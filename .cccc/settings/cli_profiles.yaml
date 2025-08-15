@@ -1,0 +1,17 @@
+peerA:
+  prompt_regex: "(?mi)^\\s*(?:claude|assistant|a:|>)\\s*$"   # 需要时按你的 Claude Code 提示符调整
+  busy_regexes: []                                           # Claude 通常不需要
+  idle_quiet_seconds: 1.0
+peerB:
+  prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # 需要时按你的 Codex CLI 调整
+  busy_regexes:
+    - "\\bRunning\\b"
+    - "\\bExecuting\\b"
+    - "\\bBuilding\\b|\\bCompiling\\b"
+    - "\\bpytest\\b|\\bnpm\\s+test\\b|\\bjest\\b"
+    - "\\b\\d{1,3}%\\b"
+  idle_quiet_seconds: 1.5
+delivery:
+  paste_max_wait_seconds: 6       # 等待空闲的最长时长
+  recheck_interval_seconds: 0.6   # 轮询间隔
+  max_flush_batch: 3              # 每轮最多 flush 多少条
