@@ -8,6 +8,7 @@ CCCC Orchestrator (tmux + long-lived CLI sessions)
 import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
+from delivery import deliver_or_queue, flush_outbox_if_idle
 
 ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # 去色
 PATCH_RE = re.compile(r"```(?:patch|diff)\s*([\s\S]*?)```", re.I)
@@ -235,8 +236,12 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
             tmux_paste(sender_pane, f"[INPUT]\n{fb}\n")
 
     if to_peer.strip():
-        tmux_paste(receiver_pane, f"[INPUT]\n{to_peer}\n")
-        log_ledger(home, {"from":who,"kind":"handoff","chars":len(to_peer)})
+        if who == "PeerA":
+            status, mid = deliver_or_queue(home, receiver_pane, "peerB", to_peer, profileB, delivery_conf)
+        else:
+            status, mid = deliver_or_queue(home, receiver_pane, "peerA", to_peer, profileA, delivery_conf)
+        log_ledger(home, {"from": who, "kind": "handoff", "status": status, "mid": mid, "chars": len(to_peer)})
+
 
 # ---------- MAIN ----------
 def main(home: Path):
@@ -250,6 +255,11 @@ def main(home: Path):
 
     leader   = (roles.get("leader") or "peerA").strip().lower()
     session  = f"cccc-{Path.cwd().name}"
+
+    cli_profiles = read_yaml(settings/"cli_profiles.yaml")
+    profileA = cli_profiles.get("peerA", {})
+    profileB = cli_profiles.get("peerB", {})
+    delivery_conf = cli_profiles.get("delivery", {})
 
     # 准备 tmux 会话/面板
     if not tmux_session_exists(session):
