@@ -27,12 +27,21 @@ def ensure_bin(name: str):
     if code != 0:
         print(f"[FATAL] 需要可执行: {name}")
         raise SystemExit(1)
+def has_bin(name: str) -> bool:
+    code,_,_ = run(f"command -v {shlex.quote(name)}"); return code==0
 
 def ensure_git_repo():
     code, out, _ = run("git rev-parse --is-inside-work-tree")
     if code != 0 or "true" not in out:
         print("[FATAL] 当前目录不是 git 仓库。请先：git init && git add -A && git commit -m 'init'")
         raise SystemExit(1)
+    # Ensure identity to avoid commit failures on fresh repos
+    code_email, out_email, _ = run("git config --get user.email")
+    code_name,  out_name,  _ = run("git config --get user.name")
+    if code_email != 0 or not out_email.strip():
+        run("git config user.email cccc-bot@local")
+    if code_name != 0 or not out_name.strip():
+        run("git config user.name CCCC Bot")
 
 def strip_ansi(s: str) -> str: return ANSI_RE.sub("", s)
 def parse_section(text: str, tag: str) -> str:
@@ -40,11 +49,12 @@ def parse_section(text: str, tag: str) -> str:
     return (m.group(1).strip() if m else "")
 
 def extract_patches(text: str) -> List[str]:
+    """Extract raw unified diff blocks from fenced ```patch|diff``` without wrapping.
+    The orchestrator expects standard unified diffs consumable by `git apply`.
+    """
     out=[]
     for m in PATCH_RE.finditer(text):
         body=m.group(1).strip()
-        if not body.startswith("*** PATCH"):
-            body=f"*** PATCH\n{body}\n*** END PATCH"
         out.append(body)
     return out
 
@@ -60,7 +70,11 @@ def extract_paths_from_patch(patch: str) -> List[str]:
     for ln in patch.splitlines():
         if ln.startswith("--- ") or ln.startswith("+++ "):
             pth=ln.split("\t")[0].split(" ",1)[1].strip()
-            if pth.startswith("a/") or pth.startswith("b/"): pth=pth[2:]
+            # Ignore /dev/null (new/delete markers)
+            if pth == "/dev/null":
+                continue
+            if pth.startswith("a/") or pth.startswith("b/"):
+                pth=pth[2:]
             paths.add(pth)
     return sorted(paths)
 
@@ -127,19 +141,37 @@ def allowed_by_policies(paths: List[str], policies: Dict[str,Any]) -> bool:
             return False
     return True
 
-def try_lint(): 
+def try_lint():
     LINT_CMD=os.environ.get("LINT_CMD","").strip()
-    if not LINT_CMD: return
-    code,out,err=run(LINT_CMD); 
-    print("[LINT]", "通过" if code==0 else "失败"); 
-    if out.strip(): print(out.strip()); 
+    cmd = None
+    if LINT_CMD:
+        cmd = LINT_CMD
+    else:
+        # Auto-detect a lightweight linter if available; otherwise skip quietly
+        if has_bin("ruff"):
+            cmd = "ruff check"
+        elif has_bin("eslint"):
+            cmd = "eslint . --max-warnings=0"
+        else:
+            print("[LINT] 跳过（未设 LINT_CMD，且未检测到 ruff/eslint）"); return
+    code,out,err=run(cmd)
+    print("[LINT]", "通过" if code==0 else "失败")
+    if out.strip(): print(out.strip())
     if err.strip(): print(err.strip())
 
 def try_tests() -> bool:
     TEST_CMD=os.environ.get("TEST_CMD","").strip()
-    if not TEST_CMD:
-        print("[TEST] 跳过（未设 TEST_CMD）"); return True
-    code,out,err=run(TEST_CMD)
+    cmd=None
+    if TEST_CMD:
+        cmd=TEST_CMD
+    else:
+        if has_bin("pytest"):
+            cmd="pytest -q"
+        elif has_bin("npm"):
+            cmd="npm test --silent"
+        else:
+            print("[TEST] 跳过（未设 TEST_CMD，也未检测到 pytest/npm）"); return True
+    code,out,err=run(cmd)
     ok=(code==0)
     print("[TEST]", "通过" if ok else "失败")
     if out.strip(): print(out.strip())
@@ -192,7 +224,8 @@ def print_block(title: str, body: str):
     print(f"\n======== {title} ========\n{body.strip()}\n")
 
 def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str,
-                  context: str, who: str, policies: Dict[str,Any], phase: str):
+                  context: str, who: str, policies: Dict[str,Any], phase: str,
+                  profileA: Dict[str,Any], profileB: Dict[str,Any], delivery_conf: Dict[str,Any]):
     tmux_paste(sender_pane, f"[CONTEXT]\n{context}\n\n[INPUT]\n{payload}\n")
     time.sleep(2.5)  # 粗略等待输出稳定
     content = tmux_capture(sender_pane, lines=2000)
@@ -204,7 +237,10 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
     print_block(f"{who} → USER", to_user); 
     log_ledger(home, {"from":who,"kind":"to_user","chars":len(to_user)})
 
-    patches = extract_patches(content)
+    # Limit patch scan to the most recent [INPUT] block to avoid stale fences
+    idx = content.rfind("[INPUT]")
+    recent = content[idx:] if idx != -1 else content
+    patches = extract_patches(recent)
     for i,patch in enumerate(patches,1):
         print_block(f"{who} 补丁#{i}", "预检中 …")
         lines = count_changed_lines(patch)
@@ -318,9 +354,9 @@ def main(home: Path):
 
     # 第一轮先发 leader
     if leader=="peera":
-        exchange_once(home, left, right, first, ctx, "PeerA", policies, phase)
+        exchange_once(home, left, right, first, ctx, "PeerA", policies, phase, profileA, profileB, delivery_conf)
     else:
-        exchange_once(home, right, left, first, ctx, "PeerB", policies, phase)
+        exchange_once(home, right, left, first, ctx, "PeerB", policies, phase, profileA, profileB, delivery_conf)
 
     rounds = 3
     for i in range(rounds):
@@ -333,9 +369,9 @@ def main(home: Path):
             mtimes = snapshot_mtime(watch_files)
 
         # A -> B
-        exchange_once(home, left, right, "<TO_PEER>type: CLAIM\nintent: implement\n</TO_PEER>", ctx, "PeerA", policies, phase)
+        exchange_once(home, left, right, "<TO_PEER>type: CLAIM\nintent: implement\n</TO_PEER>", ctx, "PeerA", policies, phase, profileA, profileB, delivery_conf)
         # B -> A
-        exchange_once(home, right, left, "<TO_PEER>type: CLAIM\nintent: review|fix\n</TO_PEER>", ctx, "PeerB", policies, phase)
+        exchange_once(home, right, left, "<TO_PEER>type: CLAIM\nintent: review|fix\n</TO_PEER>", ctx, "PeerB", policies, phase, profileA, profileB, delivery_conf)
 
         print("\n[操作] 回车继续；输入 `u: ...` 广播给两位；输入 `/refresh` 刷新 SYSTEM；输入 `q` 退出。")
         line = input("> ").strip()

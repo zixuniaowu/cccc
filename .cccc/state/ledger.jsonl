@@ -1,0 +1,5 @@
+{"ts": "2025-08-20 21:52:42", "from": "PeerA", "kind": "to_user", "chars": 55}
+{"ts": "2025-08-20 21:52:42", "from": "PeerA", "kind": "patch-precheck-fail", "stderr": "error: No valid patches in input (allow with \"--allow-empty\")"}
+{"ts": "2025-08-20 21:52:42", "from": "PeerA", "kind": "patch-precheck-fail", "stderr": "error: No valid patches in input (allow with \"--allow-empty\")"}
+{"ts": "2025-08-20 21:52:42", "from": "PeerA", "kind": "patch-reject", "reason": "path-not-allowed", "paths": ["/dev/null", "docs/DEMO.md"]}
+{"ts": "2025-08-20 21:56:53", "from": "PeerA", "kind": "to_user", "chars": 55}
