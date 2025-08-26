@@ -22,13 +22,70 @@ def capture_pane(pane: str, lines: int = 2000) -> str:
     code,out,err = _tmux("capture-pane","-t",pane,"-p","-S",f"-{lines}")
     return ANSI_RE.sub("", out if code==0 else "")
 
-def paste_to_pane(pane: str, text: str):
+def paste_to_pane(pane: str, text: str, profile: Dict[str,Any]):
+    # Ensure pane is not in copy-mode (otherwise keystrokes/paste may be eaten by tmux)
+    try:
+        code,out,err = _tmux("display-message","-p","-t",pane,"#{pane_in_mode}")
+        if code == 0 and out.strip() in ("1","on","yes"):
+            _tmux("send-keys","-t",pane,"-X","cancel")
+    except Exception:
+        pass
     with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as f:
         f.write(text); fname=f.name
     buf = f"buf-{int(time.time()*1000)}"
-    _tmux("load-buffer","-b",buf,fname); _tmux("paste-buffer","-t",pane,"-b",buf); _tmux("send-keys","-t",pane,"Enter"); _tmux("delete-buffer","-b",buf)
+    _tmux("load-buffer","-b",buf,fname)
+    # Use bracketed paste (-p) to signal paste to the CLI for more reliable handling
+    _tmux("paste-buffer","-p","-t",pane,"-b",buf)
+    # 稍长暂停，避免发送键被粘贴流吞掉（TUI 输入框更稳）
+    time.sleep(0.15)
+    # 粘贴后按序列提交
+    keys = profile.get("post_paste_keys") or ["Enter", "Enter", "C-m"]
+    for k in keys:
+        _tmux("send-keys","-t",pane,k)
+    _tmux("delete-buffer","-b",buf)
     try: os.unlink(fname)
     except Exception: pass
+
+def type_to_pane(pane: str, text: str, profile: Dict[str,Any]):
+    # 逐字发送，适合不稳定的 TUI 粘贴场景
+    try:
+        code,out,err = _tmux("display-message","-p","-t",pane,"#{pane_in_mode}")
+        if code == 0 and out.strip() in ("1","on","yes"):
+            _tmux("send-keys","-t",pane,"-X","cancel")
+    except Exception:
+        pass
+    send_at_end = bool(profile.get("type_send_at_end", True))
+    newline_key = profile.get("compose_newline_key") or "Enter"
+    line_send_key = profile.get("line_send_key") or (profile.get("send_sequence") or "C-m")
+    final_send_key = profile.get("send_sequence") or "C-m"
+    chunk_lines = int(profile.get("chunk_lines", 0) or 0)
+    chunk_delay = float(profile.get("chunk_delay_ms", 0) or 0) / 1000.0
+
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        _tmux("send-keys","-t",pane,"-l",line)
+        is_last = (i == len(lines) - 1)
+        if not is_last:
+            # 为多行正文插入换行（不提交）
+            _tmux("send-keys","-t",pane,newline_key)
+        else:
+            if send_at_end:
+                # 统一提交
+                _tmux("send-keys","-t",pane,final_send_key)
+            else:
+                # 每行提交一次
+                _tmux("send-keys","-t",pane,line_send_key)
+
+        # 分块节流，避免 TUI 过载
+        if chunk_lines and (i+1) % chunk_lines == 0:
+            time.sleep(chunk_delay)
+
+def send_text(pane: str, text: str, profile: Dict[str,Any]):
+    mode = (profile or {}).get("input_mode") or "paste"
+    if mode == "type":
+        type_to_pane(pane, text, profile)
+    else:
+        paste_to_pane(pane, text, profile)
 
 def send_ctrl_c(pane: str):
     _tmux("send-keys","-t",pane,"C-c")
@@ -118,17 +175,25 @@ def find_acks_from_output(output: str) -> Tuple[List[str], List[str]]:
 def new_mid(prefix="cccc") -> str:
     return f"{prefix}-{int(time.time())}-{uuid.uuid4().hex[:6]}"
 
-def wrap_with_mid(to_peer_payload: str, mid: str) -> str:
-    # 在 <TO_PEER> 首行后插入一行 MID 标记，便于收件方在 SYSTEM_NOTES 中 ack: <mid>
+def wrap_with_mid(payload: str, mid: str) -> str:
+    """Insert a MID marker after the first recognized opening tag.
+    Recognized tags: <TO_PEER>, <FROM_USER>, <FROM_PeerA>, <FROM_PeerB>, <FROM_SYSTEM>
+    If none present, prefix the payload with the marker.
+    """
     marker = f"[MID: {mid}]"
-    if "<TO_PEER>" in to_peer_payload:
-        return to_peer_payload.replace("<TO_PEER>", "<TO_PEER>\n"+marker, 1)
-    # 若 payload 不是标准块，兜底直接前缀
-    return marker + "\n" + to_peer_payload
+    # Allowed opening tags regex
+    import re
+    rx = re.compile(r"<(\s*(TO_PEER|FROM_USER|FROM_PeerA|FROM_PeerB|FROM_SYSTEM)\s*)>", re.I)
+    m = rx.search(payload)
+    if m:
+        start, end = m.span()
+        return payload[:end] + "\n" + marker + payload[end:]
+    return marker + "\n" + payload
 
 # --- 主入口：投递（若忙则入队；空闲则发送并等待ACK） ---
 def deliver_or_queue(home: Path, pane: str, peer: str, payload: str,
-                     profile: Dict[str,Any], delivery_conf: Dict[str,Any]) -> Tuple[str, str]:
+                     profile: Dict[str,Any], delivery_conf: Dict[str,Any],
+                     mid: Optional[str] = None) -> Tuple[str, str]:
     """
     返回 (status, mid)
       status in {"delivered","queued","failed"}
@@ -138,14 +203,15 @@ def deliver_or_queue(home: Path, pane: str, peer: str, payload: str,
 
     max_wait = float(delivery_conf.get("paste_max_wait_seconds", 6))
     interval = float(delivery_conf.get("recheck_interval_seconds", 0.6))
+    require_ack = bool(delivery_conf.get("require_ack", False))
 
     t0 = time.time()
     while time.time() - t0 < max_wait:
         idle, reason = judge.refresh(pane)
         if idle:
-            mid = new_mid()
+            mid = mid or new_mid()
             text = wrap_with_mid(payload, mid)
-            paste_to_pane(pane, f"[INPUT]\n{text}\n")
+            send_text(pane, text, profile)
             # 简单等待对方 ACK（非阻塞太久）
             time.sleep(1.2)
             latest = capture_pane(pane, 1200)
@@ -153,16 +219,23 @@ def deliver_or_queue(home: Path, pane: str, peer: str, payload: str,
             if mid in acks:
                 return "delivered", mid
             else:
-                # 未即刻ACK，入队等待后台 flush
-                outbox.enqueue(mid, text)
-                return "queued", mid
+                if require_ack:
+                    # 未即刻ACK，入队等待后台 flush
+                    outbox.enqueue(mid, text)
+                    return "queued", mid
+                # 不要求 ACK：视为已投递
+                return "delivered", mid
         time.sleep(interval)
 
-    # 超时仍繁忙 → 入队
-    mid = new_mid()
+    # 超时仍判定非空闲 → 仍执行一次 best-effort 粘贴，再按 require_ack 语义返回
+    mid = mid or new_mid()
     text = wrap_with_mid(payload, mid)
-    outbox.enqueue(mid, text)
-    return "queued", mid
+    send_text(pane, text, profile)
+    if require_ack:
+        # 不阻塞等待 ACK，这里直接入队以便后台 flush + 检测 ACK
+        outbox.enqueue(mid, text)
+        return "queued", mid
+    return "delivered", mid
 
 def flush_outbox_if_idle(home: Path, pane: str, peer: str,
                          profile: Dict[str,Any], delivery_conf: Dict[str,Any]) -> List[str]:
@@ -171,6 +244,10 @@ def flush_outbox_if_idle(home: Path, pane: str, peer: str,
     """
     judge = PaneIdleJudge(profile)
     outbox = Outbox(home, peer)
+    require_ack = bool(delivery_conf.get("require_ack", False))
+    if not require_ack:
+        # 不要求 ACK 时无需 flush 队列
+        return []
     batch = int(delivery_conf.get("max_flush_batch", 3))
 
     idle, _ = judge.refresh(pane)
@@ -181,7 +258,7 @@ def flush_outbox_if_idle(home: Path, pane: str, peer: str,
     sent_mids=[]
     for it in items[:batch]:
         mid = it["mid"]; text = it["payload"]
-        paste_to_pane(pane, f"[INPUT]\n{text}\n")
+        send_text(pane, text, profile)
         time.sleep(1.0)
         latest = capture_pane(pane, 1200)
         acks, nacks = find_acks_from_output(latest)

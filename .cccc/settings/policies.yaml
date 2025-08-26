@@ -1,15 +1,56 @@
 patch_queue:
   max_diff_lines: 150
   allowed_paths:
-    - ".cccc/**"
     - "src/**"
     - "tests/**"
     - "docs/**"
     - "infra/**"
     - "README.md"
     - "AGENTS.md"
+    - "PROJECT.md"
 rfd:
   trigger:
     both_confidence_below: 0.6
     max_dispute_rounds: 2
 autonomy_level: L1
+context:
+  files_limit: 120
+  exclude:
+    - ".venv/**"
+    - "node_modules/**"
+    - "**/__pycache__/**"
+
+handoff_filter:
+  enabled: true
+  cooldown_seconds: 15
+  min_chars: 40
+  min_words: 6
+  # 长文冗余抑制（在无新证据/补丁/问题时，丢弃与最近内容高度相似的长文本）
+  redundant_window_seconds: 120
+  redundant_similarity_threshold: 0.9
+  dedup_max_keep: 10
+  dedup_short_seconds: 30
+  # 若正文中不包含下列任一关键词，且长度又短，则视为低信号（可与 drop_regexes 叠加判断）
+  require_keywords_any:
+    - "CLAIM:"
+    - "COUNTER:"
+    - "EVIDENCE:"
+    - "TASK"
+    - "PATCH"
+    - "diff --git"
+  # 高信号“加分项”（命中任一则直接放行，忽略冷却）
+  boost_keywords_any:
+    - "CLAIM:"
+    - "COUNTER:"
+    - "EVIDENCE:"
+    - "TASK"
+    - "PATCH"
+    - "diff --git"
+  boost_regexes:
+    - '```'          # fenced code/patch
+    - '^\s*diff --git\s'
+  bypass_cooldown_when_high_signal: true
+  # 命中以下任一正则（大小写不敏感）时，视为低信号
+  drop_regexes:
+    - '^\s*(ok|okay|ready|standby|waiting|idle)\b'
+    - '准备好|等待中|就绪|已收到|确认|收到'

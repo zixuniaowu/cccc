@@ -1,60 +1,65 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 from typing import Dict, Any
-import json, re
 
-BAR = "\n" + ("-"*60) + "\n"
-
-def _read_text(p: Path) -> str:
-    if not p.exists(): raise FileNotFoundError(f"缺少: {p}")
-    return p.read_text(encoding="utf-8")
-
-def _read_yaml(p: Path) -> Dict[str, Any]:
-    if not p.exists(): return {}
-    try:
-        import yaml; return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    except ImportError:
-        d={}; 
-        for line in p.read_text(encoding="utf-8").splitlines():
-            line=line.strip()
-            if not line or line.startswith("#") or ":" not in line: continue
-            k,v=line.split(":",1); d[k.strip()]=v.strip().strip('"\'')
-        return d
-
-def _substitute(text: str, mapping: Dict[str, Any]) -> str:
-    def rep(m):
-        k=m.group(1).strip()
-        return str(mapping.get(k, m.group(0)))
-    return re.sub(r"\{\{([A-Za-z0-9_\-\.]+)\}\}", rep, text)
 
 def weave_system_prompt(home: Path, peer: str) -> str:
-    prompts  = home/"prompts"
-    personas = home/"personas"
-    settings = home/"settings"
+    """
+    Minimal runtime system prompt for mailbox mode.
+    Keep it concise: only the mailbox paths, writing rules, and inbound markers.
+    """
+    peer = (peer or "peerA").strip()
+    other = "peerB" if peer.lower() == "peera" or peer == "peerA" else "peerA"
 
-    core    = _read_text(prompts / f"{peer}.core.txt")
-    persona = _read_text(personas / f"{peer}.persona.txt")
-    guard   = _read_text(prompts / "shared.guardrails.txt")
+    mb_base = f".cccc/mailbox/{peer}"
+    to_user = f"{mb_base}/to_user.md"
+    to_peer = f"{mb_base}/to_peer.md"
+    patchf  = f"{mb_base}/patch.diff"
 
-    traits_all = _read_yaml(settings / "traits.yaml")
-    policies   = _read_yaml(settings / "policies.yaml")
-    traits = traits_all.get(peer, traits_all.get(peer.lower(), {}))
-
-    persona = _substitute(persona, traits)
-    policies_excerpt = {
-        "patch_queue": policies.get("patch_queue", {}),
-        "rfd":         policies.get("rfd", {}),
-        "autonomy_level": policies.get("autonomy_level")
-    }
-
-    system = (
-        core.strip()
-        + BAR + "# PERSONA\n" + persona.strip()
-        + BAR + "# GUARDRAILS\n" + guard.strip()
-        + BAR + "# TRAITS\n" + json.dumps(traits, ensure_ascii=False)
-        + BAR + "# POLICIES (excerpt)\n" + json.dumps(policies_excerpt, ensure_ascii=False)
-        + BAR + "# MESSAGE CONTRACT\n"
-        + "必须严格用 <TO_USER> 与 <TO_PEER> 两段输出；如需提交代码，仅输出一个 ```patch ...``` 围栏（统一 diff）。\n"
-        + "不得泄露冗长思维链；只提供理由摘要与事实引用。\n"
-    )
-    return system
+    lines = []
+    lines.append("CCCC Mailbox Contract (runtime)")
+    lines.append("")
+    lines.append(f"You are {peer}. Collaborate with {other}.")
+    lines.append("")
+    lines.append("Mailbox (the only authoritative channel):")
+    if peer.lower() == 'peera' or peer == 'peerA':
+        lines.append(f"• To user:   write plain text to {to_user}")
+    else:
+        lines.append("• To user:   (disabled for this peer; orchestrator ignores it)")
+    lines.append(f"• To peer:   write plain text to {to_peer}")
+    lines.append(f"• Patch:     write unified diff only to {patchf}")
+    lines.append("")
+    lines.append("Rules:")
+    lines.append("• Keep terminal output brief; mailbox files are authoritative.")
+    lines.append("• to_user.md: brief goals/progress/decisions, include evidence if needed.")
+    lines.append("• to_peer.md: only when you have CLAIM/COUNTER/EVIDENCE, a task, or a direct question.")
+    lines.append("• patch.diff: unified diff only; keep changes small and reversible.")
+    # Behavior compact contract (≤ 6 lines)
+    lines.append("• Evidence-first: each loop produce at least one evidence: a small unified diff, a test, or a concise log excerpt.")
+    lines.append("• Steelman then COUNTER: before disagreeing, steelman the peer’s point; then provide COUNTER + EVIDENCE.")
+    lines.append("• Focused to_peer: only CLAIM/COUNTER/EVIDENCE or concrete questions; otherwise do not send.")
+    lines.append("• Patch size: ≤ 150 changed lines; propose an RFD first for larger changes.")
+    lines.append("• The orchestrator code lives under .cccc/ and is not part of the project — do not modify or analyze it.")
+    lines.append("• If present, read PROJECT.md in the repo root for the project brief and scope.")
+    lines.append("")
+    lines.append("Inbound markers you may see here:")
+    lines.append("• <FROM_USER>..</FROM_USER>")
+    lines.append(f"• <FROM_{other.capitalize()}>..</FROM_{other.capitalize()}>")
+    lines.append("• <FROM_SYSTEM>..</FROM_SYSTEM>")
+    lines.append("• Delivery: echo the incoming [MID: …] in your next to_user or to_peer to confirm receipt.")
+    lines.append("")
+    lines.append("Speak-up Triggers (minimal, high-signal):")
+    lines.append("• On any inbound with [MID]: print <SYSTEM_NOTES>ack: <MID></SYSTEM_NOTES> in your CLI output.")
+    lines.append("• If you have a small result: send EVIDENCE (small patch/test; else 3–5 line stable log with cmd/LOC).")
+    lines.append("• If you have a next step but no result: send a short CLAIM (1–3 tasks with constraints + acceptance).")
+    lines.append("• If blocked by one uncertainty: ask a single, answerable QUESTION (focused, decidable).")
+    lines.append("• If you disagree: steelman first, then send COUNTER with a repro note or metric. Otherwise only ACK.")
+    lines.append("")
+    if peer.lower() == 'peerb' or peer == 'peerB':
+        lines.append("")
+        lines.append("Behavior for user instructions (peerB):")
+        lines.append("• Do not act on user instructions immediately.")
+        lines.append("• Wait for PeerA's follow-up; use to_peer.md for questions or EVIDENCE.")
+        lines.append("• Never write to to_user.md; the orchestrator ignores it.")
+    lines.append("Please follow the mailbox contract above.")
+    return "\n".join(lines)

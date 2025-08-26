@@ -16,6 +16,9 @@ Core Principles
 - Gates: irreversible changes (arch/schema/public API) and releases require dual‑sign from A+B.
 - Safety: minimal privilege, sensitive data only referenced, not inlined.
 
+Startup Handshake
+- On launch, each peer immediately writes a single line `READY` to its respective `.cccc/mailbox/<peer>/to_user.md`, then stands by for instructions. Avoid long terminal output; mailbox files are authoritative.
+
 Message Contract (strict)
 Every agent message has three parts. <TO_PEER> MUST be valid YAML. <TO_USER> is a concise human‑readable status.
 

@@ -44,13 +44,15 @@ def main():
             sys.stdout.write(
                 "\n<TO_USER>Mock agent: generating demo patch to verify preflight.</TO_USER>\n"
             )
-            # Use a robust new-file unified diff under docs/ (whitelisted)
+            # Use a new unique filename each run to avoid conflicts
+            ts = int(time.time())
+            fname = f"docs/DEMO-{ts}.md"
             sys.stdout.write(
                 "```diff\n"
-                "diff --git a/docs/DEMO.md b/docs/DEMO.md\n"
+                f"diff --git a/{fname} b/{fname}\n"
                 "new file mode 100644\n"
                 "--- /dev/null\n"
-                "+++ b/docs/DEMO.md\n"
+                f"+++ b/{fname}\n"
                 "@@ -0,0 +1,3 @@\n"
                 "+# CCCC Demo\n"
                 "+\n"

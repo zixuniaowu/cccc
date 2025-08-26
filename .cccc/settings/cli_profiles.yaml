@@ -2,8 +2,22 @@ peerA:
   prompt_regex: "(?mi)^\\s*(?:claude|assistant|a:|>)\\s*$"   # 需要时按你的 Claude Code 提示符调整
   busy_regexes: []                                           # Claude 通常不需要
   idle_quiet_seconds: 1.0
+  # 输入与发送策略：回车发送；为稳妥，粘贴后发送两次 Enter
+  # 注意：Ctrl-J 仅为换行，不作为提交键
+  post_paste_keys: ["Enter", "Enter"]
+  input_mode: type                                           # paste | type（Claude 更稳妥用逐字输入）
+  compose_newline_key: "C-j"                                 # 多行输入使用 Ctrl-J 插入换行（不提交）
+  send_sequence: "Enter"                                     # 最终提交键
+  type_send_at_end: true                                     # 逐字输入完成后统一提交
+  chunk_lines: 14                                            # 长消息分块的行数阈值
+  chunk_delay_ms: 160                                        # 分块之间的延迟
+  # 对 Claude 的入站消息在文本末尾追加提示语：按来源分别配置
+  inbound_suffix:
+    from_user: " 请以第一性原理与最佳实践原则思考行动；你是本任务的质量负责人，富有责任心并对质量的异常执着，请与PeerB深入协同，拿出最高质量的方案和成果来。 think"
+    from_peer: " 请以第一性原理与最佳实践的角度充分理解分析并review我这次的建议或者工作成果（如果有的话），如果有不足之处请一定指出（但请注意不要重复review）。另外，为了避免重复低效沟通导致对话进入死循环，如果没有异议或者没有要补充的核心信息或者没有新的工作状况要汇报的话请直接静默不要回复。 think"
+    from_system: " 请以第一性原理与最佳实践原则思考行动；你是本任务的质量负责人，富有责任心并对质量的异常执着，请与PeerB深入协同，拿出最高质量的方案和成果来。 think"
 peerB:
-  prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # 需要时按你的 Codex CLI 调整
+  prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # 需要时按你的 PeerB CLI 调整
   busy_regexes:
     - "\\bRunning\\b"
     - "\\bExecuting\\b"
@@ -11,7 +25,34 @@ peerB:
     - "\\bpytest\\b|\\bnpm\\s+test\\b|\\bjest\\b"
     - "\\b\\d{1,3}%\\b"
   idle_quiet_seconds: 1.5
+  # Codex CLI：回车发送；需要多行时用 Ctrl-J 插入换行（不提交）
+  post_paste_keys: ["Enter"]
+  input_mode: type
+  compose_newline_key: "C-j"
+  send_sequence: "Enter"
+  type_send_at_end: true
+  chunk_lines: 12
+  chunk_delay_ms: 180
+  # 对 Codex（PeerB）的入站消息末尾追加后缀：按来源分别配置
+  inbound_suffix:
+    from_user: " 不用立即对此指令采取行动，先等待PeerA的后续沟通；如需反馈，仅在 to_peer.md 中提出问题或证据，不要直接向用户汇报。"
+    from_peer: " 请以第一性原理与最佳实践的角度充分理解分析并review我这次的建议或者工作成果（如果有的话），如果有不足之处请一定指出（但请注意不要重复review）。另外，为了避免重复低效沟通导致对话进入死循环，如果没有异议或者没有要补充的核心信息或者没有新的工作状况要汇报的话请直接静默不要回复。"
+    from_system: " 不用立即对此指令采取行动，先等待PeerA的后续沟通；如需反馈，仅在 to_peer.md 中提出问题或证据，不要直接向用户汇报。"
 delivery:
   paste_max_wait_seconds: 6       # 等待空闲的最长时长
   recheck_interval_seconds: 0.6   # 轮询间隔
   max_flush_batch: 3              # 每轮最多 flush 多少条
+  require_ack: false              # 以 mailbox 事件作为 ACK，不强制 CLI 回显 ACK
+  read_timeout_seconds: 8         # 读取一轮回复的最大等待时长
+  ack_timeout_seconds: 40         # mailbox ACK 超时阈值
+  resend_attempts: 2              # 超时后最多重发 2 次（避免噪音）
+  ack_require_mid: false          # 是否严格要求对方回显 [MID: ...] 才视为 ACK（默认不强制）
+  duplicate_window_seconds: 90    # 短窗口重复投递防抖
+
+startup_wait_seconds: 12          # CLI 首次启动等待提示符的时长
+commands:
+  peerA: "claude --dangerously-skip-permissions"
+  peerB: "codex --dangerously-bypass-approvals-and-sandbox"
+delivery_mode:
+  peerA: bridge   # tmux | bridge（bridge 通过 inbox.md 由 adapter 注入）
+  peerB: bridge

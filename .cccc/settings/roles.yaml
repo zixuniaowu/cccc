@@ -1,7 +1,7 @@
 leader: peerA   # 初期由你指定：peerA 或 peerB
 specialties:
-  peerA: [product-shaping, architecture, security-review]
-  peerB: [implementation, testing, performance]
+  peerA: [product-shaping, architecture, design, review]
+  peerB: [implementation, testing, performance, review]
 rotation:
   mode: manual
   allowed_at: ["phase-change", "stalemate"]
