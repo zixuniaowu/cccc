@@ -16,6 +16,9 @@ peerA:
     from_user: " 请以第一性原理与最佳实践原则思考行动；你是本任务的质量负责人，富有责任心并对质量的异常执着，请与PeerB深入协同，拿出最高质量的方案和成果来。 think"
     from_peer: " 请以第一性原理与最佳实践的角度充分理解分析并review我这次的建议或者工作成果（如果有的话），如果有不足之处请一定指出（但请注意不要重复review）。另外，为了避免重复低效沟通导致对话进入死循环，如果没有异议或者没有要补充的核心信息或者没有新的工作状况要汇报的话请直接静默不要回复。 think"
     from_system: " 请以第一性原理与最佳实践原则思考行动；你是本任务的质量负责人，富有责任心并对质量的异常执着，请与PeerB深入协同，拿出最高质量的方案和成果来。 think"
+  # NUDGE 消息的可选后缀（仅用于系统发送的 [NUDGE] 提示行）
+  # 例如：" 请立刻读取最旧文件并先回显 ack: <seq> 再处理"
+  nudge_suffix: " think hard"
 peerB:
   prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # 需要时按你的 PeerB CLI 调整
   busy_regexes:
@@ -38,6 +41,8 @@ peerB:
     from_user: " 不用立即对此指令采取行动，先等待PeerA的后续沟通；如需反馈，仅在 to_peer.md 中提出问题或证据，不要直接向用户汇报。"
     from_peer: " 请以第一性原理与最佳实践的角度充分理解分析并review我这次的建议或者工作成果（如果有的话），如果有不足之处请一定指出（但请注意不要重复review）。另外，为了避免重复低效沟通导致对话进入死循环，如果没有异议或者没有要补充的核心信息或者没有新的工作状况要汇报的话请直接静默不要回复。"
     from_system: " 不用立即对此指令采取行动，先等待PeerA的后续沟通；如需反馈，仅在 to_peer.md 中提出问题或证据，不要直接向用户汇报。"
+  # NUDGE 消息的可选后缀
+  nudge_suffix: ""
 delivery:
   paste_max_wait_seconds: 6       # 等待空闲的最长时长
   recheck_interval_seconds: 0.6   # 轮询间隔
@@ -48,8 +53,23 @@ delivery:
   resend_attempts: 2              # 超时后最多重发 2 次（避免噪音）
   ack_require_mid: false          # 是否严格要求对方回显 [MID: ...] 才视为 ACK（默认不强制）
   duplicate_window_seconds: 90    # 短窗口重复投递防抖
+  # --- mailbox pull + nudge 模式 ---
+  mailbox_pull_enabled: true      # 启用 inbox + NUDGE（替代直接粘贴正文）
+  inbox_dirname: "inbox"          # 收件箱目录名（相对 .cccc/mailbox/<peer>/）
+  processed_retention: 200        # processed/ 归档保留的最大条数（超出自动删除最旧）
+  nudge_resend_seconds: 90        # 若 inbox 仍有未 ACK 的文件，距上次 NUDGE ≥ 此值则再次提醒
+  nudge_jitter_pct: 0.0           # 可选：NUDGE 重发的抖动比例（0.0~0.3），避免多提醒同一时刻触发
+  soft_ack_on_mailbox_activity: false  # 可选：观察到后续 mailbox 活动视为已读（默认关闭）
+  # 启动策略：处理 inbox 残留消息（resume | discard | archive）
+  inbox_startup_policy: resume
+  inbox_startup_prompt: true   # 默认启用提示，避免误用历史残留（可改为 false 静默执行策略）
+  # 提示超时：交互 TTY 下超时后按默认策略；非交互（CI）建议 0 秒避免阻塞
+  inbox_startup_prompt_timeout_seconds: 30
+  inbox_startup_prompt_noninteractive_timeout_seconds: 0
 
 startup_wait_seconds: 12          # CLI 首次启动等待提示符的时长
+startup_nudge_seconds: 10         # 激活 NUDGE 前的最大等待时长（避免过久等待）
+console_echo: true                # 是否在控制台回显 AI 输出（调试友好；修改后需重启）
 commands:
   peerA: "claude --dangerously-skip-permissions"
   peerB: "codex --dangerously-bypass-approvals-and-sandbox"

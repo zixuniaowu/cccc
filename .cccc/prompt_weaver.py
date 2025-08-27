@@ -55,11 +55,22 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     lines.append("• If blocked by one uncertainty: ask a single, answerable QUESTION (focused, decidable).")
     lines.append("• If you disagree: steelman first, then send COUNTER with a repro note or metric. Otherwise only ACK.")
     lines.append("")
-    if peer.lower() == 'peerb' or peer == 'peerB':
+    lines.append("When you see [NUDGE]: read the oldest file under your inbox, then immediately print <SYSTEM_NOTES>ack: <seq> and proceed; repeat until inbox is empty.")
+    # Peer-specific collaboration norms (strong guidance)
+    if peer.lower() == 'peera' or peer == 'peerA':
+        lines.append("")
+        lines.append("Collaboration Norms (PeerA):")
+        lines.append("• Before modifying code: propose a concise CLAIM (constraints + acceptance) and wait for PeerB's ACK/COUNTER/QUESTION; then submit a small patch.")
+        lines.append("• Avoid unilateral file edits; keep changes discussable and reversible (≤150 changed lines by default).")
+    else:
         lines.append("")
         lines.append("Behavior for user instructions (peerB):")
         lines.append("• Do not act on user instructions immediately.")
         lines.append("• Wait for PeerA's follow-up; use to_peer.md for questions or EVIDENCE.")
         lines.append("• Never write to to_user.md; the orchestrator ignores it.")
+        lines.append("")
+        lines.append("Collaboration Norms (PeerB):")
+        lines.append("• After applying a patch: send a 1–2 line EVIDENCE report to PeerA (commit, tests ok/fail, lines, paths, MID) before going silent.")
+        lines.append("• Prefer incremental, testable changes; when blocked, ask one focused question.")
     lines.append("Please follow the mailbox contract above.")
     return "\n".join(lines)

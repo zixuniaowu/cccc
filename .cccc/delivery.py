@@ -163,13 +163,20 @@ class Outbox:
 ACK_RE = re.compile(r"(?:^|;|\s)ack:\s*([A-Za-z0-9\-\._:]+)", re.I)
 NACK_RE= re.compile(r"(?:^|;|\s)nack:\s*([A-Za-z0-9\-\._:]+)", re.I)
 SYS_NOTES_RE = re.compile(r"<SYSTEM_NOTES>([\s\S]*?)</SYSTEM_NOTES>", re.I)
+ANY_ACK_RE = re.compile(r"(?i)(?:^|\s|\[)ack:\s*([A-Za-z0-9\-\._:]+)")
 
 def find_acks_from_output(output: str) -> Tuple[List[str], List[str]]:
+    """Return (acks, nacks) tokens detected in CLI output.
+    - Prefer tokens inside <SYSTEM_NOTES>…</SYSTEM_NOTES>
+    - Fallback: accept bare "ack: <token>" anywhere in output (Claude often omits SYSTEM_NOTES)
+    """
     notes = SYS_NOTES_RE.findall(output)
     acks, nacks = [], []
     for nt in notes:
         acks  += ACK_RE.findall(nt)
         nacks += NACK_RE.findall(nt)
+    # Fallback: scan whole output for ack: tokens
+    acks += ANY_ACK_RE.findall(output)
     return list(set(acks)), list(set(nacks))
 
 def new_mid(prefix="cccc") -> str:

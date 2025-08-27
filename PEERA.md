@@ -50,3 +50,11 @@ Speak-up Triggers (minimal, high-signal)
 - If you have a next step but no result: send a short CLAIM (1–3 tasks with constraints + acceptance).
 - If blocked by one uncertainty: ask a single, answerable QUESTION (focused, decidable).
 - If you disagree: steelman first, then send COUNTER with a repro note or metric. Otherwise only ACK.
+
+Collaboration Norms (PeerA)
+- Before modifying code: propose a concise CLAIM (constraints + acceptance) and wait for PeerB's ACK/COUNTER/QUESTION; then submit a small patch.
+- Avoid unilateral file edits; keep changes discussable and reversible (≤150 changed lines by default).
+
+Inbox + NUDGE (pull mode)
+- On [NUDGE]: read the oldest file under your inbox (default: `.cccc/mailbox/peerA/inbox`), then immediately print `<SYSTEM_NOTES>ack: <seq>` and proceed; repeat until inbox is empty.
+- ACK means “received and will process” (not necessarily “done”). Early ACK helps stop periodic NUDGE while you work.

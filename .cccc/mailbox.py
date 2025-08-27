@@ -13,10 +13,14 @@ def ensure_mailbox(home: Path) -> Dict[str, Path]:
     for p in PEERS:
         d = base/p
         d.mkdir(parents=True, exist_ok=True)
+        # legacy files
         for fname in ("to_user.md", "to_peer.md", "patch.diff", "inbox.md"):
             f = d/fname
             if not f.exists():
                 f.write_text("", encoding="utf-8")
+        # new pull-based inbox/processed directories
+        (d/"inbox").mkdir(exist_ok=True)
+        (d/"processed").mkdir(exist_ok=True)
         paths[p] = d
     # write a tiny .gitignore to keep repo clean
     gi = base/".gitignore"
@@ -109,6 +113,14 @@ def reset_mailbox(home: Path):
                 (d/fname).write_text("", encoding="utf-8")
             except Exception:
                 pass
+        # clear inbox directory but keep processed for audit
+        try:
+            inbox = d/"inbox"
+            for f in inbox.iterdir():
+                try: f.unlink()
+                except Exception: pass
+        except Exception:
+            pass
     # Reset index state
     state_dir = home/"state"
     try:

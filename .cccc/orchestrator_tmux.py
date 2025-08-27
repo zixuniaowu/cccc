@@ -9,7 +9,7 @@ import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, ha
 from glob import glob
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
-from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text
+from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
 from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox
 
 ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # 去色
@@ -18,6 +18,16 @@ CONSOLE_ECHO = True
 PATCH_RE = re.compile(r"```(?:patch|diff)\s*([\s\S]*?)```", re.I)
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
+
+# --- inbox/nudge settings (read at startup from cli_profiles.delivery) ---
+MB_PULL_ENABLED = True
+INBOX_DIRNAME = "inbox"
+PROCESSED_RETENTION = 200
+NUDGE_RESEND_SECONDS = 90
+NUDGE_JITTER_PCT = 0.0
+SOFT_ACK_ON_MAILBOX_ACTIVITY = False
+INBOX_STARTUP_POLICY = "resume"  # resume | discard | archive
+INBOX_STARTUP_PROMPT = False
 
 def _append_suffix_inside(payload: str, suffix: str) -> str:
     """Append a short suffix to the end of the main body inside the outermost tag, if present.
@@ -73,6 +83,109 @@ def run(cmd: str, *, cwd: Optional[Path]=None, timeout: int=600) -> Tuple[int,st
     except subprocess.TimeoutExpired:
         p.kill(); return 124, "", "Timeout"
     return p.returncode, out, err
+
+def _peer_folder_name(label: str) -> str:
+    return "peerA" if label == "PeerA" else "peerB"
+
+def _inbox_dir(home: Path, receiver_label: str) -> Path:
+    return home/"mailbox"/_peer_folder_name(receiver_label)/INBOX_DIRNAME
+
+def _processed_dir(home: Path, receiver_label: str) -> Path:
+    return home/"mailbox"/_peer_folder_name(receiver_label)/"processed"
+
+def _next_seq_for_inbox(inbox: Path, processed: Path) -> str:
+    def _max_seq_in(d: Path) -> int:
+        mx = 0
+        try:
+            for f in d.iterdir():
+                name = f.name
+                if len(name) >= 6 and name[:6].isdigit():
+                    mx = max(mx, int(name[:6]))
+        except Exception:
+            pass
+        return mx
+    current = max(_max_seq_in(inbox), _max_seq_in(processed))
+    return f"{current+1:06d}"
+
+def _write_inbox_message(home: Path, receiver_label: str, payload: str, mid: str) -> Tuple[str, Path]:
+    inbox = _inbox_dir(home, receiver_label)
+    processed = _processed_dir(home, receiver_label)
+    inbox.mkdir(parents=True, exist_ok=True); processed.mkdir(parents=True, exist_ok=True)
+    seq = _next_seq_for_inbox(inbox, processed)
+    fname = f"{seq}.{mid}.txt"
+    fpath = inbox/fname
+    try:
+        fpath.write_text(payload, encoding='utf-8')
+    except Exception as e:
+        raise RuntimeError(f"write inbox failed: {e}")
+    return seq, fpath
+
+def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
+                left_pane: str, right_pane: str,
+                profileA: Dict[str,Any], profileB: Dict[str,Any],
+                modeA: str, modeB: str):
+    inbox_path = str(_inbox_dir(home, receiver_label))
+    # 可配置的 NUDGE 后缀（按 peer 定义），便于微调 CLI 行为
+    nudge_suffix = ""
+    if receiver_label == 'PeerA':
+        nudge_suffix = (profileA.get('nudge_suffix') or '').strip()
+    else:
+        nudge_suffix = (profileB.get('nudge_suffix') or '').strip()
+    base = f"[NUDGE] inbox={inbox_path} Read oldest; after reading each file, print <SYSTEM_NOTES>ack: <seq>"
+    msg = base + (" " + nudge_suffix if nudge_suffix else "")
+    # Route by delivery mode: bridge → write to adapter inbox.md (adapter injects Enter);
+    # tmux → send keys directly to pane with newline at end (Enter implied by profile)
+    if receiver_label == 'PeerA':
+        if modeA == 'bridge':
+            try:
+                (home/"mailbox"/"peerA"/"inbox.md").write_text(msg + "\n", encoding='utf-8')
+            except Exception:
+                pass
+        else:
+            send_text(left_pane, msg + "\n", profileA)
+    else:
+        if modeB == 'bridge':
+            try:
+                (home/"mailbox"/"peerB"/"inbox.md").write_text(msg + "\n", encoding='utf-8')
+            except Exception:
+                pass
+        else:
+            send_text(right_pane, msg + "\n", profileB)
+
+def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
+    # token may be seq (000123) or mid; prefer seq match first
+    inbox = _inbox_dir(home, receiver_label)
+    proc = _processed_dir(home, receiver_label)
+    target: Optional[Path] = None
+    if token.isdigit():
+        # match seq prefix
+        pat = token
+        for f in sorted(inbox.iterdir()):
+            if f.name.startswith(pat):
+                target = f; break
+    if target is None:
+        # try by mid
+        for f in sorted(inbox.iterdir()):
+            if f".{token}." in f.name:
+                target = f; break
+    if target is None:
+        return False
+    try:
+        proc.mkdir(parents=True, exist_ok=True)
+        target.rename(proc/target.name)
+    except Exception:
+        return False
+    # enforce retention
+    try:
+        files = sorted(proc.iterdir(), key=lambda p: p.name)
+        if len(files) > PROCESSED_RETENTION:
+            remove_n = len(files) - PROCESSED_RETENTION
+            for f in files[:remove_n]:
+                try: f.unlink()
+                except Exception: pass
+    except Exception:
+        pass
+    return True
 
 def ensure_bin(name: str):
     code,_,_ = run(f"command -v {shlex.quote(name)}")
@@ -519,6 +632,26 @@ def read_console_line(prompt: str) -> str:
         s = sys.stdin.readline()
     return sanitize_console(s)
 
+def read_console_line_timeout(prompt: str, timeout_sec: float) -> str:
+    """Read a console line with timeout. Returns empty string on timeout.
+    Avoids blocking CI/non-interactive runs. Uses select on POSIX stdin.
+    """
+    try:
+        import select, sys
+        sys.stdout.write(prompt)
+        sys.stdout.flush()
+        r, _, _ = select.select([sys.stdin], [], [], max(0.0, float(timeout_sec)))
+        if r:
+            line = sys.stdin.readline()
+            return sanitize_console(line)
+        return ""
+    except Exception:
+        # Fallback: no timeout-capable read; do a best-effort non-blocking attempt
+        try:
+            return input(prompt)
+        except Exception:
+            return ""
+
 
 def tmux_paste(pane: str, text: str):
     # 以二进制写入，宽容处理输入中的代理码位/控制序列
@@ -812,12 +945,24 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
         if not deliver_enabled:
             log_ledger(home, {"from": who, "kind": "handoff-skipped", "reason": "paused", "chars": len(to_peer)})
         else:
-            if who == "PeerA":
-                status, mid = deliver_or_queue(home, receiver_pane, "peerB", to_peer, profileB, delivery_conf)
-            else:
-                status, mid = deliver_or_queue(home, receiver_pane, "peerA", to_peer, profileA, delivery_conf)
-            log_ledger(home, {"from": who, "kind": "handoff", "status": status, "mid": mid, "chars": len(to_peer)})
-            print(f"[HANDOFF] {who} → {'PeerB' if who=='PeerA' else 'PeerA'} ({len(to_peer)} chars, status={status})")
+            # use inbox + nudge
+            recv = "PeerB" if who == "PeerA" else "PeerA"
+            mid = new_mid()
+            text_with_mid = wrap_with_mid(to_peer, mid)
+            try:
+                seq, _ = _write_inbox_message(home, recv, text_with_mid, mid)
+                _send_nudge(home, recv, seq, mid, left, right, profileA, profileB,
+                            modeA, modeB)
+                try:
+                    last_nudge_ts[recv] = time.time()
+                except Exception:
+                    pass
+                status = "nudged"
+            except Exception as e:
+                status = f"failed:{e}"
+                seq = "000000"
+            log_ledger(home, {"from": who, "kind": "handoff", "status": status, "mid": mid, "seq": seq, "chars": len(to_peer)})
+            print(f"[HANDOFF] {who} → {recv} ({len(to_peer)} chars, status={status}, seq={seq})")
 
 def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: str,
                                  policies: Dict[str,Any], phase: str,
@@ -919,6 +1064,29 @@ def main(home: Path):
         profileA["input_mode"] = imodes.get("peerA")
     if imodes.get("peerB"):
         profileB["input_mode"] = imodes.get("peerB")
+
+    # 读取调试回显开关（启动时生效）
+    try:
+        ce = cli_profiles.get("console_echo")
+        if isinstance(ce, bool):
+            global CONSOLE_ECHO
+            CONSOLE_ECHO = ce
+    except Exception:
+        pass
+
+    # 读取 inbox+NUDGE 参数（启动时生效）
+    try:
+        global MB_PULL_ENABLED, INBOX_DIRNAME, PROCESSED_RETENTION, NUDGE_RESEND_SECONDS, NUDGE_JITTER_PCT, SOFT_ACK_ON_MAILBOX_ACTIVITY
+        MB_PULL_ENABLED = bool(delivery_conf.get("mailbox_pull_enabled", True))
+        INBOX_DIRNAME = str(delivery_conf.get("inbox_dirname", "inbox"))
+        PROCESSED_RETENTION = int(delivery_conf.get("processed_retention", 200))
+        NUDGE_RESEND_SECONDS = float(delivery_conf.get("nudge_resend_seconds", 90))
+        NUDGE_JITTER_PCT = float(delivery_conf.get("nudge_jitter_pct", 0.0) or 0.0)
+        SOFT_ACK_ON_MAILBOX_ACTIVITY = bool(delivery_conf.get("soft_ack_on_mailbox_activity", False))
+        INBOX_STARTUP_POLICY = str(delivery_conf.get("inbox_startup_policy", "resume") or "resume").strip().lower()
+        INBOX_STARTUP_PROMPT = bool(delivery_conf.get("inbox_startup_prompt", False))
+    except Exception:
+        pass
 
     # 准备 tmux 会话/面板
     if not tmux_session_exists(session):
@@ -1044,9 +1212,95 @@ def main(home: Path):
                 print('[DEBUG] pane commands:\n' + out.strip())
         except Exception:
             pass
-        # 等待两侧 CLI 就绪（出现提示符并短暂安静）
-        wait_for_ready(left,  profileA, timeout=float(cli_profiles.get("startup_wait_seconds", 12)))
-        wait_for_ready(right, profileB, timeout=float(cli_profiles.get("startup_wait_seconds", 12)))
+        # 定义：启动策略处理（提前定义，避免后续调用时未绑定）
+        def _startup_handle_inbox(label: str, policy_override: Optional[str] = None):
+            try:
+                ensure_mailbox(home)
+            except Exception:
+                pass
+            inbox = _inbox_dir(home, label)
+            proc = _processed_dir(home, label)
+            try:
+                files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
+            except FileNotFoundError:
+                files = []
+            if not files:
+                return 0
+            policy = (policy_override or INBOX_STARTUP_POLICY or "resume").strip().lower()
+            if policy in ("discard", "archive"):
+                moved = 0
+                for f in files:
+                    try:
+                        proc.mkdir(parents=True, exist_ok=True)
+                        f.rename(proc/f.name); moved += 1
+                    except Exception:
+                        pass
+                try:
+                    allp = sorted(proc.iterdir(), key=lambda p: p.name)
+                    if len(allp) > PROCESSED_RETENTION:
+                        for ff in allp[:len(allp)-PROCESSED_RETENTION]:
+                            try: ff.unlink()
+                            except Exception: pass
+                except Exception:
+                    pass
+                log_ledger(home, {"from":"system","kind":"startup-inbox-discard","peer":label,"moved":moved})
+                return moved
+            log_ledger(home, {"from":"system","kind":"startup-inbox-resume","peer":label,"pending":len(files)})
+            return len(files)
+        # 启动策略：处理 inbox 残留（始终提示；30 秒无操作按默认策略）
+        try:
+            ensure_mailbox(home)
+            def _count_inbox(label: str) -> int:
+                try:
+                    ib = _inbox_dir(home, label)
+                    return len([f for f in ib.iterdir() if f.is_file()])
+                except Exception:
+                    return 0
+            cntA = _count_inbox("PeerA"); cntB = _count_inbox("PeerB")
+            if (cntA > 0 or cntB > 0):
+                chosen_policy = (INBOX_STARTUP_POLICY or "resume").strip().lower()
+                # 交互 vs 非交互：非交互用更短超时（避免卡 CI）
+                try:
+                    is_interactive = sys.stdin.isatty()
+                except Exception:
+                    is_interactive = False
+                t_conf = (cli_profiles.get("delivery", {}) or {})
+                timeout_s = float(t_conf.get("inbox_startup_prompt_timeout_seconds", 30))
+                timeout_nonint = float(t_conf.get("inbox_startup_prompt_noninteractive_timeout_seconds", 0))
+                eff_timeout = timeout_s if is_interactive else timeout_nonint
+                print("\n[INBOX] 检测到残留收件：")
+                print(f"  - PeerA: {cntA} 条 @ {str(_inbox_dir(home,'PeerA'))}")
+                print(f"  - PeerB: {cntB} 条 @ {str(_inbox_dir(home,'PeerB'))}")
+                print(f"  处理策略（本次会话）：[r] 继续处理(resume)  [a] 归档(archive)  [d] 遗弃(discard)；默认：{chosen_policy}")
+                if eff_timeout > 0:
+                    print(f"  若 {int(eff_timeout)} 秒内无输入，自动采用默认策略：{chosen_policy}")
+                ans = read_console_line_timeout("> 选择 r/a/d 并回车（或直接回车采用默认）： ", eff_timeout).strip().lower()
+                if ans in ("r","resume"):
+                    chosen_policy = "resume"
+                elif ans in ("a","archive"):
+                    chosen_policy = "archive"
+                elif ans in ("d","discard"):
+                    chosen_policy = "discard"
+                else:
+                    # 回车/超时/无效输入 → 默认
+                    pass
+                print(f"[INBOX] 采用策略：{chosen_policy}")
+                _startup_handle_inbox("PeerA", chosen_policy)
+                _startup_handle_inbox("PeerB", chosen_policy)
+        except Exception as e:
+            # 仅记录，不阻断启动
+            try:
+                log_ledger(home, {"from":"system","kind":"startup-inbox-check-error","error":str(e)[:200]})
+            except Exception:
+                pass
+
+        # 等待两侧 CLI 就绪（出现提示符并短暂安静）；
+        # 在 pull+NUDGE 模式下降低等待上限，避免首条 NUDGE 过久延迟
+        sw = float(cli_profiles.get("startup_wait_seconds", 12))
+        sn = float(cli_profiles.get("startup_nudge_seconds", 10))
+        to = min(sw, sn) if MB_PULL_ENABLED else sw
+        wait_for_ready(left,  profileA, timeout=to)
+        wait_for_ready(right, profileB, timeout=to)
 
     # 在注入之后立即记录当前捕获长度，作为解析基线
     left_snap  = tmux_capture(left,  lines=800)
@@ -1057,9 +1311,8 @@ def main(home: Path):
 
     # 简化：不再监听文件热更；修改 roles/policies/personas 需重启生效
 
-    # 初始化并清空 mailbox，避免读取到上次残留内容
+    # 初始化 mailbox（不清空 inbox，尊重启动策略）
     ensure_mailbox(home)
-    reset_mailbox(home)
     mbox_idx = MailboxIndex(state)
     mbox_counts = {"peerA": {"to_user":0, "to_peer":0, "patch":0},
                    "peerB": {"to_user":0, "to_peer":0, "patch":0}}
@@ -1090,6 +1343,8 @@ def main(home: Path):
 
     def _mailbox_peer_name(peer_label: str) -> str:
         return "peerA" if peer_label == "PeerA" else "peerB"
+
+    # （已上移至启动前调用处定义）
 
     def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None):
         # 背压：若接收方正有在飞，进入队列
@@ -1126,32 +1381,23 @@ def main(home: Path):
             return
         rs.append({"hash": h, "ts": now})
         recent_sends[receiver_label] = rs[-20:]
-        # 发送并挂起等待 ACK（以 mailbox 事件作为 ACK）
+        # 新：inbox + NUDGE 模式
         mid = new_mid()
         text_with_mid = wrap_with_mid(payload, mid)
-        status = "delivered"
-        out_mid = mid
-        # 根据 delivery_mode 选择投递路径
-        if receiver_label == 'PeerA' and modeA == 'bridge':
-            # 写入 inbox.md，由 adapter 注入
-            inbox = home/"mailbox"/"peerA"/"inbox.md"
+        try:
+            seq, _ = _write_inbox_message(home, receiver_label, text_with_mid, mid)
+            _send_nudge(home, receiver_label, seq, mid, left, right, profileA, profileB, modeA, modeB)
             try:
-                inbox.write_text(text_with_mid, encoding='utf-8')
+                last_nudge_ts[receiver_label] = time.time()
             except Exception:
-                status = "failed"
-        elif receiver_label == 'PeerB' and modeB == 'bridge':
-            inbox = home/"mailbox"/"peerB"/"inbox.md"
-            try:
-                inbox.write_text(text_with_mid, encoding='utf-8')
-            except Exception:
-                status = "failed"
-        else:
-            pane, prof = _receiver_map(receiver_label)
-            status, out_mid = deliver_or_queue(home, pane, _mailbox_peer_name(receiver_label), payload, prof, delivery_conf, mid=mid)
-        eff_req_mid = ack_require_mid if require_mid is None else bool(require_mid)
-        inflight[receiver_label] = {"mid": out_mid, "ts": time.time(), "attempts": 1, "sender": sender_label, "payload": payload, "require_mid": eff_req_mid}
-        log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": out_mid, "chars": len(payload)})
-        print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status})")
+                pass
+            status = "nudged"
+        except Exception as e:
+            status = f"failed:{e}"
+            seq = "000000"
+        inflight[receiver_label] = None  # 不再跟踪在线 ACK，改由 inbox+ACK 驱动
+        log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": mid, "seq": seq, "chars": len(payload)})
+        print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
 
     def _ack_receiver(label: str, event_text: Optional[str] = None):
         # ACK 策略：
@@ -1302,6 +1548,9 @@ def main(home: Path):
     print("[TIP] 直通模式：a! <cmd> 或 b! <cmd> 直接把命令发到对应 CLI（无包装），例如 a! /model")
 
     # last_windows/dedup_* 已在握手后初始化
+    # NUDGE 定时器与已处理 ACK 记录
+    last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
+    seen_acks: Dict[str,set] = {"PeerA": set(), "PeerB": set()}
 
     # 已合并发送，无需重复单独下发
     if start_mode == "ai_bootstrap":
@@ -1316,6 +1565,42 @@ def main(home: Path):
 
         # 非阻塞轮询：优先读取控制台输入；若无输入则扫描 A/B 输出
         line = None
+        # 先处理 ACK → 归档（轻量：捕获末尾 200 行）
+        try:
+            for label, pane in (("PeerA", left), ("PeerB", right)):
+                out = tmux_capture(pane, lines=200)
+                acks, _ = find_acks_from_output(out)
+                for tok in acks:
+                    if tok in seen_acks[label]:
+                        continue
+                    ok = _archive_inbox_entry(home, label, tok)
+                    if ok:
+                        seen_acks[label].add(tok)
+        except Exception:
+            pass
+
+        # 定时 NUDGE：若 inbox 非空且距上次提醒足够久
+        try:
+            nowt = time.time()
+            for label, pane in (("PeerA", left), ("PeerB", right)):
+                inbox = _inbox_dir(home, label)
+                files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
+                if not files:
+                    continue
+                if nowt - last_nudge_ts.get(label, 0.0) < NUDGE_RESEND_SECONDS:
+                    continue
+                oldest = files[0].name
+                seq = oldest[:6]
+                mid = oldest.split(".")[1] if "." in oldest else ""
+                inbox_path = str(inbox)
+                nmsg = f"[NUDGE] inbox={inbox_path} Read oldest; after reading each file, print <SYSTEM_NOTES>ack: <seq>"
+                if label == "PeerA":
+                    send_text(pane, nmsg + "\n", profileA)
+                else:
+                    send_text(pane, nmsg + "\n", profileB)
+                last_nudge_ts[label] = nowt
+        except Exception:
+            pass
         rlist, _, _ = select.select([sys.stdin], [], [], 0.5)
         if rlist:
             line = read_console_line("\n> ").strip()
