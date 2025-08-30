@@ -6,6 +6,11 @@ CCCC Orchestrator (tmux + long-lived CLI sessions)
 - 启动时注入极简 SYSTEM（来源于 prompt_weaver）；移除运行时热更新以保持简洁可控
 """
 import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil
+# POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
+try:
+    import fcntl  # type: ignore
+except Exception:  # pragma: no cover
+    fcntl = None  # type: ignore
 from glob import glob
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
@@ -110,14 +115,93 @@ def _next_seq_for_inbox(inbox: Path, processed: Path) -> str:
 def _write_inbox_message(home: Path, receiver_label: str, payload: str, mid: str) -> Tuple[str, Path]:
     inbox = _inbox_dir(home, receiver_label)
     processed = _processed_dir(home, receiver_label)
+    state = home/"state"
+    state.mkdir(parents=True, exist_ok=True)
     inbox.mkdir(parents=True, exist_ok=True); processed.mkdir(parents=True, exist_ok=True)
-    seq = _next_seq_for_inbox(inbox, processed)
-    fname = f"{seq}.{mid}.txt"
-    fpath = inbox/fname
-    try:
-        fpath.write_text(payload, encoding='utf-8')
-    except Exception as e:
-        raise RuntimeError(f"write inbox failed: {e}")
+
+    # Per-peer lock + counter file to avoid duplicate sequence numbers under concurrency
+    peer = _peer_folder_name(receiver_label)
+    lock_path = state/f"inbox-seq-{peer}.lock"
+    counter_path = state/f"inbox-seq-{peer}.txt"
+
+    def _compute_next_seq() -> int:
+        # If a counter exists, trust it; else derive from current max of inbox+processed
+        try:
+            val = int(counter_path.read_text(encoding="utf-8").strip())
+            return val + 1
+        except Exception:
+            pass
+        # Fallback to directory scan
+        def _max_seq_in(d: Path) -> int:
+            mx = 0
+            try:
+                for f in d.iterdir():
+                    name = f.name
+                    if len(name) >= 6 and name[:6].isdigit():
+                        mx = max(mx, int(name[:6]))
+            except Exception:
+                pass
+            return mx
+        current = max(_max_seq_in(inbox), _max_seq_in(processed))
+        return current + 1
+
+    # Acquire exclusive lock if available
+    if fcntl is not None:
+        with open(lock_path, "w") as lf:  # lock file handle lifetime holds the lock
+            try:
+                fcntl.flock(lf, fcntl.LOCK_EX)
+            except Exception:
+                pass
+            seq_int = _compute_next_seq()
+            seq = f"{seq_int:06d}"
+            fpath = inbox/f"{seq}.{mid}.txt"
+            try:
+                fpath.write_text(payload, encoding='utf-8')
+            except Exception as e:
+                raise RuntimeError(f"write inbox failed: {e}")
+            # Persist the last-used sequence for the next writer
+            try:
+                with open(counter_path, "w", encoding="utf-8") as cf:
+                    cf.write(str(seq_int))
+                    try:
+                        cf.flush(); os.fsync(cf.fileno())
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                fcntl.flock(lf, fcntl.LOCK_UN)
+            except Exception:
+                pass
+    else:
+        # Fallback (non-POSIX): best-effort using a temp marker directory as a mutex
+        lock_dir = state/f"inbox-seq-{peer}.lckdir"
+        acquired = False
+        for _ in range(50):
+            try:
+                lock_dir.mkdir(exist_ok=False)
+                acquired = True
+                break
+            except Exception:
+                time.sleep(0.01)
+        try:
+            seq_int = _compute_next_seq()
+            seq = f"{seq_int:06d}"
+            fpath = inbox/f"{seq}.{mid}.txt"
+            try:
+                fpath.write_text(payload, encoding='utf-8')
+            except Exception as e:
+                raise RuntimeError(f"write inbox failed: {e}")
+            try:
+                counter_path.write_text(str(seq_int), encoding='utf-8')
+            except Exception:
+                pass
+        finally:
+            if acquired:
+                try:
+                    lock_dir.rmdir()
+                except Exception:
+                    pass
     return seq, fpath
 
 def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
@@ -131,7 +215,14 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
         nudge_suffix = (profileA.get('nudge_suffix') or '').strip()
     else:
         nudge_suffix = (profileB.get('nudge_suffix') or '').strip()
-    base = f"[NUDGE] inbox={inbox_path} Read oldest; after reading each file, print <SYSTEM_NOTES>ack: <seq>"
+    # Include concrete seq and mid to simplify ACK on CLI side
+    if str((profileA if receiver_label=='PeerA' else profileB).get('dummy', '')):
+        pass
+    # 简化版 NUDGE：只给出 inbox 路径与动作规则（不含 seq/mid）
+    base = (
+        f"[NUDGE] inbox={inbox_path} "
+        f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
+    )
     msg = base + (" " + nudge_suffix if nudge_suffix else "")
     # Route by delivery mode: bridge → write to adapter inbox.md (adapter injects Enter);
     # tmux → send keys directly to pane with newline at end (Enter implied by profile)
@@ -142,7 +233,8 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
             except Exception:
                 pass
         else:
-            send_text(left_pane, msg + "\n", profileA)
+            # tmux injection: wait for prompt then type (type mode will submit)
+            paste_when_ready(left_pane, profileA, msg, timeout=6.0)
     else:
         if modeB == 'bridge':
             try:
@@ -150,19 +242,37 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
             except Exception:
                 pass
         else:
-            send_text(right_pane, msg + "\n", profileB)
+            paste_when_ready(right_pane, profileB, msg, timeout=6.0)
+            # Optional extra Enters for robustness (configurable per peer)
+            try:
+                extra = int((profileB.get('nudge_extra_enters') or 0))
+                delay_ms = int((profileB.get('nudge_enter_delay_ms') or 200))
+                if extra > 0:
+                    for _ in range(min(extra, 3)):
+                        time.sleep(max(0.0, delay_ms/1000.0))
+                        tmux("send-keys","-t",right_pane,"Enter")
+            except Exception:
+                pass
 
 def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
     # token may be seq (000123) or mid; prefer seq match first
     inbox = _inbox_dir(home, receiver_label)
     proc = _processed_dir(home, receiver_label)
     target: Optional[Path] = None
+    # Try matching by 6-digit seq; if token is digits use it, else search within token
+    seq_pat = None
     if token.isdigit():
-        # match seq prefix
-        pat = token
+        seq_pat = token
+    else:
+        import re as _re
+        m = _re.search(r"(\d{6,})", token)
+        if m:
+            seq_pat = m.group(1)[:6]
+    if seq_pat:
         for f in sorted(inbox.iterdir()):
-            if f.name.startswith(pat):
-                target = f; break
+            if f.name.startswith(seq_pat):
+                target = f
+                break
     if target is None:
         # try by mid
         for f in sorted(inbox.iterdir()):
@@ -1116,6 +1226,15 @@ def main(home: Path):
     # Let windows follow the size of the attached client aggressively
     tmux("set-window-option","-g","aggressive-resize","on")
     tmux("set-option","-g","history-limit","100000")
+    # Optional: disable alternate-screen to keep scrollback (some CLIs toggle full-screen modes)
+    try:
+        tmux_cfg = cli_profiles.get("tmux", {}) if isinstance(cli_profiles.get("tmux", {}), dict) else {}
+        if bool(tmux_cfg.get("alternate_screen_off", False)):
+            tmux("set-option","-g","alternate-screen","off")
+        else:
+            tmux("set-option","-g","alternate-screen","on")
+    except Exception:
+        pass
     # Enable mouse wheel scroll for history while keeping send safety (we cancel copy-mode before sending)
     tmux("bind-key","-n","WheelUpPane","copy-mode","-e")
     tmux("bind-key","-n","WheelDownPane","send-keys","-M")
@@ -1186,7 +1305,11 @@ def main(home: Path):
             py = sys.executable or 'python3'
             bridge_py = str(home/"adapters"/"bridge.py")
             inbox = str(home/"mailbox"/"peerA"/"inbox.md")
+            # Pass prompt regex if available to help the adapter time submission
+            prx = str((profileA or {}).get('prompt_regex') or '')
             inner = f"{shlex.quote(py)} {shlex.quote(bridge_py)} --home {shlex.quote(str(home))} --peer peerA --cmd {shlex.quote(CLAUDE_I_CMD)} --inbox {shlex.quote(inbox)}"
+            if prx:
+                inner += f" --prompt-regex {shlex.quote(prx)}"
             cmd = f"bash -lc {shlex.quote(inner)}"
             tmux_respawn_pane(left, cmd)
             print(f"[LAUNCH] PeerA mode=bridge pane={left} bridge_cmd={inner}")
@@ -1198,7 +1321,10 @@ def main(home: Path):
             py = sys.executable or 'python3'
             bridge_py = str(home/"adapters"/"bridge.py")
             inbox = str(home/"mailbox"/"peerB"/"inbox.md")
+            prx = str((profileB or {}).get('prompt_regex') or '')
             inner = f"{shlex.quote(py)} {shlex.quote(bridge_py)} --home {shlex.quote(str(home))} --peer peerB --cmd {shlex.quote(CODEX_I_CMD)} --inbox {shlex.quote(inbox)}"
+            if prx:
+                inner += f" --prompt-regex {shlex.quote(prx)}"
             cmd = f"bash -lc {shlex.quote(inner)}"
             tmux_respawn_pane(right, cmd)
             print(f"[LAUNCH] PeerB mode=bridge pane={right} bridge_cmd={inner}")
@@ -1328,10 +1454,31 @@ def main(home: Path):
     queued: Dict[str, List[Dict[str,Any]]] = {"PeerA": [], "PeerB": []}
     # 简易重复发送防抖（以 payload 哈希为键，在短窗口内丢弃同内容的重复投递）
     recent_sends: Dict[str, List[Dict[str,Any]]] = {"PeerA": [], "PeerB": []}
-    ack_timeout = float((cli_profiles.get("delivery", {}) or {}).get("ack_timeout_seconds", 30))
-    resend_attempts = int((cli_profiles.get("delivery", {}) or {}).get("resend_attempts", 2))
-    ack_require_mid = bool((cli_profiles.get("delivery", {}) or {}).get("ack_require_mid", False))
-    duplicate_window = float((cli_profiles.get("delivery", {}) or {}).get("duplicate_window_seconds", 90))
+    delivery_cfg = (cli_profiles.get("delivery", {}) or {})
+    ack_timeout = float(delivery_cfg.get("ack_timeout_seconds", 30))
+    resend_attempts = int(delivery_cfg.get("resend_attempts", 2))
+    ack_require_mid = bool(delivery_cfg.get("ack_require_mid", False))
+    duplicate_window = float(delivery_cfg.get("duplicate_window_seconds", 90))
+    ack_mode = str(delivery_cfg.get("ack_mode", "ack_text")).strip().lower()
+
+    # Periodic self-check configuration
+    _sc_every = int(delivery_cfg.get("self_check_every_handoffs", 0) or 0)
+    self_check_enabled = _sc_every > 0
+    self_check_every = max(1, _sc_every) if self_check_enabled else 0
+    instr_counter = 0
+    in_self_check = False
+    # self-check text from config (fallback to a sane default)
+    _sc_text = str(delivery_cfg.get("self_check_text") or "").strip()
+    DEFAULT_SELF_CHECK = (
+        "[定时自检] 先稍微停一下，请就地简短回答（每题≤1行）：\n"
+        "1) 过去这段时间具体完成了什么？\n"
+        "2) 是否偏离了原定目标？若是，原因与纠偏？\n"
+        "3) 是否造成了新的混乱？如何收敛？\n"
+        "4) 遗漏了什么工作？优先补上哪一项？\n"
+        "5) 是否遗忘了既定的角色与推荐的行为方式？\n"
+        "回答完成后再继续推进。"
+    )
+    self_check_text = _sc_text if _sc_text else DEFAULT_SELF_CHECK
 
     def _receiver_map(name: str) -> Tuple[str, Dict[str,Any]]:
         if name == "PeerA":
@@ -1341,12 +1488,22 @@ def main(home: Path):
     # Pane idle judges for optional soft-ACK
     judges: Dict[str, PaneIdleJudge] = {"PeerA": PaneIdleJudge(profileA), "PeerB": PaneIdleJudge(profileB)}
 
+    # Track inbox filenames to detect file-move ACKs (file_move mode)
+    def _list_inbox_files(label: str) -> List[str]:
+        try:
+            ib = _inbox_dir(home, label)
+            return sorted([f.name for f in ib.iterdir() if f.is_file()])
+        except Exception:
+            return []
+    prev_inbox: Dict[str, List[str]] = {"PeerA": _list_inbox_files("PeerA"), "PeerB": _list_inbox_files("PeerB")}
+
     def _mailbox_peer_name(peer_label: str) -> str:
         return "peerA" if peer_label == "PeerA" else "peerB"
 
     # （已上移至启动前调用处定义）
 
     def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None):
+        nonlocal instr_counter, in_self_check
         # 背压：若接收方正有在飞，进入队列
         if inflight[receiver_label] is not None:
             queued[receiver_label].append({"sender": sender_label, "payload": payload})
@@ -1398,6 +1555,24 @@ def main(home: Path):
         inflight[receiver_label] = None  # 不再跟踪在线 ACK，改由 inbox+ACK 驱动
         log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": mid, "seq": seq, "chars": len(payload)})
         print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
+
+        # Count non-NUDGE instructions from User/System; every K sends, broadcast a self-check to both peers.
+        try:
+            if self_check_enabled and (not in_self_check):
+                pl = (payload or "")
+                is_nudge = pl.strip().startswith("[NUDGE]")
+                if (sender_label in ("User","System")) and (not is_nudge):
+                    instr_counter += 1
+                    if instr_counter % self_check_every == 0:
+                        in_self_check = True
+                        try:
+                            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{self_check_text}\n</FROM_SYSTEM>\n")
+                            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{self_check_text}\n</FROM_SYSTEM>\n")
+                            log_ledger(home, {"from":"system","kind":"self-check","every": self_check_every, "count": instr_counter})
+                        finally:
+                            in_self_check = False
+        except Exception:
+            pass
 
     def _ack_receiver(label: str, event_text: Optional[str] = None):
         # ACK 策略：
@@ -1511,6 +1686,10 @@ def main(home: Path):
             pass
     write_status(deliver_paused)
 
+    # 在初始注入前初始化 NUDGE 去重与 ACK 去重状态
+    last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
+    seen_acks: Dict[str,set] = {"PeerA": set(), "PeerB": set()}
+
     # 统一合并首条系统消息（SYSTEM + 项目指令），一次发送，避免节奏混乱
     if start_mode in ("has_doc", "ai_bootstrap"):
         sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
@@ -1542,15 +1721,27 @@ def main(home: Path):
         _send_handoff("System", "PeerB", combinedB)
         log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued"})
         log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":"queued"})
+    else:
+        # Minimal SYSTEM bootstrap for 'ask' mode to ensure inbox file exists
+        try:
+            sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
+            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
+            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
+            log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued-minimal"})
+            log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":"queued-minimal"})
+        except Exception:
+            pass
+        # 启动系统提示已发送，不计入周期性自检计数
+        try:
+            instr_counter = 0
+        except Exception:
+            pass
 
     print("\n[就绪] 常用：a:/b:/both:/u: 发送消息；/pause|/resume 交接；/refresh 刷新 SYSTEM；q 退出。")
     print("[TIP] 控制台输入不被干扰：默认关闭 AI 输出回显。用 /echo on 开启，/echo off 关闭，/echo 查看状态。")
     print("[TIP] 直通模式：a! <cmd> 或 b! <cmd> 直接把命令发到对应 CLI（无包装），例如 a! /model")
 
     # last_windows/dedup_* 已在握手后初始化
-    # NUDGE 定时器与已处理 ACK 记录
-    last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
-    seen_acks: Dict[str,set] = {"PeerA": set(), "PeerB": set()}
 
     # 已合并发送，无需重复单独下发
     if start_mode == "ai_bootstrap":
@@ -1565,17 +1756,46 @@ def main(home: Path):
 
         # 非阻塞轮询：优先读取控制台输入；若无输入则扫描 A/B 输出
         line = None
-        # 先处理 ACK → 归档（轻量：捕获末尾 200 行）
+        # 先处理 ACK：根据模式选择（file_move: 观测文件移动；ack_text: 解析回显）
         try:
-            for label, pane in (("PeerA", left), ("PeerB", right)):
-                out = tmux_capture(pane, lines=200)
-                acks, _ = find_acks_from_output(out)
-                for tok in acks:
-                    if tok in seen_acks[label]:
+            if ack_mode == 'file_move':
+                for label in ("PeerA","PeerB"):
+                    cur = _list_inbox_files(label)
+                    prev = prev_inbox.get(label, [])
+                    # 检测从 inbox 消失的文件（视为已读）
+                    disappeared = [fn for fn in prev if fn not in cur]
+                    if disappeared:
+                        proc = _processed_dir(home, label)
+                        for fn in disappeared:
+                            ok = (proc/(fn)).exists()
+                            seq = fn[:6]
+                            try:
+                                print(f"[ACK-FILE] {label} seq={seq} file={fn} ok={bool(ok)}")
+                                log_ledger(home, {"from":label,"kind":"ack-file","seq":seq,"file":fn,"ok":bool(ok)})
+                            except Exception:
+                                pass
+                    prev_inbox[label] = cur
+            else:
+                for label, pane in (("PeerA", left), ("PeerB", right)):
+                    out = tmux_capture(pane, lines=800)
+                    acks, _ = find_acks_from_output(out)
+                    if not acks:
                         continue
-                    ok = _archive_inbox_entry(home, label, tok)
-                    if ok:
+                    inbox = _inbox_dir(home, label)
+                    files = [f for f in inbox.iterdir() if f.is_file()]
+                    for tok in acks:
+                        if tok in seen_acks[label]:
+                            continue
+                        ok = _archive_inbox_entry(home, label, tok)
+                        # Treat 'inbox-empty' or no files as benign ACKs to avoid loops
+                        if (not ok) and (tok.strip().lower() in ("inbox-empty","empty","none") or len(files)==0):
+                            ok = True
                         seen_acks[label].add(tok)
+                        try:
+                            print(f"[ACK] {label} token={tok} ok={bool(ok)}")
+                            log_ledger(home, {"from":label,"kind":"ack","token":tok,"ok":bool(ok)})
+                        except Exception:
+                            pass
         except Exception:
             pass
 
@@ -1593,11 +1813,23 @@ def main(home: Path):
                 seq = oldest[:6]
                 mid = oldest.split(".")[1] if "." in oldest else ""
                 inbox_path = str(inbox)
-                nmsg = f"[NUDGE] inbox={inbox_path} Read oldest; after reading each file, print <SYSTEM_NOTES>ack: <seq>"
+                nmsg = (
+                    f"[NUDGE] inbox={inbox_path} "
+                    f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
+                )
                 if label == "PeerA":
-                    send_text(pane, nmsg + "\n", profileA)
+                    paste_when_ready(pane, profileA, nmsg, timeout=6.0)
                 else:
-                    send_text(pane, nmsg + "\n", profileB)
+                    paste_when_ready(pane, profileB, nmsg, timeout=6.0)
+                    try:
+                        extra = int((profileB.get('nudge_extra_enters') or 0))
+                        delay_ms = int((profileB.get('nudge_enter_delay_ms') or 200))
+                        if extra > 0:
+                            for _ in range(min(extra, 3)):
+                                time.sleep(max(0.0, delay_ms/1000.0))
+                                tmux("send-keys","-t",pane,"Enter")
+                    except Exception:
+                        pass
                 last_nudge_ts[label] = nowt
         except Exception:
             pass

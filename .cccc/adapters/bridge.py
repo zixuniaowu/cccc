@@ -30,6 +30,7 @@ def main():
     ap.add_argument('--cmd', required=True, help='CLI command to run')
     ap.add_argument('--inbox', required=False, help='Path to inbox.md (optional; derived from home+peer if omitted)')
     ap.add_argument('--newline', default='\r', help='Submission newline (\r is Enter)')
+    ap.add_argument('--prompt-regex', default='', help='Optional prompt regex to detect readiness')
     args = ap.parse_args()
 
     home = Path(args.home)
@@ -99,6 +100,12 @@ def main():
     DSR_REPLY_RE = re.compile(r"\x1b\[\d{1,3};\d{1,3}R")
     # SGR (Select Graphic Rendition) – normalize low-contrast styles to improve readability in tmux themes
     SGR_RE = re.compile(r"\x1b\[([0-9;]*)m")
+    # TUI control sequences that cause screen wipes or alternate-screen switching — strip or soften them
+    ALT_TOGGLE_RE = re.compile(r"\x1b\[\?(?:1047|1049)[hl]")  # enter/exit alt screen
+    ED_RE  = re.compile(r"\x1b\[(?:[0-3]?)[J]")              # erase in display
+    EL_RE  = re.compile(r"\x1b\[(?:[0-2]?)[K]")              # erase in line
+    CUP_RE = re.compile(r"\x1b\[\d{0,3};\d{0,3}H")          # cursor position → replace with newline
+    STBM_RE= re.compile(r"\x1b\[\d{0,3};\d{0,3}r")          # set scrolling region
 
     def _normalize_contrast(s: str) -> str:
         def _repl(m: re.Match) -> str:
@@ -146,6 +153,8 @@ def main():
     except Exception:
         pass
 
+    # Prompt detection removed for simplicity to avoid timing issues across CLIs
+
     while True:
         try:
             # Pump child stdout to pane (non-blocking)
@@ -186,31 +195,22 @@ def main():
                 payload = read_text(inbox).strip()
                 if payload:
                     log("inbox changed; injecting payload")
-                    # Submit payload, then reliably send submit (Enter) twice
+                    # Submit payload (peer-specific minimal strategy)
                     try:
-                        child.write(payload)
-                        # Robust submit sequence: Ctrl-M (Enter) x2 then raw CR x2
-                        try:
-                            child.sendcontrol('m')    # Enter (CR)
-                        except Exception:
-                            pass
-                        time.sleep(0.06)
-                        try:
-                            child.sendcontrol('m')
-                        except Exception:
-                            pass
-                        time.sleep(0.06)
-                        try:
-                            child.send('\r')         # raw CR
-                        except Exception:
-                            pass
-                        time.sleep(0.04)
-                        try:
-                            child.send('\r')
-                        except Exception:
-                            pass
-                        # final small delay
-                        time.sleep(0.04)
+                        pl = payload.rstrip("\r\n")
+                        if peer == 'peerB':
+                            # Codex CLI: newline-terminated send is most reliable
+                            child.sendline(pl)
+                            time.sleep(0.06)
+                        else:
+                            # Claude Code: write + single Enter (CR)
+                            child.write(pl)
+                            try:
+                                child.sendcontrol('m')
+                            except Exception:
+                                try: child.send('\r')
+                                except Exception: pass
+                            time.sleep(0.06)
                     except Exception as e:
                         print(f"[bridge] inject failed: {e}")
                         log(f"inject failed: {e}")

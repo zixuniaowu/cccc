@@ -16,9 +16,6 @@ Core Principles
 - Gates: irreversible changes (arch/schema/public API) and releases require dual‑sign from A+B.
 - Safety: minimal privilege, sensitive data only referenced, not inlined.
 
-Startup Handshake
-- On launch, each peer immediately writes a single line `READY` to its respective `.cccc/mailbox/<peer>/to_user.md`, then stands by for instructions. Avoid long terminal output; mailbox files are authoritative.
-
 Message Contract (strict)
 Every agent message has three parts. <TO_PEER> MUST be valid YAML. <TO_USER> is a concise human‑readable status.
 
@@ -107,6 +104,14 @@ Repository Pointers
 - Runner: cccc.py looks for CCCC_HOME (defaults to .cccc)
 - Note: top‑level README quickstart mentions orchestrator/orchestrator_poc.py which is not present; prefer using cccc.py.
 
+Orchestrator Domain (.cccc) Boundaries
+- Domain: `.cccc/**` is the orchestrator domain, not business code or assets.
+- Allowed writes: mailbox (`.cccc/mailbox/**`), shared workpad (`.cccc/work/**`), logs (`.cccc/logs/**`), and ephemeral state/locks (`.cccc/state/**`). These are non‑authoritative and may be rotated/cleaned.
+- Restricted changes: orchestrator code/config/policies under `.cccc/**` require an RFD and dual‑sign; do not modify casually.
+- Non‑mix rule: business changes must land via `patch.diff` into business paths outside `.cccc/**`. Do not treat `.cccc/**` artifacts as business deliverables.
+- Persistence: promote any long‑term evidence from `.cccc/work/**` into `docs/evidence/**` or `tests/fixtures/**` via patch, including provenance (tool, source, hash/size).
+- Hygiene: `.cccc/work/**` is git‑ignored by default; never store secrets; prefer stable log references `LOG:tool#Lx-Ly` or file slices like `.cccc/work/logs/*.txt#Lx-Ly`.
+
 Working Agreement (Agents)
 - Always steelman major COUNTERs and seek explicit confirmation before dismissal.
 - Enforce COUNTER quota per phase; include at least one “strong opposition” with a concrete risk/alternative and reproduction.
@@ -153,3 +158,49 @@ Pending Decisions (to align with user)
 
 Quickstart
 - Local run suggestion: `python cccc.py` after setting environment if needed; see README.md for details.
+
+Project Status (Now)
+- Prompts: `PEERA.md`/`PEERB.md` fused with v2. Add Persona (humanized co‑leader stance), PCR+Hook as soft‑required, mapping to CLAIM/COUNTER/EVIDENCE, and `.cccc/work/**` shared workspace rules. Startup system prompt aligned.
+- Boundaries: `.cccc/**` clarified as orchestrator domain. Allowed writes: `.cccc/mailbox/**`, `.cccc/work/**`, `.cccc/logs/**`, `.cccc/state/**` (non‑authoritative). Orchestrator code/config/policies remain guarded.
+- NUDGE robustness: bridge adapter and tmux path hardened to reliably submit after paste (CR/LF/Ctrl‑J variants + pane poke). Configurable `post_paste_keys` per peer.
+- Periodic self‑check: new configurable cadence and text. After every N user/system handoffs (default 20), system asks both peers 5 short self‑inspection questions before proceeding.
+- Ignore rules: `.gitignore` ignores `.cccc/work/**` by default; evidence “promotion” documented.
+
+Configs (added/changed)
+- `.cccc/settings/cli_profiles.yaml`
+  - `delivery.self_check_every_handoffs: 20` — 0 disables.
+  - `delivery.self_check_text: |` — multiline self‑check prompt text.
+  - `peerB.post_paste_keys: ["Enter", "C-m"]` — more robust submit after paste.
+- `.cccc/prompt_weaver.py` — startup system prompt now mentions persona cue, PCR+Hook hint + exemptions, and `.cccc` allowed writes.
+
+Self‑Check (lightweight governance)
+- Trigger: counts non‑NUDGE handoffs from User/System; every Nth triggers for both peers.
+- Text: sourced from `delivery.self_check_text`; keep concise (≤1 line per answer).
+- Ledger: emits `kind: self-check` entry.
+- Goal: prevent drift/looping; reinforce persona and first‑principles without heavy rules.
+
+NUDGE Reliability (Codex CLI update adaptation)
+- Bridge adapter (`.cccc/adapters/bridge.py`): after writing payload, sends `sendline("")`, `Ctrl‑M ×2`, raw `\r ×2`, raw `\n`, `Ctrl‑J`, with short delays.
+- Orchestrator nudge path: after writing inbox in bridge mode, sends a best‑effort `Enter` to the pane as a poke.
+- Profiles: per‑peer `post_paste_keys` customizable.
+
+M2 Plan — Telegram Bridge (MVP)
+- Goal: chat→mailbox→peers with evidence‑first flow; minimal, reversible.
+- Process: separate bridge process reads Telegram (long polling); writes `<FROM_USER>…</FROM_USER>` with `[MID: …]` into `.cccc/mailbox/peerA|peerB/inbox.md` (default broadcast; support `a:`/`b:`/`both:` prefixes). Tails `peerA/to_user.md` and posts concise updates back.
+- Safety: token via env var; chat allowlist in `.cccc/settings/telegram.yaml`; redact and cap message size; no diffs in chat (point to repo files instead).
+- Reliability: file‑based handoff only; retries/backoff; logs to `.cccc/state/bridge-telegram.log` and annotates ledger (`from=user-telegram`).
+- Acceptance (P0):
+  - A1: Inbound chat reaches both peers and includes `[MID]` ack flow.
+  - A2: Outbound to_user summaries appear in chat (debounced, truncated).
+  - A3: Ledger entries recorded for inbound/outbound.
+  - A4: No secrets leaked; only allowlisted chats accepted.
+
+Open Decisions (bridge)
+- Broadcast default: always both, or remember last addressed peer?
+- Outbound scope: only `to_user` vs include patch/test short lines.
+- Formatting: plain text vs Markdown; per‑chat toggles?
+- Placement: launch bridge as third tmux pane vs separate process/service.
+
+Next Steps (proposed)
+- Draft `./.cccc/adapters/telegram_bridge.py` skeleton + `settings/telegram.yaml` (token env var name, chat allowlist, post options), docs page.
+- Dry‑run with mock transport (no network) to validate mailbox integration; then gate networked run behind explicit token.

@@ -13,12 +13,12 @@ peerA:
   chunk_delay_ms: 160                                        # 分块之间的延迟
   # 对 Claude 的入站消息在文本末尾追加提示语：按来源分别配置
   inbound_suffix:
-    from_user: " 请以第一性原理与最佳实践原则思考行动；你是本任务的质量负责人，富有责任心并对质量的异常执着，请与PeerB深入协同，拿出最高质量的方案和成果来。 think"
-    from_peer: " 请以第一性原理与最佳实践的角度充分理解分析并review我这次的建议或者工作成果（如果有的话），如果有不足之处请一定指出（但请注意不要重复review）。另外，为了避免重复低效沟通导致对话进入死循环，如果没有异议或者没有要补充的核心信息或者没有新的工作状况要汇报的话请直接静默不要回复。 think"
+    from_user: " 请以第一性原理与最佳实践原则思考行动；你是本任务的质量负责人，富有责任心并对质量的异常执着，请与PeerB深入协同，拿出最高质量的方案和完整的成果来。 think"
+    from_peer: " 请以第一性原理与最佳实践的角度基于我们整体任务的目标review我这次的建议或者工作成果（如果有的话），如果有疏漏或者不足之处请一定指出（但请注意不要重复review）。另外，为了避免重复低效沟通导致对话进入死循环，如果没有异议或者没有要补充的核心信息或者没有新的工作状况要汇报的话请直接静默不要回复。 think"
     from_system: " 请以第一性原理与最佳实践原则思考行动；你是本任务的质量负责人，富有责任心并对质量的异常执着，请与PeerB深入协同，拿出最高质量的方案和成果来。 think"
   # NUDGE 消息的可选后缀（仅用于系统发送的 [NUDGE] 提示行）
   # 例如：" 请立刻读取最旧文件并先回显 ack: <seq> 再处理"
-  nudge_suffix: " think hard"
+  nudge_suffix: " 请理解并执行 读取消息文件 → 执行相关任务 → 输出/回复 → 消息文件的相关事项处理完毕后将消息文件归档 → 处理下一个消息 的闭环流程 think hard"
 peerB:
   prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # 需要时按你的 PeerB CLI 调整
   busy_regexes:
@@ -30,29 +30,44 @@ peerB:
   idle_quiet_seconds: 1.5
   # Codex CLI：回车发送；需要多行时用 Ctrl-J 插入换行（不提交）
   post_paste_keys: ["Enter"]
-  input_mode: type
+  input_mode: paste
   compose_newline_key: "C-j"
   send_sequence: "Enter"
   type_send_at_end: true
   chunk_lines: 12
   chunk_delay_ms: 180
+  # NUDGE 提交稳健性（tmux）：在发送一行后，额外按 Enter 的次数与间隔（毫秒）
+  nudge_extra_enters: 0
+  nudge_enter_delay_ms: 250
   # 对 Codex（PeerB）的入站消息末尾追加后缀：按来源分别配置
   inbound_suffix:
     from_user: " 不用立即对此指令采取行动，先等待PeerA的后续沟通；如需反馈，仅在 to_peer.md 中提出问题或证据，不要直接向用户汇报。"
-    from_peer: " 请以第一性原理与最佳实践的角度充分理解分析并review我这次的建议或者工作成果（如果有的话），如果有不足之处请一定指出（但请注意不要重复review）。另外，为了避免重复低效沟通导致对话进入死循环，如果没有异议或者没有要补充的核心信息或者没有新的工作状况要汇报的话请直接静默不要回复。"
+    from_peer: " 请以第一性原理与最佳实践的角度基于我们整体任务的目标review我这次的建议或者工作成果（如果有的话），如果有疏漏或者不足之处请一定指出（但请注意不要重复review）。另外，为了避免重复低效沟通导致对话进入死循环，如果没有异议或者没有要补充的核心信息或者没有新的工作状况要汇报的话请直接静默不要回复。"
     from_system: " 不用立即对此指令采取行动，先等待PeerA的后续沟通；如需反馈，仅在 to_peer.md 中提出问题或证据，不要直接向用户汇报。"
   # NUDGE 消息的可选后缀
-  nudge_suffix: ""
+  nudge_suffix: " 请理解并执行 读取消息文件 → 执行相关任务 → 输出/回复 → 消息文件的相关事项处理完毕后将消息文件归档 → 处理下一个消息 的闭环流程"
 delivery:
   paste_max_wait_seconds: 6       # 等待空闲的最长时长
   recheck_interval_seconds: 0.6   # 轮询间隔
   max_flush_batch: 3              # 每轮最多 flush 多少条
   require_ack: false              # 以 mailbox 事件作为 ACK，不强制 CLI 回显 ACK
+  ack_mode: file_move             # ack_text | file_move（优先采用 file_move：由 CLI 读取后移动到 processed/）
   read_timeout_seconds: 8         # 读取一轮回复的最大等待时长
   ack_timeout_seconds: 40         # mailbox ACK 超时阈值
   resend_attempts: 2              # 超时后最多重发 2 次（避免噪音）
   ack_require_mid: false          # 是否严格要求对方回显 [MID: ...] 才视为 ACK（默认不强制）
   duplicate_window_seconds: 90    # 短窗口重复投递防抖
+  # --- periodic self-check ---
+  self_check_every_handoffs: 20   # 每传达 N 条指令后推送一次自检（0/缺省=关闭）
+  # 自检提示内容（YAML 多行字符串）；可按需调整措辞
+  self_check_text: |-
+    [定时自检] 先稍微停一下，请就地简短回答（每题≤1行）：
+    1) 过去这段时间具体完成了什么？
+    2) 是否偏离了原定目标？若是，原因与纠偏？
+    3) 是否造成了新的混乱？如何收敛？
+    4) 遗漏了什么工作？优先补上哪一项？
+    5) 是否遗忘了既定的角色与推荐的行为方式？
+    回答完成后再继续推进。
   # --- mailbox pull + nudge 模式 ---
   mailbox_pull_enabled: true      # 启用 inbox + NUDGE（替代直接粘贴正文）
   inbox_dirname: "inbox"          # 收件箱目录名（相对 .cccc/mailbox/<peer>/）
@@ -70,9 +85,11 @@ delivery:
 startup_wait_seconds: 12          # CLI 首次启动等待提示符的时长
 startup_nudge_seconds: 10         # 激活 NUDGE 前的最大等待时长（避免过久等待）
 console_echo: true                # 是否在控制台回显 AI 输出（调试友好；修改后需重启）
+tmux:
+  alternate_screen_off: true      # 关闭 alt-screen，保留滚动历史（若个别 CLI 需要全屏可临时改回 false）
 commands:
   peerA: "claude --dangerously-skip-permissions"
   peerB: "codex --dangerously-bypass-approvals-and-sandbox"
 delivery_mode:
-  peerA: bridge   # tmux | bridge（bridge 通过 inbox.md 由 adapter 注入）
-  peerB: bridge
+  peerA: tmux     # 使用 tmux 注入（更稳）
+  peerB: tmux

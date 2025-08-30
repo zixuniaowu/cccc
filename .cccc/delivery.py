@@ -163,7 +163,11 @@ class Outbox:
 ACK_RE = re.compile(r"(?:^|;|\s)ack:\s*([A-Za-z0-9\-\._:]+)", re.I)
 NACK_RE= re.compile(r"(?:^|;|\s)nack:\s*([A-Za-z0-9\-\._:]+)", re.I)
 SYS_NOTES_RE = re.compile(r"<SYSTEM_NOTES>([\s\S]*?)</SYSTEM_NOTES>", re.I)
-ANY_ACK_RE = re.compile(r"(?i)(?:^|\s|\[)ack:\s*([A-Za-z0-9\-\._:]+)")
+# Fallback matchers across whole output
+# 1) Prefer 6-digit seq directly after ack: / ack：, regardless of surrounding chars
+ANY_ACK_SEQ_RE = re.compile(r"(?i)ack\s*[:：]\s*(\d{6})")
+# 2) General token (more permissive), allow preceding whitespace, '[' or '<'
+ANY_ACK_RE = re.compile(r"(?i)(?:^|[\s\[<])ack\s*[:：]\s*([A-Za-z0-9\-\._:]+)")
 
 def find_acks_from_output(output: str) -> Tuple[List[str], List[str]]:
     """Return (acks, nacks) tokens detected in CLI output.
@@ -175,7 +179,9 @@ def find_acks_from_output(output: str) -> Tuple[List[str], List[str]]:
     for nt in notes:
         acks  += ACK_RE.findall(nt)
         nacks += NACK_RE.findall(nt)
-    # Fallback: scan whole output for ack: tokens
+    # Fallback: scan whole output for ack seq first, then general tokens
+    # This helps when SYSTEM_NOTES closing tag is malformed and ack is adjacent to '>'
+    acks += ANY_ACK_SEQ_RE.findall(output)
     acks += ANY_ACK_RE.findall(output)
     return list(set(acks)), list(set(nacks))
 
