@@ -233,8 +233,8 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
             except Exception:
                 pass
         else:
-            # tmux injection: wait for prompt then type (type mode will submit)
-            paste_when_ready(left_pane, profileA, msg, timeout=6.0)
+            # tmux injection: paste then single submit; avoid pre-Enter poke to prevent stray newlines
+            paste_when_ready(left_pane, profileA, msg, timeout=6.0, poke=False)
     else:
         if modeB == 'bridge':
             try:
@@ -242,7 +242,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
             except Exception:
                 pass
         else:
-            paste_when_ready(right_pane, profileB, msg, timeout=6.0)
+            paste_when_ready(right_pane, profileB, msg, timeout=6.0, poke=False)
             # Optional extra Enters for robustness (configurable per peer)
             try:
                 extra = int((profileB.get('nudge_extra_enters') or 0))
@@ -797,23 +797,25 @@ def tmux_start_interactive(pane: str, cmd: str):
     wrapped = f"bash -lc {shlex.quote(cmd)}"
     tmux_respawn_pane(pane, wrapped)
 
-def wait_for_ready(pane: str, profile: Dict[str,Any], *, timeout: float = 12.0) -> bool:
-    """Wait until the pane appears idle (prompt+quiet or quiet-only). Pokes with a newline."""
+def wait_for_ready(pane: str, profile: Dict[str,Any], *, timeout: float = 12.0, poke: bool = True) -> bool:
+    """Wait until the pane appears idle (prompt+quiet or quiet-only).
+    If poke is True, sends a single Enter after ~1.5s to coax a prompt; else never sends pre-Enter.
+    """
     judge = PaneIdleJudge(profile)
     t0 = time.time(); poked = False
     while time.time() - t0 < timeout:
         idle, reason = judge.refresh(pane)
         if idle:
             return True
-        # After 1.5s without prompt, send a newline to coax prompt
-        if not poked and time.time() - t0 > 1.5:
+        # After 1.5s without prompt, send a newline to coax prompt (optional)
+        if poke and (not poked) and (time.time() - t0 > 1.5):
             tmux("send-keys","-t",pane,"Enter")
             poked = True
         time.sleep(0.25)
     return False
 
-def paste_when_ready(pane: str, profile: Dict[str,Any], text: str, *, timeout: float = 10.0):
-    ok = wait_for_ready(pane, profile, timeout=timeout)
+def paste_when_ready(pane: str, profile: Dict[str,Any], text: str, *, timeout: float = 10.0, poke: bool = True):
+    ok = wait_for_ready(pane, profile, timeout=timeout, poke=poke)
     if not ok:
         print(f"[WARN] 目标 pane 未就绪，仍尝试贴入（best-effort）。")
     # 统一通过 delivery 的 send_text，使用 per-CLI 配置（含回车发送/换行键）
@@ -1818,9 +1820,9 @@ def main(home: Path):
                     f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
                 )
                 if label == "PeerA":
-                    paste_when_ready(pane, profileA, nmsg, timeout=6.0)
+                    paste_when_ready(pane, profileA, nmsg, timeout=6.0, poke=False)
                 else:
-                    paste_when_ready(pane, profileB, nmsg, timeout=6.0)
+                    paste_when_ready(pane, profileB, nmsg, timeout=6.0, poke=False)
                     try:
                         extra = int((profileB.get('nudge_extra_enters') or 0))
                         delay_ms = int((profileB.get('nudge_enter_delay_ms') or 200))

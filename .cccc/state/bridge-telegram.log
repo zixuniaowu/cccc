@@ -1,0 +1,5 @@
+2025-08-31 00:06:18 [dry-run] bridge started
+2025-08-31 00:06:18 [outbound] to_user.md 180 chars | Discussing P0 priorities with PeerB. Advocating security-first approach: audit vulnerabilities before establishing quality gates to avoid baking security issues into test baseline.
+2025-08-31 00:06:18 [outbound] to_user.md 5 chars | READY
+2025-08-31 00:06:18 [inbound] routes=['peerA', 'peerB'] mid=tg-1756566378-0d8312 size=50 from=msg1.txt
+2025-08-31 00:06:18 [inbound] routes=['peerA', 'peerB'] mid=tg-1756566378-c65773 size=50 from=msg2.txt

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from pathlib import Path
-import os, sys, shutil, argparse
+import os, sys, shutil, argparse, subprocess, json, atexit, signal, time
 
 def _bootstrap(src_root: Path, target: Path, *, force: bool = False, include_guides: bool = False):
     src_cccc = src_root/".cccc"
@@ -76,6 +76,218 @@ def main():
         print(f"[FATAL] 未找到 CCCC 目录：{home}\n你可以先运行 `python cccc.py init --to .` 拷贝脚手架。也可设置环境变量 CCCC_HOME。")
         raise SystemExit(1)
     sys.path.insert(0, str(home))
+
+    # 轻量引导：首次启动时询问是否连接 Telegram（不强制，默认仅本地）。
+    # - Token 仅从环境读取或临时输入（不写盘）
+    # - 配置文件仅写非敏感项（dry_run/allow_chats/discover_allowlist）
+    def _isatty() -> bool:
+        try:
+            return sys.stdin.isatty()
+        except Exception:
+            return False
+
+    def _read_yaml(p: Path):
+        if not p.exists():
+            return {}
+        try:
+            import yaml  # type: ignore
+            return yaml.safe_load(p.read_text(encoding='utf-8')) or {}
+        except Exception:
+            # naive fallback
+            d = {}
+            for line in p.read_text(encoding='utf-8').splitlines():
+                line = line.strip()
+                if not line or line.startswith('#') or ':' not in line:
+                    continue
+                k, v = line.split(':', 1)
+                # strip inline comments
+                if '#' in v:
+                    v = v.split('#', 1)[0]
+                d[k.strip()] = v.strip().strip('"\'')
+            return d
+
+    def _write_yaml(p: Path, obj):
+        try:
+            import yaml  # type: ignore
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(yaml.safe_dump(obj, allow_unicode=True, sort_keys=False), encoding='utf-8')
+            return
+        except Exception:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            # minimal JSON as fallback
+            p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    BRIDGE_PROC = {"p": None}
+
+    def _spawn_telegram_bridge(env_extra: dict):
+        bridge = home/"adapters"/"telegram_bridge.py"
+        if not bridge.exists():
+            print("[WARN] 未找到 Telegram 桥接脚本，跳过连接。")
+            return None
+        env = os.environ.copy(); env.update(env_extra or {})
+        print("[TELEGRAM] 正在启动桥接（长轮询）…")
+        # Start new session so we can kill the whole process group on exit
+        p = subprocess.Popen([sys.executable, str(bridge)], env=env, start_new_session=True)
+        BRIDGE_PROC["p"] = p
+        try:
+            # Persist PID for diagnostics
+            pid_path = home/"state"/"telegram-bridge.pid"
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
+            pid_path.write_text(str(p.pid), encoding='utf-8')
+        except Exception:
+            pass
+        return p
+
+    def _cleanup_bridge():
+        p = BRIDGE_PROC.get("p")
+        if not p:
+            return
+        try:
+            # Send SIGTERM to the process group (Linux/macOS)
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+            except Exception:
+                p.terminate()
+            # Wait up to 5s, then SIGKILL the group
+            for _ in range(10):
+                if p.poll() is not None:
+                    break
+                time.sleep(0.5)
+            if p.poll() is None:
+                try:
+                    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                except Exception:
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+        finally:
+            BRIDGE_PROC["p"] = None
+            # best-effort: remove stale pid file
+            try:
+                (home/"state"/"telegram-bridge.pid").unlink(missing_ok=True)  # type: ignore
+            except Exception:
+                pass
+
+    # Ensure child cleanup on exit and signals
+    def _install_shutdown_hooks():
+        atexit.register(_cleanup_bridge)
+        def _sig_handler(signum, frame):
+            _cleanup_bridge()
+            # Re-raise default behavior
+            raise SystemExit(0)
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            try:
+                signal.signal(sig, _sig_handler)
+            except Exception:
+                pass
+
+    # 引导逻辑：仅在交互式终端且未设置 CCCC_NO_WIZARD 时触发
+    if _isatty() and not os.environ.get('CCCC_NO_WIZARD'):
+        try:
+            print("\n[SETUP] 请选择运行方式：\n  1) 仅本地命令行（默认）\n  2) 本地 + 连接 Telegram（需要 Bot token）")
+            choice = input("> 请输入 1 或 2（回车=1）：").strip() or "1"
+        except Exception:
+            choice = "1"
+        if choice == "2":
+            cfg_path = home/"settings"/"telegram.yaml"
+            cfg = _read_yaml(cfg_path)
+            if not cfg:
+                cfg = {
+                    "token_env": "TELEGRAM_BOT_TOKEN",
+                    "allow_chats": [],
+                    "dry_run": False,
+                    "discover_allowlist": True,
+                    "autoregister": "open",
+                    "max_auto_subs": 3,
+                }
+            else:
+                cfg["dry_run"] = False
+                if not cfg.get("allow_chats"):
+                    cfg["discover_allowlist"] = True
+                if not cfg.get("autoregister"):
+                    cfg["autoregister"] = "open"
+                if not cfg.get("max_auto_subs"):
+                    cfg["max_auto_subs"] = 3
+            # Normalize allow_chats (handle strings like "[]" or "[123]")
+            def _coerce_allowlist(val):
+                def to_int(x):
+                    try:
+                        return int(str(x).strip())
+                    except Exception:
+                        return None
+                if isinstance(val, (list, tuple, set)):
+                    out = []
+                    for x in val:
+                        v = to_int(x)
+                        if v is not None:
+                            out.append(v)
+                    return out
+                if isinstance(val, str):
+                    s = val.strip().strip('"\'')
+                    if not s:
+                        return []
+                    if s.startswith('[') and s.endswith(']'):
+                        try:
+                            arr = json.loads(s)
+                            return _coerce_allowlist(arr)
+                        except Exception:
+                            pass
+                    s2 = s.strip('[]')
+                    parts = [p for p in s2.replace(',', ' ').split() if p]
+                    out = []
+                    for p in parts:
+                        v = to_int(p)
+                        if v is not None:
+                            out.append(v)
+                    return out
+                return []
+            coerced = _coerce_allowlist(cfg.get("allow_chats"))
+            if coerced:
+                cfg["allow_chats"] = coerced
+            else:
+                cfg["allow_chats"] = []
+                cfg["discover_allowlist"] = True
+            # 提示 token（不落盘）
+            token_env = str(cfg.get("token_env") or "TELEGRAM_BOT_TOKEN")
+            token_val = os.environ.get(token_env, "")
+            if not token_val:
+                print(f"[SETUP] 未检测到环境变量 {token_env}。建议在终端中 export，而不是写入文件。")
+                try:
+                    token_val = input("请输入 Telegram Bot Token（仅用于本次进程，不会写盘）：").strip()
+                except Exception:
+                    token_val = ""
+            # 允许用户直接录入 chat_id（可留空跳过）
+            if not cfg.get("allow_chats"):
+                try:
+                    raw = input("可选：请输入 chat_id（可多个，用逗号/空格分隔；群聊通常为负数 -100...；回车跳过）：").strip()
+                except Exception:
+                    raw = ""
+                ids = []
+                if raw:
+                    import re as _re
+                    parts = [p for p in _re.split(r"[\s,]+", raw) if p]
+                    for p in parts:
+                        try:
+                            ids.append(int(p))
+                        except Exception:
+                            pass
+                    if ids:
+                        cfg["allow_chats"] = ids
+                        cfg["discover_allowlist"] = False
+                        print(f"[SETUP] 已设置 allow_chats={ids}")
+            # 写入非敏感配置（YAML 不可用则写 JSON）
+            _write_yaml(cfg_path, cfg)
+            # 可选：获取 chat_id
+            if not cfg.get("allow_chats"):
+                print("[SETUP] 已启用发现模式（discover_allowlist=true）。你可以：\n  • 直接在聊天里发送 /subscribe 自助订阅（若配置为 autoregister=open）；或\n  • 发送 /whoami 然后在 .cccc/state/bridge-telegram.log 查到 chat_id，填入 allow_chats 后重启桥接。")
+            # 启动桥接（只在当前进程环境注入 token）
+            if token_val:
+                _spawn_telegram_bridge({token_env: token_val})
+            else:
+                print("[WARN] 未提供 Token，无法连接 Telegram；将以本地模式继续。")
+    # Install shutdown hooks after potential spawn
+    _install_shutdown_hooks()
     try:
         from orchestrator_tmux import main as run
     except Exception as e:

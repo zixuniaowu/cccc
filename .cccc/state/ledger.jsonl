@@ -78,3 +78,4 @@
 {"ts": "2025-08-23 10:07:04", "from": "PeerB", "kind": "handoff", "route": "mailbox", "status": "delivered", "mid": "cccc-1755911223-5dc32b", "chars": 372}
 {"ts": "2025-08-23 10:07:28", "from": "PeerA", "kind": "handoff", "route": "mailbox", "status": "delivered", "mid": "cccc-1755911248-84eaa0", "chars": 689}
 {"ts": "2025-08-23 10:07:29", "from": "PeerA", "kind": "to_user", "route": "mailbox", "chars": 180}
+{"ts": "2025-08-31 00:06:03", "kind": "evidence-validate", "verdict": "pass", "title": "Runner quick pass", "evidence_kind": "generic", "log_ref": "LOG:evrun-1756566363.log#L1-L9", "checks": [{"name": "echo", "exit": 0, "ok": true}], "meta": {}}

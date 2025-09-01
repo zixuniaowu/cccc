@@ -74,5 +74,5 @@ def weave_system_prompt(home: Path, peer: str) -> str:
         lines.append("Collaboration Norms (PeerB):")
         lines.append("• After applying a patch: send a 1–2 line EVIDENCE report to PeerA (commit, tests ok/fail, lines, paths, MID) before going silent.")
         lines.append("• Prefer incremental, testable changes; when blocked, ask one focused question.")
-    lines.append("Please follow the mailbox contract above. Also you should standby for the upcoming requests later.")
+    lines.append("Please follow the mailbox contract above. Also you should enter standby mode asap for the upcoming requests later. Repeat, you should enter standby mode asap.")
     return "\n".join(lines)

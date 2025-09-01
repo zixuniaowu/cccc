@@ -1,0 +1,31 @@
+# Telegram Bridge Settings (MVP)
+
+token_env: "TELEGRAM_BOT_TOKEN"   # Bot token from env var; do not hardcode
+allow_chats: []                    # List of allowed chat_id (integers); empty = deny all
+discover_allowlist: true           # If true and allow_chats empty, run to log incoming chat_id for onboarding
+autoregister: open                 # open | off — open allows /subscribe to add current chat automatically
+max_auto_subs: 3                   # Max chats that can auto-subscribe when autoregister=open
+dry_run: true                      # If true, do not connect network; use file-based mock
+
+# Inbound routing (when a message arrives)
+default_route: "both"              # both | a | b
+prefix_routes: true                # allow a:/b:/both: at message start to override
+
+# Outbound
+debounce_seconds: 30               # Combine multiple events into one summary
+max_msg_chars: 900                 # Truncate messages (IM safe defaults)
+include_patch_snippets: false      # Never send large diffs; point to repo paths instead
+show_peer_messages: false          # Also forward PeerA↔PeerB to_peer.md summaries to Telegram
+peer_message_max_chars: 600        # Max chars for peer-to-peer message previews
+peer_debounce_seconds: 30          # Debounce for peer-to-peer summaries
+
+# Redaction & safety
+redact_patterns:
+  - "(?i)api[_-]?key\s*[:=]\s*\S+"
+  - "(?i)secret\s*[:=]\s*\S+"
+  - "(?i)password\s*[:=]\s*\S+"
+
+# Mock files used in dry_run mode
+mock:
+  inbox_dir: ".cccc/work/telegram_inbox"     # files dropped here become inbound messages
+  outbox_log: ".cccc/state/bridge-telegram.log"

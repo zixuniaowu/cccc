@@ -32,6 +32,7 @@ M0 最小内核梳理与闭环强化（本地）
 M1 Telegram 桥接 MVP（安全、低打扰）
 - 目标：群聊→mailbox（inbox.md）输入；to_user 摘要→群聊输出；严控内容为“短摘要+证据引用”。
 - 交付：
+  - 单一 Orchestrator Bot：以一个 Bot 入群；A/B 身份在消息内清晰标注（PeerA/PeerB），入站支持 a:/b:/both: 路由。避免“双 Bot”造成权限/节流/语义分裂。
   - 进程式桥接（长轮询）：令牌 via 环境，chat allowlist，消息大小上限，脱敏与日志落地到 .cccc/state/。
   - 入站：用户消息写入 `.cccc/mailbox/peerA|peerB/inbox.md`，带 [MID]；支持 a:/b:/both: 前缀定向。
   - 出站：监听 `to_user.md`（简报四行：Outcome/Refs/Risks/Decision-needed），时间窗合并去重，引用 repo 路径/LOG 片段。
@@ -98,4 +99,3 @@ M4 模版晋升与观测（可选，不强制）
 - 写通用“证据卡片”的简版规范与示例（不落代码，先文档对齐）。
 - 起草 `./.cccc/adapters/telegram_bridge.py` 骨架与 `settings/telegram.yaml`（令牌 env 名、allowlist、节流策略）；实现离线干跑。
 - 增加 no-output-after-read 的轻量告警打点（ledger），用于观察 NUDGE 闭环质量。
-
