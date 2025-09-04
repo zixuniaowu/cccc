@@ -545,34 +545,7 @@ def main():
         import hashlib
         return hashlib.sha1((t or "").encode('utf-8', errors='ignore')).hexdigest()
 
-    # Persist outbound files already sent (path -> mtime) to avoid resending on restart
-    def _sent_files_path() -> Path:
-        return HOME/"state"/"outbound-sent.json"
-    def load_sent_files() -> Dict[str, float]:
-        p = _sent_files_path()
-        try:
-            if p.exists():
-                obj = json.loads(p.read_text(encoding='utf-8'))
-                if isinstance(obj, dict):
-                    out: Dict[str, float] = {}
-                    for k, v in obj.items():
-                        try:
-                            out[str(k)] = float(v)
-                        except Exception:
-                            pass
-                    return out
-        except Exception:
-            pass
-        return {}
-    def save_sent_files(d: Dict[str, float]):
-        p = _sent_files_path()
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            # Keep most recent 2000 entries to bound file size
-            items = sorted(d.items(), key=lambda kv: kv[1])[-2000:]
-            p.write_text(json.dumps(dict(items), ensure_ascii=False, indent=2), encoding='utf-8')
-        except Exception:
-            pass
+    # Delete-on-success semantics for outbound files; no persistent sent-cache needed
 
 
     def send_summary(peer: str, text: str):
@@ -687,13 +660,15 @@ def main():
 
         threading.Thread(target=watch_ledger_for_rfd, daemon=True).start()
         # Outbound files watcher state
-        sent_files: Dict[str, float] = load_sent_files()
+        # Track attempts within this run only (avoid rapid duplicates if filesystem timestamps don't change)
+        sent_files: Dict[str, float] = {}
         def _is_image(path: Path) -> bool:
             return path.suffix.lower() in ('.jpg','.jpeg','.png','.gif','.webp')
-        def _send_file(peer: str, fp: Path, caption: str):
+        def _send_file(peer: str, fp: Path, caption: str) -> bool:
             cap = f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + _summarize(redact(caption or ''), max_chars)
             # Choose send method: sidecar override > dir/ext heuristic
             method = 'sendPhoto' if _is_image(fp) or fp.parent.name == 'photos' else 'sendDocument'
+            any_fail = False
             try:
                 sidecars = [fp.with_suffix(fp.suffix + '.sendas'), fp.with_name(fp.name + '.sendas')]
                 for sc in sidecars:
@@ -753,6 +728,7 @@ def main():
                     with urllib.request.urlopen(req, timeout=60) as resp:
                         _ = resp.read()
                 except Exception as e:
+                    any_fail = True
                     try:
                         import urllib.error as _ue
                         if isinstance(e, _ue.HTTPError):
@@ -767,9 +743,29 @@ def main():
                         _append_log(outlog, f"[error] outbound-file send {fp}: {e}")
             _append_log(outlog, f"[outbound-file] {fp}")
             _append_ledger({"kind":"bridge-file-outbound","peer":peer,"path":str(fp)})
+            # Delete file and sidecars only when all sends succeeded
+            if not any_fail:
+                try:
+                    for side in (
+                        fp.with_suffix(fp.suffix + '.caption.txt'),
+                        fp.with_suffix(fp.suffix + '.sendas'),
+                        fp.with_name(fp.name + '.sendas'),
+                        fp.with_suffix(fp.suffix + '.meta.json'),
+                    ):
+                        try:
+                            if side.exists():
+                                side.unlink()
+                        except Exception:
+                            pass
+                    fp.unlink()
+                except Exception as de:
+                    _append_log(outlog, f"[warn] failed to delete outbound file {fp}: {de}")
+                return True
+            return False
         
         # Optional reset on start: baseline|archive|clear
-        reset_mode = str((outbound_conf.get('reset_on_start') or 'baseline')).lower()
+        # Default to 'clear' to avoid blasting residual files on startup
+        reset_mode = str((outbound_conf.get('reset_on_start') or 'clear')).lower()
         try:
             if reset_mode in ('archive','clear'):
                 arch = HOME/'state'/'outbound-archive'; arch.mkdir(parents=True, exist_ok=True)
@@ -815,9 +811,7 @@ def main():
                                 fp.unlink()
                             except Exception:
                                 pass
-                # After clearing, reset sent-files record
-                sent_files = {}
-                save_sent_files(sent_files)
+                # After clearing, outbound directory is empty; no extra bookkeeping needed
         except Exception:
             pass
         # Initialize baseline and persist seen hashes
@@ -840,24 +834,7 @@ def main():
                 pk = 'peerA' if peer=='peerA' else 'peerB'
                 seen.setdefault(pk, {})['to_peer'] = _hash_text(txt)
             save_outbound_seen(seen)
-            # Baseline outbound files: mark current files as already sent when in baseline mode
-            if reset_mode == 'baseline':
-                for peer in ('peerA','peerB'):
-                    for sub in ('files','photos'):
-                        d = outbound_dir/peer/sub
-                        if not d.exists():
-                            continue
-                        for fp in sorted(d.glob('*')):
-                            if fp.is_dir():
-                                continue
-                            nm = str(fp.name).lower()
-                            if nm.endswith('.caption.txt') or nm.endswith('.sendas') or nm.endswith('.meta.json'):
-                                continue
-                            try:
-                                sent_files[str(fp)] = fp.stat().st_mtime
-                            except Exception:
-                                pass
-                save_sent_files(sent_files)
+            # Baseline mode: do nothing special; existing files (if any) will be sent once and deleted on success
         except Exception:
             pass
 
@@ -898,10 +875,6 @@ def main():
                             name=str(fp.name).lower()
                             if name.endswith('.caption.txt') or name.endswith('.sendas') or name.endswith('.meta.json'):
                                 continue
-                            key = str(fp)
-                            mt = fp.stat().st_mtime
-                            if sent_files.get(key) == mt:
-                                continue
                             # optional caption sidecar
                             cap_fp = fp.with_suffix(fp.suffix + '.caption.txt')
                             if cap_fp.exists():
@@ -911,9 +884,8 @@ def main():
                                     cap = ''
                             else:
                                 cap = ''
+                            # Send and delete on success; on failure, keep file for retry
                             _send_file(peer, fp, cap)
-                            sent_files[key] = mt
-                            save_sent_files(sent_files)
             except Exception as e:
                 _append_log(outlog, f"[error] watch_outbound: {e}")
             time.sleep(1.0)
