@@ -545,6 +545,35 @@ def main():
         import hashlib
         return hashlib.sha1((t or "").encode('utf-8', errors='ignore')).hexdigest()
 
+    # Persist outbound files already sent (path -> mtime) to avoid resending on restart
+    def _sent_files_path() -> Path:
+        return HOME/"state"/"outbound-sent.json"
+    def load_sent_files() -> Dict[str, float]:
+        p = _sent_files_path()
+        try:
+            if p.exists():
+                obj = json.loads(p.read_text(encoding='utf-8'))
+                if isinstance(obj, dict):
+                    out: Dict[str, float] = {}
+                    for k, v in obj.items():
+                        try:
+                            out[str(k)] = float(v)
+                        except Exception:
+                            pass
+                    return out
+        except Exception:
+            pass
+        return {}
+    def save_sent_files(d: Dict[str, float]):
+        p = _sent_files_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            # Keep most recent 2000 entries to bound file size
+            items = sorted(d.items(), key=lambda kv: kv[1])[-2000:]
+            p.write_text(json.dumps(dict(items), ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+
 
     def send_summary(peer: str, text: str):
         label = "PeerA" if peer == 'peerA' else "PeerB"
@@ -582,50 +611,83 @@ def main():
             'peerA': HOME/"mailbox"/"peerA"/"to_peer.md",
             'peerB': HOME/"mailbox"/"peerB"/"to_peer.md",
         }
-        # RFD watcher state
-        seen_rfd_ids = set()
+        # RFD watcher state with persistence to avoid resending on restart
+        def _rfd_seen_path() -> Path:
+            return HOME/"state"/"rfd-seen.json"
+        def _load_rfd_seen() -> set:
+            p = _rfd_seen_path()
+            try:
+                if p.exists():
+                    obj = json.loads(p.read_text(encoding='utf-8'))
+                    arr = obj.get('ids') or []
+                    return set(str(x) for x in arr)
+            except Exception:
+                pass
+            return set()
+        def _save_rfd_seen(ids: set):
+            p = _rfd_seen_path(); p.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                # Trim to last 2000 items to bound file size
+                arr = list(ids)[-2000:]
+                p.write_text(json.dumps({'ids': arr}, ensure_ascii=False, indent=2), encoding='utf-8')
+            except Exception:
+                pass
+
         def watch_ledger_for_rfd():
             ledger = HOME/"state"/"ledger.jsonl"
+            seen_rfd_ids = _load_rfd_seen()
+            baseline_done = False
+            window = 1000  # scan recent lines window
             while True:
                 try:
                     if ledger.exists():
-                        lines = ledger.read_text(encoding='utf-8').splitlines()[-400:]
+                        lines = ledger.read_text(encoding='utf-8').splitlines()[-window:]
+                        changed = False
                         for line in lines:
                             try:
                                 ev = json.loads(line)
                             except Exception:
                                 continue
                             kind = str(ev.get('kind') or '').lower()
-                            if kind == 'rfd':
-                                rid = str(ev.get('id') or '')
-                                if not rid:
-                                    import hashlib
-                                    rid = hashlib.sha1(line.encode('utf-8')).hexdigest()[:8]
-                                if rid in seen_rfd_ids:
-                                    continue
-                                seen_rfd_ids.add(rid)
-                                text = ev.get('title') or ev.get('summary') or f"RFD {rid}"
-                                markup = {
-                                    'inline_keyboard': [[
-                                        {'text': 'Approve', 'callback_data': f'rfd:{rid}:approve'},
-                                        {'text': 'Reject', 'callback_data': f'rfd:{rid}:reject'},
-                                        {'text': 'Ask More', 'callback_data': f'rfd:{rid}:askmore'},
-                                    ]]
-                                }
-                                for chat_id in allow:
-                                    tg_api('sendMessage', {
-                                        'chat_id': chat_id,
-                                        'text': f"[RFD] {text}",
-                                        'reply_markup': json.dumps(markup)
-                                    }, timeout=15)
-                                _append_ledger({'kind':'bridge-rfd-card','id':rid})
+                            if kind != 'rfd':
+                                continue
+                            rid = str(ev.get('id') or '')
+                            if not rid:
+                                import hashlib
+                                rid = hashlib.sha1(line.encode('utf-8')).hexdigest()[:8]
+                            if rid in seen_rfd_ids:
+                                continue
+                            # On first run, baseline: mark existing RFDs as seen but do not send
+                            if not baseline_done:
+                                seen_rfd_ids.add(rid); changed = True
+                                continue
+                            # New RFD → send interactive card once
+                            text = ev.get('title') or ev.get('summary') or f"RFD {rid}"
+                            markup = {
+                                'inline_keyboard': [[
+                                    {'text': 'Approve', 'callback_data': f'rfd:{rid}:approve'},
+                                    {'text': 'Reject', 'callback_data': f'rfd:{rid}:reject'},
+                                    {'text': 'Ask More', 'callback_data': f'rfd:{rid}:askmore'},
+                                ]]
+                            }
+                            for chat_id in allow:
+                                tg_api('sendMessage', {
+                                    'chat_id': chat_id,
+                                    'text': f"[RFD] {text}",
+                                    'reply_markup': json.dumps(markup)
+                                }, timeout=15)
+                            _append_ledger({'kind':'bridge-rfd-card','id':rid})
+                            seen_rfd_ids.add(rid); changed = True
+                        if changed:
+                            _save_rfd_seen(seen_rfd_ids)
+                        baseline_done = True
                 except Exception:
                     pass
                 time.sleep(2.0)
 
         threading.Thread(target=watch_ledger_for_rfd, daemon=True).start()
         # Outbound files watcher state
-        sent_files: Dict[str, float] = {}
+        sent_files: Dict[str, float] = load_sent_files()
         def _is_image(path: Path) -> bool:
             return path.suffix.lower() in ('.jpg','.jpeg','.png','.gif','.webp')
         def _send_file(peer: str, fp: Path, caption: str):
@@ -711,23 +773,51 @@ def main():
         try:
             if reset_mode in ('archive','clear'):
                 arch = HOME/'state'/'outbound-archive'; arch.mkdir(parents=True, exist_ok=True)
+                # Clear to_user and to_peer files to prevent re-sending summaries on restart
                 for peer, pth in {**to_user_paths, **to_peer_paths}.items():
                     try:
                         txt = pth.read_text(encoding='utf-8')
                     except Exception:
                         txt = ''
-                    if not txt:
-                        continue
-                    if reset_mode == 'archive':
-                        import time as _t
-                        ts = _t.strftime('%Y%m%d-%H%M%S')
-                        dest_dir = arch/peer
-                        dest_dir.mkdir(parents=True, exist_ok=True)
-                        (dest_dir/f"{pth.name}-{ts}").write_text(txt, encoding='utf-8')
-                    try:
-                        pth.write_text('', encoding='utf-8')
-                    except Exception:
-                        pass
+                    if txt:
+                        if reset_mode == 'archive':
+                            import time as _t
+                            ts = _t.strftime('%Y%m%d-%H%M%S')
+                            dest_dir = arch/peer
+                            dest_dir.mkdir(parents=True, exist_ok=True)
+                            (dest_dir/f"{pth.name}-{ts}").write_text(txt, encoding='utf-8')
+                        try:
+                            pth.write_text('', encoding='utf-8')
+                        except Exception:
+                            pass
+                # Also clear/archive outbound files to avoid blasting residual uploads
+                for peer in ('peerA','peerB'):
+                    for sub in ('files','photos'):
+                        d = outbound_dir/peer/sub
+                        if not d.exists():
+                            continue
+                        for fp in sorted(d.glob('*')):
+                            if fp.is_dir():
+                                continue
+                            nm = str(fp.name).lower()
+                            if nm.endswith('.caption.txt') or nm.endswith('.sendas') or nm.endswith('.meta.json'):
+                                continue
+                            if reset_mode == 'archive':
+                                import time as _t
+                                ts = _t.strftime('%Y%m%d-%H%M%S')
+                                dest_dir = arch/peer/sub
+                                dest_dir.mkdir(parents=True, exist_ok=True)
+                                try:
+                                    (dest_dir/f"{fp.name}-{ts}").write_bytes(fp.read_bytes())
+                                except Exception:
+                                    pass
+                            try:
+                                fp.unlink()
+                            except Exception:
+                                pass
+                # After clearing, reset sent-files record
+                sent_files = {}
+                save_sent_files(sent_files)
         except Exception:
             pass
         # Initialize baseline and persist seen hashes
@@ -750,6 +840,24 @@ def main():
                 pk = 'peerA' if peer=='peerA' else 'peerB'
                 seen.setdefault(pk, {})['to_peer'] = _hash_text(txt)
             save_outbound_seen(seen)
+            # Baseline outbound files: mark current files as already sent when in baseline mode
+            if reset_mode == 'baseline':
+                for peer in ('peerA','peerB'):
+                    for sub in ('files','photos'):
+                        d = outbound_dir/peer/sub
+                        if not d.exists():
+                            continue
+                        for fp in sorted(d.glob('*')):
+                            if fp.is_dir():
+                                continue
+                            nm = str(fp.name).lower()
+                            if nm.endswith('.caption.txt') or nm.endswith('.sendas') or nm.endswith('.meta.json'):
+                                continue
+                            try:
+                                sent_files[str(fp)] = fp.stat().st_mtime
+                            except Exception:
+                                pass
+                save_sent_files(sent_files)
         except Exception:
             pass
 
@@ -805,6 +913,7 @@ def main():
                                 cap = ''
                             _send_file(peer, fp, cap)
                             sent_files[key] = mt
+                            save_sent_files(sent_files)
             except Exception as e:
                 _append_log(outlog, f"[error] watch_outbound: {e}")
             time.sleep(1.0)
