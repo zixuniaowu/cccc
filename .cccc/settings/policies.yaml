@@ -12,6 +12,14 @@ rfd:
   trigger:
     both_confidence_below: 0.6
     max_dispute_rounds: 2
+  gates:
+    # 默认不因“行数大”而强制 RFD；优先建议拆分为小步。
+    # 若你希望由用户审批大改动，将其设为 true。
+    large_diff_requires_rfd: false
+    # 命中受保护路径时，需要 RFD 批准后才能合入
+    protected_paths:
+      - ".cccc/**"           # 编排器域受保护
+      - "src/api/public/**"  # 示例：对外 API 受保护（可按项目调整）
 autonomy_level: L1
 context:
   files_limit: 120

@@ -401,7 +401,7 @@ def main():
         res = tg_api('getUpdates', {
             'offset': offset,
             'timeout': 25,
-            'allowed_updates': json.dumps(["message", "edited_message"])  # type: ignore
+            'allowed_updates': json.dumps(["message", "edited_message", "callback_query"])  # type: ignore
         }, timeout=35)
         updates = []
         new_offset = offset
@@ -436,10 +436,115 @@ def main():
     peer_debounce = int(cfg.get('peer_debounce_seconds') or debounce)
     peer_max_chars = int(cfg.get('peer_message_max_chars') or 600)
     runtime = load_runtime()
-    show_peers_default = bool(cfg.get('show_peer_messages', False))
+    show_peers_default = bool(cfg.get('show_peer_messages', True))
     show_peers = bool(runtime.get('show_peer_messages', show_peers_default))
+
+    # Routing policy
+    routing = cfg.get('routing') or {}
+    require_explicit = bool(routing.get('require_explicit', True))
+    allow_prefix = bool(routing.get('allow_prefix', True))
+    require_mention = bool(routing.get('require_mention', False))
+    dm_conf = cfg.get('dm') or {}
+    dm_route_default = str(dm_conf.get('route_default', 'both'))
+    hints = cfg.get('hints') or {}
+    hint_cooldown = int(hints.get('cooldown_seconds', 300))
+
+    # Files policy
+    files_conf = cfg.get('files') or {}
+    files_enabled = bool(files_conf.get('enabled', True))
+    max_mb = int(files_conf.get('max_mb', 16))
+    max_bytes = max_mb * 1024 * 1024
+    allowed_mime = [str(x) for x in (files_conf.get('allowed_mime') or [])]
+    inbound_dir = Path(files_conf.get('inbound_dir') or HOME/"work"/"upload"/"inbound")
+    outbound_dir = Path(files_conf.get('outbound_dir') or HOME/"work"/"upload"/"outbound")
+    strip_exif = bool(files_conf.get('strip_exif', True))
+
+    # Hint cooldown memory { (chat_id,user_id): ts }
+    hint_last: Dict[Tuple[int,int], float] = {}
+
+    def _mime_allowed(m: str) -> bool:
+        if not allowed_mime:
+            return True
+        for pat in allowed_mime:
+            if pat.endswith('/*'):
+                if m.startswith(pat[:-1]):
+                    return True
+            if m.lower() == pat.lower():
+                return True
+        return False
+
+    def _sanitize_name(name: str) -> str:
+        name = re.sub(r"[^A-Za-z0-9_.\-]+", "_", name)
+        return name[:120] or f"file_{int(time.time())}"
+
+    def _save_file_from_telegram(file_id: str, orig_name: str, chat_id: int, mid: str) -> Tuple[Path, Dict[str,Any]]:
+        meta: Dict[str,Any] = {}
+        # getFile
+        res = tg_api('getFile', {'file_id': file_id}, timeout=20)
+        if not res.get('ok'):
+            raise RuntimeError(f"getFile failed: {res}")
+        file_path = (res.get('result') or {}).get('file_path')
+        if not file_path:
+            raise RuntimeError("file_path missing")
+        url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+        # Prepare path
+        day = time.strftime('%Y%m%d')
+        safe = _sanitize_name(orig_name or os.path.basename(file_path))
+        out_dir = inbound_dir/str(chat_id)/day
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir/f"{mid}__{safe}"
+        # Download
+        with urllib.request.urlopen(url, timeout=60) as resp, open(out_path, 'wb') as f:
+            data = resp.read()
+            if len(data) > max_bytes:
+                raise RuntimeError(f"file too large: {len(data)} bytes > {max_bytes}")
+            f.write(data)
+            meta['bytes'] = len(data)
+        # Hash
+        import hashlib
+        h = hashlib.sha256()
+        with open(out_path, 'rb') as f:
+            while True:
+                chunk = f.read(1024*64)
+                if not chunk: break
+                h.update(chunk)
+        meta['sha256'] = h.hexdigest()
+        meta['path'] = str(out_path)
+        meta['name'] = safe
+        return out_path, meta
+
+    def _maybe_hint(chat_id: int, user_id: int):
+        now = time.time()
+        key = (chat_id, user_id)
+        if now - float(hint_last.get(key, 0)) < hint_cooldown:
+            return
+        hint_last[key] = now
+        tg_api('sendMessage', {'chat_id': chat_id, 'text': '未检测到路由。请在开头使用 /a /b /both 或 a: b: both: 指定路由。'}, timeout=15)
     last_sent_ts = {"peerA": 0.0, "peerB": 0.0}
     last_seen = {"peerA": "", "peerB": ""}
+
+    # Outbound baseline persistence to avoid re-sending history on restart
+    def _seen_path() -> Path:
+        return HOME/"state"/"outbound_seen.json"
+    def load_outbound_seen() -> dict:
+        p = _seen_path()
+        try:
+            if p.exists():
+                return json.loads(p.read_text(encoding='utf-8'))
+        except Exception:
+            pass
+        return {"peerA": {"to_user": "", "to_peer": ""}, "peerB": {"to_user": "", "to_peer": ""}}
+    def save_outbound_seen(obj: dict):
+        p = _seen_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+    def _hash_text(t: str) -> str:
+        import hashlib
+        return hashlib.sha1((t or "").encode('utf-8', errors='ignore')).hexdigest()
+
 
     def send_summary(peer: str, text: str):
         label = "PeerA" if peer == 'peerA' else "PeerB"
@@ -466,14 +571,188 @@ def main():
         _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":"to_peer","chars":len(msg)})
 
     def watch_outputs():
-        to_user_paths = {
-            'peerA': HOME/"mailbox"/"peerA"/"to_user.md",
-            'peerB': HOME/"mailbox"/"peerB"/"to_user.md",
-        }
+        outbound_conf = cfg.get('outbound') or {}
+        watch_peers = outbound_conf.get('watch_to_user_peers') or ['peerA']
+        to_user_paths = {}
+        if 'peerA' in watch_peers:
+            to_user_paths['peerA'] = HOME/'mailbox'/'peerA'/'to_user.md'
+        if 'peerB' in watch_peers:
+            to_user_paths['peerB'] = HOME/'mailbox'/'peerB'/'to_user.md'
         to_peer_paths = {
             'peerA': HOME/"mailbox"/"peerA"/"to_peer.md",
             'peerB': HOME/"mailbox"/"peerB"/"to_peer.md",
         }
+        # RFD watcher state
+        seen_rfd_ids = set()
+        def watch_ledger_for_rfd():
+            ledger = HOME/"state"/"ledger.jsonl"
+            while True:
+                try:
+                    if ledger.exists():
+                        lines = ledger.read_text(encoding='utf-8').splitlines()[-400:]
+                        for line in lines:
+                            try:
+                                ev = json.loads(line)
+                            except Exception:
+                                continue
+                            kind = str(ev.get('kind') or '').lower()
+                            if kind == 'rfd':
+                                rid = str(ev.get('id') or '')
+                                if not rid:
+                                    import hashlib
+                                    rid = hashlib.sha1(line.encode('utf-8')).hexdigest()[:8]
+                                if rid in seen_rfd_ids:
+                                    continue
+                                seen_rfd_ids.add(rid)
+                                text = ev.get('title') or ev.get('summary') or f"RFD {rid}"
+                                markup = {
+                                    'inline_keyboard': [[
+                                        {'text': 'Approve', 'callback_data': f'rfd:{rid}:approve'},
+                                        {'text': 'Reject', 'callback_data': f'rfd:{rid}:reject'},
+                                        {'text': 'Ask More', 'callback_data': f'rfd:{rid}:askmore'},
+                                    ]]
+                                }
+                                for chat_id in allow:
+                                    tg_api('sendMessage', {
+                                        'chat_id': chat_id,
+                                        'text': f"[RFD] {text}",
+                                        'reply_markup': json.dumps(markup)
+                                    }, timeout=15)
+                                _append_ledger({'kind':'bridge-rfd-card','id':rid})
+                except Exception:
+                    pass
+                time.sleep(2.0)
+
+        threading.Thread(target=watch_ledger_for_rfd, daemon=True).start()
+        # Outbound files watcher state
+        sent_files: Dict[str, float] = {}
+        def _is_image(path: Path) -> bool:
+            return path.suffix.lower() in ('.jpg','.jpeg','.png','.gif','.webp')
+        def _send_file(peer: str, fp: Path, caption: str):
+            cap = f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + _summarize(redact(caption or ''), max_chars)
+            # Choose send method: sidecar override > dir/ext heuristic
+            method = 'sendPhoto' if _is_image(fp) or fp.parent.name == 'photos' else 'sendDocument'
+            try:
+                sidecars = [fp.with_suffix(fp.suffix + '.sendas'), fp.with_name(fp.name + '.sendas')]
+                for sc in sidecars:
+                    if sc.exists():
+                        try:
+                            m = (sc.read_text(encoding='utf-8').strip() or '').lower()
+                            if m == 'photo':
+                                method = 'sendPhoto'
+                            elif m == 'document':
+                                method = 'sendDocument'
+                        except Exception:
+                            pass
+                        break
+            except Exception:
+                pass
+            for chat_id in allow:
+                try:
+                    with open(fp, 'rb') as f:
+                        data = f.read()
+                    # Use multipart/form-data via urllib is complex; rely on Telegram auto-download for MVP: send link not possible.
+                    # For simplicity in MVP, fall back to sendDocument by URL is not allowed; so we will skip if too large to read.
+                    # Here we implement minimal upload using `urllib.request` with manual boundary.
+                    boundary = f"----cccc{int(time.time()*1000)}"
+                    def _multipart(fields, files):
+                        crlf = "\r\n"; lines=[]
+                        for k,v in fields.items():
+                            lines.append(f"--{boundary}")
+                            lines.append(f"Content-Disposition: form-data; name=\"{k}\"")
+                            lines.append("")
+                            lines.append(str(v))
+                        for k, (filename, content, mime) in files.items():
+                            lines.append(f"--{boundary}")
+                            lines.append(f"Content-Disposition: form-data; name=\"{k}\"; filename=\"{filename}\"")
+                            lines.append(f"Content-Type: {mime}")
+                            lines.append("")
+                            lines.append(content)
+                        lines.append(f"--{boundary}--")
+                        body = b""
+                        for part in lines:
+                            if isinstance(part, bytes):
+                                body += part + b"\r\n"
+                            else:
+                                body += part.encode('utf-8') + b"\r\n"
+                        return body, boundary
+                    api_url = f"https://api.telegram.org/bot{token}/{method}"
+                    fields = { 'chat_id': chat_id, 'caption': cap }
+                    import mimetypes
+                    mt = mimetypes.guess_type(fp.name)[0] or ''
+                    if method=='sendPhoto':
+                        mime = mt if mt.startswith('image/') else 'image/jpeg'
+                    else:
+                        mime = mt or 'application/octet-stream'
+                    files = { ('photo' if method=='sendPhoto' else 'document'): (fp.name, data, mime) }
+                    body, bnd = _multipart(fields, files)
+                    req = urllib.request.Request(api_url, data=body, method='POST')
+                    req.add_header('Content-Type', f'multipart/form-data; boundary={bnd}')
+                    with urllib.request.urlopen(req, timeout=60) as resp:
+                        _ = resp.read()
+                except Exception as e:
+                    try:
+                        import urllib.error as _ue
+                        if isinstance(e, _ue.HTTPError):
+                            try:
+                                detail = e.read().decode('utf-8','ignore')
+                            except Exception:
+                                detail = ''
+                            _append_log(outlog, f"[error] outbound-file send {fp}: {e} {detail[:200]}")
+                        else:
+                            _append_log(outlog, f"[error] outbound-file send {fp}: {e}")
+                    except Exception:
+                        _append_log(outlog, f"[error] outbound-file send {fp}: {e}")
+            _append_log(outlog, f"[outbound-file] {fp}")
+            _append_ledger({"kind":"bridge-file-outbound","peer":peer,"path":str(fp)})
+        
+        # Optional reset on start: baseline|archive|clear
+        reset_mode = str((outbound_conf.get('reset_on_start') or 'baseline')).lower()
+        try:
+            if reset_mode in ('archive','clear'):
+                arch = HOME/'state'/'outbound-archive'; arch.mkdir(parents=True, exist_ok=True)
+                for peer, pth in {**to_user_paths, **to_peer_paths}.items():
+                    try:
+                        txt = pth.read_text(encoding='utf-8')
+                    except Exception:
+                        txt = ''
+                    if not txt:
+                        continue
+                    if reset_mode == 'archive':
+                        import time as _t
+                        ts = _t.strftime('%Y%m%d-%H%M%S')
+                        dest_dir = arch/peer
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        (dest_dir/f"{pth.name}-{ts}").write_text(txt, encoding='utf-8')
+                    try:
+                        pth.write_text('', encoding='utf-8')
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        # Initialize baseline and persist seen hashes
+        try:
+            seen = load_outbound_seen()
+            for peer, pth in to_user_paths.items():
+                try:
+                    txt = pth.read_text(encoding='utf-8').strip()
+                except Exception:
+                    txt = ''
+                last_seen[peer] = txt; last_sent_ts[peer] = time.time()
+                pk = 'peerA' if peer=='peerA' else 'peerB'
+                seen.setdefault(pk, {})['to_user'] = _hash_text(txt)
+            for peer, pth in to_peer_paths.items():
+                try:
+                    txt = pth.read_text(encoding='utf-8').strip()
+                except Exception:
+                    txt = ''
+                last_seen[f"peer_{peer}"] = txt; last_sent_ts[f"peer_{peer}"] = time.time()
+                pk = 'peerA' if peer=='peerA' else 'peerB'
+                seen.setdefault(pk, {})['to_peer'] = _hash_text(txt)
+            save_outbound_seen(seen)
+        except Exception:
+            pass
+
         while True:
             now = time.time()
             for peer, p in to_user_paths.items():
@@ -498,6 +777,36 @@ def main():
                         last_seen[key] = txt
                         last_sent_ts[key] = now
                         send_peer_summary(peer, txt)
+            # Outbound files
+            try:
+                for peer in ('peerA','peerB'):
+                    for sub in ('files','photos'):
+                        d = outbound_dir/peer/sub
+                        if not d.exists():
+                            continue
+                        for fp in sorted(d.glob('*')):
+                            if fp.is_dir():
+                                continue
+                            name=str(fp.name).lower()
+                            if name.endswith('.caption.txt') or name.endswith('.sendas') or name.endswith('.meta.json'):
+                                continue
+                            key = str(fp)
+                            mt = fp.stat().st_mtime
+                            if sent_files.get(key) == mt:
+                                continue
+                            # optional caption sidecar
+                            cap_fp = fp.with_suffix(fp.suffix + '.caption.txt')
+                            if cap_fp.exists():
+                                try:
+                                    cap = cap_fp.read_text(encoding='utf-8').strip()
+                                except Exception:
+                                    cap = ''
+                            else:
+                                cap = ''
+                            _send_file(peer, fp, cap)
+                            sent_files[key] = mt
+            except Exception as e:
+                _append_log(outlog, f"[error] watch_outbound: {e}")
             time.sleep(1.0)
 
     t_out = threading.Thread(target=watch_outputs, daemon=True)
@@ -516,9 +825,29 @@ def main():
             offset_path.parent.mkdir(parents=True, exist_ok=True)
             offset_path.write_text(json.dumps({"offset": off}), encoding='utf-8')
         for u in updates:
+            # Handle inline button callbacks (e.g., RFD approvals)
+            if u.get('callback_query'):
+                cq = u['callback_query']
+                data = str(cq.get('data') or '')
+                cchat = ((cq.get('message') or {}).get('chat') or {})
+                cchat_id = int(cchat.get('id', 0) or 0)
+                try:
+                    if data.startswith('rfd:'):
+                        parts = data.split(':', 2)
+                        rid = parts[1] if len(parts) > 1 else ''
+                        decision = parts[2] if len(parts) > 2 else ''
+                        _append_ledger({'kind':'decision','rfd_id':rid,'decision':decision,'chat':cchat_id})
+                        tg_api('answerCallbackQuery', {'callback_query_id': cq.get('id'), 'text': f'已记录决策: {decision}'}, timeout=10)
+                        tg_api('sendMessage', {'chat_id': cchat_id, 'text': f"[RFD] {rid} → {decision}"}, timeout=15)
+                    else:
+                        tg_api('answerCallbackQuery', {'callback_query_id': cq.get('id')}, timeout=10)
+                except Exception:
+                    pass
+                continue
             msg = u.get('message') or u.get('edited_message') or {}
             chat = (msg.get('chat') or {})
             chat_id = int(chat.get('id', 0) or 0)
+            chat_type = str(chat.get('type') or '')
             if chat_id not in allow:
                 text = (msg.get('text') or '').strip()
                 if policy == 'open' and is_cmd(text, 'subscribe'):
@@ -551,9 +880,141 @@ def main():
                 elif policy == 'open':
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': '未订阅。发送 /subscribe 可订阅，/unsubscribe 取消。'}, timeout=15)
                 continue
-            text = msg.get('text') or ''
-            if not text:
+            text = (msg.get('text') or '').strip()
+            caption = (msg.get('caption') or '').strip()
+            is_dm = (chat_type == 'private')
+            route_source = text or caption
+            # Enforce mention in group if configured
+            if (not is_dm) and require_mention:
+                ents = msg.get('entities') or []
+                mentions = any(e.get('type')=='mention' for e in ents)
+                if not mentions:
+                    _maybe_hint(chat_id, int((msg.get('from') or {}).get('id', 0) or 0))
+                    continue
+            # Enforce explicit routing for groups
+            has_explicit = bool(re.match(r"^(?:/(?:a|b|both)(?:@\S+)?|(?:a:|b:|both:))", (route_source or '').strip(), re.I))
+            dr = dm_route_default if is_dm else default_route
+            if (not is_dm) and require_explicit and not has_explicit and not (msg.get('document') or msg.get('photo')):
+                _maybe_hint(chat_id, int((msg.get('from') or {}).get('id', 0) or 0))
                 continue
+            # Reply routing: if message contains only a route and replies to another message,
+            # use the replied message's content/files.
+            rmsg = msg.get('reply_to_message') or {}
+            if rmsg and has_explicit and not (text.strip().split(maxsplit=1)[1:] if text else []) and not caption:
+                rtext = (rmsg.get('text') or rmsg.get('caption') or '').strip()
+                if rtext:
+                    route_source = rtext
+                if files_enabled and (rmsg.get('document') or rmsg.get('photo')):
+                    metas = []
+                    try:
+                        if rmsg.get('document'):
+                            doc = rmsg['document']
+                            fn = doc.get('file_name') or 'document.bin'
+                            mime = doc.get('mime_type') or 'application/octet-stream'
+                            if _mime_allowed(mime):
+                                midf = _mid()
+                                path, meta = _save_file_from_telegram(doc.get('file_id'), fn, chat_id, midf)
+                                meta.update({'mime': mime, 'caption': rtext, 'mid': midf}); metas.append(meta)
+                        if rmsg.get('photo'):
+                            ph = sorted(rmsg['photo'], key=lambda p: int(p.get('file_size') or 0))[-1]
+                            fn = 'photo.jpg'; mime = 'image/jpeg'
+                            midf = _mid(); path, meta = _save_file_from_telegram(ph.get('file_id'), fn, chat_id, midf)
+                            meta.update({'mime': mime, 'caption': rtext, 'mid': midf}); metas.append(meta)
+                    except Exception as e:
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': f'接收引用文件失败: {e}'}, timeout=15)
+                        _append_log(outlog, f"[error] inbound-file-reply: {e}")
+                        metas = []
+                    if metas:
+                        routes, _ = _route_from_text(text or '/both', dr)
+                        lines = ["<FROM_USER>", f"[MID: {_mid()}]"]
+                        if rtext:
+                            lines.append(f"Quoted: {redact(rtext)[:200]}")
+                        for mta in metas:
+                            rel = os.path.relpath(mta['path'], start=ROOT)
+                            lines.append(f"File: {rel}")
+                            lines.append(f"SHA256: {mta['sha256']}  Size: {mta['bytes']}  MIME: {mta['mime']}")
+                            try:
+                                side = Path(mta['path']).with_suffix(Path(mta['path']).suffix + '.meta.json')
+                                side.write_text(json.dumps({
+                                    'chat_id': chat_id,
+                                    'path': rel,
+                                    'sha256': mta['sha256'],
+                                    'bytes': mta['bytes'],
+                                    'mime': mta['mime'],
+                                    'caption': rtext,
+                                    'mid': mta.get('mid'),
+                                    'ts': time.strftime('%Y-%m-%d %H:%M:%S')
+                                }, ensure_ascii=False, indent=2), encoding='utf-8')
+                            except Exception:
+                                pass
+                        lines.append("</FROM_USER>")
+                        payload = "\n".join(lines) + "\n"
+                        _deliver_inbound(HOME, routes, payload, _mid())
+                        _append_log(outlog, f"[inbound-file-reply] routes={routes} files={len(metas)} chat={chat_id}")
+                        _append_ledger({'kind': 'bridge-file-inbound', 'chat': chat_id, 'routes': routes,
+                                        'files': [{'path': m['path'], 'sha256': m['sha256']} for m in metas]})
+                        continue
+# Inbound files
+            if files_enabled and (msg.get('document') or msg.get('photo')):
+                if (not is_dm) and require_explicit and not has_explicit:
+                    _maybe_hint(chat_id, int((msg.get('from') or {}).get('id', 0) or 0))
+                    continue
+                metas = []
+                try:
+                    if msg.get('document'):
+                        doc = msg['document']
+                        fn = doc.get('file_name') or 'document.bin'
+                        mime = doc.get('mime_type') or 'application/octet-stream'
+                        if not _mime_allowed(mime):
+                            tg_api('sendMessage', {'chat_id': chat_id, 'text': f'文件类型不被允许: {mime}'}, timeout=15)
+                            continue
+                        midf = _mid()
+                        path, meta = _save_file_from_telegram(doc.get('file_id'), fn, chat_id, midf)
+                        meta.update({'mime': mime, 'caption': caption, 'mid': midf})
+                        metas.append(meta)
+                    if msg.get('photo'):
+                        ph = sorted(msg['photo'], key=lambda p: int(p.get('file_size') or 0))[-1]
+                        fn = 'photo.jpg'
+                        mime = 'image/jpeg'
+                        midf = _mid()
+                        path, meta = _save_file_from_telegram(ph.get('file_id'), fn, chat_id, midf)
+                        meta.update({'mime': mime, 'caption': caption, 'mid': midf})
+                        metas.append(meta)
+                    # Build inbox payload
+                    routes, _ = _route_from_text(route_source or '', dr)
+                    lines = ["<FROM_USER>"]
+                    lines.append(f"[MID: {_mid()}]")
+                    if caption:
+                        lines.append(f"Caption: {redact(caption)}")
+                    for mta in metas:
+                        rel = os.path.relpath(mta['path'], start=ROOT)
+                        lines.append(f"File: {rel}")
+                        lines.append(f"SHA256: {mta['sha256']}  Size: {mta['bytes']}  MIME: {mta['mime']}")
+                        # write sidecar meta json
+                        try:
+                            side = Path(mta['path']).with_suffix(Path(mta['path']).suffix + '.meta.json')
+                            side.write_text(json.dumps({
+                                'chat_id': chat_id,
+                                'path': rel,
+                                'sha256': mta['sha256'],
+                                'bytes': mta['bytes'],
+                                'mime': mta['mime'],
+                                'caption': caption,
+                                'mid': mta.get('mid'),
+                                'ts': time.strftime('%Y-%m-%d %H:%M:%S')
+                            }, ensure_ascii=False, indent=2), encoding='utf-8')
+                        except Exception:
+                            pass
+                    lines.append("</FROM_USER>")
+                    payload = "\n".join(lines) + "\n"
+                    _deliver_inbound(HOME, routes, payload, _mid())
+                    _append_log(outlog, f"[inbound-file] routes={routes} files={len(metas)} chat={chat_id}")
+                    _append_ledger({"kind":"bridge-file-inbound","chat":chat_id,"routes":routes,"files":[{"path":m['path'],"sha256":m['sha256'],"bytes":m['bytes'],"mime":m['mime']} for m in metas]})
+                    continue
+                except Exception as e:
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': f'接收文件失败: {e}'}, timeout=15)
+                    _append_log(outlog, f"[error] inbound-file: {e}")
+                    continue
             # minimal commands
             if is_cmd(text, 'subscribe'):
                 if policy == 'open':
@@ -569,13 +1030,119 @@ def main():
                 else:
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': '当前不支持自助订阅，请联系管理员添加。'}, timeout=15)
                 continue
+            if is_cmd(text, 'status'):
+                st_path = HOME/"state"/"status.json"
+                try:
+                    st = json.loads(st_path.read_text(encoding='utf-8')) if st_path.exists() else {}
+                except Exception:
+                    st = {}
+                phase = st.get('phase'); paused = st.get('paused'); leader = st.get('leader')
+                counts = st.get('mailbox_counts') or {}
+                a = counts.get('peerA') or {}; b = counts.get('peerB') or {}
+                lines = [
+                    f"Phase: {phase}  Paused: {paused}",
+                    f"Leader: {leader}",
+                    f"peerA to_user:{a.get('to_user',0)} to_peer:{a.get('to_peer',0)} patch:{a.get('patch',0)}",
+                    f"peerB to_user:{b.get('to_user',0)} to_peer:{b.get('to_peer',0)} patch:{b.get('patch',0)}",
+                ]
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
+                continue
+            if is_cmd(text, 'queue'):
+                q_path = HOME/"state"/"queue.json"; qA=qB=0; inflA=inflB=False
+                try:
+                    q = json.loads(q_path.read_text(encoding='utf-8')) if q_path.exists() else {}
+                    qA = int(q.get('peerA') or 0); qB = int(q.get('peerB') or 0)
+                    infl = q.get('inflight') or {}; inflA = bool(infl.get('peerA')); inflB = bool(infl.get('peerB'))
+                except Exception:
+                    pass
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"Queue: PeerA={qA} inflight={inflA} | PeerB={qB} inflight={inflB}"}, timeout=15)
+                continue
+            if is_cmd(text, 'locks'):
+                l_path = HOME/"state"/"locks.json"
+                try:
+                    l = json.loads(l_path.read_text(encoding='utf-8')) if l_path.exists() else {}
+                    locks = l.get('inbox_seq_locks') or []
+                    infl = l.get('inflight') or {}
+                    lines=[
+                        f"InboxSeqLocks: {', '.join(locks) if locks else 'none'}",
+                        f"Inflight: PeerA={bool(infl.get('peerA'))} PeerB={bool(infl.get('peerB'))}",
+                    ]
+                except Exception:
+                    lines=["No locks info"]
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
+                continue
             if is_cmd(text, 'whoami'):
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': f"chat_id={chat_id}"}, timeout=15)
                 _append_log(outlog, f"[meta] whoami chat={chat_id}")
                 continue
             if is_cmd(text, 'help'):
-                help_txt = "使用: a:/b:/both: 或 /a /b /both 路由到 PeerA/PeerB/两者；/whoami 查看 chat_id；/subscribe 订阅（若启用）；/unsubscribe 取消订阅；/showpeers on|off 切换是否显示 Peer↔Peer 摘要。"
+                help_txt = (
+                    "使用: a:/b:/both: 或 /a /b /both 路由到 PeerA/PeerB/两者；/whoami 看 chat_id；/status 查看状态；/queue 查看队列；/locks 查看锁；"
+                    "/subscribe 订阅（若启用）；/unsubscribe 取消；/showpeers on|off 切换 Peer↔Peer 摘要；/files [in|out] [N] 列最近文件；/file N 看详情。"
+                )
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
+                continue
+            # /files and /file
+            if re.match(r"^/files(?:@\S+)?\b", text.strip(), re.I):
+                m = re.match(r"^/files(?:@\S+)?\s*(in|out)?\s*(\d+)?", text.strip(), re.I)
+                mode = (m.group(1).lower() if (m and m.group(1)) else 'in')
+                limit = int(m.group(2)) if (m and m.group(2)) else 10
+                base = inbound_dir if mode == 'in' else outbound_dir
+                items = []
+                for root, dirs, files in os.walk(base):
+                    for fn in files:
+                        if fn.endswith('.meta.json') or fn.endswith('.caption.txt'):
+                            continue
+                        fp = Path(root)/fn
+                        try:
+                            st = fp.stat()
+                            items.append((st.st_mtime, fp))
+                        except Exception:
+                            pass
+                items.sort(key=lambda x: x[0], reverse=True)
+                items = items[:max(1, min(limit, 50))]
+                lines=[f"最近文件（{ '入站' if mode=='in' else '出站' }，前 {len(items)} 条）："]
+                map_paths=[str(p) for _,p in items]
+                # Save last listing map for /file N
+                rt = load_runtime(); lm = rt.get('last_files',{})
+                lm[str(chat_id)] = {'mode': mode, 'items': map_paths}
+                rt['last_files']=lm; save_runtime(rt)
+                for idx,(ts,fp) in enumerate(items, start=1):
+                    rel = os.path.relpath(fp, start=ROOT)
+                    try:
+                        size = fp.stat().st_size
+                    except Exception:
+                        size = 0
+                    lines.append(f"{idx}. {rel}  ({size} bytes)")
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
+                continue
+            if re.match(r"^/file(?:@\S+)?\s+\d+\b", text.strip(), re.I):
+                m = re.match(r"^/file(?:@\S+)?\s+(\d+)\b", text.strip(), re.I)
+                n = int(m.group(1)) if m else 0
+                rt = load_runtime(); lm = (rt.get('last_files') or {}).get(str(chat_id)) or {}
+                arr = lm.get('items') or []
+                if n<=0 or n>len(arr):
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': '无效编号。请先 /files 列表，然后 /file N。'}, timeout=15)
+                    continue
+                fp = Path(arr[n-1])
+                info=[]
+                rel = os.path.relpath(fp, start=ROOT)
+                info.append(f"Path: {rel}")
+                try:
+                    st=fp.stat(); info.append(f"Size: {st.st_size} bytes  MTime: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(st.st_mtime))}")
+                except Exception:
+                    pass
+                meta_fp = fp.with_suffix(fp.suffix+'.meta.json')
+                if meta_fp.exists():
+                    try:
+                        meta = json.loads(meta_fp.read_text(encoding='utf-8'))
+                        sha = meta.get('sha256'); mime = meta.get('mime'); cap = meta.get('caption')
+                        if sha: info.append(f"SHA256: {sha}")
+                        if mime: info.append(f"MIME: {mime}")
+                        if cap: info.append(f"Caption: {redact(cap)}")
+                    except Exception:
+                        pass
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(info)}, timeout=15)
                 continue
             if re.match(r"^/showpeers(?:@\S+)?\s+(on|off)\b", text.strip(), re.I):
                 m = re.match(r"^/showpeers(?:@\S+)?\s+(on|off)\b", text.strip(), re.I)
@@ -596,7 +1163,7 @@ def main():
                 else:
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': '当前不支持自助取消订阅，请联系管理员。'}, timeout=15)
                 continue
-            routes, body = _route_from_text(text, default_route)
+            routes, body = _route_from_text(route_source, dr)
             mid = _mid()
             body2 = _wrap_user_if_needed(body)
             payload = _wrap_with_mid(body2, mid)

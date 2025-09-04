@@ -851,6 +851,110 @@ def allowed_by_policies(paths: List[str], policies: Dict[str,Any]) -> bool:
             return False
     return True
 
+# ---------- RFD helpers ----------
+def _ledger_tail(home: Path, keep: int = 400) -> List[Dict[str,Any]]:
+    p = home/"state"/"ledger.jsonl"
+    if not p.exists():
+        return []
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()[-keep:]
+        out=[]
+        for ln in lines:
+            try: out.append(json.loads(ln))
+            except Exception: pass
+        return out
+    except Exception:
+        return []
+
+def _ledger_has_rfd(home: Path, rid: str) -> bool:
+    rid = str(rid or '').strip()
+    if not rid: return False
+    for ev in _ledger_tail(home):
+        if str(ev.get('kind') or '').lower() == 'rfd' and str(ev.get('id') or '') == rid:
+            return True
+    return False
+
+def _ledger_has_decision_approved(home: Path, rid: str) -> bool:
+    rid = str(rid or '').strip()
+    if not rid: return False
+    for ev in _ledger_tail(home):
+        if str(ev.get('kind') or '').lower() == 'decision' and str(ev.get('rfd_id') or '') == rid:
+            dec = str(ev.get('decision') or '').lower()
+            if dec in ('approve','approved','yes','ok','allow','accept'):
+                return True
+    return False
+
+def _ensure_rfd_logged(home: Path, rid: str, title: str, summary: str = ""):
+    if not _ledger_has_rfd(home, rid):
+        log_ledger(home, {"kind": "rfd", "id": rid, "title": title, "summary": summary})
+
+def _paths_match_patterns(paths: List[str], patterns: List[str]) -> bool:
+    for p in paths:
+        for pat in patterns:
+            if fnmatch.fnmatch(p, pat):
+                return True
+    return False
+
+def _rfd_id_for_large(paths: List[str], lines: int) -> str:
+    import hashlib
+    basis = ",".join(paths) + f"|{lines}"
+    return f"rfd-large-{hashlib.sha1(basis.encode('utf-8')).hexdigest()[:8]}"
+
+def _rfd_id_for_protected(paths: List[str]) -> str:
+    import hashlib
+    basis = ",".join(paths)
+    return f"rfd-prot-{hashlib.sha1(basis.encode('utf-8')).hexdigest()[:8]}"
+
+def _maybe_emit_rfd_from_to_peer(home: Path, who: str, text: str):
+    try:
+        import yaml  # type: ignore
+        obj = yaml.safe_load(text)
+        if isinstance(obj, dict):
+            intent = str(obj.get('intent') or '').strip().lower()
+            _type = str(obj.get('type') or '').strip().lower()
+            if intent == 'rfd' or _type == 'rfd':
+                rid = str(obj.get('id') or '').strip()
+                title = str(obj.get('title') or obj.get('summary') or '')
+                if not title:
+                    tasks = obj.get('tasks') or []
+                    if isinstance(tasks, list) and tasks:
+                        t0 = tasks[0]
+                        if isinstance(t0, dict):
+                            title = str(t0.get('desc') or '')
+                if not rid:
+                    import hashlib
+                    rid = 'rfd-msg-' + hashlib.sha1(text.encode('utf-8', errors='ignore')).hexdigest()[:8]
+                _ensure_rfd_logged(home, rid, title or f"RFD from {who}")
+    except Exception:
+        pass
+
+def _rfd_gate_check(home: Path, policies: Dict[str,Any], patch: str, lines: int) -> Tuple[bool, Optional[str]]:
+    """Return (allowed, reject_reason_or_None). Applies RFD gates for large diff and protected paths.
+    If rejected due to RFD requirement, also emits an RFD event to the ledger.
+    """
+    gates = (policies.get('rfd') or {}).get('gates') or {}
+    prot = gates.get('protected_paths') or []
+    large_requires = bool(gates.get('large_diff_requires_rfd', False))
+    max_lines = int((policies.get('patch_queue') or {}).get('max_diff_lines', 150))
+    paths = extract_paths_from_patch(patch)
+    # Protected paths gate
+    if prot and _paths_match_patterns(paths, prot):
+        rid = _rfd_id_for_protected(paths)
+        if _ledger_has_decision_approved(home, rid):
+            return True, None
+        _ensure_rfd_logged(home, rid, "受保护路径修改审批", f"paths={paths}")
+        return False, f"rfd-required-protected-path:{rid}"
+    # Large diff gate (allows override via decision)
+    if lines > max_lines:
+        if not large_requires:
+            return False, f"too-many-lines:{lines}>{max_lines}"
+        rid = _rfd_id_for_large(paths, lines)
+        if _ledger_has_decision_approved(home, rid):
+            return True, None
+        _ensure_rfd_logged(home, rid, "大改动行数审批", f"lines={lines}")
+        return False, f"rfd-required-large-diff:{rid}"
+    return True, None
+
 
 def try_lint():
     LINT_CMD=os.environ.get("LINT_CMD","").strip()
@@ -1686,7 +1790,40 @@ def main(home: Path):
             (state/"status.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
+    
+    def write_queue_and_locks():
+        state = home/"state"
+        # Queue snapshot
+        try:
+            q_payload = {
+                'peerA': len(queued.get('PeerA') or []),
+                'peerB': len(queued.get('PeerB') or []),
+                'inflight': {
+                    'peerA': bool(inflight.get('PeerA')),
+                    'peerB': bool(inflight.get('PeerB')),
+                }
+            }
+            (state/"queue.json").write_text(json.dumps(q_payload, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
+        # Locks snapshot (proxy: inbox seq locks present + inflight)
+        try:
+            locks = []
+            for nm in ('inbox-seq-peerA.lock','inbox-seq-peerB.lock'):
+                if (state/nm).exists():
+                    locks.append(nm)
+            l_payload = {
+                'inbox_seq_locks': locks,
+                'inflight': {
+                    'peerA': bool(inflight.get('PeerA')),
+                    'peerB': bool(inflight.get('PeerB')),
+                }
+            }
+            (state/"locks.json").write_text(json.dumps(l_payload, ensure_ascii=False), encoding='utf-8')
+        except Exception:
+            pass
     write_status(deliver_paused)
+    write_queue_and_locks()
 
     # 在初始注入前初始化 NUDGE 去重与 ACK 去重状态
     last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
@@ -1862,13 +1999,15 @@ def main(home: Path):
                     mbox_counts["peerA"]["to_peer"] += 1
                     mbox_last["peerA"]["to_peer"] = time.strftime("%H:%M:%S")
                     last_event_ts["PeerA"] = time.time()
+                    # 若 to_peer 表达了 RFD 意图，则落账为 kind:rfd（供桥接下发卡片）
+                    _maybe_emit_rfd_from_to_peer(home, "PeerA", payload)
                     # 若 to_peer 中包含统一 diff，尝试直接应用（避免“讨论了 diff 但未落地”）
                     inline = extract_inline_diff_if_any(payload) or ""
                     if inline:
                         print_block("PeerA 内嵌补丁", "预检中 …")
                         lines = count_changed_lines(inline)
-                        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
-                        if lines <= max_lines:
+                        allowed, reason = _rfd_gate_check(home, policies, inline, lines)
+                        if allowed:
                             ok,err = git_apply_check(inline)
                             if ok:
                                 ok2,err2 = git_apply(inline)
@@ -1888,6 +2027,9 @@ def main(home: Path):
                             else:
                                 print("[PATCH] 预检失败：\n"+err.strip())
                                 log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                        else:
+                            # 记录因 RFD/策略原因被拒绝
+                            log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
                     if should_forward(payload, "PeerA", "PeerB", policies, state, eff_enabled):
@@ -1903,26 +2045,31 @@ def main(home: Path):
                         patch = norm
                         print_block("PeerA 补丁", "预检中 …")
                         lines = count_changed_lines(patch)
-                        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
-                        if lines>max_lines:
-                            print(f"[POLICY] 改动行数 {lines} > {max_lines}，拒绝。")
-                            log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"too-many-lines","lines":lines});
-                        else:
-                            ok,err = git_apply_check(patch)
-                            if not ok:
-                                print("[PATCH] 预检失败：\n"+err.strip())
-                                log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                        allowed, reason = _rfd_gate_check(home, policies, patch, lines)
+                        if allowed:
+                            # 路径允许性检查
+                            paths = extract_paths_from_patch(patch)
+                            if not allowed_by_policies(paths, policies):
+                                log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
                             else:
-                                ok2,err2 = git_apply(patch)
-                                if not ok2:
-                                    print("[PATCH] 应用失败：\n"+err2.strip())
-                                    log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                                ok,err = git_apply_check(patch)
+                                if not ok:
+                                    print("[PATCH] 预检失败：\n"+err.strip())
+                                    log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                                 else:
-                                    try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply patch (mailbox)")
-                                    log_ledger(home, {"from":"PeerA","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
-                                    mbox_counts["peerA"]["patch"] += 1
-                                    _ack_receiver("PeerA", events["peerA"].get("patch"))
-                                    last_event_ts["PeerA"] = time.time()
+                                    ok2,err2 = git_apply(patch)
+                                    if not ok2:
+                                        print("[PATCH] 应用失败：\n"+err2.strip())
+                                        log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                                    else:
+                                        try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply patch (mailbox)")
+                                        log_ledger(home, {"from":"PeerA","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
+                                mbox_counts["peerA"]["patch"] += 1
+                                _ack_receiver("PeerA", events["peerA"].get("patch"))
+                                last_event_ts["PeerA"] = time.time()
+                        else:
+                            print(f"[POLICY] 补丁需 RFD 批准，原因: {reason}")
+                            log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 # PeerB 事件
                 if events["peerB"].get("to_user"):
                     # 忽略 PeerB → USER 的通道（对外口径由 PeerA 统一输出）
@@ -1933,12 +2080,13 @@ def main(home: Path):
                     mbox_counts["peerB"]["to_peer"] += 1
                     mbox_last["peerB"]["to_peer"] = time.strftime("%H:%M:%S")
                     last_event_ts["PeerB"] = time.time()
+                    _maybe_emit_rfd_from_to_peer(home, "PeerB", payload)
                     inline = extract_inline_diff_if_any(payload) or ""
                     if inline:
                         print_block("PeerB 内嵌补丁", "预检中 …")
                         lines = count_changed_lines(inline)
-                        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
-                        if lines <= max_lines:
+                        allowed, reason = _rfd_gate_check(home, policies, inline, lines)
+                        if allowed:
                             ok,err = git_apply_check(inline)
                             if ok:
                                 ok2,err2 = git_apply(inline)
@@ -1954,6 +2102,8 @@ def main(home: Path):
                             else:
                                 print("[PATCH] 预检失败：\n"+err.strip())
                                 log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                        else:
+                            log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
                         if should_forward(payload, "PeerB", "PeerA", policies, state, eff_enabled):
@@ -1969,30 +2119,34 @@ def main(home: Path):
                         patch = norm
                         print_block("PeerB 补丁", "预检中 …")
                         lines = count_changed_lines(patch)
-                        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
-                        if lines>max_lines:
-                            print(f"[POLICY] 改动行数 {lines} > {max_lines}，拒绝。")
-                            log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":"too-many-lines","lines":lines});
-                        else:
-                            ok,err = git_apply_check(patch)
-                            if not ok:
-                                print("[PATCH] 预检失败：\n"+err.strip())
-                                log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                        allowed, reason = _rfd_gate_check(home, policies, patch, lines)
+                        if allowed:
+                            paths = extract_paths_from_patch(patch)
+                            if not allowed_by_policies(paths, policies):
+                                log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
                             else:
-                                ok2,err2 = git_apply(patch)
-                                if not ok2:
-                                    print("[PATCH] 应用失败：\n"+err2.strip())
-                                    log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                                ok,err = git_apply_check(patch)
+                                if not ok:
+                                    print("[PATCH] 预检失败：\n"+err.strip())
+                                    log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                                 else:
-                                    try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply patch (mailbox)")
-                                    log_ledger(home, {"from":"PeerB","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
+                                    ok2,err2 = git_apply(patch)
+                                    if not ok2:
+                                        print("[PATCH] 应用失败：\n"+err2.strip())
+                                        log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                                    else:
+                                        try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply patch (mailbox)")
+                                        log_ledger(home, {"from":"PeerB","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
                                 mbox_counts["peerB"]["patch"] += 1
                                 _ack_receiver("PeerB", events["peerB"].get("patch"))
                                 last_event_ts["PeerB"] = time.time()
+                        else:
+                            print(f"[POLICY] 补丁需 RFD 批准，原因: {reason}")
+                            log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 # 持久化索引
                 mbox_idx.save()
                 # 刷新面板用状态
-                write_status(deliver_paused)
+                write_status(deliver_paused); write_queue_and_locks()
                 # 检查是否需要超时重发
                 _resend_timeouts()
                 # 若队列中有待发消息且接收方空闲，尝试派发
@@ -2033,7 +2187,7 @@ def main(home: Path):
         # /compose 已移除：行内输入依赖 readline，后台静音避免干扰
         if line == "/anti-on":
             handoff_filter_override = True
-            write_status(deliver_paused)
+            write_status(deliver_paused); write_queue_and_locks()
             print("[ANTI] 低信号过滤 override=on"); continue
         if line == "/anti-off":
             handoff_filter_override = False

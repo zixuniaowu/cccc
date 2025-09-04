@@ -94,7 +94,7 @@ Security & Safety
 Milestones (from PRD)
 - M0: PoC loop — fuzzy goal → A/B handoff → minimal patch → preflight → ledger.
 - M1: Commit queue + soft locks + evidence ledger + rule‑based confidence.
-- M2: Telegram bridge for <TO_USER>/<TO_PEER>, inline RFD, write‑back to ledger.
+- M2: Telegram bridge for <TO_USER>/<TO_PEER>, inline RFD, write‑back to ledger (implemented; see “M2 Status — Telegram Bridge”).
 - M3: Docshot incremental context; deviation detection; auto correction proposals.
 - M4: Security/dep scan, secrets detection, perf gates, plugin third roles.
 
@@ -157,21 +157,23 @@ Pending Decisions (to align with user)
 - Ledger backend: JSONL now, migrate to SQLite at M1.5?
 
 Quickstart
-- Local run suggestion: `python cccc.py` after setting environment if needed; see README.md for details.
+- Run `python cccc.py` in the repo root. An onboarding wizard can help configure Telegram (token via env, allowlist discovery). Autostart is enabled when configured.
 
 Project Status (Now)
-- Prompts: `PEERA.md`/`PEERB.md` fused with v2. Add Persona (humanized co‑leader stance), PCR+Hook as soft‑required, mapping to CLAIM/COUNTER/EVIDENCE, and `.cccc/work/**` shared workspace rules. Startup system prompt aligned.
-- Boundaries: `.cccc/**` clarified as orchestrator domain. Allowed writes: `.cccc/mailbox/**`, `.cccc/work/**`, `.cccc/logs/**`, `.cccc/state/**` (non‑authoritative). Orchestrator code/config/policies remain guarded.
-- NUDGE robustness: bridge adapter and tmux path hardened to reliably submit after paste (CR/LF/Ctrl‑J variants + pane poke). Configurable `post_paste_keys` per peer.
-- Periodic self‑check: new configurable cadence and text. After every N user/system handoffs (default 20), system asks both peers 5 short self‑inspection questions before proceeding.
-- Ignore rules: `.gitignore` ignores `.cccc/work/**` by default; evidence “promotion” documented.
+- Prompts: `PEERA.md`/`PEERB.md` aligned (v2). Persona cue added; PCR+Hook guidance mapped to CLAIM/COUNTER/EVIDENCE; `.cccc/work/**` shared workspace rules embedded. Startup system prompt aligned via `prompt_weaver.py`.
+- Boundaries: `.cccc/**` is orchestrator domain. Allowed writes: `.cccc/mailbox/**`, `.cccc/work/**`, `.cccc/logs/**`, `.cccc/state/**` (non‑authoritative). Orchestrator code/config/policies remain guarded.
+- NUDGE stability: simplified to “paste → single Enter”. No pre‑Enter poke; extra Enters disabled by default. NUDGE text enforces a closed loop: read the oldest inbox file → act → output → move that file to `processed/` → next.
+- Inbox numbering: per‑peer fcntl lock + counter under `.cccc/state/` generates monotonic 6‑digit sequences (eliminates duplicate inbox filenames under concurrency).
+- Telegram bridge: robust inbound/outbound with explicit routing, reply‑routing, file exchange, startup noise suppression, and minimal commands (details below).
+- Periodic self‑check: configurable cadence and text. After every N user/system handoffs (default 20), system asks both peers short self‑inspection questions; emits `kind:self-check` in ledger.
+- Hygiene: `.gitignore` ignores `.cccc/work/**`; evidence “promotion” path documented.
 
 Configs (added/changed)
 - `.cccc/settings/cli_profiles.yaml`
   - `delivery.self_check_every_handoffs: 20` — 0 disables.
   - `delivery.self_check_text: |` — multiline self‑check prompt text.
-  - `peerB.post_paste_keys: ["Enter", "C-m"]` — more robust submit after paste.
-- `.cccc/prompt_weaver.py` — startup system prompt now mentions persona cue, PCR+Hook hint + exemptions, and `.cccc` allowed writes.
+  - `peerB.post_paste_keys: ["Enter"]` — default single Enter submit.
+- `.cccc/prompt_weaver.py` — startup system prompt includes persona cue, PCR+Hook hint + exemptions, `.cccc` allowed writes, and Telegram file exchange guidance (outbound photos/files folders, `.caption.txt`, `.sendas`).
 
 Self‑Check (lightweight governance)
 - Trigger: counts non‑NUDGE handoffs from User/System; every Nth triggers for both peers.
@@ -179,28 +181,48 @@ Self‑Check (lightweight governance)
 - Ledger: emits `kind: self-check` entry.
 - Goal: prevent drift/looping; reinforce persona and first‑principles without heavy rules.
 
-NUDGE Reliability (Codex CLI update adaptation)
-- Bridge adapter (`.cccc/adapters/bridge.py`): after writing payload, sends `sendline("")`, `Ctrl‑M ×2`, raw `\r ×2`, raw `\n`, `Ctrl‑J`, with short delays.
-- Orchestrator nudge path: after writing inbox in bridge mode, sends a best‑effort `Enter` to the pane as a poke.
-- Profiles: per‑peer `post_paste_keys` customizable.
+NUDGE Reliability (updated)
+- Orchestrator NUDGE: paste, then a single Enter; no pre‑Enter “poke”, no extra Enters by default (configurable per‑peer if needed).
+- NUDGE text: closed loop of processing inbox files in order and moving processed files to `processed/`.
+- Bridge mode: adapter writes `inbox.md`; orchestrator avoids duplicate submits; CLI profiles keep minimal `send_keys=["Enter"]`.
 
-M2 Plan — Telegram Bridge (MVP)
-- Goal: chat→mailbox→peers with evidence‑first flow; minimal, reversible.
-- Process: separate bridge process reads Telegram (long polling); writes `<FROM_USER>…</FROM_USER>` with `[MID: …]` into `.cccc/mailbox/peerA|peerB/inbox.md` (default broadcast; support `a:`/`b:`/`both:` prefixes). Tails `peerA/to_user.md` and posts concise updates back.
-- Safety: token via env var; chat allowlist in `.cccc/settings/telegram.yaml`; redact and cap message size; no diffs in chat (point to repo files instead).
-- Reliability: file‑based handoff only; retries/backoff; logs to `.cccc/state/bridge-telegram.log` and annotates ledger (`from=user-telegram`).
-- Acceptance (P0):
-  - A1: Inbound chat reaches both peers and includes `[MID]` ack flow.
-  - A2: Outbound to_user summaries appear in chat (debounced, truncated).
-  - A3: Ledger entries recorded for inbound/outbound.
-  - A4: No secrets leaked; only allowlisted chats accepted.
+M2 Status — Telegram Bridge (implemented)
+- Mode: long‑polling `getUpdates` with singleton lock; logs to `.cccc/state/bridge-telegram.log`; optional dry‑run（文件驱动的模拟）。
+- One bot, explicit routing: require `a:`/`b:`/`both:` prefix or `/a` `/b` `/both` commands in groups; mention form `@Bot a:` supported；可选 `require_mention`。
+- Reply‑routing: reply to a message with only `/a|/b|/both` routes the quoted text and attachments to the selected peer(s)。
+- Inbound text: auto‑wrap to `<FROM_USER>…</FROM_USER>` when no known tags；插入 `[MID: …]` 于开标签后。按序写入 `.cccc/mailbox/<peer>/inbox/000123.<MID>.txt`（同时镜像到 `inbox.md`）。
+- Inbound files: 保存至 `.cccc/work/upload/inbound/<chat>/<date>/<MID>__name`，附 `.meta.json`（mime/bytes/sha256/caption/ts）。Inbox 引用包含文件路径+元信息。
+- Outbound messages: 监听 `to_user.md`（默认仅 PeerA，可由 `outbound.watch_to_user_peers` 配置）与 `to_peer.md`（当启用），发送去重/节流后的摘要。Peer↔Peer 摘要默认开启；可用 `/showpeers on|off` 切换。
+- Outbound files: 从 `.cccc/work/upload/outbound/<peer>/{photos|files}/` 发送；支持 `.caption.txt`（<=900 chars）与 `.sendas`（`photo|document`）旁注；自动猜测 MIME，图片默认 `sendPhoto`。
+- RFD cards: 监控 ledger 的 `kind:rfd`，下发带内联按钮的卡片（Approve/Reject/Ask More）；决策落账为 `kind:decision`。
+- Startup noise suppression: `.cccc/state/outbound_seen.json` 持久化基线，避免重发历史；首次启动推进 offset 跳过 Telegram 历史。支持 `outbound.reset_on_start: baseline|archive|clear`。
+- Security: 通过 `.cccc/settings/telegram.yaml` 配置 allowlist；支持脱敏与大小上限；EXIF 可配置剥离；网络请求最小化并记录日志。
 
-Open Decisions (bridge)
-- Broadcast default: always both, or remember last addressed peer?
-- Outbound scope: only `to_user` vs include patch/test short lines.
-- Formatting: plain text vs Markdown; per‑chat toggles?
-- Placement: launch bridge as third tmux pane vs separate process/service.
+Telegram Commands（最小集）
+- `/help`：用法与路由提示。
+- `/whoami`：返回 `chat_id` 以便加入 allowlist。
+- `/subscribe` `/unsubscribe`：自助订阅/取消（当 `autoregister: open`）。
+- `/showpeers on|off`：切换 Peer↔Peer 摘要（全局运行时，默认 ON）。
+- `/status` `/queue` `/locks`：查看 `.cccc/state/` 的基本快照。
+- `/files [in|out] [N]`、`/file N`：列最近文件并查看详情（path/size/MIME/SHA256/caption）。
 
-Next Steps (proposed)
-- Draft `./.cccc/adapters/telegram_bridge.py` skeleton + `settings/telegram.yaml` (token env var name, chat allowlist, post options), docs page.
-- Dry‑run with mock transport (no network) to validate mailbox integration; then gate networked run behind explicit token.
+Process Management（bridge）
+- `cccc.py` 提供引导式向导，支持通过环境变量输入 Token、allowlist 发现与可选 `chat_id` 直填。
+- 多仓隔离：仅在确认为“本仓库的桥接进程”后才会终止旧进程（校验 `/proc/<pid>/cmdline`）。
+- 写入 PID 并在退出时优雅清理（SIGTERM→wait→SIGKILL）。在配置或 `dry_run: true` 时自动启动。
+
+Defaults（开箱即用）
+- `autostart: true`，`dry_run: false`，`show_peer_messages: true`。
+- Routing：`require_explicit: true`，`allow_prefix: true`，`require_mention: false`（群组可选）。
+- Files：`files.enabled: true`，`max_mb: 16`，`inbound_dir: .cccc/work/upload/inbound`，`outbound_dir: .cccc/work/upload/outbound`，`strip_exif: true`。
+- Outbound：`outbound.watch_to_user_peers: [peerA]`，`outbound.reset_on_start: baseline`。
+
+Next Steps（toward a polished OSS product）
+- Per‑chat showpeers：从全局切换为“按 chat 持久化”的细粒度控制。
+- 文件提级与校验：`/promote` 将入站文件从 `.cccc/work/upload/inbound/**` 提升到 `docs/evidence/**`（通过 patch）；`/check` 运行 Evidence Runner 校验（见 `Evidence-Card-Spec.md`）。
+- 远程维护：新增 `/outbound reset baseline|archive|clear`，便于无 SSH 情况下重置出站基线。
+- 媒体增强：统一回复路由 UX，并支持 Telegram 图集（`sendMediaGroup`）以更好地承载多图/多文件。
+- 上传健壮性：可选引入 `requests` 简化 multipart、改进超时/重试；在安全前提下提升 `max_mb`；分片发送更大文件。
+- 可观测性：提供轻量 `/dashboard` 链接；ledger 从 JSONL 迁移到 SQLite，提升可查询与持久化能力。
+- 安全加固：默认剥离 EXIF，可选恶意文件扫描（如 clamscan）；对入/出站路径实施严格 allowlist；日志持续脱敏。
+- 体验打磨：精简 `/help` 文案、RFD 卡片包含关键上下文；在 README 提供“一键上手（bridge + CLI + evidence‑first）”快速指引。

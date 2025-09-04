@@ -119,6 +119,67 @@ def main():
 
     BRIDGE_PROC = {"p": None}
 
+    def _kill_stale_bridge():
+        """Best-effort: terminate a previously spawned bridge (by pid file), and
+        remove stale lock/pid files to avoid duplicate or wedged instances.
+        """
+        try:
+            pid_path = home/"state"/"telegram-bridge.pid"
+            if pid_path.exists():
+                try:
+                    pid = int(pid_path.read_text(encoding='utf-8').strip())
+                except Exception:
+                    pid = 0
+                if pid > 0:
+                    # Verify target process belongs to this repo (by cmdline path)
+                    belongs=False
+                    try:
+                        cmdline_path=f'/proc/{pid}/cmdline'
+                        from pathlib import Path as _P
+                        repo_root=_P(__file__).resolve().parent
+                        if _P(cmdline_path).exists():
+                            cmd=_P(cmdline_path).read_bytes().decode('utf-8','ignore')
+                            # Must contain this repo's telegram_bridge.py path
+                            if str(repo_root/'.cccc'/'adapters'/'telegram_bridge.py') in cmd:
+                                belongs=True
+                    except Exception:
+                        pass
+                    if not belongs:
+                        # Do not kill unknown process; treat as stale pid
+                        pid=0
+                    if pid>0:
+                        try:
+                            os.killpg(os.getpgid(pid), signal.SIGTERM)
+                        except Exception:
+                            try:
+                                os.kill(pid, signal.SIGTERM)
+                            except Exception:
+                                pass
+                        for _ in range(10):
+                            try:
+                                os.kill(pid, 0)
+                                time.sleep(0.3)
+                            except Exception:
+                                break
+                        else:
+                            try:
+                                os.killpg(os.getpgid(pid), signal.SIGKILL)
+                            except Exception:
+                                try:
+                                    os.kill(pid, signal.SIGKILL)
+                                except Exception:
+                                    pass
+            try:
+                (home/"state"/"telegram-bridge.lock").unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                (home/"state"/"telegram-bridge.pid").unlink(missing_ok=True)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
     def _spawn_telegram_bridge(env_extra: dict):
         bridge = home/"adapters"/"telegram_bridge.py"
         if not bridge.exists():
@@ -126,8 +187,11 @@ def main():
             return None
         env = os.environ.copy(); env.update(env_extra or {})
         print("[TELEGRAM] 正在启动桥接（长轮询）…")
-        # Start new session so we can kill the whole process group on exit
-        p = subprocess.Popen([sys.executable, str(bridge)], env=env, start_new_session=True)
+        # Kill stale instance before spawning
+        _kill_stale_bridge()
+        # Start new session so we can kill the whole process group on exit; set cwd to repo root
+        repo_root = Path(__file__).resolve().parent
+        p = subprocess.Popen([sys.executable, str(bridge)], env=env, cwd=str(repo_root), start_new_session=True)
         BRIDGE_PROC["p"] = p
         try:
             # Persist PID for diagnostics
@@ -288,6 +352,20 @@ def main():
                 print("[WARN] 未提供 Token，无法连接 Telegram；将以本地模式继续。")
     # Install shutdown hooks after potential spawn
     _install_shutdown_hooks()
+
+    # Autostart Telegram bridge in non-interactive environments when configured
+    try:
+        cfg_path = home/"settings"/"telegram.yaml"
+        cfg = _read_yaml(cfg_path)
+        auto = True if not cfg else bool((cfg or {}).get('autostart', True))
+        if auto and (BRIDGE_PROC.get('p') is None):
+            token_env = str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
+            token_val = os.environ.get(token_env, '')
+            dry = bool((cfg or {}).get('dry_run', True))
+            if dry or token_val:
+                _spawn_telegram_bridge({token_env: token_val} if token_val else {})
+    except Exception:
+        pass
     try:
         from orchestrator_tmux import main as run
     except Exception as e:
