@@ -1,4 +1,4 @@
-leader: peerA   # 初期由你指定：peerA 或 peerB
+leader: peerA   # Choose initial leader: peerA or peerB
 specialties:
   peerA: [product-shaping, architecture, design, review]
   peerB: [implementation, testing, performance, review]

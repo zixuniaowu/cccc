@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import re, json, time, os, shlex, tempfile, subprocess, uuid
 
-# --- tmux helpers (复用 orchestrator 的方式) ---
+# --- tmux helpers (aligned with orchestrator) ---
 def _run(cmd: str, timeout: int = 600, cwd: Optional[Path] = None) -> Tuple[int,str,str]:
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(cwd) if cwd else None)
     try:
@@ -36,9 +36,9 @@ def paste_to_pane(pane: str, text: str, profile: Dict[str,Any]):
     _tmux("load-buffer","-b",buf,fname)
     # Use bracketed paste (-p) to signal paste to the CLI for more reliable handling
     _tmux("paste-buffer","-p","-t",pane,"-b",buf)
-    # 稍长暂停，避免发送键被粘贴流吞掉（TUI 输入框更稳）
+    # Small pause so the paste buffer is not swallowed; stabilizes TUI input boxes
     time.sleep(0.15)
-    # 粘贴后按序列提交
+    # After paste, send a configurable sequence of submit keys
     keys = profile.get("post_paste_keys") or ["Enter", "Enter", "C-m"]
     for k in keys:
         _tmux("send-keys","-t",pane,k)
@@ -47,7 +47,7 @@ def paste_to_pane(pane: str, text: str, profile: Dict[str,Any]):
     except Exception: pass
 
 def type_to_pane(pane: str, text: str, profile: Dict[str,Any]):
-    # 逐字发送，适合不稳定的 TUI 粘贴场景
+    # Type char-by-char; better for fragile TUI paste scenarios
     try:
         code,out,err = _tmux("display-message","-p","-t",pane,"#{pane_in_mode}")
         if code == 0 and out.strip() in ("1","on","yes"):
@@ -66,17 +66,17 @@ def type_to_pane(pane: str, text: str, profile: Dict[str,Any]):
         _tmux("send-keys","-t",pane,"-l",line)
         is_last = (i == len(lines) - 1)
         if not is_last:
-            # 为多行正文插入换行（不提交）
+            # Insert a newline for multi-line bodies (no submit)
             _tmux("send-keys","-t",pane,newline_key)
         else:
             if send_at_end:
-                # 统一提交
+                # Submit once at the end
                 _tmux("send-keys","-t",pane,final_send_key)
             else:
-                # 每行提交一次
+                # Submit each line
                 _tmux("send-keys","-t",pane,line_send_key)
 
-        # 分块节流，避免 TUI 过载
+        # Chunked throttling to avoid overloading the TUI
         if chunk_lines and (i+1) % chunk_lines == 0:
             time.sleep(chunk_delay)
 
@@ -90,7 +90,7 @@ def send_text(pane: str, text: str, profile: Dict[str,Any]):
 def send_ctrl_c(pane: str):
     _tmux("send-keys","-t",pane,"C-c")
 
-# --- 状态与判空 ---
+# --- State & idle detection ---
 class PaneIdleJudge:
     def __init__(self, profile: Dict[str,Any]):
         self.prompt_re = re.compile(profile.get("prompt_regex",""), re.I) if profile.get("prompt_regex") else None
@@ -100,29 +100,29 @@ class PaneIdleJudge:
         self._last_change_ts = 0.0
 
     def refresh(self, pane: str) -> Tuple[bool, str]:
-        """返回 (是否空闲, 解释)"""
+        """Return (is_idle, reason)."""
         text = capture_pane(pane, lines=1200)
         now = time.time()
         if text != self._last_snapshot:
             self._last_snapshot = text
             self._last_change_ts = now
 
-        tail = text.splitlines()[-30:]  # 看最近 30 行
+        tail = text.splitlines()[-30:]  # inspect the most recent 30 lines
         tail_txt = "\n".join(tail)
 
-        # 忙碌正则命中 → 忙
+        # If any busy regex matches → busy
         for rx in self.busy_res:
             if rx.search(tail_txt):
                 return False, "busy_regex"
 
-        # 有提示符 + 安静一段时间 → 空闲
+        # If prompt detected and quiet for a while → idle
         if self.prompt_re and self.prompt_re.search(tail_txt):
             if now - self._last_change_ts >= self.quiet_sec:
                 return True, "prompt+quiet"
             else:
                 return False, "prompt-but-noisy"
 
-        # 无提示符时，用“静默时长”兜底
+        # Fallback without prompt: rely on quiet duration
         if now - self._last_change_ts >= self.quiet_sec:
             return True, "quiet-only"
 
@@ -164,10 +164,10 @@ ACK_RE = re.compile(r"(?:^|;|\s)ack:\s*([A-Za-z0-9\-\._:]+)", re.I)
 NACK_RE= re.compile(r"(?:^|;|\s)nack:\s*([A-Za-z0-9\-\._:]+)", re.I)
 SYS_NOTES_RE = re.compile(r"<SYSTEM_NOTES>([\s\S]*?)</SYSTEM_NOTES>", re.I)
 # Fallback matchers across whole output
-# 1) Prefer 6-digit seq directly after ack: / ack：, regardless of surrounding chars
-ANY_ACK_SEQ_RE = re.compile(r"(?i)ack\s*[:：]\s*(\d{6})")
+# 1) Prefer 6-digit seq directly after ack:, regardless of surrounding chars
+ANY_ACK_SEQ_RE = re.compile(r"(?i)ack\s*:\s*(\d{6})")
 # 2) General token (more permissive), allow preceding whitespace, '[' or '<'
-ANY_ACK_RE = re.compile(r"(?i)(?:^|[\s\[<])ack\s*[:：]\s*([A-Za-z0-9\-\._:]+)")
+ANY_ACK_RE = re.compile(r"(?i)(?:^|[\s\[<])ack\s*:\s*([A-Za-z0-9\-\._:]+)")
 
 def find_acks_from_output(output: str) -> Tuple[List[str], List[str]]:
     """Return (acks, nacks) tokens detected in CLI output.
@@ -203,13 +203,12 @@ def wrap_with_mid(payload: str, mid: str) -> str:
         return payload[:end] + "\n" + marker + payload[end:]
     return marker + "\n" + payload
 
-# --- 主入口：投递（若忙则入队；空闲则发送并等待ACK） ---
+# --- Main entry: deliver (queue if busy); wait for ACK when enabled ---
 def deliver_or_queue(home: Path, pane: str, peer: str, payload: str,
                      profile: Dict[str,Any], delivery_conf: Dict[str,Any],
                      mid: Optional[str] = None) -> Tuple[str, str]:
     """
-    返回 (status, mid)
-      status in {"delivered","queued","failed"}
+    Return (status, mid) where status in {"delivered","queued","failed"}
     """
     judge = PaneIdleJudge(profile)
     outbox = Outbox(home, peer)
@@ -225,7 +224,7 @@ def deliver_or_queue(home: Path, pane: str, peer: str, payload: str,
             mid = mid or new_mid()
             text = wrap_with_mid(payload, mid)
             send_text(pane, text, profile)
-            # 简单等待对方 ACK（非阻塞太久）
+            # Brief wait for receiver ACK (do not block too long)
             time.sleep(1.2)
             latest = capture_pane(pane, 1200)
             acks, _ = find_acks_from_output(latest)
@@ -233,33 +232,31 @@ def deliver_or_queue(home: Path, pane: str, peer: str, payload: str,
                 return "delivered", mid
             else:
                 if require_ack:
-                    # 未即刻ACK，入队等待后台 flush
+                    # No immediate ACK → enqueue for background flush
                     outbox.enqueue(mid, text)
                     return "queued", mid
-                # 不要求 ACK：视为已投递
+                # ACK not required → treat as delivered
                 return "delivered", mid
         time.sleep(interval)
 
-    # 超时仍判定非空闲 → 仍执行一次 best-effort 粘贴，再按 require_ack 语义返回
+    # Timeout while still not idle → perform one best-effort paste, then follow require_ack semantics
     mid = mid or new_mid()
     text = wrap_with_mid(payload, mid)
     send_text(pane, text, profile)
     if require_ack:
-        # 不阻塞等待 ACK，这里直接入队以便后台 flush + 检测 ACK
+        # Do not block for ACK; enqueue so the background flusher can detect ACKs
         outbox.enqueue(mid, text)
         return "queued", mid
     return "delivered", mid
 
 def flush_outbox_if_idle(home: Path, pane: str, peer: str,
                          profile: Dict[str,Any], delivery_conf: Dict[str,Any]) -> List[str]:
-    """
-    若空闲则尝试 flush 队列前 N 条；返回已确认的 mid 列表。
-    """
+    """If idle, flush up to N queued items; return list of ACKed mids."""
     judge = PaneIdleJudge(profile)
     outbox = Outbox(home, peer)
     require_ack = bool(delivery_conf.get("require_ack", False))
     if not require_ack:
-        # 不要求 ACK 时无需 flush 队列
+        # If ACK is not required, nothing to flush
         return []
     batch = int(delivery_conf.get("max_flush_batch", 3))
 
@@ -278,8 +275,8 @@ def flush_outbox_if_idle(home: Path, pane: str, peer: str,
         if mid in acks:
             outbox.remove(mid); sent_mids.append(mid)
         elif mid in nacks:
-            outbox.remove(mid)  # 丢弃并记账（调用方可记录原因）
+            outbox.remove(mid)  # Drop and account (caller may record reason)
         else:
-            # 留在队列，后续再试
+            # Keep in queue; try later
             pass
     return sent_mids

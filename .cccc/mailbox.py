@@ -74,9 +74,9 @@ def read_if_changed(path: Path, last_sha: str) -> Tuple[bool, str, str]:
 
 def scan_mailboxes(home: Path, idx: MailboxIndex) -> Dict[str, Dict[str, Any]]:
     """
-    返回每个 peer 的事件：
+    Return events per peer when mailbox files change and are non-empty.
+    Example:
       { 'peerA': {'to_user': '...', 'to_peer': '...', 'patch': '...'}, 'peerB': {...} }
-    仅当对应文件内容发生变化且非空时返回字段。
     """
     ensure_mailbox(home)
     base = home/"mailbox"

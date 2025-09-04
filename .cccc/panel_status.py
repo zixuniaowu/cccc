@@ -122,10 +122,10 @@ def render(home: Path):
     anti = status.get("handoff_filter_enabled")
 
     lines: List[str] = []
-    # Header（固定高度，避免“增长感”）
-    lines.append("CCCC Panel  |  在终端输入 h 或 /help 查看命令   |   " + time.strftime('%H:%M:%S'))
+    # Header (fixed height; avoid runaway growth)
+    lines.append("CCCC Panel  |  type h or /help in terminal   |   " + time.strftime('%H:%M:%S'))
     lines.append("============================================================")
-    # 精简状态
+    # Compact status
     lines.append(f"Session: {session.get('session','-')}  Phase: {phase}  Leader: {leader}  Paused: {paused}")
     lines.append(f"Delivery: require_ack={require_ack}  filter={anti}")
     if mcounts:
@@ -133,13 +133,13 @@ def render(home: Path):
         lines.append(f"Mailbox: A tu={ca.get('to_user',0)} tp={ca.get('to_peer',0)} pa={ca.get('patch',0)}  |  B tu={cb.get('to_user',0)} tp={cb.get('to_peer',0)} pa={cb.get('patch',0)}")
     lines.append(f"Handoff: delivered={stats['handoff'].get('delivered',0)} queued={stats['handoff'].get('queued',0)} failed={stats['handoff'].get('failed',0)}  Flow A→B={stats['handoff'].get('A2B',0)} B→A={stats['handoff'].get('B2A',0)}")
     lines.append(f"Patches: commits={stats['patch']['commit']} tests_ok={stats['patch']['tests_ok']} tests_fail={stats['patch']['tests_fail']} rejects={stats['patch']['reject']}")
-    # Recent（限制条数）
+    # Recent (limited items)
     lines.append("Recent:")
     for it in stats["notes"][-6:]:
         lines.append("- " + format_note_line(it))
-    # Footer 提示
+    # Footer hint
     lines.append("------------------------------------------------------------")
-    lines.append("在编排器终端：a:/b:/both:/u: 发送；h 或 /help 查看；q 退出。")
+    lines.append("In terminal: a:/b:/both:/u: send; h or /help for help; q to quit.")
 
     out = "\n".join(lines)
     sys.stdout.write("\033[H\033[J")  # clear screen

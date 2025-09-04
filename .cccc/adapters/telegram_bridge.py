@@ -519,7 +519,7 @@ def main():
         if now - float(hint_last.get(key, 0)) < hint_cooldown:
             return
         hint_last[key] = now
-        tg_api('sendMessage', {'chat_id': chat_id, 'text': '未检测到路由。请在开头使用 /a /b /both 或 a: b: both: 指定路由。'}, timeout=15)
+        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'No route detected. Prefix with /a /b /both or a: b: both: to route.'}, timeout=15)
     last_sent_ts = {"peerA": 0.0, "peerB": 0.0}
     last_seen = {"peerA": "", "peerB": ""}
 
@@ -837,7 +837,7 @@ def main():
                         rid = parts[1] if len(parts) > 1 else ''
                         decision = parts[2] if len(parts) > 2 else ''
                         _append_ledger({'kind':'decision','rfd_id':rid,'decision':decision,'chat':cchat_id})
-                        tg_api('answerCallbackQuery', {'callback_query_id': cq.get('id'), 'text': f'已记录决策: {decision}'}, timeout=10)
+                        tg_api('answerCallbackQuery', {'callback_query_id': cq.get('id'), 'text': f'Decision recorded: {decision}'}, timeout=10)
                         tg_api('sendMessage', {'chat_id': cchat_id, 'text': f"[RFD] {rid} → {decision}"}, timeout=15)
                     else:
                         tg_api('answerCallbackQuery', {'callback_query_id': cq.get('id')}, timeout=10)
@@ -854,12 +854,12 @@ def main():
                     # Auto-register with cap
                     cur = set(load_subs())
                     if chat_id in cur:
-                        tg_api('sendMessage', {'chat_id': chat_id, 'text': '已订阅（已在允许列表）'}, timeout=15)
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Already subscribed (allowlist)'}, timeout=15)
                     elif len(cur) >= max_auto:
-                        tg_api('sendMessage', {'chat_id': chat_id, 'text': '订阅人数已达上限，请联系管理员添加。'}, timeout=15)
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Subscription limit reached; contact admin.'}, timeout=15)
                     else:
                         cur.add(chat_id); save_subs(sorted(cur)); allow.add(chat_id)
-                        tg_api('sendMessage', {'chat_id': chat_id, 'text': '订阅成功：本聊天将接收摘要与提示。取消可发送 /unsubscribe'}, timeout=15)
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Subscribed. This chat will receive summaries. Send /unsubscribe to leave.'}, timeout=15)
                         _append_log(outlog, f"[subscribe] chat={chat_id}")
                         _append_ledger({"kind":"bridge-subscribe","chat":chat_id})
                     continue
@@ -868,7 +868,7 @@ def main():
                     cur = set(load_subs()); removed = chat_id in cur
                     if removed:
                         cur.discard(chat_id); save_subs(sorted(cur))
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': '已取消订阅' if removed else '未订阅'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Unsubscribed' if removed else 'Not subscribed'}, timeout=15)
                     _append_log(outlog, f"[unsubscribe] chat={chat_id}")
                     _append_ledger({"kind":"bridge-unsubscribe","chat":chat_id})
                     continue
@@ -876,9 +876,9 @@ def main():
                 _append_log(outlog, f"[drop] message from not-allowed chat={chat_id}")
                 _append_ledger({"kind":"bridge-drop","reason":"not-allowed","chat":chat_id})
                 if discover and is_cmd(text, 'whoami'):
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': f"chat_id={chat_id} (不在允许列表，发送 /subscribe 可自助订阅)"}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': f"chat_id={chat_id} (not allowed; send /subscribe to opt-in)"}, timeout=15)
                 elif policy == 'open':
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': '未订阅。发送 /subscribe 可订阅，/unsubscribe 取消。'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Not subscribed. Send /subscribe to opt-in, /unsubscribe to leave.'}, timeout=15)
                 continue
             text = (msg.get('text') or '').strip()
             caption = (msg.get('caption') or '').strip()
@@ -921,7 +921,7 @@ def main():
                             midf = _mid(); path, meta = _save_file_from_telegram(ph.get('file_id'), fn, chat_id, midf)
                             meta.update({'mime': mime, 'caption': rtext, 'mid': midf}); metas.append(meta)
                     except Exception as e:
-                        tg_api('sendMessage', {'chat_id': chat_id, 'text': f'接收引用文件失败: {e}'}, timeout=15)
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': f'Failed to receive quoted file: {e}'}, timeout=15)
                         _append_log(outlog, f"[error] inbound-file-reply: {e}")
                         metas = []
                     if metas:
@@ -966,7 +966,7 @@ def main():
                         fn = doc.get('file_name') or 'document.bin'
                         mime = doc.get('mime_type') or 'application/octet-stream'
                         if not _mime_allowed(mime):
-                            tg_api('sendMessage', {'chat_id': chat_id, 'text': f'文件类型不被允许: {mime}'}, timeout=15)
+                            tg_api('sendMessage', {'chat_id': chat_id, 'text': f'File type not allowed: {mime}'}, timeout=15)
                             continue
                         midf = _mid()
                         path, meta = _save_file_from_telegram(doc.get('file_id'), fn, chat_id, midf)
@@ -1012,7 +1012,7 @@ def main():
                     _append_ledger({"kind":"bridge-file-inbound","chat":chat_id,"routes":routes,"files":[{"path":m['path'],"sha256":m['sha256'],"bytes":m['bytes'],"mime":m['mime']} for m in metas]})
                     continue
                 except Exception as e:
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': f'接收文件失败: {e}'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': f'Failed to receive file: {e}'}, timeout=15)
                     _append_log(outlog, f"[error] inbound-file: {e}")
                     continue
             # minimal commands
@@ -1023,12 +1023,12 @@ def main():
                         cur.add(chat_id); save_subs(sorted(cur)); allow.add(chat_id)
                     tg_api('sendMessage', {
                         'chat_id': chat_id,
-                        'text': '订阅成功：本聊天将接收摘要与提示。发送 /unsubscribe 可取消。' if added else '已订阅（已在允许列表）'
+                        'text': 'Subscribed. This chat will receive summaries. Send /unsubscribe to leave.' if added else 'Already subscribed (allowlist)'
                     }, timeout=15)
                     _append_log(outlog, f"[subscribe] chat={chat_id}{' (noop)' if not added else ''}")
                     _append_ledger({"kind":"bridge-subscribe","chat":chat_id,"noop": (not added)})
                 else:
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': '当前不支持自助订阅，请联系管理员添加。'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Self-subscribe disabled; contact admin.'}, timeout=15)
                 continue
             if is_cmd(text, 'status'):
                 st_path = HOME/"state"/"status.json"
@@ -1077,8 +1077,8 @@ def main():
                 continue
             if is_cmd(text, 'help'):
                 help_txt = (
-                    "使用: a:/b:/both: 或 /a /b /both 路由到 PeerA/PeerB/两者；/whoami 看 chat_id；/status 查看状态；/queue 查看队列；/locks 查看锁；"
-                    "/subscribe 订阅（若启用）；/unsubscribe 取消；/showpeers on|off 切换 Peer↔Peer 摘要；/files [in|out] [N] 列最近文件；/file N 看详情；/rfd list|show <id>。"
+                    "Usage: a:/b:/both: or /a /b /both to route to PeerA/PeerB/both; /whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; "
+                    "/subscribe opt-in (if enabled); /unsubscribe opt-out; /showpeers on|off toggle Peer↔Peer summary; /files [in|out] [N] list recent files; /file N view; /rfd list|show <id>."
                 )
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
                 continue
@@ -1112,7 +1112,7 @@ def main():
                 if sub == 'show':
                     rid = cmd[2] if len(cmd) > 2 else ''
                     if not rid:
-                        tg_api('sendMessage', {'chat_id': chat_id, 'text': '用法: /rfd show <id>'}, timeout=15)
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /rfd show <id>'}, timeout=15)
                         continue
                     # Find the RFD and latest decision
                     rfd = None; decision = None
@@ -1151,7 +1151,7 @@ def main():
                             pass
                 items.sort(key=lambda x: x[0], reverse=True)
                 items = items[:max(1, min(limit, 50))]
-                lines=[f"最近文件（{ '入站' if mode=='in' else '出站' }，前 {len(items)} 条）："]
+                lines=[f"Recent files ({ 'inbound' if mode=='in' else 'outbound' }, top {len(items)}):"]
                 map_paths=[str(p) for _,p in items]
                 # Save last listing map for /file N
                 rt = load_runtime(); lm = rt.get('last_files',{})
@@ -1172,7 +1172,7 @@ def main():
                 rt = load_runtime(); lm = (rt.get('last_files') or {}).get(str(chat_id)) or {}
                 arr = lm.get('items') or []
                 if n<=0 or n>len(arr):
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': '无效编号。请先 /files 列表，然后 /file N。'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Invalid index. Run /files, then /file N.'}, timeout=15)
                     continue
                 fp = Path(arr[n-1])
                 info=[]
@@ -1199,7 +1199,7 @@ def main():
                 val = m.group(1).lower() == 'on' if m else False
                 runtime = load_runtime(); runtime['show_peer_messages'] = bool(val); save_runtime(runtime)
                 show_peers = bool(val)
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"Peer↔Peer 摘要显示已设为: {'ON' if val else 'OFF'} (全局)"}, timeout=15)
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"Peer↔Peer summary set to: {'ON' if val else 'OFF'} (global)"}, timeout=15)
                 _append_log(outlog, f"[runtime] show_peer_messages={val}")
                 continue
             if is_cmd(text, 'unsubscribe'):
@@ -1207,11 +1207,11 @@ def main():
                     cur = set(load_subs()); removed = chat_id in cur
                     if removed:
                         cur.discard(chat_id); save_subs(sorted(cur)); allow.discard(chat_id)
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': '已取消订阅' if removed else '未订阅'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Unsubscribed' if removed else 'Not subscribed'}, timeout=15)
                     _append_log(outlog, f"[unsubscribe] chat={chat_id}")
                     _append_ledger({"kind":"bridge-unsubscribe","chat":chat_id})
                 else:
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': '当前不支持自助取消订阅，请联系管理员。'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Self-unsubscribe disabled; contact admin.'}, timeout=15)
                 continue
             routes, body = _route_from_text(route_source, dr)
             mid = _mid()

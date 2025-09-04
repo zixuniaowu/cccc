@@ -13,13 +13,13 @@ rfd:
     both_confidence_below: 0.6
     max_dispute_rounds: 2
   gates:
-    # 默认不因“行数大”而强制 RFD；优先建议拆分为小步。
-    # 若你希望由用户审批大改动，将其设为 true。
+    # By default do NOT require RFD for large diffs; prefer splitting into small steps.
+    # Set to true if you want explicit approval for large changes.
     large_diff_requires_rfd: false
-    # 命中受保护路径时，需要 RFD 批准后才能合入
+    # Protected paths require an approved RFD decision before merging
     protected_paths:
-      - ".cccc/**"           # 编排器域受保护
-      - "src/api/public/**"  # 示例：对外 API 受保护（可按项目调整）
+      - ".cccc/**"           # Orchestrator domain protected
+      - "src/api/public/**"  # Example: public API protected (adjust per project)
 autonomy_level: L1
 context:
   files_limit: 120
@@ -33,12 +33,12 @@ handoff_filter:
   cooldown_seconds: 15
   min_chars: 40
   min_words: 6
-  # 长文冗余抑制（在无新证据/补丁/问题时，丢弃与最近内容高度相似的长文本）
+  # Long-text redundancy suppression: drop highly similar long content without new evidence/patch/question
   redundant_window_seconds: 120
   redundant_similarity_threshold: 0.9
   dedup_max_keep: 10
   dedup_short_seconds: 30
-  # 若正文中不包含下列任一关键词，且长度又短，则视为低信号（可与 drop_regexes 叠加判断）
+  # If none of the following keywords appear and the text is short, treat as low-signal
   require_keywords_any:
     - "CLAIM:"
     - "COUNTER:"
@@ -46,7 +46,7 @@ handoff_filter:
     - "TASK"
     - "PATCH"
     - "diff --git"
-  # 高信号“加分项”（命中任一则直接放行，忽略冷却）
+  # High-signal boosters (bypass cooldown when any matches)
   boost_keywords_any:
     - "CLAIM:"
     - "COUNTER:"
@@ -58,7 +58,6 @@ handoff_filter:
     - '```'          # fenced code/patch
     - '^\s*diff --git\s'
   bypass_cooldown_when_high_signal: true
-  # 命中以下任一正则（大小写不敏感）时，视为低信号
+  # Treat as low-signal when any of the following regexes matches (case-insensitive)
   drop_regexes:
     - '^\s*(ok|okay|ready|standby|waiting|idle)\b'
-    - '准备好|等待中|就绪|已收到|确认|收到'

@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-CCCC Orchestrator (tmux + long-lived CLI sessions)
-- 左右两 pane 分别运行 PeerA(Claude) / PeerB(Codex) 的交互式会话（长连接）
-- 通过 tmux 粘贴消息/抓取输出，解析 <TO_USER>/<TO_PEER> 与 ```patch```，执行预检/应用/测试/记账
-- 启动时注入极简 SYSTEM（来源于 prompt_weaver）；移除运行时热更新以保持简洁可控
+CCCC Orchestrator (tmux + long‑lived CLI sessions)
+- Left/right panes run PeerA (Claude) and PeerB (Codex) interactive sessions.
+- Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER> and fenced ```patch```, then preflights/applies/tests/logs.
+- Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
 import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
@@ -17,9 +17,9 @@ from typing import Dict, Any, Optional, Tuple, List
 from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
 from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox
 
-ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # 去色
-# 控制控制台是否回显 AI 输出块，默认关闭以避免干扰输入体验
-CONSOLE_ECHO = True
+ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # strip ANSI color/control sequences
+# Console echo of AI output blocks. Default OFF to avoid disrupting typing.
+CONSOLE_ECHO = False
 PATCH_RE = re.compile(r"```(?:patch|diff)\s*([\s\S]*?)```", re.I)
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
@@ -209,7 +209,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
                 profileA: Dict[str,Any], profileB: Dict[str,Any],
                 modeA: str, modeB: str):
     inbox_path = str(_inbox_dir(home, receiver_label))
-    # 可配置的 NUDGE 后缀（按 peer 定义），便于微调 CLI 行为
+    # Optional NUDGE suffix (per peer) to fine‑tune CLI behavior
     nudge_suffix = ""
     if receiver_label == 'PeerA':
         nudge_suffix = (profileA.get('nudge_suffix') or '').strip()
@@ -218,7 +218,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
     # Include concrete seq and mid to simplify ACK on CLI side
     if str((profileA if receiver_label=='PeerA' else profileB).get('dummy', '')):
         pass
-    # 简化版 NUDGE：只给出 inbox 路径与动作规则（不含 seq/mid）
+    # Simplified NUDGE: only show inbox path and handling rules (no seq/mid)
     base = (
         f"[NUDGE] inbox={inbox_path} "
         f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
@@ -300,7 +300,7 @@ def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
 def ensure_bin(name: str):
     code,_,_ = run(f"command -v {shlex.quote(name)}")
     if code != 0:
-        print(f"[FATAL] 需要可执行: {name}")
+        print(f"[FATAL] Executable required: {name}")
         raise SystemExit(1)
 def has_bin(name: str) -> bool:
     code,_,_ = run(f"command -v {shlex.quote(name)}"); return code==0
@@ -308,7 +308,7 @@ def has_bin(name: str) -> bool:
 def ensure_git_repo():
     code, out, _ = run("git rev-parse --is-inside-work-tree")
     if code != 0 or "true" not in out:
-        print("[INFO] 当前目录不是 git 仓库，正在初始化 …")
+        print("[INFO] Not a git repository; initializing …")
         run("git init")
         # Ensure identity to avoid commit failures on fresh repos
         code_email, out_email, _ = run("git config --get user.email")
@@ -611,7 +611,7 @@ def tmux_session_exists(name: str) -> bool:
 
 def tmux_new_session(name: str) -> Tuple[str,str]:
     code,out,err = tmux("new-session","-d","-s",name,"-P","-F","#S:#I.#P")
-    if code!=0: raise RuntimeError(f"tmux new-session 失败: {err}")
+    if code!=0: raise RuntimeError(f"tmux new-session failed: {err}")
     # 初始只保留一个 pane，后续按我们定义重建布局
     code3,out3,_ = tmux("list-panes","-t",name,"-F","#P")
     panes = out3.strip().splitlines()
@@ -642,7 +642,7 @@ def tmux_ensure_ledger_tail(session: str, ledger_path: Path):
     tmux("split-window","-v","-t",tp, cmd)
 
 def tmux_build_2x2(session: str) -> Dict[str,str]:
-    """构造稳定 2x2 布局，根据 pane 坐标映射 {'lt','rt','lb','rb'}。"""
+    """Build a stable 2x2 layout and map panes by coordinates {'lt','rt','lb','rb'}."""
     target = _win(session)
     # 干净起步：仅保留 pane 0
     tmux("select-pane","-t",f"{target}.0")
@@ -817,7 +817,7 @@ def wait_for_ready(pane: str, profile: Dict[str,Any], *, timeout: float = 12.0, 
 def paste_when_ready(pane: str, profile: Dict[str,Any], text: str, *, timeout: float = 10.0, poke: bool = True):
     ok = wait_for_ready(pane, profile, timeout=timeout, poke=poke)
     if not ok:
-        print(f"[WARN] 目标 pane 未就绪，仍尝试贴入（best-effort）。")
+        print(f"[WARN] Target pane not ready; pasting anyway (best-effort).")
     # 统一通过 delivery 的 send_text，使用 per-CLI 配置（含回车发送/换行键）
     send_text(pane, text, profile)
 
@@ -847,7 +847,7 @@ def allowed_by_policies(paths: List[str], policies: Dict[str,Any]) -> bool:
     allowed = policies.get("patch_queue",{}).get("allowed_paths",["**"])
     for pth in paths:
         if not any(fnmatch.fnmatch(pth,pat) for pat in allowed):
-            print(f"[POLICY] 路径不允许: {pth}")
+            print(f"[POLICY] Path not allowed: {pth}")
             return False
     return True
 
@@ -942,7 +942,7 @@ def _rfd_gate_check(home: Path, policies: Dict[str,Any], patch: str, lines: int)
         rid = _rfd_id_for_protected(paths)
         if _ledger_has_decision_approved(home, rid):
             return True, None
-        _ensure_rfd_logged(home, rid, "受保护路径修改审批", f"paths={paths}")
+        _ensure_rfd_logged(home, rid, "Protected path change approval", f"paths={paths}")
         return False, f"rfd-required-protected-path:{rid}"
     # Large diff gate (allows override via decision)
     if lines > max_lines:
@@ -951,7 +951,7 @@ def _rfd_gate_check(home: Path, policies: Dict[str,Any], patch: str, lines: int)
         rid = _rfd_id_for_large(paths, lines)
         if _ledger_has_decision_approved(home, rid):
             return True, None
-        _ensure_rfd_logged(home, rid, "大改动行数审批", f"lines={lines}")
+        _ensure_rfd_logged(home, rid, "Large diff line-count approval", f"lines={lines}")
         return False, f"rfd-required-large-diff:{rid}"
     return True, None
 
@@ -979,12 +979,12 @@ def try_lint():
                 except Exception:
                     has_cfg = False
             if not has_cfg:
-                print("[LINT] 跳过（检测到 eslint 但无配置）"); return
+                print("[LINT] Skipped (eslint detected but no config)"); return
             cmd = "eslint . --max-warnings=0"
         else:
-            print("[LINT] 跳过（未设 LINT_CMD，且未检测到 ruff/eslint）"); return
+            print("[LINT] Skipped (no LINT_CMD and no ruff/eslint)"); return
     code,out,err=run(cmd)
-    print("[LINT]", "通过" if code==0 else "失败")
+    print("[LINT]", "OK" if code==0 else "FAIL")
     if out.strip(): print(out.strip())
     if err.strip(): print(err.strip())
 
@@ -1001,24 +1001,24 @@ def try_tests() -> bool:
             if has_tests:
                 cmd="pytest -q"
             else:
-                print("[TEST] 跳过（未发现 pytest 测试文件）"); return True
+                print("[TEST] Skipped (no pytest tests found)"); return True
         elif has_bin("npm") and Path("package.json").exists():
             try:
                 pj = json.loads(Path("package.json").read_text(encoding="utf-8"))
                 test_script = (pj.get("scripts") or {}).get("test")
                 if not test_script:
-                    print("[TEST] 跳过（package.json 无 test 脚本）"); return True
+                    print("[TEST] Skipped (package.json has no test script)"); return True
                 # Skip the default placeholder script
                 if "no test specified" in test_script:
-                    print("[TEST] 跳过（默认占位 npm test 脚本）"); return True
+                    print("[TEST] Skipped (default placeholder npm test script)"); return True
                 cmd="npm test --silent"
             except Exception:
-                print("[TEST] 跳过（解析 package.json 失败）"); return True
+                print("[TEST] Skipped (failed to parse package.json)"); return True
         else:
-            print("[TEST] 跳过（未设 TEST_CMD，也未检测到 pytest/npm）"); return True
+            print("[TEST] Skipped (no TEST_CMD and no pytest/npm)"); return True
     code,out,err=run(cmd)
     ok=(code==0)
-    print("[TEST]", "通过" if ok else "失败")
+    print("[TEST]", "OK" if ok else "FAIL")
     if out.strip(): print(out.strip())
     if err.strip(): print(err.strip())
     return ok
@@ -1073,8 +1073,8 @@ def context_blob(policies: Dict[str,Any], phase: str) -> str:
 
 # ---------- EXCHANGE ----------
 def print_block(title: str, body: str):
-    """可切换的控制台回显：默认静默，避免打字时被刷屏打断。
-    内容仍会进入 mailbox/ledger/面板，不丢信息。
+    """Optional console echo. Default is quiet to avoid interrupting typing.
+    Content still goes to mailbox/ledger/panel; nothing is lost.
     """
     if not body.strip():
         return
@@ -1114,16 +1114,16 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
         items=re.findall(SECTION_RE_TPL.format(tag=tag), window, re.I)
         return (items[-1].strip() if items else "")
     to_user = last("TO_USER"); to_peer = last("TO_PEER")
-    # 不在此处打印 <TO_USER>，避免与后台轮询重复；仅处理补丁与交接
+    # Do not print <TO_USER> here (the background poller will report it); focus on patches and handoffs only
 
-    # 仅扫描窗口中的补丁围栏，过滤掉非真实 diff 的围栏
+    # Only scan fenced patches visible in the window; ignore non-diff fences
     patches = [p for p in extract_patches(window) if is_valid_diff(p)]
     for i,patch in enumerate(patches,1):
-        print_block(f"{who} 补丁#{i}", "预检中 …")
+        print_block(f"{who} Patch#{i}", "Preflight …")
         lines = count_changed_lines(patch)
         max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
         if lines>max_lines:
-            print(f"[POLICY] 改动行数 {lines} > {max_lines}，拒绝。")
+            print(f"[POLICY] Changed lines {lines} > {max_lines}; rejecting.")
             log_ledger(home, {"from":who,"kind":"patch-reject","reason":"too-many-lines","lines":lines}); 
             continue
         paths = extract_paths_from_patch(patch)
@@ -1132,12 +1132,12 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
             continue
         ok,err = git_apply_check(patch)
         if not ok:
-            print("[PATCH] 预检失败：\n"+err.strip()); 
+            print("[PATCH] Preflight failed:\n"+err.strip()); 
             log_ledger(home, {"from":who,"kind":"patch-precheck-fail","stderr":err.strip()[:2000]}); 
             continue
         ok2,err2 = git_apply(patch)
         if not ok2:
-            print("[PATCH] 应用失败：\n"+err2.strip()); 
+            print("[PATCH] Apply failed:\n"+err2.strip()); 
             log_ledger(home, {"from":who,"kind":"patch-apply-fail","stderr":err2.strip()[:2000]}); 
             continue
         try_lint()
@@ -1145,7 +1145,7 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
         git_commit(f"cccc({who}): apply patch (phase {phase})")
         log_ledger(home, {"from":who,"kind":"patch-commit","paths":paths,"lines":lines,"tests_ok":tests_ok})
         if not tests_ok:
-            fb = "<TO_PEER>\ntype: EVIDENCE\nintent: fix\ntasks:\n  - desc: '测试失败，请提供最小修复补丁'\n</TO_PEER>\n"
+            fb = "<TO_PEER>\ntype: EVIDENCE\nintent: fix\ntasks:\n  - desc: 'Tests failed; please provide the minimal fix patch'\n</TO_PEER>\n"
             paste_when_ready(sender_pane, sender_profile, f"[INPUT]\n{fb}\n")
 
     if to_peer.strip():
@@ -1207,11 +1207,11 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
 
     patches = [p for p in extract_patches(sanitized) if is_valid_diff(p)]
     for i,patch in enumerate(patches,1):
-        print_block(f"{who} 补丁#{i}", "预检中 …")
+        print_block(f"{who} Patch#{i}", "Preflight …")
         lines = count_changed_lines(patch)
         max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
         if lines>max_lines:
-            print(f"[POLICY] 改动行数 {lines} > {max_lines}，拒绝。")
+            print(f"[POLICY] Changed lines {lines} > {max_lines}; rejecting.")
             log_ledger(home, {"from":who,"kind":"patch-reject","reason":"too-many-lines","lines":lines}); 
             continue
         paths = extract_paths_from_patch(patch)
@@ -1220,12 +1220,12 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
             continue
         ok,err = git_apply_check(patch)
         if not ok:
-            print("[PATCH] 预检失败：\n"+err.strip()); 
+            print("[PATCH] Preflight failed:\n"+err.strip()); 
             log_ledger(home, {"from":who,"kind":"patch-precheck-fail","stderr":err.strip()[:2000]}); 
             continue
         ok2,err2 = git_apply(patch)
         if not ok2:
-            print("[PATCH] 应用失败：\n"+err2.strip()); 
+            print("[PATCH] Apply failed:\n"+err2.strip()); 
             log_ledger(home, {"from":who,"kind":"patch-apply-fail","stderr":err2.strip()[:2000]}); 
             continue
         try_lint()
@@ -1344,9 +1344,9 @@ def main(home: Path):
     # Enable mouse wheel scroll for history while keeping send safety (we cancel copy-mode before sending)
     tmux("bind-key","-n","WheelUpPane","copy-mode","-e")
     tmux("bind-key","-n","WheelDownPane","send-keys","-M")
-    print(f"[INFO] 使用 tmux 会话: {session}（左=PeerA / 右=PeerB）")
+    print(f"[INFO] Using tmux session: {session} (left=PeerA / right=PeerB)")
     print(f"[INFO] pane map: left={left} right={right} lb={pos.get('lb')} rb={pos.get('rb')}")
-    print(f"[TIP] 另开终端可随时 `tmux attach -t {session}` 旁观/插话")
+    print(f"[TIP] In another terminal: `tmux attach -t {session}` to observe/input")
     # 确保四分屏：左/右=A/B；左下=ledger tail；右下=帮助
     # 在左下/右下 pane 启动 ledger 与帮助
     lp = shlex.quote(str(state/"ledger.jsonl"))
@@ -1359,20 +1359,20 @@ def main(home: Path):
     cmd_status = f"bash -lc {shlex.quote(f'{py} {status_py} --home {str(home)} --interval 1.0')}"
     tmux_respawn_pane(pos['rb'], cmd_status)
 
-    # —— PROJECT.md 启动分支：在启动 CLI 之前做选择 ——
+    # PROJECT.md bootstrap branch: choose before starting the CLIs
     project_md_path = Path.cwd()/"PROJECT.md"
     project_md_exists = project_md_path.exists()
     start_mode = "has_doc" if project_md_exists else "ask"  # has_doc | ai_bootstrap | ask
     if not project_md_exists:
-        print("\n[PROJECT] 未检测到 PROJECT.md。请选择：")
-        print("  1) 我先编写 PROJECT.md，再继续启动 CLI")
-        print("  2) 直接启动 CLI，让 AI 协作生成 PROJECT.md（仅允许修改 PROJECT.md）")
+        print("\n[PROJECT] No PROJECT.md found. Choose:")
+        print("  1) I will create PROJECT.md, then continue")
+        print("  2) Start CLI and let AIs co-create PROJECT.md (only modify PROJECT.md)")
         while True:
-            ans = read_console_line("选择 1 或 2 并回车: ").strip().lower()
+            ans = read_console_line("> Enter 1 or 2 and press Enter: ").strip().lower()
             if ans in ("1", "a", "user", "u"):
-                print("[PROJECT] 等待你在仓库根目录创建 PROJECT.md …")
+                print("[PROJECT] Waiting for PROJECT.md at repo root …")
                 while not project_md_path.exists():
-                    nxt = read_console_line("- 创建完成后回车继续；或输入 2 切换为 AI 生成: ").strip().lower()
+                    nxt = read_console_line("- After creation press Enter to continue; or enter 2 to switch to AI bootstrap: ").strip().lower()
                     if nxt in ("2", "b", "ai"):
                         start_mode = "ai_bootstrap"; break
                 if project_md_path.exists():
@@ -1380,31 +1380,31 @@ def main(home: Path):
                 break
             if ans in ("2", "b", "ai"):
                 start_mode = "ai_bootstrap"; break
-            print("[HINT] 请输入 1 或 2。")
+            print("[HINT] Enter 1 or 2.")
 
-    # 启动交互式 CLI（缺省回退到内置 Mock）
+    # Start interactive CLIs (fallback to built-in Mock when not configured)
     commands = cli_profiles.get("commands", {}) if isinstance(cli_profiles.get("commands", {}), dict) else {}
     CLAUDE_I_CMD = os.environ.get("CLAUDE_I_CMD") or commands.get("peerA") or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerA"
     CODEX_I_CMD  = os.environ.get("CODEX_I_CMD")  or commands.get("peerB") or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerB"
     if (commands.get("peerA") is None and os.environ.get("CLAUDE_I_CMD") is None) or \
        (commands.get("peerB") is None and os.environ.get("CODEX_I_CMD") is None):
-        print("[INFO] 未提供全部 CLI 命令，缺失的一侧将使用内置 Mock（可在 cli_profiles.yaml 的 commands 中配置，或用环境变量覆盖）。")
+        print("[INFO] Some CLI commands not provided; missing side will use built-in Mock (configure in cli_profiles.yaml or via env vars).")
     else:
-        print("[INFO] 已使用配置中的 CLI 命令（可用环境变量覆盖）。")
+        print("[INFO] Using CLI commands from configuration (overridable by env).")
     if start_mode in ("has_doc", "ai_bootstrap"):
         if modeA == 'bridge':
             # Ensure pexpect is available; otherwise fallback to tmux mode for visibility
             pyexe = shlex.quote(sys.executable or 'python3')
             code,_,_ = run(f"{pyexe} -c 'import pexpect'")
             if code != 0:
-                print("[WARN] pexpect 未安装，PeerA bridge 模式不可用，回退到 tmux 输入注入（请 pip install pexpect）")
+                print("[WARN] pexpect not installed; PeerA bridge mode disabled. Falling back to tmux input injection (pip install pexpect).")
                 modeA = 'tmux'
         if modeB == 'bridge':
             # Ensure pexpect is available; otherwise fallback to tmux mode
             pyexe = shlex.quote(sys.executable or 'python3')
             code,_,_ = run(f"{pyexe} -c 'import pexpect'")
             if code != 0:
-                print("[WARN] pexpect 未安装，PeerB bridge 模式不可用，回退到 tmux 输入注入（请 pip install pexpect）")
+                print("[WARN] pexpect not installed; PeerB bridge mode disabled. Falling back to tmux input injection (pip install pexpect).")
                 modeB = 'tmux'
         if modeA == 'bridge':
             # Run bridge adapter in pane; it will spawn the CLI child and proxy stdout
@@ -1500,13 +1500,13 @@ def main(home: Path):
                 timeout_s = float(t_conf.get("inbox_startup_prompt_timeout_seconds", 30))
                 timeout_nonint = float(t_conf.get("inbox_startup_prompt_noninteractive_timeout_seconds", 0))
                 eff_timeout = timeout_s if is_interactive else timeout_nonint
-                print("\n[INBOX] 检测到残留收件：")
-                print(f"  - PeerA: {cntA} 条 @ {str(_inbox_dir(home,'PeerA'))}")
-                print(f"  - PeerB: {cntB} 条 @ {str(_inbox_dir(home,'PeerB'))}")
-                print(f"  处理策略（本次会话）：[r] 继续处理(resume)  [a] 归档(archive)  [d] 遗弃(discard)；默认：{chosen_policy}")
+                print("\n[INBOX] Residual inbox detected:")
+                print(f"  - PeerA: {cntA} @ {str(_inbox_dir(home,'PeerA'))}")
+                print(f"  - PeerB: {cntB} @ {str(_inbox_dir(home,'PeerB'))}")
+                print(f"  Policy for this session: [r] resume  [a] archive  [d] discard; default: {chosen_policy}")
                 if eff_timeout > 0:
-                    print(f"  若 {int(eff_timeout)} 秒内无输入，自动采用默认策略：{chosen_policy}")
-                ans = read_console_line_timeout("> 选择 r/a/d 并回车（或直接回车采用默认）： ", eff_timeout).strip().lower()
+                    print(f"  Will apply default policy {chosen_policy} after {int(eff_timeout)}s of inactivity.")
+                ans = read_console_line_timeout("> Choose r/a/d and Enter (or Enter to use default): ", eff_timeout).strip().lower()
                 if ans in ("r","resume"):
                     chosen_policy = "resume"
                 elif ans in ("a","archive"):
@@ -1516,11 +1516,11 @@ def main(home: Path):
                 else:
                     # 回车/超时/无效输入 → 默认
                     pass
-                print(f"[INBOX] 采用策略：{chosen_policy}")
+                print(f"[INBOX] Using policy: {chosen_policy}")
                 _startup_handle_inbox("PeerA", chosen_policy)
                 _startup_handle_inbox("PeerB", chosen_policy)
         except Exception as e:
-            # 仅记录，不阻断启动
+            # Log only; do not block startup
             try:
                 log_ledger(home, {"from":"system","kind":"startup-inbox-check-error","error":str(e)[:200]})
             except Exception:
@@ -1576,13 +1576,13 @@ def main(home: Path):
     # self-check text from config (fallback to a sane default)
     _sc_text = str(delivery_cfg.get("self_check_text") or "").strip()
     DEFAULT_SELF_CHECK = (
-        "[定时自检] 先稍微停一下，请就地简短回答（每题≤1行）：\n"
-        "1) 过去这段时间具体完成了什么？\n"
-        "2) 是否偏离了原定目标？若是，原因与纠偏？\n"
-        "3) 是否造成了新的混乱？如何收敛？\n"
-        "4) 遗漏了什么工作？优先补上哪一项？\n"
-        "5) 是否遗忘了既定的角色与推荐的行为方式？\n"
-        "回答完成后再继续推进。"
+        "[Self-check] Pause briefly and answer (≤1 line each):\n"
+        "1) What did you concretely complete?\n"
+        "2) Any drift from goal? Why and how to correct?\n"
+        "3) Any new confusion? How to converge?\n"
+        "4) What was missed? Which single item to fix first?\n"
+        "5) Did you forget your role and recommended behaviors?\n"
+        "Continue only after answering."
     )
     self_check_text = _sc_text if _sc_text else DEFAULT_SELF_CHECK
 
@@ -1764,13 +1764,13 @@ def main(home: Path):
         nxt = queued[label].pop(0)
         _send_handoff(nxt.get("sender","System"), label, nxt.get("payload",""))
 
-    # 等待用户指令模式（不强制初始 requirement）
+    # Wait for user input mode (no hard initial requirement)
     phase = "discovery"
     ctx = context_blob(policies, phase)
-    # 简化：默认不暂停交接，避免过度干涉；必要时由用户手动 /pause
+    # Simplify: do not pause handoff by default; let user /pause when needed
     deliver_paused = False
 
-    # 初始状态快照写入，供状态面板读取
+    # Write initial status snapshot for panel
     def write_status(paused: bool):
         state = home/"state"
         pol_enabled = bool((policies.get("handoff_filter") or {}).get("enabled", True))
@@ -1876,38 +1876,38 @@ def main(home: Path):
         except Exception:
             pass
 
-    print("\n[就绪] 常用：a:/b:/both:/u: 发送消息；/pause|/resume 交接；/refresh 刷新 SYSTEM；q 退出。")
-    print("[TIP] 控制台输入不被干扰：默认关闭 AI 输出回显。用 /echo on 开启，/echo off 关闭，/echo 查看状态。")
-    print("[TIP] 直通模式：a! <cmd> 或 b! <cmd> 直接把命令发到对应 CLI（无包装），例如 a! /model")
+    print("\n[READY] Common: a:/b:/both:/u: send; /pause|/resume handoff; /refresh SYSTEM; q quit.")
+    print("[TIP] Console echo is off by default. Use /echo on|off|<empty> to toggle/view.")
+    print("[TIP] Passthrough: a! <cmd> / b! <cmd> sends raw input to the CLI (no wrapper), e.g., a! /model")
     # 首次进入给出明确输入提示
     try:
-        sys.stdout.write("[READY] 输入 h 或 /help 查看命令提示。\n> ")
+        sys.stdout.write("[READY] Type h or /help for command hints.\n> ")
         sys.stdout.flush()
     except Exception:
         pass
 
-    # last_windows/dedup_* 已在握手后初始化
+    # last_windows/dedup_* initialized after handshake
 
-    # 已合并发送，无需重复单独下发
+    # Already injected; no need to re-send
     if start_mode == "ai_bootstrap":
-        print("[PROJECT] 已选择由 AI 协作生成 PROJECT.md，已合并随首条 SYSTEM 一并发送。")
+        print("[PROJECT] Selected AI bootstrap for PROJECT.md; instructions were sent with the first SYSTEM message.")
 
-    # 若已存在 PROJECT.md：提示快速阅读并待命（不强制暂停 A↔B，减少干涉）
+    # If PROJECT.md exists: hint to read and standby (do not force pause for A↔B)
     if start_mode == "has_doc":
-        print("[PROJECT] 已检测到 PROJECT.md，指令已合并随首条 SYSTEM 一并发送。")
+        print("[PROJECT] Found PROJECT.md; instructions were sent with the first SYSTEM message.")
 
     while True:
-        # 精简：不做阶段锁/解锁；仅在启动时发送清晰指示；去除运行时 SYSTEM 热更新
+        # Keep it simple: no phase locks; send clear instructions at start; remove runtime SYSTEM hot-reload
 
-        # 非阻塞轮询：优先读取控制台输入；若无输入则扫描 A/B 输出
+        # Non-blocking loop: prioritize console input; otherwise scan A/B mailbox outputs
         line = None
-        # 先处理 ACK：根据模式选择（file_move: 观测文件移动；ack_text: 解析回显）
+        # Handle ACK first: by mode (file_move watches moves; ack_text parses echoes)
         try:
             if ack_mode == 'file_move':
                 for label in ("PeerA","PeerB"):
                     cur = _list_inbox_files(label)
                     prev = prev_inbox.get(label, [])
-                    # 检测从 inbox 消失的文件（视为已读）
+                    # Detect disappeared files from inbox (consider ACK)
                     disappeared = [fn for fn in prev if fn not in cur]
                     if disappeared:
                         proc = _processed_dir(home, label)
@@ -1982,35 +1982,35 @@ def main(home: Path):
         if rlist:
             line = read_console_line("> ").strip()
         else:
-            # Mailbox 轮询：消费结构化输出（不再抓屏解析）。
-            # 为避免打字时被回显干扰，默认静音扫描期间的 console 打印。
+            # Mailbox polling: consume structured outputs (no screen scraping).
+            # To avoid echo interfering with typing, mute console printing during scan.
             _stdout_saved = sys.stdout
             if not CONSOLE_ECHO:
                 sys.stdout = io.StringIO()
             try:
                 events = scan_mailboxes(home, mbox_idx)
                 payload = ""  # guard variable for conditional forwarding
-                # PeerA 事件
+                # PeerA events
                 if events["peerA"].get("to_user"):
                     print_block("PeerA → USER", events["peerA"]["to_user"])
                     log_ledger(home, {"from":"PeerA","kind":"to_user","route":"mailbox","chars":len(events["peerA"]["to_user"])})
-                    _ack_receiver("PeerA", events["peerA"]["to_user"])  # 视作对 PeerA 的 ACK（其刚刚收到对等方消息后回应）
+                    _ack_receiver("PeerA", events["peerA"]["to_user"])  # Consider as ACK (responded after peer handoff)
                     mbox_counts["peerA"]["to_user"] += 1
                     mbox_last["peerA"]["to_user"] = time.strftime("%H:%M:%S")
                     last_event_ts["PeerA"] = time.time()
                 if events["peerA"].get("to_peer"):
                     payload = events["peerA"]["to_peer"].strip()
-                    # 任意 mailbox 活动均可作为 ACK
+                    # Any mailbox activity can count as ACK
                     _ack_receiver("PeerA", payload)
                     mbox_counts["peerA"]["to_peer"] += 1
                     mbox_last["peerA"]["to_peer"] = time.strftime("%H:%M:%S")
                     last_event_ts["PeerA"] = time.time()
-                    # 若 to_peer 表达了 RFD 意图，则落账为 kind:rfd（供桥接下发卡片）
+                    # If to_peer expresses RFD intent, log kind:rfd (so bridge can send a card)
                     _maybe_emit_rfd_from_to_peer(home, "PeerA", payload)
-                    # 若 to_peer 中包含统一 diff，尝试直接应用（避免“讨论了 diff 但未落地”）
+                    # If to_peer contains a unified diff, try to apply it (avoid “discuss diff but not land”)
                     inline = extract_inline_diff_if_any(payload) or ""
                     if inline:
-                        print_block("PeerA 内嵌补丁", "预检中 …")
+                        print_block("PeerA inline patch", "Preflight …")
                         lines = count_changed_lines(inline)
                         allowed, reason = _rfd_gate_check(home, policies, inline, lines)
                         if allowed:
@@ -2028,10 +2028,10 @@ def main(home: Path):
                                     _send_handoff("System", "PeerA", standby)
                                     _send_handoff("System", "PeerB", standby)
                                 else:
-                                    print("[PATCH] 应用失败：\n"+err2.strip())
+                                    print("[PATCH] Apply failed:\n"+err2.strip())
                                     log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
                             else:
-                                print("[PATCH] 预检失败：\n"+err.strip())
+                                print("[PATCH] Preflight failed:\n"+err.strip())
                                 log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                         else:
                             # 记录因 RFD/策略原因被拒绝
@@ -2046,10 +2046,10 @@ def main(home: Path):
                 if events["peerA"].get("patch"):
                     norm = normalize_mailbox_patch(events["peerA"]["patch"]) or ""
                     if not norm:
-                        print("[PATCH] 跳过：patch.diff 非统一 diff 或包含无效内容")
+                        print("[PATCH] Skipped: patch.diff is not a unified diff or contains invalid content")
                     else:
                         patch = norm
-                        print_block("PeerA 补丁", "预检中 …")
+                        print_block("PeerA patch", "Preflight …")
                         lines = count_changed_lines(patch)
                         allowed, reason = _rfd_gate_check(home, policies, patch, lines)
                         if allowed:
@@ -2060,12 +2060,12 @@ def main(home: Path):
                             else:
                                 ok,err = git_apply_check(patch)
                                 if not ok:
-                                    print("[PATCH] 预检失败：\n"+err.strip())
+                                    print("[PATCH] Preflight failed:\n"+err.strip())
                                     log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                                 else:
                                     ok2,err2 = git_apply(patch)
                                     if not ok2:
-                                        print("[PATCH] 应用失败：\n"+err2.strip())
+                                        print("[PATCH] Apply failed:\n"+err2.strip())
                                         log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
                                     else:
                                         try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply patch (mailbox)")
@@ -2074,11 +2074,11 @@ def main(home: Path):
                                 _ack_receiver("PeerA", events["peerA"].get("patch"))
                                 last_event_ts["PeerA"] = time.time()
                         else:
-                            print(f"[POLICY] 补丁需 RFD 批准，原因: {reason}")
+                            print(f"[POLICY] Patch requires RFD approval: {reason}")
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
-                # PeerB 事件
+                # PeerB events
                 if events["peerB"].get("to_user"):
-                    # 忽略 PeerB → USER 的通道（对外口径由 PeerA 统一输出）
+                    # Ignore PeerB → USER channel (PeerA handles user-facing summaries)
                     pass
                 if events["peerB"].get("to_peer"):
                     payload = events["peerB"]["to_peer"].strip()
@@ -2089,7 +2089,7 @@ def main(home: Path):
                     _maybe_emit_rfd_from_to_peer(home, "PeerB", payload)
                     inline = extract_inline_diff_if_any(payload) or ""
                     if inline:
-                        print_block("PeerB 内嵌补丁", "预检中 …")
+                        print_block("PeerB inline patch", "Preflight …")
                         lines = count_changed_lines(inline)
                         allowed, reason = _rfd_gate_check(home, policies, inline, lines)
                         if allowed:
@@ -2103,10 +2103,10 @@ def main(home: Path):
                                     _send_handoff("System", "PeerA", standby)
                                     _send_handoff("System", "PeerB", standby)
                                 else:
-                                    print("[PATCH] 应用失败：\n"+err2.strip())
+                                    print("[PATCH] Apply failed:\n"+err2.strip())
                                     log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
                             else:
-                                print("[PATCH] 预检失败：\n"+err.strip())
+                                print("[PATCH] Preflight failed:\n"+err.strip())
                                 log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                         else:
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
@@ -2120,10 +2120,10 @@ def main(home: Path):
                 if events["peerB"].get("patch"):
                     norm = normalize_mailbox_patch(events["peerB"]["patch"]) or ""
                     if not norm:
-                        print("[PATCH] 跳过：patch.diff 非统一 diff 或包含无效内容")
+                        print("[PATCH] Skipped: patch.diff is not a unified diff or contains invalid content")
                     else:
                         patch = norm
-                        print_block("PeerB 补丁", "预检中 …")
+                        print_block("PeerB patch", "Preflight …")
                         lines = count_changed_lines(patch)
                         allowed, reason = _rfd_gate_check(home, policies, patch, lines)
                         if allowed:
@@ -2133,12 +2133,12 @@ def main(home: Path):
                             else:
                                 ok,err = git_apply_check(patch)
                                 if not ok:
-                                    print("[PATCH] 预检失败：\n"+err.strip())
+                                    print("[PATCH] Preflight failed:\n"+err.strip())
                                     log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                                 else:
                                     ok2,err2 = git_apply(patch)
                                     if not ok2:
-                                        print("[PATCH] 应用失败：\n"+err2.strip())
+                                        print("[PATCH] Apply failed:\n"+err2.strip())
                                         log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
                                     else:
                                         try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply patch (mailbox)")
@@ -2147,15 +2147,15 @@ def main(home: Path):
                                 _ack_receiver("PeerB", events["peerB"].get("patch"))
                                 last_event_ts["PeerB"] = time.time()
                         else:
-                            print(f"[POLICY] 补丁需 RFD 批准，原因: {reason}")
+                            print(f"[POLICY] Patch requires RFD approval: {reason}")
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
-                # 持久化索引
+                # Persist index
                 mbox_idx.save()
-                # 刷新面板用状态
+                # Refresh status for panel
                 write_status(deliver_paused); write_queue_and_locks()
-                # 检查是否需要超时重发
+                # Check resend timeouts
                 _resend_timeouts()
-                # 若队列中有待发消息且接收方空闲，尝试派发
+                # Try to send next from queue when receiver idle
                 _try_send_from_queue("PeerA")
                 _try_send_from_queue("PeerB")
             finally:
@@ -2171,15 +2171,15 @@ def main(home: Path):
         if line.lower() == "q":
             break
         if line.lower() in ("h", "/help"):
-            print("[HELP] 常用：")
+            print("[HELP]")
             print("  a: <text>    → PeerA    |  b: <text> → PeerB")
-            print("  both:/u: <text>         → 同时发给 A/B")
-            print("  a! <cmd> / b! <cmd>     → 直通命令到对应 CLI（无包装）")
-            print("  /pause | /resume        → 暂停/恢复对等交接")
-            print("  /refresh                → 重新注入 SYSTEM 提示")
-            print("  /echo on|off|<空>       → 控制台回显开/关/查看")
-            print("  q                       → 退出 orchestrator")
-            # 重印提示符
+            print("  both:/u: <text>         → send to both A/B")
+            print("  a! <cmd> / b! <cmd>     → passthrough to respective CLI (no wrapper)")
+            print("  /pause | /resume        → pause/resume A↔B handoff")
+            print("  /refresh                → re-inject SYSTEM prompt")
+            print("  /echo on|off|<empty>    → console echo on/off/show")
+            print("  q                       → quit orchestrator")
+            # Reprint prompt
             try:
                 sys.stdout.write("> "); sys.stdout.flush()
             except Exception:
@@ -2189,42 +2189,42 @@ def main(home: Path):
             sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
-            print("[SYSTEM] 已刷新（mailbox 交付）。"); continue
+            print("[SYSTEM] Refreshed (mailbox delivery)."); continue
         if line == "/pause":
             deliver_paused = True
-            print("[PAUSE] 已暂停对等交接（仍会收集 <TO_USER> 与补丁预检）"); write_status(True); continue
+            print("[PAUSE] Paused A↔B handoff (still collect <TO_USER> and patch preflight)"); write_status(True); continue
         if line == "/resume":
             deliver_paused = False
             write_status(False)
-            print("[PAUSE] 已恢复对等交接"); continue
+            print("[PAUSE] Resumed A↔B handoff"); continue
         if line == "/echo on":
             CONSOLE_ECHO = True
-            print("[ECHO] 控制台回显已开启（可能干扰输入体验）"); continue
+            print("[ECHO] Console echo ON (may interfere with input)"); continue
         if line == "/echo off":
             CONSOLE_ECHO = False
-            print("[ECHO] 控制台回显已关闭（推荐）"); continue
+            print("[ECHO] Console echo OFF (recommended)"); continue
         if line == "/echo":
-            print(f"[ECHO] 当前状态：{'on' if CONSOLE_ECHO else 'off'}"); continue
-        # /compose 已移除：行内输入依赖 readline，后台静音避免干扰
+            print(f"[ECHO] Status: {'on' if CONSOLE_ECHO else 'off'}"); continue
+        # /compose removed: line input relies on readline; background stays quiet to avoid interference
         if line == "/anti-on":
             handoff_filter_override = True
             write_status(deliver_paused); write_queue_and_locks()
-            print("[ANTI] 低信号过滤 override=on"); continue
+            print("[ANTI] Low-signal filter override=on"); continue
         if line == "/anti-off":
             handoff_filter_override = False
             write_status(deliver_paused)
-            print("[ANTI] 低信号过滤 override=off"); continue
+            print("[ANTI] Low-signal filter override=off"); continue
         if line == "/anti-status":
             pol_enabled = bool((policies.get("handoff_filter") or {}).get("enabled", True))
             eff = handoff_filter_override if handoff_filter_override is not None else pol_enabled
             src = "override" if handoff_filter_override is not None else "policy"
-            print(f"[ANTI] 低信号过滤: {eff} (source={src})"); continue
+            print(f"[ANTI] Low-signal filter: {eff} (source={src})"); continue
         if line.startswith("u:") or line.startswith("both:"):
             msg=line.split(":",1)[1].strip()
             _send_handoff("User", "PeerA", f"<FROM_USER>\n{msg}\n</FROM_USER>\n")
             _send_handoff("User", "PeerB", f"<FROM_USER>\n{msg}\n</FROM_USER>\n")
             continue
-        # 直通：a! / b! 直接把命令写入对应 CLI（无包装、无 MID）
+        # Passthrough: a! / b! writes raw command to target CLI (no wrapper/MID)
         if line.startswith("a!"):
             msg = line[2:].strip()
             if msg:
@@ -2235,7 +2235,7 @@ def main(home: Path):
             if msg:
                 _send_raw_to_cli(home, 'PeerB', msg, modeA, modeB, left, right)
             continue
-        # 正常带包装路由
+        # Normal wrapped routing
         if line.startswith("a:"):
             msg=line.split(":",1)[1].strip()
             _send_handoff("User", "PeerA", f"<FROM_USER>\n{msg}\n</FROM_USER>\n")
@@ -2244,11 +2244,11 @@ def main(home: Path):
             msg=line.split(":",1)[1].strip()
             _send_handoff("User", "PeerB", f"<FROM_USER>\n{msg}\n</FROM_USER>\n")
             continue
-        # 默认广播：立即发送给两侧
+        # Default broadcast: send to both peers immediately
         _send_handoff("User", "PeerA", f"<FROM_USER>\n{line}\n</FROM_USER>\n")
         _send_handoff("User", "PeerB", f"<FROM_USER>\n{line}\n</FROM_USER>\n")
         
-    print("\n[END] 最近提交：")
+    print("\n[END] Recent commits:")
     run("git --no-pager log -n 5 --oneline")
     print("Ledger:", (home/"state/ledger.jsonl"))
-    print(f"[TIP] 你可继续 `tmux attach -t {session}` 与两位 AI 互动。")
+    print(f"[TIP] You can `tmux attach -t {session}` to continue interacting with both AIs.")

@@ -1,1 +1,0 @@
-{"session": "cccc-cccc", "paused": false, "phase": "discovery", "leader": "peera", "require_ack": false, "mailbox_counts": {"peerA": {"to_user": 2, "to_peer": 0, "patch": 0}, "peerB": {"to_user": 2, "to_peer": 0, "patch": 0}}, "ts": "2025-08-24 23:28:38"}

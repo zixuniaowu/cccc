@@ -6,14 +6,14 @@ import os, sys, shutil, argparse, subprocess, json, atexit, signal, time
 def _bootstrap(src_root: Path, target: Path, *, force: bool = False, include_guides: bool = False):
     src_cccc = src_root/".cccc"
     if not src_cccc.exists():
-        print(f"[FATAL] 源目录缺少 .cccc：{src_cccc}")
+        print(f"[FATAL] Missing .cccc source: {src_cccc}")
         raise SystemExit(1)
     target_cccc = target/".cccc"
     target.mkdir(parents=True, exist_ok=True)
 
     def copy_one(src: Path, dst: Path):
         if dst.exists() and not force:
-            print(f"[SKIP] 已存在：{dst}")
+            print(f"[SKIP] Exists: {dst}")
             return
         if src.is_dir():
             if dst.exists() and force:
@@ -22,25 +22,25 @@ def _bootstrap(src_root: Path, target: Path, *, force: bool = False, include_gui
         else:
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
-        print(f"[OK] 写入：{dst}")
+        print(f"[OK] Wrote: {dst}")
 
-    # 复制 .cccc 整体（排除 state 与动态文件）
+    # Copy .cccc scaffold (exclude state and dynamic files)
     for root, dirs, files in os.walk(src_cccc):
         rel = Path(root).relative_to(src_cccc)
-        # 跳过动态/状态目录
+        # Skip dynamic/state directories
         if any(str(rel).startswith(p) for p in ("state",)):
             continue
         for fn in files:
-            # 跳过缓存与本地状态
+            # Skip caches and local state
             if fn.endswith(".pyc"):
                 continue
             src = Path(root)/fn
             dst = target_cccc/rel/fn
             copy_one(src, dst)
 
-    # 复制入口脚本
+    # Copy entry script
     copy_one(src_root/"cccc.py", target/"cccc.py")
-    # 可选：复制参考系统提示词到 .cccc/guides/（避免污染仓库根目录）
+    # Optional: copy reference guides into .cccc/guides/ (keep repo root clean)
     if include_guides:
         guides_dir = target_cccc/"guides"
         for top in ("CLAUDE.md", "AGENTS.md"):
@@ -48,7 +48,7 @@ def _bootstrap(src_root: Path, target: Path, *, force: bool = False, include_gui
             if src.exists():
                 copy_one(src, guides_dir/top)
 
-    # 默认 Ephemeral：仅当目标仓库不是本产品仓库时，向目标仓库 .gitignore 追加忽略 /.cccc/**
+    # Default Ephemeral: if target is not this product repo, append /.cccc/** to target .gitignore
     try:
         if (target/".git").exists() and target.resolve() != src_root.resolve():
             gi = target/".gitignore"
@@ -60,49 +60,49 @@ def _bootstrap(src_root: Path, target: Path, *, force: bool = False, include_gui
                         f.write("\n")
                     f.write("# Ignore CCCC runtime domain (Ephemeral mode)\n")
                     f.write(line+"\n")
-                print(f"[OK] 追加 .gitignore: {line}")
+                print(f"[OK] Appended to .gitignore: {line}")
     except Exception:
         pass
 
-    print(f"\n[BOOTSTRAP] 已将 CCCC 脚手架写入：{target}")
+    print(f"\n[BOOTSTRAP] CCCC scaffold written to: {target}")
 
 
 def main():
     parser = argparse.ArgumentParser(description="CCCC Orchestrator & Bootstrap",
                                      epilog=(
         "Examples:\n"
-        "  python3 cccc.py init --to .            # 在目标仓生成 .cccc 脚手架并追加 .gitignore\n"
-        "  python3 cccc.py doctor                 # 检查 git/tmux/python 与 telegram 配置\n"
-        "  python3 cccc.py token set              # 保存 Telegram token 到 .cccc/settings/telegram.yaml\n"
-        "  python3 cccc.py bridge start           # 启动 Telegram 桥接（需已设置 token）\n"
-        "  python3 cccc.py clean                  # 清理 .cccc/{mailbox,work,logs,state}/\n"
-        "  python3 cccc.py run                    # 运行 orchestrator\n"
+        "  python3 cccc.py init --to .            # Create .cccc scaffold and append /.cccc/** to .gitignore\n"
+        "  python3 cccc.py doctor                 # Check git/tmux/python and Telegram token presence\n"
+        "  python3 cccc.py token set              # Save Telegram token to .cccc/settings/telegram.yaml (gitignored)\n"
+        "  python3 cccc.py bridge start           # Start Telegram bridge (requires token)\n"
+        "  python3 cccc.py clean                  # Purge .cccc/{mailbox,work,logs,state}/\n"
+        "  python3 cccc.py run                    # Run orchestrator\n"
     ))
     sub = parser.add_subparsers(dest="cmd")
-    p_init = sub.add_parser("init", help="将 .cccc 脚手架拷贝到目标仓库")
-    p_init.add_argument("--to", default=".", help="目标仓库路径（默认当前目录）")
-    p_init.add_argument("--force", action="store_true", help="覆盖已存在文件/目录")
-    p_init.add_argument("--include-guides", action="store_true", help="将 CLAUDE.md/AGENTS.md 复制到 .cccc/guides/")
+    p_init = sub.add_parser("init", help="Copy .cccc scaffold into target repo")
+    p_init.add_argument("--to", default=".", help="Target repository path (default: current dir)")
+    p_init.add_argument("--force", action="store_true", help="Overwrite existing files/directories")
+    p_init.add_argument("--include-guides", action="store_true", help="Also copy CLAUDE.md/AGENTS.md into .cccc/guides/")
 
-    p_up = sub.add_parser("upgrade", help="升级现有 .cccc（与 init 类似，默认不覆盖已存在文件）")
-    p_up.add_argument("--to", default=".", help="目标仓库路径（默认当前目录）")
-    p_up.add_argument("--force", action="store_true", help="覆盖已存在文件/目录")
-    p_up.add_argument("--include-guides", action="store_true", help="将 CLAUDE.md/AGENTS.md 复制到 .cccc/guides/")
+    p_up = sub.add_parser("upgrade", help="Upgrade existing .cccc (like init; by default non-overwriting)")
+    p_up.add_argument("--to", default=".", help="Target repository path (default: current dir)")
+    p_up.add_argument("--force", action="store_true", help="Overwrite existing files/directories")
+    p_up.add_argument("--include-guides", action="store_true", help="Also copy CLAUDE.md/AGENTS.md into .cccc/guides/")
 
     # Utility subcommands (M2.1/M2.2)
-    p_clean = sub.add_parser("clean", help="清理 .cccc/{mailbox,work,logs,state}/ 运行产物")
+    p_clean = sub.add_parser("clean", help="Purge .cccc/{mailbox,work,logs,state}/ runtime artifacts")
 
-    p_doctor = sub.add_parser("doctor", help="环境诊断（git/tmux/python/telegram 配置）")
+    p_doctor = sub.add_parser("doctor", help="Environment check (git/tmux/python/telegram)")
 
-    p_token = sub.add_parser("token", help="管理 Telegram token（保存在 .cccc/settings/telegram.yaml，不进 git）")
-    p_token.add_argument("action", choices=["set","unset","show"], help="操作：set/unset/show")
-    p_token.add_argument("value", nargs="?", help="当 action=set 时可直接提供 token（为空则交互输入）")
+    p_token = sub.add_parser("token", help="Manage Telegram token (stored in .cccc/settings/telegram.yaml; gitignored)")
+    p_token.add_argument("action", choices=["set","unset","show"], help="Action: set/unset/show")
+    p_token.add_argument("value", nargs="?", help="When action=set, token value (empty = prompt)")
 
-    p_bridge = sub.add_parser("bridge", help="控制 Telegram 桥接")
-    p_bridge.add_argument("action", choices=["start","stop","status"], help="启动/停止/查看状态")
+    p_bridge = sub.add_parser("bridge", help="Control Telegram bridge")
+    p_bridge.add_argument("action", choices=["start","stop","status"], help="Start/stop/show status")
 
     # Alias run
-    sub.add_parser("run", help="运行 orchestrator")
+    sub.add_parser("run", help="Run orchestrator")
 
     args, rest = parser.parse_known_args()
     repo_root = Path(__file__).resolve().parent
@@ -110,10 +110,10 @@ def main():
         _bootstrap(repo_root, Path(args.to).resolve(), force=bool(args.force), include_guides=bool(getattr(args, 'include_guides', False)))
         return
 
-    # 计算运行域（即使不存在也允许部分子命令工作）
+    # Resolve runtime home (allow utility subcommands to run even if missing)
     home = Path(os.environ.get("CCCC_HOME", ".cccc")).resolve()
 
-    # 轻量 YAML 读写（供子命令使用）
+    # Lightweight YAML read/write helpers (for subcommands)
     def _read_yaml(p: Path):
         if not p.exists():
             return {}
@@ -143,7 +143,7 @@ def main():
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
 
-    # ---- 早期分发：工具子命令（不应触发编排器或向导） ----
+    # ---- Early dispatch: utility subcommands (must not trigger orchestrator/wizard) ----
     def _which(bin_name: str) -> bool:
         try:
             subprocess.run(["bash","-lc",f"command -v {bin_name}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
@@ -156,12 +156,12 @@ def main():
             try:
                 if d.exists():
                     shutil.rmtree(d)
-                    print(f"[CLEAN] 已清理 {d}")
+                    print(f"[CLEAN] Purged {d}")
             except Exception as e:
-                print(f"[CLEAN] 无法清理 {d}: {e}")
+                print(f"[CLEAN] Failed to purge {d}: {e}")
 
     def _cmd_doctor():
-        print("[DOCTOR] 开始诊断…")
+        print("[DOCTOR] Starting checks…")
         ok_git = _which("git")
         ok_tmux = _which("tmux")
         ok_py = True
@@ -177,7 +177,7 @@ def main():
         tok = (cfg or {}).get('token') or os.environ.get(str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN') )
         print(f"- telegram config: {'FOUND' if cfg else 'NONE'}; token: {'SET' if tok else 'NOT SET'}")
         if not ok_tmux:
-            print("建议：安装 tmux（例如 apt install tmux / brew install tmux）。")
+            print("Hint: install tmux (e.g., apt install tmux / brew install tmux).")
 
     def _cmd_token(action: str, value: str|None):
         cfg_path = home/"settings"/"telegram.yaml"
@@ -186,27 +186,27 @@ def main():
             tok = value
             if not tok:
                 try:
-                    tok = input("请输入 Telegram Bot Token：").strip()
+                    tok = input("Enter Telegram Bot Token: ").strip()
                 except Exception:
                     tok = None
             if not tok:
-                print("[TOKEN] 未设置 token。"); return
+                print("[TOKEN] No token set."); return
             cfg['token'] = tok
             _write_yaml(cfg_path, cfg)
-            print(f"[TOKEN] 已保存到 {cfg_path}（文件默认被忽略，不进 git）")
+            print(f"[TOKEN] Saved to {cfg_path} (file is gitignored)")
         elif action == 'unset':
             if 'token' in cfg:
                 cfg.pop('token', None)
                 _write_yaml(cfg_path, cfg)
-                print("[TOKEN] 已移除保存的 token。")
+                print("[TOKEN] Token removed.")
             else:
-                print("[TOKEN] 未发现已保存的 token。")
+                print("[TOKEN] No saved token.")
         else:  # show
             tok = cfg.get('token') if cfg else None
             if tok:
-                print("[TOKEN] 已保存：" + (tok[:4] + "…" + tok[-4:]) )
+                print("[TOKEN] Saved: " + (tok[:4] + "…" + tok[-4:]) )
             else:
-                print("[TOKEN] 未保存。可用 `cccc token set` 设置。")
+                print("[TOKEN] Not saved. Use `cccc token set`.")
 
     def _cmd_bridge(action: str):
         state = home/"state"; state.mkdir(parents=True, exist_ok=True)
@@ -214,16 +214,16 @@ def main():
         def _start():
             bridge = home/"adapters"/"telegram_bridge.py"
             if not bridge.exists():
-                print("[BRIDGE] 未找到脚本：", bridge); return
+                print("[BRIDGE] Script not found:", bridge); return
             cfg = _read_yaml(home/"settings"/"telegram.yaml")
             token_env = str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
             tok = os.environ.get(token_env, '') or str((cfg or {}).get('token') or '')
             if not tok:
-                print("[BRIDGE] 未检测到 token。请先 `cccc token set` 或设置环境变量。"); return
+                print("[BRIDGE] Token not found. Run `cccc token set` or set env var."); return
             env = os.environ.copy(); env[token_env] = tok
             p = subprocess.Popen([sys.executable, str(bridge)], env=env, cwd=str(repo_root), start_new_session=True)
             pid_path.write_text(str(p.pid), encoding='utf-8')
-            print("[BRIDGE] 已启动，pid=", p.pid)
+            print("[BRIDGE] Started, pid=", p.pid)
         def _stop():
             try:
                 if pid_path.exists():
@@ -235,14 +235,14 @@ def main():
                             os.kill(pid, signal.SIGTERM)
                         except Exception:
                             pass
-                    print("[BRIDGE] 已发送停止信号。")
+                    print("[BRIDGE] Stop signal sent.")
             except Exception as e:
-                print("[BRIDGE] 停止失败：", e)
+                print("[BRIDGE] Stop failed:", e)
         def _status():
             if pid_path.exists():
-                print(f"[BRIDGE] 运行中，pid={pid_path.read_text(encoding='utf-8').strip()}")
+                print(f"[BRIDGE] Running, pid={pid_path.read_text(encoding='utf-8').strip()}")
             else:
-                print("[BRIDGE] 未运行。")
+                print("[BRIDGE] Not running.")
         if action == 'start': _start(); return
         if action == 'stop': _stop(); return
         if action == 'status': _status(); return
@@ -256,22 +256,22 @@ def main():
     if args.cmd == 'bridge':
         _cmd_bridge(args.action); return
 
-    # 运行 orchestrator（保持原有行为）
+    # Run orchestrator (original behavior)
     if not home.exists():
-        print(f"[FATAL] 未找到 CCCC 目录：{home}\n你可以先运行 `python cccc.py init --to .` 拷贝脚手架。也可设置环境变量 CCCC_HOME。")
+        print(f"[FATAL] CCCC directory not found: {home}\nRun `python cccc.py init --to .` to copy the scaffold, or set CCCC_HOME.")
         raise SystemExit(1)
     sys.path.insert(0, str(home))
 
-    # 轻量引导：首次启动时询问是否连接 Telegram（不强制，默认仅本地）。
-    # - Token 仅从环境读取或临时输入（不写盘）
-    # - 配置文件仅写非敏感项（dry_run/allow_chats/discover_allowlist）
+    # Lightweight wizard: ask once about Telegram connection (optional; local by default).
+    # - Token can come from env or a one-time prompt (we save to YAML, gitignored)
+    # - Config writes only non-sensitive fields
     def _isatty() -> bool:
         try:
             return sys.stdin.isatty()
         except Exception:
             return False
 
-    # 上面已定义 _read_yaml/_write_yaml，下面继续使用
+    # _read_yaml/_write_yaml defined above; reuse here
 
     BRIDGE_PROC = {"p": None}
 
@@ -339,9 +339,9 @@ def main():
     def _spawn_telegram_bridge(env_extra: dict):
         bridge = home/"adapters"/"telegram_bridge.py"
         if not bridge.exists():
-            print("[WARN] 未找到 Telegram 桥接脚本，跳过连接。")
+            print("[WARN] Telegram bridge script not found; skipping.")
             return None
-        # 从配置 YAML 读取 token（若未在 env_extra 指定）
+        # Read token from YAML config (if not provided in env_extra)
         cfg = _read_yaml(home/"settings"/"telegram.yaml")
         token_env = str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
         env = os.environ.copy(); env.update(env_extra or {})
@@ -349,7 +349,7 @@ def main():
             tok = str((cfg or {}).get('token') or '')
             if tok:
                 env[token_env] = tok
-        print("[TELEGRAM] 正在启动桥接（长轮询）…")
+        print("[TELEGRAM] Starting bridge (long-polling)…")
         # Kill stale instance before spawning
         _kill_stale_bridge()
         # Start new session so we can kill the whole process group on exit; set cwd to repo root
@@ -409,11 +409,11 @@ def main():
             except Exception:
                 pass
 
-    # 引导逻辑：仅在交互式终端且未设置 CCCC_NO_WIZARD 时触发
+    # Wizard logic: only in interactive TTY and when CCCC_NO_WIZARD is not set
     if _isatty() and not os.environ.get('CCCC_NO_WIZARD'):
         try:
-            print("\n[SETUP] 请选择运行方式：\n  1) 仅本地命令行（默认）\n  2) 本地 + 连接 Telegram（需要 Bot token）")
-            choice = input("> 请输入 1 或 2（回车=1）：").strip() or "1"
+            print("\n[SETUP] Choose run mode:\n  1) Local CLI only (default)\n  2) Local + connect Telegram (requires Bot token)")
+            choice = input("> Enter 1 or 2 (Enter=1): ").strip() or "1"
         except Exception:
             choice = "1"
         if choice == "2":
@@ -475,22 +475,22 @@ def main():
             else:
                 cfg["allow_chats"] = []
                 cfg["discover_allowlist"] = True
-            # 提示 token（默认保存到 .cccc/settings/telegram.yaml；不进 git）
+            # Prompt for token (saved to .cccc/settings/telegram.yaml; gitignored)
             token_env = str(cfg.get("token_env") or "TELEGRAM_BOT_TOKEN")
             token_val = os.environ.get(token_env, "")
             if not token_val:
-                print(f"[SETUP] 未检测到环境变量 {token_env}。你可以输入一次 Token，我们会保存到 .cccc/settings/telegram.yaml（该文件默认被忽略，不进 git）。")
+                print(f"[SETUP] Env var {token_env} not found. You may enter the token once; we will save it to .cccc/settings/telegram.yaml (gitignored).")
                 try:
-                    token_val = input("请输入 Telegram Bot Token（仅用于本次进程，不会写盘）：").strip()
+                    token_val = input("Enter Telegram Bot Token (used for this session; will be saved): ").strip()
                 except Exception:
                     token_val = ""
-            # 默认保存 token 到配置（Ephemeral 模式下安全）
+            # Save token to config by default (safe in Ephemeral mode)
             if token_val:
                 cfg['token'] = token_val
-            # 允许用户直接录入 chat_id（可留空跳过）
+            # Allow user to input chat_id(s) (optional; Enter to skip)
             if not cfg.get("allow_chats"):
                 try:
-                    raw = input("可选：请输入 chat_id（可多个，用逗号/空格分隔；群聊通常为负数 -100...；回车跳过）：").strip()
+                    raw = input("Optional: enter chat_id (comma/space separated; groups are negative -100...; Enter to skip): ").strip()
                 except Exception:
                     raw = ""
                 ids = []
@@ -505,21 +505,21 @@ def main():
                     if ids:
                         cfg["allow_chats"] = ids
                         cfg["discover_allowlist"] = False
-                        print(f"[SETUP] 已设置 allow_chats={ids}")
-            # 写入配置（包含 token；该文件位于 .cccc/settings/telegram.yaml，不应被提交）
+                        print(f"[SETUP] allow_chats set to {ids}")
+            # Write config (including token) to .cccc/settings/telegram.yaml (should not be committed)
             _write_yaml(cfg_path, cfg)
-            # 可选：获取 chat_id
+            # Optional: onboarding for chat_id
             if not cfg.get("allow_chats"):
-                print("[SETUP] 已启用发现模式（discover_allowlist=true）。你可以：\n  • 直接在聊天里发送 /subscribe 自助订阅（若配置为 autoregister=open）；或\n  • 发送 /whoami 然后在 .cccc/state/bridge-telegram.log 查到 chat_id，填入 allow_chats 后重启桥接。")
-            # 启动桥接（优先使用当前进程环境的 token，否则读 YAML 中的 token）
+                print("[SETUP] Discovery mode enabled (discover_allowlist=true). You can either:\n  • Send /subscribe in chat (if autoregister=open), or\n  • Send /whoami and find chat_id in .cccc/state/bridge-telegram.log, then add it to allow_chats and restart.")
+            # Start bridge (prefer env token; else read token from YAML)
             if token_val:
                 _spawn_telegram_bridge({token_env: token_val})
             else:
-                # 若 YAML 已保存 token，_spawn_telegram_bridge 会自动从 YAML 注入
+                # If YAML has a token, _spawn_telegram_bridge will inject it automatically
                 if cfg.get('token'):
                     _spawn_telegram_bridge({})
                 else:
-                    print("[WARN] 未提供 Token，无法连接 Telegram；将以本地模式继续。")
+                    print("[WARN] No token provided; continue in local mode without Telegram.")
     # Install shutdown hooks after potential spawn
     _install_shutdown_hooks()
 
@@ -540,7 +540,7 @@ def main():
     try:
         from orchestrator_tmux import main as run
     except Exception as e:
-        print(f"[FATAL] 导入 orchestrator 失败：{e}")
+        print(f"[FATAL] Failed to import orchestrator: {e}")
         raise
     run(home)
 

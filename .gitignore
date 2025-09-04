@@ -3,5 +3,19 @@
 .cccc/state/**
 .cccc/logs/**
 .cccc/mailbox/**
+# Optional local personas (not used at runtime)
+.cccc/personas/**
 # Local, non-tracked runtime config (no secrets in repo)
 .cccc/settings/telegram.yaml
+
+# Python bytecode caches
+**/__pycache__/**
+*.pyc
+
+# Local virtualenv
+/.venv/
+
+# Root-level AI prompt guides are for local tooling only
+/CLAUDE.md
+/AGENTS.md
+/GEMINI.md
