@@ -1879,6 +1879,12 @@ def main(home: Path):
     print("\n[就绪] 常用：a:/b:/both:/u: 发送消息；/pause|/resume 交接；/refresh 刷新 SYSTEM；q 退出。")
     print("[TIP] 控制台输入不被干扰：默认关闭 AI 输出回显。用 /echo on 开启，/echo off 关闭，/echo 查看状态。")
     print("[TIP] 直通模式：a! <cmd> 或 b! <cmd> 直接把命令发到对应 CLI（无包装），例如 a! /model")
+    # 首次进入给出明确输入提示
+    try:
+        sys.stdout.write("[READY] 输入 h 或 /help 查看命令提示。\n> ")
+        sys.stdout.flush()
+    except Exception:
+        pass
 
     # last_windows/dedup_* 已在握手后初始化
 
@@ -1974,7 +1980,7 @@ def main(home: Path):
             pass
         rlist, _, _ = select.select([sys.stdin], [], [], 0.5)
         if rlist:
-            line = read_console_line("\n> ").strip()
+            line = read_console_line("> ").strip()
         else:
             # Mailbox 轮询：消费结构化输出（不再抓屏解析）。
             # 为避免打字时被回显干扰，默认静音扫描期间的 console 打印。
@@ -2164,6 +2170,21 @@ def main(home: Path):
             continue
         if line.lower() == "q":
             break
+        if line.lower() in ("h", "/help"):
+            print("[HELP] 常用：")
+            print("  a: <text>    → PeerA    |  b: <text> → PeerB")
+            print("  both:/u: <text>         → 同时发给 A/B")
+            print("  a! <cmd> / b! <cmd>     → 直通命令到对应 CLI（无包装）")
+            print("  /pause | /resume        → 暂停/恢复对等交接")
+            print("  /refresh                → 重新注入 SYSTEM 提示")
+            print("  /echo on|off|<空>       → 控制台回显开/关/查看")
+            print("  q                       → 退出 orchestrator")
+            # 重印提示符
+            try:
+                sys.stdout.write("> "); sys.stdout.flush()
+            except Exception:
+                pass
+            continue
         if line == "/refresh":
             sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")

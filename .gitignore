@@ -1,3 +1,7 @@
 # CCCC orchestrator shared workspace (non-authoritative)
 .cccc/work/**
-
+.cccc/state/**
+.cccc/logs/**
+.cccc/mailbox/**
+# Local, non-tracked runtime config (no secrets in repo)
+.cccc/settings/telegram.yaml

@@ -122,52 +122,24 @@ def render(home: Path):
     anti = status.get("handoff_filter_enabled")
 
     lines: List[str] = []
-    lines.append("CCCC Status Panel")
-    lines.append("=================")
-    lines.append("")
-    lines.append("Controls")
-    lines.append("- a: <text> → PeerA  | b: <text> → PeerB")
-    lines.append("- both:/u: <text>     → both peers")
-    lines.append("- a! <cmd>            → raw passthrough to PeerA (no wrapper)")
-    lines.append("- b! <cmd>            → raw passthrough to PeerB (no wrapper)")
-    lines.append("- /pause | /resume     : toggle handoff")
-    lines.append("- /anti-on|/anti-off   : toggle low-signal filter override")
-    lines.append("- /anti-status         : show filter state")
-    lines.append("- /refresh             : re-inject SYSTEM")
-    lines.append("- q                    : quit orchestrator")
-    lines.append("")
-    lines.append("Session")
-    lines.append(f"- name   : {session.get('session', '-')}   phase: {phase}  leader: {leader}")
-    lines.append(f"- paused : {paused}")
-    lines.append(f"- panes  : lt={session.get('lt','?')} rt={session.get('rt','?')} lb={session.get('lb','?')} rb={session.get('rb','?')}")
-    lines.append("")
-    lines.append("Delivery")
-    lines.append(f"- require_ack: {require_ack}")
-    lines.append(f"- anti-loop filter: {anti}")
+    # Header（固定高度，避免“增长感”）
+    lines.append("CCCC Panel  |  在终端输入 h 或 /help 查看命令   |   " + time.strftime('%H:%M:%S'))
+    lines.append("============================================================")
+    # 精简状态
+    lines.append(f"Session: {session.get('session','-')}  Phase: {phase}  Leader: {leader}  Paused: {paused}")
+    lines.append(f"Delivery: require_ack={require_ack}  filter={anti}")
     if mcounts:
-        lines.append("- mailbox events:")
-        for who in ("peerA","peerB"):
-            c = mcounts.get(who) or {}
-            lines.append(f"  · {who}: to_user={c.get('to_user',0)} to_peer={c.get('to_peer',0)} patch={c.get('patch',0)}")
-    if mlast:
-        lines.append("- mailbox last:")
-        for who in ("peerA","peerB"):
-            c = mlast.get(who) or {}
-            lines.append(f"  · {who}: to_user={c.get('to_user','-')} to_peer={c.get('to_peer','-')} patch={c.get('patch','-')}")
-    lines.append("")
-    lines.append("Handoff")
-    lines.append(f"- total: delivered={stats['handoff'].get('delivered',0)} queued={stats['handoff'].get('queued',0)} failed={stats['handoff'].get('failed',0)}")
-    lines.append(f"- flow : A→B={stats['handoff'].get('A2B',0)}  B→A={stats['handoff'].get('B2A',0)}")
-    lines.append("")
-    lines.append("Patches")
-    lines.append(f"- commits: {stats['patch']['commit']}   tests: ok={stats['patch']['tests_ok']} fail={stats['patch']['tests_fail']}")
-    lines.append(f"- rejects: precheck={stats['patch']['precheck_fail']} apply={stats['patch']['apply_fail']} reject={stats['patch']['reject']}")
-    lines.append("")
-    lines.append("Recent Events (ledger tail)")
-    for it in stats["notes"]:
+        ca = mcounts.get('peerA') or {}; cb = mcounts.get('peerB') or {}
+        lines.append(f"Mailbox: A tu={ca.get('to_user',0)} tp={ca.get('to_peer',0)} pa={ca.get('patch',0)}  |  B tu={cb.get('to_user',0)} tp={cb.get('to_peer',0)} pa={cb.get('patch',0)}")
+    lines.append(f"Handoff: delivered={stats['handoff'].get('delivered',0)} queued={stats['handoff'].get('queued',0)} failed={stats['handoff'].get('failed',0)}  Flow A→B={stats['handoff'].get('A2B',0)} B→A={stats['handoff'].get('B2A',0)}")
+    lines.append(f"Patches: commits={stats['patch']['commit']} tests_ok={stats['patch']['tests_ok']} tests_fail={stats['patch']['tests_fail']} rejects={stats['patch']['reject']}")
+    # Recent（限制条数）
+    lines.append("Recent:")
+    for it in stats["notes"][-6:]:
         lines.append("- " + format_note_line(it))
-    lines.append("")
-    lines.append("Copy-mode: Prefix-[ to enter; q or Esc to exit")
+    # Footer 提示
+    lines.append("------------------------------------------------------------")
+    lines.append("在编排器终端：a:/b:/both:/u: 发送；h 或 /help 查看；q 退出。")
 
     out = "\n".join(lines)
     sys.stdout.write("\033[H\033[J")  # clear screen

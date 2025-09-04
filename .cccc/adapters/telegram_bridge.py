@@ -1078,10 +1078,60 @@ def main():
             if is_cmd(text, 'help'):
                 help_txt = (
                     "使用: a:/b:/both: 或 /a /b /both 路由到 PeerA/PeerB/两者；/whoami 看 chat_id；/status 查看状态；/queue 查看队列；/locks 查看锁；"
-                    "/subscribe 订阅（若启用）；/unsubscribe 取消；/showpeers on|off 切换 Peer↔Peer 摘要；/files [in|out] [N] 列最近文件；/file N 看详情。"
+                    "/subscribe 订阅（若启用）；/unsubscribe 取消；/showpeers on|off 切换 Peer↔Peer 摘要；/files [in|out] [N] 列最近文件；/file N 看详情；/rfd list|show <id>。"
                 )
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
                 continue
+            # /rfd list|show <id>
+            if re.match(r"^/rfd(?:@\S+)?\b", text.strip(), re.I):
+                try:
+                    cmd = text.strip().split()
+                    sub = cmd[1].lower() if len(cmd) > 1 else 'list'
+                except Exception:
+                    sub = 'list'
+                ledger = HOME/"state"/"ledger.jsonl"
+                entries = []
+                try:
+                    lines = ledger.read_text(encoding='utf-8').splitlines()[-500:]
+                    for ln in lines:
+                        try:
+                            ev = json.loads(ln)
+                            entries.append(ev)
+                        except Exception:
+                            pass
+                except Exception:
+                    entries = []
+                if sub == 'list':
+                    rfds = [e for e in entries if str(e.get('kind') or '').lower() == 'rfd'][-10:]
+                    if not rfds:
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'No RFD entries'}, timeout=15)
+                        continue
+                    lines = [f"{e.get('id') or '?'} | {e.get('title') or e.get('summary') or ''}" for e in rfds]
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
+                    continue
+                if sub == 'show':
+                    rid = cmd[2] if len(cmd) > 2 else ''
+                    if not rid:
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': '用法: /rfd show <id>'}, timeout=15)
+                        continue
+                    # Find the RFD and latest decision
+                    rfd = None; decision = None
+                    for ev in entries:
+                        k = str(ev.get('kind') or '').lower()
+                        if k == 'rfd' and str(ev.get('id') or '') == rid:
+                            rfd = ev
+                        if k == 'decision' and str(ev.get('rfd_id') or '') == rid:
+                            decision = ev
+                    text_out = [f"RFD {rid}"]
+                    if rfd:
+                        text_out.append(f"title={rfd.get('title') or rfd.get('summary') or ''}")
+                        text_out.append(f"ts={rfd.get('ts')}")
+                    else:
+                        text_out.append('not found in tail')
+                    if decision:
+                        text_out.append(f"decision={decision.get('decision')} by chat={decision.get('chat')} ts={decision.get('ts')}")
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(text_out)}, timeout=15)
+                    continue
             # /files and /file
             if re.match(r"^/files(?:@\S+)?\b", text.strip(), re.I):
                 m = re.match(r"^/files(?:@\S+)?\s*(in|out)?\s*(\d+)?", text.strip(), re.I)
