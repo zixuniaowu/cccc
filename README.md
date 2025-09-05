@@ -1,6 +1,6 @@
 # CCCC Pair — Dual‑AI Orchestrator (Telegram‑first, Evidence‑first)
 
-Two best‑in‑class AI CLIs (Claude Code + Codex CLI) co‑drive your work as equal peers. They collaborate, self‑review, and ship small, reversible changes with built‑in governance. You monitor and approve from one place: your team’s Telegram chat.
+Two best‑in‑class AI CLIs (Claude Code + Codex CLI) co‑drive your work as equal peers. They collaborate, self‑review, and ship small, reversible changes with built‑in governance. You monitor and approve from two places: tmux or your team’s Telegram chat.
 
 Not a chatbot UI. Not an IDE plugin. A production‑minded orchestrator for 24/7, long‑running work.
 
