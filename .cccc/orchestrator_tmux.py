@@ -1582,12 +1582,11 @@ def main(home: Path):
     # self-check text from config (fallback to a sane default)
     _sc_text = str(delivery_cfg.get("self_check_text") or "").strip()
     DEFAULT_SELF_CHECK = (
-        "[Self-check] Pause briefly and answer (≤1 line each):\n"
-        "1) What did you concretely complete?\n"
-        "2) Any drift from goal? Why and how to correct?\n"
-        "3) Any new confusion? How to converge?\n"
-        "4) What was missed? Which single item to fix first?\n"
-        "5) Did you forget your role and recommended behaviors?\n"
+        "[Self-check] Briefly answer (≤2 line each):\n"
+        "1) Any drift from goal?\n"
+        "2) What’s still unclear? Any new confusion created? Any better ideas?\n"
+        "3) What was missed?\n"
+        "4) The single next check (hook/path/metric).\n"
         "Continue only after answering."
     )
     self_check_text = _sc_text if _sc_text else DEFAULT_SELF_CHECK
@@ -1668,12 +1667,19 @@ def main(home: Path):
         log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": mid, "seq": seq, "chars": len(payload)})
         print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
 
-        # Count non-NUDGE instructions from User/System; every K sends, broadcast a self-check to both peers.
+        # Count non-NUDGE, non-low-signal handoffs; every K sends, broadcast a self-check to both peers.
         try:
             if self_check_enabled and (not in_self_check):
                 pl = (payload or "")
                 is_nudge = pl.strip().startswith("[NUDGE]")
-                if (sender_label in ("User","System")) and (not is_nudge):
+                # Treat any meaningful handoff (User/System/PeerA/PeerB) as a step toward self-check
+                meaningful_sender = sender_label in ("User","System","PeerA","PeerB")
+                low_signal = False
+                try:
+                    low_signal = is_low_signal(pl, policies)
+                except Exception:
+                    low_signal = False
+                if meaningful_sender and (not is_nudge) and (not low_signal):
                     instr_counter += 1
                     if instr_counter % self_check_every == 0:
                         in_self_check = True

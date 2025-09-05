@@ -61,8 +61,8 @@ delivery:
   self_check_every_handoffs: 12   # Push a self-check after N handoffs (0=disable)
   self_check_text: |-
     [Self-check] Briefly answer (≤2 line each):
-    1) Any drift from goal? Why and how to correct?
-    2) What’s still unclear? Any new confusion created? How to converge?
+    1) Any drift from goal?
+    2) What’s still unclear? Any new confusion created? Any better ideas?
     3) What was missed?
     4) The single next check (hook/path/metric).
     Continue only after answering.
