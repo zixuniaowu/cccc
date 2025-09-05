@@ -35,6 +35,12 @@
 .vscode/
 .env
 
+# Local dev environments
+/venv-publish/
+
+# Build-time generated scaffold (created by scripts/sync_scaffold.py)
+/cccc_scaffold/
+
 # Optional: keep repo minimal (docs/tests can be reintroduced later)
 /docs/
 /tests/
