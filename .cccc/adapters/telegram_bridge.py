@@ -249,9 +249,38 @@ def save_runtime(obj: Dict[str, Any]):
     except Exception:
         pass
 
-def _summarize(text: str, max_chars: int) -> str:
-    s = re.sub(r"\s+", " ", text).strip()
-    return (s[:max_chars] + '…') if len(s) > max_chars else s
+def _summarize(text: str, max_chars: int, max_lines: int = 8) -> str:
+    """Summarize while preserving line breaks for readability.
+    - Normalize newlines, trim trailing spaces
+    - Collapse consecutive blank lines
+    - Keep at most max_lines; then cap by max_chars
+    """
+    if not text:
+        return ""
+    t = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", "  ")
+    lines = [ln.rstrip() for ln in t.split("\n")]
+    # strip leading/trailing empty lines
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    # collapse multiple blank lines
+    kept = []
+    empty = 0
+    for ln in lines:
+        if not ln.strip():
+            empty += 1
+            if empty <= 1:
+                kept.append("")
+        else:
+            empty = 0
+            kept.append(ln)
+    # limit lines
+    kept = kept[:max_lines]
+    out = "\n".join(kept).strip()
+    if len(out) > max_chars:
+        out = out[: max(0, max_chars - 1) ] + "…"
+    return out
 
 def _subs_path() -> Path:
     return HOME/"state"/"telegram-subs.json"
@@ -290,6 +319,7 @@ def dry_run_loop(cfg: Dict[str, Any]):
     seen = set()
     default_route = str(cfg.get('default_route') or 'both')
     max_chars = int(cfg.get('max_msg_chars') or 900)
+    max_lines = int(cfg.get('max_msg_lines') or 8)
     _append_log(outlog, "[dry-run] bridge started")
 
     def watch_outputs():
@@ -304,7 +334,7 @@ def dry_run_loop(cfg: Dict[str, Any]):
                 key = str(p)
                 if txt and txt != last[key]:
                     last[key] = txt
-                    preview = _summarize(txt, max_chars)
+                    preview = _summarize(txt, max_chars, max_lines)
                     _append_log(outlog, f"[outbound] {p.name} {len(txt)} chars | {preview}")
             time.sleep(1.0)
 
@@ -433,8 +463,10 @@ def main():
     # Outbound watcher (send summaries when to_user changes; debounced per peer)
     debounce = int(cfg.get('debounce_seconds') or 30)
     max_chars = int(cfg.get('max_msg_chars') or 900)
+    max_lines = int(cfg.get('max_msg_lines') or 8)
     peer_debounce = int(cfg.get('peer_debounce_seconds') or debounce)
     peer_max_chars = int(cfg.get('peer_message_max_chars') or 600)
+    peer_max_lines = int(cfg.get('peer_message_max_lines') or 6)
     runtime = load_runtime()
     show_peers_default = bool(cfg.get('show_peer_messages', True))
     show_peers = bool(runtime.get('show_peer_messages', show_peers_default))
@@ -550,7 +582,7 @@ def main():
 
     def send_summary(peer: str, text: str):
         label = "PeerA" if peer == 'peerA' else "PeerB"
-        msg = f"[{label}]\n" + _summarize(redact(text), max_chars)
+        msg = f"[{label}]\n" + _summarize(redact(text), max_chars, max_lines)
         for chat_id in allow:
             tg_api('sendMessage', {
                 'chat_id': chat_id,
@@ -562,7 +594,7 @@ def main():
 
     def send_peer_summary(sender_peer: str, text: str):
         label = "PeerA→PeerB" if sender_peer == 'peerA' else "PeerB→PeerA"
-        msg = f"[{label}]\n" + _summarize(redact(text), peer_max_chars)
+        msg = f"[{label}]\n" + _summarize(redact(text), peer_max_chars, peer_max_lines)
         for chat_id in allow:
             tg_api('sendMessage', {
                 'chat_id': chat_id,
@@ -665,7 +697,7 @@ def main():
         def _is_image(path: Path) -> bool:
             return path.suffix.lower() in ('.jpg','.jpeg','.png','.gif','.webp')
         def _send_file(peer: str, fp: Path, caption: str) -> bool:
-            cap = f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + _summarize(redact(caption or ''), max_chars)
+            cap = f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + _summarize(redact(caption or ''), max_chars, max_lines)
             # Choose send method: sidecar override > dir/ext heuristic
             method = 'sendPhoto' if _is_image(fp) or fp.parent.name == 'photos' else 'sendDocument'
             any_fail = False

@@ -19,10 +19,12 @@ Orchestrator Boundaries (unaltered)
 - .cccc/** is orchestrator domain (non‑business). Allowed writes: .cccc/mailbox/**, .cccc/work/**, .cccc/logs/**, .cccc/state/** (all non‑authoritative). Do not modify orchestrator code/config/policies.
 - Keep patches small (≤ 150 changed lines). Prefer multiple small diffs.
 
-Exploration and Convergence (diverge → decide → build)
-- Start with a short Explore window (1–2 exchanges): free‑form, idea‑led conversation to surface novel options (you may use an IDEA block; see below).
-- Decide: once a “top idea” emerges, switch to PCR+Hook and pick the cheapest discriminative probe with exactly one Next.
+Conversation Rhythm (light)
+- Opening · Explore: start with 2–3 one‑line options (orthogonal angles). If uncertain, ask 1 decisive question. Free‑form is welcome; use an IDEA block when helpful.
+- No pure ACK: if you agree, add one new angle (risk/hook/smaller next) or steelman+counter in 1 line.
+- Decide: when a top idea emerges, write a ≤6‑line Decision note (see template) or at least a PCR+Hook line, then pick one cheapest discriminative Next.
 - Build: evidence‑first loop (EVIDENCE/CLAIM/COUNTER/QUESTION) with Loop Guard (refocus when no gain) and Baton Discipline (one Next per turn).
+- Reflect: end a micro‑loop with a 2‑line reflect (“what’s unclear + next check”).
 
 Minimal Handshake — PCR+Hook (soft‑required for to_peer.md)
 First line in .cccc/mailbox/peerA/to_peer.md:
@@ -48,10 +50,10 @@ Evidence (domain‑agnostic)
 - Decision trace: include ledger/commit/test/log IDs when available.
 
 Handoff Mechanics (make pair > single)
-- Challenger quota: for each substantive topic, aim ≥3 COUNTERs across rounds (≥1 strong opposition) unless falsified earlier.
+- Prefer at least 2 concrete COUNTERs across a substantive topic (including 1 strong opposition) unless falsified early.
 - Loop guard: if 2 rounds add no information (no assumptions killed; same symptom), send R with a cheaper probe or narrower objective.
 - Builder‑critic rhythm: one proposes a micro‑claim/evidence; the other tries to falsify with the smallest decisive check; then switch.
-- Baton discipline: only one Next per turn. No parallel laundry lists.
+- Baton discipline: only one Next per turn. No parallel laundry lists. No pure ACK.
 
 Quality Micro‑Checklist (pre‑send)
 - Reversible? Readable? Small, safe change boundary?
@@ -83,8 +85,20 @@ Inbox + NUDGE (pull mode)
 - On [NUDGE]: read the oldest inbox file; after processing, move it to processed/ (same mailbox). Repeat until empty. Only reply if blocked.
 
 Self‑Checks (micro‑rituals)
-- Before sending: Does this add information or land a small win? Is this the cheapest discriminative step? Did I cite a Hook and a single Next?
-- After receiving: Can I falsify/strengthen this with the smallest test/log? What is the leanest risk to mitigate now?
+- Before sending: Did I add information or land a small win? Is this the cheapest discriminative step? Did I cite a Hook and a single Next?
+- After receiving: Can I falsify/strengthen this with the smallest test/log? What is the leanest risk to mitigate now? End a loop with a 2‑line reflect.
+
+Micro‑templates (copy‑paste)
+- IDEA (Explore‑only)
+  - Idea: <one‑liner>
+  - Contrast: <how it differs from current options>
+  - 1 test: <5‑minute sniff test>
+- Decision (≤6 lines; optional but recommended)
+  - Decision / Why this / Why not others
+  - Assumptions / Kill‑criteria / Next (PCR+Hook)
+- Reflect (2 lines)
+  - Unclear: <what remains uncertain>
+  - Next check: <single check with hook/path/metric>
 
 Anti‑patterns (reject by default)
 - Vague talk without Hook/Next; long narrative where a list suffices.

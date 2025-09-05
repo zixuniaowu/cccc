@@ -1,0 +1,12 @@
+include LICENSE
+include README.md
+
+# Include orchestrator scaffold (but not runtime directories)
+recursive-include cccc_scaffold/scaffold *
+
+# Prune runtime/cache artifacts
+prune cccc_scaffold/scaffold/state
+prune cccc_scaffold/scaffold/logs
+prune cccc_scaffold/scaffold/work
+prune cccc_scaffold/scaffold/mailbox
+global-exclude *.pyc __pycache__/* .DS_Store

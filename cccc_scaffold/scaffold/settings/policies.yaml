@@ -1,0 +1,63 @@
+patch_queue:
+  max_diff_lines: 150
+  allowed_paths:
+    - "src/**"
+    - "tests/**"
+    - "docs/**"
+    - "infra/**"
+    - "README.md"
+    - "AGENTS.md"
+    - "PROJECT.md"
+rfd:
+  trigger:
+    both_confidence_below: 0.6
+    max_dispute_rounds: 2
+  gates:
+    # By default do NOT require RFD for large diffs; prefer splitting into small steps.
+    # Set to true if you want explicit approval for large changes.
+    large_diff_requires_rfd: false
+    # Protected paths require an approved RFD decision before merging
+    protected_paths:
+      - ".cccc/**"           # Orchestrator domain protected
+      - "src/api/public/**"  # Example: public API protected (adjust per project)
+autonomy_level: L1
+context:
+  files_limit: 120
+  exclude:
+    - ".venv/**"
+    - "node_modules/**"
+    - "**/__pycache__/**"
+
+handoff_filter:
+  enabled: true
+  cooldown_seconds: 15
+  min_chars: 40
+  min_words: 6
+  # Long-text redundancy suppression: drop highly similar long content without new evidence/patch/question
+  redundant_window_seconds: 120
+  redundant_similarity_threshold: 0.9
+  dedup_max_keep: 10
+  dedup_short_seconds: 30
+  # If none of the following keywords appear and the text is short, treat as low-signal
+  require_keywords_any:
+    - "CLAIM:"
+    - "COUNTER:"
+    - "EVIDENCE:"
+    - "TASK"
+    - "PATCH"
+    - "diff --git"
+  # High-signal boosters (bypass cooldown when any matches)
+  boost_keywords_any:
+    - "CLAIM:"
+    - "COUNTER:"
+    - "EVIDENCE:"
+    - "TASK"
+    - "PATCH"
+    - "diff --git"
+  boost_regexes:
+    - '```'          # fenced code/patch
+    - '^\s*diff --git\s'
+  bypass_cooldown_when_high_signal: true
+  # Treat as low-signal when any of the following regexes matches (case-insensitive)
+  drop_regexes:
+    - '^\s*(ok|okay|ready|standby|waiting|idle)\b'

@@ -4,9 +4,21 @@ from pathlib import Path
 import os, sys, shutil, argparse, subprocess, json, atexit, signal, time
 
 def _bootstrap(src_root: Path, target: Path, *, force: bool = False, include_guides: bool = False):
-    src_cccc = src_root/".cccc"
-    if not src_cccc.exists():
-        print(f"[FATAL] Missing .cccc source: {src_cccc}")
+    # Preferred: packaged resources (importlib.resources)
+    src_cccc = None
+    try:
+        from importlib import resources as _res
+        base = _res.files("cccc_scaffold").joinpath("scaffold")  # type: ignore
+        if base.is_dir():
+            src_cccc = Path(str(base))
+    except Exception:
+        src_cccc = None
+    # Fallback: repo/source layout during development
+    if src_cccc is None:
+        candidates = [src_root/".cccc", Path(sys.prefix)/".cccc", Path(sys.exec_prefix)/".cccc"]
+        src_cccc = next((p for p in candidates if p.exists()), None)
+    if src_cccc is None:
+        print("[FATAL] Missing scaffold resources; reinstall the package or run from source repo with .cccc/")
         raise SystemExit(1)
     target_cccc = target/".cccc"
     target.mkdir(parents=True, exist_ok=True)
@@ -38,8 +50,7 @@ def _bootstrap(src_root: Path, target: Path, *, force: bool = False, include_gui
             dst = target_cccc/rel/fn
             copy_one(src, dst)
 
-    # Copy entry script
-    copy_one(src_root/"cccc.py", target/"cccc.py")
+    # Do not copy entry script; users run the installed `cccc` command from the package
     # Optional: copy reference guides into .cccc/guides/ (keep repo root clean)
     if include_guides:
         guides_dir = target_cccc/"guides"
@@ -71,12 +82,12 @@ def main():
     parser = argparse.ArgumentParser(description="CCCC Orchestrator & Bootstrap",
                                      epilog=(
         "Examples:\n"
-        "  python3 cccc.py init --to .            # Create .cccc scaffold and append /.cccc/** to .gitignore\n"
-        "  python3 cccc.py doctor                 # Check git/tmux/python and Telegram token presence\n"
-        "  python3 cccc.py token set              # Save Telegram token to .cccc/settings/telegram.yaml (gitignored)\n"
-        "  python3 cccc.py bridge start           # Start Telegram bridge (requires token)\n"
-        "  python3 cccc.py clean                  # Purge .cccc/{mailbox,work,logs,state}/\n"
-        "  python3 cccc.py run                    # Run orchestrator\n"
+        "  cccc init              # Create .cccc scaffold in current repo and append /.cccc/** to .gitignore\n"
+        "  cccc doctor            # Check git/tmux/python and Telegram token presence\n"
+        "  cccc token set         # Save Telegram token to .cccc/settings/telegram.yaml (gitignored)\n"
+        "  cccc bridge start      # Start Telegram bridge (requires token)\n"
+        "  cccc clean             # Purge .cccc/{mailbox,work,logs,state}/\n"
+        "  cccc run               # Run orchestrator\n"
     ))
     sub = parser.add_subparsers(dest="cmd")
     p_init = sub.add_parser("init", help="Copy .cccc scaffold into target repo")
@@ -99,8 +110,12 @@ def main():
     p_token.add_argument("value", nargs="?", help="When action=set, token value (empty = prompt)")
 
     p_bridge = sub.add_parser("bridge", help="Control Telegram bridge")
-    p_bridge.add_argument("action", choices=["start","stop","status"], help="Start/stop/show status")
+    p_bridge.add_argument("action", choices=["start","stop","status","restart","logs"], help="Start/stop/show status/restart/show logs")
+    p_bridge.add_argument("-n","--lines", type=int, default=120, help="Tail this many lines for logs action")
+    p_bridge.add_argument("-f","--follow", action="store_true", help="Follow logs (stream)")
 
+    # Utility: show versions
+    sub.add_parser("version", help="Show package and scaffold versions")
     # Alias run
     sub.add_parser("run", help="Run orchestrator")
 
@@ -211,6 +226,12 @@ def main():
     def _cmd_bridge(action: str):
         state = home/"state"; state.mkdir(parents=True, exist_ok=True)
         pid_path = state/"telegram-bridge.pid"
+        def _alive(pid: int) -> bool:
+            try:
+                os.kill(pid, 0)
+                return True
+            except Exception:
+                return False
         def _start():
             bridge = home/"adapters"/"telegram_bridge.py"
             if not bridge.exists():
@@ -221,7 +242,8 @@ def main():
             if not tok:
                 print("[BRIDGE] Token not found. Run `cccc token set` or set env var."); return
             env = os.environ.copy(); env[token_env] = tok
-            p = subprocess.Popen([sys.executable, str(bridge)], env=env, cwd=str(repo_root), start_new_session=True)
+            # Run from project root so .cccc resolves correctly inside bridge
+            p = subprocess.Popen([sys.executable, str(bridge)], env=env, cwd=str(Path.cwd()), start_new_session=True)
             pid_path.write_text(str(p.pid), encoding='utf-8')
             print("[BRIDGE] Started, pid=", p.pid)
         def _stop():
@@ -240,12 +262,56 @@ def main():
                 print("[BRIDGE] Stop failed:", e)
         def _status():
             if pid_path.exists():
-                print(f"[BRIDGE] Running, pid={pid_path.read_text(encoding='utf-8').strip()}")
+                try:
+                    pid = int(pid_path.read_text(encoding='utf-8').strip())
+                except Exception:
+                    pid = 0
+                if pid and _alive(pid):
+                    print(f"[BRIDGE] Running, pid={pid}")
+                else:
+                    print("[BRIDGE] Not running (stale pid file).")
             else:
                 print("[BRIDGE] Not running.")
+        def _logs(lines: int = 120, follow: bool = False):
+            lg = home/"state"/"bridge-telegram.log"
+            if not lg.exists():
+                print("[BRIDGE] Log file not found:", lg)
+                return
+            try:
+                if follow:
+                    # Simple follow implementation
+                    print(f"[BRIDGE] Tailing {lg} (Ctrl-C to stop)…")
+                    with open(lg, 'r', encoding='utf-8') as f:
+                        # jump to last lines
+                        try:
+                            from collections import deque
+                            dq = deque(f, maxlen=lines)
+                            for ln in dq:
+                                print(ln.rstrip())
+                        except Exception:
+                            pass
+                        while True:
+                            ln = f.readline()
+                            if not ln:
+                                time.sleep(0.5); continue
+                            print(ln.rstrip())
+                else:
+                    # print last N lines
+                    try:
+                        from collections import deque
+                        with open(lg, 'r', encoding='utf-8') as f:
+                            dq = deque(f, maxlen=lines)
+                            for ln in dq:
+                                print(ln.rstrip())
+                    except Exception as e:
+                        print(f"[BRIDGE] Failed to read logs: {e}")
+            except KeyboardInterrupt:
+                pass
         if action == 'start': _start(); return
         if action == 'stop': _stop(); return
         if action == 'status': _status(); return
+        if action == 'restart': _stop(); time.sleep(0.5); _start(); return
+        if action == 'logs': _logs(lines=int(getattr(args,'lines',120) or 120), follow=bool(getattr(args,'follow', False))); return
 
     if args.cmd == 'clean':
         _cmd_clean(); return
@@ -255,10 +321,40 @@ def main():
         _cmd_token(args.action, getattr(args, 'value', None)); return
     if args.cmd == 'bridge':
         _cmd_bridge(args.action); return
+    if args.cmd == 'version':
+        # Package version
+        pkg_ver = "unknown"
+        try:
+            try:
+                import importlib.metadata as md  # py3.8+
+            except Exception:
+                import importlib_metadata as md  # type: ignore
+            for name in ("cccc-pair","cccc_pair","cccc"):
+                try:
+                    pkg_ver = md.version(name); break
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        # Scaffold info
+        scaffold_path = home
+        exists = scaffold_path.exists()
+        file_count = 0
+        if exists:
+            try:
+                for root, dirs, files in os.walk(scaffold_path):
+                    if any(x in root for x in ("state","logs","work","mailbox","__pycache__")):
+                        continue
+                    file_count += len(files)
+            except Exception:
+                pass
+        print(f"cccc package: {pkg_ver}")
+        print(f"scaffold path: {scaffold_path} (exists={exists}, files~{file_count})")
+        return
 
     # Run orchestrator (original behavior)
     if not home.exists():
-        print(f"[FATAL] CCCC directory not found: {home}\nRun `python cccc.py init --to .` to copy the scaffold, or set CCCC_HOME.")
+        print(f"[FATAL] CCCC directory not found: {home}\nRun `cccc init` in your target repository to copy the scaffold, or set CCCC_HOME.")
         raise SystemExit(1)
     sys.path.insert(0, str(home))
 
@@ -292,11 +388,10 @@ def main():
                     try:
                         cmdline_path=f'/proc/{pid}/cmdline'
                         from pathlib import Path as _P
-                        repo_root=_P(__file__).resolve().parent
                         if _P(cmdline_path).exists():
                             cmd=_P(cmdline_path).read_bytes().decode('utf-8','ignore')
-                            # Must contain this repo's telegram_bridge.py path
-                            if str(repo_root/'.cccc'/'adapters'/'telegram_bridge.py') in cmd:
+                            # Must contain this repo's telegram_bridge.py path (under current project's .cccc)
+                            if str((home/'adapters'/'telegram_bridge.py').resolve()) in cmd:
                                 belongs=True
                     except Exception:
                         pass
@@ -352,9 +447,9 @@ def main():
         print("[TELEGRAM] Starting bridge (long-polling)…")
         # Kill stale instance before spawning
         _kill_stale_bridge()
-        # Start new session so we can kill the whole process group on exit; set cwd to repo root
-        repo_root = Path(__file__).resolve().parent
-        p = subprocess.Popen([sys.executable, str(bridge)], env=env, cwd=str(repo_root), start_new_session=True)
+        # Start new session so we can kill the whole process group on exit; set cwd to project root
+        project_root = home.parent
+        p = subprocess.Popen([sys.executable, str(bridge)], env=env, cwd=str(project_root), start_new_session=True)
         BRIDGE_PROC["p"] = p
         try:
             # Persist PID for diagnostics

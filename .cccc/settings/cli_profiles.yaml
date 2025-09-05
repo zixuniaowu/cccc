@@ -13,12 +13,12 @@ peerA:
   chunk_delay_ms: 160                                        # Delay between chunks (ms)
   # Optional inbound suffix per source
   inbound_suffix:
-    from_user: " Act with first principles and best practices; you co-own quality and outcomes; collaborate deeply with PeerB. think"
-    from_peer: " Review with first principles against our global goal; point out gaps concisely (avoid duplicate reviews). If nothing critical to add, stay silent. think"
-    from_system: " Act with first principles and best practices; you co-own quality and outcomes; collaborate deeply with PeerB. think"
+    from_user: " Explore first: 2–3 quick options (1‑liners), ask 1 decisive Q; no patch yet; then hand baton to PeerB. ultrathink"
+    from_peer: " Please review my work/opinion with first principles against our global goal; Synthesize: write a ≤6‑line Decision (or PCR+Hook) before next step; pick one cheapest discriminative Next. If nothing critical to add other than an pure ACK, stay silent and do not reply. ultrathink"
+    from_system: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line. ultrathink"
   # Optional NUDGE suffix (system [NUDGE] lines only)
   # e.g., " Read the oldest file and first echo ack: <seq> before processing"
-  nudge_suffix: " Follow the closed loop: read oldest → act → output/reply → archive processed message → next. think hard"
+  nudge_suffix: " Read oldest → act → output/reply → move to processed/ → next; if blocked, ask 1 decisive Q. ultrathink"
 peerB:
   prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # Adjust to your PeerB CLI prompt if needed
   busy_regexes:
@@ -41,11 +41,11 @@ peerB:
   nudge_enter_delay_ms: 250
   # Optional inbound suffix per source
   inbound_suffix:
-    from_user: " Do not act immediately; wait for PeerA follow-up. If needed, reply via to_peer.md with questions or evidence (never to user)."
-    from_peer: " Review against our global goal; point out gaps precisely (avoid duplication). If nothing critical to add, prefer silence."
-    from_system: " Do not act immediately; wait for PeerA follow-up; reply with questions or evidence via to_peer.md."
+    from_user: " Do not act yet; wait for PeerA’s framing. Ask 1 decisive Q or propose a 2min micro‑experiment."
+    from_peer: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line; propose a Hook. If nothing critical to add other than an pure ACK, stay silent and do not reply."
+    from_system: " End micro‑loops with 2‑line Reflect: what’s unclear + the single next check (with hook)."
   # Optional NUDGE suffix
-  nudge_suffix: " Follow the closed loop: read oldest → act → output/reply → archive processed message → next."
+  nudge_suffix: " Read oldest → act → output/reply → move to processed/ → next; keep changes small & evidential."
 delivery:
   paste_max_wait_seconds: 6       # Max wait for idle before paste
   recheck_interval_seconds: 0.6   # Poll interval
@@ -58,14 +58,13 @@ delivery:
   ack_require_mid: false          # Strictly require [MID: ...] echo to ACK? (default false)
   duplicate_window_seconds: 90    # De‑dup guard window
   # --- periodic self-check ---
-  self_check_every_handoffs: 20   # Push a self-check after N handoffs (0=disable)
+  self_check_every_handoffs: 12   # Push a self-check after N handoffs (0=disable)
   self_check_text: |-
-    [Self-check] Briefly answer (≤1 line each):
-    1) What concrete progress since last check?
-    2) Any drift from goal? Why and how to correct?
-    3) Any new confusion created? How to converge?
-    4) What was missed? Which single item to fix first?
-    5) Did you forget your role and recommended behaviors?
+    [Self-check] Briefly answer (≤2 line each):
+    1) Any drift from goal? Why and how to correct?
+    2) What’s still unclear? Any new confusion created? How to converge?
+    3) What was missed?
+    4) The single next check (hook/path/metric).
     Continue only after answering.
   # --- mailbox pull + nudge mode ---
   mailbox_pull_enabled: true      # Enable inbox + NUDGE (instead of direct paste)

@@ -11,11 +11,30 @@
 # Python bytecode caches
 **/__pycache__/**
 *.pyc
+.pytest_cache/**
+.mypy_cache/**
+.tox/**
+.coverage
 
 # Local virtualenv
 /.venv/
+
+# Build artifacts
+/dist/
+/build/
+*.egg-info/
 
 # Root-level AI prompt guides are for local tooling only
 /CLAUDE.md
 /AGENTS.md
 /GEMINI.md
+
+# Local/editor/platform noise
+.DS_Store
+.idea/
+.vscode/
+.env
+
+# Optional: keep repo minimal (docs/tests can be reintroduced later)
+/docs/
+/tests/

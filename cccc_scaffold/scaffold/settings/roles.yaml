@@ -1,0 +1,7 @@
+leader: peerA   # Choose initial leader: peerA or peerB
+specialties:
+  peerA: [product-shaping, architecture, design, review]
+  peerB: [implementation, testing, performance, review]
+rotation:
+  mode: manual
+  allowed_at: ["phase-change", "stalemate"]

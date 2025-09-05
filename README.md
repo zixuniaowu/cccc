@@ -1,72 +1,249 @@
-# CCCC — 两个对等 AI 的协作编排器（内部备忘）
-- 目的：让两位平等的 AI（PeerA/PeerB）在同一仓库、同一分支上，以“证据优先 + 小步快跑”的方式协作，尽量减少人工干预到关键决策点。
-- 机制：Mailbox 文件作为唯一权威信道；tmux 仅作可视化。只有补丁/测试/日志（Evidence）改变系统状态。
+# CCCC Pair — Dual‑AI Orchestrator (Telegram‑first, Evidence‑first)
 
-## 核心能力
-- 双 CLI 长连：tmux 四分屏（A/B + ledger + 状态面板）。
-- Mailbox 协议：`.cccc/mailbox/peerX/{to_user.md,to_peer.md,patch.diff}` 收发结构化内容。
-- 提交队列：补丁预检（`git apply --check`）→ 应用 → Lint/快测 → `git commit` → 记账。
-- 规则收敛：默认“≤150 行改动/补丁”；超限通过 RFD 走例外（需双签与更严格门禁）。
-- 触发器→输出：最小合规发声（ACK/EVIDENCE/CLAIM/QUESTION/COUNTER），减少无效闲聊。
+Two best‑in‑class AI CLIs (Claude Code + Codex CLI) co‑drive your work as equal peers. They collaborate, self‑review, and ship small, reversible changes with built‑in governance. You monitor and approve from one place: your team’s Telegram chat.
 
-## 为什么用 Mailbox
-- 避免解析不同 CLI 的 TUI/回显差异；让 Evidence 可回放、可审计。
-- 终端视图只做“感觉良好”的可视化；真实决策以 mailbox 与 ledger 为准。
+Not a chatbot UI. Not an IDE plugin. A production‑minded orchestrator for 24/7, long‑running work.
 
-## 快速开始
-```bash
-# 依赖：git, tmux, Python 3.10+
-python3 -m venv .venv && source .venv/bin/activate
-pip install pyyaml
+## Why It’s Different
 
-# 运行（在本仓库）
-python cccc.py
-# 或迁移脚手架到你的仓库
-python cccc.py init --to /path/to/repo  # --force 可覆盖
+- Dual‑AI Autonomy: peers continuously plan → build → critique → refine. They don’t wait for prompts; they follow a mailbox contract and change the world only with EVIDENCE (diff/tests/logs/benchmarks).
+- Telegram‑first Collaboration: a 24/7 agent lives in your team chat. High‑signal summaries, one‑tap RFD decisions, explicit routing (a:/b:/both:) so normal conversation remains normal. Files flow both ways with captions and sidecars.
+- Builder–Critic Synergy: peers challenge CLAIMs with COUNTERs and converge via verifiable EVIDENCE. In practice this beats single‑model quality on complex, multi‑day tasks.
+- tmux Transparency: dual panes (PeerA/PeerB) + compact status panel. You can peek, nudge, or inject text without disrupting flows—and without a GUI.
+- Governance at the Core (RFD): protected areas and irreversible changes raise Request‑For‑Decision cards in chat; approvals are written to a ledger and unlock execution.
+- Team‑level Efficiency: one always‑on bot concentrates orchestration and approvals for the whole team. You reduce duplicated “per‑seat” sessions and still retain control.
+
+## What You Get
+
+- Evidence‑first loop: tiny diffs/tests/logs; only green changes commit.
+- Single‑branch queue: preflight `git apply` → (optional) lint/tests → commit.
+- RFD closed loop: generate cards, gate protected paths/large diffs, unlock on decision.
+- Telegram integration: explicit routing; `/status`, `/queue`, `/locks`, `/rfd list|show`, `/showpeers on|off`, file send/receive with meta.
+- Ledger: append‑only `.cccc/state/ledger.jsonl` (patch/test/log/decision) for audit.
+
+## Requirements
+
+- Python `>= 3.9`
+- tmux (e.g., `brew install tmux` or `sudo apt install tmux`)
+- git (preflight/commits)
+
+Supported CLIs (current)
+- Peer A: Claude Code CLI (recommended: MAX Plan)
+- Peer B: Codex CLI (recommended: PRO Plan)
+
+## Install
+
+- Recommended (pipx)
+  - `pipx install cccc-pair`
+- Or venv
+  - `python3 -m venv v && . v/bin/activate && pip install cccc-pair`
+
+## Quick Start (5 minutes)
+
+1) Initialize in your project repo
+
+```
+cccc init
 ```
 
-启动后：
-- tmux 会话名：`cccc-<repo>`，四分屏：A（左上）/B（右上）/ledger（左下）/状态（右下）。
-- 控制台输入：`a: 文本` / `b: 文本` / `u: 文本（或 both: 文本）`。
-- 任何补丁会自动走预检→应用→lint/test→提交，并记录到 `.cccc/state/ledger.jsonl`。
+This copies the scaffold to `./.cccc/` and appends `/.cccc/**` to `.gitignore` (Ephemeral).
 
-## 配置（启动时读取）
-- `.cccc/settings/cli_profiles.yaml`
-  - `commands.peerA|peerB`: CLI 启动命令（未设则回退内置 Mock）。
-  - `delivery_mode.peerA|peerB`: `tmux` | `bridge`（建议 B 在 tmux，TUI 更稳）。
-  - `peer*.inbound_suffix`: tri‑suffix（from_user/from_peer/from_system），由你手动维护。
-- `.cccc/settings/policies.yaml`
-  - `patch_queue.max_diff_lines` 默认 150；`allowed_paths` 路径白名单。
-  - `handoff_filter` 低信号抑制策略（冷却、关键词、去重等）。
-- `.cccc/settings/roles.yaml`：当前 leader（用于状态显示）。
+2) Check environment
 
-提示：现阶段不做运行时热更新；修改上述配置需重启 `python cccc.py` 生效。
+```
+cccc doctor
+```
 
-## 运行时 SYSTEM（极简）
-- 由 `prompt_weaver.py` 动态拼装（Mailbox 合约 + Inbound markers + Speak‑up Triggers）。
-- 历史长文 prompt 已归档到 `docs/bak/`，不再参与运行时注入。
+3) (Optional) Enable Telegram
 
-## Speak‑up Triggers（最小高信号输出）
-- 收到含 `[MID]` 的消息：在 CLI 输出 `<SYSTEM_NOTES>ack: <MID></SYSTEM_NOTES>`。
-- 有最小产物：发 EVIDENCE（小补丁/测试；否则 3–5 行稳定日志，含命令/行号）。
-- 有下一步但无产物：发 CLAIM（1–3 任务；每个含 constraints + acceptance）。
-- 被单点不确定阻塞：只问一个可判定的 QUESTION。
-- 不同意：先 steelman，再发 COUNTER（附复现/度量）。
+```
+cccc token set   # paste your bot token; stored in .cccc/settings/telegram.yaml (gitignored)
+```
 
-## 调试与可视化
-- `CONSOLE_ECHO`：是否在 orchestrator 控制台回显 AI 输出（当前默认 true，便于调试）。后续可考虑迁移到配置文件（启动时读取即可，无需热更）。
-- tmux 常用：切 pane（Ctrl‑b 方向键）；脱离（Ctrl‑b d）。滚动历史：滚轮上进入 copy‑mode，`q`/`Esc` 退出。
+4) Run orchestrator (tmux UI)
 
-## 策略：为何保留 150 行上限
-- 小步可回滚、评审成本低，证据循环更快；不限制创意，只鼓励拆分与可验证。
-- 需要大改时：用 RFD 走例外（双签、严格门禁）或拆成补丁序列。
+```
+cccc run
+```
 
-## 已知限制（现阶段）
-- 无运行时热更新：修改配置需重启。
-- bridge 适配器仍在演进（已做 DSR/SGR 修正）；TUI 较重的 CLI 建议用 tmux 模式。
-- 未接入外部消息桥（如 Telegram）；仅本地 tmux 可视化。
+tmux opens: left/right = PeerA/PeerB, bottom‑right = status panel. If token is present and autostart=true, the Telegram bridge starts automatically.
 
-## 路线（短期）
-- M0→M1：稳定提交队列/软锁/证据账本；完善失败原因与观测。
-- M1.5：可选的配置热加载（仅 policies/roles），并保留极简 SYSTEM。
-- M2：外部桥接（Telegram）；RFD 内联；差异追踪与自修复提案。
+5) First‑time CLI setup (required)
+
+- Install the two CLIs and make sure the binaries are on PATH:
+  - `claude ...` (Claude Code)
+  - `codex ...` (Codex CLI)
+- Paste system prompts for best collaboration quality:
+  - Open `PEERA.md` and copy its full content into a new file `CLAUDE.md` at your repo root (not tracked; `.gitignore` already ignores it). Claude Code CLI should load this as its system prompt.
+  - Open `PEERB.md` and copy its full content into a new file `AGENTS.md` at your repo root (not tracked). Codex CLI should load this as its system prompt.
+- Move any previous “project state” prompt into `PROJECT.md` at the repo root (recommended). The orchestrator will weave this into the runtime SYSTEM so both peers align on scope and goals.
+- Verify or adjust the CLI commands in `.cccc/settings/cli_profiles.yaml`:
+  - `commands.peerA: "claude ..."`
+  - `commands.peerB: "codex ..."`
+  - You can also override at runtime with env vars: `CLAUDE_I_CMD`, `CODEX_I_CMD`.
+
+## First Landing Checklist (Minimal)
+
+Do just these to get a clean, working setup:
+
+1) `cccc init` (creates `./.cccc` and ignores runtime dirs)
+2) `cccc doctor` (git/tmux/python)
+3) Prepare system prompts (required once per repo)
+   - Copy `PEERA.md` → `CLAUDE.md` (root)
+   - Copy `PEERB.md` → `AGENTS.md` (root)
+   - Put your brief/scope in `PROJECT.md` (root)
+4) Optional Telegram (highly recommended)
+   - `cccc token set`
+   - `cccc run` (bridge autostarts) or `cccc bridge start`
+5) Start work: `cccc run` (tmux panes + status panel)
+
+That’s it. You can refine policies later.
+
+## Telegram Quickstart (Team Hub)
+
+- Group routing: use explicit routes so normal chat stays normal
+  - `a: <text>` / `b: <text>` / `both: <text>`
+  - or `/a ...` `/b ...` `/both ...` (works with privacy mode)
+- Get oriented
+  - `/status` project stats; `/queue` handoff queue; `/locks` internal locks
+  - `/whoami` shows your chat_id; `/subscribe` (if `autoregister: open`)
+  - `/showpeers on|off` toggles Peer↔Peer summaries
+- File exchange
+  - Outbound (AIs → Telegram): save under `.cccc/work/upload/outbound/<peer>/{photos,files}/`
+  - Optional caption: same‑name `.caption.txt`; force send‑as via `.sendas` (`photo|document`)
+  - Sent files are deleted on success; `outbound.reset_on_start: clear` avoids blasting residuals on restart
+  - Inbound (Telegram → AIs): bot writes `<FROM_USER>` with sidecar meta; peers act on it
+- Governance: RFD cards in chat with Approve/Reject; decisions go to the ledger and unlock execution.
+
+## A Typical Session (End‑to‑End, ~3 minutes)
+
+Goal: ship a small, reversible change with dual‑AI collaboration.
+
+1) Explore (short)
+- In Telegram (or tmux), route a brief idea to both: `both: Add a section to README about team chat tips`
+- PeerA summarizes intent; PeerB asks 1 focused question if needed.
+
+2) Decide (concise CLAIM)
+- PeerA writes a CLAIM in `peerA/to_peer.md` with acceptance and constraints (≤150 lines; links to where to edit).
+- PeerB COUNTERs if there’s a sharper place or a safer rollout.
+
+3) Build (evidence‑first)
+- PeerB produces a tiny unified diff in `peerB/patch.diff` (e.g., add a new README subsection) and a 1–2 line EVIDENCE note (tests OK/lines/paths/MID).
+- Orchestrator preflights → applies → (optional) lint/tests → commits on green and logs to ledger.
+
+4) Team visibility
+- Telegram posts a concise summary (debounced); peers stay quiet unless blocked.
+- If you need files (screenshots/spec PDFs), drop them to the bot with a caption; peers act on the inbound block with meta.
+
+RFD is not required here. It triggers automatically only for protected areas or when you explicitly ask for a decision.
+
+## Recommended Stack (Pragmatic & Stable)
+
+- AI CLIs: Claude Code (MAX Plan) + Codex CLI (PRO Plan) for robust, sustained workloads.
+- Orchestrator: this project, with tmux for long‑lived panes and a compact panel.
+- Transport & Governance: Telegram for team‑wide visibility, quick RFD decisions, and file exchange.
+
+## Folder Layout (after `cccc init`)
+
+```
+.cccc/
+  adapters/telegram_bridge.py    # Telegram long‑poll bridge (MVP)
+  settings/
+    cli_profiles.yaml            # tmux/paste/type behavior; echo; idle regexes; self‑check
+    policies.yaml                # patch queue size; allowlist; RFD gates
+    roles.yaml                   # leader; specialties; rotation
+    telegram.yaml                # token/autostart/allowlist/dry_run/routing/files
+  mailbox/                       # peerA/peerB with to_user.md/to_peer.md/patch.diff; inbox/processed
+  work/                          # shared workspace; upload inbound/outbound; ephemeral
+  state/                         # ledger.jsonl, bridge logs, status/session; ephemeral
+  logs/                          # extra logs; ephemeral
+  orchestrator_tmux.py delivery.py mailbox.py panel_status.py prompt_weaver.py
+  evidence_runner.py mock_agent.py
+```
+
+## CLI Reference
+
+- `cccc init [--force] [--to PATH]` — copy scaffold; preserves layout; excludes runtime dirs
+- `cccc doctor` — check git/tmux/python/telegram
+- `cccc run` — start orchestrator (tmux panes + status panel; autostarts bridge when configured)
+- `cccc token set|unset|show` — manage Telegram token (gitignored)
+- `cccc bridge start|stop|status|restart|logs [-n N] [--follow]` — control and inspect bridge
+- `cccc clean` — purge `.cccc/{mailbox,work,logs,state}/`
+- `cccc version` — show package version and scaffold path info
+
+CLI prerequisites (summary)
+- Peer A = Claude Code; Peer B = Codex CLI. Install and log in as required by each vendor.
+- Ensure the binaries (`claude`, `codex`) are on PATH or set `commands.peer*`/`CLAUDE_I_CMD`/`CODEX_I_CMD`.
+
+## Key Configuration (snippets)
+
+`.cccc/settings/policies.yaml`
+
+```
+patch_queue:
+  max_diff_lines: 150
+  allowed_paths: ["src/**","tests/**","docs/**","infra/**","README.md","PROJECT.md"]
+rfd:
+  gates:
+    protected_paths: [".cccc/**","src/api/public/**"]
+    large_diff_requires_rfd: false
+handoff_filter:
+  enabled: true
+  cooldown_seconds: 15
+```
+
+`.cccc/settings/telegram.yaml`
+
+```
+token_env: "TELEGRAM_BOT_TOKEN"
+autostart: true
+discover_allowlist: true
+autoregister: open
+dry_run: false
+files:
+  enabled: true
+  outbound_dir: ".cccc/work/upload/outbound"
+outbound:
+  reset_on_start: clear
+```
+
+## FAQ / Troubleshooting
+
+**tmux panes not appearing?**
+- Install tmux (`tmux -V`), run in a TTY, then `cccc run`. Check `cccc doctor`.
+
+**Telegram bot silent?**
+- `cccc token show` (token saved?) → `cccc bridge status` (running?) → `cccc bridge logs -n 200`
+- In group chats, route explicitly (`a:`/`/a`), and run `/whoami` or `/subscribe` once to register
+- Ensure `autostart: true`, `dry_run: false`
+
+**Claude/Codex CLI not found?**
+- Install the CLIs and make sure the binaries are on PATH; otherwise set explicit commands:
+  - Edit `.cccc/settings/cli_profiles.yaml` (`commands.peerA|peerB`) or
+  - Export env vars before `cccc run`: `CLAUDE_I_CMD="/path/to/claude ..."`, `CODEX_I_CMD="/path/to/codex ..."`
+
+**Where to put my project brief/policies?**
+- Put your project scope/brief in `PROJECT.md` (repo root). The orchestrator injects it into the runtime SYSTEM so both peers align.
+- RFD/protected paths live in `.cccc/settings/policies.yaml`.
+
+**“This environment is externally managed” during install/build?**
+- Use a venv or pipx for publishing; avoid system Python for `pip install` of tools like build/twine.
+
+**RFD card not shown?**
+- Confirm ledger has `kind:rfd`; check bridge logs; verify gates and to_peer YAML format.
+
+## Security & Privacy
+
+- Telegram token saved to `.cccc/settings/telegram.yaml` (gitignored) or env; do not commit secrets.
+- Bridge redacts common secret patterns; keep mailbox content free of tokens.
+- Orchestrator domain `.cccc/**` is runtime; do not commit `state/logs/work/mailbox`.
+
+## Roadmap (Selected)
+
+- Role‑based approvals; multi‑sign gates; richer RFD templates with default options/expiry
+- Artifact previews in chat; repro snippets; CI/CD hooks for release/rollback cards
+- Optional safety scanners (ClamAV/DLP) for inbound files; Slack/Mattermost bridges
+
+## License
+
+Apache (see LICENSE).

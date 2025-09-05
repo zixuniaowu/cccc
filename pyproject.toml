@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cccc-pair"
+version = "0.2.4"
+description = "Two‑AI orchestrator (tmux) for evidence‑first, small‑step collaboration"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.9"
+authors = [
+  { name = "ChesterRa", email = "ra@ike.ba" }
+]
+license = { file = "LICENSE" }
+keywords = ["orchestrator","tmux","ai","rfd","pair","collaboration"]
+dependencies = [
+  "PyYAML>=6.0"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Environment :: Console",
+  "Operating System :: POSIX :: Linux",
+  "Operating System :: MacOS",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[project.urls]
+Homepage = "https://github.com/ChesterRa/cccc"
+Repository = "https://github.com/ChesterRa/cccc"
+Issues = "https://github.com/ChesterRa/cccc/issues"
+
+[project.scripts]
+cccc = "cccc:main"
+
+[tool.setuptools]
+py-modules = ["cccc"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["cccc_scaffold"]
+
+[tool.setuptools.package-data]
+"cccc_scaffold" = ["scaffold/**"]
+
+# Install the runtime scaffold under the installation prefix at ".cccc/"
+# We purposefully exclude state/logs/work/mailbox and caches from the distribution.
+[tool.setuptools.data-files]
+# Preserve subdirectory layout under the installation prefix
+".cccc" = [
+  ".cccc/*.py",
+]
+".cccc/adapters" = [
+  ".cccc/adapters/*.py",
+]
+".cccc/prompts" = [
+  ".cccc/prompts/*",
+]
+".cccc/settings" = [
+  ".cccc/settings/*",
+]
