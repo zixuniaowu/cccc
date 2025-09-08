@@ -1984,11 +1984,11 @@ def main(home: Path):
 
     # Already injected; no need to re-send
     if start_mode == "ai_bootstrap":
-        print("[PROJECT] Selected AI bootstrap for PROJECT.md; instructions were sent with the first SYSTEM message.")
+        print("[PROJECT] Selected AI bootstrap for PROJECT.md.")
 
     # If PROJECT.md exists: hint to read and standby (do not force pause for A↔B)
     if start_mode == "has_doc":
-        print("[PROJECT] Found PROJECT.md; instructions were sent with the first SYSTEM message.")
+        print("[PROJECT] Found PROJECT.md.")
 
     while True:
         # Keep it simple: no phase locks; send clear instructions at start; remove runtime SYSTEM hot-reload
@@ -2092,11 +2092,7 @@ def main(home: Path):
                     mbox_counts["peerA"]["to_user"] += 1
                     mbox_last["peerA"]["to_user"] = time.strftime("%H:%M:%S")
                     last_event_ts["PeerA"] = time.time()
-                    # Clear to_user.md after core consumption (unify semantics; transports read ledger or subsequent writes)
-                    try:
-                        (home/"mailbox"/"peerA"/"to_user.md").write_text("", encoding="utf-8")
-                    except Exception:
-                        pass
+                    # Do not clear here; bridges will clear after successful send to avoid races
                 if events["peerA"].get("to_peer"):
                     payload = events["peerA"]["to_peer"].strip()
                     # Any mailbox activity can count as ACK
@@ -2143,7 +2139,7 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
-                    if should_forward(payload, "PeerA", "PeerB", policies, state, eff_enabled):
+                    if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                         _send_handoff("PeerA", "PeerB", wrapped)
                         # Clear to_peer.md after successful forward to avoid accidental resends
@@ -2188,12 +2184,8 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 # PeerB events
                 if events["peerB"].get("to_user"):
-                    # Core consumption for consistency: log and clear even if ignored by transports
+                    # Core consumption for consistency: log event; bridges will clear file after send
                     log_ledger(home, {"from":"PeerB","kind":"to_user","route":"mailbox","chars":len(events["peerB"].get("to_user",""))})
-                    try:
-                        (home/"mailbox"/"peerB"/"to_user.md").write_text("", encoding="utf-8")
-                    except Exception:
-                        pass
                 if events["peerB"].get("to_peer"):
                     payload = events["peerB"]["to_peer"].strip()
                     _ack_receiver("PeerB", payload)
@@ -2232,7 +2224,7 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
-                        if should_forward(payload, "PeerB", "PeerA", policies, state, eff_enabled):
+                        if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
                             wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
                             _send_handoff("PeerB", "PeerA", wrapped)
                             # Clear to_peer.md after successful forward

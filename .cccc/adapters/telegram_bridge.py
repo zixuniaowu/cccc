@@ -23,6 +23,9 @@ except Exception:
 
 ROOT = Path.cwd()
 HOME = ROOT/".cccc"
+# Ensure we can import modules from .cccc (single-source preamble via prompt_weaver)
+if str(HOME) not in sys.path:
+    sys.path.insert(0, str(HOME))
 CLI_PROFILES = None
 try:
     CLI_PROFILES = read_yaml(HOME/"settings"/"cli_profiles.yaml")
@@ -509,7 +512,7 @@ def main():
     outlog = HOME/"state"/"bridge-telegram.log"
     _append_log(outlog, "[net] bridge started")
     # Outbound watcher (send summaries when to_user changes; debounced per peer)
-    debounce = int(cfg.get('debounce_seconds') or 30)
+    debounce = int(cfg.get('debounce_seconds') or 3)
     max_chars = int(cfg.get('max_msg_chars') or 900)
     max_lines = int(cfg.get('max_msg_lines') or 8)
     peer_debounce = int(cfg.get('peer_debounce_seconds') or debounce)
@@ -654,7 +657,7 @@ def main():
 
     def watch_outputs():
         outbound_conf = cfg.get('outbound') or {}
-        watch_peers = outbound_conf.get('watch_to_user_peers') or ['peerA']
+        watch_peers = outbound_conf.get('watch_to_user_peers') or ['peerA','peerB']
         to_user_paths = {}
         if 'peerA' in watch_peers:
             to_user_paths['peerA'] = HOME/'mailbox'/'peerA'/'to_user.md'
@@ -946,6 +949,11 @@ def main():
                     last_seen[peer] = txt
                     last_sent_ts[peer] = now
                     send_summary(peer, txt)
+                    # Clear after successful send to avoid repeats and race with orchestrator
+                    try:
+                        p.write_text('', encoding='utf-8')
+                    except Exception:
+                        pass
             # to_peer (peer-to-peer) messages
             eff_show = bool(load_runtime().get('show_peer_messages', show_peers))
             if eff_show:
