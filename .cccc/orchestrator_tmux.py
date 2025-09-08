@@ -2086,13 +2086,22 @@ def main(home: Path):
                 payload = ""  # guard variable for conditional forwarding
                 # PeerA events
                 if events["peerA"].get("to_user"):
-                    print_block("PeerA → USER", events["peerA"]["to_user"])
-                    log_ledger(home, {"from":"PeerA","kind":"to_user","route":"mailbox","chars":len(events["peerA"]["to_user"])})
+                    txt = events["peerA"]["to_user"].strip()
+                    print_block("PeerA → USER", txt)
+                    try:
+                        eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
+                    except Exception:
+                        eid = str(int(time.time()))
+                    log_ledger(home, {"kind":"to_user","peer":"PeerA","text":txt,"eid":eid})
                     _ack_receiver("PeerA", events["peerA"]["to_user"])  # Consider as ACK (responded after peer handoff)
                     mbox_counts["peerA"]["to_user"] += 1
                     mbox_last["peerA"]["to_user"] = time.strftime("%H:%M:%S")
                     last_event_ts["PeerA"] = time.time()
-                    # Do not clear here; bridges will clear after successful send to avoid races
+                    # Clear mailbox file after logging to ledger (core is authoritative outbox)
+                    try:
+                        (home/"mailbox"/"peerA"/"to_user.md").write_text("", encoding="utf-8")
+                    except Exception:
+                        pass
                 if events["peerA"].get("to_peer"):
                     payload = events["peerA"]["to_peer"].strip()
                     # Any mailbox activity can count as ACK
@@ -2184,8 +2193,16 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 # PeerB events
                 if events["peerB"].get("to_user"):
-                    # Core consumption for consistency: log event; bridges will clear file after send
-                    log_ledger(home, {"from":"PeerB","kind":"to_user","route":"mailbox","chars":len(events["peerB"].get("to_user",""))})
+                    txt = events["peerB"].get("to_user"," ").strip()
+                    try:
+                        eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
+                    except Exception:
+                        eid = str(int(time.time()))
+                    log_ledger(home, {"kind":"to_user","peer":"PeerB","text":txt,"eid":eid})
+                    try:
+                        (home/"mailbox"/"peerB"/"to_user.md").write_text("", encoding="utf-8")
+                    except Exception:
+                        pass
                 if events["peerB"].get("to_peer"):
                     payload = events["peerB"]["to_peer"].strip()
                     _ack_receiver("PeerB", payload)

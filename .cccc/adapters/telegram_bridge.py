@@ -657,12 +657,6 @@ def main():
 
     def watch_outputs():
         outbound_conf = cfg.get('outbound') or {}
-        watch_peers = outbound_conf.get('watch_to_user_peers') or ['peerA','peerB']
-        to_user_paths = {}
-        if 'peerA' in watch_peers:
-            to_user_paths['peerA'] = HOME/'mailbox'/'peerA'/'to_user.md'
-        if 'peerB' in watch_peers:
-            to_user_paths['peerB'] = HOME/'mailbox'/'peerB'/'to_user.md'
         to_peer_paths = {
             'peerA': HOME/"mailbox"/"peerA"/"to_peer.md",
             'peerB': HOME/"mailbox"/"peerB"/"to_peer.md",
@@ -742,6 +736,67 @@ def main():
                 time.sleep(2.0)
 
         threading.Thread(target=watch_ledger_for_rfd, daemon=True).start()
+
+        # Outbox (to_user) watcher: read structured events from ledger (single source of truth)
+        def _outbox_seen_path() -> Path:
+            return HOME/"state"/"outbox-seen.json"
+        def _load_outbox_seen() -> set:
+            p = _outbox_seen_path()
+            try:
+                if p.exists():
+                    arr = json.loads(p.read_text(encoding='utf-8')).get('ids') or []
+                    return set(str(x) for x in arr)
+            except Exception:
+                pass
+            return set()
+        def _save_outbox_seen(ids: set):
+            p = _outbox_seen_path(); p.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                p.write_text(json.dumps({'ids': list(ids)[-5000:]}, ensure_ascii=False, indent=2), encoding='utf-8')
+            except Exception:
+                pass
+        def watch_ledger_for_to_user():
+            ledger = HOME/"state"/"ledger.jsonl"
+            seen_ids = _load_outbox_seen()
+            baseline_done = False
+            window = 2000
+            while True:
+                try:
+                    if ledger.exists():
+                        lines = ledger.read_text(encoding='utf-8').splitlines()[-window:]
+                        changed=False
+                        for line in lines:
+                            try:
+                                ev = json.loads(line)
+                            except Exception:
+                                continue
+                            if str(ev.get('kind') or '').lower() != 'to_user':
+                                continue
+                            eid = str(ev.get('eid') or '')
+                            peer = str(ev.get('peer') or '')
+                            text = str(ev.get('text') or '')
+                            if not peer or not text:
+                                continue
+                            if eid and eid in seen_ids:
+                                continue
+                            if not baseline_done:
+                                if eid:
+                                    seen_ids.add(eid); changed=True
+                                continue
+                            # Send to Telegram
+                            p = 'peerA' if peer.lower() in ('peera','peera'.lower(), 'peera'.lower()) or peer=='PeerA' else 'peerB'
+                            send_summary(p, text)
+                            if eid:
+                                seen_ids.add(eid); changed=True
+                            _append_ledger({'kind':'bridge-outbox-sent','peer':p,'eid':eid,'chars':len(text)})
+                        if changed:
+                            _save_outbox_seen(seen_ids)
+                        baseline_done = True
+                except Exception:
+                    pass
+                time.sleep(1.0)
+
+        threading.Thread(target=watch_ledger_for_to_user, daemon=True).start()
         # Outbound files watcher state
         # Track attempts within this run only (avoid rapid duplicates if filesystem timestamps don't change)
         sent_files: Dict[str, float] = {}
@@ -914,17 +969,9 @@ def main():
                 # After clearing, outbound directory is empty; no extra bookkeeping needed
         except Exception:
             pass
-        # Initialize baseline and persist seen hashes
+        # Initialize baseline and persist seen hashes (for peer-to-peer summaries only)
         try:
             seen = load_outbound_seen()
-            for peer, pth in to_user_paths.items():
-                try:
-                    txt = pth.read_text(encoding='utf-8').strip()
-                except Exception:
-                    txt = ''
-                last_seen[peer] = txt; last_sent_ts[peer] = time.time()
-                pk = 'peerA' if peer=='peerA' else 'peerB'
-                seen.setdefault(pk, {})['to_user'] = _hash_text(txt)
             for peer, pth in to_peer_paths.items():
                 try:
                     txt = pth.read_text(encoding='utf-8').strip()
@@ -934,26 +981,11 @@ def main():
                 pk = 'peerA' if peer=='peerA' else 'peerB'
                 seen.setdefault(pk, {})['to_peer'] = _hash_text(txt)
             save_outbound_seen(seen)
-            # Baseline mode: do nothing special; existing files (if any) will be sent once and deleted on success
         except Exception:
             pass
 
         while True:
             now = time.time()
-            for peer, p in to_user_paths.items():
-                try:
-                    txt = p.read_text(encoding='utf-8').strip()
-                except Exception:
-                    txt = ''
-                if txt and txt != last_seen[peer] and (now - last_sent_ts[peer] >= debounce):
-                    last_seen[peer] = txt
-                    last_sent_ts[peer] = now
-                    send_summary(peer, txt)
-                    # Clear after successful send to avoid repeats and race with orchestrator
-                    try:
-                        p.write_text('', encoding='utf-8')
-                    except Exception:
-                        pass
             # to_peer (peer-to-peer) messages
             eff_show = bool(load_runtime().get('show_peer_messages', show_peers))
             if eff_show:
