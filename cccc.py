@@ -189,8 +189,29 @@ def main():
         print(f"- python: {'OK' if ok_py else 'MISSING'} ({sys.executable})")
         print(f"- CCCC_HOME: {home} ({'EXISTS' if home.exists() else 'MISSING'})")
         cfg = _read_yaml(home/"settings"/"telegram.yaml") if home.exists() else {}
-        tok = (cfg or {}).get('token') or os.environ.get(str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN') )
-        print(f"- telegram config: {'FOUND' if cfg else 'NONE'}; token: {'SET' if tok else 'NOT SET'}")
+        def _resolve_token(c):
+            src = None
+            val = None
+            if c and c.get('token'):
+                val = str(c.get('token'))
+                src = 'config'
+            else:
+                tenv = (c or {}).get('token_env')
+                if tenv:
+                    v = os.environ.get(str(tenv), '')
+                    if v:
+                        val = v
+                        src = f"env:{tenv}"
+            return val, src
+        tok, src = _resolve_token(cfg)
+        print(f"- telegram config: {'FOUND' if cfg else 'NONE'}; token: {'SET' if tok else 'NOT SET'}" + (f" (source={src})" if src else ""))
+        # Optional hint when env is present but config also has token (config wins by design)
+        try:
+            tenv = (cfg or {}).get('token_env')
+            if tenv and os.environ.get(str(tenv)) and (cfg or {}).get('token'):
+                print(f"  hint: env {tenv} is set but ignored (config token takes precedence)")
+        except Exception:
+            pass
         if not ok_tmux:
             print("Hint: install tmux (e.g., apt install tmux / brew install tmux).")
 
@@ -238,14 +259,23 @@ def main():
                 print("[BRIDGE] Script not found:", bridge); return
             cfg = _read_yaml(home/"settings"/"telegram.yaml")
             token_env = str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
-            tok = os.environ.get(token_env, '') or str((cfg or {}).get('token') or '')
+            # Resolve token: prefer config token; fall back to env only if token_env explicitly configured
+            tok = None; src = None
+            if (cfg or {}).get('token'):
+                tok = str(cfg.get('token')); src = 'config'
+            else:
+                tenv = (cfg or {}).get('token_env')
+                if tenv:
+                    v = os.environ.get(str(tenv), '')
+                    if v:
+                        tok = v; src = f"env:{tenv}"
             if not tok:
-                print("[BRIDGE] Token not found. Run `cccc token set` or set env var."); return
+                print("[BRIDGE] Token not found. Run `cccc token set` to save it locally, or set `token_env` in telegram.yaml and provide that env var."); return
             env = os.environ.copy(); env[token_env] = tok
             # Run from project root so .cccc resolves correctly inside bridge
             p = subprocess.Popen([sys.executable, str(bridge)], env=env, cwd=str(Path.cwd()), start_new_session=True)
             pid_path.write_text(str(p.pid), encoding='utf-8')
-            print("[BRIDGE] Started, pid=", p.pid)
+            print(f"[BRIDGE] Started, pid={p.pid} (token_source={src})")
         def _stop():
             try:
                 if pid_path.exists():
@@ -440,11 +470,21 @@ def main():
         cfg = _read_yaml(home/"settings"/"telegram.yaml")
         token_env = str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
         env = os.environ.copy(); env.update(env_extra or {})
-        if not env.get(token_env):
-            tok = str((cfg or {}).get('token') or '')
-            if tok:
-                env[token_env] = tok
-        print("[TELEGRAM] Starting bridge (long-polling)…")
+        src = None
+        if env.get(token_env):
+            src = f"env:{token_env}"
+        else:
+            if (cfg or {}).get('token'):
+                env[token_env] = str(cfg.get('token'))
+                src = 'config'
+            else:
+                tenv = (cfg or {}).get('token_env')
+                if tenv:
+                    v = os.environ.get(str(tenv), '')
+                    if v:
+                        env[token_env] = v
+                        src = f"env:{tenv}"
+        print(f"[TELEGRAM] Starting bridge (long-polling)… (token_source={src or 'none'})")
         # Kill stale instance before spawning
         _kill_stale_bridge()
         # Start new session so we can kill the whole process group on exit; set cwd to project root
@@ -574,14 +614,45 @@ def main():
             token_env = str(cfg.get("token_env") or "TELEGRAM_BOT_TOKEN")
             token_val = os.environ.get(token_env, "")
             if not token_val:
-                print(f"[SETUP] Env var {token_env} not found. You may enter the token once; we will save it to .cccc/settings/telegram.yaml (gitignored).")
-                try:
-                    token_val = input("Enter Telegram Bot Token (used for this session; will be saved): ").strip()
-                except Exception:
-                    token_val = ""
-            # Save token to config by default (safe in Ephemeral mode)
-            if token_val:
+                saved = str(cfg.get('token') or '')
+                if saved:
+                    # Offer a minimal choice: use saved or paste new (no extra skip here to avoid duplicate mode selection)
+                    masked = (saved[:4] + "…" + saved[-4:]) if len(saved) >= 8 else "(saved)"
+                    print(f"[SETUP] Saved Bot Token detected (masked: {masked}).")
+                    print("  1) Use saved token (default)\n  2) Paste a new token and save")
+                    try:
+                        ch = input("> Choose 1/2 (Enter=1): ").strip() or "1"
+                    except Exception:
+                        ch = "1"
+                    if ch == "2":
+                        try:
+                            token_val = input("Paste new Telegram Bot Token: ").strip()
+                        except Exception:
+                            token_val = ""
+                        if token_val:
+                            cfg['token'] = token_val
+                            _write_yaml(cfg_path, cfg)
+                            print("[SETUP] New token saved.")
+                        else:
+                            token_val = saved
+                            print("[SETUP] Empty input; continue with saved token.")
+                    else:
+                        token_val = saved
+                        print("[SETUP] Using saved token.")
+                else:
+                    print(f"[SETUP] Env var {token_env} not found. Paste your Bot Token to save it to .cccc/settings/telegram.yaml (local).")
+                    try:
+                        token_val = input("Paste Telegram Bot Token: ").strip()
+                    except Exception:
+                        token_val = ""
+                    if token_val:
+                        cfg['token'] = token_val
+                        _write_yaml(cfg_path, cfg)
+                        print("[SETUP] Token saved.")
+            # Persist early if env provided a token but config lacks one (optional convenience)
+            if token_val and not cfg.get('token'):
                 cfg['token'] = token_val
+                _write_yaml(cfg_path, cfg)
             # Allow user to input chat_id(s) (optional; Enter to skip)
             if not cfg.get("allow_chats"):
                 try:
@@ -601,7 +672,7 @@ def main():
                         cfg["allow_chats"] = ids
                         cfg["discover_allowlist"] = False
                         print(f"[SETUP] allow_chats set to {ids}")
-            # Write config (including token) to .cccc/settings/telegram.yaml (should not be committed)
+            # Write config (including any changes) to .cccc/settings/telegram.yaml (should not be committed)
             _write_yaml(cfg_path, cfg)
             # Optional: onboarding for chat_id
             if not cfg.get("allow_chats"):
@@ -625,7 +696,16 @@ def main():
         auto = True if not cfg else bool((cfg or {}).get('autostart', True))
         if auto and (BRIDGE_PROC.get('p') is None):
             token_env = str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
-            token_val = os.environ.get(token_env, '') or str((cfg or {}).get('token') or '')
+            # Prefer config token; only fall back to env when token_env explicitly configured
+            token_val = None
+            if (cfg or {}).get('token'):
+                token_val = str(cfg.get('token'))
+            else:
+                tenv = (cfg or {}).get('token_env')
+                if tenv:
+                    v = os.environ.get(str(tenv), '')
+                    if v:
+                        token_val = v
             dry = bool((cfg or {}).get('dry_run', True))
             if token_val:
                 _spawn_telegram_bridge({token_env: token_val})

@@ -128,7 +128,7 @@ class PaneIdleJudge:
 
         return False, "changing"
 
-# --- 出站队列与 ACK ---
+# --- Outbox and ACK ---
 class Outbox:
     def __init__(self, home: Path, peer: str):
         self.path = home/"state"/f"outbox-{peer}.jsonl"

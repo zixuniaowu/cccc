@@ -612,7 +612,7 @@ def tmux_session_exists(name: str) -> bool:
 def tmux_new_session(name: str) -> Tuple[str,str]:
     code,out,err = tmux("new-session","-d","-s",name,"-P","-F","#S:#I.#P")
     if code!=0: raise RuntimeError(f"tmux new-session failed: {err}")
-    # 初始只保留一个 pane，后续按我们定义重建布局
+    # Start with a single pane; rebuild layout as defined below
     code3,out3,_ = tmux("list-panes","-t",name,"-F","#P")
     panes = out3.strip().splitlines()
     return panes[0], panes[0]
@@ -644,15 +644,15 @@ def tmux_ensure_ledger_tail(session: str, ledger_path: Path):
 def tmux_build_2x2(session: str) -> Dict[str,str]:
     """Build a stable 2x2 layout and map panes by coordinates {'lt','rt','lb','rb'}."""
     target = _win(session)
-    # 干净起步：仅保留 pane 0
+    # Clean start: keep only pane 0
     tmux("select-pane","-t",f"{target}.0")
     tmux("kill-pane","-a","-t",f"{target}.0")
-    # 横向 split，得到两个上方 pane
+    # Horizontal split to create two top panes
     rc,_,err = tmux("split-window","-h","-t",f"{target}.0")
     if rc != 0:
         print(f"[TMUX] split horizontal failed: {err.strip()}")
     tmux("select-layout","-t",target,"tiled")
-    # 取坐标，识别上方左右两个 pane
+    # Read coordinates and identify left/right top panes
     code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
     panes=[]
     for ln in out.splitlines():
@@ -665,7 +665,7 @@ def tmux_build_2x2(session: str) -> Dict[str,str]:
     top_row = [p for p in panes if p[2] == top_y]
     top_row_sorted = sorted(top_row, key=lambda x: x[1])
     if len(top_row_sorted) < 2:
-        # 兜底使用索引
+        # Fallback: use pane index mapping
         code2,out2,_ = tmux("list-panes","-t",target,"-F","#{pane_index} #{pane_id}")
         idx_to_id={}
         for ln in out2.splitlines():
@@ -676,7 +676,7 @@ def tmux_build_2x2(session: str) -> Dict[str,str]:
     else:
         lt = top_row_sorted[0][0]
         rt = top_row_sorted[-1][0]
-    # 对左右各自纵向 split，得到左下/右下
+    # Vertical split on left/right to create bottom-left/bottom-right
     rc,_,err = tmux("split-window","-v","-t",lt)
     if rc != 0:
         print(f"[TMUX] split lt vertical failed: {err.strip()}")
@@ -684,7 +684,7 @@ def tmux_build_2x2(session: str) -> Dict[str,str]:
     if rc != 0:
         print(f"[TMUX] split rt vertical failed: {err.strip()}")
     tmux("select-layout","-t",target,"tiled")
-    # 最终读取 4 个 pane，按坐标映射
+    # Finally list 4 panes and map by coordinates
     code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
     panes=[]
     for ln in out.splitlines():
@@ -693,7 +693,7 @@ def tmux_build_2x2(session: str) -> Dict[str,str]:
             panes.append((pid, int(left), int(top)))
         except Exception:
             pass
-    # 识别上/下行
+    # Identify top/bottom rows
     min_top = min(p[2] for p in panes)
     max_top = max(p[2] for p in panes)
     top_panes = sorted([p for p in panes if p[2]==min_top], key=lambda x: x[1])
@@ -704,7 +704,7 @@ def tmux_build_2x2(session: str) -> Dict[str,str]:
         'lb': bot_panes[0][0] if len(bot_panes)>0 else f"{target}.2",
         'rb': bot_panes[-1][0] if len(bot_panes)>0 else f"{target}.3",
     }
-    # 打印 pane 列表与坐标用于排查
+    # Print pane list and coordinates for troubleshooting
     _,outp,_ = tmux("list-panes","-t",target,"-F","#{pane_id}:#{pane_left},#{pane_top},#{pane_right},#{pane_bottom}")
     print(f"[TMUX] panes: {outp.strip()}")
     return positions
@@ -735,7 +735,7 @@ def sanitize_console(s: str) -> str:
         return s
 
 def read_console_line(prompt: str) -> str:
-    # 更稳健地读取控制台输入，避免特殊序列导致异常
+    # Read console input robustly; guard against special sequences
     try:
         s = input(prompt)
     except Exception:
@@ -764,7 +764,7 @@ def read_console_line_timeout(prompt: str, timeout_sec: float) -> str:
 
 
 def tmux_paste(pane: str, text: str):
-    # 以二进制写入，宽容处理输入中的代理码位/控制序列
+    # Write as binary; tolerate surrogate/escape sequences in input
     data = text.encode("utf-8", errors="replace")
     with tempfile.NamedTemporaryFile("wb", delete=False) as f:
         f.write(data); fname=f.name
@@ -772,14 +772,14 @@ def tmux_paste(pane: str, text: str):
     tmux("load-buffer","-b",buf,fname)
     tmux("paste-buffer","-t",pane,"-b",buf)
     time.sleep(0.12)
-    # 统一只发送一次回车，避免重复提交
+    # Send a single Enter to avoid duplicate submissions
     tmux("send-keys","-t",pane,"Enter")
     tmux("delete-buffer","-b",buf)
     try: os.unlink(fname)
     except Exception: pass
 
 def tmux_type(pane: str, text: str):
-    # 保留用于启动/应急；常规发送走 delivery.send_text
+    # Keep for startup/emergency; normal sends go through delivery.send_text
     for line in text.splitlines():
         tmux("send-keys","-t",pane,"-l",line)
         tmux("send-keys","-t",pane,"Enter")
@@ -793,7 +793,7 @@ def bash_ansi_c_quote(s: str) -> str:
     return "$'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
 
 def tmux_start_interactive(pane: str, cmd: str):
-    # 更稳健：直接在 pane 内以 bash -lc 运行命令，避免粘贴方式误发到错误 pane
+    # Robust: run command inside pane via bash -lc; avoid paste-to-wrong-pane issues
     wrapped = f"bash -lc {shlex.quote(cmd)}"
     tmux_respawn_pane(pane, wrapped)
 
@@ -818,7 +818,7 @@ def paste_when_ready(pane: str, profile: Dict[str,Any], text: str, *, timeout: f
     ok = wait_for_ready(pane, profile, timeout=timeout, poke=poke)
     if not ok:
         print(f"[WARN] Target pane not ready; pasting anyway (best-effort).")
-    # 统一通过 delivery 的 send_text，使用 per-CLI 配置（含回车发送/换行键）
+    # Use delivery.send_text with per-CLI config (submit/newline keys)
     send_text(pane, text, profile)
 
 # ---------- YAML & prompts ----------
@@ -1074,6 +1074,49 @@ def context_blob(policies: Dict[str,Any], phase: str) -> str:
     return (f"# PHASE: {phase}\n# REPO FILES (partial):\n{list_repo_files(policies)}\n\n"
             f"# POLICIES:\n{json.dumps({'patch_queue':policies.get('patch_queue',{}),'rfd':policies.get('rfd',{}),'autonomy_level':policies.get('autonomy_level')},ensure_ascii=False)}\n")
 
+# ---------- Weekly diary helpers (minimal, single-writer) ----------
+def _week_file_path(repo_root: Path, dt=None) -> Path:
+    import datetime as _dt
+    dt = dt or _dt.datetime.now(_dt.timezone.utc).astimezone()
+    iso = dt.isocalendar()
+    year = int(iso[0]); week = int(iso[1])
+    return repo_root/"docs"/"weekly"/f"{year}-W{week:02d}.md"
+
+def _today_heading(dt=None) -> str:
+    import datetime as _dt
+    dt = dt or _dt.datetime.now(_dt.timezone.utc).astimezone()
+    return f"## {dt.strftime('%Y-%m-%d')}"
+
+def _file_tail_lines(p: Path, n: int = 10) -> List[str]:
+    try:
+        with p.open('r', encoding='utf-8') as f:
+            from collections import deque
+            dq = deque(f, maxlen=max(1, int(n)))
+            return [ln.rstrip('\n') for ln in dq]
+    except Exception:
+        return []
+
+def _weekly_has_today(repo_root: Path, dt=None) -> Tuple[Path, bool]:
+    p = _week_file_path(repo_root, dt)
+    if not p.exists():
+        return p, False
+    try:
+        heading = _today_heading(dt)
+        for ln in p.read_text(encoding='utf-8').splitlines():
+            if ln.strip().startswith(heading):
+                return p, True
+    except Exception:
+        pass
+    return p, False
+
+def _weekly_has_retro(p: Path) -> bool:
+    try:
+        if not p.exists():
+            return False
+        return any(ln.strip().startswith("## Retrospective") for ln in p.read_text(encoding='utf-8').splitlines())
+    except Exception:
+        return False
+
 # ---------- watcher ----------
 # Note: runtime hot-reload of settings/prompts/personas removed for simplicity.
 
@@ -1095,10 +1138,10 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
                   deliver_enabled: bool=True,
                   dedup_peer: Optional[Dict[str,str]] = None):
     sender_profile = profileA if who=="PeerA" else profileB
-    # 直接贴入极简消息，不注入上下文与包装标识（由调用方传入 FROM_* 标签）
+    # Paste minimal message; no extra context/wrappers (caller supplies FROM_* tags)
     before_len = len(tmux_capture(sender_pane, lines=800))
     paste_when_ready(sender_pane, sender_profile, payload)
-    # 等待响应：优先等到 <TO_USER>/<TO_PEER>/```diff 出现或回到空闲提示符
+    # Wait for response: prefer <TO_USER>/<TO_PEER>/```diff, or idle prompt
     judge = PaneIdleJudge(sender_profile)
     start = time.time()
     timeout = float(delivery_conf.get("read_timeout_seconds", 8))
@@ -1106,20 +1149,19 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
     while time.time() - start < timeout:
         content = tmux_capture(sender_pane, lines=800)
         window = content[before_len:]
-        # 移除我们自己的 FROM_* 包装不会产生，保留窗口供上层诊断（mailbox 模式下不依赖此路径）
+        # Do not strip wrappers here; keep window for diagnostics (mailbox path does not rely on this)
         if ("<TO_USER>" in window) or ("<TO_PEER>" in window) or ("```diff" in window) or ("```patch" in window):
             break
         idle, _ = judge.refresh(sender_pane)
         if idle and time.time() - start > 1.2:
             break
         time.sleep(0.25)
-    # 仅解析最近一次 INPUT 之后模型的输出，避免误采集 SYSTEM 或我们贴入的 <TO_*>
-    # window 已在等待循环中计算
-    # 解析最新的三分区（仅在窗口中查找）
+    # Parse only output after the last INPUT to avoid picking up SYSTEM or our injected <TO_*>.
+    # The 'window' slice is computed in the wait loop; parse the latest sections (window-only).
     def last(tag):
         items=re.findall(SECTION_RE_TPL.format(tag=tag), window, re.I)
         return (items[-1].strip() if items else "")
-    to_user = last("TO_USER"); to_peer = last("TO_PEER")
+    to_user = last("TO_USER"); to_peer = last("TO_PEER"); meta = last("META")
     # Do not print <TO_USER> here (the background poller will report it); focus on patches and handoffs only
 
     # Only scan fenced patches visible in the window; ignore non-diff fences
@@ -1155,7 +1197,7 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
             paste_when_ready(sender_pane, sender_profile, f"[INPUT]\n{fb}\n")
 
     if to_peer.strip():
-        # 去重：避免重复交接同一内容
+        # De-duplicate: avoid handing off the same content repeatedly
         if dedup_peer is not None:
             h = hashlib.sha1(to_peer.encode("utf-8", errors="replace")).hexdigest()
             key = f"{who}:to_peer"
@@ -1167,10 +1209,14 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
         if not deliver_enabled:
             log_ledger(home, {"from": who, "kind": "handoff-skipped", "reason": "paused", "chars": len(to_peer)})
         else:
-            # use inbox + nudge
+            # use inbox + nudge; wrap with outer source marker and append META as sibling block
             recv = "PeerB" if who == "PeerA" else "PeerA"
+            outer = f"FROM_{who}"
+            body = f"<{outer}>\n{to_peer}\n</{outer}>\n\n"
+            if meta.strip():
+                body += f"<META>\n{meta}\n</META>\n"
             mid = new_mid()
-            text_with_mid = wrap_with_mid(to_peer, mid)
+            text_with_mid = wrap_with_mid(body, mid)
             try:
                 seq, _ = _write_inbox_message(home, recv, text_with_mid, mid)
                 _send_nudge(home, recv, seq, mid, left, right, profileA, profileB,
@@ -1191,11 +1237,11 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
                                  profileA: Dict[str,Any], profileB: Dict[str,Any], delivery_conf: Dict[str,Any],
                                  deliver_enabled: bool, last_windows: Dict[str,int],
                                  dedup_user: Dict[str,str], dedup_peer: Dict[str,str]):
-    # 捕获全窗口，并在全窗口中解析，避免因 TUI 清屏或回显策略导致的长度倒退/无增长
+    # Capture the whole window and parse it to avoid TUI clear/echo policies causing length regressions/no growth
     content = tmux_capture(pane, lines=1000)
-    # 记录总长度（用于诊断），但不作为唯一 gating 条件
+    # Record total length (diagnostic only), not a gating condition
     last_windows[who] = len(content)
-    # 移除我们贴入且被回显的 [INPUT]...END 段，避免误解析
+    # Remove echoed [INPUT]...END sections we injected to avoid mis-parsing
     sanitized = re.sub(r"\[INPUT\][\s\S]*?"+re.escape(INPUT_END_MARK), "", content, flags=re.I)
 
     def last(tag):
@@ -1239,7 +1285,7 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
         git_commit(f"cccc({who}): apply patch (phase {phase})")
         log_ledger(home, {"from":who,"kind":"patch-commit","paths":paths,"lines":lines,"tests_ok":tests_ok})
         if not tests_ok:
-            fb = "<TO_PEER>\ntype: EVIDENCE\nintent: fix\ntasks:\n  - desc: '测试失败，请提供最小修复补丁'\n</TO_PEER>\n"
+            fb = "<TO_PEER>\ntype: EVIDENCE\nintent: fix\ntasks:\n  - desc: 'Tests failed; please provide a minimal fix patch'\n</TO_PEER>\n"
             tmux_paste(pane, f"[INPUT]\n{fb}\n")
 
     if to_peer and to_peer.strip():
@@ -1263,7 +1309,7 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
 def main(home: Path):
     global CONSOLE_ECHO
     ensure_bin("tmux"); ensure_git_repo()
-    # 目录
+    # Directories
     settings = home/"settings"; state = home/"state"
     state.mkdir(exist_ok=True)
 
@@ -1287,7 +1333,7 @@ def main(home: Path):
     if imodes.get("peerB"):
         profileB["input_mode"] = imodes.get("peerB")
 
-    # 读取调试回显开关（启动时生效）
+    # Read debug echo switch (effective at startup)
     try:
         ce = cli_profiles.get("console_echo")
         if isinstance(ce, bool):
@@ -1296,7 +1342,7 @@ def main(home: Path):
     except Exception:
         pass
 
-    # 读取 inbox+NUDGE 参数（启动时生效）
+    # Read inbox+NUDGE parameters (effective at startup)
     try:
         global MB_PULL_ENABLED, INBOX_DIRNAME, PROCESSED_RETENTION, NUDGE_RESEND_SECONDS, NUDGE_JITTER_PCT, SOFT_ACK_ON_MAILBOX_ACTIVITY
         MB_PULL_ENABLED = bool(delivery_conf.get("mailbox_pull_enabled", True))
@@ -1310,7 +1356,7 @@ def main(home: Path):
     except Exception:
         pass
 
-    # 准备 tmux 会话/面板
+    # Prepare tmux session/panes
     if not tmux_session_exists(session):
         _,_ = tmux_new_session(session)
         # Ensure the detached session window uses our current terminal size (avoid 80x24 default)
@@ -1353,13 +1399,13 @@ def main(home: Path):
     print(f"[INFO] Using tmux session: {session} (left=PeerA / right=PeerB)")
     print(f"[INFO] pane map: left={left} right={right} lb={pos.get('lb')} rb={pos.get('rb')}")
     print(f"[TIP] In another terminal: `tmux attach -t {session}` to observe/input")
-    # 确保四分屏：左/右=A/B；左下=ledger tail；右下=帮助
-    # 在左下/右下 pane 启动 ledger 与帮助
+    # Ensure 2x2 layout: left/right=A/B; bottom-left=ledger tail; bottom-right=help
+    # Start ledger and help panes at bottom-left/bottom-right
     lp = shlex.quote(str(state/"ledger.jsonl"))
-    # 在 pane 内直接执行命令（使用 respawn-pane 更稳健）
+    # Execute commands inside panes directly (more robust with respawn-pane)
     cmd_ledger_sh = f"bash -lc \"printf %s {bash_ansi_c_quote('[CCCC Ledger]\\n')}; tail -F {lp} 2>/dev/null || tail -f {lp}\""
     tmux_respawn_pane(pos['lb'], cmd_ledger_sh)
-    # 右下状态面板：运行内置 Python 渲染器，实时读取 ledger/status
+    # Bottom-right status panel: run built-in Python renderer to read ledger/status in real time
     py = shlex.quote(sys.executable or 'python3')
     status_py = shlex.quote(str(home/"panel_status.py"))
     cmd_status = f"bash -lc {shlex.quote(f'{py} {status_py} --home {str(home)} --interval 1.0')}"
@@ -1450,7 +1496,7 @@ def main(home: Path):
                 print('[DEBUG] pane commands:\n' + out.strip())
         except Exception:
             pass
-        # 定义：启动策略处理（提前定义，避免后续调用时未绑定）
+        # Define startup policy handling early to avoid late binding
         def _startup_handle_inbox(label: str, policy_override: Optional[str] = None):
             try:
                 ensure_mailbox(home)
@@ -1485,7 +1531,7 @@ def main(home: Path):
                 return moved
             log_ledger(home, {"from":"system","kind":"startup-inbox-resume","peer":label,"pending":len(files)})
             return len(files)
-        # 启动策略：处理 inbox 残留（始终提示；30 秒无操作按默认策略）
+        # Startup policy: handle leftover inbox (always prompt; default applies after 30s of inactivity)
         try:
             ensure_mailbox(home)
             def _count_inbox(label: str) -> int:
@@ -1497,7 +1543,7 @@ def main(home: Path):
             cntA = _count_inbox("PeerA"); cntB = _count_inbox("PeerB")
             if (cntA > 0 or cntB > 0):
                 chosen_policy = (INBOX_STARTUP_POLICY or "resume").strip().lower()
-                # 交互 vs 非交互：非交互用更短超时（避免卡 CI）
+                # Interactive vs non-interactive: shorter timeout in non-interactive runs (avoid hanging CI)
                 try:
                     is_interactive = sys.stdin.isatty()
                 except Exception:
@@ -1520,7 +1566,7 @@ def main(home: Path):
                 elif ans in ("d","discard"):
                     chosen_policy = "discard"
                 else:
-                    # 回车/超时/无效输入 → 默认
+                    # Enter/timeout/invalid input → use default policy
                     pass
                 print(f"[INBOX] Using policy: {chosen_policy}")
                 _startup_handle_inbox("PeerA", chosen_policy)
@@ -1532,39 +1578,39 @@ def main(home: Path):
             except Exception:
                 pass
 
-        # 等待两侧 CLI 就绪（出现提示符并短暂安静）；
-        # 在 pull+NUDGE 模式下降低等待上限，避免首条 NUDGE 过久延迟
+        # Wait until both CLIs are ready (prompt + brief quiet period);
+        # In pull+NUDGE mode, use a lower wait cap to avoid delaying the first NUDGE for too long
         sw = float(cli_profiles.get("startup_wait_seconds", 12))
         sn = float(cli_profiles.get("startup_nudge_seconds", 10))
         to = min(sw, sn) if MB_PULL_ENABLED else sw
         wait_for_ready(left,  profileA, timeout=to)
         wait_for_ready(right, profileB, timeout=to)
 
-    # 在注入之后立即记录当前捕获长度，作为解析基线
+    # After initial injection, record capture lengths as the parsing baseline
     left_snap  = tmux_capture(left,  lines=800)
     right_snap = tmux_capture(right, lines=800)
     last_windows = {"PeerA": len(left_snap), "PeerB": len(right_snap)}
     dedup_user = {}
     dedup_peer = {}
 
-    # 简化：不再监听文件热更；修改 roles/policies/personas 需重启生效
+    # Simplify: no hot-reload; changes to roles/policies/personas require restart
 
-    # 初始化 mailbox（不清空 inbox，尊重启动策略）
+    # Initialize mailbox (do not clear inbox; honor startup policy)
     ensure_mailbox(home)
     mbox_idx = MailboxIndex(state)
     mbox_counts = {"peerA": {"to_user":0, "to_peer":0, "patch":0},
                    "peerB": {"to_user":0, "to_peer":0, "patch":0}}
     mbox_last = {"peerA": {"to_user": "-", "to_peer": "-", "patch": "-"},
                  "peerB": {"to_user": "-", "to_peer": "-", "patch": "-"}}
-    # 记录各 peer 最近一次 mailbox 活动时间（用于 timeout 软 ACK 判定）
+    # Track last mailbox activity per peer (used for timeout-based soft ACK)
     last_event_ts = {"PeerA": 0.0, "PeerB": 0.0}
     handoff_filter_override: Optional[bool] = None
-    # 精简：不做会话顺序化；广播即发，秩序由提示词约束
+    # Minimalism: no session serialization; broadcast immediately; order governed by prompts
 
-    # 交接背压：按接收方维护 in-flight 与等待队列
+    # Handoff backpressure: maintain in-flight and waiting queues per receiver
     inflight: Dict[str, Optional[Dict[str,Any]]] = {"PeerA": None, "PeerB": None}
     queued: Dict[str, List[Dict[str,Any]]] = {"PeerA": [], "PeerB": []}
-    # 简易重复发送防抖（以 payload 哈希为键，在短窗口内丢弃同内容的重复投递）
+    # Simple resend de-bounce (hash payload; drop duplicates within a short window)
     recent_sends: Dict[str, List[Dict[str,Any]]] = {"PeerA": [], "PeerB": []}
     delivery_cfg = (cli_profiles.get("delivery", {}) or {})
     ack_timeout = float(delivery_cfg.get("ack_timeout_seconds", 30))
@@ -1611,16 +1657,16 @@ def main(home: Path):
     def _mailbox_peer_name(peer_label: str) -> str:
         return "peerA" if peer_label == "PeerA" else "peerB"
 
-    # （已上移至启动前调用处定义）
+    # (Defined earlier before startup)
 
     def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None):
         nonlocal instr_counter, in_self_check
-        # 背压：若接收方正有在飞，进入队列
+        # Backpressure: if receiver has in-flight, enqueue
         if inflight[receiver_label] is not None:
             queued[receiver_label].append({"sender": sender_label, "payload": payload})
             log_ledger(home, {"from": sender_label, "kind": "handoff-queued", "to": receiver_label, "chars": len(payload)})
             return
-        # 追加入站后缀（按来源 from_user/from_peer/from_system 可分别配置；向后兼容字符串配置）
+        # Append inbound suffix (per source: from_user/from_peer/from_system); keep backward-compatible string config
         def _suffix_for(receiver: str, sender: str) -> str:
             key = 'from_peer'
             if sender == 'User':
@@ -1631,7 +1677,7 @@ def main(home: Path):
             cfg = (prof or {}).get('inbound_suffix', '')
             if isinstance(cfg, dict):
                 return (cfg.get(key) or '').strip()
-            # 兼容旧配置：字符串
+            # Backward compatibility: string value
             if receiver == 'PeerA':
                 return str(cfg).strip()
             if receiver == 'PeerB' and sender == 'User':
@@ -1640,7 +1686,7 @@ def main(home: Path):
         suf = _suffix_for(receiver_label, sender_label)
         if suf:
             payload = _append_suffix_inside(payload, suf)
-        # 重复发送防抖：在短窗口内，丢弃与上次相同 payload 的投递
+        # Resend de-bounce: drop identical payloads within a short window
         h = hashlib.sha1(payload.encode('utf-8', errors='replace')).hexdigest()
         now = time.time()
         rs = [it for it in recent_sends[receiver_label] if now - float(it.get('ts',0)) <= duplicate_window]
@@ -1649,7 +1695,7 @@ def main(home: Path):
             return
         rs.append({"hash": h, "ts": now})
         recent_sends[receiver_label] = rs[-20:]
-        # 新：inbox + NUDGE 模式
+        # New: inbox + NUDGE mode
         mid = new_mid()
         text_with_mid = wrap_with_mid(payload, mid)
         try:
@@ -1663,7 +1709,7 @@ def main(home: Path):
         except Exception as e:
             status = f"failed:{e}"
             seq = "000000"
-        inflight[receiver_label] = None  # 不再跟踪在线 ACK，改由 inbox+ACK 驱动
+        inflight[receiver_label] = None  # Stop tracking live ACK; rely on inbox+ACK
         log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": mid, "seq": seq, "chars": len(payload)})
         print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
 
@@ -1684,8 +1730,69 @@ def main(home: Path):
                     if instr_counter % self_check_every == 0:
                         in_self_check = True
                         try:
-                            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{self_check_text}\n</FROM_SYSTEM>\n")
-                            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{self_check_text}\n</FROM_SYSTEM>\n")
+                            peerA_msg = self_check_text
+                            peerB_msg = self_check_text
+
+                            # Append Weekly Dev Diary reminder for PeerB (single-writer) with daily cooldown
+                            try:
+                                import datetime as _dt
+                                repo_root = home.parent
+                                today = _dt.datetime.now(_dt.timezone.utc).astimezone()
+                                today_str = today.strftime('%Y-%m-%d')
+                                state_path = home/"state"/"diary-last-remind.json"
+                                try:
+                                    state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
+                                except Exception:
+                                    state = {}
+                                last_date = str(state.get('last_date') or '')
+                                wk_path, has_today = _weekly_has_today(repo_root, today)
+                                need_daily = (not has_today) and (last_date != today_str)
+                                if need_daily:
+                                    # Minimal template: replace-or-append today's section, ≤40 lines total
+                                    diary_block = (
+                                        f"[Weekly Diary]\n"
+                                        f"- File: {wk_path.as_posix()}\n"
+                                        f"- Instruction: Return a minimal patch to create or replace today's section (≤40 lines total). If a draft already exists today, replace it with a more concise version (focus on top points).\n"
+                                        f"  Template:\n"
+                                        f"  ## {today_str} (Weekday)\n"
+                                        f"  Today: ...\n"
+                                        f"  Changes: ...\n"
+                                        f"  Risks/Next: ...\n"
+                                    )
+                                    peerB_msg = peerB_msg + "\n\n" + diary_block
+                                    # Update cooldown state
+                                    try:
+                                        state['last_date'] = today_str
+                                        state_path.parent.mkdir(parents=True, exist_ok=True)
+                                        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+                                    except Exception:
+                                        pass
+                                # Retro prompt at first self-check of new week if last week has no Retrospective
+                                try:
+                                    last_week = today - _dt.timedelta(days=7)
+                                    last_week_file = _week_file_path(repo_root, last_week)
+                                    lw_id = last_week_file.stem  # e.g., 2025-W36
+                                    prompted = str((state or {}).get('last_retro_prompt_week') or '')
+                                    if last_week_file.exists() and (not _weekly_has_retro(last_week_file)) and (prompted != lw_id):
+                                        retro_block = (
+                                            f"[Weekly Retrospective]\n"
+                                            f"- File: {last_week_file.as_posix()}\n"
+                                            f"- Instruction: Return a minimal patch to append '## Retrospective' with 3–5 bullets (concise).\n"
+                                        )
+                                        peerB_msg = peerB_msg + "\n\n" + retro_block
+                                        try:
+                                            state['last_retro_prompt_week'] = lw_id
+                                            state_path.parent.mkdir(parents=True, exist_ok=True)
+                                            state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
+                                        except Exception:
+                                            pass
+                                except Exception:
+                                    pass
+                            except Exception:
+                                pass
+
+                            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{peerA_msg}\n</FROM_SYSTEM>\n")
+                            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{peerB_msg}\n</FROM_SYSTEM>\n")
                             log_ledger(home, {"from":"system","kind":"self-check","every": self_check_every, "count": instr_counter})
                         finally:
                             in_self_check = False
@@ -1693,19 +1800,19 @@ def main(home: Path):
             pass
 
     def _ack_receiver(label: str, event_text: Optional[str] = None):
-        # ACK 策略：
-        # - 若 ack_require_mid=True：仅当事件文本包含 [MID: *] 时确认
-        # - 若 ack_require_mid=False：任意事件均视为 ACK（兼容不严格回显 MID 的 CLI）
+        # ACK policy:
+        # - If ack_require_mid=True: confirm only when event text contains [MID: *]
+        # - If ack_require_mid=False: treat any event as ACK (compat with CLIs that don’t echo MID strictly)
         infl = inflight.get(label)
         if not infl:
             return
         if event_text:
-            # per-message 强制 MID：仅当 require_mid=False 或事件文本包含 MID 时确认
+            # Per-message MID enforcement: confirm only when require_mid=False or when event contains MID
             need_mid = bool(infl.get('require_mid', False))
             if (not need_mid) or (str(infl.get("mid","")) in event_text):
                 cur_mid = infl.get("mid")
                 inflight[label] = None
-                # 清理队列中与当前 mid 相同的条目（例如超时后回队列的同一消息）
+                # Clean up entries in queue with the same mid (e.g., requeued after timeout)
                 if queued[label]:
                     queued[label] = [q for q in queued[label] if q.get("mid") != cur_mid]
                 if queued[label]:
@@ -1717,7 +1824,7 @@ def main(home: Path):
         for label, infl in list(inflight.items()):
             if not infl:
                 continue
-            # Per-label overrides: for bridge receivers，默认避免重发；但若该消息 require_mid=True，则允许有限重发
+            # Per-label overrides: for bridge receivers, avoid resends by default; allow limited resends when require_mid=True
             eff_timeout = ack_timeout
             eff_resend = resend_attempts
             if (label == 'PeerA' and modeA == 'bridge') or (label == 'PeerB' and modeB == 'bridge'):
@@ -1727,8 +1834,8 @@ def main(home: Path):
             # Soft-ACK: if receiver pane is idle, consider delivery successful
             pane, prof = _receiver_map(label)
             idle, _r = judges[label].refresh(pane)
-            # 不再将“pane 空闲”视为 ACK，避免误判
-            # 仍然允许后续基于 [MID] 的强 ACK
+            # Do not treat "pane idle" as ACK anymore to avoid false positives
+            # Still allow strong ACK via [MID]
             if now - infl.get("ts", 0) >= eff_timeout:
                 if int(infl.get("attempts", 0)) < eff_resend:
                     mid = infl.get("mid")
@@ -1754,7 +1861,7 @@ def main(home: Path):
                     log_ledger(home, {"from": infl.get("sender"), "kind": "handoff-resend", "to": label, "status": status, "mid": out_mid})
                     print(f"[RESEND] {infl.get('sender')} → {label} (mid={out_mid}, attempt={infl['attempts']})")
                 else:
-                    # 超出重试次数（或 eff_resend=0）：在 bridge 模式下，若期间有任何 mailbox 活动，视为软 ACK；否则直接丢弃以避免重复注入
+                    # Exceeded retries (or eff_resend=0): in bridge mode, treat any mailbox activity as soft ACK; otherwise drop to avoid duplicate injection
                     last_ts = last_event_ts.get(label, 0.0)
                     if last_ts and last_ts > float(infl.get("ts", 0)):
                         kind = "handoff-timeout-soft-ack"
@@ -1837,11 +1944,11 @@ def main(home: Path):
     write_status(deliver_paused)
     write_queue_and_locks()
 
-    # 在初始注入前初始化 NUDGE 去重与 ACK 去重状态
+    # Initialize NUDGE de-dup and ACK de-dup state before first injection
     last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
     seen_acks: Dict[str,set] = {"PeerA": set(), "PeerB": set()}
 
-    # 统一合并首条系统消息（SYSTEM + 项目指令），一次发送，避免节奏混乱
+    # Combine the first system message (SYSTEM + project brief) into a single send to avoid rhythm issues
     if start_mode in ("has_doc", "ai_bootstrap"):
         sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
         if start_mode == "ai_bootstrap":
@@ -1870,6 +1977,23 @@ def main(home: Path):
         combinedB = f"<FROM_SYSTEM>\n{sysB}\n\n{proj_block}\n</FROM_SYSTEM>\n"
         _send_handoff("System", "PeerA", combinedA)
         _send_handoff("System", "PeerB", combinedB)
+        # Minimal startup context: current time/TZ and weekly diary tail (if exists)
+        try:
+            import datetime as _dt
+            now = _dt.datetime.now(_dt.timezone.utc).astimezone()
+            tz = now.strftime('%z')
+            tz_fmt = f"UTC{tz[:3]}:{tz[3:]}" if tz else "local"
+            repo_root = home.parent
+            wf = _week_file_path(repo_root, now)
+            tail = _file_tail_lines(wf, 10) if wf.exists() else []
+            ctx = (
+                f"[Context]\nNow: {now.strftime('%Y-%m-%d %H:%M')} {tz_fmt}\n"
+                f"Weekly: {wf.as_posix()}\n" + ("\n".join(tail[-10:]) if tail else "(no recent lines)")
+            )
+            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
+            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
+        except Exception:
+            pass
         log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued"})
         log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":"queued"})
     else:
@@ -1878,11 +2002,28 @@ def main(home: Path):
             sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
+            # Minimal startup context: current time/TZ and weekly diary tail (if exists)
+            try:
+                import datetime as _dt
+                now = _dt.datetime.now(_dt.timezone.utc).astimezone()
+                tz = now.strftime('%z')
+                tz_fmt = f"UTC{tz[:3]}:{tz[3:]}" if tz else "local"
+                repo_root = home.parent
+                wf = _week_file_path(repo_root, now)
+                tail = _file_tail_lines(wf, 10) if wf.exists() else []
+                ctx = (
+                    f"[Context]\nNow: {now.strftime('%Y-%m-%d %H:%M')} {tz_fmt}\n"
+                    f"Weekly: {wf.as_posix()}\n" + ("\n".join(tail[-10:]) if tail else "(no recent lines)")
+                )
+                _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
+                _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
+            except Exception:
+                pass
             log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued-minimal"})
             log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":"queued-minimal"})
         except Exception:
             pass
-        # 启动系统提示已发送，不计入周期性自检计数
+        # System prompt sent at startup; do not count towards periodic self-check
         try:
             instr_counter = 0
         except Exception:
@@ -1891,7 +2032,7 @@ def main(home: Path):
     print("\n[READY] Common: a:/b:/both:/u: send; /pause|/resume handoff; /refresh SYSTEM; q quit.")
     print("[TIP] Console echo is off by default. Use /echo on|off|<empty> to toggle/view.")
     print("[TIP] Passthrough: a! <cmd> / b! <cmd> sends raw input to the CLI (no wrapper), e.g., a! /model")
-    # 首次进入给出明确输入提示
+    # Show a clear input hint on first entry
     try:
         sys.stdout.write("[READY] Type h or /help for command hints.\n> ")
         sys.stdout.flush()
@@ -1956,7 +2097,7 @@ def main(home: Path):
         except Exception:
             pass
 
-        # 定时 NUDGE：若 inbox 非空且距上次提醒足够久
+        # Periodic NUDGE: when inbox non-empty and enough time has passed since the last reminder
         try:
             nowt = time.time()
             for label, pane in (("PeerA", left), ("PeerB", right)):
@@ -2046,7 +2187,7 @@ def main(home: Path):
                                 print("[PATCH] Preflight failed:\n"+err.strip())
                                 log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                         else:
-                            # 记录因 RFD/策略原因被拒绝
+                            # Record rejections due to RFD/policy reasons
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
@@ -2065,7 +2206,7 @@ def main(home: Path):
                         lines = count_changed_lines(patch)
                         allowed, reason = _rfd_gate_check(home, policies, patch, lines)
                         if allowed:
-                            # 路径允许性检查
+                            # Path allowlist check
                             paths = extract_paths_from_patch(patch)
                             if not allowed_by_policies(paths, policies):
                                 log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"path-not-allowed","paths":paths});

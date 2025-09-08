@@ -367,6 +367,7 @@ def main():
     # Real network path: gate by token and allowlist; long-poll getUpdates; send concise summaries
     _acquire_singleton_lock("telegram-bridge")
     token_env = str(cfg.get('token_env') or 'TELEGRAM_BOT_TOKEN')
+    # Token is injected by parent process into env[token_env]; do not consult other env by default here
     token = os.environ.get(token_env, '')
     def _coerce_allowlist(val) -> set:
         def to_int(x):
