@@ -1161,7 +1161,13 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
     def last(tag):
         items=re.findall(SECTION_RE_TPL.format(tag=tag), window, re.I)
         return (items[-1].strip() if items else "")
-    to_user = last("TO_USER"); to_peer = last("TO_PEER"); meta = last("META")
+    to_user = last("TO_USER"); to_peer = last("TO_PEER");
+    _ins = last("INSIGHT"); _meta = last("META")
+    meta_tag = None; meta_text = ""
+    if _ins.strip():
+        meta_tag = "INSIGHT"; meta_text = _ins
+    elif _meta.strip():
+        meta_tag = "META"; meta_text = _meta
     # Do not print <TO_USER> here (the background poller will report it); focus on patches and handoffs only
 
     # Only scan fenced patches visible in the window; ignore non-diff fences
@@ -1213,8 +1219,8 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
             recv = "PeerB" if who == "PeerA" else "PeerA"
             outer = f"FROM_{who}"
             body = f"<{outer}>\n{to_peer}\n</{outer}>\n\n"
-            if meta.strip():
-                body += f"<META>\n{meta}\n</META>\n"
+            if meta_tag and meta_text.strip():
+                body += f"<{meta_tag}>\n{meta_text}\n</{meta_tag}>\n"
             mid = new_mid()
             text_with_mid = wrap_with_mid(body, mid)
             try:
