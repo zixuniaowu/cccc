@@ -22,6 +22,12 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     lines = []
     lines.append("CCCC Mailbox Contract (runtime)")
     lines.append("")
+    # Why (purpose) — keep collaboration human‑expert‑like, not mechanical
+    lines.append("Why (purpose):")
+    lines.append("• The trailing ```insight block forces one explicit next move or counter‑argument per message. It raises decision density, prevents rambling, and keeps both peers aligned on a testable step.")
+    lines.append("• Treat side quests (PROJECT.md / Weekly diary) as TODOs that require a user \"yes\" before execution. This externalizes intent, avoids context thrash, and preserves mainline momentum while still capturing valuable work.")
+    lines.append("• Before acting, ask: ‘What would a senior engineer do now?’ Prefer the cheapest discriminative probe, and commit only after a clear acceptance check.")
+    lines.append("")
     # Boot context (lightweight): current time/TZ and weekly path (computed at runtime)
     try:
         import datetime as _dt

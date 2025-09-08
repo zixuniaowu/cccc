@@ -1804,62 +1804,7 @@ def main(home: Path):
                             peerB_msg = self_check_text
 
                             # Append Weekly Dev Diary reminder for PeerB (single-writer) with daily cooldown
-                            try:
-                                import datetime as _dt
-                                repo_root = home.parent
-                                today = _dt.datetime.now(_dt.timezone.utc).astimezone()
-                                today_str = today.strftime('%Y-%m-%d')
-                                state_path = home/"state"/"diary-last-remind.json"
-                                try:
-                                    state = json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
-                                except Exception:
-                                    state = {}
-                                last_date = str(state.get('last_date') or '')
-                                wk_path, has_today = _weekly_has_today(home, today)
-                                need_daily = (not has_today) and (last_date != today_str)
-                                if need_daily:
-                                    # Minimal template: replace-or-append today's section, ≤40 lines total
-                                    diary_block = (
-                                        f"[Weekly Diary]\n"
-                                        f"- File: {wk_path.as_posix()}\n"
-                                        f"- Instruction: Return a minimal patch to create or replace today's section (≤40 lines total). If a draft already exists today, replace it with a more concise version (focus on top points).\n"
-                                        f"  Template:\n"
-                                        f"  ## {today_str} (Weekday)\n"
-                                        f"  Today: ...\n"
-                                        f"  Changes: ...\n"
-                                        f"  Risks/Next: ...\n"
-                                    )
-                                    peerB_msg = peerB_msg + "\n\n" + diary_block
-                                    # Update cooldown state
-                                    try:
-                                        state['last_date'] = today_str
-                                        state_path.parent.mkdir(parents=True, exist_ok=True)
-                                        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
-                                    except Exception:
-                                        pass
-                                # Retro prompt at first self-check of new week if last week has no Retrospective
-                                try:
-                                    last_week = today - _dt.timedelta(days=7)
-                                    last_week_file = _week_file_path(home, last_week)
-                                    lw_id = last_week_file.stem  # e.g., 2025-W36
-                                    prompted = str((state or {}).get('last_retro_prompt_week') or '')
-                                    if last_week_file.exists() and (not _weekly_has_retro(last_week_file)) and (prompted != lw_id):
-                                        retro_block = (
-                                            f"[Weekly Retrospective]\n"
-                                            f"- File: {last_week_file.as_posix()}\n"
-                                            f"- Instruction: Return a minimal patch to append '## Retrospective' with 3–5 bullets (concise).\n"
-                                        )
-                                        peerB_msg = peerB_msg + "\n\n" + retro_block
-                                        try:
-                                            state['last_retro_prompt_week'] = lw_id
-                                            state_path.parent.mkdir(parents=True, exist_ok=True)
-                                            state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')
-                                        except Exception:
-                                            pass
-                                except Exception:
-                                    pass
-                            except Exception:
-                                pass
+                            # Diary/retrospective prompts are managed as side-quest TODOs by the AI; do not inject from system here.
 
                             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{peerA_msg}\n</FROM_SYSTEM>\n")
                             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{peerB_msg}\n</FROM_SYSTEM>\n")
@@ -2018,36 +1963,6 @@ def main(home: Path):
     last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
     seen_acks: Dict[str,set] = {"PeerA": set(), "PeerB": set()}
 
-    # Startup injection policy (config-driven)
-    STARTUP = (delivery_conf.get("startup") or {}) if isinstance(delivery_conf.get("startup"), dict) else {}
-    inject_mode = str(STARTUP.get("inject_system", "none") or "none").strip().lower()
-    if inject_mode in ("minimal", "project"):
-        try:
-            sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
-            if inject_mode == "project":
-                proj_block = (
-                    "Please read PROJECT.md to understand goals, scope, constraints and CI gates.\n"
-                    "Then output a ≤5-line summary to the user and standby.\n"
-                    "Do not modify any files until further instruction.\n"
-                )
-            else:
-                proj_block = ""
-            if proj_block:
-                combinedA = f"<FROM_SYSTEM>\n{sysA}\n\n{proj_block}\n</FROM_SYSTEM>\n"
-                combinedB = f"<FROM_SYSTEM>\n{sysB}\n\n{proj_block}\n</FROM_SYSTEM>\n"
-            else:
-                combinedA = f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n"
-                combinedB = f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n"
-            _send_handoff("System", "PeerA", combinedA)
-            _send_handoff("System", "PeerB", combinedB)
-            log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":inject_mode})
-            log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":inject_mode})
-        except Exception:
-            pass
-        try:
-            instr_counter = 0
-        except Exception:
-            pass
 
     print("\n[READY] Common: a:/b:/both:/u: send; /pause|/resume handoff; /refresh SYSTEM; q quit.")
     print("[TIP] Console echo is off by default. Use /echo on|off|<empty> to toggle/view.")
