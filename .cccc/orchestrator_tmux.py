@@ -2160,13 +2160,13 @@ def main(home: Path):
                     if should_forward(payload, "PeerA", "PeerB", policies, state, eff_enabled):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                         _send_handoff("PeerA", "PeerB", wrapped)
+                        # Clear to_peer.md after successful forward to avoid accidental resends
+                        try:
+                            (home/"mailbox"/"peerA"/"to_peer.md").write_text("", encoding="utf-8")
+                        except Exception:
+                            pass
                     else:
                         log_ledger(home, {"from":"PeerA","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
-                    # Clear to_peer.md to avoid accidental resends (overwrite, do not append)
-                    try:
-                        (home/"mailbox"/"peerA"/"to_peer.md").write_text("", encoding="utf-8")
-                    except Exception:
-                        pass
                 if events["peerA"].get("patch"):
                     norm = normalize_mailbox_patch(events["peerA"]["patch"]) or ""
                     if not norm:
@@ -2239,13 +2239,13 @@ def main(home: Path):
                     if should_forward(payload, "PeerB", "PeerA", policies, state, eff_enabled):
                         wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
                         _send_handoff("PeerB", "PeerA", wrapped)
+                        # Clear to_peer.md after successful forward
+                        try:
+                            (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")
+                        except Exception:
+                            pass
                     else:
                         log_ledger(home, {"from":"PeerB","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
-                    # Clear to_peer.md to avoid accidental resends
-                    try:
-                        (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")
-                    except Exception:
-                        pass
                 if events["peerB"].get("patch"):
                     norm = normalize_mailbox_patch(events["peerB"]["patch"]) or ""
                     if not norm:
