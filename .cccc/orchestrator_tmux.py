@@ -2123,6 +2123,11 @@ def main(home: Path):
                     mbox_counts["peerA"]["to_user"] += 1
                     mbox_last["peerA"]["to_user"] = time.strftime("%H:%M:%S")
                     last_event_ts["PeerA"] = time.time()
+                    # Clear to_user.md after core consumption (unify semantics; transports read ledger or subsequent writes)
+                    try:
+                        (home/"mailbox"/"peerA"/"to_user.md").write_text("", encoding="utf-8")
+                    except Exception:
+                        pass
                 if events["peerA"].get("to_peer"):
                     payload = events["peerA"]["to_peer"].strip()
                     # Any mailbox activity can count as ACK
@@ -2208,8 +2213,12 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 # PeerB events
                 if events["peerB"].get("to_user"):
-                    # Ignore PeerB → USER channel (PeerA handles user-facing summaries)
-                    pass
+                    # Core consumption for consistency: log and clear even if ignored by transports
+                    log_ledger(home, {"from":"PeerB","kind":"to_user","route":"mailbox","chars":len(events["peerB"].get("to_user",""))})
+                    try:
+                        (home/"mailbox"/"peerB"/"to_user.md").write_text("", encoding="utf-8")
+                    except Exception:
+                        pass
                 if events["peerB"].get("to_peer"):
                     payload = events["peerB"]["to_peer"].strip()
                     _ack_receiver("PeerB", payload)
