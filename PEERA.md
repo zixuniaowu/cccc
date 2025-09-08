@@ -68,7 +68,7 @@ Quality Micro‑Checklist (pre‑send)
 - Reversible? Readable? Small, safe change boundary?
 - Acceptance present (≤2 checks)? Assumptions listed (≤2)?
 - Cheapest discriminative next step chosen?
-- Did you include an `<INSIGHT>` block (1–2 items; first ask/counter)?
+- Did you include an ```insight block (1–2 blocks; first ask/counter)?
 
 Failure Routines
 - Precheck/test fails → immediately propose the smallest fix or revert; provide minimal repro; if blocked, raise a targeted QUESTION or a COUNTER.
