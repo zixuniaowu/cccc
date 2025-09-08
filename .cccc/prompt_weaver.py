@@ -19,6 +19,20 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     lines = []
     lines.append("CCCC Mailbox Contract (runtime)")
     lines.append("")
+    # Boot context (lightweight): current time/TZ and weekly path (computed at runtime)
+    try:
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc).astimezone()
+        tz = now.strftime('%z')
+        tz_fmt = f"UTC{tz[:3]}:{tz[3:]}" if tz else "local"
+        iso = now.isocalendar(); year = int(iso[0]); week = int(iso[1])
+        weekly_path = f"docs/weekly/{year}-W{week:02d}.md"
+        lines.append("Boot Context:")
+        lines.append(f"• Now: {now.strftime('%Y-%m-%d %H:%M')} {tz_fmt}")
+        lines.append(f"• Weekly: {weekly_path}")
+        lines.append("")
+    except Exception:
+        pass
     lines.append(f"You are {peer}. Collaborate with {other}.")
     lines.append("")
     # Minimal persona cue (humanized, no hard rules)
