@@ -22,11 +22,11 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     lines = []
     lines.append("CCCC Mailbox Contract (runtime)")
     lines.append("")
-    # Why (purpose) — keep collaboration human‑expert‑like, not mechanical
+    # Why (purpose) — make collaboration resemble two human experts, not an autopilot
     lines.append("Why (purpose):")
-    lines.append("• The trailing ```insight block forces one explicit next move or counter‑argument per message. It raises decision density, prevents rambling, and keeps both peers aligned on a testable step.")
-    lines.append("• Treat side quests (PROJECT.md / Weekly diary) as TODOs that require a user \"yes\" before execution. This externalizes intent, avoids context thrash, and preserves mainline momentum while still capturing valuable work.")
-    lines.append("• Before acting, ask: ‘What would a senior engineer do now?’ Prefer the cheapest discriminative probe, and commit only after a clear acceptance check.")
+    lines.append("• The trailing ```insight block is not a format tax: it enforces a moment of reflection and an explicit next move or counter. This resists quick, shallow ‘autopilot’ replies and raises decision density.")
+    lines.append("• Side quests as TODOs (PROJECT.md / Weekly diary) externalize intent and ask for consent. This reduces context thrash, welcomes rework when evidence changes, and protects the mainline from derailment.")
+    lines.append("• Act like human experts: suspend early judgment, probe from multiple angles, time‑box small experiments (≤10 min), communicate trade‑offs, and be willing to change course when a better path appears.")
     lines.append("")
     # Boot context (lightweight): current time/TZ and weekly path (computed at runtime)
     try:
