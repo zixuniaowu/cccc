@@ -62,13 +62,24 @@ class MailboxIndex:
         self.idx[self.key_for(peer, fname)] = {"sha": sha, "ts": time.time()}
 
 def read_if_changed(path: Path, last_sha: str) -> Tuple[bool, str, str]:
+    """Read mailbox file robustly (tolerate encoding issues) and detect changes.
+    - Always decode with UTF-8 replace to avoid intermittent UnicodeDecodeError from tool outputs.
+    - Treat empty/whitespace-only as no event.
+    """
     try:
-        text = path.read_text(encoding="utf-8")
+        raw = path.read_bytes()
+        try:
+            text = raw.decode("utf-8", errors="replace")
+        except Exception:
+            # As a last resort, treat as empty
+            text = ""
     except Exception:
         return False, "", last_sha
     text = text.strip()
+    if not text:
+        return False, "", last_sha
     sha = sha256_text(text)
-    if text and sha != last_sha:
+    if sha != last_sha:
         return True, text, sha
     return False, "", last_sha
 

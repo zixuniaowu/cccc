@@ -2157,6 +2157,16 @@ def main(home: Path):
                                     )
                                     _send_handoff("System", "PeerA", standby)
                                     _send_handoff("System", "PeerB", standby)
+                                    # Clear original to_peer.md to avoid re-applying inline patch
+                                    try:
+                                        (home/"mailbox"/"peerA"/"to_peer.md").write_text("", encoding="utf-8")
+                                    except Exception:
+                                        pass
+                                    # Emit a summary event for bridges (so external channels are informed)
+                                    try:
+                                        outbox_write(home, {"type":"to_peer_summary","from":"PeerA","to":"PeerB","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
+                                    except Exception:
+                                        pass
                                 else:
                                     print("[PATCH] Apply failed:\n"+err2.strip())
                                     log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
@@ -2255,6 +2265,16 @@ def main(home: Path):
                                     standby = ("<FROM_SYSTEM>\nPatch applied. Please standby and await the next instruction.\n</FROM_SYSTEM>\n")
                                     _send_handoff("System", "PeerA", standby)
                                     _send_handoff("System", "PeerB", standby)
+                                    # Clear original to_peer.md
+                                    try:
+                                        (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")
+                                    except Exception:
+                                        pass
+                                    # Emit a summary event
+                                    try:
+                                        outbox_write(home, {"type":"to_peer_summary","from":"PeerB","to":"PeerA","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
+                                    except Exception:
+                                        pass
                                 else:
                                     print("[PATCH] Apply failed:\n"+err2.strip())
                                     log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
