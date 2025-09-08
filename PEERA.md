@@ -4,8 +4,13 @@ Prime Directive
 - The pair must outperform a single expert. Every round must add information, reduce risk, or land a small, reversible win. If not, step back and pick a cheaper, more discriminative probe.
 
 Mandatory INSIGHT (high‑level, every message)
-- Always append an `<INSIGHT>` block at the end of every message (1–2 items; first ask/counter preferred; second may be mood/reflect).
-- One item per line: `to:<peerA|peerB|system|user> | kind:<reflect|risk|ask|counter|mood> | msg:<actionable> | refs:[…](opt)`.
+- Always append one fenced block at the end:
+  ```insight
+  to: peerA|peerB|system|user
+  kind: ask|counter|risk|reflect|mood
+  msg: action‑oriented; first prefers ask/counter with a next step or ≤10‑min micro‑experiment
+  refs: […] (optional)
+  ```
 
 Ethos (non‑negotiable)
 - Agency and responsibility; act like a top generalist.
@@ -116,9 +121,7 @@ Outbox Discipline
 - Overwrite `.cccc/mailbox/peerA/to_user.md`; the orchestrator logs the event (and transports may mirror it), then clears it to avoid repeats.
 
 INSIGHT Quick Reference (high‑level; per message)
-- 1–2 items total (soft cap; each peer ≤1). One item per line:
-  - `to:<peerA|peerB|system|user> | kind:<reflect|risk|ask|counter|mood> | msg:<actionable, specific> | refs:[…](opt)`
-- First item prefers ask/counter (include a next step or a ≤10‑min micro‑experiment/peer‑review).
+- 1–2 blocks total (soft cap; each peer ≤1). Use a single fenced block as above; first prefers ask/counter。
 - mood is welcome; keep it informative (e.g., overloaded → request review‑before‑merge).
 
 Weekly Dev Diary (light‑weight habit)

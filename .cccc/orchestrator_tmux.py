@@ -1162,12 +1162,15 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
         items=re.findall(SECTION_RE_TPL.format(tag=tag), window, re.I)
         return (items[-1].strip() if items else "")
     to_user = last("TO_USER"); to_peer = last("TO_PEER");
-    _ins = last("INSIGHT"); _meta = last("META")
-    meta_tag = None; meta_text = ""
-    if _ins.strip():
-        meta_tag = "INSIGHT"; meta_text = _ins
-    elif _meta.strip():
-        meta_tag = "META"; meta_text = _meta
+    # Extract the last ```insight fenced block (no backward-compat for tags)
+    def _last_insight(text: str) -> str:
+        try:
+            m = re.findall(r"```insight\s*([\s\S]*?)```", text, re.I)
+            return (m[-1].strip() if m else "")
+        except Exception:
+            return ""
+    # Note: insight is present in window for diagnostics only; forwarding uses mailbox path
+    _insight_diag = _last_insight(window)
     # Do not print <TO_USER> here (the background poller will report it); focus on patches and handoffs only
 
     # Only scan fenced patches visible in the window; ignore non-diff fences
