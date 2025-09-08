@@ -91,8 +91,8 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     # Delivery MID is informational; no explicit echo required.
     lines.append("")
     # Always-on INSIGHT channel (high-level, does not change code state)
-    lines.append("Always-on `"""insight`""" (high-level meta channel):")
-    lines.append("• Append one `"""insight`""" fenced block to every message (always present; place it at the end). Example:")
+    lines.append("Always-on ```insight (high-level meta channel):")
+    lines.append("• Append one ```insight fenced block to every message (always present; place it at the end). Example:")
     lines.append("  ```insight")
     lines.append("  to: peerB  |  kind: ask")
     lines.append("  msg: Two valid interpretations → write one acceptance example each, then converge")
