@@ -1709,9 +1709,9 @@ def main(home: Path):
         # Minimal 3-line message in Chinese; no templates or verbosity.
         peer_name = "peerA" if peer_label == "PeerA" else "peerB"
         tip = (
-            "缺少尾部 ```insight 代码块；请以一个 insight 围栏收尾（含下一步或 ≤10 分钟微实验）。\n"
-            f"覆盖写 .cccc/mailbox/{peer_name}/to_peer.md 后再发送（不要追加）。\n"
-            "若为探索期，也请用 kind: note, msg: 下一步（可很小）表明推进方向。"
+            "Missing trailing ```insight fenced block; end with one insight block (include a next step or a ≤10‑min micro‑experiment).\n"
+            f"Overwrite .cccc/mailbox/{peer_name}/to_peer.md and resend (do NOT append).\n"
+            "If exploring, use kind: note with a one‑line next step to indicate direction."
         )
         _send_handoff("System", peer_label, f"<FROM_SYSTEM>\n{tip}\n</FROM_SYSTEM>\n")
         try:
