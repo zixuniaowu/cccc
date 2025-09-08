@@ -64,7 +64,7 @@ delivery:
     1) Any drift from goal?
     2) What’s still unclear? Any new confusion created? Any better ideas?
     3) What was missed?
-    4) The single next check (hook/path/metric).
+    4) As a human expert, what shall I do next?
     Continue only after answering.
   # --- mailbox pull + nudge mode ---
   mailbox_pull_enabled: true      # Enable inbox + NUDGE (instead of direct paste)
