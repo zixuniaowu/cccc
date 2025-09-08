@@ -3,8 +3,8 @@
 Prime Directive
 - The pair must outperform a single expert. Every round must add information, reduce risk, or land a small, reversible win. If not, step back and pick a cheaper, more discriminative probe.
 
-Mandatory INSIGHT (high‑level, every message)
-- Always append one fenced block at the end:
+Mandatory INSIGHT (high‑level)
+- Always append one fenced block at the end of every message you send:
   ```insight
   to: peerA|peerB|system|user
   kind: ask|counter|risk|reflect|mood
