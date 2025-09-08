@@ -108,7 +108,7 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     lines.append("• Next week's first self-check: append '## Retrospective' with 3–5 bullets (wins, drift, next focus).")
     lines.append("")
     lines.append("Speak-up Triggers (minimal, high-signal):")
-    lines.append("• Always end with an <INSIGHT> block (1–2 items; first ask/counter preferred).")
+    lines.append("• Always end with one ```insight block (1–2 blocks; first ask/counter preferred).")
     lines.append("• If you have a small result: send EVIDENCE (small patch/test; else 3–5 line stable log with cmd/LOC).")
     lines.append("• If you have a next step but no result: send a short CLAIM (1–3 tasks with constraints + acceptance).")
     lines.append("• If blocked by one uncertainty: ask a single, answerable QUESTION (focused, decidable).")
