@@ -778,6 +778,23 @@ def main():
             _append_ledger({"kind":"bridge-file-outbound","peer":peer,"path":str(fp)})
             # Delete file and sidecars only when all sends succeeded
             if not any_fail:
+                # Minimal file ACK: write a sidecar with sent metadata before deleting the payload
+                try:
+                    import hashlib as _hl, datetime as _dt
+                    sha = _hl.sha256(data).hexdigest() if 'data' in locals() else ''
+                    sent_meta = {
+                        "sent": True,
+                        "ts": _dt.datetime.now(_dt.timezone.utc).astimezone().isoformat(),
+                        "bytes": len(data) if 'data' in locals() else None,
+                        "sha256": sha,
+                        "method": method,
+                        "peer": peer,
+                        "name": fp.name,
+                    }
+                    (fp.with_suffix(fp.suffix + '.sent.json')).write_text(json.dumps(sent_meta, ensure_ascii=False, indent=2), encoding='utf-8')
+                    _append_ledger({"kind":"bridge-file-sent","peer":peer,"path":str(fp),"bytes":sent_meta.get('bytes'),"sha256":sha})
+                except Exception as _e:
+                    _append_log(outlog, f"[warn] failed to write sent sidecar for {fp}: {_e}")
                 try:
                     for side in (
                         fp.with_suffix(fp.suffix + '.caption.txt'),
@@ -906,7 +923,7 @@ def main():
                             if fp.is_dir():
                                 continue
                             name=str(fp.name).lower()
-                            if name.endswith('.caption.txt') or name.endswith('.sendas') or name.endswith('.meta.json'):
+                            if name.endswith('.caption.txt') or name.endswith('.sendas') or name.endswith('.meta.json') or name.endswith('.sent.json'):
                                 continue
                             # optional caption sidecar
                             cap_fp = fp.with_suffix(fp.suffix + '.caption.txt')

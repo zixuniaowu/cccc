@@ -1645,6 +1645,17 @@ def main(home: Path):
         "Continue only after answering."
     )
     self_check_text = _sc_text if _sc_text else DEFAULT_SELF_CHECK
+    # Append a minimal, always-on reminder to end with one insight block (never verbose)
+    try:
+        INSIGHT_REMINDER = (
+            "Reminder: end with one ```insight block (ask/counter; include a next step or ≤10‑min micro‑experiment)."
+        )
+        if INSIGHT_REMINDER not in self_check_text:
+            # Ensure single trailing newline then append reminder as the last line
+            self_check_text = self_check_text.rstrip("\n") + "\n" + INSIGHT_REMINDER
+    except Exception:
+        # Fail-safe: keep original self_check_text
+        pass
 
     def _receiver_map(name: str) -> Tuple[str, Dict[str,Any]]:
         if name == "PeerA":
@@ -1667,6 +1678,45 @@ def main(home: Path):
         return "peerA" if peer_label == "PeerA" else "peerB"
 
     # (Defined earlier before startup)
+
+    # Minimal teaching-intercept: require a trailing fenced ```insight block in mailbox to_peer payloads.
+    # Rationale: single structural invariant; high ROI; no timers/windows; intercept every time until satisfied.
+    INSIGHT_FENCE = "```insight"
+
+    def _has_trailing_insight_block(text: str) -> bool:
+        if not text:
+            return False
+        try:
+            s = str(text).rstrip()
+            # Fast checks to avoid heavy regex: must end with closing fence and contain an opening insight fence
+            if not s.endswith("```"):
+                return False
+            open_pos = s.rfind(INSIGHT_FENCE)
+            if open_pos < 0:
+                return False
+            # Ensure the last closing fence occurs after the opening insight fence
+            close_pos = s.rfind("```")
+            return close_pos > open_pos
+        except Exception:
+            return False
+
+    def _teach_intercept_missing_insight(home: Path, peer_label: str, payload: str) -> bool:
+        """Return True if intercepted and forwarded a system teaching message (payload not forwarded)."""
+        if _has_trailing_insight_block(payload):
+            return False
+        # Minimal 3-line message in Chinese; no templates or verbosity.
+        peer_name = "peerA" if peer_label == "PeerA" else "peerB"
+        tip = (
+            "缺少尾部 ```insight 代码块；请以一个 insight 围栏收尾（含下一步或 ≤10 分钟微实验）。\n"
+            f"覆盖写 .cccc/mailbox/{peer_name}/to_peer.md 后再发送（不要追加）。\n"
+            "若为探索期，也请用 kind: note, msg: 下一步（可很小）表明推进方向。"
+        )
+        _send_handoff("System", peer_label, f"<FROM_SYSTEM>\n{tip}\n</FROM_SYSTEM>\n")
+        try:
+            log_ledger(home, {"from": "system", "kind": "teach-intercept", "peer": peer_label, "reason": "missing-insight"})
+        except Exception:
+            pass
+        return True
 
     def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None):
         nonlocal instr_counter, in_self_check
@@ -2138,6 +2188,12 @@ def main(home: Path):
                     mbox_counts["peerA"]["to_peer"] += 1
                     mbox_last["peerA"]["to_peer"] = time.strftime("%H:%M:%S")
                     last_event_ts["PeerA"] = time.time()
+                    # Minimal teaching-intercept: require trailing insight fence; intercept every time until satisfied
+                    try:
+                        if _teach_intercept_missing_insight(home, "PeerA", payload):
+                            payload = ""
+                    except Exception:
+                        pass
                     # If to_peer expresses RFD intent, log kind:rfd (so bridge can send a card)
                     _maybe_emit_rfd_from_to_peer(home, "PeerA", payload)
                     # If to_peer contains a unified diff, try to apply it (avoid “discuss diff but not land”)
@@ -2228,6 +2284,12 @@ def main(home: Path):
                     mbox_counts["peerB"]["to_peer"] += 1
                     mbox_last["peerB"]["to_peer"] = time.strftime("%H:%M:%S")
                     last_event_ts["PeerB"] = time.time()
+                    # Minimal teaching-intercept
+                    try:
+                        if _teach_intercept_missing_insight(home, "PeerB", payload):
+                            payload = ""
+                    except Exception:
+                        pass
                     _maybe_emit_rfd_from_to_peer(home, "PeerB", payload)
                     inline = extract_inline_diff_if_any(payload) or ""
                     if inline:
