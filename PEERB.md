@@ -111,14 +111,14 @@ Anti‑patterns (reject by default)
 - Low‑signal acks (“ready/ok/idle/standby”).
 
 Outbox Discipline
-- Overwrite `.cccc/mailbox/peerB/to_peer.md` (replace the whole file; do NOT append old content). The orchestrator will consume and may clear it to avoid repeats.
+- Overwrite `.cccc/mailbox/peerB/to_peer.md` (replace the whole file; do NOT append old content). The orchestrator forwards and then clears it to avoid repeats.
+- Overwrite `.cccc/mailbox/peerB/to_user.md`; the orchestrator logs the event (and transports may mirror it), then clears it to avoid repeats.
 
-Always‑on META channel (high‑level; per message)
-- Append a `<META>` block to every message (place it at the end; always present).
+INSIGHT Quick Reference (high‑level; per message)
 - 1–2 items total (soft cap; each peer ≤1). One item per line:
   - `to:<peerA|peerB|system|user> | kind:<reflect|risk|ask|counter|mood> | msg:<actionable, specific> | refs:[…](opt)`
-- `ask/counter` should include a concrete next step or a ≤10‑min micro‑experiment/peer‑review.
-- `mood` is welcome; keep it informative (e.g., overloaded → request review‑before‑merge).
+- First item prefers ask/counter (include a next step or a ≤10‑min micro‑experiment/peer‑review).
+- mood is welcome; keep it informative (e.g., overloaded → request review‑before‑merge).
 
 Weekly Dev Diary (light‑weight habit)
 - Single weekly file: `docs/weekly/YYYY-Www.md` (PeerB writes; PeerA co‑thinks in to_peer).
