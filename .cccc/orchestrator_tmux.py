@@ -1332,6 +1332,12 @@ def main(home: Path):
     # Directories
     settings = home/"settings"; state = home/"state"
     state.mkdir(exist_ok=True)
+    # Reset preamble sent flags on each orchestrator start to ensure the first
+    # user message per peer carries the preamble in this session.
+    try:
+        (state/"preamble_sent.json").write_text(json.dumps({"PeerA": False, "PeerB": False}, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
     roles    = read_yaml(settings/"roles.yaml")
     policies = read_yaml(settings/"policies.yaml")
@@ -2366,7 +2372,10 @@ def main(home: Path):
             try:
                 peer_key = "peerA" if receiver_label == "PeerA" else "peerB"
                 pre = weave_preamble_text(home, peer_key)
-                combined = f"<FROM_SYSTEM>\n{pre}\n</FROM_SYSTEM>\n\n" + user_payload
+                # Merge preamble into the first user message as one instruction block
+                m = re.search(r"<\s*FROM_USER\s*>\s*([\s\S]*?)<\s*/FROM_USER\s*>", user_payload, re.I)
+                inner = m.group(1) if m else user_payload
+                combined = f"<FROM_USER>\n{pre}\n\n{inner.strip()}\n</FROM_USER>\n"
                 st[receiver_label] = True
                 _save_preamble_sent(st)
                 log_ledger(home, {"from":"system","kind":"lazy-preamble-sent","peer":receiver_label})

@@ -255,7 +255,10 @@ def _deliver_inbound(home: Path, routes: List[str], payload: str, mid: str):
             if not bool(st.get(label)):
                 pre = _compose_preamble(peer)
                 if pre:
-                    final = f"<FROM_SYSTEM>\n{pre}\n</FROM_SYSTEM>\n\n" + final
+                    # Merge preamble into the first user message as one block
+                    m = re.search(r"<\s*FROM_USER\s*>\s*([\s\S]*?)<\s*/FROM_USER\s*>", final, re.I)
+                    inner = m.group(1) if m else final
+                    final = f"<FROM_USER>\n{pre}\n\n{inner.strip()}\n</FROM_USER>\n"
                 st[label] = True
                 _save_preamble_sent(st)
                 _append_ledger({"kind":"lazy-preamble-sent","peer":label})
