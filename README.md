@@ -212,7 +212,7 @@ outbound:
 
 - Always‑on ```insight fenced block (formerly META): each peer appends a high‑level block to every message (1–2 blocks; first ask/counter preferred). Improves alignment without changing code state.
 - Practical rule (single agent or peers): end every outbound message with exactly one trailing ```insight block (ask/counter preferred; include a concrete next step or ≤10‑min micro‑experiment). The orchestrator intercepts and asks you to overwrite and resend if the block is missing.
-- Weekly Dev Diary: single weekly file `docs/weekly/YYYY-Www.md` (PeerB writes). Daily create/replace today’s section ≤40 lines (Today/Changes/Risks‑Next). Next week’s first self‑check: add `## Retrospective` 3–5 bullets.
+- Weekly Dev Diary: single weekly file `.cccc/work/docs/weekly/YYYY-Www.md` (PeerB writes). Daily create/replace today’s section ≤40 lines (Today/Changes/Risks‑Next). Next week’s first self‑check: add `## Retrospective` 3–5 bullets.
 - Boot Context: initial SYSTEM includes current time/TZ and the weekly path; peers start with a shared anchor.
 - Outbox Discipline: to_peer.md and to_user.md are overwrite‑only; the orchestrator (core) consumes and clears after logging/forwarding to avoid repeats. Bridges are thin mirrors, not state machines.
 

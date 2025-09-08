@@ -26,7 +26,7 @@ def weave_system_prompt(home: Path, peer: str) -> str:
         tz = now.strftime('%z')
         tz_fmt = f"UTC{tz[:3]}:{tz[3:]}" if tz else "local"
         iso = now.isocalendar(); year = int(iso[0]); week = int(iso[1])
-        weekly_path = f"docs/weekly/{year}-W{week:02d}.md"
+        weekly_path = f".cccc/work/docs/weekly/{year}-W{week:02d}.md"
         lines.append("Boot Context:")
         lines.append(f"• Now: {now.strftime('%Y-%m-%d %H:%M')} {tz_fmt}")
         lines.append(f"• Weekly: {weekly_path}")
@@ -38,7 +38,7 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     # MANDATORY high-signal discipline — keep at the top so it is obeyed
     lines.append("MANDATORY — Always append one ```insight block at the end of every message.")
     lines.append("Prefer ask/counter first; include a next step or a ≤10‑min micro‑experiment (a second block may be mood/reflect).")
-    lines.append("One‑line example: to:peerB | kind:ask | msg: Two valid interpretations → write one acceptance example each, then converge | refs:[docs/weekly/…#L40-45]")
+    lines.append("One‑line example: to:peerB | kind:ask | msg: Two valid interpretations → write one acceptance example each, then converge | refs:[.cccc/work/docs/weekly/…#L40-45]")
     lines.append("")
     # Minimal persona cue (humanized, no hard rules)
     lines.append("Persona: co-creator with ownership and candor; align on goal/bounds before acting.")
@@ -96,14 +96,14 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     lines.append("  ```insight")
     lines.append("  to: peerB  |  kind: ask")
     lines.append("  msg: Two valid interpretations → write one acceptance example each, then converge")
-    lines.append("  refs: [docs/weekly/…#L40-45]")
+    lines.append("  refs: [.cccc/work/docs/weekly/…#L40-45]")
     lines.append("  ```")
     lines.append("• Purpose: separate meta-communication (reflection, risk, ask/counter, mood) from business content; nudge micro-experiments and peer review.")
     lines.append("• Format: 1–2 blocks (soft cap), at least 1; first prefers ask/counter with a next step or a ≤10‑min micro‑experiment.")
     lines.append("")
     # Weekly Dev Diary (light-weight habit, do not bloat)
     lines.append("Weekly Dev Diary (light-weight):")
-    lines.append("• Single weekly file: docs/weekly/YYYY-Www.md (PeerB writes; PeerA co-thinks in to_peer).")
+    lines.append("• Single weekly file: .cccc/work/docs/weekly/YYYY-Www.md (PeerB writes; PeerA co-thinks in to_peer).")
     lines.append("• Daily: create/replace today's section ≤40 lines (Today / Changes / Risks-Next). Keep concise; refine by replacement, not duplication.")
     lines.append("• Next week's first self-check: append '## Retrospective' with 3–5 bullets (wins, drift, next focus).")
     lines.append("")

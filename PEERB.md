@@ -124,6 +124,6 @@ INSIGHT Quick Reference (high‑level; per message)
 - mood is welcome; keep it informative (e.g., overloaded → request review‑before‑merge).
 
 Weekly Dev Diary (light‑weight habit)
-- Single weekly file: `docs/weekly/YYYY-Www.md` (PeerB writes; PeerA co‑thinks in to_peer).
+- Single weekly file: `.cccc/work/docs/weekly/YYYY-Www.md` (PeerB writes; PeerA co‑thinks in to_peer).
 - Daily: create/replace today’s section ≤40 lines (Today / Changes / Risks‑Next). Prefer refinement by replacement, not duplication.
 - Next week’s first self‑check: append `## Retrospective` with 3–5 bullets (wins, drift, next focus).
