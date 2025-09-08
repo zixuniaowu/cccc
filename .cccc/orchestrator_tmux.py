@@ -2236,16 +2236,16 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
-                    if should_forward(payload, "PeerB", "PeerA", policies, state, eff_enabled):
-                        wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
-                        _send_handoff("PeerB", "PeerA", wrapped)
-                        # Clear to_peer.md after successful forward
-                        try:
-                            (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")
-                        except Exception:
-                            pass
-                    else:
-                        log_ledger(home, {"from":"PeerB","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
+                        if should_forward(payload, "PeerB", "PeerA", policies, state, eff_enabled):
+                            wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
+                            _send_handoff("PeerB", "PeerA", wrapped)
+                            # Clear to_peer.md after successful forward
+                            try:
+                                (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")
+                            except Exception:
+                                pass
+                        else:
+                            log_ledger(home, {"from":"PeerB","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
                 if events["peerB"].get("patch"):
                     norm = normalize_mailbox_patch(events["peerB"]["patch"]) or ""
                     if not norm:
