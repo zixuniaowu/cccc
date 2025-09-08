@@ -1977,27 +1977,6 @@ def main(home: Path):
         combinedB = f"<FROM_SYSTEM>\n{sysB}\n\n{proj_block}\n</FROM_SYSTEM>\n"
         _send_handoff("System", "PeerA", combinedA)
         _send_handoff("System", "PeerB", combinedB)
-        # Minimal startup context: current time/TZ and weekly diary tail (if exists)
-        try:
-            import datetime as _dt
-            now = _dt.datetime.now(_dt.timezone.utc).astimezone()
-            tz = now.strftime('%z')
-            tz_fmt = f"UTC{tz[:3]}:{tz[3:]}" if tz else "local"
-            repo_root = home.parent
-            wf = _week_file_path(repo_root, now)
-            tail = _file_tail_lines(wf, 10) if wf.exists() else []
-            ctx = (
-                f"[Context]\nNow: {now.strftime('%Y-%m-%d %H:%M')} {tz_fmt}\n"
-                f"Weekly: {wf.as_posix()}\n" + ("\n".join(tail[-10:]) if tail else "(no recent lines)")
-            )
-            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
-            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
-            try:
-                log_ledger(home, {"from":"system","kind":"context-boot","weekly": wf.as_posix(), "tail_lines": len(tail), "tz": tz_fmt})
-            except Exception:
-                pass
-        except Exception:
-            pass
         log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued"})
         log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":"queued"})
     else:
@@ -2006,27 +1985,6 @@ def main(home: Path):
             sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
-            # Minimal startup context: current time/TZ and weekly diary tail (if exists)
-            try:
-                import datetime as _dt
-                now = _dt.datetime.now(_dt.timezone.utc).astimezone()
-                tz = now.strftime('%z')
-                tz_fmt = f"UTC{tz[:3]}:{tz[3:]}" if tz else "local"
-                repo_root = home.parent
-                wf = _week_file_path(repo_root, now)
-                tail = _file_tail_lines(wf, 10) if wf.exists() else []
-                ctx = (
-                    f"[Context]\nNow: {now.strftime('%Y-%m-%d %H:%M')} {tz_fmt}\n"
-                    f"Weekly: {wf.as_posix()}\n" + ("\n".join(tail[-10:]) if tail else "(no recent lines)")
-                )
-                _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
-                _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
-                try:
-                    log_ledger(home, {"from":"system","kind":"context-boot","weekly": wf.as_posix(), "tail_lines": len(tail), "tz": tz_fmt})
-                except Exception:
-                    pass
-            except Exception:
-                pass
             log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued-minimal"})
             log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":"queued-minimal"})
         except Exception:
