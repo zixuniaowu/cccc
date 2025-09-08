@@ -1075,12 +1075,14 @@ def context_blob(policies: Dict[str,Any], phase: str) -> str:
             f"# POLICIES:\n{json.dumps({'patch_queue':policies.get('patch_queue',{}),'rfd':policies.get('rfd',{}),'autonomy_level':policies.get('autonomy_level')},ensure_ascii=False)}\n")
 
 # ---------- Weekly diary helpers (minimal, single-writer) ----------
-def _week_file_path(repo_root: Path, dt=None) -> Path:
+def _week_file_path(home: Path, dt=None) -> Path:
     import datetime as _dt
     dt = dt or _dt.datetime.now(_dt.timezone.utc).astimezone()
     iso = dt.isocalendar()
     year = int(iso[0]); week = int(iso[1])
-    return repo_root/"docs"/"weekly"/f"{year}-W{week:02d}.md"
+    # Store weekly diary under orchestrator workdir to minimize repo intrusion
+    # .cccc/work/docs/weekly/YYYY-Www.md (non-authoritative; ignored by VCS)
+    return home/"work"/"docs"/"weekly"/f"{year}-W{week:02d}.md"
 
 def _today_heading(dt=None) -> str:
     import datetime as _dt
@@ -1096,8 +1098,8 @@ def _file_tail_lines(p: Path, n: int = 10) -> List[str]:
     except Exception:
         return []
 
-def _weekly_has_today(repo_root: Path, dt=None) -> Tuple[Path, bool]:
-    p = _week_file_path(repo_root, dt)
+def _weekly_has_today(home: Path, dt=None) -> Tuple[Path, bool]:
+    p = _week_file_path(home, dt)
     if not p.exists():
         return p, False
     try:
@@ -1804,7 +1806,7 @@ def main(home: Path):
                                 except Exception:
                                     state = {}
                                 last_date = str(state.get('last_date') or '')
-                                wk_path, has_today = _weekly_has_today(repo_root, today)
+                                wk_path, has_today = _weekly_has_today(home, today)
                                 need_daily = (not has_today) and (last_date != today_str)
                                 if need_daily:
                                     # Minimal template: replace-or-append today's section, ≤40 lines total
@@ -1829,7 +1831,7 @@ def main(home: Path):
                                 # Retro prompt at first self-check of new week if last week has no Retrospective
                                 try:
                                     last_week = today - _dt.timedelta(days=7)
-                                    last_week_file = _week_file_path(repo_root, last_week)
+                                    last_week_file = _week_file_path(home, last_week)
                                     lw_id = last_week_file.stem  # e.g., 2025-W36
                                     prompted = str((state or {}).get('last_retro_prompt_week') or '')
                                     if last_week_file.exists() and (not _weekly_has_retro(last_week_file)) and (prompted != lw_id):
