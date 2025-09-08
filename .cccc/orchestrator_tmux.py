@@ -1992,6 +1992,10 @@ def main(home: Path):
             )
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
+            try:
+                log_ledger(home, {"from":"system","kind":"context-boot","weekly": wf.as_posix(), "tail_lines": len(tail), "tz": tz_fmt})
+            except Exception:
+                pass
         except Exception:
             pass
         log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued"})
@@ -2017,6 +2021,10 @@ def main(home: Path):
                 )
                 _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
                 _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{ctx}\n</FROM_SYSTEM>\n")
+                try:
+                    log_ledger(home, {"from":"system","kind":"context-boot","weekly": wf.as_posix(), "tail_lines": len(tail), "tz": tz_fmt})
+                except Exception:
+                    pass
             except Exception:
                 pass
             log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued-minimal"})
