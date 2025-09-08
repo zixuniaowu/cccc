@@ -849,6 +849,26 @@ def log_ledger(home: Path, entry: Dict[str,Any]):
     with (state/"ledger.jsonl").open("a",encoding="utf-8") as f:
         f.write(json.dumps(entry,ensure_ascii=False)+"\n")
 
+def outbox_write(home: Path, event: Dict[str,Any]) -> Dict[str,Any]:
+    """Append a structured outbound event for bridges to consume.
+    Returns the full event with id/ts populated.
+    """
+    state = home/"state"; state.mkdir(exist_ok=True)
+    ev = dict(event)
+    try:
+        # Populate id/ts if missing
+        if 'ts' not in ev:
+            ev['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
+        base = (ev.get('type') or '') + '|' + (ev.get('peer') or ev.get('from') or '') + '|' + (ev.get('text') or '')
+        hid = hashlib.sha1(base.encode('utf-8','ignore')).hexdigest()[:12]
+        ev.setdefault('id', hid)
+    except Exception:
+        ev.setdefault('id', str(int(time.time())))
+        ev.setdefault('ts', time.strftime('%Y-%m-%d %H:%M:%S'))
+    with (state/"outbox.jsonl").open('a', encoding='utf-8') as f:
+        f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    return ev
+
 def allowed_by_policies(paths: List[str], policies: Dict[str,Any]) -> bool:
     allowed = policies.get("patch_queue",{}).get("allowed_paths",["**"])
     for pth in paths:
@@ -2092,7 +2112,7 @@ def main(home: Path):
                         eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
                     except Exception:
                         eid = str(int(time.time()))
-                    log_ledger(home, {"kind":"to_user","peer":"PeerA","text":txt,"eid":eid})
+                    outbox_write(home, {"type":"to_user","peer":"PeerA","text":txt,"eid":eid})
                     _ack_receiver("PeerA", events["peerA"]["to_user"])  # Consider as ACK (responded after peer handoff)
                     mbox_counts["peerA"]["to_user"] += 1
                     mbox_last["peerA"]["to_user"] = time.strftime("%H:%M:%S")
@@ -2151,6 +2171,10 @@ def main(home: Path):
                     if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                         _send_handoff("PeerA", "PeerB", wrapped)
+                        try:
+                            outbox_write(home, {"type":"to_peer_summary","from":"PeerA","to":"PeerB","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
+                        except Exception:
+                            pass
                         # Clear to_peer.md after successful forward to avoid accidental resends
                         try:
                             (home/"mailbox"/"peerA"/"to_peer.md").write_text("", encoding="utf-8")
@@ -2198,7 +2222,7 @@ def main(home: Path):
                         eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
                     except Exception:
                         eid = str(int(time.time()))
-                    log_ledger(home, {"kind":"to_user","peer":"PeerB","text":txt,"eid":eid})
+                    outbox_write(home, {"type":"to_user","peer":"PeerB","text":txt,"eid":eid})
                     try:
                         (home/"mailbox"/"peerB"/"to_user.md").write_text("", encoding="utf-8")
                     except Exception:
@@ -2244,6 +2268,10 @@ def main(home: Path):
                         if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
                             wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
                             _send_handoff("PeerB", "PeerA", wrapped)
+                            try:
+                                outbox_write(home, {"type":"to_peer_summary","from":"PeerB","to":"PeerA","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
+                            except Exception:
+                                pass
                             # Clear to_peer.md after successful forward
                             try:
                                 (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")

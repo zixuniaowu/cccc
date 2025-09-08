@@ -755,40 +755,54 @@ def main():
                 p.write_text(json.dumps({'ids': list(ids)[-5000:]}, ensure_ascii=False, indent=2), encoding='utf-8')
             except Exception:
                 pass
-        def watch_ledger_for_to_user():
-            ledger = HOME/"state"/"ledger.jsonl"
+        def watch_outbox():
+            outbox = HOME/"state"/"outbox.jsonl"
             seen_ids = _load_outbox_seen()
             baseline_done = False
             window = 2000
             while True:
                 try:
-                    if ledger.exists():
-                        lines = ledger.read_text(encoding='utf-8').splitlines()[-window:]
+                    if outbox.exists():
+                        lines = outbox.read_text(encoding='utf-8').splitlines()[-window:]
                         changed=False
                         for line in lines:
                             try:
                                 ev = json.loads(line)
                             except Exception:
                                 continue
-                            if str(ev.get('kind') or '').lower() != 'to_user':
+                            etype = str(ev.get('type') or '').lower()
+                            if etype not in ('to_user','to_peer_summary'):
                                 continue
-                            eid = str(ev.get('eid') or '')
-                            peer = str(ev.get('peer') or '')
-                            text = str(ev.get('text') or '')
-                            if not peer or not text:
-                                continue
-                            if eid and eid in seen_ids:
+                            oid = str(ev.get('id') or ev.get('eid') or '')
+                            if oid and oid in seen_ids:
                                 continue
                             if not baseline_done:
-                                if eid:
-                                    seen_ids.add(eid); changed=True
+                                if oid:
+                                    seen_ids.add(oid); changed=True
                                 continue
-                            # Send to Telegram
-                            p = 'peerA' if peer.lower() in ('peera','peera'.lower(), 'peera'.lower()) or peer=='PeerA' else 'peerB'
-                            send_summary(p, text)
-                            if eid:
-                                seen_ids.add(eid); changed=True
-                            _append_ledger({'kind':'bridge-outbox-sent','peer':p,'eid':eid,'chars':len(text)})
+                            if etype == 'to_user':
+                                peer = str(ev.get('peer') or '')
+                                text = str(ev.get('text') or '')
+                                if not peer or not text:
+                                    continue
+                                p = 'peerA' if peer.lower() in ('peera','peera'.lower(), 'peera'.lower()) or peer=='PeerA' else 'peerB'
+                                send_summary(p, text)
+                                _append_ledger({'kind':'bridge-outbox-sent','type':'to_user','peer':p,'id':oid,'chars':len(text)})
+                                if oid:
+                                    seen_ids.add(oid); changed=True
+                            elif etype == 'to_peer_summary':
+                                fromp = str(ev.get('from') or '')
+                                text = str(ev.get('text') or '')
+                                if not fromp or not text:
+                                    continue
+                                sp = 'peerA' if fromp.lower() in ('peera','peera'.lower()) or fromp=='PeerA' else 'peerB'
+                                # Respect show_peer_messages runtime switch
+                                eff_show = bool(load_runtime().get('show_peer_messages', show_peers))
+                                if eff_show:
+                                    send_peer_summary(sp, text)
+                                    _append_ledger({'kind':'bridge-outbox-sent','type':'to_peer_summary','peer':sp,'id':oid,'chars':len(text)})
+                                    if oid:
+                                        seen_ids.add(oid); changed=True
                         if changed:
                             _save_outbox_seen(seen_ids)
                         baseline_done = True
@@ -796,7 +810,7 @@ def main():
                     pass
                 time.sleep(1.0)
 
-        threading.Thread(target=watch_ledger_for_to_user, daemon=True).start()
+        threading.Thread(target=watch_outbox, daemon=True).start()
         # Outbound files watcher state
         # Track attempts within this run only (avoid rapid duplicates if filesystem timestamps don't change)
         sent_files: Dict[str, float] = {}
@@ -986,19 +1000,7 @@ def main():
 
         while True:
             now = time.time()
-            # to_peer (peer-to-peer) messages
-            eff_show = bool(load_runtime().get('show_peer_messages', show_peers))
-            if eff_show:
-                for peer, p in to_peer_paths.items():
-                    try:
-                        txt = p.read_text(encoding='utf-8').strip()
-                    except Exception:
-                        txt = ''
-                    key = f"peer_{peer}"
-                    if txt and txt != last_seen.get(key, '') and (now - last_sent_ts.get(key, 0.0) >= peer_debounce):
-                        last_seen[key] = txt
-                        last_sent_ts[key] = now
-                        send_peer_summary(peer, txt)
+            # Peer↔Peer summaries now come from outbox (no file polling)
             # Outbound files
             try:
                 for peer in ('peerA','peerB'):
