@@ -1049,6 +1049,15 @@ def weave_system(home: Path, peer: str) -> str:
     from prompt_weaver import weave_system_prompt
     return weave_system_prompt(home, peer)
 
+def weave_preamble_text(home: Path, peer: str) -> str:
+    """Single-source preamble (same source as SYSTEM)."""
+    try:
+        from prompt_weaver import weave_preamble
+        return weave_preamble(home, peer)
+    except Exception:
+        # Fallback to full system when preamble helper not present
+        return weave_system(home, peer)
+
 DEFAULT_CONTEXT_EXCLUDES = [
     ".venv/**", "node_modules/**", "**/__pycache__/**", "**/*.pyc",
     ".tox/**", "dist/**", "build/**", ".mypy_cache/**"
@@ -1709,7 +1718,7 @@ def main(home: Path):
         # Minimal 3-line message in Chinese; no templates or verbosity.
         peer_name = "peerA" if peer_label == "PeerA" else "peerB"
         tip = (
-            "Missing trailing ```insight fenced block; end with one insight block (include a next step or a ≤10‑min micro‑experiment).\n"
+            "Missing trailing ```insight fenced block in the last message you sent; end with one insight block (include a next step or a ≤10‑min micro‑experiment).\n"
             f"Overwrite .cccc/mailbox/{peer_name}/to_peer.md and resend (do NOT append).\n"
             "If exploring, use kind: note with a one‑line next step to indicate direction."
         )
@@ -2009,48 +2018,32 @@ def main(home: Path):
     last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
     seen_acks: Dict[str,set] = {"PeerA": set(), "PeerB": set()}
 
-    # Combine the first system message (SYSTEM + project brief) into a single send to avoid rhythm issues
-    if start_mode in ("has_doc", "ai_bootstrap"):
-        sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
-        if start_mode == "ai_bootstrap":
-            proj_block = (
-                "Initial Task: Collaborate to create a high-quality PROJECT.md for this repository.\n\n"
-                "Rules:\n"
-                "- Allowed file change: create/update PROJECT.md only. Do not modify .cccc/** or other files.\n"
-                "- Use mailbox: write draft content to to_user.md, questions/negotiation to to_peer.md.\n"
-                "- When ready, produce a unified diff for PROJECT.md in patch.diff (small, single-file patch).\n"
-                "- Keep changes minimal and reversible.\n\n"
-                "Content Requirements (suggested sections):\n"
-                "- Purpose & Context; Scope & Non-Goals; Tech Snapshot; Build/Run/CI; Quality Gates; Constraints; Risks & Next Steps.\n\n"
-                "Collaboration:\n"
-                "- PeerA leads structure and wording; PeerB compiles repo facts and verifies claims. Prefer evidence.\n\n"
-                "Acceptance:\n"
-                "- Provide a single unified diff that adds PROJECT.md, ≤ 200 changed lines.\n"
-                "- After apply, re-run lint/tests (if configured) and report status to user.\n"
-            )
-        else:
-            proj_block = (
-                "Please read PROJECT.md to understand goals, scope, constraints and CI gates.\n"
-                "Then output a ≤5-line summary to the user and standby.\n"
-                "Do not modify any files until further instruction.\n"
-            )
-        combinedA = f"<FROM_SYSTEM>\n{sysA}\n\n{proj_block}\n</FROM_SYSTEM>\n"
-        combinedB = f"<FROM_SYSTEM>\n{sysB}\n\n{proj_block}\n</FROM_SYSTEM>\n"
-        _send_handoff("System", "PeerA", combinedA)
-        _send_handoff("System", "PeerB", combinedB)
-        log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued"})
-        log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":"queued"})
-    else:
-        # Minimal SYSTEM bootstrap for 'ask' mode to ensure inbox file exists
+    # Startup injection policy (config-driven)
+    STARTUP = (delivery_conf.get("startup") or {}) if isinstance(delivery_conf.get("startup"), dict) else {}
+    inject_mode = str(STARTUP.get("inject_system", "none") or "none").strip().lower()
+    if inject_mode in ("minimal", "project"):
         try:
             sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
-            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
-            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
-            log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":"queued-minimal"})
-            log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":"queued-minimal"})
+            if inject_mode == "project":
+                proj_block = (
+                    "Please read PROJECT.md to understand goals, scope, constraints and CI gates.\n"
+                    "Then output a ≤5-line summary to the user and standby.\n"
+                    "Do not modify any files until further instruction.\n"
+                )
+            else:
+                proj_block = ""
+            if proj_block:
+                combinedA = f"<FROM_SYSTEM>\n{sysA}\n\n{proj_block}\n</FROM_SYSTEM>\n"
+                combinedB = f"<FROM_SYSTEM>\n{sysB}\n\n{proj_block}\n</FROM_SYSTEM>\n"
+            else:
+                combinedA = f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n"
+                combinedB = f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n"
+            _send_handoff("System", "PeerA", combinedA)
+            _send_handoff("System", "PeerB", combinedB)
+            log_ledger(home, {"from":"system","kind":"system-boot","peer":"A","status":inject_mode})
+            log_ledger(home, {"from":"system","kind":"system-boot","peer":"B","status":inject_mode})
         except Exception:
             pass
-        # System prompt sent at startup; do not count towards periodic self-check
         try:
             instr_counter = 0
         except Exception:
@@ -2391,11 +2384,11 @@ def main(home: Path):
             print("  /echo on|off|<empty>    → console echo on/off/show")
             print("  q                       → quit orchestrator")
             # Reprint prompt
-            try:
-                sys.stdout.write("> "); sys.stdout.flush()
-            except Exception:
-                pass
-            continue
+        try:
+            sys.stdout.write("> "); sys.stdout.flush()
+        except Exception:
+            pass
+        continue
         if line == "/refresh":
             sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
@@ -2430,10 +2423,47 @@ def main(home: Path):
             eff = handoff_filter_override if handoff_filter_override is not None else pol_enabled
             src = "override" if handoff_filter_override is not None else "policy"
             print(f"[ANTI] Low-signal filter: {eff} (source={src})"); continue
+        # Lazy preamble: prepend on the first user message per peer (config-driven)
+        LAZY = (delivery_conf.get("lazy_preamble") or {}) if isinstance(delivery_conf.get("lazy_preamble"), dict) else {}
+        LAZY_ENABLED = bool(LAZY.get("enabled", True))
+
+        # State helpers for preamble-sent flags
+        def _preamble_state_path() -> Path:
+            return home/"state"/"preamble_sent.json"
+        def _load_preamble_sent() -> Dict[str,bool]:
+            p = _preamble_state_path();
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                return {"PeerA": False, "PeerB": False}
+        def _save_preamble_sent(st: Dict[str,bool]):
+            p = _preamble_state_path(); p.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+        def _maybe_prepend_preamble(receiver_label: str, user_payload: str) -> str:
+            if not LAZY_ENABLED:
+                return user_payload
+            st = _load_preamble_sent()
+            if bool(st.get(receiver_label)):
+                return user_payload
+            try:
+                peer_key = "peerA" if receiver_label == "PeerA" else "peerB"
+                pre = weave_preamble_text(home, peer_key)
+                combined = f"<FROM_SYSTEM>\n{pre}\n</FROM_SYSTEM>\n\n" + user_payload
+                st[receiver_label] = True
+                _save_preamble_sent(st)
+                log_ledger(home, {"from":"system","kind":"lazy-preamble-sent","peer":receiver_label})
+                return combined
+            except Exception:
+                return user_payload
+
         if line.startswith("u:") or line.startswith("both:"):
             msg=line.split(":",1)[1].strip()
-            _send_handoff("User", "PeerA", f"<FROM_USER>\n{msg}\n</FROM_USER>\n")
-            _send_handoff("User", "PeerB", f"<FROM_USER>\n{msg}\n</FROM_USER>\n")
+            up = f"<FROM_USER>\n{msg}\n</FROM_USER>\n"
+            _send_handoff("User", "PeerA", _maybe_prepend_preamble("PeerA", up))
+            _send_handoff("User", "PeerB", _maybe_prepend_preamble("PeerB", up))
             continue
         # Passthrough: a! / b! writes raw command to target CLI (no wrapper/MID)
         if line.startswith("a!"):
@@ -2449,15 +2479,18 @@ def main(home: Path):
         # Normal wrapped routing
         if line.startswith("a:"):
             msg=line.split(":",1)[1].strip()
-            _send_handoff("User", "PeerA", f"<FROM_USER>\n{msg}\n</FROM_USER>\n")
+            up = f"<FROM_USER>\n{msg}\n</FROM_USER>\n"
+            _send_handoff("User", "PeerA", _maybe_prepend_preamble("PeerA", up))
             continue
         if line.startswith("b:"):
             msg=line.split(":",1)[1].strip()
-            _send_handoff("User", "PeerB", f"<FROM_USER>\n{msg}\n</FROM_USER>\n")
+            up = f"<FROM_USER>\n{msg}\n</FROM_USER>\n"
+            _send_handoff("User", "PeerB", _maybe_prepend_preamble("PeerB", up))
             continue
         # Default broadcast: send to both peers immediately
-        _send_handoff("User", "PeerA", f"<FROM_USER>\n{line}\n</FROM_USER>\n")
-        _send_handoff("User", "PeerB", f"<FROM_USER>\n{line}\n</FROM_USER>\n")
+        up = f"<FROM_USER>\n{line}\n</FROM_USER>\n"
+        _send_handoff("User", "PeerA", _maybe_prepend_preamble("PeerA", up))
+        _send_handoff("User", "PeerB", _maybe_prepend_preamble("PeerB", up))
         
     print("\n[END] Recent commits:")
     run("git --no-pager log -n 5 --oneline")

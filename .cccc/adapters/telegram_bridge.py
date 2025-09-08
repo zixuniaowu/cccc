@@ -23,6 +23,11 @@ except Exception:
 
 ROOT = Path.cwd()
 HOME = ROOT/".cccc"
+CLI_PROFILES = None
+try:
+    CLI_PROFILES = read_yaml(HOME/"settings"/"cli_profiles.yaml")
+except Exception:
+    CLI_PROFILES = {}
 
 def read_yaml(p: Path) -> Dict[str, Any]:
     if not p.exists():
@@ -211,13 +216,52 @@ def _deliver_inbound(home: Path, routes: List[str], payload: str, mid: str):
     """Write numbered inbox files per peer to integrate with orchestrator NUDGE.
     Also write inbox.md as a last-resort for bridge mode users.
     """
+    # Lazy preamble (config-driven; single-source via prompt_weaver)
+    LP = ((CLI_PROFILES or {}).get('delivery') or {}).get('lazy_preamble') or {}
+    LAZY_ENABLED = bool(LP.get('enabled', True))
+    def _preamble_state_path() -> Path:
+        return home/"state"/"preamble_sent.json"
+    def _load_preamble_sent() -> dict:
+        p = _preamble_state_path()
+        try:
+            return json.loads(p.read_text(encoding='utf-8'))
+        except Exception:
+            return {"PeerA": False, "PeerB": False}
+    def _save_preamble_sent(st: dict):
+        p = _preamble_state_path(); p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+    def _compose_preamble(peer: str) -> str:
+        try:
+            # Prefer weave_preamble; fallback to system prompt
+            from prompt_weaver import weave_preamble as _wp
+            return _wp(home, peer)
+        except Exception:
+            try:
+                from prompt_weaver import weave_system_prompt as _ws
+                return _ws(home, peer)
+            except Exception:
+                return ""
+    st = _load_preamble_sent() if LAZY_ENABLED else {"PeerA": True, "PeerB": True}
     for peer in routes:
         inbox_dir, proc_dir, state = _ensure_dirs(home, peer)
         seq = _next_seq(inbox_dir, proc_dir, state, peer)
         fname = f"{seq}.{mid}.txt"
-        _write_text(inbox_dir/fname, payload)
+        final = payload
+        if LAZY_ENABLED:
+            label = 'PeerA' if peer == 'peerA' else 'PeerB'
+            if not bool(st.get(label)):
+                pre = _compose_preamble(peer)
+                if pre:
+                    final = f"<FROM_SYSTEM>\n{pre}\n</FROM_SYSTEM>\n\n" + final
+                st[label] = True
+                _save_preamble_sent(st)
+                _append_ledger({"kind":"lazy-preamble-sent","peer":label})
+        _write_text(inbox_dir/fname, final)
         # Best-effort: also mirror to inbox.md for adapter users
-        _write_text((home/"mailbox"/peer/"inbox.md"), payload)
+        _write_text((home/"mailbox"/peer/"inbox.md"), final)
 
 def _append_ledger(entry: Dict[str, Any]):
     try:
