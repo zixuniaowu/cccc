@@ -1,13 +1,14 @@
-# CCCC Pair — Dual‑AI Orchestrator (Telegram‑first, Evidence‑first)
+# CCCC Pair — Dual‑AI Orchestrator (Evidence‑first) · Agent‑as‑a‑Service (AaaS)
 
-Two best‑in‑class AI CLIs (Claude Code + Codex CLI) co‑drive your work as equal peers. They collaborate, self‑review, and ship small, reversible changes with built‑in governance. You monitor and approve from two places: tmux or your team’s Telegram chat.
+Two best‑in‑class AI CLIs (Claude Code + Codex CLI) co‑drive your work as equal peers. They collaborate, self‑review, and ship small, reversible changes with built‑in governance. You observe and nudge from tmux or IM. CCCC treats agents as long‑lived services — Agent‑as‑a‑Service (AaaS) — that speak the same contract, produce auditable evidence, and integrate with your team’s tools.
 
 Not a chatbot UI. Not an IDE plugin. A production‑minded orchestrator for 24/7, long‑running work.
 
 ## Why It’s Different
 
 - Dual‑AI Autonomy: peers continuously plan → build → critique → refine. They don’t wait for prompts; they follow a mailbox contract and change the world only with EVIDENCE (diff/tests/logs/benchmarks).
-- Telegram‑first Collaboration: a 24/7 agent lives in your team chat. High‑signal summaries, one‑tap RFD decisions, explicit routing (a:/b:/both:) so normal conversation remains normal. Files flow both ways with captions and sidecars.
+- Agent‑as‑a‑Service (AaaS): agents are long‑running services with a mailbox contract, not ad‑hoc prompts. They keep rhythm, produce evidence, and integrate with IM (Telegram today; Slack/Teams via bridges) without coupling core logic to any single transport.
+- IM Collaboration: a 24/7 agent lives in your team chat. High‑signal summaries, one‑tap RFD decisions, explicit routing (a:/b:/both:) so normal conversation remains normal. Files flow both ways with captions and sidecars.
 - Builder–Critic Synergy: peers challenge CLAIMs with COUNTERs and converge via verifiable EVIDENCE. In practice this beats single‑model quality on complex, multi‑day tasks.
 - tmux Transparency: dual panes (PeerA/PeerB) + compact status panel. You can peek, nudge, or inject text without disrupting flows—and without a GUI.
 - Governance at the Core (RFD): protected areas and irreversible changes raise Request‑For‑Decision cards in chat; approvals are written to a ledger and unlock execution.
@@ -18,7 +19,7 @@ Not a chatbot UI. Not an IDE plugin. A production‑minded orchestrator for 24/7
 - Evidence‑first loop: tiny diffs/tests/logs; only green changes commit.
 - Single‑branch queue: preflight `git apply` → (optional) lint/tests → commit.
 - RFD closed loop: generate cards, gate protected paths/large diffs, unlock on decision.
-- Telegram integration: explicit routing; `/status`, `/queue`, `/locks`, `/rfd list|show`, `/showpeers on|off`, file send/receive with meta.
+- AaaS integration: explicit routing; `/status`, `/queue`, `/locks`, `/rfd list|show`, `/showpeers on|off`, file send/receive with meta. Bridges mirror events; orchestrator remains transport‑agnostic.
 - Ledger: append‑only `.cccc/state/ledger.jsonl` (patch/test/log/decision) for audit.
 
 ## Requirements
@@ -99,7 +100,7 @@ Do just these to get a clean, working setup:
 
 That’s it. You can refine policies later.
 
-## Telegram Quickstart (Team Hub)
+## IM Quickstart (Team Hub)
 
 - Group routing: use explicit routes so normal chat stays normal
   - `a: <text>` / `b: <text>` / `both: <text>`
@@ -109,10 +110,10 @@ That’s it. You can refine policies later.
   - `/whoami` shows your chat_id; `/subscribe` (if `autoregister: open`)
   - `/showpeers on|off` toggles Peer↔Peer summaries
 - File exchange
-  - Outbound (AIs → Telegram): save under `.cccc/work/upload/outbound/<peer>/{photos,files}/`
+  - Outbound (AIs → IM): save under `.cccc/work/upload/outbound/<peer>/{photos,files}/`
   - Optional caption: same‑name `.caption.txt`; force send‑as via `.sendas` (`photo|document`)
   - Sent files are deleted on success; `outbound.reset_on_start: clear` avoids blasting residuals on restart
-  - Inbound (Telegram → AIs): bot writes `<FROM_USER>` with sidecar meta; peers act on it
+  - Inbound (IM → AIs): bridge writes `<FROM_USER>` with sidecar meta; peers act on it
 - Governance: RFD cards in chat with Approve/Reject; decisions go to the ledger and unlock execution.
 
 ## A Typical Session (End‑to‑End, ~3 minutes)
@@ -206,6 +207,13 @@ files:
 outbound:
   reset_on_start: clear
 ```
+
+## 0.2.7 Highlights (RC)
+
+- Always‑on `<INSIGHT>` channel (formerly `<META>`): each peer appends a high‑level block to every message (1–2 items; first ask/counter preferred). Improves alignment without changing code state.
+- Weekly Dev Diary: single weekly file `docs/weekly/YYYY-Www.md` (PeerB writes). Daily create/replace today’s section ≤40 lines (Today/Changes/Risks‑Next). Next week’s first self‑check: add `## Retrospective` 3–5 bullets.
+- Boot Context: initial SYSTEM includes current time/TZ and the weekly path; peers start with a shared anchor.
+- Outbox Discipline: to_peer.md and to_user.md are overwrite‑only; the orchestrator (core) consumes and clears after logging/forwarding to avoid repeats. Bridges are thin mirrors, not state machines.
 
 ## FAQ / Troubleshooting
 
