@@ -67,10 +67,13 @@ def _smart_decode(raw: bytes) -> str:
       - UTF-8 with BOM (utf-8-sig)
       - UTF-16 LE/BE (BOM)
       - UTF-8 (strict)
+      - UTF-16 (heuristic via NUL ratio), try LE then BE (strict, then ignore)
       - GB18030 (common superset for CJK)
-      - UTF-16 LE (heuristic: many NUL bytes)
       - Latin-1 (last resort)
+    Rationale: GB18030 can decode almost any byte stream, so we must try UTF-16
+    heuristics before GB18030 to avoid mojibake when sources write UTF-16.
     """
+    # BOM-based
     try:
         if raw.startswith(b"\xef\xbb\xbf"):
             return raw.decode("utf-8-sig", errors="strict")
@@ -78,19 +81,33 @@ def _smart_decode(raw: bytes) -> str:
             return raw.decode("utf-16-le", errors="strict")
         if raw.startswith(b"\xfe\xff"):
             return raw.decode("utf-16-be", errors="strict")
-        # Try UTF-8
+    except Exception:
+        pass
+    # UTF-8 strict
+    try:
         return raw.decode("utf-8", errors="strict")
+    except Exception:
+        pass
+    # Heuristic for UTF-16 without BOM: many NULs → try LE then BE
+    try:
+        nul_count = raw.count(b"\x00")
+        if nul_count > max(4, len(raw)//8):
+            try:
+                return raw.decode("utf-16-le", errors="strict")
+            except Exception:
+                try:
+                    return raw.decode("utf-16-be", errors="strict")
+                except Exception:
+                    # Last resort for UTF-16-ish data
+                    try:
+                        return raw.decode("utf-16-le", errors="ignore")
+                    except Exception:
+                        return raw.decode("utf-16-be", errors="ignore")
     except Exception:
         pass
     # Try GB18030 (covers GBK/GB2312)
     try:
         return raw.decode("gb18030", errors="strict")
-    except Exception:
-        pass
-    # Heuristic for UTF-16 without BOM: many NULs
-    try:
-        if raw.count(b"\x00") > max(4, len(raw)//8):
-            return raw.decode("utf-16-le", errors="ignore")
     except Exception:
         pass
     # Fallback
