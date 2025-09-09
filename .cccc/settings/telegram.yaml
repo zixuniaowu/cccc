@@ -1,0 +1,46 @@
+token_env: TELEGRAM_BOT_TOKEN
+autostart: 'true'
+allow_chats: '[]'
+discover_allowlist: 'true'
+autoregister: open
+max_auto_subs: '3'
+dry_run: 'false'
+default_route: both
+prefix_routes: 'true'
+debounce_seconds: '30'
+max_msg_chars: '4096'
+max_msg_lines: '32'
+include_patch_snippets: 'false'
+show_peer_messages: 'true'
+peer_message_max_chars: '2048'
+peer_message_max_lines: '16'
+peer_debounce_seconds: '30'
+routing: ''
+require_explicit: 'true'
+allow_prefix: 'true'
+require_mention: 'false'
+dm: ''
+route_default: both
+hints: ''
+cooldown_seconds: '300'
+files: ''
+enabled: 'true'
+max_mb: '16'
+allowed_mime: '["text/*","image/png","image/jpeg","application/pdf","application/zip"]'
+inbound_dir: .cccc/work/upload/inbound
+outbound_dir: .cccc/work/upload/outbound
+inbound_retention_days: '14'
+outbound_retention_days: '14'
+strip_exif: 'true'
+autowrap_from_user: 'true'
+run_clamav: 'false'
+redact_patterns: ''
+'- "(?i)api[_-]?key\s*[': =]\s*\S+
+'- "(?i)secret\s*[': =]\s*\S+
+'- "(?i)password\s*[': =]\s*\S+
+mock: ''
+inbox_dir: .cccc/work/telegram_inbox
+outbox_log: .cccc/state/bridge-telegram.log
+outbound: ''
+reset_on_start: baseline
+watch_to_user_peers: '["peerA"]'
