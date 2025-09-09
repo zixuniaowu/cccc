@@ -124,6 +124,10 @@ Outbox Discipline
 - Overwrite `.cccc/mailbox/peerB/to_peer.md` (replace the whole file; do NOT append old content). The orchestrator forwards and then clears it to avoid repeats.
 - Overwrite `.cccc/mailbox/peerB/to_user.md`; the orchestrator logs the event (and transports may mirror it), then clears it to avoid repeats.
 
+Encoding Discipline
+- Always write `.cccc/mailbox/**/{to_user.md,to_peer.md,patch.diff}` as UTF‑8 (no BOM).
+- Do not use binary/unknown encodings or escaping that alters non‑ASCII text.
+
 INSIGHT Quick Reference (high‑level; per message)
 - 1–2 blocks total (soft cap; each peer ≤1). Use a single fenced block as above; first prefers ask/counter。
 - mood is welcome; keep it informative (e.g., overloaded → request review‑before‑merge).
