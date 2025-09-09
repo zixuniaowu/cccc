@@ -87,10 +87,10 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     # Delivery MID is informational; no explicit echo required.
     lines.append("")
     # INSIGHT invariant (high‑level meta channel)
-    lines.append("INSIGHT invariant (high‑level, does not change code state):")
-    lines.append("• Append exactly one trailing fenced ```insight block to every message. Prefer ask/counter first; include a next step or a ≤10‑min micro‑experiment.")
+    lines.append("INSIGHT invariant (meta‑only; not a body duplicate):")
+    lines.append("• Append exactly one trailing fenced ```insight block to every message. Do not restate or summarize the body; write only meta: a new hook/assumption/risk/trade‑off/next or a revise delta.")
     lines.append("  Example:\n  ```insight\n  to: peerB  |  kind: ask\n  msg: Two valid interpretations → write one acceptance example each, then converge\n  refs: [.cccc/work/docs/weekly/…#L40-45]\n  ```")
-    lines.append("• Purpose: separate meta‑communication (reflection, risk, ask/counter, mood) and nudge micro‑experiments and peer review.")
+    lines.append("• Start the first line with a lens (meta stance), e.g., lens: clarity|risk|tradeoff|assumption|next|revise. No code/patch in insight; if you need details, put them in the body and keep insight meta‑only.")
     lines.append("")
     # Weekly Dev Diary (light-weight habit, do not bloat)
     lines.append("Weekly Dev Diary (light-weight):")

@@ -24,6 +24,111 @@ PATCH_RE = re.compile(r"```(?:patch|diff)\s*([\s\S]*?)```", re.I)
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
 
+# ---------- REV state helpers (lightweight) ----------
+def _rev_state_path(home: Path) -> Path:
+    return home/"state"/"review_rev_state.json"
+
+def _load_rev_state(home: Path) -> Dict[str, Any]:
+    p = _rev_state_path(home)
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return {"PeerA": {"pending": False, "since": 0.0, "last_rev_ts": 0.0, "last_deltas": [], "last_remind_since": 0.0},
+                "PeerB": {"pending": False, "since": 0.0, "last_rev_ts": 0.0, "last_deltas": [], "last_remind_since": 0.0}}
+
+def _save_rev_state(home: Path, st: Dict[str, Any]):
+    p = _rev_state_path(home); p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception:
+        pass
+
+INSIGHT_BLOCK_RE = re.compile(r"```\s*insight\s*([\s\S]*?)```", re.I)
+def _extract_insight_kind(text: str) -> str:
+    try:
+        m = INSIGHT_BLOCK_RE.findall(text or '')
+        if not m:
+            return ""
+        block = m[-1]
+        k = re.findall(r"(?mi)^\s*kind\s*:\s*([A-Za-z0-9_\-]+)", block)
+        return (k[-1].strip().lower() if k else "")
+    except Exception:
+        return ""
+
+def _extract_rev_delta(text: str) -> str:
+    try:
+        m = INSIGHT_BLOCK_RE.findall(text or '')
+        if not m:
+            return ""
+        block = m[-1]
+        # Heuristic: look for 'delta:' in any line of block
+        for ln in block.splitlines():
+            if 'delta:' in ln.lower():
+                return ln.strip()
+        return ""
+    except Exception:
+        return ""
+
+## Insight soft reminder removed (keep meta-only guidance in prompt; no runtime nudges)
+
+def _update_rev_state_from_to_peer(home: Path, sender_label: str, payload: str):
+    st = _load_rev_state(home)
+    kind = _extract_insight_kind(payload)
+    now = time.time()
+    # Sender does a revise → clear their pending and record delta
+    if kind in ("revise","rev","polish"):
+        me = sender_label
+        try:
+            ent = st.get(me) or {}
+            ent["pending"] = False
+            ent["last_rev_ts"] = now
+            delta = _extract_rev_delta(payload)
+            if delta:
+                arr = (ent.get("last_deltas") or []) + [delta]
+                ent["last_deltas"] = arr[-3:]
+            st[me] = ent
+        except Exception:
+            pass
+    # Sender raises a review trigger → the other peer owes a revise
+    if kind in ("counter","question","risk"):
+        other = "PeerB" if sender_label == "PeerA" else "PeerA"
+        try:
+            ent = st.get(other) or {}
+            ent["pending"] = True
+            ent["since"] = now
+            st[other] = ent
+        except Exception:
+            pass
+    _save_rev_state(home, st)
+
+def _maybe_rev_remind(home: Path, receiver_label: str, send_fn):
+    """If there is an outstanding review trigger without a later revise, send one gentle reminder."""
+    st = _load_rev_state(home)
+    ent = st.get(receiver_label) or {}
+    if not ent.get("pending"):
+        return
+    since = float(ent.get("since") or 0.0)
+    last_rev_ts = float(ent.get("last_rev_ts") or 0.0)
+    last_remind_since = float(ent.get("last_remind_since") or 0.0)
+    if since <= 0.0 or last_rev_ts > since:
+        return
+    if last_remind_since == since:
+        return
+    tip = (
+        "<FROM_SYSTEM>\n"
+        "Gentle nudge: consider a quick REV pass (≤10 min) to address recent COUNTER/QUESTION before broad announce.\n"
+        "Submit one `insight` with kind: revise (include delta:+/‑/tests and refs to the review).\n"
+        "</FROM_SYSTEM>\n"
+    )
+    try:
+        send_fn(tip)
+        ent["last_remind_since"] = since
+        st[receiver_label] = ent
+        _save_rev_state(home, st)
+        log_ledger(home, {"kind":"revise-remind","peer":receiver_label})
+    except Exception:
+        pass
+
 # --- inbox/nudge settings (read at startup from cli_profiles.delivery) ---
 MB_PULL_ENABLED = True
 INBOX_DIRNAME = "inbox"
@@ -1685,7 +1790,7 @@ def main(home: Path):
     # Append a minimal, always-on reminder to end with one insight block (never verbose)
     try:
         INSIGHT_REMINDER = (
-            "Reminder: end with one ```insight block (ask/counter; include a next step or ≤10‑min micro‑experiment)."
+            "Insight: add one new angle not restating body (lens + hook/assumption/risk/trade‑off/next/delta)."
         )
         if INSIGHT_REMINDER not in self_check_text:
             # Ensure single trailing newline then append reminder as the last line
@@ -2106,6 +2211,8 @@ def main(home: Path):
                 payload = ""  # guard variable for conditional forwarding
                 # PeerA events
                 if events["peerA"].get("to_user"):
+                    # Gentle REV reminder if there is an outstanding review without revise
+                    _maybe_rev_remind(home, "PeerA", lambda msg: _send_handoff("System", "PeerA", msg))
                     txt = events["peerA"]["to_user"].strip()
                     print_block("PeerA → USER", txt)
                     try:
@@ -2124,6 +2231,11 @@ def main(home: Path):
                         pass
                 if events["peerA"].get("to_peer"):
                     payload = events["peerA"]["to_peer"].strip()
+                    # Update REV state from PeerA's to_peer message
+                    try:
+                        _update_rev_state_from_to_peer(home, "PeerA", payload)
+                    except Exception:
+                        pass
                     # Any mailbox activity can count as ACK
                     _ack_receiver("PeerA", payload)
                     mbox_counts["peerA"]["to_peer"] += 1
@@ -2227,6 +2339,7 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 # PeerB events
                 if events["peerB"].get("to_user"):
+                    _maybe_rev_remind(home, "PeerB", lambda msg: _send_handoff("System", "PeerB", msg))
                     txt = events["peerB"].get("to_user"," ").strip()
                     try:
                         eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
@@ -2239,6 +2352,10 @@ def main(home: Path):
                         pass
                 if events["peerB"].get("to_peer"):
                     payload = events["peerB"]["to_peer"].strip()
+                    try:
+                        _update_rev_state_from_to_peer(home, "PeerB", payload)
+                    except Exception:
+                        pass
                     _ack_receiver("PeerB", payload)
                     mbox_counts["peerB"]["to_peer"] += 1
                     mbox_last["peerB"]["to_peer"] = time.strftime("%H:%M:%S")
