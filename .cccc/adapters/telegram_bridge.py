@@ -467,8 +467,11 @@ def main():
 
     def tg_api(method: str, params: Dict[str, Any], *, timeout: int = 35) -> Dict[str, Any]:
         base = f"https://api.telegram.org/bot{token}/{method}"
-        data = urllib.parse.urlencode(params).encode('utf-8')
+        # Use JSON consistently to avoid encoding issues with non-ASCII text
+        data = json.dumps(params, ensure_ascii=False).encode('utf-8')
         req = urllib.request.Request(base, data=data, method='POST')
+        req.add_header('Content-Type', 'application/json; charset=utf-8')
+        req.add_header('Accept', 'application/json')
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 body = resp.read().decode('utf-8', errors='replace')
