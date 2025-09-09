@@ -61,18 +61,48 @@ class MailboxIndex:
     def update_hash(self, peer: str, fname: str, sha: str):
         self.idx[self.key_for(peer, fname)] = {"sha": sha, "ts": time.time()}
 
+def _smart_decode(raw: bytes) -> str:
+    """Decode bytes to str with simple BOM/heuristic detection.
+    Order:
+      - UTF-8 with BOM (utf-8-sig)
+      - UTF-16 LE/BE (BOM)
+      - UTF-8 (strict)
+      - GB18030 (common superset for CJK)
+      - UTF-16 LE (heuristic: many NUL bytes)
+      - Latin-1 (last resort)
+    """
+    try:
+        if raw.startswith(b"\xef\xbb\xbf"):
+            return raw.decode("utf-8-sig", errors="strict")
+        if raw.startswith(b"\xff\xfe"):
+            return raw.decode("utf-16-le", errors="strict")
+        if raw.startswith(b"\xfe\xff"):
+            return raw.decode("utf-16-be", errors="strict")
+        # Try UTF-8
+        return raw.decode("utf-8", errors="strict")
+    except Exception:
+        pass
+    # Try GB18030 (covers GBK/GB2312)
+    try:
+        return raw.decode("gb18030", errors="strict")
+    except Exception:
+        pass
+    # Heuristic for UTF-16 without BOM: many NULs
+    try:
+        if raw.count(b"\x00") > max(4, len(raw)//8):
+            return raw.decode("utf-16-le", errors="ignore")
+    except Exception:
+        pass
+    # Fallback
+    return raw.decode("latin1", errors="ignore")
+
 def read_if_changed(path: Path, last_sha: str) -> Tuple[bool, str, str]:
-    """Read mailbox file robustly (tolerate encoding issues) and detect changes.
-    - Always decode with UTF-8 replace to avoid intermittent UnicodeDecodeError from tool outputs.
-    - Treat empty/whitespace-only as no event.
+    """Read mailbox file robustly and detect changes.
+    Treat empty/whitespace-only as no event.
     """
     try:
         raw = path.read_bytes()
-        try:
-            text = raw.decode("utf-8", errors="replace")
-        except Exception:
-            # As a last resort, treat as empty
-            text = ""
+        text = _smart_decode(raw)
     except Exception:
         return False, "", last_sha
     text = text.strip()
