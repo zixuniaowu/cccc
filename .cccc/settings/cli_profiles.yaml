@@ -18,7 +18,7 @@ peerA:
     from_system: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line. ultrathink"
   # Optional NUDGE suffix (system [NUDGE] lines only)
   # e.g., " Read the oldest file and first echo ack: <seq> before processing"
-  nudge_suffix: " Read oldest → act → output/reply → move to processed/ → next; if blocked, ask 1 decisive Q. ultrathink"
+  nudge_suffix: " Always send messages by UPDATING message files(do NOT create/'write new' these files nor just print messages to console). ultrathink"
 peerB:
   prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # Adjust to your PeerB CLI prompt if needed
   busy_regexes:
@@ -45,7 +45,7 @@ peerB:
     from_peer: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line; propose a Hook. If nothing critical to add other than an pure ACK, stay silent and do not reply."
     from_system: " End micro‑loops with 2‑line Reflect: what’s unclear + the single next check (with hook)."
   # Optional NUDGE suffix
-  nudge_suffix: " Read oldest → act → output/reply → move to processed/ → next; keep changes small & evidential."
+  nudge_suffix: " Always send messages by updating message files(Do not just print messages to console)."
 delivery:
   paste_max_wait_seconds: 6       # Max wait for idle before paste
   recheck_interval_seconds: 0.6   # Poll interval

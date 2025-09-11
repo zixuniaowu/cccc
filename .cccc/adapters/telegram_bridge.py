@@ -606,6 +606,7 @@ def main():
             return
         hint_last[key] = now
         tg_api('sendMessage', {'chat_id': chat_id, 'text': 'No route detected. Prefix with /a /b /both or a: b: both: to route.'}, timeout=15)
+    # Per-peer rate tracking for outbound chat messages (keys: 'peerA'|'peerB')
     last_sent_ts = {"peerA": 0.0, "peerB": 0.0}
     last_seen = {"peerA": "", "peerB": ""}
 
@@ -634,9 +635,28 @@ def main():
     # Delete-on-success semantics for outbound files; no persistent sent-cache needed
 
 
+    def _preflight_msg(peer_key: str, msg: str, min_interval_s: float) -> tuple:
+        """Return (ok, reason). Validate JSON-encodability and per-peer rate only.
+        Size constraints are applied by summarization before this point.
+        """
+        try:
+            _ = json.dumps({'m': msg})
+        except Exception as e:
+            return False, f'json-encode-failed: {e}'
+        now = time.time(); last = float(last_sent_ts.get(peer_key, 0.0) or 0.0)
+        if now - last < float(min_interval_s or 0.0):
+            return False, f'rate-limited: interval<{min_interval_s}s'
+        return True, ''
+
     def send_summary(peer: str, text: str):
+        # peer in {'peerA','peerB'}
         label = "PeerA" if peer == 'peerA' else "PeerB"
+        # Build final message first, then preflight the actual payload (rate only)
         msg = f"[{label}]\n" + _summarize(redact(text), max_chars, max_lines)
+        ok, reason = _preflight_msg(peer, msg, float(str(cfg.get('to_user_min_interval_s') or 1.5)))
+        if not ok:
+            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_user','peer': peer, 'reason': reason})
+            return
         for chat_id in allow:
             tg_api('sendMessage', {
                 'chat_id': chat_id,
@@ -645,10 +665,16 @@ def main():
             }, timeout=15)
         _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars")
         _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":label.lower(),"chars":len(msg)})
+        last_sent_ts[peer] = time.time()
 
     def send_peer_summary(sender_peer: str, text: str):
+        # sender_peer in {'peerA','peerB'}. Build summarized message then preflight
         label = "PeerA→PeerB" if sender_peer == 'peerA' else "PeerB→PeerA"
         msg = f"[{label}]\n" + _summarize(redact(text), peer_max_chars, peer_max_lines)
+        ok, reason = _preflight_msg(sender_peer, msg, float(str(cfg.get('peer_summary_min_interval_s') or 1.5)))
+        if not ok:
+            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_peer_summary','peer': sender_peer, 'reason': reason})
+            return
         for chat_id in allow:
             tg_api('sendMessage', {
                 'chat_id': chat_id,
@@ -657,6 +683,7 @@ def main():
             }, timeout=15)
         _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars")
         _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":"to_peer","chars":len(msg)})
+        last_sent_ts['peerA' if sender_peer=='peerA' else 'peerB'] = time.time()
 
     def watch_outputs():
         outbound_conf = cfg.get('outbound') or {}
@@ -936,8 +963,8 @@ def main():
             return False
         
         # Optional reset on start: baseline|archive|clear
-        # Default to 'clear' to avoid blasting residual files on startup
-        reset_mode = str((outbound_conf.get('reset_on_start') or 'clear')).lower()
+        # Prefer nested 'outbound.reset_on_start', fallback to top-level 'reset_on_start'. Default 'baseline'.
+        reset_mode = str((outbound_conf.get('reset_on_start') or cfg.get('reset_on_start') or 'baseline')).lower()
         try:
             if reset_mode in ('archive','clear'):
                 arch = HOME/'state'/'outbound-archive'; arch.mkdir(parents=True, exist_ok=True)

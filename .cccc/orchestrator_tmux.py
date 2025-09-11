@@ -138,6 +138,12 @@ NUDGE_JITTER_PCT = 0.0
 SOFT_ACK_ON_MAILBOX_ACTIVITY = False
 INBOX_STARTUP_POLICY = "resume"  # resume | discard | archive
 INBOX_STARTUP_PROMPT = False
+# Progress-aware NUDGE coalescing (single-flight)
+NUDGE_DEBOUNCE_MS = 1500.0
+NUDGE_PROGRESS_TIMEOUT_S = 45.0
+NUDGE_KEEPALIVE = True
+NUDGE_BACKOFF_BASE_MS = 1000.0
+NUDGE_BACKOFF_MAX_MS = 60000.0
 
 def _append_suffix_inside(payload: str, suffix: str) -> str:
     """Append a short suffix to the end of the main body inside the outermost tag, if present.
@@ -309,6 +315,87 @@ def _write_inbox_message(home: Path, receiver_label: str, payload: str, mid: str
                     pass
     return seq, fpath
 
+def _nudge_state_path(home: Path, receiver_label: str) -> Path:
+    peer = _peer_folder_name(receiver_label)
+    return home/"state"/f"nudge.{peer}.json"
+
+def _load_nudge_state(home: Path, receiver_label: str) -> Dict[str, Any]:
+    p = _nudge_state_path(home, receiver_label)
+    try:
+        st = json.loads(p.read_text(encoding='utf-8'))
+        return st if isinstance(st, dict) else {}
+    except Exception:
+        return {}
+
+def _save_nudge_state(home: Path, receiver_label: str, st: Dict[str, Any]):
+    p = _nudge_state_path(home, receiver_label); p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception:
+        pass
+
+def _nudge_mark_progress(home: Path, receiver_label: str, *, seq: Optional[str] = None):
+    st = _load_nudge_state(home, receiver_label)
+    st['inflight'] = False
+    st['retries'] = 0
+    st['last_progress_ts'] = time.time()
+    if seq:
+        st['last_ack_seq'] = str(seq)
+    _save_nudge_state(home, receiver_label, st)
+
+def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
+                      profile: Dict[str,Any], *, force: bool = False, suffix: str = "") -> bool:
+    """Progress-aware, single-flight NUDGE sender. Returns True if a NUDGE was sent.
+    No-miss guarantee: if no progress, keepalive resends with capped backoff.
+    """
+    st = _load_nudge_state(home, receiver_label)
+    now = time.time()
+    inflight = bool(st.get('inflight', False))
+    last_sent = float(st.get('last_sent_ts') or 0.0)
+    last_prog = float(st.get('last_progress_ts') or 0.0)
+    retries = int(st.get('retries') or 0)
+
+    # Debounce shortly after progress (drop nudges within this window)
+    if (not force) and (now - last_prog) * 1000.0 < max(0.0, float(NUDGE_DEBOUNCE_MS)):
+        st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
+        _save_nudge_state(home, receiver_label, st)
+        return False
+
+    if inflight and not force:
+        # If inflight but no progress for too long, allow a resend with backoff
+        if (now - last_prog) >= max(1.0, float(NUDGE_PROGRESS_TIMEOUT_S)):
+            # Exponential backoff; never more frequent than the legacy resend interval
+            interval = min(float(NUDGE_BACKOFF_MAX_MS), float(NUDGE_BACKOFF_BASE_MS) * (2 ** max(0, retries))) / 1000.0
+            min_legacy = max(1.0, float(NUDGE_RESEND_SECONDS))
+            interval = max(interval, min_legacy)
+            if (now - last_sent) < interval:
+                st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
+                _save_nudge_state(home, receiver_label, st)
+                return False
+            # send keepalive
+            st['retries'] = retries + 1
+        else:
+            # inflight and still within timeout → drop
+            st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
+            _save_nudge_state(home, receiver_label, st)
+            return False
+
+    # Build message
+    inbox_path = str(_inbox_dir(home, receiver_label))
+    nmsg = (
+        f"[NUDGE] inbox={inbox_path} "
+        f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
+    )
+    if suffix:
+        sfx = suffix.strip()
+        if sfx:
+            nmsg = nmsg + ' ' + sfx
+    paste_when_ready(pane, profile, nmsg, timeout=6.0, poke=False)
+    st['inflight'] = True
+    st['last_sent_ts'] = now
+    _save_nudge_state(home, receiver_label, st)
+    return True
+
 def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
                 left_pane: str, right_pane: str,
                 profileA: Dict[str,Any], profileB: Dict[str,Any],
@@ -329,8 +416,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
         f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
     )
     msg = base + (" " + nudge_suffix if nudge_suffix else "")
-    # Route by delivery mode: bridge → write to adapter inbox.md (adapter injects Enter);
-    # tmux → send keys directly to pane with newline at end (Enter implied by profile)
+    # Route by delivery mode
     if receiver_label == 'PeerA':
         if modeA == 'bridge':
             try:
@@ -338,8 +424,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
             except Exception:
                 pass
         else:
-            # tmux injection: paste then single submit; avoid pre-Enter poke to prevent stray newlines
-            paste_when_ready(left_pane, profileA, msg, timeout=6.0, poke=False)
+            _maybe_send_nudge(home, 'PeerA', left_pane, profileA, suffix=nudge_suffix)
     else:
         if modeB == 'bridge':
             try:
@@ -347,17 +432,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
             except Exception:
                 pass
         else:
-            paste_when_ready(right_pane, profileB, msg, timeout=6.0, poke=False)
-            # Optional extra Enters for robustness (configurable per peer)
-            try:
-                extra = int((profileB.get('nudge_extra_enters') or 0))
-                delay_ms = int((profileB.get('nudge_enter_delay_ms') or 200))
-                if extra > 0:
-                    for _ in range(min(extra, 3)):
-                        time.sleep(max(0.0, delay_ms/1000.0))
-                        tmux("send-keys","-t",right_pane,"Enter")
-            except Exception:
-                pass
+            _maybe_send_nudge(home, 'PeerB', right_pane, profileB, suffix=nudge_suffix)
 
 def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
     # token may be seq (000123) or mid; prefer seq match first
@@ -898,8 +973,9 @@ def bash_ansi_c_quote(s: str) -> str:
     return "$'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
 
 def tmux_start_interactive(pane: str, cmd: str):
-    # Robust: run command inside pane via bash -lc; avoid paste-to-wrong-pane issues
-    wrapped = f"bash -lc {shlex.quote(cmd)}"
+    # Robust: run command inside pane via bash -lc; enforce UTF-8 locale to avoid mojibake
+    env_prefix = "LC_ALL=C.UTF-8 LANG=C.UTF-8"
+    wrapped = f"bash -lc {shlex.quote(env_prefix + ' ' + cmd)}"
     tmux_respawn_pane(pane, wrapped)
 
 def wait_for_ready(pane: str, profile: Dict[str,Any], *, timeout: float = 12.0, poke: bool = True) -> bool:
@@ -1504,6 +1580,13 @@ def main(home: Path):
         SOFT_ACK_ON_MAILBOX_ACTIVITY = bool(delivery_conf.get("soft_ack_on_mailbox_activity", False))
         INBOX_STARTUP_POLICY = str(delivery_conf.get("inbox_startup_policy", "resume") or "resume").strip().lower()
         INBOX_STARTUP_PROMPT = bool(delivery_conf.get("inbox_startup_prompt", False))
+        # Progress-aware NUDGE parameters
+        global NUDGE_DEBOUNCE_MS, NUDGE_PROGRESS_TIMEOUT_S, NUDGE_KEEPALIVE, NUDGE_BACKOFF_BASE_MS, NUDGE_BACKOFF_MAX_MS
+        NUDGE_DEBOUNCE_MS = float(delivery_conf.get("nudge_debounce_ms", NUDGE_DEBOUNCE_MS))
+        NUDGE_PROGRESS_TIMEOUT_S = float(delivery_conf.get("nudge_progress_timeout_s", NUDGE_PROGRESS_TIMEOUT_S))
+        NUDGE_KEEPALIVE = bool(delivery_conf.get("nudge_keepalive", NUDGE_KEEPALIVE))
+        NUDGE_BACKOFF_BASE_MS = float(delivery_conf.get("nudge_backoff_base_ms", NUDGE_BACKOFF_BASE_MS))
+        NUDGE_BACKOFF_MAX_MS = float(delivery_conf.get("nudge_backoff_max_ms", NUDGE_BACKOFF_MAX_MS))
     except Exception:
         pass
 
@@ -2136,6 +2219,8 @@ def main(home: Path):
                             try:
                                 print(f"[ACK-FILE] {label} seq={seq} file={fn} ok={bool(ok)}")
                                 log_ledger(home, {"from":label,"kind":"ack-file","seq":seq,"file":fn,"ok":bool(ok)})
+                                # Treat file movement as progress for NUDGE single-flight
+                                _nudge_mark_progress(home, label, seq=seq)
                             except Exception:
                                 pass
                     prev_inbox[label] = cur
@@ -2158,6 +2243,8 @@ def main(home: Path):
                         try:
                             print(f"[ACK] {label} token={tok} ok={bool(ok)}")
                             log_ledger(home, {"from":label,"kind":"ack","token":tok,"ok":bool(ok)})
+                            # Any ACK token implies progress; clear inflight
+                            _nudge_mark_progress(home, label)
                         except Exception:
                             pass
         except Exception:
@@ -2171,30 +2258,13 @@ def main(home: Path):
                 files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
                 if not files:
                     continue
-                if nowt - last_nudge_ts.get(label, 0.0) < NUDGE_RESEND_SECONDS:
-                    continue
-                oldest = files[0].name
-                seq = oldest[:6]
-                mid = oldest.split(".")[1] if "." in oldest else ""
-                inbox_path = str(inbox)
-                nmsg = (
-                    f"[NUDGE] inbox={inbox_path} "
-                    f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
-                )
+                # Coalesced NUDGE: send only when needed; backoff otherwise
                 if label == "PeerA":
-                    paste_when_ready(pane, profileA, nmsg, timeout=6.0, poke=False)
+                    sent = _maybe_send_nudge(home, label, pane, profileA, suffix=(profileA.get('nudge_suffix') or '').strip())
                 else:
-                    paste_when_ready(pane, profileB, nmsg, timeout=6.0, poke=False)
-                    try:
-                        extra = int((profileB.get('nudge_extra_enters') or 0))
-                        delay_ms = int((profileB.get('nudge_enter_delay_ms') or 200))
-                        if extra > 0:
-                            for _ in range(min(extra, 3)):
-                                time.sleep(max(0.0, delay_ms/1000.0))
-                                tmux("send-keys","-t",pane,"Enter")
-                    except Exception:
-                        pass
-                last_nudge_ts[label] = nowt
+                    sent = _maybe_send_nudge(home, label, pane, profileB, suffix=(profileB.get('nudge_suffix') or '').strip())
+                if sent:
+                    last_nudge_ts[label] = nowt
         except Exception:
             pass
         rlist, _, _ = select.select([sys.stdin], [], [], 0.5)
