@@ -128,6 +128,12 @@ Outbox and Encoding Discipline
 - Overwrite(Update) `.cccc/mailbox/peerA/to_user.md`; the orchestrator logs the event (and transports may mirror it), then clears it to avoid repeats.
 - Update-only semantics: treat to_user.md/to_peer.md as pre-existing and replace the entire content; do NOT create or "write new" these files (avoid encoding drift).
 
+Temporary Encoding Constraint (PEERA)
+- For `.cccc/mailbox/peerA/to_user.md` and `.cccc/mailbox/peerA/to_peer.md`, write in English and use ASCII-only (7-bit) characters.
+- Do not use any non-ASCII characters (no CJK, emoji, smart quotes, or typographic dashes). Use plain ASCII punctuation.
+- Keep the `<TO_USER>`/`<TO_PEER>` wrappers and a single trailing fenced `insight` block; ensure all content is ASCII.
+- This is a short-term workaround for upstream write-encoding issues and will be removed once resolved.
+
 INSIGHT Quick Reference (high‑level; per message)
 - 1–2 blocks total (soft cap; each peer ≤1). Use a single fenced block as above; first prefers ask/counter。
 - mood is welcome; keep it informative (e.g., overloaded → request review‑before‑merge).
