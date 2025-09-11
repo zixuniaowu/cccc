@@ -2035,6 +2035,37 @@ def main(home: Path):
                                 now_line = f"Now: {ts} {tzname} (UTC{sign}{hh:02d}:{mm:02d})"
                             except Exception:
                                 now_line = "Now: unknown"
+
+                            # Context maintenance: at every 5th self-check, compact and reinject SYSTEM (simple, once-only per trigger)
+                            try:
+                                sc_index = int(instr_counter // self_check_every) if self_check_every > 0 else 0
+                            except Exception:
+                                sc_index = 0
+                            if sc_index > 0 and sc_index % 5 == 0:
+                                try:
+                                    # Send passthrough /compact to both peers (no retries, no preconditions)
+                                    _send_raw_to_cli(home, 'PeerA', '/compact', modeA, modeB, left, right)
+                                    log_ledger(home, {"from":"system","kind":"context-compact-try","peer":"PeerA","self_check_index": sc_index})
+                                except Exception:
+                                    pass
+                                try:
+                                    _send_raw_to_cli(home, 'PeerB', '/compact', modeA, modeB, left, right)
+                                    log_ledger(home, {"from":"system","kind":"context-compact-try","peer":"PeerB","self_check_index": sc_index})
+                                except Exception:
+                                    pass
+                                # Immediately reinject full SYSTEM to both peers with a Now line prefix
+                                try:
+                                    sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
+                                    reinjA = f"<FROM_SYSTEM>\n{now_line}\n{sysA}\n</FROM_SYSTEM>\n"
+                                    reinjB = f"<FROM_SYSTEM>\n{now_line}\n{sysB}\n</FROM_SYSTEM>\n"
+                                    _send_handoff("System", "PeerA", reinjA)
+                                    _send_handoff("System", "PeerB", reinjB)
+                                    log_ledger(home, {"from":"system","kind":"context-system-reinject","peer":"PeerA","chars": len(reinjA)})
+                                    log_ledger(home, {"from":"system","kind":"context-system-reinject","peer":"PeerB","chars": len(reinjB)})
+                                except Exception:
+                                    pass
+
+                            # Build self-check payloads (after any context maintenance)
                             peerA_msg = now_line + "\n" + self_check_text
                             peerB_msg = now_line + "\n" + self_check_text
 
