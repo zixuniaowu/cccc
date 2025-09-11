@@ -18,7 +18,7 @@ peerA:
     from_system: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line. ultrathink"
   # Optional NUDGE suffix (system [NUDGE] lines only)
   # e.g., " Read the oldest file and first echo ack: <seq> before processing"
-  nudge_suffix: " Always send messages by UPDATING message files(do NOT create/'write new' these files nor just print messages to console). ultrathink"
+  nudge_suffix: " Always send messages by UPDATING message files (do NOT create/'write new' these files nor print messages to console). Also use ASCII-only (7-bit). If inbox is empty: do not reply; widen perspective — re-check goals, constraints, and assumptions; look for cheap probes, small optimizations, or creative next steps; then continue any remaining tasks. ultrathink"
 peerB:
   prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # Adjust to your PeerB CLI prompt if needed
   busy_regexes:
@@ -45,7 +45,7 @@ peerB:
     from_peer: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line; propose a Hook. If nothing critical to add other than an pure ACK, stay silent and do not reply."
     from_system: " End micro‑loops with 2‑line Reflect: what’s unclear + the single next check (with hook)."
   # Optional NUDGE suffix
-  nudge_suffix: " Always send messages by updating message files(Do not just print messages to console)."
+  nudge_suffix: " Always send messages by updating message files (do not print messages to console). If inbox is empty: do not reply; widen perspective — re-check goals, constraints, and assumptions; look for cheap probes, small optimizations, or creative next steps; then continue any remaining tasks."
 delivery:
   paste_max_wait_seconds: 6       # Max wait for idle before paste
   recheck_interval_seconds: 0.6   # Poll interval
@@ -60,18 +60,20 @@ delivery:
   # --- periodic self-check ---
   self_check_every_handoffs: 12   # Push a self-check after N handoffs (0=disable)
   self_check_text: |-
-    [Self-check] Briefly answer (≤2 line each):
+    [Self-check] Briefly answer (≤2 lines each):
     1) Any drift from goal?
-    2) What’s still unclear? Any new confusion created? Any better ideas?
+    2) What remains unclear? Any new confusion? Any better ideas?
     3) What was missed?
-    4) As a human expert, what shall I do next?
+    4) Are you actively using the insight channel for a new meta angle (hook/assumption/risk/trade-off/next/delta) rather than restating the body?
+    5) As a top-tier human generalist, what broad insights prevent narrow, one-sided, or shallow execution on this task?
     Continue only after answering.
   # --- mailbox pull + nudge mode ---
   mailbox_pull_enabled: true      # Enable inbox + NUDGE (instead of direct paste)
   inbox_dirname: "inbox"          # Inbox dir (relative to .cccc/mailbox/<peer>/)
   processed_retention: 200        # Max kept entries in processed/ (remove oldest beyond)
   nudge_resend_seconds: 90        # If inbox not ACKed for this interval, re‑NUDGE
-  nudge_jitter_pct: 0.0           # Optional jitter (0.0~0.3) to avoid synchronized reminders
+  nudge_jitter_pct: 0.15          # Optional jitter (0.0~0.3) to avoid synchronized reminders
+  nudge_progress_timeout_s: 90    # Allow resend only if no progress for this long (seconds)
   soft_ack_on_mailbox_activity: false  # Consider later mailbox activity as soft ACK (default off)
   # Startup policy for leftover inbox files (resume | discard | archive)
   inbox_startup_policy: resume
@@ -93,3 +95,9 @@ commands:
 delivery_mode:
   peerA: tmux     # Use tmux injection (more stable)
   peerB: tmux
+  
+  # NUDGE backoff tuning
+  # Exponential backoff base and cap for repeated nudges
+  # Effective interval = max(nudge_resend_seconds, base * 2^retries) up to max cap
+  # See orchestrator_tmux.py for runtime application
+  

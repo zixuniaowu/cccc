@@ -5,7 +5,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER> and fenced ```patch```, then preflights/applies/tests/logs.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
-import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil
+import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
     import fcntl  # type: ignore
@@ -368,6 +368,14 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
             interval = min(float(NUDGE_BACKOFF_MAX_MS), float(NUDGE_BACKOFF_BASE_MS) * (2 ** max(0, retries))) / 1000.0
             min_legacy = max(1.0, float(NUDGE_RESEND_SECONDS))
             interval = max(interval, min_legacy)
+            # Apply optional jitter to avoid synchronized reminders
+            try:
+                jpct = float(NUDGE_JITTER_PCT)
+                if jpct and jpct > 0.0:
+                    jig = 1.0 + random.uniform(-jpct, jpct)
+                    interval = max(1.0, interval * jig)
+            except Exception:
+                pass
             if (now - last_sent) < interval:
                 st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
                 _save_nudge_state(home, receiver_label, st)
@@ -2014,8 +2022,21 @@ def main(home: Path):
                     if instr_counter % self_check_every == 0:
                         in_self_check = True
                         try:
-                            peerA_msg = self_check_text
-                            peerB_msg = self_check_text
+                            # Prepend dynamic time/TZ line
+                            try:
+                                lt = time.localtime()
+                                ts = time.strftime('%Y-%m-%d %H:%M:%S', lt)
+                                tzname = time.tzname[lt.tm_isdst] if isinstance(time.tzname, (list, tuple)) else str(time.tzname)
+                                # Compute UTC offset
+                                off = -time.altzone if (time.daylight and lt.tm_isdst) else -time.timezone
+                                sign = '+' if off >= 0 else '-'
+                                off = abs(off)
+                                hh = off // 3600; mm = (off % 3600) // 60
+                                now_line = f"Now: {ts} {tzname} (UTC{sign}{hh:02d}:{mm:02d})"
+                            except Exception:
+                                now_line = "Now: unknown"
+                            peerA_msg = now_line + "\n" + self_check_text
+                            peerB_msg = now_line + "\n" + self_check_text
 
                             # Append Weekly Dev Diary reminder for PeerB (single-writer) with daily cooldown
                             # Diary/retrospective prompts are managed as side-quest TODOs by the AI; do not inject from system here.
