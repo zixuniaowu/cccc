@@ -9,7 +9,7 @@ Slack Bridge (MVP)
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
-import os, sys, json, time, re, threading, hashlib, datetime, urllib.request
+import os, sys, json, time, re, threading, hashlib, datetime, urllib.request, urllib.parse
 try:
     import fcntl  # type: ignore
 except Exception:
