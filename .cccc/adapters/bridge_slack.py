@@ -321,8 +321,10 @@ def main():
                 return
             if etype != 'message':
                 return
-            if event.get('subtype'):
-                return  # skip bot edits and non-user messages
+            sub = str(event.get('subtype') or '')
+            # Allow subtype=file_share (channel message with files). Skip other subtypes (edits, bot_message, etc.)
+            if sub and sub.lower() != 'file_share':
+                return
             text = str(event.get('text') or '')
             ch = str(event.get('channel') or '')
             user = str(event.get('user') or '')
