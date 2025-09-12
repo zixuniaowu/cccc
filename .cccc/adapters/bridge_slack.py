@@ -241,14 +241,27 @@ def main():
             _append_log(f"[error] download file failed: {e}")
             return None
 
-    def handle(evt):
+    def handle(req):
         try:
-            typ = evt.get('type') or ''
-            if typ != 'events_api': return
-            payload = evt.get('payload') or {}
-            event = payload.get('event') or {}
-            if event.get('type') != 'message': return
-            if 'subtype' in event: return  # skip bot edits, etc.
+            # SocketModeRequest object: req.type, req.payload, req.envelope_id
+            typ = getattr(req, 'type', '')
+            if not typ and isinstance(req, dict):
+                typ = str(req.get('type') or '')
+            if typ != 'events_api':
+                return
+            payload = getattr(req, 'payload', None)
+            if payload is None and isinstance(req, dict):
+                payload = req.get('payload') or {}
+            event = (payload or {}).get('event') or {}
+            # Ack early to avoid timeouts
+            try:
+                client.ack(req)
+            except Exception:
+                pass
+            if str(event.get('type') or '') != 'message':
+                return
+            if event.get('subtype'):
+                return  # skip bot edits and non-user messages
             text = str(event.get('text') or '')
             ch = str(event.get('channel') or '')
             user = str(event.get('user') or '')
@@ -292,9 +305,8 @@ def main():
             routes, body = _route_from_text(text, default_route)
             mid = f"slack-{int(time.time())}-{user[-4:]}"
             _write_inbox(routes, body, mid)
-            client.ack(evt)
         except Exception:
-            try: client.ack(evt)
+            try: client.ack(req)
             except Exception: pass
 
     client.socket_mode_request_listeners.append(handle)
