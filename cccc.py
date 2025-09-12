@@ -803,13 +803,43 @@ def main():
             except Exception:
                 pass
         if choice == "4":
-            dcfg = _read_yaml(home/"settings"/"discord.yaml")
-            be = str((dcfg or {}).get('bot_token_env') or 'DISCORD_BOT_TOKEN')
-            env = {}
-            if (dcfg or {}).get('bot_token'): env[be] = str(dcfg.get('bot_token'))
-            if not env.get(be):
-                v = os.environ.get(be, '')
-                if v: env[be] = v
+            # Interactive Discord setup (prompt for bot token if missing), then start bridge
+            cfg_path = home/"settings"/"discord.yaml"
+            dcfg = _read_yaml(cfg_path) or {
+                "bot_token_env": "DISCORD_BOT_TOKEN",
+                "autostart": False,
+                "dry_run": False,
+                "channels": {"to_user": [], "to_peer_summary": []},
+                "outbound": {"reset_on_start": "baseline"},
+            }
+            be = str(dcfg.get('bot_token_env') or 'DISCORD_BOT_TOKEN')
+            saved = str(dcfg.get('bot_token') or '')
+            try:
+                if saved:
+                    masked = (saved[:6] + "…" + saved[-4:]) if len(saved) >= 10 else "(saved)"
+                    print(f"[SETUP][Discord] Bot token: {masked}")
+                bot = input("  Paste Discord Bot Token (Enter to keep): ").strip() or saved
+            except Exception:
+                bot = saved
+            # Optional channel id for to_user
+            try:
+                cur = (dcfg.get('channels') or {}).get('to_user') or []
+                cur_id = cur[0] if cur else ''
+                if cur_id:
+                    print(f"  Current to_user channel id: {cur_id}")
+                ch = input("  Optional: channel ID for to_user (numeric, Enter to skip): ").strip()
+            except Exception:
+                ch = ""
+            if bot:
+                dcfg['bot_token'] = bot
+            if ch:
+                dcfg.setdefault('channels', {}).setdefault('to_user', [])
+                if ch not in dcfg['channels']['to_user']:
+                    dcfg['channels']['to_user'].append(ch)
+                dcfg['channels'].setdefault('to_peer_summary', [])
+                if ch not in dcfg['channels']['to_peer_summary']:
+                    dcfg['channels']['to_peer_summary'].append(ch)
+            _write_yaml(cfg_path, dcfg)
             try:
                 _cmd_bridge('discord', 'start')
             except Exception:
