@@ -1025,6 +1025,18 @@ def main():
                                 }, ensure_ascii=False, indent=2), encoding='utf-8')
                             except Exception:
                                 pass
+                        # Append inbound index (reply case)
+                        try:
+                            idx = HOME/"state"/"inbound-index.jsonl"; idx.parent.mkdir(parents=True, exist_ok=True)
+                            for mta in metas:
+                                rec = {
+                                    'ts': int(time.time()), 'path': mta['path'], 'platform': 'telegram',
+                                    'routes': routes, 'mid': mta.get('mid'), 'mime': mta['mime'], 'bytes': mta['bytes'], 'sha256': mta['sha256']
+                                }
+                                with idx.open('a', encoding='utf-8') as f:
+                                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
                         lines.append("</FROM_USER>")
                         payload = "\n".join(lines) + "\n"
                         _deliver_inbound(HOME, routes, payload, _mid())
@@ -1083,6 +1095,18 @@ def main():
                             }, ensure_ascii=False, indent=2), encoding='utf-8')
                         except Exception:
                             pass
+                    # Append inbound index (normal case)
+                    try:
+                        idx = HOME/"state"/"inbound-index.jsonl"; idx.parent.mkdir(parents=True, exist_ok=True)
+                        for mta in metas:
+                            rec = {
+                                'ts': int(time.time()), 'path': mta['path'], 'platform': 'telegram',
+                                'routes': routes, 'mid': mta.get('mid'), 'mime': mta['mime'], 'bytes': mta['bytes'], 'sha256': mta['sha256']
+                            }
+                            with idx.open('a', encoding='utf-8') as f:
+                                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
                     lines.append("</FROM_USER>")
                     payload = "\n".join(lines) + "\n"
                     _deliver_inbound(HOME, routes, payload, _mid())

@@ -283,10 +283,9 @@ def main():
                 _append_log(f"[inbound] skip large file {name} {size} bytes > {max_mb} MB")
                 return None
             inbound_root = Path(str(cfg_files.get('inbound_dir') or (HOME/"work"/"upload"/"inbound")))
-            # Unify: inbound/<platform>/<channel>/YYYYMMDD
-            ch_folder = str(channel_id or 'unknown')
+            # Unified inbound layout: inbound/YYYYMMDD
             day = datetime.datetime.now().strftime('%Y%m%d')
-            dest_dir = inbound_root/'slack'/ch_folder/day
+            dest_dir = inbound_root/day
             dest_dir.mkdir(parents=True, exist_ok=True)
             safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)
             mid = f"slack-{int(time.time())}"
@@ -396,6 +395,22 @@ def main():
             _append_log(f"[error] download file failed: {e}")
             return None
 
+    def _append_inbound_index(p: Path, meta: Dict[str, Any], routes: Optional[list] = None):
+        try:
+            rec = {
+                'ts': int(time.time()),
+                'path': str(p),
+                'platform': 'slack',
+                **({} if not meta else meta)
+            }
+            if routes:
+                rec['routes'] = routes
+            idx = HOME/"state"/"inbound-index.jsonl"; idx.parent.mkdir(parents=True, exist_ok=True)
+            with idx.open('a', encoding='utf-8') as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
     def handle(*args, **kwargs):
         try:
             # Accept both signatures: (req) or (client, req)
@@ -503,6 +518,12 @@ def main():
                     if saved:
                         refs = "\n".join([f"- {str(p)} ({m.get('mime','')},{m.get('bytes',0)} bytes)" for p,m in saved])
                         text = (text + "\n\nFiles:\n" + refs).strip()
+                        # Index inbound files
+                        try:
+                            for pth, mt in saved:
+                                _append_inbound_index(pth, mt, routes=['peerA','peerB'] if 'both:' in text.lower() else (['peerA'] if text.lower().strip().startswith('a:') else ['peerB']))
+                        except Exception:
+                            pass
                     if missed:
                         refs2 = "\n".join([f"- {u}" for u in missed])
                         text = (text + "\n\nFiles (undownloaded):\n" + refs2).strip()
@@ -558,11 +579,10 @@ def main():
         while True:
             try:
                 for peer in ('peerA','peerB'):
-                    for folder in ('photos','files'):
-                        d = out_root/peer/folder
-                        if not d.exists():
-                            continue
-                        for f in d.iterdir():
+                    d = out_root/peer
+                    if not d.exists():
+                        continue
+                    for f in d.iterdir():
                             if not f.is_file():
                                 continue
                             if f.suffix.endswith('.json') or f.name.endswith('.sent.json'):

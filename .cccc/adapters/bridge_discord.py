@@ -276,9 +276,9 @@ def main():
             try:
                 files_cfg = (cfg.get('files') or {})
                 inbound_root = Path(str(files_cfg.get('inbound_dir') or (HOME/"work"/"upload"/"inbound")))
-                # Unify: inbound/<platform>/<channel>/YYYYMMDD
+                # Unified inbound layout: inbound/YYYYMMDD
                 day = datetime.datetime.now().strftime('%Y%m%d')
-                dest_dir = inbound_root/'discord'/str(message.channel.id)/day
+                dest_dir = inbound_root/day
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 refs = []
                 # Only accept attachments if explicit routing prefix present in text
@@ -300,6 +300,16 @@ def main():
                 if refs:
                     extra = "\n".join([f"- {str(p)} ({m.get('mime','')},{m.get('bytes',0)} bytes)" for p,m in refs])
                     body = (body + ("\n\nFiles:\n" + extra if extra else "")).strip()
+                    # Index inbound files
+                    try:
+                        routes_list = ['peerA','peerB'] if re.match(r"^\s*both:\s*", text, re.I) else (['peerA'] if re.match(r"^\s*a:\s*", text, re.I) else ['peerB'])
+                        idx = HOME/"state"/"inbound-index.jsonl"; idx.parent.mkdir(parents=True, exist_ok=True)
+                        for pth, mt in refs:
+                            rec = { 'ts': int(time.time()), 'path': str(pth), 'platform': 'discord', **mt, 'routes': routes_list }
+                            with idx.open('a', encoding='utf-8') as f:
+                                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                    except Exception:
+                        pass
             except Exception:
                 pass
             _write_inbox(routes, body, mid)
@@ -340,39 +350,38 @@ def main():
         while True:
             try:
                 for peer in ('peerA','peerB'):
-                    for folder in ('photos','files'):
-                        d = out_root/peer/folder
-                        if not d.exists():
+                    d = out_root/peer
+                    if not d.exists():
+                        continue
+                    for f in d.iterdir():
+                        if not f.is_file():
                             continue
-                        for f in d.iterdir():
-                            if not f.is_file():
-                                continue
-                            if f.name.endswith('.sent.json'):
-                                continue
-                            key = str(f.resolve())
-                            if key in sent and (time.time() - sent[key] < 3):
-                                continue
-                            cap = ''
+                        if f.name.endswith('.sent.json'):
+                            continue
+                        key = str(f.resolve())
+                        if key in sent and (time.time() - sent[key] < 3):
+                            continue
+                        cap = ''
+                        try:
+                            for sc in (f.with_suffix(f.suffix + '.caption.txt'), f.with_name(f.name + '.caption.txt')):
+                                if sc.exists():
+                                    cap = sc.read_text(encoding='utf-8')
+                                    break
+                        except Exception:
+                            pass
+                        # queue send for all configured channels (to_user + to_peer_summary)
+                        for ch_id in (chans_user or []) + (chans_peer or []):
                             try:
-                                for sc in (f.with_suffix(f.suffix + '.caption.txt'), f.with_name(f.name + '.caption.txt')):
-                                    if sc.exists():
-                                        cap = sc.read_text(encoding='utf-8')
-                                        break
-                            except Exception:
-                                pass
-                            # queue send for all configured channels (to_user + to_peer_summary)
-                            for ch_id in (chans_user or []) + (chans_peer or []):
-                                try:
-                                    asyncio.run_coroutine_threadsafe(_send_file(ch_id, f, f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + cap), client.loop)
-                                except Exception as e:
-                                    _log(f"[error] schedule file send failed: {e}")
-                            meta = {'platform':'discord','ts': int(time.time()), 'file': str(f.name)}
-                            try:
-                                with open(f.with_name(f.name + '.sent.json'), 'w', encoding='utf-8') as mf:
-                                    json.dump(meta, mf, ensure_ascii=False)
-                            except Exception:
-                                pass
-                            sent[key] = time.time()
+                                asyncio.run_coroutine_threadsafe(_send_file(ch_id, f, f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + cap), client.loop)
+                            except Exception as e:
+                                _log(f"[error] schedule file send failed: {e}")
+                        meta = {'platform':'discord','ts': int(time.time()), 'file': str(f.name)}
+                        try:
+                            with open(f.with_name(f.name + '.sent.json'), 'w', encoding='utf-8') as mf:
+                                json.dump(meta, mf, ensure_ascii=False)
+                        except Exception:
+                            pass
+                        sent[key] = time.time()
             except Exception:
                 pass
             time.sleep(1.0)
