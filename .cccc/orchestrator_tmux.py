@@ -69,6 +69,58 @@ def _extract_rev_delta(text: str) -> str:
     except Exception:
         return ""
 
+def _extract_last_insight_block(text: str) -> str:
+    try:
+        m = INSIGHT_BLOCK_RE.findall(text or '')
+        return m[-1] if m else ""
+    except Exception:
+        return ""
+
+def _insight_has_field(block: str, name: str) -> bool:
+    try:
+        return bool(re.search(rf"(?mi)^\s*{re.escape(name)}\s*:\s*\S", block))
+    except Exception:
+        return False
+
+def _revise_quality_ok(full_text: str) -> Tuple[bool, str]:
+    """Check if payload has a valid revise insight: kind=revise and has delta/refs/next and not restating body."""
+    try:
+        kind = _extract_insight_kind(full_text)
+        if kind not in ("revise","rev","polish"):
+            return False, "not-revise-kind"
+        block = _extract_last_insight_block(full_text)
+        miss = []
+        if not _insight_has_field(block, 'delta'):
+            miss.append('delta')
+        if not (_insight_has_field(block, 'refs') or _insight_has_field(block, 'ref')):
+            miss.append('refs')
+        if not _insight_has_field(block, 'next'):
+            miss.append('next')
+        if miss:
+            return False, f"missing:{','.join(miss)}"
+        # Similarity guard: avoid restating body as insight
+        try:
+            body = full_text
+            bi = block
+            body = body.replace(block, " ")
+            toks_body = _tokenize_for_similarity(body)
+            toks_ins = _tokenize_for_similarity(bi)
+            sim = _jaccard(toks_body, toks_ins)
+            if sim >= 0.85:
+                return False, "similar-to-body"
+        except Exception:
+            pass
+        return True, "ok"
+    except Exception:
+        return False, "error"
+
+def _rev_mark_pending(home: Path, peer_label: str, pending: bool = True):
+    st = _load_rev_state(home)
+    ent = st.get(peer_label) or {}
+    ent["pending"] = bool(pending)
+    st[peer_label] = ent
+    _save_rev_state(home, st)
+
 ## Insight soft reminder removed (keep meta-only guidance in prompt; no runtime nudges)
 
 def _update_rev_state_from_to_peer(home: Path, sender_label: str, payload: str):
@@ -2333,8 +2385,7 @@ def main(home: Path):
                 payload = ""  # guard variable for conditional forwarding
                 # PeerA events
                 if events["peerA"].get("to_user"):
-                    # Gentle REV reminder if there is an outstanding review without revise
-                    _maybe_rev_remind(home, "PeerA", lambda msg: _send_handoff("System", "PeerA", msg))
+                    # Removed soft REV reminder in favor of hard gate on to_peer
                     txt = events["peerA"]["to_user"].strip()
                     print_block("PeerA → USER", txt)
                     try:
@@ -2412,6 +2463,27 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
+                    # Hard gate: if PeerA owes a REV (due to prior COUNTER/QUESTION from PeerB),
+                    # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
+                    try:
+                        owed = bool((_load_rev_state(home).get("PeerA") or {}).get("pending", False))
+                    except Exception:
+                        owed = False
+                    if owed:
+                        has_inline = bool(extract_inline_diff_if_any(payload) or "" )
+                        if not has_inline:
+                            okq, why = _revise_quality_ok(payload)
+                            if not okq:
+                                tip = (
+                                    "<FROM_SYSTEM>\n"
+                                    "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
+                                    "</FROM_SYSTEM>\n"
+                                )
+                                _send_handoff("System", "PeerA", tip)
+                                log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerA","reason": why})
+                                # Ensure debt remains pending (in case kind=revise but low quality)
+                                _rev_mark_pending(home, "PeerA", True)
+                                payload = ""
                     if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                         _send_handoff("PeerA", "PeerB", wrapped)
@@ -2461,7 +2533,7 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 # PeerB events
                 if events["peerB"].get("to_user"):
-                    _maybe_rev_remind(home, "PeerB", lambda msg: _send_handoff("System", "PeerB", msg))
+                    # Removed soft REV reminder in favor of hard gate on to_peer
                     txt = events["peerB"].get("to_user"," ").strip()
                     try:
                         eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
@@ -2524,6 +2596,26 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
+                        # Hard gate: if PeerB owes a REV (due to prior COUNTER/QUESTION from PeerA),
+                        # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
+                        try:
+                            owed = bool((_load_rev_state(home).get("PeerB") or {}).get("pending", False))
+                        except Exception:
+                            owed = False
+                        if owed:
+                            has_inline = bool(extract_inline_diff_if_any(payload) or "")
+                            if not has_inline:
+                                okq, why = _revise_quality_ok(payload)
+                                if not okq:
+                                    tip = (
+                                        "<FROM_SYSTEM>\n"
+                                        "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
+                                        "</FROM_SYSTEM>\n"
+                                    )
+                                    _send_handoff("System", "PeerB", tip)
+                                    log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerB","reason": why})
+                                    _rev_mark_pending(home, "PeerB", True)
+                                    payload = ""
                         if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
                             wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
                             _send_handoff("PeerB", "PeerA", wrapped)
