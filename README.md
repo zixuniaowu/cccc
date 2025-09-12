@@ -7,7 +7,7 @@ Not a chatbot UI. Not an IDE plugin. A production‑minded orchestrator for 24/7
 ## Why It’s Different
 
 - Dual‑AI Autonomy: peers continuously plan → build → critique → refine. They don’t wait for prompts; they follow a mailbox contract and change the world only with EVIDENCE (diff/tests/logs/benchmarks).
-- Agent‑as‑a‑Service (AaaS): agents are long‑running services with a mailbox contract, not ad‑hoc prompts. They keep rhythm, produce evidence, and integrate with IM (Telegram today; Slack/Teams via bridges) without coupling core logic to any single transport.
+- Agent‑as‑a‑Service (AaaS): agents are long‑running services with a mailbox contract, not ad‑hoc prompts. They keep rhythm, produce evidence, and integrate with IM (Telegram/Slack/Discord via bridges; Teams outbound planned) without coupling core logic to any single transport.
 - IM Collaboration: a 24/7 agent lives in your team chat. High‑signal summaries, one‑tap RFD decisions, explicit routing (a:/b:/both:) so normal conversation remains normal. Files flow both ways with captions and sidecars.
 - Builder–Critic Synergy: peers challenge CLAIMs with COUNTERs and converge via verifiable EVIDENCE. In practice this beats single‑model quality on complex, multi‑day tasks.
 - tmux Transparency: dual panes (PeerA/PeerB) + compact status panel. You can peek, nudge, or inject text without disrupting flows—and without a GUI.
@@ -67,7 +67,13 @@ cccc token set   # paste your bot token; stored in .cccc/settings/telegram.yaml 
 cccc run
 ```
 
-tmux opens: left/right = PeerA/PeerB, bottom‑right = status panel. If token is present and autostart=true, the Telegram bridge starts automatically.
+tmux opens: left/right = PeerA/PeerB, bottom‑right = status panel.
+Run wizard (interactive TTY) lets you optionally connect a bridge:
+- 1) Local only (default)
+- 2) Local + Telegram
+- 3) Local + Slack
+- 4) Local + Discord
+You can also manage bridges later via `cccc bridge …` or set `autostart` in `.cccc/settings/*.yaml`.
 
 5) First‑time CLI setup (required)
 
@@ -149,11 +155,16 @@ RFD is not required here. It triggers automatically only for protected areas or 
 ```
 .cccc/
   adapters/telegram_bridge.py    # Telegram long‑poll bridge (MVP)
+  adapters/bridge_slack.py       # Slack bridge (Socket Mode + Web API, MVP)
+  adapters/bridge_discord.py     # Discord bridge (Gateway + REST, MVP)
+  adapters/outbox_consumer.py    # Shared Outbox reader (to_user/to_peer_summary)
   settings/
     cli_profiles.yaml            # tmux/paste/type behavior; echo; idle regexes; self‑check
     policies.yaml                # patch queue size; allowlist; RFD gates
     roles.yaml                   # leader; specialties; rotation
     telegram.yaml                # token/autostart/allowlist/dry_run/routing/files
+    slack.yaml                   # app/bot tokens, channels, autostart, dry_run
+    discord.yaml                 # bot token, channels, autostart, dry_run
   mailbox/                       # peerA/peerB with to_user.md/to_peer.md/patch.diff; inbox/processed
   work/                          # shared workspace; upload inbound/outbound; ephemeral
   state/                         # ledger.jsonl, bridge logs, status/session; ephemeral
@@ -166,9 +177,9 @@ RFD is not required here. It triggers automatically only for protected areas or 
 
 - `cccc init [--force] [--to PATH]` — copy scaffold; preserves layout; excludes runtime dirs
 - `cccc doctor` — check git/tmux/python/telegram
-- `cccc run` — start orchestrator (tmux panes + status panel; autostarts bridge when configured)
+- `cccc run` — start orchestrator (tmux panes + status panel; optional bridge connect wizard; autostarts per YAML)
 - `cccc token set|unset|show` — manage Telegram token (gitignored)
-- `cccc bridge start|stop|status|restart|logs [-n N] [--follow]` — control and inspect bridge
+- `cccc bridge <telegram|slack|discord|all> start|stop|status|restart|logs [-n N] [--follow]` — control/inspect bridges
 - `cccc clean` — purge `.cccc/{mailbox,work,logs,state}/`
 - `cccc version` — show package version and scaffold path info
 
@@ -207,6 +218,47 @@ files:
 outbound:
   reset_on_start: clear
 ```
+
+`.cccc/settings/slack.yaml`
+
+```
+app_token_env: SLACK_APP_TOKEN   # xapp-... (Socket Mode)
+bot_token_env: SLACK_BOT_TOKEN   # xoxb-... (Web API)
+autostart: false
+dry_run: true
+channels:
+  to_user: []
+  to_peer_summary: []
+outbound:
+  reset_on_start: baseline
+```
+
+`.cccc/settings/discord.yaml`
+
+```
+bot_token_env: DISCORD_BOT_TOKEN
+autostart: false
+dry_run: true
+channels:
+  to_user: []           # numeric channel IDs
+  to_peer_summary: []
+outbound:
+  reset_on_start: baseline
+```
+
+## 0.2.9 Highlights (RC)
+
+- Bridges: add Slack/Discord adapters (MVP). Outbound reads single‑source Outbox (`.cccc/state/outbox.jsonl`) via a shared consumer; inbound routes `a:/b:/both:` to mailbox inbox. Dry‑run by default; enable via `.cccc/settings/{slack,discord}.yaml` or env tokens.
+- Unified bridge CLI: `cccc bridge <telegram|slack|discord|all> start|stop|status|restart|logs`。`cccc run` 启动向导可选择连接 Telegram/Slack/Discord；也可通过 YAML `autostart` 自启。
+- Context maintenance: 每隔 N 次自检（`delivery.context_compact_every_self_checks`, 默认 5），向双端直通一次 `/compact`，随后立刻重注入完整 SYSTEM（首行含 “Now: … TZ”）。无需前置判断/重试。
+- Self‑check 增强：自检首行注入当前时间/时区；新增第 4 条“是否把 insight 用于新维度（hook/assumption/risk/trade‑off/next/delta）而非复述”；第 5 条强化“广谱专家视角以避免狭隘执行”。
+- NUDGE 改进：指数回退基于 180s，上限 60 分钟，`nudge_jitter_pct: 0.15`，无进展阈值 90s；NUDGE 文案鼓励在 inbox 为空时做高维度思考/微探针/小优化后继续推进。
+- REV 硬门槛：出现 COUNTER/QUESTION 后，对端下一条 to_peer 必须为“合格 revise”（insight.kind=revise，且含 delta/refs/next，且非复述）或携带直接证据（内联统一 diff）。否则拦截并提示，记录 `revise-intercept`。
+- 临时编码约束（PEERA）：为规避上游写文件编码顽固问题，PeerA 写入 `to_user.md`/`to_peer.md` 时使用英文 ASCII‑only（7‑bit）。问题解决后将移除该约束。
+
+配置键（新增/调整）
+- `.cccc/settings/cli_profiles.yaml` → `delivery.context_compact_every_self_checks: 5`（0=关闭）
+- `.cccc/settings/cli_profiles.yaml` → NUDGE 相关：`nudge_backoff_base_ms: 180000`、`nudge_backoff_max_ms: 3600000`、`nudge_jitter_pct: 0.15`、`nudge_progress_timeout_s: 90`
 
 ## 0.2.7 Highlights (RC)
 
