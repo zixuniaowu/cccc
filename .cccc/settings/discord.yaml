@@ -2,7 +2,7 @@
 # Provide a bot token via env or plain text; channels are numeric IDs.
 
 bot_token_env: DISCORD_BOT_TOKEN
-dry_run: true
+dry_run: false
 show_peer_messages: true
 default_route: both   # a|b|both when no explicit prefix
 
@@ -13,3 +13,9 @@ channels:
 outbound:
   reset_on_start: baseline  # baseline|clear
 
+files:
+  enabled: true
+  max_mb: 16
+  inbound_dir: .cccc/work/upload/inbound
+  outbound_dir: .cccc/work/upload/outbound
+  strip_exif: true

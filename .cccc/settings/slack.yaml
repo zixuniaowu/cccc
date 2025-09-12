@@ -4,7 +4,7 @@
 app_token_env: SLACK_APP_TOKEN   # xapp-... for Socket Mode (optional for inbound)
 bot_token_env: SLACK_BOT_TOKEN   # xoxb-... for Web API
 
-dry_run: true
+dry_run: false
 show_peer_messages: true
 default_route: both   # a|b|both when no explicit prefix provided
 
@@ -15,3 +15,9 @@ channels:
 outbound:
   reset_on_start: baseline  # baseline|clear
 
+files:
+  enabled: true
+  max_mb: 16
+  inbound_dir: .cccc/work/upload/inbound
+  outbound_dir: .cccc/work/upload/outbound
+  strip_exif: true

@@ -8,8 +8,8 @@ Discord Bridge (MVP)
 """
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
-import os, sys, json, time, re, threading, asyncio
+from typing import Dict, Any, List, Tuple, Optional
+import os, sys, json, time, re, threading, asyncio, hashlib, datetime
 
 ROOT = Path.cwd(); HOME = ROOT/".cccc"
 if str(HOME) not in sys.path: sys.path.insert(0, str(HOME))
@@ -89,6 +89,19 @@ def _summarize(t: str, max_chars: int = 1500, max_lines: int = 12) -> str:
     out='\n'.join(kept).strip()
     return out if len(out)<=max_chars else out[:max_chars-1]+'…'
 
+def _sha256_file(fp: Path) -> str:
+    h = hashlib.sha256()
+    with open(fp, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024*64), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _today_dir(root: Path, sub: str) -> Path:
+    dt = datetime.datetime.now().strftime('%Y%m%d')
+    p = root/"upload"/"inbound"/sub/dt
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
 def main():
     cfg = read_yaml(HOME/"settings"/"discord.yaml")
     dry = bool(cfg.get('dry_run', True))
@@ -129,15 +142,17 @@ def main():
     t = threading.Thread(target=lambda: oc.loop(on_to_user, on_to_peer_summary), daemon=True)
     t.start()
 
-    # If no token or dry_run, run outbound-only logging loop
+    # If no token or dry_run, continue outbound-only loop in background
     if dry or not token:
-        _log("[info] dry-run or token missing; not connecting to Discord")
-        while True:
-            with q_lock:
-                if send_queue:
-                    ch, msg = send_queue.pop(0)
-                    _log(f"[dry-run] outbound to {ch}: {len(msg)} chars")
-            time.sleep(0.5)
+        _log("[info] dry-run or token missing; not connecting to Discord (outbound-only)")
+        def dry_loop():
+            while True:
+                with q_lock:
+                    if send_queue:
+                        ch, msg = send_queue.pop(0)
+                        _log(f"[dry-run] outbound to {ch}: {len(msg)} chars")
+                time.sleep(0.5)
+        threading.Thread(target=dry_loop, daemon=True).start()
 
     # Live mode with discord.py
     try:
@@ -167,6 +182,31 @@ def main():
             text = message.content or ''
             routes, body = _route_from_text(text, default_route)
             mid = f"dc-{int(time.time())}-{str(message.author.id)[-4:]}"
+            # Save attachments if any
+            try:
+                files_cfg = (cfg.get('files') or {})
+                inbound_root = Path(str(files_cfg.get('inbound_dir') or (HOME/"work")))
+                dest_dir = _today_dir(inbound_root, 'discord')
+                refs = []
+                for att in message.attachments:
+                    safe = re.sub(r"[^A-Za-z0-9._-]", "_", att.filename or f"discord_{att.id}")
+                    out = dest_dir/f"{mid}__{safe}"
+                    try:
+                        await att.save(out)
+                        meta = {
+                            'platform': 'discord', 'name': att.filename, 'bytes': out.stat().st_size,
+                            'mime': att.content_type, 'sha256': _sha256_file(out), 'ts': int(time.time()), 'url_src': att.url,
+                        }
+                        with open(out.with_suffix(out.suffix+".meta.json"), 'w', encoding='utf-8') as mf:
+                            json.dump(meta, mf, ensure_ascii=False, indent=2)
+                        refs.append((out, meta))
+                    except Exception as e:
+                        _log(f"[error] save attachment failed: {e}")
+                if refs:
+                    extra = "\n".join([f"- {str(p)} ({m.get('mime','')},{m.get('bytes',0)} bytes)" for p,m in refs])
+                    body = (body + ("\n\nFiles:\n" + extra if extra else "")).strip()
+            except Exception:
+                pass
             _write_inbox(routes, body, mid)
         except Exception:
             pass
@@ -186,6 +226,64 @@ def main():
                 except Exception as e:
                     _log(f"[error] send failed to {ch_id}: {e}")
 
+    # Outbound files watcher
+    async def _send_file(ch_id: int, fp: Path, caption: str):
+        ch = client.get_channel(ch_id)
+        if not ch:
+            return
+        try:
+            await ch.send(content=_summarize(caption or '', 1500, 10), file=discord.File(str(fp)))
+        except Exception as e:
+            _log(f"[error] file send failed to {ch_id}: {e}")
+
+    def watch_outbound_files():
+        files_cfg = (cfg.get('files') or {})
+        if not bool(files_cfg.get('enabled', True)):
+            return
+        out_root = Path(str(files_cfg.get('outbound_dir') or (HOME/"work"/"upload"/"outbound")))
+        sent: Dict[str, float] = {}
+        while True:
+            try:
+                for peer in ('peerA','peerB'):
+                    for folder in ('photos','files'):
+                        d = out_root/peer/folder
+                        if not d.exists():
+                            continue
+                        for f in d.iterdir():
+                            if not f.is_file():
+                                continue
+                            if f.name.endswith('.sent.json'):
+                                continue
+                            key = str(f.resolve())
+                            if key in sent and (time.time() - sent[key] < 3):
+                                continue
+                            cap = ''
+                            try:
+                                for sc in (f.with_suffix(f.suffix + '.caption.txt'), f.with_name(f.name + '.caption.txt')):
+                                    if sc.exists():
+                                        cap = sc.read_text(encoding='utf-8')
+                                        break
+                            except Exception:
+                                pass
+                            # queue send for all configured channels (to_user + to_peer_summary)
+                            for ch_id in (chans_user or []) + (chans_peer or []):
+                                try:
+                                    asyncio.run_coroutine_threadsafe(_send_file(ch_id, f, f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + cap), client.loop)
+                                except Exception as e:
+                                    _log(f"[error] schedule file send failed: {e}")
+                            meta = {'platform':'discord','ts': int(time.time()), 'file': str(f.name)}
+                            try:
+                                with open(f.with_name(f.name + '.sent.json'), 'w', encoding='utf-8') as mf:
+                                    json.dump(meta, mf, ensure_ascii=False)
+                            except Exception:
+                                pass
+                            sent[key] = time.time()
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+    threading.Thread(target=watch_outbound_files, daemon=True).start()
+
     async def runner():
         await client.login(token)
         loop = asyncio.get_running_loop()
@@ -196,4 +294,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

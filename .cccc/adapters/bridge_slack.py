@@ -9,7 +9,7 @@ Slack Bridge (MVP)
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
-import os, sys, json, time, re, threading
+import os, sys, json, time, re, threading, hashlib, datetime, urllib.request
 
 ROOT = Path.cwd(); HOME = ROOT/".cccc"
 if str(HOME) not in sys.path: sys.path.insert(0, str(HOME))
@@ -104,6 +104,19 @@ def _summarize(text: str, max_chars: int = 1200, max_lines: int = 12) -> str:
     out='\n'.join(kept).strip()
     return out if len(out)<=max_chars else out[:max_chars-1]+'…'
 
+def _sha256_file(fp: Path) -> str:
+    h = hashlib.sha256()
+    with open(fp, 'rb') as f:
+        for chunk in iter(lambda: f.read(1024*64), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _today_dir(root: Path, sub: str) -> Path:
+    dt = datetime.datetime.now().strftime('%Y%m%d')
+    p = root/"upload"/"inbound"/sub/dt
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
 def main():
     cfg = read_yaml(HOME/"settings"/"slack.yaml")
     dry = bool(cfg.get('dry_run', True))
@@ -153,7 +166,8 @@ def main():
     # Inbound via Socket Mode (optional)
     if dry or not (app_token and bot_token):
         _append_log("[info] inbound disabled (dry_run or tokens missing)")
-        while True: time.sleep(1.0)
+        # Still support outbound files watcher in dry-run (logs only)
+        pass
 
     try:
         from slack_sdk.socket_mode import SocketModeClient  # type: ignore
@@ -164,6 +178,40 @@ def main():
 
     web = WebClient(token=bot_token)
     client = SocketModeClient(app_token=app_token, web_client=web)
+
+    def _download_slack_file(file_obj: Dict[str, Any]) -> Optional[Tuple[Path, Dict[str, Any]]]:
+        try:
+            url = file_obj.get('url_private_download') or file_obj.get('url_private')
+            if not url:
+                return None
+            name = file_obj.get('name') or f"slack_{int(time.time())}"
+            mime = file_obj.get('mimetype') or ''
+            size = int(file_obj.get('size') or 0)
+            cfg_files = (cfg.get('files') or {})
+            max_mb = int(cfg_files.get('max_mb', 16))
+            if max_mb > 0 and size > max_mb * 1024 * 1024:
+                _append_log(f"[inbound] skip large file {name} {size} bytes > {max_mb} MB")
+                return None
+            # Destination
+            inbound_root = Path(str(cfg_files.get('inbound_dir') or (HOME/"work")))
+            dest_dir = _today_dir(inbound_root, 'slack')
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)
+            mid = f"slack-{int(time.time())}"
+            out = dest_dir/f"{mid}__{safe}"
+            # Download with Bearer header
+            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {bot_token}"})
+            with urllib.request.urlopen(req, timeout=30) as r, open(out, 'wb') as f:
+                f.write(r.read())
+            meta = {
+                'platform': 'slack', 'name': name, 'bytes': out.stat().st_size,
+                'mime': mime, 'sha256': _sha256_file(out), 'ts': int(time.time()), 'url_src': url,
+            }
+            with open(out.with_suffix(out.suffix+".meta.json"), 'w', encoding='utf-8') as mf:
+                json.dump(meta, mf, ensure_ascii=False, indent=2)
+            return out, meta
+        except Exception as e:
+            _append_log(f"[error] download file failed: {e}")
+            return None
 
     def handle(evt):
         try:
@@ -176,6 +224,20 @@ def main():
             text = str(event.get('text') or '')
             ch = str(event.get('channel') or '')
             user = str(event.get('user') or '')
+            # Files (if any)
+            try:
+                flist = event.get('files') or []
+                saved = []
+                for fo in flist:
+                    got = _download_slack_file(fo)
+                    if got:
+                        saved.append(got)
+                if saved:
+                    # Append file references to body
+                    refs = "\n".join([f"- {str(p)} ({m.get('mime','')},{m.get('bytes',0)} bytes)" for p,m in saved])
+                    text = (text + "\n\nFiles:\n" + refs).strip()
+            except Exception:
+                pass
             # Route and write inbox
             routes, body = _route_from_text(text, default_route)
             mid = f"slack-{int(time.time())}-{user[-4:]}"
@@ -188,6 +250,78 @@ def main():
     client.socket_mode_request_listeners.append(handle)
     _append_log("[info] slack socket mode starting …")
     client.connect()
+    # Outbound files watcher (both in live and dry-run modes)
+    def _send_file_to_channels(fp: Path, caption: str) -> bool:
+        cap = _summarize(caption or '', 1200, 10)
+        chs = list(dict.fromkeys((channels_to_user or []) + (channels_peer or [])))
+        if dry or not bot_token:
+            _append_log(f"[dry-run] outbound file {fp.name} to {chs}; caption={len(cap)} chars")
+            return True
+        try:
+            from slack_sdk import WebClient  # type: ignore
+            cli = WebClient(token=bot_token)
+            ok_any = False
+            for ch in chs:
+                try:
+                    # prefer files_upload_v2; fallback if not available
+                    try:
+                        cli.files_upload_v2(channels=ch, file=str(fp), filename=fp.name, initial_comment=cap or None)
+                    except Exception:
+                        cli.files_upload(channels=ch, file=str(fp), filename=fp.name, initial_comment=cap or None)
+                    ok_any = True
+                    time.sleep(0.5)
+                except Exception as e:
+                    _append_log(f"[error] slack file upload failed to {ch}: {e}")
+            return ok_any
+        except Exception as e:
+            _append_log(f"[error] slack_sdk missing or upload failed: {e}")
+            return False
+
+    def watch_outbound_files():
+        files_cfg = (cfg.get('files') or {})
+        if not bool(files_cfg.get('enabled', True)):
+            return
+        out_root = Path(str(files_cfg.get('outbound_dir') or (HOME/"work"/"upload"/"outbound")))
+        sent_files: Dict[str, float] = {}
+        while True:
+            try:
+                for peer in ('peerA','peerB'):
+                    for folder in ('photos','files'):
+                        d = out_root/peer/folder
+                        if not d.exists():
+                            continue
+                        for f in d.iterdir():
+                            if not f.is_file():
+                                continue
+                            if f.suffix.endswith('.json') or f.name.endswith('.sent.json'):
+                                continue
+                            key = str(f.resolve())
+                            if key in sent_files and (time.time() - sent_files[key] < 3):
+                                continue
+                            # caption sidecar
+                            cap = ''
+                            try:
+                                for sc in (f.with_suffix(f.suffix + '.caption.txt'), f.with_name(f.name + '.caption.txt')):
+                                    if sc.exists():
+                                        cap = sc.read_text(encoding='utf-8')
+                                        break
+                            except Exception:
+                                pass
+                            ok = _send_file_to_channels(f, f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + cap)
+                            if ok:
+                                meta = {'platform':'slack','ts': int(time.time()), 'file': str(f.name)}
+                                try:
+                                    with open(f.with_name(f.name + '.sent.json'), 'w', encoding='utf-8') as mf:
+                                        json.dump(meta, mf, ensure_ascii=False)
+                                except Exception:
+                                    pass
+                                sent_files[key] = time.time()
+            except Exception:
+                pass
+            time.sleep(1.0)
+
+    threading.Thread(target=watch_outbound_files, daemon=True).start()
+
     try:
         while True: time.sleep(1.0)
     finally:
@@ -196,4 +330,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
