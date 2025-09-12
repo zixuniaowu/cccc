@@ -747,26 +747,61 @@ def main():
                 else:
                     print("[WARN] No token provided; continue in local mode without Telegram.")
         if choice == "3":
-            # Try to start Slack if tokens present; do not block on prompts (keep wizard light)
-            scfg = _read_yaml(home/"settings"/"slack.yaml")
-            at_env = str((scfg or {}).get('app_token_env') or 'SLACK_APP_TOKEN')
-            bt_env = str((scfg or {}).get('bot_token_env') or 'SLACK_BOT_TOKEN')
-            env = {}
-            if (scfg or {}).get('app_token'): env[at_env] = str(scfg.get('app_token'))
-            if (scfg or {}).get('bot_token'): env[bt_env] = str(scfg.get('bot_token'))
-            if not env.get(at_env):
-                v = os.environ.get(at_env, '')
-                if v: env[at_env] = v
-            if not env.get(bt_env):
-                v = os.environ.get(bt_env, '')
-                if v: env[bt_env] = v
-            if env.get(bt_env):
-                try:
-                    _cmd_bridge('slack', 'start')
-                except Exception:
-                    pass
-            else:
-                print("[SLACK] Bot token missing; configure .cccc/settings/slack.yaml or env SLACK_BOT_TOKEN.")
+            # Interactive Slack setup (prompt for tokens if missing), then start bridge
+            cfg_path = home/"settings"/"slack.yaml"
+            scfg = _read_yaml(cfg_path) or {
+                "app_token_env": "SLACK_APP_TOKEN",
+                "bot_token_env": "SLACK_BOT_TOKEN",
+                "autostart": False,
+                "dry_run": False,
+                "channels": {"to_user": [], "to_peer_summary": []},
+                "outbound": {"reset_on_start": "baseline"},
+            }
+            at_env = str(scfg.get('app_token_env') or 'SLACK_APP_TOKEN')
+            bt_env = str(scfg.get('bot_token_env') or 'SLACK_BOT_TOKEN')
+            # Read existing/masked tokens
+            saved_app = str(scfg.get('app_token') or '')
+            saved_bot = str(scfg.get('bot_token') or '')
+            try:
+                print("[SETUP][Slack] Provide tokens (Enter to keep saved or use env).")
+                if saved_bot:
+                    masked = (saved_bot[:6] + "…" + saved_bot[-4:]) if len(saved_bot) >= 10 else "(saved)"
+                    print(f"  Bot token (xoxb-): {masked}")
+                bot = input("  Paste Bot User OAuth Token (xoxb-, Enter to keep): ").strip() or saved_bot
+            except Exception:
+                bot = saved_bot
+            try:
+                if saved_app:
+                    masked = (saved_app[:6] + "…" + saved_app[-4:]) if len(saved_app) >= 10 else "(saved)"
+                    print(f"  App-level token (xapp-): {masked}")
+                app = input("  Paste App-level Token (xapp-, Enter to keep/skip for outbound-only): ").strip() or saved_app
+            except Exception:
+                app = saved_app
+            # Optional: ask for one channel id for to_user
+            try:
+                cur = (scfg.get('channels') or {}).get('to_user') or []
+                cur_id = cur[0] if cur else ''
+                if cur_id:
+                    print(f"  Current to_user channel id: {cur_id}")
+                ch = input("  Optional: channel ID for to_user (e.g., C0123456789, Enter to skip): ").strip()
+            except Exception:
+                ch = ""
+            if bot:
+                scfg['bot_token'] = bot
+            if app:
+                scfg['app_token'] = app
+            if ch:
+                scfg.setdefault('channels', {}).setdefault('to_user', [])
+                if ch not in scfg['channels']['to_user']:
+                    scfg['channels']['to_user'].append(ch)
+                scfg['channels'].setdefault('to_peer_summary', [])
+                if ch not in scfg['channels']['to_peer_summary']:
+                    scfg['channels']['to_peer_summary'].append(ch)
+            _write_yaml(cfg_path, scfg)
+            try:
+                _cmd_bridge('slack', 'start')
+            except Exception:
+                pass
         if choice == "4":
             dcfg = _read_yaml(home/"settings"/"discord.yaml")
             be = str((dcfg or {}).get('bot_token_env') or 'DISCORD_BOT_TOKEN')
