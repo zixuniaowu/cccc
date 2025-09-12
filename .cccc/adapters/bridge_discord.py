@@ -118,6 +118,30 @@ def main():
     except Exception:
         from outbox_consumer import OutboxConsumer
     oc = OutboxConsumer(HOME, seen_name='discord', reset_on_start=reset)
+    # Dynamic subscriptions (channel IDs)
+    SUBS_LOCK = threading.Lock()
+    def _subs_path() -> Path:
+        return HOME/"state"/"discord-subs.json"
+    def load_subs() -> List[int]:
+        p = _subs_path()
+        try:
+            if p.exists():
+                arr = json.loads(p.read_text(encoding='utf-8')).get('channels') or []
+                out=[]
+                for x in arr:
+                    try: out.append(int(x))
+                    except Exception: pass
+                return out
+        except Exception:
+            pass
+        return []
+    def save_subs(items: List[int]):
+        p = _subs_path(); p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            p.write_text(json.dumps({'channels': list(dict.fromkeys(items))[-2000:]}, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+    SUBS = load_subs()
 
     send_queue: List[Tuple[int,str]] = []  # (channel_id, text)
     q_lock = threading.Lock()
@@ -131,16 +155,22 @@ def main():
         p = str(ev.get('peer') or '').lower()
         label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
-        if chans_user:
-            enqueue(chans_user, msg)
+        with q_lock:
+            with SUBS_LOCK:
+                chs = list(dict.fromkeys((chans_user or []) + (SUBS or [])))
+        if chs:
+            enqueue(chs, msg)
 
     def on_to_peer_summary(ev: Dict[str,Any]):
         if not show_peers: return
         frm = str(ev.get('from') or '')
         label = 'PeerA→PeerB' if frm in ('PeerA','peera','peera') else 'PeerB→PeerA'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
-        if chans_peer:
-            enqueue(chans_peer, msg)
+        with q_lock:
+            with SUBS_LOCK:
+                chs = list(dict.fromkeys((chans_peer or []) + (SUBS or [])))
+        if chs:
+            enqueue(chs, msg)
 
     t = threading.Thread(target=lambda: oc.loop(on_to_user, on_to_peer_summary), daemon=True)
     t.start()
@@ -183,6 +213,26 @@ def main():
             if message.author == client.user:
                 return
             text = message.content or ''
+            low = text.strip().lower()
+            if low in ('subscribe','sub'):
+                try:
+                    with SUBS_LOCK:
+                        if message.channel.id not in SUBS:
+                            SUBS.append(message.channel.id); save_subs(SUBS)
+                    await message.channel.send('Subscribed this channel for to_user/to_peer_summary.')
+                except Exception:
+                    pass
+                return
+            if low in ('unsubscribe','unsub'):
+                try:
+                    with SUBS_LOCK:
+                        SUBS2 = [x for x in SUBS if x != message.channel.id]
+                        if len(SUBS2) != len(SUBS):
+                            SUBS[:] = SUBS2; save_subs(SUBS)
+                    await message.channel.send('Unsubscribed this channel.')
+                except Exception:
+                    pass
+                return
             routes, body = _route_from_text(text, default_route)
             mid = f"dc-{int(time.time())}-{str(message.author.id)[-4:]}"
             # Save attachments if any

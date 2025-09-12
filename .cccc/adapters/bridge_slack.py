@@ -135,6 +135,27 @@ def main():
         from outbox_consumer import OutboxConsumer
     oc = OutboxConsumer(HOME, seen_name='slack', reset_on_start=reset)
 
+    # Dynamic channel subscriptions persist under state; used to avoid editing YAML.
+    SUBS_LOCK = threading.Lock()
+    def _subs_path() -> Path:
+        return HOME/"state"/"slack-subs.json"
+    def load_subs() -> List[str]:
+        p = _subs_path()
+        try:
+            if p.exists():
+                arr = json.loads(p.read_text(encoding='utf-8')).get('channels') or []
+                return [str(x) for x in arr]
+        except Exception:
+            pass
+        return []
+    def save_subs(items: List[str]):
+        p = _subs_path(); p.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            p.write_text(json.dumps({'channels': list(dict.fromkeys(items))[-2000:]}, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+    SUBS = load_subs()
+
     def send_text(chs: List[str], text: str):
         if dry or not bot_token:
             _append_log(f"[dry-run] outbound len={len(text)} to {chs}")
@@ -152,16 +173,20 @@ def main():
         p = str(ev.get('peer') or '').lower()
         label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
-        if channels_to_user:
-            send_text(channels_to_user, msg)
+        with SUBS_LOCK:
+            chs = list(dict.fromkeys((channels_to_user or []) + (SUBS or [])))
+        if chs:
+            send_text(chs, msg)
 
     def on_to_peer_summary(ev: Dict[str,Any]):
         if not show_peers: return
         frm = str(ev.get('from') or '')
         label = 'PeerA→PeerB' if frm in ('PeerA','peera','peera') else 'PeerB→PeerA'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
-        if channels_peer:
-            send_text(channels_peer, msg)
+        with SUBS_LOCK:
+            chs = list(dict.fromkeys((channels_peer or []) + (SUBS or [])))
+        if chs:
+            send_text(chs, msg)
 
     th = threading.Thread(target=lambda: oc.loop(on_to_user, on_to_peer_summary), daemon=True)
     th.start()
@@ -227,6 +252,28 @@ def main():
             text = str(event.get('text') or '')
             ch = str(event.get('channel') or '')
             user = str(event.get('user') or '')
+            # Subscribe/Unsubscribe commands (plain text, not Slash Commands)
+            low = text.strip().lower()
+            if low in ("subscribe","sub"):
+                with SUBS_LOCK:
+                    if ch not in SUBS:
+                        SUBS.append(ch); save_subs(SUBS)
+                try:
+                    web.chat_postMessage(channel=ch, text="Subscribed this channel for to_user/to_peer_summary.")
+                except Exception:
+                    pass
+                client.ack(evt); return
+            if low in ("unsubscribe","unsub"):
+                with SUBS_LOCK:
+                    SUBS2 = [x for x in SUBS if x != ch]
+                    if len(SUBS2) != len(SUBS):
+                        SUBS[:] = SUBS2; save_subs(SUBS)
+                try:
+                    web.chat_postMessage(channel=ch, text="Unsubscribed this channel.")
+                except Exception:
+                    pass
+                client.ack(evt); return
+
             # Files (if any)
             try:
                 flist = event.get('files') or []
