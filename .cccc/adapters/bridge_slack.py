@@ -300,8 +300,11 @@ def main():
                 # Handle files shared without a text message
                 try:
                     fid = str(event.get('file_id') or (event.get('file') or {}).get('id') or '')
-                    ch = str(event.get('channel_id') or '')
+                    ch2 = str(event.get('channel_id') or '')
                     body = ''
+                    # Only accept file_shared in DMs; ignore in channels to avoid noise
+                    if not (ch2.startswith('D') or str(event.get('channel_type') or '') == 'im'):
+                        return
                     if fid:
                         info = web.files_info(file=fid)
                         fobj = (info.get('file') or {})
@@ -323,6 +326,15 @@ def main():
             text = str(event.get('text') or '')
             ch = str(event.get('channel') or '')
             user = str(event.get('user') or '')
+            ch_type = str(event.get('channel_type') or '')
+            is_dm = (ch.startswith('D') or ch_type == 'im')
+            # Routing prefixes only; ignore general chatter without explicit route
+            prefix_re = re.compile(r"^\s*(a:|b:|both:)\s*", re.I)
+            has_prefix = bool(prefix_re.search(text))
+            # Mention form: <@BOT_USER_ID> a: ...
+            if (not has_prefix) and BOT_USER_ID:
+                if re.search(rf"^\s*<@{re.escape(BOT_USER_ID)}>\s+(a:|b:|both:)\s*", text, re.I):
+                    has_prefix = True
             # Ignore self/bot messages to avoid echo loops
             if event.get('bot_id') or (BOT_USER_ID and user == BOT_USER_ID):
                 return
@@ -351,18 +363,22 @@ def main():
             # Files (if any)
             try:
                 flist = event.get('files') or []
-                saved = []
-                for fo in flist:
-                    got = _download_slack_file(fo)
-                    if got:
-                        saved.append(got)
-                if saved:
-                    # Append file references to body
-                    refs = "\n".join([f"- {str(p)} ({m.get('mime','')},{m.get('bytes',0)} bytes)" for p,m in saved])
-                    text = (text + "\n\nFiles:\n" + refs).strip()
-            except Exception:
-                pass
+                if flist and has_prefix:  # only accept files with explicit routing
+                    saved = []
+                    for fo in flist:
+                        got = _download_slack_file(fo)
+                        if got:
+                            saved.append(got)
+                    if saved:
+                        refs = "\n".join([f"- {str(p)} ({m.get('mime','')},{m.get('bytes',0)} bytes)" for p,m in saved])
+                        text = (text + "\n\nFiles:\n" + refs).strip()
+            except Exception as e:
+                _append_log(f"[error] files in message failed: {e}")
             # Route and write inbox
+            if not has_prefix:
+                # Allow only subscribe/unsubscribe without prefix; drop other chatter
+                _append_log(f"[inbound] drop without prefix ch={ch}")
+                return
             routes, body = _route_from_text(text, default_route)
             mid = f"slack-{int(time.time())}-{user[-4:]}"
             _write_inbox(routes, body, mid)

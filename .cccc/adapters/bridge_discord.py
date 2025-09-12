@@ -235,7 +235,11 @@ def main():
             if message.author == client.user:
                 return
             text = message.content or ''
-            low = text.strip().lower()
+            # Require routing prefixes to avoid forwarding general chatter
+            if not re.search(r"^\s*(a:|b:|both:)\s*", text, re.I):
+                low = text.strip().lower()
+                if low not in ('subscribe','sub','unsubscribe','unsub') and not message.attachments:
+                    return
             if low in ('subscribe','sub'):
                 try:
                     with SUBS_LOCK:
@@ -263,7 +267,8 @@ def main():
                 inbound_root = Path(str(files_cfg.get('inbound_dir') or (HOME/"work")))
                 dest_dir = _today_dir(inbound_root, 'discord')
                 refs = []
-                for att in message.attachments:
+                # Only accept attachments if explicit routing prefix present in text
+                for att in (message.attachments or []) if re.search(r"^\s*(a:|b:|both:)\s*", text, re.I) else []:
                     safe = re.sub(r"[^A-Za-z0-9._-]", "_", att.filename or f"discord_{att.id}")
                     out = dest_dir/f"{mid}__{safe}"
                     try:
