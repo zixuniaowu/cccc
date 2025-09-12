@@ -135,7 +135,8 @@ def _sha256_file(fp: Path) -> str:
 
 def _today_dir(root: Path, sub: str) -> Path:
     dt = datetime.datetime.now().strftime('%Y%m%d')
-    p = root/"upload"/"inbound"/sub/dt
+    # root is expected to be the inbound_dir already (e.g., .cccc/work/upload/inbound)
+    p = root/sub/dt
     p.mkdir(parents=True, exist_ok=True)
     return p
 
@@ -252,15 +253,29 @@ def main():
                 _append_log(f"[inbound] skip large file {name} {size} bytes > {max_mb} MB")
                 return None
             # Destination
-            inbound_root = Path(str(cfg_files.get('inbound_dir') or (HOME/"work")))
+            inbound_root = Path(str(cfg_files.get('inbound_dir') or (HOME/"work"/"upload"/"inbound")))
             dest_dir = _today_dir(inbound_root, 'slack')
             safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)
             mid = f"slack-{int(time.time())}"
             out = dest_dir/f"{mid}__{safe}"
             # Download with Bearer header
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {bot_token}"})
-            with urllib.request.urlopen(req, timeout=30) as r, open(out, 'wb') as f:
-                f.write(r.read())
+            req = urllib.request.Request(url, headers={
+                "Authorization": f"Bearer {bot_token}",
+                "Accept": "application/octet-stream, */*"
+            })
+            with urllib.request.urlopen(req, timeout=60) as r:
+                ctype = (r.headers.get('Content-Type') or '').lower()
+                data = r.read()
+            # Guard against JSON error bodies (e.g., invalid_auth)
+            if 'json' in ctype or (data.startswith(b'{') and data.endswith(b'}')):
+                try:
+                    err = json.loads(data.decode('utf-8', 'ignore'))
+                except Exception:
+                    err = {'raw': data[:120].decode('utf-8','ignore')}
+                _append_log(f"[error] slack download returned JSON instead of file: {err}")
+                return None
+            with open(out, 'wb') as f:
+                f.write(data)
             meta = {
                 'platform': 'slack', 'name': name, 'bytes': out.stat().st_size,
                 'mime': mime, 'sha256': _sha256_file(out), 'ts': int(time.time()), 'url_src': url,

@@ -119,7 +119,7 @@ def _sha256_file(fp: Path) -> str:
 
 def _today_dir(root: Path, sub: str) -> Path:
     dt = datetime.datetime.now().strftime('%Y%m%d')
-    p = root/"upload"/"inbound"/sub/dt
+    p = root/sub/dt
     p.mkdir(parents=True, exist_ok=True)
     return p
 
