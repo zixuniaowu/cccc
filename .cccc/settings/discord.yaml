@@ -1,0 +1,15 @@
+# Discord bridge settings (MVP)
+# Provide a bot token via env or plain text; channels are numeric IDs.
+
+bot_token_env: DISCORD_BOT_TOKEN
+dry_run: true
+show_peer_messages: true
+default_route: both   # a|b|both when no explicit prefix
+
+channels:
+  to_user: []         # e.g., [123456789012345678]
+  to_peer_summary: [] # e.g., [123456789012345678]
+
+outbound:
+  reset_on_start: baseline  # baseline|clear
+
