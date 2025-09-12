@@ -246,27 +246,14 @@ outbound:
   reset_on_start: baseline
 ```
 
-## 0.2.9 Highlights (RC)
+## Feature Overview (selected)
 
-- Bridges: add Slack/Discord adapters (MVP). Outbound reads single‑source Outbox (`.cccc/state/outbox.jsonl`) via a shared consumer; inbound routes `a:/b:/both:` to mailbox inbox. Dry‑run by default; enable via `.cccc/settings/{slack,discord}.yaml` or env tokens.
-- Unified bridge CLI: `cccc bridge <telegram|slack|discord|all> start|stop|status|restart|logs`。`cccc run` 启动向导可选择连接 Telegram/Slack/Discord；也可通过 YAML `autostart` 自启。
-- Context maintenance: 每隔 N 次自检（`delivery.context_compact_every_self_checks`, 默认 5），向双端直通一次 `/compact`，随后立刻重注入完整 SYSTEM（首行含 “Now: … TZ”）。无需前置判断/重试。
-- Self‑check 增强：自检首行注入当前时间/时区；新增第 4 条“是否把 insight 用于新维度（hook/assumption/risk/trade‑off/next/delta）而非复述”；第 5 条强化“广谱专家视角以避免狭隘执行”。
-- NUDGE 改进：指数回退基于 180s，上限 60 分钟，`nudge_jitter_pct: 0.15`，无进展阈值 90s；NUDGE 文案鼓励在 inbox 为空时做高维度思考/微探针/小优化后继续推进。
-- REV 硬门槛：出现 COUNTER/QUESTION 后，对端下一条 to_peer 必须为“合格 revise”（insight.kind=revise，且含 delta/refs/next，且非复述）或携带直接证据（内联统一 diff）。否则拦截并提示，记录 `revise-intercept`。
-- 临时编码约束（PEERA）：为规避上游写文件编码顽固问题，PeerA 写入 `to_user.md`/`to_peer.md` 时使用英文 ASCII‑only（7‑bit）。问题解决后将移除该约束。
-
-配置键（新增/调整）
-- `.cccc/settings/cli_profiles.yaml` → `delivery.context_compact_every_self_checks: 5`（0=关闭）
-- `.cccc/settings/cli_profiles.yaml` → NUDGE 相关：`nudge_backoff_base_ms: 180000`、`nudge_backoff_max_ms: 3600000`、`nudge_jitter_pct: 0.15`、`nudge_progress_timeout_s: 90`
-
-## 0.2.7 Highlights (RC)
-
-- Always‑on ```insight fenced block (formerly META): each peer appends a high‑level block to every message (1–2 blocks; first ask/counter preferred). Improves alignment without changing code state.
-- Practical rule (single agent or peers): end every outbound message with exactly one trailing ```insight block (ask/counter preferred; include a concrete next step or ≤10‑min micro‑experiment). The orchestrator intercepts and asks you to overwrite and resend if the block is missing.
-- Weekly Dev Diary: single weekly file `.cccc/work/docs/weekly/YYYY-Www.md` (PeerB writes). Daily create/replace today’s section ≤40 lines (Today/Changes/Risks‑Next). Next week’s first self‑check: add `## Retrospective` 3–5 bullets.
-- Boot Context: initial SYSTEM includes current time/TZ and the weekly path; peers start with a shared anchor.
-- Outbox Discipline: to_peer.md and to_user.md are overwrite‑only; the orchestrator (core) consumes and clears after logging/forwarding to avoid repeats. Bridges are thin mirrors, not state machines.
+- Bridges: Telegram (inbound/outbound), Slack (Socket Mode + Web API, MVP), Discord (Gateway + REST, MVP). Outbound reads single‑source Outbox (`.cccc/state/outbox.jsonl`) via a shared consumer; inbound routes `a:/b:/both:` to mailbox inbox. Dry‑run by default; enable via `.cccc/settings/{slack,discord}.yaml` or env tokens.
+- Unified bridge CLI: `cccc bridge <telegram|slack|discord|all> start|stop|status|restart|logs` and an optional connect wizard in `cccc run`. Bridges can autostart via YAML.
+- Context maintenance: on a cadence (config `delivery.context_compact_every_self_checks`), send `/compact` to both CLIs and immediately reinject the full SYSTEM with a leading “Now: … TZ” line.
+- Self‑check enhancements: inject current time/TZ; add an insight‑channel reminder to generate new angles (hook/assumption/risk/trade‑off/next/delta) rather than restating.
+- NUDGE improvements: exponential backoff, jitter, progress timeout; guidance for productive action when inbox is empty.
+- REV gate: after a COUNTER/QUESTION, the next to_peer must be a valid revise (insight.kind=revise with delta/refs/next and not restating) or carry direct evidence (inline unified diff). Otherwise the message is intercepted with a short tip and logged.
 
 ## FAQ / Troubleshooting
 
