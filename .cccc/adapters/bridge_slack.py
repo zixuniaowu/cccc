@@ -241,21 +241,27 @@ def main():
             _append_log(f"[error] download file failed: {e}")
             return None
 
-    def handle(req):
+    def handle(*args, **kwargs):
         try:
-            # SocketModeRequest object: req.type, req.payload, req.envelope_id
-            typ = getattr(req, 'type', '')
-            if not typ and isinstance(req, dict):
-                typ = str(req.get('type') or '')
+            # Accept both signatures: (req) or (client, req)
+            _client = client
+            if len(args) == 1:
+                req = args[0]
+            elif len(args) >= 2:
+                _client = args[0]
+                req = args[1]
+            else:
+                return
+            # req: Slack SocketModeRequest
+            typ = str(getattr(req, 'type', '') or '')
             if typ != 'events_api':
                 return
-            payload = getattr(req, 'payload', None)
-            if payload is None and isinstance(req, dict):
-                payload = req.get('payload') or {}
+            payload = getattr(req, 'payload', None) or {}
             event = (payload or {}).get('event') or {}
             # Ack early to avoid timeouts
             try:
-                client.ack(req)
+                from slack_sdk.socket_mode.response import SocketModeResponse  # type: ignore
+                _client.send_socket_mode_response(SocketModeResponse(envelope_id=getattr(req, 'envelope_id', '')))  # type: ignore
             except Exception:
                 pass
             if str(event.get('type') or '') != 'message':
@@ -306,7 +312,9 @@ def main():
             mid = f"slack-{int(time.time())}-{user[-4:]}"
             _write_inbox(routes, body, mid)
         except Exception:
-            try: client.ack(req)
+            try:
+                from slack_sdk.socket_mode.response import SocketModeResponse  # type: ignore
+                _client.send_socket_mode_response(SocketModeResponse(envelope_id=getattr(req, 'envelope_id', '')))  # type: ignore
             except Exception: pass
 
     client.socket_mode_request_listeners.append(handle)
