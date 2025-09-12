@@ -10,6 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import os, sys, json, time, re, threading, hashlib, datetime, urllib.request
+try:
+    import fcntl  # type: ignore
+except Exception:
+    fcntl = None  # type: ignore
 
 ROOT = Path.cwd(); HOME = ROOT/".cccc"
 if str(HOME) not in sys.path: sys.path.insert(0, str(HOME))
@@ -28,6 +32,24 @@ def _now(): return time.strftime('%Y-%m-%d %H:%M:%S')
 def _append_log(line: str):
     p = HOME/"state"/"bridge-slack.log"; p.parent.mkdir(parents=True, exist_ok=True)
     with p.open('a', encoding='utf-8') as f: f.write(f"{_now()} {line}\n")
+
+def _acquire_singleton_lock(name: str = "slack-bridge"):
+    """Prevent multiple slack bridge instances from running concurrently."""
+    lf_path = HOME/"state"/f"{name}.lock"
+    lf_path.parent.mkdir(parents=True, exist_ok=True)
+    f = open(lf_path, 'w')
+    try:
+        if fcntl is not None:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        f.write(str(os.getpid()))
+        f.flush()
+    except Exception:
+        try:
+            _append_log("[warn] duplicate slack bridge instance detected; exiting")
+        except Exception:
+            pass
+        sys.exit(0)
+    return f
 
 def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
     t = (text or '').strip()
@@ -118,6 +140,7 @@ def _today_dir(root: Path, sub: str) -> Path:
     return p
 
 def main():
+    _acquire_singleton_lock("slack-bridge")
     cfg = read_yaml(HOME/"settings"/"slack.yaml")
     dry = bool(cfg.get('dry_run', True))
     app_token = os.environ.get(str(cfg.get('app_token_env') or 'SLACK_APP_TOKEN')) or cfg.get('app_token')
