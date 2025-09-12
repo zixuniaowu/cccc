@@ -14,11 +14,11 @@ peerA:
   # Optional inbound suffix per source
   inbound_suffix:
     from_user: " Explore first: 2–3 quick options (1‑liners), ask 1 decisive Q; no patch yet; then hand baton to PeerB. ultrathink"
-    from_peer: " Please review my work/opinion with first principles against our global goal; Synthesize: write a ≤6‑line Decision (or PCR+Hook) before next step; pick one cheapest discriminative Next. If nothing critical to add other than an pure ACK, stay silent and do not reply. ultrathink"
-    from_system: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line. ultrathink"
+    from_peer: " Please review my work/opinion with first principles against our global goal; If nothing critical to add other than an pure ACK, stay silent and do not reply. ultrathink"
+    from_system: " ultrathink"
   # Optional NUDGE suffix (system [NUDGE] lines only)
   # e.g., " Read the oldest file and first echo ack: <seq> before processing"
-  nudge_suffix: " Always send messages by UPDATING message files (do NOT create/'write new' these files nor print messages to console). Also use ASCII-only (7-bit). If inbox is empty: do not reply; widen perspective — re-check goals, constraints, and assumptions; look for cheap probes, small optimizations, or creative next steps; then continue any remaining tasks. ultrathink"
+  nudge_suffix: " Always send messages by UPDATING message files (do NOT create/'write new' these files nor just print messages to console). Also use ASCII-only (7-bit). If inbox is empty: do not reply; widen perspective — re-check goals, constraints, and assumptions; look for cheap probes, small optimizations, or creative next steps; Just do sth truely helpful. ultrathink"
 peerB:
   prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # Adjust to your PeerB CLI prompt if needed
   busy_regexes:
@@ -43,9 +43,9 @@ peerB:
   inbound_suffix:
     from_user: " Do not act yet; wait for PeerA’s framing. Ask 1 decisive Q or propose a 2min micro‑experiment."
     from_peer: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line; propose a Hook. If nothing critical to add other than an pure ACK, stay silent and do not reply."
-    from_system: " End micro‑loops with 2‑line Reflect: what’s unclear + the single next check (with hook)."
+    from_system: " "
   # Optional NUDGE suffix
-  nudge_suffix: " Always send messages by updating message files (do not print messages to console). If inbox is empty: do not reply; widen perspective — re-check goals, constraints, and assumptions; look for cheap probes, small optimizations, or creative next steps; then continue any remaining tasks."
+  nudge_suffix: " Always send messages by updating message files (do not just print messages to console). If inbox is empty: do not reply; widen perspective — re-check goals, constraints, and assumptions; look for cheap probes, small optimizations, or creative next steps; Just do sth truely helpful."
 delivery:
   paste_max_wait_seconds: 6       # Max wait for idle before paste
   recheck_interval_seconds: 0.6   # Poll interval
@@ -67,6 +67,8 @@ delivery:
     4) Are you actively using the insight channel for a new meta angle (hook/assumption/risk/trade-off/next/delta) rather than restating the body?
     5) As a top-tier human generalist, what broad insights prevent narrow, one-sided, or shallow execution on this task?
     Continue only after answering.
+  # Context maintenance cadence: every N self-check cycles, run /compact + SYSTEM reinjection (0=disable)
+  context_compact_every_self_checks: 5
   # --- mailbox pull + nudge mode ---
   mailbox_pull_enabled: true      # Enable inbox + NUDGE (instead of direct paste)
   inbox_dirname: "inbox"          # Inbox dir (relative to .cccc/mailbox/<peer>/)

@@ -196,6 +196,8 @@ NUDGE_PROGRESS_TIMEOUT_S = 45.0
 NUDGE_KEEPALIVE = True
 NUDGE_BACKOFF_BASE_MS = 1000.0
 NUDGE_BACKOFF_MAX_MS = 60000.0
+# Context maintenance cadence: every N self-check cycles, run /compact + SYSTEM reinjection (0=disable)
+CONTEXT_COMPACT_EVERY_SELF_CHECKS = 5
 
 def _append_suffix_inside(payload: str, suffix: str) -> str:
     """Append a short suffix to the end of the main body inside the outermost tag, if present.
@@ -1641,12 +1643,13 @@ def main(home: Path):
         INBOX_STARTUP_POLICY = str(delivery_conf.get("inbox_startup_policy", "resume") or "resume").strip().lower()
         INBOX_STARTUP_PROMPT = bool(delivery_conf.get("inbox_startup_prompt", False))
         # Progress-aware NUDGE parameters
-        global NUDGE_DEBOUNCE_MS, NUDGE_PROGRESS_TIMEOUT_S, NUDGE_KEEPALIVE, NUDGE_BACKOFF_BASE_MS, NUDGE_BACKOFF_MAX_MS
+        global NUDGE_DEBOUNCE_MS, NUDGE_PROGRESS_TIMEOUT_S, NUDGE_KEEPALIVE, NUDGE_BACKOFF_BASE_MS, NUDGE_BACKOFF_MAX_MS, CONTEXT_COMPACT_EVERY_SELF_CHECKS
         NUDGE_DEBOUNCE_MS = float(delivery_conf.get("nudge_debounce_ms", NUDGE_DEBOUNCE_MS))
         NUDGE_PROGRESS_TIMEOUT_S = float(delivery_conf.get("nudge_progress_timeout_s", NUDGE_PROGRESS_TIMEOUT_S))
         NUDGE_KEEPALIVE = bool(delivery_conf.get("nudge_keepalive", NUDGE_KEEPALIVE))
         NUDGE_BACKOFF_BASE_MS = float(delivery_conf.get("nudge_backoff_base_ms", NUDGE_BACKOFF_BASE_MS))
         NUDGE_BACKOFF_MAX_MS = float(delivery_conf.get("nudge_backoff_max_ms", NUDGE_BACKOFF_MAX_MS))
+        CONTEXT_COMPACT_EVERY_SELF_CHECKS = int(delivery_conf.get("context_compact_every_self_checks", CONTEXT_COMPACT_EVERY_SELF_CHECKS))
     except Exception:
         pass
 
@@ -2093,7 +2096,7 @@ def main(home: Path):
                                 sc_index = int(instr_counter // self_check_every) if self_check_every > 0 else 0
                             except Exception:
                                 sc_index = 0
-                            if sc_index > 0 and sc_index % 5 == 0:
+                            if (CONTEXT_COMPACT_EVERY_SELF_CHECKS > 0) and (sc_index > 0) and (sc_index % CONTEXT_COMPACT_EVERY_SELF_CHECKS == 0):
                                 try:
                                     # Send passthrough /compact to both peers (no retries, no preconditions)
                                     _send_raw_to_cli(home, 'PeerA', '/compact', modeA, modeB, left, right)
