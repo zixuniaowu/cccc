@@ -607,11 +607,11 @@ def main():
     # Wizard logic: only in interactive TTY and when CCCC_NO_WIZARD is not set
     if _isatty() and not os.environ.get('CCCC_NO_WIZARD'):
         try:
-            print("\n[SETUP] Choose run mode:\n  1) Local CLI only (default)\n  2) Local + connect Telegram\n  3) Local + connect Slack (Socket Mode + Web API)\n  4) Local + connect Discord\n  5) Local + connect All (Telegram+Slack+Discord)")
-            choice = input("> Enter 1 or 2 (Enter=1): ").strip() or "1"
+            print("\n[SETUP] Choose run mode:\n  1) Local CLI only (default)\n  2) Local + connect Telegram\n  3) Local + connect Slack (Socket Mode + Web API)\n  4) Local + connect Discord")
+            choice = input("> Enter 1-4 (Enter=1): ").strip() or "1"
         except Exception:
             choice = "1"
-        if choice in ("2","5"):
+        if choice == "2":
             cfg_path = home/"settings"/"telegram.yaml"
             cfg = _read_yaml(cfg_path)
             if not cfg:
@@ -746,7 +746,7 @@ def main():
                     _spawn_telegram_bridge({})
                 else:
                     print("[WARN] No token provided; continue in local mode without Telegram.")
-        if choice in ("3","5"):
+        if choice == "3":
             # Try to start Slack if tokens present; do not block on prompts (keep wizard light)
             scfg = _read_yaml(home/"settings"/"slack.yaml")
             at_env = str((scfg or {}).get('app_token_env') or 'SLACK_APP_TOKEN')
@@ -767,7 +767,7 @@ def main():
                     pass
             else:
                 print("[SLACK] Bot token missing; configure .cccc/settings/slack.yaml or env SLACK_BOT_TOKEN.")
-        if choice in ("4","5"):
+        if choice == "4":
             dcfg = _read_yaml(home/"settings"/"discord.yaml")
             be = str((dcfg or {}).get('bot_token_env') or 'DISCORD_BOT_TOKEN')
             env = {}
