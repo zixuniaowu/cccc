@@ -1653,6 +1653,62 @@ def main(home: Path):
     except Exception:
         pass
 
+    # Lazy preamble (applies to both console input and mailbox-driven inbound)
+    LAZY = (delivery_conf.get("lazy_preamble") or {}) if isinstance(delivery_conf.get("lazy_preamble"), dict) else {}
+    LAZY_ENABLED = bool(LAZY.get("enabled", True))
+
+    def _preamble_state_path() -> Path:
+        return state/"preamble_sent.json"
+    def _load_preamble_sent() -> Dict[str,bool]:
+        try:
+            return json.loads(_preamble_state_path().read_text(encoding="utf-8"))
+        except Exception:
+            return {"PeerA": False, "PeerB": False}
+    def _save_preamble_sent(st: Dict[str,bool]):
+        try:
+            _preamble_state_path().write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    def _maybe_prepend_preamble_inbox(receiver_label: str):
+        """If first user message for this peer arrived via mailbox inbox, prepend preamble in-file."""
+        if not LAZY_ENABLED:
+            return
+        try:
+            st = _load_preamble_sent()
+            if bool(st.get(receiver_label)):
+                return
+            ib = _inbox_dir(home, receiver_label)
+            files = sorted([f for f in ib.iterdir() if f.is_file()], key=lambda p: p.name)
+            if not files:
+                return
+            target = files[0]
+            try:
+                body = target.read_text(encoding='utf-8')
+            except Exception:
+                return
+            # Only modify <FROM_USER> payloads; otherwise keep as-is
+            m = re.search(r"<\s*FROM_USER\s*>\s*([\s\S]*?)<\s*/FROM_USER\s*>", body, re.I)
+            if not m:
+                return
+            peer_key = "peerA" if receiver_label == "PeerA" else "peerB"
+            pre = weave_preamble_text(home, peer_key)
+            # If preamble text already present (e.g., injected by adapter), skip to avoid duplication
+            try:
+                if pre and pre.strip() and (pre.strip() in body):
+                    st[receiver_label] = True
+                    _save_preamble_sent(st)
+                    return
+            except Exception:
+                pass
+            inner = m.group(1)
+            combined = f"<FROM_USER>\n{pre}\n\n{inner.strip()}\n</FROM_USER>\n"
+            target.write_text(combined, encoding='utf-8')
+            st[receiver_label] = True
+            _save_preamble_sent(st)
+            log_ledger(home, {"from":"system","kind":"lazy-preamble-sent","peer":receiver_label, "route":"mailbox"})
+        except Exception:
+            pass
+
     # Prepare tmux session/panes
     if not tmux_session_exists(session):
         _,_ = tmux_new_session(session)
@@ -2365,6 +2421,8 @@ def main(home: Path):
                 files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
                 if not files:
                     continue
+                # Before nudging the peer to read the first message, ensure lazy preamble is prepended once
+                _maybe_prepend_preamble_inbox(label)
                 # Coalesced NUDGE: send only when needed; backoff otherwise
                 if label == "PeerA":
                     sent = _maybe_send_nudge(home, label, pane, profileA, suffix=(profileA.get('nudge_suffix') or '').strip())

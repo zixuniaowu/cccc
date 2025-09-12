@@ -354,7 +354,7 @@ def main():
                 if not env.get(be):
                     v = os.environ.get(be, '')
                     if v: env[be] = v; src = f"env:{be}"
-                # Discord可在dry_run下运行 outbound-only；无token仍可运行但仅记录
+                # Discord 需要有效的 Bot Token；否则退出
             # Run from project root
             p = subprocess.Popen([sys.executable, str(script)], env=env, cwd=str(Path.cwd()), start_new_session=True)
             pid_path.write_text(str(p.pid), encoding='utf-8')
@@ -679,19 +679,17 @@ def main():
                 cfg = {
                     "token_env": "TELEGRAM_BOT_TOKEN",
                     "allow_chats": [],
-                    "dry_run": False,
                     "discover_allowlist": True,
                     "autoregister": "open",
                     "max_auto_subs": 3,
                 }
             else:
-                cfg["dry_run"] = False
                 if not cfg.get("allow_chats"):
                     cfg["discover_allowlist"] = True
-                if not cfg.get("autoregister"):
-                    cfg["autoregister"] = "open"
-                if not cfg.get("max_auto_subs"):
-                    cfg["max_auto_subs"] = 3
+            if not cfg.get("autoregister"):
+                cfg["autoregister"] = "open"
+            if not cfg.get("max_auto_subs"):
+                cfg["max_auto_subs"] = 3
             # Normalize allow_chats (handle strings like "[]" or "[123]")
             def _coerce_allowlist(val):
                 def to_int(x):
@@ -814,7 +812,6 @@ def main():
                 "app_token_env": "SLACK_APP_TOKEN",
                 "bot_token_env": "SLACK_BOT_TOKEN",
                 "autostart": False,
-                "dry_run": False,
                 "channels": {"to_user": [], "to_peer_summary": []},
                 "outbound": {"reset_on_start": "baseline"},
             }
@@ -869,7 +866,6 @@ def main():
             dcfg = _read_yaml(cfg_path) or {
                 "bot_token_env": "DISCORD_BOT_TOKEN",
                 "autostart": False,
-                "dry_run": False,
                 "channels": {"to_user": [], "to_peer_summary": []},
                 "outbound": {"reset_on_start": "baseline"},
             }

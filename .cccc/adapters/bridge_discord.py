@@ -4,7 +4,6 @@
 Discord Bridge (MVP)
 - Outbound: read outbox.jsonl and post to configured channels
 - Inbound: on_message (optional) to route into mailbox via a:/b:/both:
-- If discord.py is not installed or token missing, run in dry-run outbound mode.
 """
 from __future__ import annotations
 from pathlib import Path
@@ -126,13 +125,12 @@ def _today_dir(root: Path, sub: str) -> Path:
 def main():
     _acquire_singleton_lock("discord-bridge")
     cfg = read_yaml(HOME/"settings"/"discord.yaml")
-    dry = bool(cfg.get('dry_run', True))
     token = os.environ.get(str(cfg.get('bot_token_env') or 'DISCORD_BOT_TOKEN')) or cfg.get('bot_token')
     chans_user = [int(x) for x in (cfg.get('channels') or {}).get('to_user', [])]
     chans_peer = [int(x) for x in (cfg.get('channels') or {}).get('to_peer_summary', [])]
     reset = str((cfg.get('outbound') or {}).get('reset_on_start', 'baseline'))
     show_peers = bool(cfg.get('show_peer_messages', True))
-    default_route = str(cfg.get('default_route','both')).lower()[0:1] if cfg.get('default_route') else 'b'
+    default_route = str(cfg.get('default_route','both')).lower() if cfg.get('default_route') else 'both'
 
     # Outbound consumer thread
     try:
@@ -184,7 +182,16 @@ def main():
             enqueue(chs, msg)
 
     def on_to_peer_summary(ev: Dict[str,Any]):
-        if not show_peers: return
+        # Runtime override via shared bridge-runtime.json
+        eff_show = show_peers
+        try:
+            rp = HOME/"state"/"bridge-runtime.json"
+            if rp.exists():
+                eff_show = bool((json.loads(rp.read_text(encoding='utf-8')) or {}).get('show_peer_messages', show_peers))
+        except Exception:
+            pass
+        if not eff_show:
+            return
         frm = str(ev.get('from') or '')
         label = 'PeerA→PeerB' if frm in ('PeerA','peera','peera') else 'PeerB→PeerA'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
@@ -197,29 +204,17 @@ def main():
     t = threading.Thread(target=lambda: oc.loop(on_to_user, on_to_peer_summary), daemon=True)
     t.start()
 
-    # If no token or dry_run, continue outbound-only loop in background
-    if dry or not token:
-        _log("[info] dry-run or token missing; not connecting to Discord (outbound-only)")
-        def dry_loop():
-            while True:
-                with q_lock:
-                    if send_queue:
-                        ch, msg = send_queue.pop(0)
-                        _log(f"[dry-run] outbound to {ch}: {len(msg)} chars")
-                time.sleep(0.5)
-        threading.Thread(target=dry_loop, daemon=True).start()
+    # Require token for any Discord operations
+    if not token:
+        _log("[error] DISCORD_BOT_TOKEN missing; exiting")
+        sys.exit(1)
 
     # Live mode with discord.py
     try:
         import discord  # type: ignore
     except Exception as e:
-        _log(f"[warn] discord.py not installed: {e}; running outbound dry-run")
-        while True:
-            with q_lock:
-                if send_queue:
-                    ch, msg = send_queue.pop(0)
-                    _log(f"[dry-run] outbound to {ch}: {len(msg)} chars")
-            time.sleep(0.5)
+        _log(f"[error] discord.py not installed: {e}; exiting")
+        sys.exit(1)
 
     intents = discord.Intents.default()
     intents.message_content = True
@@ -238,7 +233,7 @@ def main():
             # Require routing prefixes to avoid forwarding general chatter
             if not re.search(r"^\s*(a:|b:|both:)\s*", text, re.I):
                 low = text.strip().lower()
-                if low not in ('subscribe','sub','unsubscribe','unsub') and not message.attachments:
+                if low not in ('subscribe','sub','unsubscribe','unsub','showpeers on','showpeers off') and not message.attachments:
                     return
             if low in ('subscribe','sub'):
                 try:
@@ -246,6 +241,22 @@ def main():
                         if message.channel.id not in SUBS:
                             SUBS.append(message.channel.id); save_subs(SUBS)
                     await message.channel.send('Subscribed this channel for to_user/to_peer_summary.')
+                except Exception:
+                    pass
+                return
+            if low in ('showpeers on','showpeers off'):
+                val = (low.endswith('on'))
+                rt_path = HOME/"state"/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    cur = {}
+                    if rt_path.exists():
+                        cur = json.loads(rt_path.read_text(encoding='utf-8'))
+                    cur['show_peer_messages'] = bool(val)
+                    rt_path.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding='utf-8')
+                except Exception:
+                    pass
+                try:
+                    await message.channel.send(f"Peer↔Peer summary set to: {'ON' if val else 'OFF'} (global)")
                 except Exception:
                     pass
                 return
@@ -264,8 +275,11 @@ def main():
             # Save attachments if any
             try:
                 files_cfg = (cfg.get('files') or {})
-                inbound_root = Path(str(files_cfg.get('inbound_dir') or (HOME/"work")))
-                dest_dir = _today_dir(inbound_root, 'discord')
+                inbound_root = Path(str(files_cfg.get('inbound_dir') or (HOME/"work"/"upload"/"inbound")))
+                # Unify: inbound/<platform>/<channel>/YYYYMMDD
+                day = datetime.datetime.now().strftime('%Y%m%d')
+                dest_dir = inbound_root/'discord'/str(message.channel.id)/day
+                dest_dir.mkdir(parents=True, exist_ok=True)
                 refs = []
                 # Only accept attachments if explicit routing prefix present in text
                 for att in (message.attachments or []) if re.search(r"^\s*(a:|b:|both:)\s*", text, re.I) else []:
@@ -276,6 +290,7 @@ def main():
                         meta = {
                             'platform': 'discord', 'name': att.filename, 'bytes': out.stat().st_size,
                             'mime': att.content_type, 'sha256': _sha256_file(out), 'ts': int(time.time()), 'url_src': att.url,
+                            'mid': mid,
                         }
                         with open(out.with_suffix(out.suffix+".meta.json"), 'w', encoding='utf-8') as mf:
                             json.dump(meta, mf, ensure_ascii=False, indent=2)

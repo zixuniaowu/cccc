@@ -4,12 +4,12 @@
 Slack Bridge (MVP)
 - Outbound: read .cccc/state/outbox.jsonl (single source) and post messages to configured channels
 - Inbound: Socket Mode (optional) to accept messages and route to mailbox inbox with a:/b:/both: prefixes
-- Dry-run friendly; loads only when tokens present
 """
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
 import os, sys, json, time, re, threading, hashlib, datetime, urllib.request, urllib.parse
+from urllib.error import HTTPError, URLError
 try:
     import fcntl  # type: ignore
 except Exception:
@@ -143,14 +143,18 @@ def _today_dir(root: Path, sub: str) -> Path:
 def main():
     _acquire_singleton_lock("slack-bridge")
     cfg = read_yaml(HOME/"settings"/"slack.yaml")
-    dry = bool(cfg.get('dry_run', True))
     app_token = os.environ.get(str(cfg.get('app_token_env') or 'SLACK_APP_TOKEN')) or cfg.get('app_token')
     bot_token = os.environ.get(str(cfg.get('bot_token_env') or 'SLACK_BOT_TOKEN')) or cfg.get('bot_token')
     channels_to_user = [str(x) for x in (cfg.get('channels') or {}).get('to_user', [])]
     channels_peer = [str(x) for x in (cfg.get('channels') or {}).get('to_peer_summary', [])]
     reset = str((cfg.get('outbound') or {}).get('reset_on_start', 'baseline'))
     show_peers = bool(cfg.get('show_peer_messages', True))
-    default_route = str(cfg.get('default_route','both')).lower()[0:1] if cfg.get('default_route') else 'b'
+    default_route = str(cfg.get('default_route','both')).lower() if cfg.get('default_route') else 'both'
+
+    # Require bot token for any Slack operations
+    if not bot_token:
+        _append_log("[error] SLACK_BOT_TOKEN missing; exiting")
+        sys.exit(1)
 
     # Outbound consumer
     try:
@@ -181,9 +185,6 @@ def main():
     SUBS = load_subs()
 
     def send_text(chs: List[str], text: str):
-        if dry or not bot_token:
-            _append_log(f"[dry-run] outbound len={len(text)} to {chs}")
-            return
         try:
             from slack_sdk import WebClient  # type: ignore
             cli = WebClient(token=bot_token)
@@ -203,7 +204,16 @@ def main():
             send_text(chs, msg)
 
     def on_to_peer_summary(ev: Dict[str,Any]):
-        if not show_peers: return
+        # Runtime override via shared bridge-runtime.json
+        eff_show = show_peers
+        try:
+            rp = HOME/"state"/"bridge-runtime.json"
+            if rp.exists():
+                eff_show = bool((json.loads(rp.read_text(encoding='utf-8')) or {}).get('show_peer_messages', show_peers))
+        except Exception:
+            pass
+        if not eff_show:
+            return
         frm = str(ev.get('from') or '')
         label = 'PeerA→PeerB' if frm in ('PeerA','peera','peera') else 'PeerB→PeerA'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
@@ -215,19 +225,12 @@ def main():
     th = threading.Thread(target=lambda: oc.loop(on_to_user, on_to_peer_summary), daemon=True)
     th.start()
 
-    # Inbound via Socket Mode (optional)
-    if dry or not (app_token and bot_token):
-        _append_log("[info] inbound disabled (dry_run or tokens missing)")
-        # Still support outbound files watcher in dry-run (logs only)
-        pass
-
+    # Prepare WebClient (required for outbound; exit if slack_sdk missing)
     try:
-        from slack_sdk.socket_mode import SocketModeClient  # type: ignore
         from slack_sdk.web import WebClient  # type: ignore
     except Exception as e:
-        _append_log(f"[warn] slack_sdk not installed: {e}; inbound disabled")
-        while True: time.sleep(1.0)
-
+        _append_log(f"[error] slack_sdk not installed: {e}; exiting")
+        sys.exit(1)
     web = WebClient(token=bot_token)
     # Discover bot user id to ignore self-messages (prevent echo loops)
     BOT_USER_ID = ""
@@ -237,11 +240,38 @@ def main():
         _append_log(f"[info] slack bot user_id={BOT_USER_ID}")
     except Exception as e:
         _append_log(f"[warn] slack auth_test failed: {e}")
-    client = SocketModeClient(app_token=app_token, web_client=web)
-
-    def _download_slack_file(file_obj: Dict[str, Any]) -> Optional[Tuple[Path, Dict[str, Any]]]:
+    client = None
+    socket_mode_available = False
+    if app_token:
         try:
+            from slack_sdk.socket_mode import SocketModeClient  # type: ignore
+            from slack_sdk.socket_mode.response import SocketModeResponse  # type: ignore
+            client = SocketModeClient(app_token=app_token, web_client=web)
+            socket_mode_available = True
+        except Exception as e:
+            _append_log(f"[warn] slack socket mode unavailable: {e}; inbound disabled")
+    else:
+        _append_log("[info] inbound disabled (no SLACK_APP_TOKEN)")
+
+    def _download_slack_file(file_obj: Dict[str, Any], channel_id: Optional[str] = None) -> Optional[Tuple[Path, Dict[str, Any]]]:
+        """Robustly download a Slack file with token auth, preserving Authorization
+        across Slack-domain redirects, validating content-type, and streaming to disk.
+        """
+        try:
+            # Prefer fresh url_private_download; fall back to url_private; refetch via files.info when missing
             url = file_obj.get('url_private_download') or file_obj.get('url_private')
+            fid = str(file_obj.get('id') or '')
+            if not url and fid:
+                try:
+                    info = web.files_info(file=fid)
+                    file2 = (info or {}).get('file') or {}
+                    url = file2.get('url_private_download') or file2.get('url_private')
+                    # merge enriched fields
+                    for k in ('mimetype','name','size'):
+                        if not file_obj.get(k) and file2.get(k):
+                            file_obj[k] = file2.get(k)
+                except Exception as e:
+                    _append_log(f"[warn] files_info failed for {fid}: {e}")
             if not url:
                 return None
             name = file_obj.get('name') or f"slack_{int(time.time())}"
@@ -252,36 +282,115 @@ def main():
             if max_mb > 0 and size > max_mb * 1024 * 1024:
                 _append_log(f"[inbound] skip large file {name} {size} bytes > {max_mb} MB")
                 return None
-            # Destination
             inbound_root = Path(str(cfg_files.get('inbound_dir') or (HOME/"work"/"upload"/"inbound")))
-            dest_dir = _today_dir(inbound_root, 'slack')
+            # Unify: inbound/<platform>/<channel>/YYYYMMDD
+            ch_folder = str(channel_id or 'unknown')
+            day = datetime.datetime.now().strftime('%Y%m%d')
+            dest_dir = inbound_root/'slack'/ch_folder/day
+            dest_dir.mkdir(parents=True, exist_ok=True)
             safe = re.sub(r"[^A-Za-z0-9._-]", "_", name)
             mid = f"slack-{int(time.time())}"
             out = dest_dir/f"{mid}__{safe}"
-            # Download with Bearer header
-            req = urllib.request.Request(url, headers={
+
+            # Custom redirect handler that preserves Authorization for Slack-owned hosts only
+            class _AuthRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+                    new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+                    try:
+                        if new_req is None:
+                            return None
+                        auth = req.headers.get('Authorization')
+                        if auth:
+                            try:
+                                o = urllib.parse.urlparse(req.full_url)
+                                n = urllib.parse.urlparse(newurl)
+                                # Only forward token to Slack-owned domains
+                                def _is_slack_host(netloc: str) -> bool:
+                                    h = (netloc or '').lower()
+                                    return h.endswith('slack.com') or h.endswith('slack-edge.com') or h.endswith('files.slack.com')
+                                if _is_slack_host(o.netloc) and _is_slack_host(n.netloc):
+                                    new_req.add_unredirected_header('Authorization', auth)
+                            except Exception:
+                                pass
+                        # Preserve Accept / UA for subsequent hops
+                        if 'Accept' in req.headers:
+                            new_req.add_unredirected_header('Accept', req.headers['Accept'])
+                        if 'User-Agent' in req.headers:
+                            new_req.add_unredirected_header('User-Agent', req.headers['User-Agent'])
+                    except Exception:
+                        pass
+                    return new_req
+
+            opener = urllib.request.build_opener(_AuthRedirect())
+            headers = {
                 "Authorization": f"Bearer {bot_token}",
-                "Accept": "application/octet-stream, */*"
-            })
-            with urllib.request.urlopen(req, timeout=60) as r:
-                ctype = (r.headers.get('Content-Type') or '').lower()
-                data = r.read()
-            # Guard against JSON error bodies (e.g., invalid_auth)
-            if 'json' in ctype or (data.startswith(b'{') and data.endswith(b'}')):
-                try:
-                    err = json.loads(data.decode('utf-8', 'ignore'))
-                except Exception:
-                    err = {'raw': data[:120].decode('utf-8','ignore')}
-                _append_log(f"[error] slack download returned JSON instead of file: {err}")
-                return None
-            with open(out, 'wb') as f:
-                f.write(data)
-            meta = {
-                'platform': 'slack', 'name': name, 'bytes': out.stat().st_size,
-                'mime': mime, 'sha256': _sha256_file(out), 'ts': int(time.time()), 'url_src': url,
+                "Accept": "application/octet-stream, */*",
+                "User-Agent": "cccc-slack-bridge/0.2.9"
             }
-            with open(out.with_suffix(out.suffix+".meta.json"), 'w', encoding='utf-8') as mf:
-                json.dump(meta, mf, ensure_ascii=False, indent=2)
+
+            def _fetch_to(out_path: Path, src_url: str) -> Tuple[bool, str, int, Optional[str]]:
+                try:
+                    req = urllib.request.Request(src_url, headers=headers)
+                    with opener.open(req, timeout=120) as r:
+                        ctype = (r.headers.get('Content-Type') or '').lower()
+                        clen = r.headers.get('Content-Length')
+                        exp = int(clen) if clen and clen.isdigit() else -1
+                        # Reject obvious error bodies
+                        if 'application/json' in ctype or 'text/html' in ctype:
+                            blob = r.read(512)
+                            try:
+                                preview = blob.decode('utf-8','ignore')
+                            except Exception:
+                                preview = str(blob[:80])
+                            return False, ctype, 0, preview
+                        written = 0
+                        with open(out_path, 'wb') as f:
+                            while True:
+                                chunk = r.read(1024*256)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                                written += len(chunk)
+                        if exp > 0 and written != exp:
+                            return False, ctype, written, f"length_mismatch expected={exp} got={written}"
+                        return True, ctype, written, None
+                except HTTPError as e:
+                    return False, f"http_error:{e.code}", 0, str(e)
+                except URLError as e:
+                    return False, "url_error", 0, str(e)
+                except Exception as e:
+                    return False, "exception", 0, str(e)
+
+            ok, ctype, bytes_written, err = _fetch_to(out, url)
+            if not ok and fid:
+                # One retry via fresh files.info (URL may rotate)
+                try:
+                    info = web.files_info(file=fid)
+                    file2 = (info or {}).get('file') or {}
+                    retry_url = file2.get('url_private_download') or file2.get('url_private') or url
+                    ok, ctype, bytes_written, err = _fetch_to(out, retry_url)
+                except Exception as e:
+                    _append_log(f"[warn] retry files_info failed for {fid}: {e}")
+
+            if not ok:
+                _append_log(f"[error] slack download failed name={name} url={url} ctype={ctype} err={err}")
+                try:
+                    if out.exists():
+                        out.unlink()
+                except Exception:
+                    pass
+                return None
+
+            meta = {
+                'platform': 'slack', 'name': name, 'bytes': bytes_written,
+                'mime': mime or ctype, 'sha256': _sha256_file(out), 'ts': int(time.time()), 'url_src': url,
+                'mid': mid,
+            }
+            try:
+                with open(out.with_suffix(out.suffix+".meta.json"), 'w', encoding='utf-8') as mf:
+                    json.dump(meta, mf, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
             return out, meta
         except Exception as e:
             _append_log(f"[error] download file failed: {e}")
@@ -306,33 +415,17 @@ def main():
             event = (payload or {}).get('event') or {}
             # Ack early to avoid timeouts
             try:
-                from slack_sdk.socket_mode.response import SocketModeResponse  # type: ignore
-                _client.send_socket_mode_response(SocketModeResponse(envelope_id=getattr(req, 'envelope_id', '')))  # type: ignore
+                try:
+                    from slack_sdk.socket_mode.response import SocketModeResponse  # type: ignore
+                    _client.send_socket_mode_response(SocketModeResponse(envelope_id=getattr(req, 'envelope_id', '')))  # type: ignore
+                except Exception:
+                    pass
             except Exception:
                 pass
             etype = str(event.get('type') or '')
             if etype == 'file_shared':
-                # Handle files shared without a text message
-                try:
-                    fid = str(event.get('file_id') or (event.get('file') or {}).get('id') or '')
-                    ch2 = str(event.get('channel_id') or '')
-                    body = ''
-                    # Only accept file_shared in DMs; ignore in channels to avoid noise
-                    if not (ch2.startswith('D') or str(event.get('channel_type') or '') == 'im'):
-                        return
-                    if fid:
-                        info = web.files_info(file=fid)
-                        fobj = (info.get('file') or {})
-                        got = _download_slack_file(fobj)
-                        if got:
-                            out, meta = got
-                            body = ("Files:\n- " + f"{str(out)} ({meta.get('mime','')},{meta.get('bytes',0)} bytes)").strip()
-                    # Route (default)
-                    routes, final = _route_from_text(body, default_route)
-                    mid = f"slack-{int(time.time())}"
-                    _write_inbox(routes, final, mid)
-                except Exception as e:
-                    _append_log(f"[error] handle file_shared failed: {e}")
+                # Enforce explicit routing: ignore bare file_shared without text
+                _append_log("[inbound] drop file_shared without text (require a:/b:/both: with attachments)")
                 return
             if etype != 'message':
                 return
@@ -343,8 +436,6 @@ def main():
             text = str(event.get('text') or '')
             ch = str(event.get('channel') or '')
             user = str(event.get('user') or '')
-            ch_type = str(event.get('channel_type') or '')
-            is_dm = (ch.startswith('D') or ch_type == 'im')
             # Routing prefixes only; ignore general chatter without explicit route
             prefix_re = re.compile(r"^\s*(a:|b:|both:)\s*", re.I)
             has_prefix = bool(prefix_re.search(text))
@@ -365,7 +456,25 @@ def main():
                     web.chat_postMessage(channel=ch, text="Subscribed this channel for to_user/to_peer_summary.")
                 except Exception:
                     pass
-                client.ack(evt); return
+                return
+            # Runtime toggle: showpeers on|off
+            msp = re.match(r"^\s*/?showpeers\s+(on|off)\b", low)
+            if msp:
+                val = (msp.group(1) == 'on')
+                rt_path = HOME/"state"/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    cur = {}
+                    if rt_path.exists():
+                        cur = json.loads(rt_path.read_text(encoding='utf-8'))
+                    cur['show_peer_messages'] = bool(val)
+                    rt_path.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding='utf-8')
+                except Exception:
+                    pass
+                try:
+                    web.chat_postMessage(channel=ch, text=f"Peer↔Peer summary set to: {'ON' if val else 'OFF'} (global)")
+                except Exception:
+                    pass
+                return
             if low in ("unsubscribe","unsub"):
                 with SUBS_LOCK:
                     SUBS2 = [x for x in SUBS if x != ch]
@@ -375,20 +484,28 @@ def main():
                     web.chat_postMessage(channel=ch, text="Unsubscribed this channel.")
                 except Exception:
                     pass
-                client.ack(evt); return
+                return
 
             # Files (if any)
             try:
                 flist = event.get('files') or []
                 if flist and has_prefix:  # only accept files with explicit routing
-                    saved = []
+                    saved: List[Tuple[Path, Dict[str, Any]]] = []
+                    missed: List[str] = []
                     for fo in flist:
-                        got = _download_slack_file(fo)
+                        got = _download_slack_file(fo, ch)
                         if got:
                             saved.append(got)
+                        else:
+                            link = str((fo or {}).get('permalink') or (fo or {}).get('url_private') or '')
+                            if link:
+                                missed.append(link)
                     if saved:
                         refs = "\n".join([f"- {str(p)} ({m.get('mime','')},{m.get('bytes',0)} bytes)" for p,m in saved])
                         text = (text + "\n\nFiles:\n" + refs).strip()
+                    if missed:
+                        refs2 = "\n".join([f"- {u}" for u in missed])
+                        text = (text + "\n\nFiles (undownloaded):\n" + refs2).strip()
             except Exception as e:
                 _append_log(f"[error] files in message failed: {e}")
             # Route and write inbox
@@ -404,17 +521,14 @@ def main():
                 from slack_sdk.socket_mode.response import SocketModeResponse  # type: ignore
                 _client.send_socket_mode_response(SocketModeResponse(envelope_id=getattr(req, 'envelope_id', '')))  # type: ignore
             except Exception: pass
-
-    client.socket_mode_request_listeners.append(handle)
-    _append_log("[info] slack socket mode starting …")
-    client.connect()
-    # Outbound files watcher (both in live and dry-run modes)
+    if socket_mode_available and client is not None:
+        client.socket_mode_request_listeners.append(handle)
+        _append_log("[info] slack socket mode starting …")
+        client.connect()
+    # Outbound files watcher
     def _send_file_to_channels(fp: Path, caption: str) -> bool:
         cap = _summarize(caption or '', 1200, 10)
         chs = list(dict.fromkeys((channels_to_user or []) + (channels_peer or [])))
-        if dry or not bot_token:
-            _append_log(f"[dry-run] outbound file {fp.name} to {chs}; caption={len(cap)} chars")
-            return True
         try:
             from slack_sdk import WebClient  # type: ignore
             cli = WebClient(token=bot_token)
