@@ -284,6 +284,28 @@ def main():
         }.get(name)
         pid_path = state/f"bridge-{name}.pid"
         log_path = state/f"bridge-{name}.log"
+        def _find_pids_for(script_path: Path) -> list[int]:
+            pids: list[int] = []
+            sp = str(script_path.resolve()) if script_path else ''
+            if not sp:
+                return pids
+            proc = Path('/proc')
+            try:
+                for d in proc.iterdir():
+                    if not d.is_dir():
+                        continue
+                    if not d.name.isdigit():
+                        continue
+                    pid = int(d.name)
+                    try:
+                        cmd = (d/"cmdline").read_bytes().decode('utf-8','ignore')
+                        if sp in cmd:
+                            pids.append(pid)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            return pids
         def _alive(pid: int) -> bool:
             try:
                 os.kill(pid, 0)
@@ -339,8 +361,23 @@ def main():
             print(f"[BRIDGE] {name} started, pid={p.pid} ({src or 'no-tokens'})")
         def _stop():
             try:
+                # Kill by pid file (if present)
                 if pid_path.exists():
-                    pid = int(pid_path.read_text(encoding='utf-8').strip())
+                    try:
+                        pid = int(pid_path.read_text(encoding='utf-8').strip())
+                    except Exception:
+                        pid = 0
+                    if pid:
+                        try:
+                            os.killpg(os.getpgid(pid), signal.SIGTERM)
+                        except Exception:
+                            try:
+                                os.kill(pid, signal.SIGTERM)
+                            except Exception:
+                                pass
+                # Also scan /proc for any matching script processes and stop them all
+                pids = _find_pids_for(script)
+                for pid in pids:
                     try:
                         os.killpg(os.getpgid(pid), signal.SIGTERM)
                     except Exception:
@@ -348,21 +385,23 @@ def main():
                             os.kill(pid, signal.SIGTERM)
                         except Exception:
                             pass
-                    print(f"[BRIDGE] {name} stop signal sent.")
+                print(f"[BRIDGE] {name} stop signal sent (targets={len(pids) + (1 if pid_path.exists() else 0)}).")
             except Exception as e:
                 print(f"[BRIDGE] {name} stop failed:", e)
         def _status():
+            pids = _find_pids_for(script)
+            pid_file_pid = None
             if pid_path.exists():
                 try:
-                    pid = int(pid_path.read_text(encoding='utf-8').strip())
+                    pid_file_pid = int(pid_path.read_text(encoding='utf-8').strip())
                 except Exception:
-                    pid = 0
-                if pid and _alive(pid):
-                    print(f"[BRIDGE] {name} running, pid={pid}")
-                else:
-                    print(f"[BRIDGE] {name} not running (stale pid file).")
+                    pid_file_pid = None
+            if pids:
+                print(f"[BRIDGE] {name} running (instances={len(pids)}): {', '.join(str(p) for p in pids)}")
             else:
                 print(f"[BRIDGE] {name} not running.")
+            if pid_file_pid and pid_file_pid not in pids:
+                print(f"  note: pid file exists but process not found (stale pid {pid_file_pid}).")
         def _logs(lines: int = 120, follow: bool = False):
             lg = log_path
             if not lg.exists():
@@ -605,6 +644,17 @@ def main():
     # Ensure child cleanup on exit and signals
     def _install_shutdown_hooks():
         atexit.register(_cleanup_bridge)
+        # Also best-effort stop Slack/Discord bridges started outside this process
+        def _kill_known_bridges():
+            try:
+                for nm in ('slack','discord'):
+                    try:
+                        _cmd_bridge(nm, 'stop')
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        atexit.register(_kill_known_bridges)
         def _sig_handler(signum, frame):
             _cleanup_bridge()
             # Re-raise default behavior
