@@ -113,7 +113,10 @@ def main():
     default_route = str(cfg.get('default_route','both')).lower()[0:1] if cfg.get('default_route') else 'b'
 
     # Outbound consumer thread
-    from .outbox_consumer import OutboxConsumer
+    try:
+        from adapters.outbox_consumer import OutboxConsumer
+    except Exception:
+        from outbox_consumer import OutboxConsumer
     oc = OutboxConsumer(HOME, seen_name='discord', reset_on_start=reset)
 
     send_queue: List[Tuple[int,str]] = []  # (channel_id, text)

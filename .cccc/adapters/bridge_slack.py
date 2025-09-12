@@ -129,7 +129,10 @@ def main():
     default_route = str(cfg.get('default_route','both')).lower()[0:1] if cfg.get('default_route') else 'b'
 
     # Outbound consumer
-    from .outbox_consumer import OutboxConsumer
+    try:
+        from adapters.outbox_consumer import OutboxConsumer
+    except Exception:
+        from outbox_consumer import OutboxConsumer
     oc = OutboxConsumer(HOME, seen_name='slack', reset_on_start=reset)
 
     def send_text(chs: List[str], text: str):
