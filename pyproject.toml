@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cccc-pair"
-version = "0.2.9rc4"
+version = "0.2.9rc5"
 description = "Two‑AI orchestrator (tmux) for evidence‑first, small‑step collaboration"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
