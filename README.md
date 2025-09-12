@@ -183,6 +183,11 @@ RFD is not required here. It triggers automatically only for protected areas or 
 - `cccc clean` — purge `.cccc/{mailbox,work,logs,state}/`
 - `cccc version` — show package version and scaffold path info
 
+Adapter dependencies (optional)
+- Slack bridge requires `slack_sdk` (install via `pip install slack_sdk`).
+- Discord bridge requires `discord.py` (install via `pip install discord.py`).
+If these packages are not installed, adapters run in dry-run/outbound-only mode and log a hint.
+
 CLI prerequisites (summary)
 - Peer A = Claude Code; Peer B = Codex CLI. Install and log in as required by each vendor.
 - Ensure the binaries (`claude`, `codex`) are on PATH or set `commands.peer*`/`CLAUDE_I_CMD`/`CODEX_I_CMD`.

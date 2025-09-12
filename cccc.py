@@ -223,6 +223,12 @@ def main():
             at = (scfg or {}).get('app_token') or os.environ.get(at_env)
             bt = (scfg or {}).get('bot_token') or os.environ.get(bt_env)
             print(f"- slack config: {'FOUND' if scfg else 'NONE'}; bot_token: {'SET' if bt else 'NOT SET'}; app_token: {'SET' if at else 'NOT SET'}")
+            # SDK presence
+            try:
+                import slack_sdk  # type: ignore
+                print("  - slack_sdk: OK")
+            except Exception:
+                print("  - slack_sdk: MISSING (install with: pip install slack_sdk)")
         except Exception:
             pass
         # Discord quick check
@@ -231,6 +237,11 @@ def main():
             be = str((dcfg or {}).get('bot_token_env') or 'DISCORD_BOT_TOKEN')
             bt = (dcfg or {}).get('bot_token') or os.environ.get(be)
             print(f"- discord config: {'FOUND' if dcfg else 'NONE'}; bot_token: {'SET' if bt else 'NOT SET'}")
+            try:
+                import discord  # type: ignore
+                print("  - discord.py: OK")
+            except Exception:
+                print("  - discord.py: MISSING (install with: pip install discord.py)")
         except Exception:
             pass
 
