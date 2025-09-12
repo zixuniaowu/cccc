@@ -228,6 +228,14 @@ def main():
         while True: time.sleep(1.0)
 
     web = WebClient(token=bot_token)
+    # Discover bot user id to ignore self-messages (prevent echo loops)
+    BOT_USER_ID = ""
+    try:
+        auth = web.auth_test()
+        BOT_USER_ID = str(auth.get('user_id') or '')
+        _append_log(f"[info] slack bot user_id={BOT_USER_ID}")
+    except Exception as e:
+        _append_log(f"[warn] slack auth_test failed: {e}")
     client = SocketModeClient(app_token=app_token, web_client=web)
 
     def _download_slack_file(file_obj: Dict[str, Any]) -> Optional[Tuple[Path, Dict[str, Any]]]:
@@ -287,13 +295,37 @@ def main():
                 _client.send_socket_mode_response(SocketModeResponse(envelope_id=getattr(req, 'envelope_id', '')))  # type: ignore
             except Exception:
                 pass
-            if str(event.get('type') or '') != 'message':
+            etype = str(event.get('type') or '')
+            if etype == 'file_shared':
+                # Handle files shared without a text message
+                try:
+                    fid = str(event.get('file_id') or (event.get('file') or {}).get('id') or '')
+                    ch = str(event.get('channel_id') or '')
+                    body = ''
+                    if fid:
+                        info = web.files_info(file=fid)
+                        fobj = (info.get('file') or {})
+                        got = _download_slack_file(fobj)
+                        if got:
+                            out, meta = got
+                            body = ("Files:\n- " + f"{str(out)} ({meta.get('mime','')},{meta.get('bytes',0)} bytes)").strip()
+                    # Route (default)
+                    routes, final = _route_from_text(body, default_route)
+                    mid = f"slack-{int(time.time())}"
+                    _write_inbox(routes, final, mid)
+                except Exception as e:
+                    _append_log(f"[error] handle file_shared failed: {e}")
+                return
+            if etype != 'message':
                 return
             if event.get('subtype'):
                 return  # skip bot edits and non-user messages
             text = str(event.get('text') or '')
             ch = str(event.get('channel') or '')
             user = str(event.get('user') or '')
+            # Ignore self/bot messages to avoid echo loops
+            if event.get('bot_id') or (BOT_USER_ID and user == BOT_USER_ID):
+                return
             # Subscribe/Unsubscribe commands (plain text, not Slash Commands)
             low = text.strip().lower()
             if low in ("subscribe","sub"):
