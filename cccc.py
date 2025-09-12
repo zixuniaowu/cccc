@@ -109,7 +109,8 @@ def main():
     p_token.add_argument("action", choices=["set","unset","show"], help="Action: set/unset/show")
     p_token.add_argument("value", nargs="?", help="When action=set, token value (empty = prompt)")
 
-    p_bridge = sub.add_parser("bridge", help="Control Telegram bridge")
+    p_bridge = sub.add_parser("bridge", help="Control chat bridges (telegram|slack|discord|all)")
+    p_bridge.add_argument("name", choices=["telegram","slack","discord","all"], help="Bridge name or 'all'")
     p_bridge.add_argument("action", choices=["start","stop","status","restart","logs"], help="Start/stop/show status/restart/show logs")
     p_bridge.add_argument("-n","--lines", type=int, default=120, help="Tail this many lines for logs action")
     p_bridge.add_argument("-f","--follow", action="store_true", help="Follow logs (stream)")
@@ -214,6 +215,24 @@ def main():
             pass
         if not ok_tmux:
             print("Hint: install tmux (e.g., apt install tmux / brew install tmux).")
+        # Slack quick check
+        try:
+            scfg = _read_yaml(home/"settings"/"slack.yaml")
+            at_env = str((scfg or {}).get('app_token_env') or 'SLACK_APP_TOKEN')
+            bt_env = str((scfg or {}).get('bot_token_env') or 'SLACK_BOT_TOKEN')
+            at = (scfg or {}).get('app_token') or os.environ.get(at_env)
+            bt = (scfg or {}).get('bot_token') or os.environ.get(bt_env)
+            print(f"- slack config: {'FOUND' if scfg else 'NONE'}; bot_token: {'SET' if bt else 'NOT SET'}; app_token: {'SET' if at else 'NOT SET'}")
+        except Exception:
+            pass
+        # Discord quick check
+        try:
+            dcfg = _read_yaml(home/"settings"/"discord.yaml")
+            be = str((dcfg or {}).get('bot_token_env') or 'DISCORD_BOT_TOKEN')
+            bt = (dcfg or {}).get('bot_token') or os.environ.get(be)
+            print(f"- discord config: {'FOUND' if dcfg else 'NONE'}; bot_token: {'SET' if bt else 'NOT SET'}")
+        except Exception:
+            pass
 
     def _cmd_token(action: str, value: str|None):
         cfg_path = home/"settings"/"telegram.yaml"
@@ -244,9 +263,16 @@ def main():
             else:
                 print("[TOKEN] Not saved. Use `cccc token set`.")
 
-    def _cmd_bridge(action: str):
+    def _cmd_bridge(name: str, action: str, *, lines: int = 120, follow: bool = False):
+        """Manage a single bridge by name."""
         state = home/"state"; state.mkdir(parents=True, exist_ok=True)
-        pid_path = state/"telegram-bridge.pid"
+        script = {
+            'telegram': home/"adapters"/"telegram_bridge.py",
+            'slack':    home/"adapters"/"bridge_slack.py",
+            'discord':  home/"adapters"/"bridge_discord.py",
+        }.get(name)
+        pid_path = state/f"bridge-{name}.pid"
+        log_path = state/f"bridge-{name}.log"
         def _alive(pid: int) -> bool:
             try:
                 os.kill(pid, 0)
@@ -254,28 +280,52 @@ def main():
             except Exception:
                 return False
         def _start():
-            bridge = home/"adapters"/"telegram_bridge.py"
-            if not bridge.exists():
-                print("[BRIDGE] Script not found:", bridge); return
-            cfg = _read_yaml(home/"settings"/"telegram.yaml")
-            token_env = str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
-            # Resolve token: prefer config token; fall back to env only if token_env explicitly configured
-            tok = None; src = None
-            if (cfg or {}).get('token'):
-                tok = str(cfg.get('token')); src = 'config'
-            else:
-                tenv = (cfg or {}).get('token_env')
-                if tenv:
-                    v = os.environ.get(str(tenv), '')
-                    if v:
-                        tok = v; src = f"env:{tenv}"
-            if not tok:
-                print("[BRIDGE] Token not found. Run `cccc token set` to save it locally, or set `token_env` in telegram.yaml and provide that env var."); return
-            env = os.environ.copy(); env[token_env] = tok
-            # Run from project root so .cccc resolves correctly inside bridge
-            p = subprocess.Popen([sys.executable, str(bridge)], env=env, cwd=str(Path.cwd()), start_new_session=True)
+            if not script or not script.exists():
+                print(f"[BRIDGE] Script not found for {name}: {script}"); return
+            env = os.environ.copy(); src = None
+            # Resolve tokens per adapter
+            if name == 'telegram':
+                cfg = _read_yaml(home/"settings"/"telegram.yaml")
+                token_env = str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
+                tok = None
+                if (cfg or {}).get('token'):
+                    tok = str(cfg.get('token')); src = 'config'
+                else:
+                    tenv = (cfg or {}).get('token_env')
+                    if tenv:
+                        v = os.environ.get(str(tenv), '')
+                        if v:
+                            tok = v; src = f"env:{tenv}"
+                if not tok:
+                    print("[BRIDGE] Telegram token not found. Run `cccc token set` or set env."); return
+                env[token_env] = tok
+            elif name == 'slack':
+                cfg = _read_yaml(home/"settings"/"slack.yaml")
+                at_env = str((cfg or {}).get('app_token_env') or 'SLACK_APP_TOKEN')
+                bt_env = str((cfg or {}).get('bot_token_env') or 'SLACK_BOT_TOKEN')
+                if (cfg or {}).get('app_token'): env[at_env] = str(cfg.get('app_token')); src = (src or '') + ' app_token=config'
+                if (cfg or {}).get('bot_token'): env[bt_env] = str(cfg.get('bot_token')); src = (src or '') + ' bot_token=config'
+                if not env.get(at_env):
+                    v = os.environ.get(at_env, '')
+                    if v: env[at_env] = v; src = (src or '') + f" app_token=env:{at_env}"
+                if not env.get(bt_env):
+                    v = os.environ.get(bt_env, '')
+                    if v: env[bt_env] = v; src = (src or '') + f" bot_token=env:{bt_env}"
+                # Allow outbound-only when仅 bot_token; inbound需要app_token
+                if not env.get(bt_env):
+                    print("[BRIDGE] Slack bot token missing; set slack.yaml bot_token or env SLACK_BOT_TOKEN."); return
+            elif name == 'discord':
+                cfg = _read_yaml(home/"settings"/"discord.yaml")
+                be = str((cfg or {}).get('bot_token_env') or 'DISCORD_BOT_TOKEN')
+                if (cfg or {}).get('bot_token'): env[be] = str(cfg.get('bot_token')); src = 'config'
+                if not env.get(be):
+                    v = os.environ.get(be, '')
+                    if v: env[be] = v; src = f"env:{be}"
+                # Discord可在dry_run下运行 outbound-only；无token仍可运行但仅记录
+            # Run from project root
+            p = subprocess.Popen([sys.executable, str(script)], env=env, cwd=str(Path.cwd()), start_new_session=True)
             pid_path.write_text(str(p.pid), encoding='utf-8')
-            print(f"[BRIDGE] Started, pid={p.pid} (token_source={src})")
+            print(f"[BRIDGE] {name} started, pid={p.pid} ({src or 'no-tokens'})")
         def _stop():
             try:
                 if pid_path.exists():
@@ -287,9 +337,9 @@ def main():
                             os.kill(pid, signal.SIGTERM)
                         except Exception:
                             pass
-                    print("[BRIDGE] Stop signal sent.")
+                    print(f"[BRIDGE] {name} stop signal sent.")
             except Exception as e:
-                print("[BRIDGE] Stop failed:", e)
+                print(f"[BRIDGE] {name} stop failed:", e)
         def _status():
             if pid_path.exists():
                 try:
@@ -297,13 +347,13 @@ def main():
                 except Exception:
                     pid = 0
                 if pid and _alive(pid):
-                    print(f"[BRIDGE] Running, pid={pid}")
+                    print(f"[BRIDGE] {name} running, pid={pid}")
                 else:
-                    print("[BRIDGE] Not running (stale pid file).")
+                    print(f"[BRIDGE] {name} not running (stale pid file).")
             else:
-                print("[BRIDGE] Not running.")
+                print(f"[BRIDGE] {name} not running.")
         def _logs(lines: int = 120, follow: bool = False):
-            lg = home/"state"/"bridge-telegram.log"
+            lg = log_path
             if not lg.exists():
                 print("[BRIDGE] Log file not found:", lg)
                 return
@@ -341,7 +391,7 @@ def main():
         if action == 'stop': _stop(); return
         if action == 'status': _status(); return
         if action == 'restart': _stop(); time.sleep(0.5); _start(); return
-        if action == 'logs': _logs(lines=int(getattr(args,'lines',120) or 120), follow=bool(getattr(args,'follow', False))); return
+        if action == 'logs': _logs(lines=lines, follow=follow); return
 
     if args.cmd == 'clean':
         _cmd_clean(); return
@@ -350,7 +400,17 @@ def main():
     if args.cmd == 'token':
         _cmd_token(args.action, getattr(args, 'value', None)); return
     if args.cmd == 'bridge':
-        _cmd_bridge(args.action); return
+        name = getattr(args, 'name')
+        act = getattr(args, 'action')
+        if name == 'all':
+            for nm in ('telegram','slack','discord'):
+                try:
+                    print(f"[BRIDGE] {nm} → {act}")
+                    _cmd_bridge(nm, act, lines=int(getattr(args,'lines',120) or 120), follow=bool(getattr(args,'follow', False)))
+                except Exception as e:
+                    print(f"[BRIDGE] {nm} {act} failed: {e}")
+            return
+        _cmd_bridge(name, act, lines=int(getattr(args,'lines',120) or 120), follow=bool(getattr(args,'follow', False))); return
     if args.cmd == 'version':
         # Package version
         pkg_ver = "unknown"
@@ -547,11 +607,11 @@ def main():
     # Wizard logic: only in interactive TTY and when CCCC_NO_WIZARD is not set
     if _isatty() and not os.environ.get('CCCC_NO_WIZARD'):
         try:
-            print("\n[SETUP] Choose run mode:\n  1) Local CLI only (default)\n  2) Local + connect Telegram (requires Bot token)")
+            print("\n[SETUP] Choose run mode:\n  1) Local CLI only (default)\n  2) Local + connect Telegram\n  3) Local + connect Slack (Socket Mode + Web API)\n  4) Local + connect Discord\n  5) Local + connect All (Telegram+Slack+Discord)")
             choice = input("> Enter 1 or 2 (Enter=1): ").strip() or "1"
         except Exception:
             choice = "1"
-        if choice == "2":
+        if choice in ("2","5"):
             cfg_path = home/"settings"/"telegram.yaml"
             cfg = _read_yaml(cfg_path)
             if not cfg:
@@ -686,29 +746,74 @@ def main():
                     _spawn_telegram_bridge({})
                 else:
                     print("[WARN] No token provided; continue in local mode without Telegram.")
+        if choice in ("3","5"):
+            # Try to start Slack if tokens present; do not block on prompts (keep wizard light)
+            scfg = _read_yaml(home/"settings"/"slack.yaml")
+            at_env = str((scfg or {}).get('app_token_env') or 'SLACK_APP_TOKEN')
+            bt_env = str((scfg or {}).get('bot_token_env') or 'SLACK_BOT_TOKEN')
+            env = {}
+            if (scfg or {}).get('app_token'): env[at_env] = str(scfg.get('app_token'))
+            if (scfg or {}).get('bot_token'): env[bt_env] = str(scfg.get('bot_token'))
+            if not env.get(at_env):
+                v = os.environ.get(at_env, '')
+                if v: env[at_env] = v
+            if not env.get(bt_env):
+                v = os.environ.get(bt_env, '')
+                if v: env[bt_env] = v
+            if env.get(bt_env):
+                try:
+                    _cmd_bridge('slack', 'start')
+                except Exception:
+                    pass
+            else:
+                print("[SLACK] Bot token missing; configure .cccc/settings/slack.yaml or env SLACK_BOT_TOKEN.")
+        if choice in ("4","5"):
+            dcfg = _read_yaml(home/"settings"/"discord.yaml")
+            be = str((dcfg or {}).get('bot_token_env') or 'DISCORD_BOT_TOKEN')
+            env = {}
+            if (dcfg or {}).get('bot_token'): env[be] = str(dcfg.get('bot_token'))
+            if not env.get(be):
+                v = os.environ.get(be, '')
+                if v: env[be] = v
+            try:
+                _cmd_bridge('discord', 'start')
+            except Exception:
+                pass
     # Install shutdown hooks after potential spawn
     _install_shutdown_hooks()
 
-    # Autostart Telegram bridge in non-interactive environments when configured
+    # Autostart bridges in non-interactive environments when configured
     try:
-        cfg_path = home/"settings"/"telegram.yaml"
-        cfg = _read_yaml(cfg_path)
-        auto = True if not cfg else bool((cfg or {}).get('autostart', True))
-        if auto and (BRIDGE_PROC.get('p') is None):
-            token_env = str((cfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
-            # Prefer config token; only fall back to env when token_env explicitly configured
+        # Telegram
+        tcfg = _read_yaml(home/"settings"/"telegram.yaml")
+        t_auto = True if not tcfg else bool((tcfg or {}).get('autostart', True))
+        if t_auto and (BRIDGE_PROC.get('p') is None):
+            token_env = str((tcfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
             token_val = None
-            if (cfg or {}).get('token'):
-                token_val = str(cfg.get('token'))
+            if (tcfg or {}).get('token'):
+                token_val = str(tcfg.get('token'))
             else:
-                tenv = (cfg or {}).get('token_env')
+                tenv = (tcfg or {}).get('token_env')
                 if tenv:
                     v = os.environ.get(str(tenv), '')
                     if v:
                         token_val = v
-            dry = bool((cfg or {}).get('dry_run', True))
             if token_val:
                 _spawn_telegram_bridge({token_env: token_val})
+        # Slack
+        scfg = _read_yaml(home/"settings"/"slack.yaml")
+        if scfg and bool((scfg or {}).get('autostart', False)):
+            try:
+                _cmd_bridge('slack', 'start')
+            except Exception:
+                pass
+        # Discord
+        dcfg = _read_yaml(home/"settings"/"discord.yaml")
+        if dcfg and bool((dcfg or {}).get('autostart', False)):
+            try:
+                _cmd_bridge('discord', 'start')
+            except Exception:
+                pass
     except Exception:
         pass
 
