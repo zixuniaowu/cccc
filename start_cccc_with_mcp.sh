@@ -29,20 +29,16 @@ fi
 
 # 3. 安裝必要的 MCP servers (如果尚未安裝)
 echo "📥 檢查 MCP servers..."
-npm list -g @modelcontextprotocol/server-figma >/dev/null 2>&1 || {
-    echo "📦 安裝 Figma MCP server..."
-    npm install -g @modelcontextprotocol/server-figma
-}
 
+# 檢查並安裝 Filesystem MCP server
 npm list -g @modelcontextprotocol/server-filesystem >/dev/null 2>&1 || {
     echo "📦 安裝 Filesystem MCP server..."
     npm install -g @modelcontextprotocol/server-filesystem
 }
 
-npm list -g @modelcontextprotocol/server-github >/dev/null 2>&1 || {
-    echo "📦 安裝 GitHub MCP server..."
-    npm install -g @modelcontextprotocol/server-github
-}
+# 其他 MCP servers 可選安裝（按需啟用）
+echo "💡 注意：Figma 和 GitHub MCP servers 需要額外配置"
+echo "   請查看 https://github.com/modelcontextprotocol/servers 獲取安裝指南"
 
 # 4. 設置增強的 CLI 命令
 export CLAUDE_I_CMD="claude --mcp-config $(pwd)/.claude/mcp.json"
@@ -66,4 +62,17 @@ echo "   /both 使用 Figma MCP 工具分析我的設計系統"
 echo ""
 
 # 啟動主程序
-python3 .cccc/venv/bin/cccc run
+echo "🎯 激活虛擬環境並啟動 CCCC..."
+if [ -f "cccc/venv/bin/activate" ]; then
+    source cccc/venv/bin/activate
+    echo "✅ 虛擬環境已激活"
+    cccc run
+else
+    echo "⚠️  虛擬環境未找到，使用已安裝的命令..."
+    if [ -f "cccc/venv/bin/cccc" ]; then
+        cccc/venv/bin/cccc run
+    else
+        echo "⚠️  cccc 命令未找到，嘗試 Python 直接啟動..."
+        python3 cccc/cccc.py run
+    fi
+fi

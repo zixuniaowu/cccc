@@ -1,0 +1,9 @@
+{
+  "sent": true,
+  "ts": "2025-09-13T16:04:53.238148+09:00",
+  "bytes": 250265,
+  "sha256": "2a73594d8fcecf49933c984bd96a3e616aaf3155ef35fc5ad251a73821e7f3e2",
+  "method": "sendPhoto",
+  "peer": "peerB",
+  "name": "controls_test.png"
+}

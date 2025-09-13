@@ -1,0 +1,19 @@
+{
+  "PeerA": {
+    "pending": false,
+    "since": 0.0,
+    "last_rev_ts": 0.0,
+    "last_deltas": [],
+    "last_remind_since": 0.0
+  },
+  "PeerB": {
+    "pending": false,
+    "since": 1757747121.8324802,
+    "last_rev_ts": 1757747130.4359255,
+    "last_deltas": [
+      "delta: +E2E tests with Playwright, will write test stubs once basic HTML is ready.",
+      "delta: +Passed: test_detailed_functionality (Playwright)"
+    ],
+    "last_remind_since": 0.0
+  }
+}

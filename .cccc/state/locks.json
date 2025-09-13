@@ -1,0 +1,1 @@
+{"inbox_seq_locks": ["inbox-seq-peerA.lock", "inbox-seq-peerB.lock"], "inflight": {"peerA": false, "peerB": false}}

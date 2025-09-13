@@ -1,0 +1,77 @@
+2025-09-09 20:50:14 [net] bridge started
+2025-09-09 20:50:26 [drop] message from not-allowed chat=6936004059
+2025-09-09 20:50:44 [drop] message from not-allowed chat=6936004059
+2025-09-09 20:50:58 [subscribe] chat=6936004059
+2025-09-09 21:25:22 [inbound] routes=['peerA', 'peerB'] mid=tg-1757420722-346528 size=3 chat=6936004059
+2025-09-09 21:26:08 [outbound] sent PeerA 181 chars
+2025-09-09 21:29:27 [inbound] routes=['peerA', 'peerB'] mid=tg-1757420967-8a1c14 size=27 chat=6936004059
+2025-09-09 21:30:01 [outbound] sent PeerA 396 chars
+2025-09-09 21:30:32 [outbound] sent PeerA→PeerB 614 chars
+2025-09-09 21:31:27 [outbound] sent PeerB→PeerA 1004 chars
+2025-09-09 21:31:54 [outbound] sent PeerA→PeerB 927 chars
+2025-09-09 21:31:59 [outbound] sent PeerA 350 chars
+2025-09-09 21:36:04 [inbound] routes=['peerA', 'peerB'] mid=tg-1757421364-1bd951 size=24 chat=6936004059
+2025-09-09 21:39:11 [outbound] sent PeerA 309 chars
+2025-09-09 21:41:18 [inbound] routes=['peerA', 'peerB'] mid=tg-1757421678-150e73 size=69 chat=6936004059
+2025-09-09 21:41:39 [outbound] sent PeerA 146 chars
+2025-09-09 21:41:50 [outbound] sent PeerA→PeerB 921 chars
+2025-09-09 21:43:52 [inbound] routes=['peerA', 'peerB'] mid=tg-1757421832-d06d03 size=36 chat=6936004059
+2025-09-09 21:46:17 [outbound-file] /home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerA/files/tokyo_heat_analysis_2025.md
+2025-09-09 21:47:04 [outbound] sent PeerA 289 chars
+2025-09-09 21:47:47 [inbound] routes=['peerA', 'peerB'] mid=tg-1757422067-f14397 size=17 chat=6936004059
+2025-09-09 21:48:08 [outbound] sent PeerA 181 chars
+2025-09-09 21:48:21 [outbound] sent PeerA→PeerB 964 chars
+2025-09-09 21:50:59 [inbound] routes=['peerB'] mid=tg-1757422259-f83a95 size=7 chat=6936004059
+2025-09-09 21:54:54 [net] bridge started
+2025-09-09 21:54:56 [inbound] routes=['peerB'] mid=tg-1757422496-3565c3 size=7 chat=6936004059
+2025-09-09 21:58:28 [outbound] sent PeerB→PeerA 327 chars
+2025-09-09 22:00:00 [outbound] sent PeerA 286 chars
+2025-09-09 22:00:44 [outbound] sent PeerA→PeerB 907 chars
+2025-09-09 22:01:08 [outbound] sent PeerB→PeerA 580 chars
+2025-09-09 22:01:48 [outbound] sent PeerA→PeerB 872 chars
+2025-09-09 22:01:57 [outbound] sent PeerA 382 chars
+2025-09-09 22:02:11 [outbound] sent PeerB→PeerA 405 chars
+2025-09-09 22:03:01 [outbound] sent PeerA→PeerB 900 chars
+2025-09-09 22:03:10 [outbound] sent PeerA 483 chars
+2025-09-09 22:03:19 [outbound] sent PeerB→PeerA 287 chars
+2025-09-09 22:12:13 [drop] message from not-allowed chat=-4803652535
+2025-09-09 22:12:42 [subscribe] chat=-4803652535
+2025-09-09 22:13:06 [inbound] routes=['peerB'] mid=tg-1757423586-f4c99a size=8 chat=-4803652535
+2025-09-09 22:13:24 [outbound] sent PeerB→PeerA 302 chars
+2025-09-09 22:13:53 [outbound] sent PeerA 466 chars
+2025-09-09 22:14:12 [outbound] sent PeerA→PeerB 698 chars
+2025-09-09 22:14:23 [outbound] sent PeerB→PeerA 296 chars
+2025-09-10 13:42:32 [error] api getUpdates: The read operation timed out
+2025-09-10 13:42:33 [inbound] routes=['peerA', 'peerB'] mid=tg-1757479353-9b2288 size=14 chat=6936004059
+2025-09-10 13:43:09 [outbound] sent PeerB→PeerA 383 chars
+2025-09-10 13:43:12 [outbound] sent PeerA 299 chars
+2025-09-10 13:43:24 [outbound] sent PeerA→PeerB 527 chars
+2025-09-10 13:43:37 [outbound] sent PeerB→PeerA 282 chars
+2025-09-10 13:43:53 [outbound] sent PeerA→PeerB 884 chars
+2025-09-10 13:44:12 [outbound] sent PeerB→PeerA 415 chars
+2025-09-10 14:09:13 [error] api getUpdates: <urlopen error [Errno -3] Temporary failure in name resolution>
+2025-09-13 12:26:26 [net] bridge started
+2025-09-13 14:29:05 [net] bridge started
+2025-09-13 15:49:12 [error] api getUpdates: The read operation timed out
+2025-09-13 15:51:52 [inbound] routes=['peerA', 'peerB'] mid=tg-1757746312-4035f1 size=161 chat=6936004059
+2025-09-13 15:53:28 [outbound] sent PeerA 352 chars
+2025-09-13 15:53:30 [outbound] sent PeerB→PeerA 686 chars
+2025-09-13 15:54:32 [outbound] sent PeerA→PeerB 542 chars
+2025-09-13 15:54:54 [outbound] sent PeerA→PeerB 564 chars
+2025-09-13 15:55:39 [outbound] sent PeerB→PeerA 534 chars
+2025-09-13 15:57:15 [outbound] sent PeerA→PeerB 537 chars
+2025-09-13 16:00:18 [outbound-file] /home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerB/photos/solar_system_test.png
+2025-09-13 16:00:24 [outbound] sent PeerB→PeerA 641 chars
+2025-09-13 16:03:22 [inbound] routes=['peerA', 'peerB'] mid=tg-1757747002-5841f2 size=18 chat=6936004059
+2025-09-13 16:03:41 [outbound] sent PeerA 488 chars
+2025-09-13 16:03:44 [outbound] sent PeerB→PeerA 411 chars
+2025-09-13 16:03:57 [outbound] sent PeerA→PeerB 462 chars
+2025-09-13 16:04:16 [outbound] sent PeerA→PeerB 456 chars
+2025-09-13 16:04:53 [outbound-file] /home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerB/photos/controls_test.png
+2025-09-13 16:04:58 [outbound-file] /home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerB/photos/planet_info_test.png
+2025-09-13 16:05:24 [outbound] sent PeerA→PeerB 536 chars
+2025-09-13 16:05:32 [outbound] sent PeerB→PeerA 561 chars
+2025-09-13 16:05:53 [outbound] sent PeerB→PeerA 536 chars
+2025-09-13 16:06:21 [outbound] sent PeerA 330 chars
+2025-09-13 16:06:45 [outbound] sent PeerA→PeerB 475 chars
+2025-09-13 20:53:40 [error] api getUpdates: The read operation timed out

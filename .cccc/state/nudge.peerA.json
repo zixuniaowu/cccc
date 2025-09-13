@@ -1,0 +1,8 @@
+{
+  "inflight": false,
+  "last_sent_ts": 1757747185.1992235,
+  "dropped_count": 693,
+  "retries": 0,
+  "last_progress_ts": 1757747202.8841898,
+  "last_ack_seq": "000036"
+}

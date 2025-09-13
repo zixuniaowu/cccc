@@ -1,0 +1,9 @@
+{
+  "sent": true,
+  "ts": "2025-09-13T16:04:58.048974+09:00",
+  "bytes": 274266,
+  "sha256": "8f0dbbda5366b56173fdde52024ee95e8d1ded62b8412ffbee4190fd193a47d4",
+  "method": "sendPhoto",
+  "peer": "peerB",
+  "name": "planet_info_test.png"
+}

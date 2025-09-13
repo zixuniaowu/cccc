@@ -1,0 +1,257 @@
+{"ts": "2025-09-09 19:01:40", "from": "PeerA", "kind": "ack-file", "seq": "test_m", "file": "test_message.txt", "ok": true}
+{"ts": "2025-09-09 19:02:24", "from": "PeerB", "kind": "ack-file", "seq": "test_m", "file": "test_message.txt", "ok": true}
+{"ts": "2025-09-09 19:02:42", "from": "System", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757412155-6ab0c1", "seq": "000001", "chars": 416}
+{"ts": "2025-09-09 19:02:42", "from": "system", "kind": "teach-intercept", "peer": "PeerB", "reason": "missing-insight"}
+{"ts": "2025-09-09 19:03:04", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757412183-8556bc", "seq": "000001", "chars": 977}
+{"ts": "2025-09-09 19:03:08", "from": "PeerB", "kind": "ack-file", "seq": "000001", "file": "000001.cccc-1757412155-6ab0c1.txt", "ok": true}
+{"ts": "2025-09-09 19:03:23", "from": "PeerA", "kind": "ack-file", "seq": "000001", "file": "000001.cccc-1757412183-8556bc.txt", "ok": true}
+{"ts": "2025-09-09 19:07:38", "from": "System", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757412451-c000ed", "seq": "000002", "chars": 423}
+{"ts": "2025-09-09 19:07:38", "from": "system", "kind": "teach-intercept", "peer": "PeerA", "reason": "missing-insight"}
+{"ts": "2025-09-09 19:07:38", "from": "PeerA", "kind": "ack-file", "seq": "tokyo_", "file": "tokyo_heat_analysis.txt", "ok": true}
+{"ts": "2025-09-09 19:07:50", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757412469-c3c77b", "seq": "000002", "chars": 1113}
+{"ts": "2025-09-09 19:07:53", "from": "PeerA", "kind": "ack-file", "seq": "000002", "file": "000002.cccc-1757412451-c000ed.txt", "ok": true}
+{"ts": "2025-09-09 19:08:14", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757412493-8708c3", "seq": "000003", "chars": 1052}
+{"ts": "2025-09-09 19:08:19", "from": "PeerB", "kind": "ack-file", "seq": "000002", "file": "000002.cccc-1757412469-c3c77b.txt", "ok": true}
+{"ts": "2025-09-09 19:08:54", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757412528-563cdf", "seq": "000003", "chars": 1083}
+{"ts": "2025-09-09 19:08:54", "from": "PeerA", "kind": "ack-file", "seq": "000003", "file": "000003.cccc-1757412493-8708c3.txt", "ok": true}
+{"ts": "2025-09-09 19:25:27", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757413526-29953e", "seq": "000004", "chars": 1544}
+{"ts": "2025-09-09 19:25:56", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757413550-31009a", "seq": "000004", "chars": 1179}
+{"ts": "2025-09-09 19:25:56", "from": "PeerA", "kind": "ack-file", "seq": "000004", "file": "000004.cccc-1757413526-29953e.txt", "ok": true}
+{"ts": "2025-09-09 19:26:31", "from": "PeerB", "kind": "ack-file", "seq": "000003", "file": "000003.cccc-1757412528-563cdf.txt", "ok": true}
+{"ts": "2025-09-09 19:27:18", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757413637-1435c0", "seq": "000005", "chars": 1195}
+{"ts": "2025-09-09 19:27:24", "from": "PeerB", "kind": "ack-file", "seq": "000004", "file": "000004.cccc-1757413550-31009a.txt", "ok": true}
+{"ts": "2025-09-09 19:27:41", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757413654-3e671c", "seq": "000005", "chars": 905}
+{"ts": "2025-09-09 19:27:41", "from": "PeerA", "kind": "ack-file", "seq": "000005", "file": "000005.cccc-1757413637-1435c0.txt", "ok": true}
+{"ts": "2025-09-09 19:28:08", "from": "PeerB", "kind": "ack-file", "seq": "000005", "file": "000005.cccc-1757413654-3e671c.txt", "ok": true}
+{"ts": "2025-09-09 20:50:26", "kind": "bridge-drop", "reason": "not-allowed", "chat": 6936004059}
+{"ts": "2025-09-09 20:50:44", "kind": "bridge-drop", "reason": "not-allowed", "chat": 6936004059}
+{"ts": "2025-09-09 20:50:58", "kind": "bridge-subscribe", "chat": 6936004059}
+{"ts": "2025-09-09 21:25:22", "kind": "lazy-preamble-sent", "peer": "PeerA"}
+{"ts": "2025-09-09 21:25:22", "kind": "lazy-preamble-sent", "peer": "PeerB"}
+{"ts": "2025-09-09 21:25:22", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerA", "peerB"], "mid": "tg-1757420722-346528", "chars": 3}
+{"ts": "2025-09-09 21:25:51", "from": "PeerA", "kind": "ack-file", "seq": "000006", "file": "000006.tg-1757420722-346528.txt", "ok": true}
+{"ts": "2025-09-09 21:26:08", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 181}
+{"ts": "2025-09-09 21:26:08", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "44f53b20d7b3", "chars": 173}
+{"ts": "2025-09-09 21:29:27", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerA", "peerB"], "mid": "tg-1757420967-8a1c14", "chars": 27}
+{"ts": "2025-09-09 21:29:41", "from": "PeerA", "kind": "ack-file", "seq": "000007", "file": "000007.tg-1757420967-8a1c14.txt", "ok": true}
+{"ts": "2025-09-09 21:30:01", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 396}
+{"ts": "2025-09-09 21:30:01", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "f0c8670e2ec9", "chars": 387}
+{"ts": "2025-09-09 21:30:07", "from": "PeerB", "kind": "ack-file", "seq": "000006", "file": "000006.tg-1757420722-346528.txt", "ok": true}
+{"ts": "2025-09-09 21:30:18", "from": "System", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757421012-0762fa", "seq": "000008", "chars": 423}
+{"ts": "2025-09-09 21:30:18", "from": "system", "kind": "teach-intercept", "peer": "PeerA", "reason": "missing-insight"}
+{"ts": "2025-09-09 21:30:18", "from": "PeerB", "kind": "ack-file", "seq": "000007", "file": "000007.tg-1757420967-8a1c14.txt", "ok": true}
+{"ts": "2025-09-09 21:30:24", "from": "PeerA", "kind": "ack-file", "seq": "000008", "file": "000008.cccc-1757421012-0762fa.txt", "ok": true}
+{"ts": "2025-09-09 21:30:31", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757421029-bfdd8c", "seq": "000008", "chars": 810}
+{"ts": "2025-09-09 21:30:32", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 614}
+{"ts": "2025-09-09 21:30:32", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "df3b3d3aa74b", "chars": 600}
+{"ts": "2025-09-09 21:30:38", "from": "System", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757421032-420831", "seq": "000009", "chars": 416}
+{"ts": "2025-09-09 21:30:38", "from": "system", "kind": "teach-intercept", "peer": "PeerB", "reason": "missing-insight"}
+{"ts": "2025-09-09 21:30:48", "from": "PeerB", "kind": "ack-file", "seq": "000008", "file": "000008.cccc-1757421029-bfdd8c.txt", "ok": true}
+{"ts": "2025-09-09 21:31:03", "from": "PeerB", "kind": "ack-file", "seq": "000009", "file": "000009.cccc-1757421032-420831.txt", "ok": true}
+{"ts": "2025-09-09 21:31:25", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757421084-5a3bb2", "seq": "000009", "chars": 1295}
+{"ts": "2025-09-09 21:31:27", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 1004}
+{"ts": "2025-09-09 21:31:27", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "ae6e8aa9d0be", "chars": 990}
+{"ts": "2025-09-09 21:31:41", "from": "PeerA", "kind": "ack-file", "seq": "000009", "file": "000009.cccc-1757421084-5a3bb2.txt", "ok": true}
+{"ts": "2025-09-09 21:31:52", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757421110-11746e", "seq": "000010", "chars": 1129}
+{"ts": "2025-09-09 21:31:54", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 927}
+{"ts": "2025-09-09 21:31:54", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "b5865e011416", "chars": 919}
+{"ts": "2025-09-09 21:31:59", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 350}
+{"ts": "2025-09-09 21:31:59", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "44dce3f08305", "chars": 342}
+{"ts": "2025-09-09 21:32:02", "from": "PeerB", "kind": "ack-file", "seq": "000010", "file": "000010.cccc-1757421110-11746e.txt", "ok": true}
+{"ts": "2025-09-09 21:36:04", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerA", "peerB"], "mid": "tg-1757421364-1bd951", "chars": 24}
+{"ts": "2025-09-09 21:36:17", "from": "PeerA", "kind": "ack-file", "seq": "000010", "file": "000010.tg-1757421364-1bd951.txt", "ok": true}
+{"ts": "2025-09-09 21:36:18", "from": "PeerB", "kind": "ack-file", "seq": "000011", "file": "000011.tg-1757421364-1bd951.txt", "ok": true}
+{"ts": "2025-09-09 21:39:11", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 309}
+{"ts": "2025-09-09 21:39:11", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "377c1900c805", "chars": 303}
+{"ts": "2025-09-09 21:41:18", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerA", "peerB"], "mid": "tg-1757421678-150e73", "chars": 69}
+{"ts": "2025-09-09 21:41:31", "from": "PeerA", "kind": "ack-file", "seq": "000011", "file": "000011.tg-1757421678-150e73.txt", "ok": true}
+{"ts": "2025-09-09 21:41:32", "from": "PeerB", "kind": "ack-file", "seq": "000012", "file": "000012.tg-1757421678-150e73.txt", "ok": true}
+{"ts": "2025-09-09 21:41:39", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 146}
+{"ts": "2025-09-09 21:41:39", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "33655c614984", "chars": 137}
+{"ts": "2025-09-09 21:41:49", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757421707-c155a8", "seq": "000013", "chars": 1117}
+{"ts": "2025-09-09 21:41:50", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 921}
+{"ts": "2025-09-09 21:41:50", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "36615cb3f32d", "chars": 907}
+{"ts": "2025-09-09 21:42:00", "from": "PeerB", "kind": "ack-file", "seq": "000013", "file": "000013.cccc-1757421707-c155a8.txt", "ok": true}
+{"ts": "2025-09-09 21:43:52", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerA", "peerB"], "mid": "tg-1757421832-d06d03", "chars": 36}
+{"ts": "2025-09-09 21:44:05", "from": "PeerA", "kind": "ack-file", "seq": "000012", "file": "000012.tg-1757421832-d06d03.txt", "ok": true}
+{"ts": "2025-09-09 21:44:06", "from": "PeerB", "kind": "ack-file", "seq": "000014", "file": "000014.tg-1757421832-d06d03.txt", "ok": true}
+{"ts": "2025-09-09 21:46:17", "kind": "bridge-file-outbound", "peer": "peerA", "path": "/home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerA/files/tokyo_heat_analysis_2025.md"}
+{"ts": "2025-09-09 21:46:17", "kind": "bridge-file-sent", "peer": "peerA", "path": "/home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerA/files/tokyo_heat_analysis_2025.md", "bytes": 2292, "sha256": "63139310c0648c61c73f0c857c5d4eb1c49adf2c44b81993d5cf34ed788e587c"}
+{"ts": "2025-09-09 21:47:04", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 289}
+{"ts": "2025-09-09 21:47:04", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "a0287f258649", "chars": 281}
+{"ts": "2025-09-09 21:47:47", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerA", "peerB"], "mid": "tg-1757422067-f14397", "chars": 17}
+{"ts": "2025-09-09 21:48:00", "from": "PeerA", "kind": "ack-file", "seq": "000013", "file": "000013.tg-1757422067-f14397.txt", "ok": true}
+{"ts": "2025-09-09 21:48:02", "from": "PeerB", "kind": "ack-file", "seq": "000015", "file": "000015.tg-1757422067-f14397.txt", "ok": true}
+{"ts": "2025-09-09 21:48:08", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 181}
+{"ts": "2025-09-09 21:48:08", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "bf4eb4d408a5", "chars": 171}
+{"ts": "2025-09-09 21:48:20", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757422098-23f1c1", "seq": "000016", "chars": 1166}
+{"ts": "2025-09-09 21:48:21", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 964}
+{"ts": "2025-09-09 21:48:21", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "c6246de28809", "chars": 956}
+{"ts": "2025-09-09 21:48:31", "from": "PeerB", "kind": "ack-file", "seq": "000016", "file": "000016.cccc-1757422098-23f1c1.txt", "ok": true}
+{"ts": "2025-09-09 21:50:59", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerB"], "mid": "tg-1757422259-f83a95", "chars": 7}
+{"ts": "2025-09-09 21:51:12", "from": "PeerB", "kind": "ack-file", "seq": "000017", "file": "000017.tg-1757422259-f83a95.txt", "ok": true}
+{"ts": "2025-09-09 21:53:23", "from": "PeerB", "kind": "ack-file", "seq": "test_d", "file": "test_direct_response.txt", "ok": true}
+{"ts": "2025-09-09 21:54:56", "kind": "lazy-preamble-sent", "peer": "PeerB"}
+{"ts": "2025-09-09 21:54:56", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerB"], "mid": "tg-1757422496-3565c3", "chars": 7}
+{"ts": "2025-09-09 21:58:26", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757422705-232ff1", "seq": "000014", "chars": 618}
+{"ts": "2025-09-09 21:58:28", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 327}
+{"ts": "2025-09-09 21:58:28", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "19f3b096668c", "chars": 313}
+{"ts": "2025-09-09 21:58:39", "from": "PeerB", "kind": "ack-file", "seq": "000018", "file": "000018.tg-1757422496-3565c3.txt", "ok": true}
+{"ts": "2025-09-09 21:58:47", "from": "PeerA", "kind": "ack-file", "seq": "000014", "file": "000014.cccc-1757422705-232ff1.txt", "ok": true}
+{"ts": "2025-09-09 21:59:52", "from": "System", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757422786-1fd20d", "seq": "000015", "chars": 423}
+{"ts": "2025-09-09 21:59:52", "from": "system", "kind": "teach-intercept", "peer": "PeerA", "reason": "missing-insight"}
+{"ts": "2025-09-09 22:00:00", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 286}
+{"ts": "2025-09-09 22:00:00", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "8984a00d9835", "chars": 278}
+{"ts": "2025-09-09 22:00:22", "from": "PeerA", "kind": "ack-file", "seq": "000015", "file": "000015.cccc-1757422786-1fd20d.txt", "ok": true}
+{"ts": "2025-09-09 22:00:42", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757422840-919a49", "seq": "000019", "chars": 1103}
+{"ts": "2025-09-09 22:00:44", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 907}
+{"ts": "2025-09-09 22:00:44", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "2a6d5df58893", "chars": 893}
+{"ts": "2025-09-09 22:01:05", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757422864-fdb94c", "seq": "000016", "chars": 1501}
+{"ts": "2025-09-09 22:01:07", "from": "PeerB", "kind": "ack-file", "seq": "000019", "file": "000019.cccc-1757422840-919a49.txt", "ok": true}
+{"ts": "2025-09-09 22:01:08", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 580}
+{"ts": "2025-09-09 22:01:08", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "c20239e938d5", "chars": 1196}
+{"ts": "2025-09-09 22:01:23", "from": "PeerA", "kind": "ack-file", "seq": "000016", "file": "000016.cccc-1757422864-fdb94c.txt", "ok": true}
+{"ts": "2025-09-09 22:01:47", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757422905-c52002", "seq": "000020", "chars": 1069}
+{"ts": "2025-09-09 22:01:48", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 872}
+{"ts": "2025-09-09 22:01:48", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "75cec2cd0b16", "chars": 859}
+{"ts": "2025-09-09 22:01:57", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 382}
+{"ts": "2025-09-09 22:01:57", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "20b85395019a", "chars": 376}
+{"ts": "2025-09-09 22:02:08", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757422922-8d9774", "seq": "000017", "chars": 700}
+{"ts": "2025-09-09 22:02:08", "from": "PeerB", "kind": "ack-file", "seq": "000020", "file": "000020.cccc-1757422905-c52002.txt", "ok": true}
+{"ts": "2025-09-09 22:02:11", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 405}
+{"ts": "2025-09-09 22:02:11", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "9843acae6d35", "chars": 395}
+{"ts": "2025-09-09 22:02:21", "from": "PeerA", "kind": "ack-file", "seq": "000017", "file": "000017.cccc-1757422922-8d9774.txt", "ok": true}
+{"ts": "2025-09-09 22:02:59", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757422977-2e28c4", "seq": "000021", "chars": 1103}
+{"ts": "2025-09-09 22:03:01", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 900}
+{"ts": "2025-09-09 22:03:01", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "167cc4d65743", "chars": 893}
+{"ts": "2025-09-09 22:03:10", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 483}
+{"ts": "2025-09-09 22:03:10", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "a1de48ed33bc", "chars": 477}
+{"ts": "2025-09-09 22:03:15", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757422989-1c7c4a", "seq": "000018", "chars": 578}
+{"ts": "2025-09-09 22:03:15", "from": "PeerB", "kind": "ack-file", "seq": "000021", "file": "000021.cccc-1757422977-2e28c4.txt", "ok": true}
+{"ts": "2025-09-09 22:03:19", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 287}
+{"ts": "2025-09-09 22:03:19", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "41377c45aa5f", "chars": 273}
+{"ts": "2025-09-09 22:03:28", "from": "PeerA", "kind": "ack-file", "seq": "000018", "file": "000018.cccc-1757422989-1c7c4a.txt", "ok": true}
+{"ts": "2025-09-09 22:12:13", "kind": "bridge-drop", "reason": "not-allowed", "chat": -4803652535}
+{"ts": "2025-09-09 22:12:42", "kind": "bridge-subscribe", "chat": -4803652535}
+{"ts": "2025-09-09 22:13:06", "kind": "bridge-inbound", "from": "telegram", "chat": -4803652535, "routes": ["peerB"], "mid": "tg-1757423586-f4c99a", "chars": 8}
+{"ts": "2025-09-09 22:13:20", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757423599-eed4e0", "seq": "000019", "chars": 593}
+{"ts": "2025-09-09 22:13:22", "from": "PeerB", "kind": "ack-file", "seq": "000022", "file": "000022.tg-1757423586-f4c99a.txt", "ok": true}
+{"ts": "2025-09-09 22:13:24", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 302}
+{"ts": "2025-09-09 22:13:24", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "426e68e68f38", "chars": 288}
+{"ts": "2025-09-09 22:13:38", "from": "PeerA", "kind": "ack-file", "seq": "000019", "file": "000019.cccc-1757423599-eed4e0.txt", "ok": true}
+{"ts": "2025-09-09 22:13:53", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 466}
+{"ts": "2025-09-09 22:13:53", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "3d69af6cad20", "chars": 460}
+{"ts": "2025-09-09 22:14:08", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757423646-31cf82", "seq": "000023", "chars": 894}
+{"ts": "2025-09-09 22:14:12", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 698}
+{"ts": "2025-09-09 22:14:12", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "0d5de04b2b4f", "chars": 684}
+{"ts": "2025-09-09 22:14:20", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757423659-f35e3b", "seq": "000020", "chars": 587}
+{"ts": "2025-09-09 22:14:22", "from": "PeerB", "kind": "ack-file", "seq": "000023", "file": "000023.cccc-1757423646-31cf82.txt", "ok": true}
+{"ts": "2025-09-09 22:14:23", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 296}
+{"ts": "2025-09-09 22:14:23", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "b174edd8019a", "chars": 282}
+{"ts": "2025-09-09 22:14:34", "from": "PeerA", "kind": "ack-file", "seq": "000020", "file": "000020.cccc-1757423659-f35e3b.txt", "ok": true}
+{"ts": "2025-09-10 13:42:33", "kind": "lazy-preamble-sent", "peer": "PeerA"}
+{"ts": "2025-09-10 13:42:33", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerA", "peerB"], "mid": "tg-1757479353-9b2288", "chars": 14}
+{"ts": "2025-09-10 13:42:56", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757479367-094d63", "seq": "000022", "chars": 674}
+{"ts": "2025-09-10 13:43:02", "from": "System", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757479376-435522", "seq": "000023", "chars": 462}
+{"ts": "2025-09-10 13:43:06", "from": "System", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757479382-20d440", "seq": "000025", "chars": 455}
+{"ts": "2025-09-10 13:43:06", "from": "system", "kind": "self-check", "every": 12, "count": 12}
+{"ts": "2025-09-10 13:43:06", "from": "PeerA", "kind": "ack-file", "seq": "000021", "file": "000021.tg-1757479353-9b2288.txt", "ok": true}
+{"ts": "2025-09-10 13:43:06", "from": "PeerB", "kind": "ack-file", "seq": "000024", "file": "000024.tg-1757479353-9b2288.txt", "ok": true}
+{"ts": "2025-09-10 13:43:09", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 383}
+{"ts": "2025-09-10 13:43:09", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "8ee67a434cca", "chars": 369}
+{"ts": "2025-09-10 13:43:12", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 299}
+{"ts": "2025-09-10 13:43:12", "kind": "bridge-outbox-sent", "type": "to_user", "peer": "peerA", "id": "5208f4349528", "chars": 293}
+{"ts": "2025-09-10 13:43:21", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757479394-c29baf", "seq": "000026", "chars": 723}
+{"ts": "2025-09-10 13:43:21", "from": "PeerB", "kind": "ack-file", "seq": "000025", "file": "000025.cccc-1757479382-20d440.txt", "ok": true}
+{"ts": "2025-09-10 13:43:24", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 527}
+{"ts": "2025-09-10 13:43:24", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "e44c831e2cab", "chars": 513}
+{"ts": "2025-09-10 13:43:27", "from": "PeerA", "kind": "ack-file", "seq": "000022", "file": "000022.cccc-1757479367-094d63.txt", "ok": true}
+{"ts": "2025-09-10 13:43:34", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757479408-6cecc9", "seq": "000024", "chars": 573}
+{"ts": "2025-09-10 13:43:34", "from": "PeerA", "kind": "ack-file", "seq": "000023", "file": "000023.cccc-1757479376-435522.txt", "ok": true}
+{"ts": "2025-09-10 13:43:34", "from": "PeerB", "kind": "ack-file", "seq": "000026", "file": "000026.cccc-1757479394-c29baf.txt", "ok": true}
+{"ts": "2025-09-10 13:43:37", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 282}
+{"ts": "2025-09-10 13:43:37", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "578e9c4d2ad0", "chars": 268}
+{"ts": "2025-09-10 13:43:50", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757479424-48f160", "seq": "000027", "chars": 1080}
+{"ts": "2025-09-10 13:43:53", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 884}
+{"ts": "2025-09-10 13:43:53", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerA", "id": "a6baf5763f4b", "chars": 870}
+{"ts": "2025-09-10 13:43:54", "from": "PeerA", "kind": "ack-file", "seq": "000024", "file": "000024.cccc-1757479408-6cecc9.txt", "ok": true}
+{"ts": "2025-09-10 13:44:09", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757479443-b23434", "seq": "000025", "chars": 706}
+{"ts": "2025-09-10 13:44:09", "from": "PeerB", "kind": "ack-file", "seq": "000027", "file": "000027.cccc-1757479424-48f160.txt", "ok": true}
+{"ts": "2025-09-10 13:44:12", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 415}
+{"ts": "2025-09-10 13:44:12", "kind": "bridge-outbox-sent", "type": "to_peer_summary", "peer": "peerB", "id": "32e1543a2938", "chars": 401}
+{"ts": "2025-09-10 13:44:16", "from": "PeerA", "kind": "ack-file", "seq": "000025", "file": "000025.cccc-1757479443-b23434.txt", "ok": true}
+{"ts": "2025-09-13 15:51:52", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerA", "peerB"], "mid": "tg-1757746312-4035f1", "chars": 161}
+{"ts": "2025-09-13 15:51:52", "from": "system", "kind": "lazy-preamble-sent", "peer": "PeerA", "route": "mailbox"}
+{"ts": "2025-09-13 15:51:53", "from": "system", "kind": "lazy-preamble-sent", "peer": "PeerB", "route": "mailbox"}
+{"ts": "2025-09-13 15:53:25", "kind": "mailbox-diag", "file": "/home/zixuniaowu/cccc/.cccc/mailbox/peerA/to_user.md", "encoding": "utf-8(replace)", "bytes": 344, "prefix_hex": "536f6c61722053797374656d2053696d756c6174696f6e20", "nul_ratio": 0.0}
+{"ts": "2025-09-13 15:53:25", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757746405-8402d6", "seq": "000027", "chars": 981}
+{"ts": "2025-09-13 15:53:28", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 352}
+{"ts": "2025-09-13 15:53:30", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 686}
+{"ts": "2025-09-13 15:54:29", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757746469-3af186", "seq": "000029", "chars": 989}
+{"ts": "2025-09-13 15:54:32", "from": "PeerB", "kind": "ack-file", "seq": "000028", "file": "000028.tg-1757746312-4035f1.txt", "ok": false}
+{"ts": "2025-09-13 15:54:32", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 542}
+{"ts": "2025-09-13 15:54:40", "from": "PeerA", "kind": "ack-file", "seq": "000026", "file": "000026.tg-1757746312-4035f1.txt", "ok": true}
+{"ts": "2025-09-13 15:54:52", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757746492-9f0e64", "seq": "000030", "chars": 760}
+{"ts": "2025-09-13 15:54:54", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 564}
+{"ts": "2025-09-13 15:55:01", "from": "System", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757746501-ed84b8", "seq": "000031", "chars": 320}
+{"ts": "2025-09-13 15:55:01", "from": "system", "kind": "revise-intercept", "peer": "PeerB", "reason": "not-revise-kind"}
+{"ts": "2025-09-13 15:55:01", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757746501-8373c8", "seq": "000028", "chars": 304}
+{"ts": "2025-09-13 15:55:04", "from": "PeerA", "kind": "ack-file", "seq": "000027", "file": "000027.cccc-1757746405-8402d6.txt", "ok": true}
+{"ts": "2025-09-13 15:55:12", "from": "PeerB", "kind": "ack-file", "seq": "000029", "file": "000029.cccc-1757746469-3af186.txt", "ok": false}
+{"ts": "2025-09-13 15:55:20", "from": "PeerA", "kind": "ack-file", "seq": "000028", "file": "000028.cccc-1757746501-8373c8.txt", "ok": true}
+{"ts": "2025-09-13 15:55:20", "from": "PeerB", "kind": "ack-file", "seq": "000030", "file": "000030.cccc-1757746492-9f0e64.txt", "ok": false}
+{"ts": "2025-09-13 15:55:37", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757746531-a77c50", "seq": "000029", "chars": 825}
+{"ts": "2025-09-13 15:55:37", "from": "PeerB", "kind": "ack-file", "seq": "000031", "file": "000031.cccc-1757746501-ed84b8.txt", "ok": false}
+{"ts": "2025-09-13 15:55:39", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 534}
+{"ts": "2025-09-13 15:56:37", "from": "PeerA", "kind": "ack-file", "seq": "000029", "file": "000029.cccc-1757746531-a77c50.txt", "ok": true}
+{"ts": "2025-09-13 15:57:13", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757746627-cfc706", "seq": "000032", "chars": 994}
+{"ts": "2025-09-13 15:57:15", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 537}
+{"ts": "2025-09-13 15:57:16", "kind": "bridge-outbox-blocked", "type": "to_user", "peer": "peerA", "reason": "rate-limited: interval<1.5s"}
+{"ts": "2025-09-13 16:00:18", "kind": "bridge-file-outbound", "peer": "peerB", "path": "/home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerB/photos/solar_system_test.png"}
+{"ts": "2025-09-13 16:00:18", "kind": "bridge-file-sent", "peer": "peerB", "path": "/home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerB/photos/solar_system_test.png", "bytes": 250384, "sha256": "364d924cf2e5020eeeb7deeaddb046a244c61744483295e2bd5123da9976c746"}
+{"ts": "2025-09-13 16:00:22", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757746821-e92bab", "seq": "000030", "chars": 932}
+{"ts": "2025-09-13 16:00:24", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 641}
+{"ts": "2025-09-13 16:00:24", "from": "PeerB", "kind": "ack-file", "seq": "000032", "file": "000032.cccc-1757746627-cfc706.txt", "ok": false}
+{"ts": "2025-09-13 16:00:37", "from": "PeerA", "kind": "ack-file", "seq": "000030", "file": "000030.cccc-1757746821-e92bab.txt", "ok": true}
+{"ts": "2025-09-13 16:03:22", "kind": "bridge-inbound", "from": "telegram", "chat": 6936004059, "routes": ["peerA", "peerB"], "mid": "tg-1757747002-5841f2", "chars": 18}
+{"ts": "2025-09-13 16:03:39", "kind": "mailbox-diag", "file": "/home/zixuniaowu/cccc/.cccc/mailbox/peerA/to_user.md", "encoding": "utf-8(replace)", "bytes": 482, "prefix_hex": "50726f677265737320557064617465202d20506565722041", "nul_ratio": 0.0}
+{"ts": "2025-09-13 16:03:41", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757747021-b10c6f", "seq": "000032", "chars": 702}
+{"ts": "2025-09-13 16:03:41", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 488}
+{"ts": "2025-09-13 16:03:44", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 411}
+{"ts": "2025-09-13 16:03:45", "from": "PeerB", "kind": "ack-file", "seq": "000033", "file": "000033.tg-1757747002-5841f2.txt", "ok": false}
+{"ts": "2025-09-13 16:03:54", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757747028-f58337", "seq": "000034", "chars": 802}
+{"ts": "2025-09-13 16:03:54", "from": "PeerA", "kind": "ack-file", "seq": "000031", "file": "000031.tg-1757747002-5841f2.txt", "ok": true}
+{"ts": "2025-09-13 16:03:57", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 462}
+{"ts": "2025-09-13 16:04:13", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757747053-512ef1", "seq": "000035", "chars": 888}
+{"ts": "2025-09-13 16:04:16", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 456}
+{"ts": "2025-09-13 16:04:18", "from": "PeerA", "kind": "ack-file", "seq": "000032", "file": "000032.cccc-1757747021-b10c6f.txt", "ok": true}
+{"ts": "2025-09-13 16:04:53", "kind": "bridge-file-outbound", "peer": "peerB", "path": "/home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerB/photos/controls_test.png"}
+{"ts": "2025-09-13 16:04:53", "kind": "bridge-file-sent", "peer": "peerB", "path": "/home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerB/photos/controls_test.png", "bytes": 250265, "sha256": "2a73594d8fcecf49933c984bd96a3e616aaf3155ef35fc5ad251a73821e7f3e2"}
+{"ts": "2025-09-13 16:04:58", "kind": "bridge-file-outbound", "peer": "peerB", "path": "/home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerB/photos/planet_info_test.png"}
+{"ts": "2025-09-13 16:04:58", "kind": "bridge-file-sent", "peer": "peerB", "path": "/home/zixuniaowu/cccc/.cccc/work/upload/outbound/peerB/photos/planet_info_test.png", "bytes": 274266, "sha256": "8f0dbbda5366b56173fdde52024ee95e8d1ded62b8412ffbee4190fd193a47d4"}
+{"ts": "2025-09-13 16:04:59", "from": "System", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757747099-c89ef1", "seq": "000036", "chars": 320}
+{"ts": "2025-09-13 16:05:00", "from": "System", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757747099-6f079c", "seq": "000033", "chars": 497}
+{"ts": "2025-09-13 16:05:00", "from": "System", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757747100-c1eae8", "seq": "000037", "chars": 490}
+{"ts": "2025-09-13 16:05:00", "from": "system", "kind": "self-check", "every": 12, "count": 12}
+{"ts": "2025-09-13 16:05:00", "from": "system", "kind": "revise-intercept", "peer": "PeerB", "reason": "not-revise-kind"}
+{"ts": "2025-09-13 16:05:00", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757747100-73d2be", "seq": "000034", "chars": 304}
+{"ts": "2025-09-13 16:05:04", "from": "PeerB", "kind": "ack-file", "seq": "000034", "file": "000034.cccc-1757747028-f58337.txt", "ok": false}
+{"ts": "2025-09-13 16:05:13", "from": "PeerB", "kind": "ack-file", "seq": "000035", "file": "000035.cccc-1757747053-512ef1.txt", "ok": false}
+{"ts": "2025-09-13 16:05:21", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757747121-528e2d", "seq": "000038", "chars": 736}
+{"ts": "2025-09-13 16:05:24", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 536}
+{"ts": "2025-09-13 16:05:30", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757747130-869556", "seq": "000035", "chars": 856}
+{"ts": "2025-09-13 16:05:32", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 561}
+{"ts": "2025-09-13 16:05:34", "from": "PeerB", "kind": "ack-file", "seq": "000036", "file": "000036.cccc-1757747099-c89ef1.txt", "ok": false}
+{"ts": "2025-09-13 16:05:42", "from": "PeerA", "kind": "ack-file", "seq": "000033", "file": "000033.cccc-1757747099-6f079c.txt", "ok": true}
+{"ts": "2025-09-13 16:05:51", "from": "PeerB", "kind": "handoff", "to": "PeerA", "status": "nudged", "mid": "cccc-1757747151-075204", "seq": "000036", "chars": 827}
+{"ts": "2025-09-13 16:05:51", "from": "PeerA", "kind": "ack-file", "seq": "000034", "file": "000034.cccc-1757747100-73d2be.txt", "ok": true}
+{"ts": "2025-09-13 16:05:52", "from": "PeerB", "kind": "ack-file", "seq": "000037", "file": "000037.cccc-1757747100-c1eae8.txt", "ok": false}
+{"ts": "2025-09-13 16:05:53", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 536}
+{"ts": "2025-09-13 16:06:06", "from": "PeerB", "kind": "ack-file", "seq": "000038", "file": "000038.cccc-1757747121-528e2d.txt", "ok": false}
+{"ts": "2025-09-13 16:06:18", "kind": "mailbox-diag", "file": "/home/zixuniaowu/cccc/.cccc/mailbox/peerA/to_user.md", "encoding": "utf-8(replace)", "bytes": 324, "prefix_hex": "0520536f6c61722053797374656d2050726f6a6563742043", "nul_ratio": 0.0}
+{"ts": "2025-09-13 16:06:21", "kind": "bridge-outbound", "to": "telegram", "peer": "peera", "chars": 330}
+{"ts": "2025-09-13 16:06:23", "from": "PeerA", "kind": "ack-file", "seq": "000035", "file": "000035.cccc-1757747130-869556.txt", "ok": true}
+{"ts": "2025-09-13 16:06:42", "from": "PeerA", "kind": "handoff", "to": "PeerB", "status": "nudged", "mid": "cccc-1757747196-d10333", "seq": "000039", "chars": 671}
+{"ts": "2025-09-13 16:06:42", "from": "PeerA", "kind": "ack-file", "seq": "000036", "file": "000036.cccc-1757747151-075204.txt", "ok": true}
+{"ts": "2025-09-13 16:06:45", "kind": "bridge-outbound", "to": "telegram", "peer": "to_peer", "chars": 475}
+{"ts": "2025-09-13 16:06:56", "from": "PeerB", "kind": "ack-file", "seq": "000039", "file": "000039.cccc-1757747196-d10333.txt", "ok": false}

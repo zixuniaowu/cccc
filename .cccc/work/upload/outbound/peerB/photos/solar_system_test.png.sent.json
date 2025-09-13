@@ -1,0 +1,9 @@
+{
+  "sent": true,
+  "ts": "2025-09-13T16:00:18.281423+09:00",
+  "bytes": 250384,
+  "sha256": "364d924cf2e5020eeeb7deeaddb046a244c61744483295e2bd5123da9976c746",
+  "method": "sendPhoto",
+  "peer": "peerB",
+  "name": "solar_system_test.png"
+}

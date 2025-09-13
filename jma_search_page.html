@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>気象庁｜過去の気象データ検索</title>
+<meta name="Author" content="気象庁 Japan Meteorological Agency" />
+<meta name="keywords" content="気象庁 Japan Meteorological Agency" />
+<meta name="description" content="過去の気象データ検索" />
+<meta http-equiv="Content-Style-Type" content="text/css" />
+<meta http-equiv="Content-Script-Type" content="text/javascript" />
+<link rel="stylesheet" type="text/css" href="../../../com/css/define.css" media="all" />
+<link rel="stylesheet" type="text/css" href="../css/default.css" media="all" />
+<script type="text/javascript" src="/com/js/jquery.js"></script>
+<style type="text/css" media="all"><!-- @import url(../../../com/default.css); --></style>
+<style>
+span.selected{background-color:blue; color:white}
+td.nwtop{white-space:nowrap; vertical-align:top;}
+* {line-height: 1.2em; }
+</style>
+</head>
+
+<body>
+<noscript><div>すべての機能をご利用いただくにはJavascriptを有効にしてください。</div></noscript>
+<!--header start -->
+<div id="header_area">
+  <div id="nheader">
+    <div id="logo"><a href="//www.jma.go.jp/jma/index.html"><img src="/jma/com/images/logo.gif" alt="気象庁" width="120" height="67" /></a></div>
+    <div id="header2_right">
+      <div id="header2_link">
+        <ul>
+          <li xml:lang="en" lang="en"><a href="//www.jma.go.jp/jma/kokusai/multi.html">Other Languages</a></li>
+        </ul>
+      </div>
+      <div id="header2_link">
+        <ul>
+          <li xml:lang="en" lang="en"><a href="//www.jma.go.jp/jma/indexe.html">ENGLISH</a></li>
+        </ul>
+      </div>
+<!-- search -->
+      <div id="gsearch">
+        <form id="cse-search-box" action="//google.com/cse">
+          <input type="hidden" name="cx" value="009950868052057056798:0yrbmp7chwi">
+          <input type="hidden" name="ie" value="UTF-8">
+          <input type="text" name="q">
+          <input type="image" name="sa" src="/jma/com/images/btn_search6.png" alt="検索">
+        </form>
+        <script type="text/javascript" src="//www.google.com/cse/brand?form=cse-search-box&lang=ja"></script>
+      </div>
+<!-- search end-->
+    </div>
+    <ul id="gnavi">
+      <li><a href="//www.jma.go.jp/">ホーム</a></li>
+      <li><a href="//www.jma.go.jp/jma/menu/menuflash.html">防災情報</a></li>
+      <li><a href="//www.jma.go.jp/jma/menu/menureport.html" class="on">各種データ・資料</a></li>
+      <li><a href="//www.jma.go.jp/jma/menu/areas.html">地域の情報</a></li>
+      <li><a href="//www.jma.go.jp/jma/menu/menuknowledge.html">知識・解説</a></li>
+      <li><a href="//www.jma.go.jp/jma/menu/menuappli.html">各種申請・ご案内</a></li>
+    </ul>
+  </div>
+</div>
+<!--header end -->
+
+<div id="contents_area2">
+  <div id="ncontents2">
+<!-- pankuzu menu -->
+  <ul class="breadcrumb2">
+  <li><a href="//www.jma.go.jp/">ホーム</a>&nbsp;&gt;&nbsp;</li>
+  <li><a href="//www.jma.go.jp/jma/menu/menureport.html">各種データ・資料</a>&nbsp;&gt;&nbsp;</li>
+  <li>過去の気象データ検索</li>
+  </ul>
+<!-- //pankuzu menu -->
+
+<div id="main">
+
+<!-- contents -->
+<h1>過去の気象データ検索</h1>
+
+<!--この下のコメントは、「消さない」「変更しない」こと-->
+<!-- message start (don't delete) -->
+<!-- message end (don't delete) -->
+
+
+<table style="float:left"><tr>
+<td style="white-space:nowrap"><img src="../data/icon/sellected/tagver3_sur.gif" alt="高層のデータ" usemap="#point" border="0">
+<map name="point">
+<area shape="rect" alt="高層のデータ" coords="216,1,403,36" href="upper/index.php"></map></td>
+</tr></table>
+<table style="margin-left: auto"><tr>
+<td style="white-space:nowrap; font-size:smaller; vertical-align:top" rowspan="1"><a href="../data/mdrr/index.html"><img src="../data/icon/newBannerThin.gif" align="top" alt="最新の統計データにより、現在の気象状況をご覧頂けます。"></a></td>
+<td style="white-space:nowrap; font-size:smaller; vertical-align:top" rowspan="1"><a href="/risk/obsdl/index.php"><img src="../data/icon/kakoDownloadBannerThin.gif" align="top" alt="週ごとの値等、気象データをカスタマイズしてダウンロードできます。"></a></td>
+<td style="white-space:nowrap; font-size:smaller; vertical-align:top" rowspan="1"><a href="/cpd/cgi-bin/view/index.php"><img src="../data/icon/kakoChiikiBannerThin.gif" align="top" alt="地域平均した過去の気象データをご覧頂けます。(例:北日本の平均)"></a></td>
+</tr></table>
+<table>
+<tr>
+<td style="white-space:nowrap">地点と年月日時を選択して、表示するデータの種類を選択してください。</td>
+<td style="white-space:nowrap; font-size:smaller;"><a href="index.php">検索条件を全てクリア</a></td>
+</tr>
+</table>
+<table>
+<tr>
+<td style="vertical-align:top; padding-bottom:0em;">
+<h2 style="margin-top:0em; margin-bottom:0em;">地点の選択</h2>
+<div class="contents">
+<table>
+<tr><td style="text-align:right;font-size:x-small"><a href="index.php?prec_no=&block_no=&year=&month=&day=&view=">地点の選択をクリア</a><tr>
+<td style="text-align:center;white-space:nowrap">
+<a href="select/prefecture00.php?prec_no=&block_no=&year=&month=&day=&view="><img src="../data/icon/tizubanner3.gif" alt="" align="top"><br>都府県・地方を選択</a></td>
+</tr>
+<tr>
+<td style="padding-top:1em;text-align:center;white-space:nowrap">
+<img src="../data/icon/false/pointselect.gif" alt="" align="top"><br><span style="font-size:smaller">地点を選択</span></td></tr><tr><td style="padding-top:1em;text-align:center;white-space:nowrap"><span style='font-weight:bold; color:black'>（未選択）</span></td></tr>
+</table>
+</div>
+</td>
+<td style="vertical-align:top">
+<h2 style="margin-top:0em; margin-bottom:0em;">年月日の選択</h2>
+<div class="contents">
+<table>
+<tr><td style="text-align:right;font-size:x-small" colspan="7"><a href="index.php?prec_no=&block_no=&year=&month=&day=&view=">年月日の選択をクリア</a></td></tr><tr>
+<td style="vertical-align:top">
+<table>
+<tr><td class="nwtop"><a href="index.php?prec_no=&block_no=&year=2025&month=&day=&view=">2025年</a><br><a href="index.php?prec_no=&block_no=&year=2024&month=&day=&view=">2024年</a><br><a href="index.php?prec_no=&block_no=&year=2023&month=&day=&view=">2023年</a><br><a href="index.php?prec_no=&block_no=&year=2022&month=&day=&view=">2022年</a><br><a href="index.php?prec_no=&block_no=&year=2021&month=&day=&view=">2021年</a><br><a href="index.php?prec_no=&block_no=&year=2020&month=&day=&view=">2020年</a><br><a href="index.php?prec_no=&block_no=&year=2019&month=&day=&view=">2019年</a><br><a href="index.php?prec_no=&block_no=&year=2018&month=&day=&view=">2018年</a><br><a href="index.php?prec_no=&block_no=&year=2017&month=&day=&view=">2017年</a><br><a href="index.php?prec_no=&block_no=&year=2016&month=&day=&view=">2016年</a><br><a href="index.php?prec_no=&block_no=&year=2015&month=&day=&view=">2015年</a><br><a href="index.php?prec_no=&block_no=&year=2014&month=&day=&view=">2014年</a><br><a href="index.php?prec_no=&block_no=&year=2013&month=&day=&view=">2013年</a><br><a href="index.php?prec_no=&block_no=&year=2012&month=&day=&view=">2012年</a><br><a href="index.php?prec_no=&block_no=&year=2011&month=&day=&view=">2011年</a><br><a href="index.php?prec_no=&block_no=&year=2010&month=&day=&view=">2010年</a><br><a href="index.php?prec_no=&block_no=&year=2009&month=&day=&view=">2009年</a><br><a href="index.php?prec_no=&block_no=&year=2008&month=&day=&view=">2008年</a><br><a href="index.php?prec_no=&block_no=&year=2007&month=&day=&view=">2007年</a><br><a href="index.php?prec_no=&block_no=&year=2006&month=&day=&view=">2006年</a><br></td><td class="nwtop"><a href="index.php?prec_no=&block_no=&year=2005&month=&day=&view=">2005年</a><br><a href="index.php?prec_no=&block_no=&year=2004&month=&day=&view=">2004年</a><br><a href="index.php?prec_no=&block_no=&year=2003&month=&day=&view=">2003年</a><br><a href="index.php?prec_no=&block_no=&year=2002&month=&day=&view=">2002年</a><br><a href="index.php?prec_no=&block_no=&year=2001&month=&day=&view=">2001年</a><br><a href="index.php?prec_no=&block_no=&year=2000&month=&day=&view=">2000年</a><br><a href="index.php?prec_no=&block_no=&year=1999&month=&day=&view=">1999年</a><br><a href="index.php?prec_no=&block_no=&year=1998&month=&day=&view=">1998年</a><br><a href="index.php?prec_no=&block_no=&year=1997&month=&day=&view=">1997年</a><br><a href="index.php?prec_no=&block_no=&year=1996&month=&day=&view=">1996年</a><br><a href="index.php?prec_no=&block_no=&year=1995&month=&day=&view=">1995年</a><br><a href="index.php?prec_no=&block_no=&year=1994&month=&day=&view=">1994年</a><br><a href="index.php?prec_no=&block_no=&year=1993&month=&day=&view=">1993年</a><br><a href="index.php?prec_no=&block_no=&year=1992&month=&day=&view=">1992年</a><br><a href="index.php?prec_no=&block_no=&year=1991&month=&day=&view=">1991年</a><br><a href="index.php?prec_no=&block_no=&year=1990&month=&day=&view=">1990年</a><br><a href="index.php?prec_no=&block_no=&year=1989&month=&day=&view=">1989年</a><br><a href="index.php?prec_no=&block_no=&year=1988&month=&day=&view=">1988年</a><br><a href="index.php?prec_no=&block_no=&year=1987&month=&day=&view=">1987年</a><br><a href="index.php?prec_no=&block_no=&year=1986&month=&day=&view=">1986年</a><br></td><td class="nwtop"><a href="index.php?prec_no=&block_no=&year=1985&month=&day=&view=">1985年</a><br><a href="index.php?prec_no=&block_no=&year=1984&month=&day=&view=">1984年</a><br><a href="index.php?prec_no=&block_no=&year=1983&month=&day=&view=">1983年</a><br><a href="index.php?prec_no=&block_no=&year=1982&month=&day=&view=">1982年</a><br><a href="index.php?prec_no=&block_no=&year=1981&month=&day=&view=">1981年</a><br><a href="index.php?prec_no=&block_no=&year=1980&month=&day=&view=">1980年</a><br><a href="index.php?prec_no=&block_no=&year=1979&month=&day=&view=">1979年</a><br><a href="index.php?prec_no=&block_no=&year=1978&month=&day=&view=">1978年</a><br><a href="index.php?prec_no=&block_no=&year=1977&month=&day=&view=">1977年</a><br><a href="index.php?prec_no=&block_no=&year=1976&month=&day=&view=">1976年</a><br></td>
+</tr>
+</table>
+</td>
+<td style="background-color:#DADFEC;"></td>
+<td style="vertical-align:top;">
+<table>
+<tr>
+<td class="nwtop" style="text-align:right">
+<a href="index.php?prec_no=&block_no=&year=&month=1&day=&view=">1月</a><br><a href="index.php?prec_no=&block_no=&year=&month=2&day=&view=">2月</a><br><a href="index.php?prec_no=&block_no=&year=&month=3&day=&view=">3月</a><br><a href="index.php?prec_no=&block_no=&year=&month=4&day=&view=">4月</a><br><a href="index.php?prec_no=&block_no=&year=&month=5&day=&view=">5月</a><br><a href="index.php?prec_no=&block_no=&year=&month=6&day=&view=">6月</a><br><a href="index.php?prec_no=&block_no=&year=&month=7&day=&view=">7月</a><br><a href="index.php?prec_no=&block_no=&year=&month=8&day=&view=">8月</a><br><a href="index.php?prec_no=&block_no=&year=&month=9&day=&view=">9月</a><br><a href="index.php?prec_no=&block_no=&year=&month=10&day=&view=">10月</a><br><a href="index.php?prec_no=&block_no=&year=&month=11&day=&view=">11月</a><br><a href="index.php?prec_no=&block_no=&year=&month=12&day=&view=">12月</a><br></td>
+</tr>
+</table>
+</td>
+<td style="background-color:#DADFEC;"></td>
+<td style="vertical-align:top">
+<table>
+<tr>
+<td class="nwtop" style="text-align:right">
+<a href="index.php?prec_no=&block_no=&year=&month=&day=1&view=">1日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=2&view=">2日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=3&view=">3日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=4&view=">4日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=5&view=">5日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=6&view=">6日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=7&view=">7日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=8&view=">8日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=9&view=">9日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=10&view=">10日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=11&view=">11日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=12&view=">12日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=13&view=">13日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=14&view=">14日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=15&view=">15日</a><br></td><td class="nwtop" style="text-align:right"><a href="index.php?prec_no=&block_no=&year=&month=&day=16&view=">16日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=17&view=">17日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=18&view=">18日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=19&view=">19日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=20&view=">20日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=21&view=">21日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=22&view=">22日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=23&view=">23日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=24&view=">24日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=25&view=">25日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=26&view=">26日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=27&view=">27日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=28&view=">28日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=29&view=">29日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=30&view=">30日</a><br><a href="index.php?prec_no=&block_no=&year=&month=&day=31&view=">31日</a><br></td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</div>
+</td>
+<td style="vertical-align:top">
+<h2 style="margin-top:0em; margin-bottom:0em;">データの種類</h2>
+<div class="contents" style="white-space:nowrap; vertical-align:top">
+<table style="margin-top:14px">
+<tr>
+<td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/year.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>年ごとの値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点を指定してください）</td></tr></table>
+</td><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/buz066.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>年・月ごとの平年値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点を指定してください）</td></tr></table>
+</td></tr><tr><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/3month.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>３か月ごとの値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点、年を指定してください）</td></tr></table>
+</td><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/buz066.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>３か月ごとの平年値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点を指定してください）</td></tr></table>
+</td></tr><tr><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/month.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>観測開始からの月ごとの値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点を指定してください）</td></tr></table>
+</td><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/buz066.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>旬ごとの平年値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点を指定してください）</td></tr></table>
+</td></tr><tr><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/month.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>月ごとの値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点、年を指定してください）</td></tr></table>
+</td><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/buz066.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>半旬ごとの平年値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点を指定してください）</td></tr></table>
+</td></tr><tr><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/jun.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>旬ごとの値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点、年を指定してください）</td>
+</tr></table>
+</td>
+<td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/buz066.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>日ごとの平年値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点、月を指定してください）</td></tr></table>
+</td></tr>
+<tr><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/hanjun.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>半旬ごとの値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点、年を指定してください）</td>
+</tr></table>
+<td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/buz066.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>霜・雪・結氷の初終日と初冠雪日の平年値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（気象台、測候所などのみのデータです）</td></tr></table>
+</td></tr>
+<tr><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/day.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>日ごとの値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点、年月を指定してください）</td></tr></table>
+</td><td rowspan="3">
+<table class="data2"><tr><td>
+<nobr>平年値は1991-2020年の30年間の観測値<br>の平均をもとに算出しています。</nobr>
+</td></tr></table>
+</td></tr>
+<tr><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/hour.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>１時間ごとの値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点、年月日を指定してください）</td></tr></table>
+</tr>
+<tr><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/minutes.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>１０分ごとの値を表示</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点、年月日を指定してください）</td></tr></table>
+</td></tr><tr><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/buz037.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>地点ごとの観測史上1～10位の値</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（地点を指定してください）</td></tr></table>
+</td><td>
+<table><tr><td rowspan="2">
+<img src="../data/icon/false/buz066.gif" align="top" alt=""></td><td class="nwtop" style="text-align:left"><span>要素別データの公開期間</span>　<br></td></tr><tr><td class="nwtop" style="text-align:left; font-size:x-small">（気象台、測候所などのみのデータです）</td></tr></table>
+</td></tr><tr><td>
+<table><tr><td rowspan="2">
+<a href="view/rankall.php?prec_no=&block_no=&year=&month=&day=&view="><img src="../data/icon/true/buz032.gif" align="top" alt=""></a></td><td class="nwtop" style="text-align:left"><a href="view/rankall.php?prec_no=&block_no=&year=&month=&day=&view=">歴代全国ランキング</a>　<br></td></tr><tr><td class="nwtop" style="text-align:right; font-size:x-small"></td></tr></table>
+</td><td>
+<table><tr><td rowspan="2">
+<a href="view/atlas.html"><img src="../data/icon/true/buz074.gif" align="top" alt=""></a></td>
+<td class="nwtop" style="text-align:left">
+<a href="view/atlas.html">メッシュ平年値図</a>
+</td></tr><tr><td class="nwtop" style="text-align:right; font-size:x-small">
+</td></tr></table>
+</td></tr>
+</table>
+</div>
+</td></tr></table>
+</div>
+<!--[2007/04/19] 新着情報欄を追加した。-->
+<table border="0">
+<tr>
+<td valign="middle"><span style="PADDING-RIGHT: 0em; PADDING-LEFT: 0.5em; FONT-WEIGHT: bold; FONT-SIZE: 120%; PADDING-BOTTOM: 0.2em; MARGIN: 0% 0% 0.4em; BORDER-LEFT: #2b478e 0.3em solid; WIDTH: 100%; PADDING-TOP: 0.2em">新着情報</span></td>
+</tr>
+<tr>
+<td>
+<div><ul>
+<li>気象官署の移転及び風向風速計の移設に伴い、平年値の一部を更新しました。詳細は<a href= "https://www.data.jma.go.jp/suishin/oshirase/pdf/20250325.pdf">配信資料に関するお知らせ(PDF形式：124KB）</a>をご覧ください。（2025年5月21日）</li>
+<li>令和6年6月3日にお知らせした2020年平年値の第4版の一部誤りを修正し、第4.0.1版として公開、利用を開始しましたのでお知らせします。詳細は<a href= "https://www.data.jma.go.jp/suishin/oshirase/pdf/20240711.pdf">配信資料に関するお知らせ（PDF形式：121KB）</a>のとおりです。（2024年7月11日）</li>
+<li>令和6年3月26日に公開した2020年平年値の第4版に誤りがあると判明しました。ご迷惑をおかけして申し訳ございません。詳細は<a href= "https://www.data.jma.go.jp/suishin/oshirase/pdf/20240603.pdf">配信資料に関するお知らせ（PDF形式：62KB）</a>のとおりです。（2024年6月3日）</li>
+</ul></div>
+</td>
+</tr>
+<tr>
+<td>
+<div align="left">
+<ul class="pagelink mtx">
+<li><a href="kako.html">過去のお知らせ</a></li>
+</ul></div>
+</td>
+</tr>
+
+<tr><td>　</td></tr>
+
+<tr>
+<td valign="middle"><span style="PADDING-RIGHT: 0em; PADDING-LEFT: 0.5em; FONT-WEIGHT: bold; FONT-SIZE: 120%; PADDING-BOTTOM: 0.2em; MARGIN: 0% 0% 0.4em; BORDER-LEFT: #2b478e 0.3em solid; WIDTH: 100%; PADDING-TOP: 0.2em">データ修正のお知らせ</span></td>
+</tr>
+<tr>
+<td>
+<div><ul>
+<li>アメダスの松島観測所（熊本県）における2025年8月11日の観測データを精査し、降水量の値を修正しました。これに伴い「日最大1時間降水量」の「観測史上1位の値（通年及び8月としての値）」及び「日降水量」の「観測史上1位の値（8月としての値）」も変更となっておりますので、ご注意ください。（2025年8月20日）</li>
+<li>「沖永良部」（鹿児島県）と「屋久島」（鹿児島県）において、視程、天気、記事に誤りがありましたので、2020年10月27日から2024年8月28日までのデータを修正しました。（2025年5月23日）</li>
+<li>アメダスの弟子屈観測所（北海道）において、湿度計の不具合により、2024年9月30日の湿度データの一部を欠測としました。これに伴い、「日最小相対湿度」の「観測史上1位の値（通年及び9月としての値）」も変更となっておりますので、ご注意ください。（2025年5月20日）</li>
+<li>「石垣島」（沖縄県）における日最高気温及び日最低気温について、全期間のデータを検証した結果、日最高気温は1896年12月1日～1900年7月31日、日最低気温は1911年5月1日～1928年8月31日の期間を疑問値としました。詳細は「<a href="https://www.jma.go.jp/jma/press/2503/27a/20250327_ishigaki_data.pdf">お知らせ（PDF形式:63KB）</a>」をご覧ください。これに伴い、「歴代全国ランキング」の「最高気温の高い方から（2月）」および「地点ごとの観測史上1～10位の値」も変更となっておりますので、ご注意ください。（2025年3月27日）</li>
+</ul></div>
+</td>
+</tr>
+<tr>
+<td>
+<div align="left">
+<ul class="pagelink mtx">
+<li><a href="kako_data.html">データ修正の過去のお知らせ</a></li>
+
+</ul></div>
+</td>
+</tr>
+<tr>
+<td>
+<div align="left" style="margin-left:5ex">
+※ 掲載している気象データは、過去にさかのぼって修正する場合があります。
+ご利用の際には、最新の掲載データをご確認ください。
+なお、主な修正については、データ修正のお知らせに掲載します。
+</div>
+</td>
+</tr>
+</table>
+
+<hr size="2" style="color : #DADFEC;">
+<div align="right">
+<table class="layouttitle" cellspacing="0" cellpadding="3">
+  <tr valign="top">
+    <td align="left">
+    <ul class="pagelink mtx">
+      <li><a href="../data/mdrr/man/first.html">利用される方へ</a></li>
+    </ul>
+    </td>
+    <td align="left">
+    <ul class="pagelink mtx">
+      <li><a href="../data/mdrr/faq/index_k.html">よくある質問（FAQ）</a></li>
+    </ul>
+    </td>
+    <td align="left">
+    <ul class="pagelink mtx">
+      <li><a href="../data/kaisetu/index.html">気象観測統計の解説</a></li>
+    </ul>
+    </td>
+    <td align="left">
+    <ul class="pagelink mtx">
+      <li><a href="//www.jma.go.jp/jma/press/tenko.html">年・季節・各月の天候</a></li>
+    </ul>
+    </td>
+    <td align="left">
+    <ul class="pagelink mtx">
+      <li><a href="../data/mdrr/normal/index.html">平年値ダウンロード</a></li>
+    </ul>
+    </td>
+  </tr>
+</table>
+</div>
+
+<!-- //contents -->
+<p class="totop"><a href="#nheader">このページのトップへ</a></p>
+</div>
+</div>
+
+<div id="footer_area"><div id="nfooter"><ul><li><a href="//www.jma.go.jp/jma/kishou/info/coment.html">気象庁ホームページについて</a></li></ul></div></div></body>
+</html>
+
+

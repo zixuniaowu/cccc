@@ -1,0 +1,9 @@
+{
+  "sent": true,
+  "ts": "2025-09-09T21:46:17.767124+09:00",
+  "bytes": 2292,
+  "sha256": "63139310c0648c61c73f0c857c5d4eb1c49adf2c44b81993d5cf34ed788e587c",
+  "method": "sendDocument",
+  "peer": "peerA",
+  "name": "tokyo_heat_analysis_2025.md"
+}
