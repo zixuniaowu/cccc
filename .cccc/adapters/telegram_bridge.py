@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """
 Telegram Bridge (MVP skeleton)
-- Dry-run friendly: default to file-based mock (no network), then gate real network by token/allowlist.
-- Inbound: messages -> .cccc/mailbox/<peer>/inbox.md (with optional a:/b:/both: prefix routing), append [MID].
-- Outbound: tail .cccc/mailbox/peer*/to_user.md changes, debounce and send concise summaries to chat(s).
+- Network mode: gate by token/allowlist (long-poll getUpdates).
+- Inbound: messages -> .cccc/mailbox/<peer>/inbox (numbered files with [MID]); supports a:/b:/both: routing.
+- Outbound: read .cccc/state/outbox.jsonl (single source) and send concise summaries to chat(s).
 """
 from __future__ import annotations
 from pathlib import Path
@@ -26,11 +26,6 @@ HOME = ROOT/".cccc"
 # Ensure we can import modules from .cccc (single-source preamble via prompt_weaver)
 if str(HOME) not in sys.path:
     sys.path.insert(0, str(HOME))
-CLI_PROFILES = None
-try:
-    CLI_PROFILES = read_yaml(HOME/"settings"/"cli_profiles.yaml")
-except Exception:
-    CLI_PROFILES = {}
 
 def read_yaml(p: Path) -> Dict[str, Any]:
     if not p.exists():
@@ -219,52 +214,13 @@ def _deliver_inbound(home: Path, routes: List[str], payload: str, mid: str):
     """Write numbered inbox files per peer to integrate with orchestrator NUDGE.
     Also write inbox.md as a last-resort for bridge mode users.
     """
-    # Lazy preamble (config-driven; single-source via prompt_weaver)
-    LP = ((CLI_PROFILES or {}).get('delivery') or {}).get('lazy_preamble') or {}
-    LAZY_ENABLED = bool(LP.get('enabled', True))
-    def _preamble_state_path() -> Path:
-        return home/"state"/"preamble_sent.json"
-    def _load_preamble_sent() -> dict:
-        p = _preamble_state_path()
-        try:
-            return json.loads(p.read_text(encoding='utf-8'))
-        except Exception:
-            return {"PeerA": False, "PeerB": False}
-    def _save_preamble_sent(st: dict):
-        p = _preamble_state_path(); p.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding='utf-8')
-        except Exception:
-            pass
-    def _compose_preamble(peer: str) -> str:
-        try:
-            # Prefer weave_preamble; fallback to system prompt
-            from prompt_weaver import weave_preamble as _wp
-            return _wp(home, peer)
-        except Exception:
-            try:
-                from prompt_weaver import weave_system_prompt as _ws
-                return _ws(home, peer)
-            except Exception:
-                return ""
-    st = _load_preamble_sent() if LAZY_ENABLED else {"PeerA": True, "PeerB": True}
+    # Lazy preamble handled centrally in orchestrator; adapter no longer injects.
+    st = {"PeerA": True, "PeerB": True}
     for peer in routes:
         inbox_dir, proc_dir, state = _ensure_dirs(home, peer)
         seq = _next_seq(inbox_dir, proc_dir, state, peer)
         fname = f"{seq}.{mid}.txt"
         final = payload
-        if LAZY_ENABLED:
-            label = 'PeerA' if peer == 'peerA' else 'PeerB'
-            if not bool(st.get(label)):
-                pre = _compose_preamble(peer)
-                if pre:
-                    # Merge preamble into the first user message as one block
-                    m = re.search(r"<\s*FROM_USER\s*>\s*([\s\S]*?)<\s*/FROM_USER\s*>", final, re.I)
-                    inner = m.group(1) if m else final
-                    final = f"<FROM_USER>\n{pre}\n\n{inner.strip()}\n</FROM_USER>\n"
-                st[label] = True
-                _save_preamble_sent(st)
-                _append_ledger({"kind":"lazy-preamble-sent","peer":label})
         _write_text(inbox_dir/fname, final)
         # Best-effort: also mirror to inbox.md for adapter users
         _write_text((home/"mailbox"/peer/"inbox.md"), final)
@@ -280,13 +236,21 @@ def _append_ledger(entry: Dict[str, Any]):
         pass
 
 def _runtime_path() -> Path:
-    return HOME/"state"/"telegram-runtime.json"
+    # Unified runtime for all bridges
+    return HOME/"state"/"bridge-runtime.json"
 
 def load_runtime() -> Dict[str, Any]:
     p = _runtime_path()
     try:
         if p.exists():
             return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        pass
+    # Back-compat: fall back to legacy telegram-runtime.json
+    try:
+        legacy = HOME/"state"/"telegram-runtime.json"
+        if legacy.exists():
+            return json.loads(legacy.read_text(encoding='utf-8'))
     except Exception:
         pass
     return {}
@@ -359,61 +323,8 @@ def save_subs(items: List[int]):
     except Exception:
         pass
 
-def dry_run_loop(cfg: Dict[str, Any]):
-    _acquire_singleton_lock("telegram-bridge-dryrun")
-    mock = cfg.get('mock') or {}
-    inbox_dir = Path(mock.get('inbox_dir') or HOME/"work"/"telegram_inbox")
-    outlog = Path(mock.get('outbox_log') or HOME/"state"/"bridge-telegram.log")
-    inbox_dir.mkdir(parents=True, exist_ok=True)
-    outlog.parent.mkdir(parents=True, exist_ok=True)
-    seen = set()
-    default_route = str(cfg.get('default_route') or 'both')
-    max_chars = int(cfg.get('max_msg_chars') or 900)
-    max_lines = int(cfg.get('max_msg_lines') or 8)
-    _append_log(outlog, "[dry-run] bridge started")
-
-    def watch_outputs():
-        to_user_paths = [HOME/"mailbox"/"peerA"/"to_user.md", HOME/"mailbox"/"peerB"/"to_user.md"]
-        last = {str(p): '' for p in to_user_paths}
-        while True:
-            for p in to_user_paths:
-                try:
-                    txt = p.read_text(encoding='utf-8').strip()
-                except Exception:
-                    txt = ''
-                key = str(p)
-                if txt and txt != last[key]:
-                    last[key] = txt
-                    preview = _summarize(txt, max_chars, max_lines)
-                    _append_log(outlog, f"[outbound] {p.name} {len(txt)} chars | {preview}")
-            time.sleep(1.0)
-
-    th = threading.Thread(target=watch_outputs, daemon=True)
-    th.start()
-
-    while True:
-        for f in sorted(inbox_dir.glob('*.txt')):
-            if f in seen:
-                continue
-            try:
-                text = f.read_text(encoding='utf-8')
-            except Exception:
-                text = ''
-            seen.add(f)
-            routes, body = _route_from_text(text, default_route)
-            mid = _mid()
-            body2 = _wrap_user_if_needed(body)
-            payload = _wrap_with_mid(body2, mid)
-            _deliver_inbound(HOME, routes, payload, mid)
-            _append_log(outlog, f"[inbound] routes={routes} mid={mid} size={len(body)} from={f.name}")
-        time.sleep(0.8)
-
 def main():
     cfg = read_yaml(HOME/"settings"/"telegram.yaml")
-    dry = bool(cfg.get('dry_run', True))
-    if dry:
-        dry_run_loop(cfg)
-        return
     # Real network path: gate by token and allowlist; long-poll getUpdates; send concise summaries
     _acquire_singleton_lock("telegram-bridge")
     token_env = str(cfg.get('token_env') or 'TELEGRAM_BOT_TOKEN')
@@ -462,13 +373,16 @@ def main():
     max_auto = int(cfg.get('max_auto_subs') or 3)
     discover = bool(cfg.get('discover_allowlist', False))
     if not token or (not allow and not discover and policy != 'open'):
-        print("[telegram_bridge] Missing token or allowlist; enable dry_run, set discover_allowlist, or configure settings.")
+        print("[telegram_bridge] Missing token or allowlist; set discover_allowlist or configure allow_chats.")
         sys.exit(1)
 
     def tg_api(method: str, params: Dict[str, Any], *, timeout: int = 35) -> Dict[str, Any]:
         base = f"https://api.telegram.org/bot{token}/{method}"
-        data = urllib.parse.urlencode(params).encode('utf-8')
+        # Use JSON consistently to avoid encoding issues with non-ASCII text
+        data = json.dumps(params, ensure_ascii=False).encode('utf-8')
         req = urllib.request.Request(base, data=data, method='POST')
+        req.add_header('Content-Type', 'application/json; charset=utf-8')
+        req.add_header('Accept', 'application/json')
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 body = resp.read().decode('utf-8', errors='replace')
@@ -540,7 +454,6 @@ def main():
     allowed_mime = [str(x) for x in (files_conf.get('allowed_mime') or [])]
     inbound_dir = Path(files_conf.get('inbound_dir') or HOME/"work"/"upload"/"inbound")
     outbound_dir = Path(files_conf.get('outbound_dir') or HOME/"work"/"upload"/"outbound")
-    strip_exif = bool(files_conf.get('strip_exif', True))
 
     # Hint cooldown memory { (chat_id,user_id): ts }
     hint_last: Dict[Tuple[int,int], float] = {}
@@ -573,7 +486,8 @@ def main():
         # Prepare path
         day = time.strftime('%Y%m%d')
         safe = _sanitize_name(orig_name or os.path.basename(file_path))
-        out_dir = inbound_dir/str(chat_id)/day
+        # Unify: inbound/<platform>/<chat_id>/<YYYYMMDD>
+        out_dir = inbound_dir/"telegram"/str(chat_id)/day
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir/f"{mid}__{safe}"
         # Download
@@ -603,37 +517,37 @@ def main():
             return
         hint_last[key] = now
         tg_api('sendMessage', {'chat_id': chat_id, 'text': 'No route detected. Prefix with /a /b /both or a: b: both: to route.'}, timeout=15)
+    # Per-peer rate tracking for outbound chat messages (keys: 'peerA'|'peerB')
     last_sent_ts = {"peerA": 0.0, "peerB": 0.0}
     last_seen = {"peerA": "", "peerB": ""}
 
-    # Outbound baseline persistence to avoid re-sending history on restart
-    def _seen_path() -> Path:
-        return HOME/"state"/"outbound_seen.json"
-    def load_outbound_seen() -> dict:
-        p = _seen_path()
-        try:
-            if p.exists():
-                return json.loads(p.read_text(encoding='utf-8'))
-        except Exception:
-            pass
-        return {"peerA": {"to_user": "", "to_peer": ""}, "peerB": {"to_user": "", "to_peer": ""}}
-    def save_outbound_seen(obj: dict):
-        p = _seen_path()
-        try:
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
-        except Exception:
-            pass
-    def _hash_text(t: str) -> str:
-        import hashlib
-        return hashlib.sha1((t or "").encode('utf-8', errors='ignore')).hexdigest()
+    # Outbound mailbox baseline persistence removed; OutboxConsumer handles structured baselines
 
     # Delete-on-success semantics for outbound files; no persistent sent-cache needed
 
 
+    def _preflight_msg(peer_key: str, msg: str, min_interval_s: float) -> tuple:
+        """Return (ok, reason). Validate JSON-encodability and per-peer rate only.
+        Size constraints are applied by summarization before this point.
+        """
+        try:
+            _ = json.dumps({'m': msg})
+        except Exception as e:
+            return False, f'json-encode-failed: {e}'
+        now = time.time(); last = float(last_sent_ts.get(peer_key, 0.0) or 0.0)
+        if now - last < float(min_interval_s or 0.0):
+            return False, f'rate-limited: interval<{min_interval_s}s'
+        return True, ''
+
     def send_summary(peer: str, text: str):
+        # peer in {'peerA','peerB'}
         label = "PeerA" if peer == 'peerA' else "PeerB"
+        # Build final message first, then preflight the actual payload (rate only)
         msg = f"[{label}]\n" + _summarize(redact(text), max_chars, max_lines)
+        ok, reason = _preflight_msg(peer, msg, float(str(cfg.get('to_user_min_interval_s') or 1.5)))
+        if not ok:
+            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_user','peer': peer, 'reason': reason})
+            return
         for chat_id in allow:
             tg_api('sendMessage', {
                 'chat_id': chat_id,
@@ -642,10 +556,16 @@ def main():
             }, timeout=15)
         _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars")
         _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":label.lower(),"chars":len(msg)})
+        last_sent_ts[peer] = time.time()
 
     def send_peer_summary(sender_peer: str, text: str):
+        # sender_peer in {'peerA','peerB'}. Build summarized message then preflight
         label = "PeerA→PeerB" if sender_peer == 'peerA' else "PeerB→PeerA"
         msg = f"[{label}]\n" + _summarize(redact(text), peer_max_chars, peer_max_lines)
+        ok, reason = _preflight_msg(sender_peer, msg, float(str(cfg.get('peer_summary_min_interval_s') or 1.5)))
+        if not ok:
+            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_peer_summary','peer': sender_peer, 'reason': reason})
+            return
         for chat_id in allow:
             tg_api('sendMessage', {
                 'chat_id': chat_id,
@@ -654,13 +574,10 @@ def main():
             }, timeout=15)
         _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars")
         _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":"to_peer","chars":len(msg)})
+        last_sent_ts['peerA' if sender_peer=='peerA' else 'peerB'] = time.time()
 
     def watch_outputs():
         outbound_conf = cfg.get('outbound') or {}
-        to_peer_paths = {
-            'peerA': HOME/"mailbox"/"peerA"/"to_peer.md",
-            'peerB': HOME/"mailbox"/"peerB"/"to_peer.md",
-        }
         # RFD watcher state with persistence to avoid resending on restart
         def _rfd_seen_path() -> Path:
             return HOME/"state"/"rfd-seen.json"
@@ -737,80 +654,34 @@ def main():
 
         threading.Thread(target=watch_ledger_for_rfd, daemon=True).start()
 
-        # Outbox (to_user) watcher: read structured events from ledger (single source of truth)
-        def _outbox_seen_path() -> Path:
-            return HOME/"state"/"outbox-seen.json"
-        def _load_outbox_seen() -> set:
-            p = _outbox_seen_path()
+        # Outbox consumer (unified across bridges)
+        try:
             try:
-                if p.exists():
-                    arr = json.loads(p.read_text(encoding='utf-8')).get('ids') or []
-                    return set(str(x) for x in arr)
+                from adapters.outbox_consumer import OutboxConsumer
             except Exception:
-                pass
-            return set()
-        def _save_outbox_seen(ids: set):
-            p = _outbox_seen_path(); p.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                p.write_text(json.dumps({'ids': list(ids)[-5000:]}, ensure_ascii=False, indent=2), encoding='utf-8')
-            except Exception:
-                pass
-        def watch_outbox():
-            outbox = HOME/"state"/"outbox.jsonl"
-            seen_ids = _load_outbox_seen()
-            baseline_done = False
-            window = 2000
-            while True:
-                try:
-                    if outbox.exists():
-                        lines = outbox.read_text(encoding='utf-8').splitlines()[-window:]
-                        changed=False
-                        for line in lines:
-                            try:
-                                ev = json.loads(line)
-                            except Exception:
-                                continue
-                            etype = str(ev.get('type') or '').lower()
-                            if etype not in ('to_user','to_peer_summary'):
-                                continue
-                            oid = str(ev.get('id') or ev.get('eid') or '')
-                            if oid and oid in seen_ids:
-                                continue
-                            if not baseline_done:
-                                if oid:
-                                    seen_ids.add(oid); changed=True
-                                continue
-                            if etype == 'to_user':
-                                peer = str(ev.get('peer') or '')
-                                text = str(ev.get('text') or '')
-                                if not peer or not text:
-                                    continue
-                                p = 'peerA' if peer.lower() in ('peera','peera'.lower(), 'peera'.lower()) or peer=='PeerA' else 'peerB'
-                                send_summary(p, text)
-                                _append_ledger({'kind':'bridge-outbox-sent','type':'to_user','peer':p,'id':oid,'chars':len(text)})
-                                if oid:
-                                    seen_ids.add(oid); changed=True
-                            elif etype == 'to_peer_summary':
-                                fromp = str(ev.get('from') or '')
-                                text = str(ev.get('text') or '')
-                                if not fromp or not text:
-                                    continue
-                                sp = 'peerA' if fromp.lower() in ('peera','peera'.lower()) or fromp=='PeerA' else 'peerB'
-                                # Respect show_peer_messages runtime switch
-                                eff_show = bool(load_runtime().get('show_peer_messages', show_peers))
-                                if eff_show:
-                                    send_peer_summary(sp, text)
-                                    _append_ledger({'kind':'bridge-outbox-sent','type':'to_peer_summary','peer':sp,'id':oid,'chars':len(text)})
-                                    if oid:
-                                        seen_ids.add(oid); changed=True
-                        if changed:
-                            _save_outbox_seen(seen_ids)
-                        baseline_done = True
-                except Exception:
-                    pass
-                time.sleep(1.0)
-
-        threading.Thread(target=watch_outbox, daemon=True).start()
+                from outbox_consumer import OutboxConsumer
+            # Respect reset_on_start from config (baseline|clear)
+            reset = str((cfg.get('outbound') or {}).get('reset_on_start') or cfg.get('reset_on_start') or 'baseline')
+            oc = OutboxConsumer(HOME, seen_name='telegram', reset_on_start=reset)
+            def _on_to_user(ev: Dict[str, Any]):
+                peer = str(ev.get('peer') or '')
+                text = str(ev.get('text') or '')
+                if not peer or not text:
+                    return
+                p = 'peerA' if peer.lower() in ('peera','peera') or peer=='PeerA' else 'peerB'
+                send_summary(p, text)
+            def _on_to_peer_summary(ev: Dict[str, Any]):
+                fromp = str(ev.get('from') or '')
+                text = str(ev.get('text') or '')
+                if not fromp or not text:
+                    return
+                sp = 'peerA' if fromp.lower() in ('peera','peera') or fromp=='PeerA' else 'peerB'
+                eff_show = bool(load_runtime().get('show_peer_messages', show_peers))
+                if eff_show:
+                    send_peer_summary(sp, text)
+            threading.Thread(target=lambda: oc.loop(_on_to_user, _on_to_peer_summary), daemon=True).start()
+        except Exception:
+            pass
         # Outbound files watcher state
         # Track attempts within this run only (avoid rapid duplicates if filesystem timestamps don't change)
         sent_files: Dict[str, float] = {}
@@ -933,8 +804,8 @@ def main():
             return False
         
         # Optional reset on start: baseline|archive|clear
-        # Default to 'clear' to avoid blasting residual files on startup
-        reset_mode = str((outbound_conf.get('reset_on_start') or 'clear')).lower()
+        # Prefer nested 'outbound.reset_on_start', fallback to top-level 'reset_on_start'. Default 'baseline'.
+        reset_mode = str((outbound_conf.get('reset_on_start') or cfg.get('reset_on_start') or 'baseline')).lower()
         try:
             if reset_mode in ('archive','clear'):
                 arch = HOME/'state'/'outbound-archive'; arch.mkdir(parents=True, exist_ok=True)
@@ -983,20 +854,7 @@ def main():
                 # After clearing, outbound directory is empty; no extra bookkeeping needed
         except Exception:
             pass
-        # Initialize baseline and persist seen hashes (for peer-to-peer summaries only)
-        try:
-            seen = load_outbound_seen()
-            for peer, pth in to_peer_paths.items():
-                try:
-                    txt = pth.read_text(encoding='utf-8').strip()
-                except Exception:
-                    txt = ''
-                last_seen[f"peer_{peer}"] = txt; last_sent_ts[f"peer_{peer}"] = time.time()
-                pk = 'peerA' if peer=='peerA' else 'peerB'
-                seen.setdefault(pk, {})['to_peer'] = _hash_text(txt)
-            save_outbound_seen(seen)
-        except Exception:
-            pass
+        # No mailbox baseline: OutboxConsumer ensures baseline for structured events
 
         while True:
             now = time.time()

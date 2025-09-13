@@ -43,7 +43,7 @@ peerB:
   nudge_enter_delay_ms: 250
   # Optional inbound suffix per source
   inbound_suffix:
-    from_user: " Do not act yet; wait for PeerA’s framing. Ask 1 decisive Q or propose a 2min micro‑experiment."
+    from_user: " Provide your analysis and insights. Collaborate with PeerA as equals. Ask clarifying questions if needed."
     from_peer: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line; propose a Hook. If nothing critical to add other than an pure ACK, stay silent and do not reply."
     from_system: " End micro‑loops with 2‑line Reflect: what’s unclear + the single next check (with hook)."
   # Optional NUDGE suffix
@@ -87,10 +87,11 @@ delivery:
 startup_wait_seconds: 12          # Wait time for first CLI prompt
 startup_nudge_seconds: 10         # Max wait before activating NUDGE
 console_echo: true                # Echo AI output in console (debug friendly; restart to apply)
+startup_wait_seconds: 20          # 增加等待時間
 tmux:
   alternate_screen_off: true      # Keep scrollback (turn off alt-screen)
 commands:
-  peerA: "claude --dangerously-skip-permissions"
+  peerA: "claude"
   peerB: "gemini"
 delivery_mode:
   peerA: tmux     # Use tmux injection (more stable)

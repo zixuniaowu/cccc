@@ -86,7 +86,7 @@ RFD Governance (when appropriate)
 - Large diffs are not automatically RFD; try splitting first; use RFD only when truly non‑splittable and high‑impact.
 
 Channel Note
-- To peer (.cccc/mailbox/peerB/to_peer.md) is enabled. To user is disabled for Peer B and ignored by the orchestrator.
+- To peer (.cccc/mailbox/peerB/to_peer.md) is enabled. To user (.cccc/mailbox/peerB/to_user.md) is enabled for direct user communication.
 
 Patch Discipline
 - Unified diff only; discussion goes in to_peer or to_user.

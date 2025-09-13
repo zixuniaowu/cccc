@@ -5,7 +5,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER> and fenced ```patch```, then preflights/applies/tests/logs.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
-import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil
+import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
     import fcntl  # type: ignore
@@ -24,6 +24,163 @@ PATCH_RE = re.compile(r"```(?:patch|diff)\s*([\s\S]*?)```", re.I)
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
 
+# ---------- REV state helpers (lightweight) ----------
+def _rev_state_path(home: Path) -> Path:
+    return home/"state"/"review_rev_state.json"
+
+def _load_rev_state(home: Path) -> Dict[str, Any]:
+    p = _rev_state_path(home)
+    try:
+        return json.loads(p.read_text(encoding='utf-8'))
+    except Exception:
+        return {"PeerA": {"pending": False, "since": 0.0, "last_rev_ts": 0.0, "last_deltas": [], "last_remind_since": 0.0},
+                "PeerB": {"pending": False, "since": 0.0, "last_rev_ts": 0.0, "last_deltas": [], "last_remind_since": 0.0}}
+
+def _save_rev_state(home: Path, st: Dict[str, Any]):
+    p = _rev_state_path(home); p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception:
+        pass
+
+INSIGHT_BLOCK_RE = re.compile(r"```\s*insight\s*([\s\S]*?)```", re.I)
+def _extract_insight_kind(text: str) -> str:
+    try:
+        m = INSIGHT_BLOCK_RE.findall(text or '')
+        if not m:
+            return ""
+        block = m[-1]
+        k = re.findall(r"(?mi)^\s*kind\s*:\s*([A-Za-z0-9_\-]+)", block)
+        return (k[-1].strip().lower() if k else "")
+    except Exception:
+        return ""
+
+def _extract_rev_delta(text: str) -> str:
+    try:
+        m = INSIGHT_BLOCK_RE.findall(text or '')
+        if not m:
+            return ""
+        block = m[-1]
+        # Heuristic: look for 'delta:' in any line of block
+        for ln in block.splitlines():
+            if 'delta:' in ln.lower():
+                return ln.strip()
+        return ""
+    except Exception:
+        return ""
+
+def _extract_last_insight_block(text: str) -> str:
+    try:
+        m = INSIGHT_BLOCK_RE.findall(text or '')
+        return m[-1] if m else ""
+    except Exception:
+        return ""
+
+def _insight_has_field(block: str, name: str) -> bool:
+    try:
+        return bool(re.search(rf"(?mi)^\s*{re.escape(name)}\s*:\s*\S", block))
+    except Exception:
+        return False
+
+def _revise_quality_ok(full_text: str) -> Tuple[bool, str]:
+    """Check if payload has a valid revise insight: kind=revise and has delta/refs/next and not restating body."""
+    try:
+        kind = _extract_insight_kind(full_text)
+        if kind not in ("revise","rev","polish"):
+            return False, "not-revise-kind"
+        block = _extract_last_insight_block(full_text)
+        miss = []
+        if not _insight_has_field(block, 'delta'):
+            miss.append('delta')
+        if not (_insight_has_field(block, 'refs') or _insight_has_field(block, 'ref')):
+            miss.append('refs')
+        if not _insight_has_field(block, 'next'):
+            miss.append('next')
+        if miss:
+            return False, f"missing:{','.join(miss)}"
+        # Similarity guard: avoid restating body as insight
+        try:
+            body = full_text
+            bi = block
+            body = body.replace(block, " ")
+            toks_body = _tokenize_for_similarity(body)
+            toks_ins = _tokenize_for_similarity(bi)
+            sim = _jaccard(toks_body, toks_ins)
+            if sim >= 0.85:
+                return False, "similar-to-body"
+        except Exception:
+            pass
+        return True, "ok"
+    except Exception:
+        return False, "error"
+
+def _rev_mark_pending(home: Path, peer_label: str, pending: bool = True):
+    st = _load_rev_state(home)
+    ent = st.get(peer_label) or {}
+    ent["pending"] = bool(pending)
+    st[peer_label] = ent
+    _save_rev_state(home, st)
+
+## Insight soft reminder removed (keep meta-only guidance in prompt; no runtime nudges)
+
+def _update_rev_state_from_to_peer(home: Path, sender_label: str, payload: str):
+    st = _load_rev_state(home)
+    kind = _extract_insight_kind(payload)
+    now = time.time()
+    # Sender does a revise → clear their pending and record delta
+    if kind in ("revise","rev","polish"):
+        me = sender_label
+        try:
+            ent = st.get(me) or {}
+            ent["pending"] = False
+            ent["last_rev_ts"] = now
+            delta = _extract_rev_delta(payload)
+            if delta:
+                arr = (ent.get("last_deltas") or []) + [delta]
+                ent["last_deltas"] = arr[-3:]
+            st[me] = ent
+        except Exception:
+            pass
+    # Sender raises a review trigger → the other peer owes a revise
+    if kind in ("counter","question","risk"):
+        other = "PeerB" if sender_label == "PeerA" else "PeerA"
+        try:
+            ent = st.get(other) or {}
+            ent["pending"] = True
+            ent["since"] = now
+            st[other] = ent
+        except Exception:
+            pass
+    _save_rev_state(home, st)
+
+def _maybe_rev_remind(home: Path, receiver_label: str, send_fn):
+    """If there is an outstanding review trigger without a later revise, send one gentle reminder."""
+    st = _load_rev_state(home)
+    ent = st.get(receiver_label) or {}
+    if not ent.get("pending"):
+        return
+    since = float(ent.get("since") or 0.0)
+    last_rev_ts = float(ent.get("last_rev_ts") or 0.0)
+    last_remind_since = float(ent.get("last_remind_since") or 0.0)
+    if since <= 0.0 or last_rev_ts > since:
+        return
+    if last_remind_since == since:
+        return
+    tip = (
+        "<FROM_SYSTEM>\n"
+        "Gentle nudge: consider a quick REV pass (≤10 min) to address recent COUNTER/QUESTION before broad announce.\n"
+        "Submit one `insight` with kind: revise (include delta:+/‑/tests and refs to the review).\n"
+        "</FROM_SYSTEM>\n"
+    )
+    try:
+        send_fn(tip)
+        ent["last_remind_since"] = since
+        st[receiver_label] = ent
+        _save_rev_state(home, st)
+        log_ledger(home, {"kind":"revise-remind","peer":receiver_label})
+    except Exception:
+        pass
+
 # --- inbox/nudge settings (read at startup from cli_profiles.delivery) ---
 MB_PULL_ENABLED = True
 INBOX_DIRNAME = "inbox"
@@ -33,6 +190,14 @@ NUDGE_JITTER_PCT = 0.0
 SOFT_ACK_ON_MAILBOX_ACTIVITY = False
 INBOX_STARTUP_POLICY = "resume"  # resume | discard | archive
 INBOX_STARTUP_PROMPT = False
+# Progress-aware NUDGE coalescing (single-flight)
+NUDGE_DEBOUNCE_MS = 1500.0
+NUDGE_PROGRESS_TIMEOUT_S = 45.0
+NUDGE_KEEPALIVE = True
+NUDGE_BACKOFF_BASE_MS = 1000.0
+NUDGE_BACKOFF_MAX_MS = 60000.0
+# Context maintenance cadence: every N self-check cycles, run /compact + SYSTEM reinjection (0=disable)
+CONTEXT_COMPACT_EVERY_SELF_CHECKS = 5
 
 def _append_suffix_inside(payload: str, suffix: str) -> str:
     """Append a short suffix to the end of the main body inside the outermost tag, if present.
@@ -204,6 +369,95 @@ def _write_inbox_message(home: Path, receiver_label: str, payload: str, mid: str
                     pass
     return seq, fpath
 
+def _nudge_state_path(home: Path, receiver_label: str) -> Path:
+    peer = _peer_folder_name(receiver_label)
+    return home/"state"/f"nudge.{peer}.json"
+
+def _load_nudge_state(home: Path, receiver_label: str) -> Dict[str, Any]:
+    p = _nudge_state_path(home, receiver_label)
+    try:
+        st = json.loads(p.read_text(encoding='utf-8'))
+        return st if isinstance(st, dict) else {}
+    except Exception:
+        return {}
+
+def _save_nudge_state(home: Path, receiver_label: str, st: Dict[str, Any]):
+    p = _nudge_state_path(home, receiver_label); p.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception:
+        pass
+
+def _nudge_mark_progress(home: Path, receiver_label: str, *, seq: Optional[str] = None):
+    st = _load_nudge_state(home, receiver_label)
+    st['inflight'] = False
+    st['retries'] = 0
+    st['last_progress_ts'] = time.time()
+    if seq:
+        st['last_ack_seq'] = str(seq)
+    _save_nudge_state(home, receiver_label, st)
+
+def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
+                      profile: Dict[str,Any], *, force: bool = False, suffix: str = "") -> bool:
+    """Progress-aware, single-flight NUDGE sender. Returns True if a NUDGE was sent.
+    No-miss guarantee: if no progress, keepalive resends with capped backoff.
+    """
+    st = _load_nudge_state(home, receiver_label)
+    now = time.time()
+    inflight = bool(st.get('inflight', False))
+    last_sent = float(st.get('last_sent_ts') or 0.0)
+    last_prog = float(st.get('last_progress_ts') or 0.0)
+    retries = int(st.get('retries') or 0)
+
+    # Debounce shortly after progress (drop nudges within this window)
+    if (not force) and (now - last_prog) * 1000.0 < max(0.0, float(NUDGE_DEBOUNCE_MS)):
+        st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
+        _save_nudge_state(home, receiver_label, st)
+        return False
+
+    if inflight and not force:
+        # If inflight but no progress for too long, allow a resend with backoff
+        if (now - last_prog) >= max(1.0, float(NUDGE_PROGRESS_TIMEOUT_S)):
+            # Exponential backoff; never more frequent than the legacy resend interval
+            interval = min(float(NUDGE_BACKOFF_MAX_MS), float(NUDGE_BACKOFF_BASE_MS) * (2 ** max(0, retries))) / 1000.0
+            min_legacy = max(1.0, float(NUDGE_RESEND_SECONDS))
+            interval = max(interval, min_legacy)
+            # Apply optional jitter to avoid synchronized reminders
+            try:
+                jpct = float(NUDGE_JITTER_PCT)
+                if jpct and jpct > 0.0:
+                    jig = 1.0 + random.uniform(-jpct, jpct)
+                    interval = max(1.0, interval * jig)
+            except Exception:
+                pass
+            if (now - last_sent) < interval:
+                st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
+                _save_nudge_state(home, receiver_label, st)
+                return False
+            # send keepalive
+            st['retries'] = retries + 1
+        else:
+            # inflight and still within timeout → drop
+            st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
+            _save_nudge_state(home, receiver_label, st)
+            return False
+
+    # Build message
+    inbox_path = str(_inbox_dir(home, receiver_label))
+    nmsg = (
+        f"[NUDGE] inbox={inbox_path} "
+        f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
+    )
+    if suffix:
+        sfx = suffix.strip()
+        if sfx:
+            nmsg = nmsg + ' ' + sfx
+    paste_when_ready(pane, profile, nmsg, timeout=6.0, poke=False)
+    st['inflight'] = True
+    st['last_sent_ts'] = now
+    _save_nudge_state(home, receiver_label, st)
+    return True
+
 def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
                 left_pane: str, right_pane: str,
                 profileA: Dict[str,Any], profileB: Dict[str,Any],
@@ -224,8 +478,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
         f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
     )
     msg = base + (" " + nudge_suffix if nudge_suffix else "")
-    # Route by delivery mode: bridge → write to adapter inbox.md (adapter injects Enter);
-    # tmux → send keys directly to pane with newline at end (Enter implied by profile)
+    # Route by delivery mode
     if receiver_label == 'PeerA':
         if modeA == 'bridge':
             try:
@@ -233,8 +486,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
             except Exception:
                 pass
         else:
-            # tmux injection: paste then single submit; avoid pre-Enter poke to prevent stray newlines
-            paste_when_ready(left_pane, profileA, msg, timeout=6.0, poke=False)
+            _maybe_send_nudge(home, 'PeerA', left_pane, profileA, suffix=nudge_suffix)
     else:
         if modeB == 'bridge':
             try:
@@ -242,17 +494,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
             except Exception:
                 pass
         else:
-            paste_when_ready(right_pane, profileB, msg, timeout=6.0, poke=False)
-            # Optional extra Enters for robustness (configurable per peer)
-            try:
-                extra = int((profileB.get('nudge_extra_enters') or 0))
-                delay_ms = int((profileB.get('nudge_enter_delay_ms') or 200))
-                if extra > 0:
-                    for _ in range(min(extra, 3)):
-                        time.sleep(max(0.0, delay_ms/1000.0))
-                        tmux("send-keys","-t",right_pane,"Enter")
-            except Exception:
-                pass
+            _maybe_send_nudge(home, 'PeerB', right_pane, profileB, suffix=nudge_suffix)
 
 def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
     # token may be seq (000123) or mid; prefer seq match first
@@ -793,8 +1035,9 @@ def bash_ansi_c_quote(s: str) -> str:
     return "$'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
 
 def tmux_start_interactive(pane: str, cmd: str):
-    # Robust: run command inside pane via bash -lc; avoid paste-to-wrong-pane issues
-    wrapped = f"bash -lc {shlex.quote(cmd)}"
+    # Robust: run command inside pane via bash -lc; enforce UTF-8 locale to avoid mojibake
+    env_prefix = "LC_ALL=C.UTF-8 LANG=C.UTF-8"
+    wrapped = f"bash -lc {shlex.quote(env_prefix + ' ' + cmd)}"
     tmux_respawn_pane(pane, wrapped)
 
 def wait_for_ready(pane: str, profile: Dict[str,Any], *, timeout: float = 12.0, poke: bool = True) -> bool:
@@ -1399,8 +1642,72 @@ def main(home: Path):
         SOFT_ACK_ON_MAILBOX_ACTIVITY = bool(delivery_conf.get("soft_ack_on_mailbox_activity", False))
         INBOX_STARTUP_POLICY = str(delivery_conf.get("inbox_startup_policy", "resume") or "resume").strip().lower()
         INBOX_STARTUP_PROMPT = bool(delivery_conf.get("inbox_startup_prompt", False))
+        # Progress-aware NUDGE parameters
+        global NUDGE_DEBOUNCE_MS, NUDGE_PROGRESS_TIMEOUT_S, NUDGE_KEEPALIVE, NUDGE_BACKOFF_BASE_MS, NUDGE_BACKOFF_MAX_MS, CONTEXT_COMPACT_EVERY_SELF_CHECKS
+        NUDGE_DEBOUNCE_MS = float(delivery_conf.get("nudge_debounce_ms", NUDGE_DEBOUNCE_MS))
+        NUDGE_PROGRESS_TIMEOUT_S = float(delivery_conf.get("nudge_progress_timeout_s", NUDGE_PROGRESS_TIMEOUT_S))
+        NUDGE_KEEPALIVE = bool(delivery_conf.get("nudge_keepalive", NUDGE_KEEPALIVE))
+        NUDGE_BACKOFF_BASE_MS = float(delivery_conf.get("nudge_backoff_base_ms", NUDGE_BACKOFF_BASE_MS))
+        NUDGE_BACKOFF_MAX_MS = float(delivery_conf.get("nudge_backoff_max_ms", NUDGE_BACKOFF_MAX_MS))
+        CONTEXT_COMPACT_EVERY_SELF_CHECKS = int(delivery_conf.get("context_compact_every_self_checks", CONTEXT_COMPACT_EVERY_SELF_CHECKS))
     except Exception:
         pass
+
+    # Lazy preamble (applies to both console input and mailbox-driven inbound)
+    LAZY = (delivery_conf.get("lazy_preamble") or {}) if isinstance(delivery_conf.get("lazy_preamble"), dict) else {}
+    LAZY_ENABLED = bool(LAZY.get("enabled", True))
+
+    def _preamble_state_path() -> Path:
+        return state/"preamble_sent.json"
+    def _load_preamble_sent() -> Dict[str,bool]:
+        try:
+            return json.loads(_preamble_state_path().read_text(encoding="utf-8"))
+        except Exception:
+            return {"PeerA": False, "PeerB": False}
+    def _save_preamble_sent(st: Dict[str,bool]):
+        try:
+            _preamble_state_path().write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+    def _maybe_prepend_preamble_inbox(receiver_label: str):
+        """If first user message for this peer arrived via mailbox inbox, prepend preamble in-file."""
+        if not LAZY_ENABLED:
+            return
+        try:
+            st = _load_preamble_sent()
+            if bool(st.get(receiver_label)):
+                return
+            ib = _inbox_dir(home, receiver_label)
+            files = sorted([f for f in ib.iterdir() if f.is_file()], key=lambda p: p.name)
+            if not files:
+                return
+            target = files[0]
+            try:
+                body = target.read_text(encoding='utf-8')
+            except Exception:
+                return
+            # Only modify <FROM_USER> payloads; otherwise keep as-is
+            m = re.search(r"<\s*FROM_USER\s*>\s*([\s\S]*?)<\s*/FROM_USER\s*>", body, re.I)
+            if not m:
+                return
+            peer_key = "peerA" if receiver_label == "PeerA" else "peerB"
+            pre = weave_preamble_text(home, peer_key)
+            # If preamble text already present (e.g., injected by adapter), skip to avoid duplication
+            try:
+                if pre and pre.strip() and (pre.strip() in body):
+                    st[receiver_label] = True
+                    _save_preamble_sent(st)
+                    return
+            except Exception:
+                pass
+            inner = m.group(1)
+            combined = f"<FROM_USER>\n{pre}\n\n{inner.strip()}\n</FROM_USER>\n"
+            target.write_text(combined, encoding='utf-8')
+            st[receiver_label] = True
+            _save_preamble_sent(st)
+            log_ledger(home, {"from":"system","kind":"lazy-preamble-sent","peer":receiver_label, "route":"mailbox"})
+        except Exception:
+            pass
 
     # Prepare tmux session/panes
     if not tmux_session_exists(session):
@@ -1483,9 +1790,9 @@ def main(home: Path):
     # Start interactive CLIs (fallback to built-in Mock when not configured)
     commands = cli_profiles.get("commands", {}) if isinstance(cli_profiles.get("commands", {}), dict) else {}
     CLAUDE_I_CMD = os.environ.get("CLAUDE_I_CMD") or commands.get("peerA") or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerA"
-    GEMINI_I_CMD  = os.environ.get("GEMINI_I_CMD")  or commands.get("peerB") or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerB"
+    CODEX_I_CMD  = os.environ.get("CODEX_I_CMD")  or commands.get("peerB") or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerB"
     if (commands.get("peerA") is None and os.environ.get("CLAUDE_I_CMD") is None) or \
-       (commands.get("peerB") is None and os.environ.get("GEMINI_I_CMD") is None):
+       (commands.get("peerB") is None and os.environ.get("CODEX_I_CMD") is None):
         print("[INFO] Some CLI commands not provided; missing side will use built-in Mock (configure in cli_profiles.yaml or via env vars).")
     else:
         print("[INFO] Using CLI commands from configuration (overridable by env).")
@@ -1526,15 +1833,15 @@ def main(home: Path):
             bridge_py = str(home/"adapters"/"bridge.py")
             inbox = str(home/"mailbox"/"peerB"/"inbox.md")
             prx = str((profileB or {}).get('prompt_regex') or '')
-            inner = f"{shlex.quote(py)} {shlex.quote(bridge_py)} --home {shlex.quote(str(home))} --peer peerB --cmd {shlex.quote(GEMINI_I_CMD)} --inbox {shlex.quote(inbox)}"
+            inner = f"{shlex.quote(py)} {shlex.quote(bridge_py)} --home {shlex.quote(str(home))} --peer peerB --cmd {shlex.quote(CODEX_I_CMD)} --inbox {shlex.quote(inbox)}"
             if prx:
                 inner += f" --prompt-regex {shlex.quote(prx)}"
             cmd = f"bash -lc {shlex.quote(inner)}"
             tmux_respawn_pane(right, cmd)
             print(f"[LAUNCH] PeerB mode=bridge pane={right} bridge_cmd={inner}")
         else:
-            tmux_start_interactive(right, GEMINI_I_CMD)
-            print(f"[LAUNCH] PeerB mode=tmux pane={right} cmd={GEMINI_I_CMD}")
+            tmux_start_interactive(right, CODEX_I_CMD)
+            print(f"[LAUNCH] PeerB mode=tmux pane={right} cmd={CODEX_I_CMD}")
         # Debug: show current commands per pane
         try:
             code,out,err = tmux('list-panes','-F','#{pane_id} #{pane_current_command}')
@@ -1685,7 +1992,7 @@ def main(home: Path):
     # Append a minimal, always-on reminder to end with one insight block (never verbose)
     try:
         INSIGHT_REMINDER = (
-            "Reminder: end with one ```insight block (ask/counter; include a next step or ≤10‑min micro‑experiment)."
+            "Insight: add one new angle not restating body (lens + hook/assumption/risk/trade‑off/next/delta)."
         )
         if INSIGHT_REMINDER not in self_check_text:
             # Ensure single trailing newline then append reminder as the last line
@@ -1826,8 +2133,52 @@ def main(home: Path):
                     if instr_counter % self_check_every == 0:
                         in_self_check = True
                         try:
-                            peerA_msg = self_check_text
-                            peerB_msg = self_check_text
+                            # Prepend dynamic time/TZ line
+                            try:
+                                lt = time.localtime()
+                                ts = time.strftime('%Y-%m-%d %H:%M:%S', lt)
+                                tzname = time.tzname[lt.tm_isdst] if isinstance(time.tzname, (list, tuple)) else str(time.tzname)
+                                # Compute UTC offset
+                                off = -time.altzone if (time.daylight and lt.tm_isdst) else -time.timezone
+                                sign = '+' if off >= 0 else '-'
+                                off = abs(off)
+                                hh = off // 3600; mm = (off % 3600) // 60
+                                now_line = f"Now: {ts} {tzname} (UTC{sign}{hh:02d}:{mm:02d})"
+                            except Exception:
+                                now_line = "Now: unknown"
+
+                            # Context maintenance: at every 5th self-check, compact and reinject SYSTEM (simple, once-only per trigger)
+                            try:
+                                sc_index = int(instr_counter // self_check_every) if self_check_every > 0 else 0
+                            except Exception:
+                                sc_index = 0
+                            if (CONTEXT_COMPACT_EVERY_SELF_CHECKS > 0) and (sc_index > 0) and (sc_index % CONTEXT_COMPACT_EVERY_SELF_CHECKS == 0):
+                                try:
+                                    # Send passthrough /compact to both peers (no retries, no preconditions)
+                                    _send_raw_to_cli(home, 'PeerA', '/compact', modeA, modeB, left, right)
+                                    log_ledger(home, {"from":"system","kind":"context-compact-try","peer":"PeerA","self_check_index": sc_index})
+                                except Exception:
+                                    pass
+                                try:
+                                    _send_raw_to_cli(home, 'PeerB', '/compact', modeA, modeB, left, right)
+                                    log_ledger(home, {"from":"system","kind":"context-compact-try","peer":"PeerB","self_check_index": sc_index})
+                                except Exception:
+                                    pass
+                                # Immediately reinject full SYSTEM to both peers with a Now line prefix
+                                try:
+                                    sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
+                                    reinjA = f"<FROM_SYSTEM>\n{now_line}\n{sysA}\n</FROM_SYSTEM>\n"
+                                    reinjB = f"<FROM_SYSTEM>\n{now_line}\n{sysB}\n</FROM_SYSTEM>\n"
+                                    _send_handoff("System", "PeerA", reinjA)
+                                    _send_handoff("System", "PeerB", reinjB)
+                                    log_ledger(home, {"from":"system","kind":"context-system-reinject","peer":"PeerA","chars": len(reinjA)})
+                                    log_ledger(home, {"from":"system","kind":"context-system-reinject","peer":"PeerB","chars": len(reinjB)})
+                                except Exception:
+                                    pass
+
+                            # Build self-check payloads (after any context maintenance)
+                            peerA_msg = now_line + "\n" + self_check_text
+                            peerB_msg = now_line + "\n" + self_check_text
 
                             # Append Weekly Dev Diary reminder for PeerB (single-writer) with daily cooldown
                             # Diary/retrospective prompts are managed as side-quest TODOs by the AI; do not inject from system here.
@@ -2031,6 +2382,8 @@ def main(home: Path):
                             try:
                                 print(f"[ACK-FILE] {label} seq={seq} file={fn} ok={bool(ok)}")
                                 log_ledger(home, {"from":label,"kind":"ack-file","seq":seq,"file":fn,"ok":bool(ok)})
+                                # Treat file movement as progress for NUDGE single-flight
+                                _nudge_mark_progress(home, label, seq=seq)
                             except Exception:
                                 pass
                     prev_inbox[label] = cur
@@ -2053,6 +2406,8 @@ def main(home: Path):
                         try:
                             print(f"[ACK] {label} token={tok} ok={bool(ok)}")
                             log_ledger(home, {"from":label,"kind":"ack","token":tok,"ok":bool(ok)})
+                            # Any ACK token implies progress; clear inflight
+                            _nudge_mark_progress(home, label)
                         except Exception:
                             pass
         except Exception:
@@ -2066,30 +2421,15 @@ def main(home: Path):
                 files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
                 if not files:
                     continue
-                if nowt - last_nudge_ts.get(label, 0.0) < NUDGE_RESEND_SECONDS:
-                    continue
-                oldest = files[0].name
-                seq = oldest[:6]
-                mid = oldest.split(".")[1] if "." in oldest else ""
-                inbox_path = str(inbox)
-                nmsg = (
-                    f"[NUDGE] inbox={inbox_path} "
-                    f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
-                )
+                # Before nudging the peer to read the first message, ensure lazy preamble is prepended once
+                _maybe_prepend_preamble_inbox(label)
+                # Coalesced NUDGE: send only when needed; backoff otherwise
                 if label == "PeerA":
-                    paste_when_ready(pane, profileA, nmsg, timeout=6.0, poke=False)
+                    sent = _maybe_send_nudge(home, label, pane, profileA, suffix=(profileA.get('nudge_suffix') or '').strip())
                 else:
-                    paste_when_ready(pane, profileB, nmsg, timeout=6.0, poke=False)
-                    try:
-                        extra = int((profileB.get('nudge_extra_enters') or 0))
-                        delay_ms = int((profileB.get('nudge_enter_delay_ms') or 200))
-                        if extra > 0:
-                            for _ in range(min(extra, 3)):
-                                time.sleep(max(0.0, delay_ms/1000.0))
-                                tmux("send-keys","-t",pane,"Enter")
-                    except Exception:
-                        pass
-                last_nudge_ts[label] = nowt
+                    sent = _maybe_send_nudge(home, label, pane, profileB, suffix=(profileB.get('nudge_suffix') or '').strip())
+                if sent:
+                    last_nudge_ts[label] = nowt
         except Exception:
             pass
         rlist, _, _ = select.select([sys.stdin], [], [], 0.5)
@@ -2106,6 +2446,7 @@ def main(home: Path):
                 payload = ""  # guard variable for conditional forwarding
                 # PeerA events
                 if events["peerA"].get("to_user"):
+                    # Removed soft REV reminder in favor of hard gate on to_peer
                     txt = events["peerA"]["to_user"].strip()
                     print_block("PeerA → USER", txt)
                     try:
@@ -2124,6 +2465,11 @@ def main(home: Path):
                         pass
                 if events["peerA"].get("to_peer"):
                     payload = events["peerA"]["to_peer"].strip()
+                    # Update REV state from PeerA's to_peer message
+                    try:
+                        _update_rev_state_from_to_peer(home, "PeerA", payload)
+                    except Exception:
+                        pass
                     # Any mailbox activity can count as ACK
                     _ack_receiver("PeerA", payload)
                     mbox_counts["peerA"]["to_peer"] += 1
@@ -2178,6 +2524,27 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
+                    # Hard gate: if PeerA owes a REV (due to prior COUNTER/QUESTION from PeerB),
+                    # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
+                    try:
+                        owed = bool((_load_rev_state(home).get("PeerA") or {}).get("pending", False))
+                    except Exception:
+                        owed = False
+                    if owed:
+                        has_inline = bool(extract_inline_diff_if_any(payload) or "" )
+                        if not has_inline:
+                            okq, why = _revise_quality_ok(payload)
+                            if not okq:
+                                tip = (
+                                    "<FROM_SYSTEM>\n"
+                                    "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
+                                    "</FROM_SYSTEM>\n"
+                                )
+                                _send_handoff("System", "PeerA", tip)
+                                log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerA","reason": why})
+                                # Ensure debt remains pending (in case kind=revise but low quality)
+                                _rev_mark_pending(home, "PeerA", True)
+                                payload = ""
                     if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                         _send_handoff("PeerA", "PeerB", wrapped)
@@ -2227,6 +2594,7 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 # PeerB events
                 if events["peerB"].get("to_user"):
+                    # Removed soft REV reminder in favor of hard gate on to_peer
                     txt = events["peerB"].get("to_user"," ").strip()
                     try:
                         eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
@@ -2239,6 +2607,10 @@ def main(home: Path):
                         pass
                 if events["peerB"].get("to_peer"):
                     payload = events["peerB"]["to_peer"].strip()
+                    try:
+                        _update_rev_state_from_to_peer(home, "PeerB", payload)
+                    except Exception:
+                        pass
                     _ack_receiver("PeerB", payload)
                     mbox_counts["peerB"]["to_peer"] += 1
                     mbox_last["peerB"]["to_peer"] = time.strftime("%H:%M:%S")
@@ -2285,6 +2657,26 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
+                        # Hard gate: if PeerB owes a REV (due to prior COUNTER/QUESTION from PeerA),
+                        # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
+                        try:
+                            owed = bool((_load_rev_state(home).get("PeerB") or {}).get("pending", False))
+                        except Exception:
+                            owed = False
+                        if owed:
+                            has_inline = bool(extract_inline_diff_if_any(payload) or "")
+                            if not has_inline:
+                                okq, why = _revise_quality_ok(payload)
+                                if not okq:
+                                    tip = (
+                                        "<FROM_SYSTEM>\n"
+                                        "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
+                                        "</FROM_SYSTEM>\n"
+                                    )
+                                    _send_handoff("System", "PeerB", tip)
+                                    log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerB","reason": why})
+                                    _rev_mark_pending(home, "PeerB", True)
+                                    payload = ""
                         if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
                             wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
                             _send_handoff("PeerB", "PeerA", wrapped)

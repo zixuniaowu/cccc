@@ -1,10 +1,10 @@
 token_env: TELEGRAM_BOT_TOKEN
 autostart: 'true'
-allow_chats: '[]'
-discover_allowlist: 'true'
+allow_chats: []
+discover_allowlist: true
 autoregister: open
 max_auto_subs: '3'
-dry_run: 'false'
+dry_run: false
 default_route: both
 prefix_routes: 'true'
 debounce_seconds: '30'
@@ -44,3 +44,4 @@ outbox_log: .cccc/state/bridge-telegram.log
 outbound: ''
 reset_on_start: baseline
 watch_to_user_peers: '["peerA"]'
+token: 8376530835:AAGIBCxS_UhP6xUoRk8jxG-_058jcoZ6Ohc
