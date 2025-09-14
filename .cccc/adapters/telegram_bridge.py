@@ -809,39 +809,21 @@ def main():
         try:
             if reset_mode in ('archive','clear'):
                 arch = HOME/'state'/'outbound-archive'; arch.mkdir(parents=True, exist_ok=True)
-                # Clear to_user and to_peer files to prevent re-sending summaries on restart
-                for peer, pth in {**to_user_paths, **to_peer_paths}.items():
-                    try:
-                        txt = pth.read_text(encoding='utf-8')
-                    except Exception:
-                        txt = ''
-                    if txt:
-                        if reset_mode == 'archive':
-                            import time as _t
-                            ts = _t.strftime('%Y%m%d-%H%M%S')
-                            dest_dir = arch/peer
-                            dest_dir.mkdir(parents=True, exist_ok=True)
-                            (dest_dir/f"{pth.name}-{ts}").write_text(txt, encoding='utf-8')
-                        try:
-                            pth.write_text('', encoding='utf-8')
-                        except Exception:
-                            pass
-                # Also clear/archive outbound files to avoid blasting residual uploads
+                # Clear/archive outbound files to avoid blasting residual uploads (single-level per peer)
                 for peer in ('peerA','peerB'):
-                    for sub in ('files','photos'):
-                        d = outbound_dir/peer/sub
-                        if not d.exists():
+                    d = outbound_dir/peer
+                    if not d.exists():
+                        continue
+                    for fp in sorted(d.glob('*')):
+                        if fp.is_dir():
                             continue
-                        for fp in sorted(d.glob('*')):
-                            if fp.is_dir():
-                                continue
                             nm = str(fp.name).lower()
                             if nm.endswith('.caption.txt') or nm.endswith('.sendas') or nm.endswith('.meta.json'):
                                 continue
                             if reset_mode == 'archive':
                                 import time as _t
                                 ts = _t.strftime('%Y%m%d-%H%M%S')
-                                dest_dir = arch/peer/sub
+                                dest_dir = arch/peer
                                 dest_dir.mkdir(parents=True, exist_ok=True)
                                 try:
                                     (dest_dir/f"{fp.name}-{ts}").write_bytes(fp.read_bytes())
@@ -862,16 +844,15 @@ def main():
             # Outbound files
             try:
                 for peer in ('peerA','peerB'):
-                    for sub in ('files','photos'):
-                        d = outbound_dir/peer/sub
-                        if not d.exists():
+                    d = outbound_dir/peer
+                    if not d.exists():
+                        continue
+                    for fp in sorted(d.glob('*')):
+                        if fp.is_dir():
                             continue
-                        for fp in sorted(d.glob('*')):
-                            if fp.is_dir():
-                                continue
-                            name=str(fp.name).lower()
-                            if name.endswith('.caption.txt') or name.endswith('.sendas') or name.endswith('.meta.json') or name.endswith('.sent.json'):
-                                continue
+                        name=str(fp.name).lower()
+                        if name.endswith('.caption.txt') or name.endswith('.sendas') or name.endswith('.meta.json') or name.endswith('.sent.json'):
+                            continue
                             # optional caption sidecar
                             cap_fp = fp.with_suffix(fp.suffix + '.caption.txt')
                             if cap_fp.exists():
