@@ -552,7 +552,8 @@ def main():
     if socket_mode_available and client is not None:
         client.socket_mode_request_listeners.append(handle)
         _append_log("[info] slack socket mode starting …")
-        client.connect()
+        # Connect in a background thread to avoid blocking outbound watchers
+        threading.Thread(target=lambda: client.connect(), daemon=True).start()
     # Outbound files watcher
     def _send_file_to_channels(fp: Path, caption: str) -> bool:
         cap = _summarize(caption or '', 1200, 10)
@@ -565,15 +566,29 @@ def main():
             ok_any = False
             for ch in chs:
                 try:
-                    # prefer files_upload_v2; fallback if not available
+                    # Prefer files_upload_v2 with a file-like object; fallback to files_upload on failure
                     try:
-                        cli.files_upload_v2(channels=ch, file=str(fp), filename=fp.name, initial_comment=cap or None)
-                    except Exception:
-                        cli.files_upload(channels=ch, file=str(fp), filename=fp.name, initial_comment=cap or None)
+                        with open(fp, 'rb') as f:
+                            cli.files_upload_v2(channels=ch, file=f, filename=fp.name, initial_comment=cap or None)
+                    except Exception as e1:
+                        try:
+                            with open(fp, 'rb') as f2:
+                                cli.files_upload(channels=ch, file=f2, filename=fp.name, initial_comment=cap or None)
+                        except Exception as e2:
+                            try:
+                                from slack_sdk.errors import SlackApiError  # type: ignore
+                                if isinstance(e2, SlackApiError):
+                                    err = e2.response.get('error')
+                                    _append_log(f"[error] slack file upload failed to {ch}: {err}")
+                                else:
+                                    _append_log(f"[error] slack file upload failed to {ch}: {e2}")
+                            except Exception:
+                                _append_log(f"[error] slack file upload failed to {ch}: {e2}")
+                            continue
                     ok_any = True
                     time.sleep(0.5)
                 except Exception as e:
-                    _append_log(f"[error] slack file upload failed to {ch}: {e}")
+                    _append_log(f"[error] slack file upload unexpected error to {ch}: {e}")
             if not chs:
                 _append_log(f"[warn] no slack channels configured/subscribed for file send: {fp.name}")
             return ok_any
