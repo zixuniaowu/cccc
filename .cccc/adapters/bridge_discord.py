@@ -242,11 +242,11 @@ def main():
             if message.author == client.user:
                 return
             text = message.content or ''
+            low = (text or '').strip().lower()
             # Require routing prefixes to avoid forwarding general chatter (support fullwidth colon & mentions)
             has_prefix = bool(re.search(r"^\s*(?:<@!?\d+>\s+)?(a[:：]|b[:：]|both[:：])\s*", text, re.I) or
                                re.search(r"^\s*(?:<@!?\d+>\s+)?/(a|b|both)(?:@\S+)?\s+", text, re.I))
             if not has_prefix:
-                low = text.strip().lower()
                 if low not in ('subscribe','sub','unsubscribe','unsub','showpeers on','showpeers off') and not message.attachments:
                     # Drop chatter without explicit prefix; keep logs quiet in normal operation
                     return
@@ -297,7 +297,7 @@ def main():
                 dest_dir.mkdir(parents=True, exist_ok=True)
                 refs = []
                 # Only accept attachments if explicit routing prefix present in text
-                for att in (message.attachments or []) if re.search(r"^\s*(a:|b:|both:)\s*", text, re.I) else []:
+                for att in (message.attachments or []) if has_prefix else []:
                     safe = re.sub(r"[^A-Za-z0-9._-]", "_", att.filename or f"discord_{att.id}")
                     out = dest_dir/f"{mid}__{safe}"
                     try:
@@ -315,12 +315,11 @@ def main():
                 if refs:
                     extra = "\n".join([f"- {str(p)} ({m.get('mime','')},{m.get('bytes',0)} bytes)" for p,m in refs])
                     body = (body + ("\n\nFiles:\n" + extra if extra else "")).strip()
-                    # Index inbound files
+                    # Index inbound files with computed routes
                     try:
-                        routes_list = ['peerA','peerB'] if re.match(r"^\s*both:\s*", text, re.I) else (['peerA'] if re.match(r"^\s*a:\s*", text, re.I) else ['peerB'])
                         idx = HOME/"state"/"inbound-index.jsonl"; idx.parent.mkdir(parents=True, exist_ok=True)
                         for pth, mt in refs:
-                            rec = { 'ts': int(time.time()), 'path': str(pth), 'platform': 'discord', **mt, 'routes': routes_list }
+                            rec = { 'ts': int(time.time()), 'path': str(pth), 'platform': 'discord', **mt, 'routes': routes }
                             with idx.open('a', encoding='utf-8') as f:
                                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                     except Exception:
@@ -328,8 +327,11 @@ def main():
             except Exception:
                 pass
             _write_inbox(routes, body, mid)
-        except Exception:
-            pass
+        except Exception as e:
+            try:
+                _log(f"[error] on_message: {e}")
+            except Exception:
+                pass
 
     async def sender_loop():
         while True:
