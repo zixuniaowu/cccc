@@ -366,6 +366,12 @@ def main():
                 pass
 
     async def sender_loop():
+        # Ensure gateway and caches are ready before sending
+        try:
+            await client.wait_until_ready()
+        except Exception:
+            pass
+        missing_warned: set[int] = set()
         while True:
             await asyncio.sleep(0.3)
             item=None
@@ -376,7 +382,14 @@ def main():
                 ch_id, msg = item
                 ch = client.get_channel(ch_id)
                 try:
-                    if ch: await ch.send(msg)
+                    if not ch:
+                        if ch_id not in missing_warned:
+                            _log(f"[warn] send queue: channel not ready ({ch_id}); will retry shortly")
+                            missing_warned.add(ch_id)
+                        with q_lock:
+                            send_queue.append((ch_id, msg))
+                        continue
+                    await ch.send(msg)
                 except Exception as e:
                     _log(f"[error] send failed to {ch_id}: {e}")
 

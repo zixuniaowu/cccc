@@ -213,29 +213,68 @@ def main():
             if not chs:
                 return
             try:
-                from slack_sdk import WebClient  # type: ignore
-                cli = WebClient(token=bot_token)
                 while PENDING_TO_USER:
                     ev = PENDING_TO_USER.pop(0)
                     msg = ev.get('msg','')
-                    for ch in chs:
-                        try:
-                            cli.chat_postMessage(channel=ch, text=msg)
-                            time.sleep(0.3)
-                        except Exception as e:
-                            _append_log(f"[error] slack post (flush) failed: {e}")
+                    # Enqueue for sender loop
+                    try:
+                        SEND_QUEUE
+                    except NameError:
+                        # Fallback to direct send if sender loop not yet set up
+                        send_text(chs, msg)
+                    else:
+                        with SEND_LOCK:
+                            SEND_QUEUE.append(msg)
             except Exception as e:
                 _append_log(f"[error] slack flush pending failed: {e}")
 
-    def send_text(chs: List[str], text: str):
+    def send_text(chs: List[str], text: str) -> bool:
+        ok_any = False
         try:
             from slack_sdk import WebClient  # type: ignore
             cli = WebClient(token=bot_token)
             for ch in chs:
-                cli.chat_postMessage(channel=ch, text=text)
-                time.sleep(0.5)
+                try:
+                    cli.chat_postMessage(channel=ch, text=text)
+                    ok_any = True
+                    time.sleep(0.3)
+                except Exception as e:
+                    _append_log(f"[error] slack post failed to {ch}: {e}")
         except Exception as e:
             _append_log(f"[error] slack post failed: {e}")
+        return ok_any
+
+    # Simple sender queue to tolerate brief readiness gaps (e.g., channels not yet subscribed)
+    SEND_LOCK = threading.Lock()
+    SEND_QUEUE: List[str] = []
+
+    def _sender_loop():
+        warned = False
+        while True:
+            item = None
+            with SEND_LOCK:
+                if SEND_QUEUE:
+                    item = SEND_QUEUE.pop(0)
+            if item is None:
+                time.sleep(0.2); continue
+            with SUBS_LOCK:
+                chs = list(dict.fromkeys((channels_to_user or []) + (SUBS or [])))
+            if not chs:
+                if not warned:
+                    _append_log("[warn] slack sender: no channels ready; will retry queued message")
+                    warned = True
+                with SEND_LOCK:
+                    SEND_QUEUE.append(item)
+                time.sleep(0.5)
+                continue
+            warned = False
+            if not send_text(chs, item):
+                _append_log("[warn] slack sender: post failed; will retry queued message")
+                with SEND_LOCK:
+                    SEND_QUEUE.append(item)
+                time.sleep(0.5)
+
+    threading.Thread(target=_sender_loop, daemon=True).start()
 
     def on_to_user(ev: Dict[str,Any]):
         p = str(ev.get('peer') or '').lower()
@@ -244,9 +283,11 @@ def main():
         with SUBS_LOCK:
             chs = list(dict.fromkeys((channels_to_user or []) + (SUBS or [])))
         if chs:
-            send_text(chs, msg)
+            with SEND_LOCK:
+                SEND_QUEUE.append(msg)
         else:
-            # Buffer until first channel is available
+            # Buffer until first channel is available and warn for diagnostics
+            _append_log("[warn] no slack channels configured/subscribed for to_user; buffering until subscribe or channels configured")
             with PENDING_LOCK:
                 PENDING_TO_USER.append({'msg': msg})
 
