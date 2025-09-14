@@ -37,16 +37,32 @@ class OutboxConsumer:
         self.reset_on_start = str(reset_on_start or 'baseline')
         self._seen: Set[str] = set()
         self._baseline_done = False
+        # Startup marker: id of the last line present at construction time.
+        # Used to swallow only pre-start backlog while allowing immediate post-start events through.
+        self._startup_last_id: str = ''
+        self._startup_boundary_seen: bool = False
         self._load_seen()
         # If we already have a non-empty seen set from previous runs,
         # do not swallow the first window as baseline again on restart.
         if self.reset_on_start == 'baseline' and self._seen:
             self._baseline_done = True
+        # Capture startup marker (best-effort)
+        try:
+            if self.outbox.exists():
+                lines = self.outbox.read_text(encoding='utf-8').splitlines()
+                if lines:
+                    try:
+                        ev = json.loads(lines[-1])
+                        self._startup_last_id = self._id_of(ev)
+                    except Exception:
+                        self._startup_last_id = ''
+        except Exception:
+            self._startup_last_id = ''
 
     def _load_seen(self):
         if self.reset_on_start == 'clear':
-            # Start fresh and DO NOT dispatch existing backlog.
-            # Clear any persisted seen set and swallow the current tail once.
+            # Start fresh and DO NOT dispatch pre-start backlog.
+            # Clear any persisted seen set; baseline will use startup marker.
             try:
                 if self.seen_path.exists():
                     self.seen_path.unlink()
@@ -106,9 +122,20 @@ class OutboxConsumer:
                     if oid and oid in self._seen:
                         continue
                     if not self._baseline_done:
-                        if oid:
-                            self._seen.add(oid); changed = True
-                        continue
+                        # Baseline pass: swallow entries up to the startup marker (pre-start backlog)
+                        if self._startup_last_id:
+                            if not self._startup_boundary_seen:
+                                # Haven't reached the pre-start last line yet → baseline
+                                if oid:
+                                    self._seen.add(oid); changed = True
+                                # If this line is the startup last, mark boundary as seen for subsequent deliveries
+                                if oid == self._startup_last_id:
+                                    self._startup_boundary_seen = True
+                                continue
+                            # Boundary already crossed within this window → deliver as new
+                        else:
+                            # No startup marker (file absent/empty at start) → treat as new immediately
+                            pass
                     if et == 'to_user' and on_to_user:
                         on_to_user(ev)
                     elif et == 'to_peer_summary' and on_to_peer_summary:
