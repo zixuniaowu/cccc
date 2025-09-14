@@ -60,11 +60,16 @@ def _wrap_from_user(s: str) -> str:
 
 def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
     t = (text or '').strip()
-    m = re.match(r"^(a:|b:|both:)\s*", t, re.I)
+    # Strip leading mention (e.g., <@1234567890>) if present
+    t = re.sub(r"^\s*<@!?\d+>\s+", "", t)
+    # Support ASCII and fullwidth colon
+    m = re.match(r"^(a[:：]|b[:：]|both[:：])\s*", t, re.I)
     if m:
         tag = m.group(1).lower(); t = t[m.end():]
-        return ([{'a:':'peerA','b:':'peerB','both:':'peerA'}[tag]] + (["peerB"] if tag=='both:' else []), t)
-    m2 = re.match(r"^/(a|b|both)\s+", t, re.I)
+        key = 'a:' if tag.startswith('a') else ('b:' if tag.startswith('b') else 'both:')
+        return ([{'a:':'peerA','b:':'peerB','both:':'peerA'}[key]] + (["peerB"] if key=='both:' else []), t)
+    # Slash commands typed as plain text
+    m2 = re.match(r"^/(a|b|both)(?:@\S+)?\s+", t, re.I)
     if m2:
         cmd = m2.group(1).lower(); t = t[m2.end():]
         return ([{'a':'peerA','b':'peerB','both':'peerA'}[cmd]] + (["peerB"] if cmd=='both' else []), t)
@@ -237,10 +242,13 @@ def main():
             if message.author == client.user:
                 return
             text = message.content or ''
-            # Require routing prefixes to avoid forwarding general chatter
-            if not re.search(r"^\s*(a:|b:|both:)\s*", text, re.I):
+            # Require routing prefixes to avoid forwarding general chatter (support fullwidth colon & mentions)
+            has_prefix = bool(re.search(r"^\s*(?:<@!?\d+>\s+)?(a[:：]|b[:：]|both[:：])\s*", text, re.I) or
+                               re.search(r"^\s*(?:<@!?\d+>\s+)?/(a|b|both)(?:@\S+)?\s+", text, re.I))
+            if not has_prefix:
                 low = text.strip().lower()
                 if low not in ('subscribe','sub','unsubscribe','unsub','showpeers on','showpeers off') and not message.attachments:
+                    # Drop chatter without explicit prefix; keep logs quiet in normal operation
                     return
             if low in ('subscribe','sub'):
                 try:
