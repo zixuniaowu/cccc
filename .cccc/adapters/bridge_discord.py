@@ -62,17 +62,24 @@ def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
     t = (text or '').strip()
     # Strip leading mention (e.g., <@1234567890>) if present
     t = re.sub(r"^\s*<@!?\d+>\s+", "", t)
-    # Support ASCII and fullwidth colon
-    m = re.match(r"^(a[:：]|b[:：]|both[:：])\s*", t, re.I)
+    # Support ASCII / fullwidth colon with explicit key capture
+    m = re.match(r"^(a|b|both)[:：]\s*", t, re.I)
     if m:
-        tag = m.group(1).lower(); t = t[m.end():]
-        key = 'a:' if tag.startswith('a') else ('b:' if tag.startswith('b') else 'both:')
-        return ([{'a:':'peerA','b:':'peerB','both:':'peerA'}[key]] + (["peerB"] if key=='both:' else []), t)
+        kind = m.group(1).lower(); t = t[m.end():]
+        if kind == 'a':
+            return ['peerA'], t
+        if kind == 'b':
+            return ['peerB'], t
+        return ['peerA','peerB'], t
     # Slash commands typed as plain text
     m2 = re.match(r"^/(a|b|both)(?:@\S+)?\s+", t, re.I)
     if m2:
         cmd = m2.group(1).lower(); t = t[m2.end():]
-        return ([{'a':'peerA','b':'peerB','both':'peerA'}[cmd]] + (["peerB"] if cmd=='both' else []), t)
+        if cmd == 'a':
+            return ['peerA'], t
+        if cmd == 'b':
+            return ['peerB'], t
+        return ['peerA','peerB'], t
     if default_route == 'a': return ['peerA'], t
     if default_route == 'b': return ['peerB'], t
     return ['peerA','peerB'], t
