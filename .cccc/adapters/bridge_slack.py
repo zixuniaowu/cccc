@@ -572,19 +572,24 @@ def main():
                         with open(fp, 'rb') as f:
                             cli.files_upload_v2(channel=ch, file=f, filename=fp.name, initial_comment=(cap or None))
                     except SlackApiError as e1:
-                        # Log and try fallback to legacy files_upload for older workspaces/apps
-                        err = (e1.response or {}).get('error') if hasattr(e1, 'response') else str(e1)
-                        _append_log(f"[warn] files_upload_v2 failed to {ch}: {err}")
+                        # Retry v2 once without initial_comment (some workspaces/apps reject it)
                         try:
-                            with open(fp, 'rb') as f2:
-                                cli.files_upload(channels=ch, file=f2, filename=fp.name, initial_comment=(cap or None))
-                        except SlackApiError as e2:
-                            err2 = (e2.response or {}).get('error') if hasattr(e2, 'response') else str(e2)
-                            _append_log(f"[error] slack file upload failed to {ch}: {err2}")
-                            continue
-                        except Exception as e2:
-                            _append_log(f"[error] slack file upload failed to {ch}: {e2}")
-                            continue
+                            with open(fp, 'rb') as f0:
+                                cli.files_upload_v2(channel=ch, file=f0, filename=fp.name)
+                        except SlackApiError:
+                            # Log and try fallback to legacy files_upload for older workspaces/apps
+                            err = (e1.response or {}).get('error') if hasattr(e1, 'response') else str(e1)
+                            _append_log(f"[warn] files_upload_v2 failed to {ch}: {err}")
+                            try:
+                                with open(fp, 'rb') as f2:
+                                    cli.files_upload(channels=ch, file=f2, filename=fp.name, initial_comment=(cap or None))
+                            except SlackApiError as e2:
+                                err2 = (e2.response or {}).get('error') if hasattr(e2, 'response') else str(e2)
+                                _append_log(f"[error] slack file upload failed to {ch}: {err2}")
+                                continue
+                            except Exception as e2:
+                                _append_log(f"[error] slack file upload failed to {ch}: {e2}")
+                                continue
                     except Exception as e1:
                         _append_log(f"[warn] files_upload_v2 unexpected error to {ch}: {e1}")
                         try:
