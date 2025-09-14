@@ -45,7 +45,16 @@ class OutboxConsumer:
 
     def _load_seen(self):
         if self.reset_on_start == 'clear':
-            self._seen = set(); self._baseline_done = True; return
+            # Start fresh and DO NOT dispatch existing backlog.
+            # Clear any persisted seen set and swallow the current tail once.
+            try:
+                if self.seen_path.exists():
+                    self.seen_path.unlink()
+            except Exception:
+                pass
+            self._seen = set()
+            self._baseline_done = False
+            return
         try:
             if self.seen_path.exists():
                 obj = json.loads(self.seen_path.read_text(encoding='utf-8'))
