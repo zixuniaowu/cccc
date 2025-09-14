@@ -199,6 +199,16 @@ def main():
                 chs = list(dict.fromkeys((chans_user or []) + (SUBS or [])))
         if chs:
             enqueue(chs, msg)
+        else:
+            # Buffer until a channel subscribes
+            try:
+                PENDING_TO_USER
+            except NameError:
+                # define buffers if not present
+                pass
+            else:
+                with threading.Lock():
+                    PENDING_TO_USER.append(msg)
 
     def on_to_peer_summary(ev: Dict[str,Any]):
         # Runtime override via shared bridge-runtime.json
@@ -263,6 +273,21 @@ def main():
                         if message.channel.id not in SUBS:
                             SUBS.append(message.channel.id); save_subs(SUBS)
                     await message.channel.send('Subscribed this channel for to_user/to_peer_summary.')
+                except Exception:
+                    pass
+                # Flush pending to_user messages
+                try:
+                    # compute channels
+                    with SUBS_LOCK:
+                        chs = list(dict.fromkeys((chans_user or []) + (SUBS or [])))
+                    try:
+                        PENDING_TO_USER
+                    except NameError:
+                        pass
+                    else:
+                        while PENDING_TO_USER:
+                            msg2 = PENDING_TO_USER.pop(0)
+                            enqueue(chs, msg2)
                 except Exception:
                     pass
                 return

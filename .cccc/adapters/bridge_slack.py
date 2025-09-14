@@ -201,6 +201,32 @@ def main():
             pass
     SUBS = load_subs()
 
+    PENDING_LOCK = threading.Lock()
+    PENDING_TO_USER: List[Dict[str, Any]] = []  # buffer when no channels yet
+
+    def _flush_pending():
+        with PENDING_LOCK:
+            if not PENDING_TO_USER:
+                return
+            with SUBS_LOCK:
+                chs = list(dict.fromkeys((channels_to_user or []) + (SUBS or [])))
+            if not chs:
+                return
+            try:
+                from slack_sdk import WebClient  # type: ignore
+                cli = WebClient(token=bot_token)
+                while PENDING_TO_USER:
+                    ev = PENDING_TO_USER.pop(0)
+                    msg = ev.get('msg','')
+                    for ch in chs:
+                        try:
+                            cli.chat_postMessage(channel=ch, text=msg)
+                            time.sleep(0.3)
+                        except Exception as e:
+                            _append_log(f"[error] slack post (flush) failed: {e}")
+            except Exception as e:
+                _append_log(f"[error] slack flush pending failed: {e}")
+
     def send_text(chs: List[str], text: str):
         try:
             from slack_sdk import WebClient  # type: ignore
@@ -219,6 +245,10 @@ def main():
             chs = list(dict.fromkeys((channels_to_user or []) + (SUBS or [])))
         if chs:
             send_text(chs, msg)
+        else:
+            # Buffer until first channel is available
+            with PENDING_LOCK:
+                PENDING_TO_USER.append({'msg': msg})
 
     def on_to_peer_summary(ev: Dict[str,Any]):
         # Runtime override via shared bridge-runtime.json
@@ -490,6 +520,8 @@ def main():
                     web.chat_postMessage(channel=ch, text="Subscribed this channel for to_user/to_peer_summary.")
                 except Exception:
                     pass
+                # Flush any pending to_user messages now that we have a channel
+                _flush_pending()
                 return
             # Runtime toggle: showpeers on|off
             msp = re.match(r"^\s*/?showpeers\s+(on|off)\b", low)
