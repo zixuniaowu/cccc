@@ -662,6 +662,14 @@ def main():
                     nm = f.name.lower()
                     if nm.endswith('.sent.json') or nm.endswith('.meta.json') or nm.endswith('.caption.txt') or nm.endswith('.route'):
                         continue
+                    # If a sent sidecar exists, skip (idempotency across restarts)
+                    if f.with_name(f.name + '.sent.json').exists():
+                        try:
+                            # Best-effort: cleanup payload if sidecar exists
+                            f.unlink()
+                        except Exception:
+                            pass
+                        continue
                     key = str(f.resolve())
                     if key in sent_files and (time.time() - sent_files[key] < 3):
                         continue
@@ -678,6 +686,21 @@ def main():
                         try:
                             with open(f.with_name(f.name + '.sent.json'), 'w', encoding='utf-8') as mf:
                                 json.dump(meta, mf, ensure_ascii=False)
+                        except Exception:
+                            pass
+                        # Delete payload and sidecars to avoid repeat sends
+                        try:
+                            for side in (
+                                f.with_suffix(f.suffix + '.caption.txt'),
+                                f.with_suffix(f.suffix + '.route'),
+                                f.with_suffix(f.suffix + '.meta.json'),
+                            ):
+                                try:
+                                    if side.exists():
+                                        side.unlink()
+                                except Exception:
+                                    pass
+                            f.unlink()
                         except Exception:
                             pass
                         sent_files[key] = time.time()
