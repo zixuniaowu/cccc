@@ -59,14 +59,24 @@ def _acquire_singleton_lock(name: str = "slack-bridge"):
 
 def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
     t = (text or '').strip()
-    m = re.match(r"^(a:|b:|both:)\s*", t, re.I)
+    # Support ASCII and fullwidth colon after explicit key
+    m = re.match(r"^(a|b|both)[:：]\s*", t, re.I)
     if m:
-        tag = m.group(1).lower(); t = t[m.end():]
-        return ([{'a:':'peerA','b:':'peerB','both:':'peerA'}[tag]] + (["peerB"] if tag=='both:' else []), t)
-    m2 = re.match(r"^/(a|b|both)\s+", t, re.I)
+        kind = m.group(1).lower(); t = t[m.end():]
+        if kind == 'a':
+            return ['peerA'], t
+        if kind == 'b':
+            return ['peerB'], t
+        return ['peerA','peerB'], t
+    # Slash commands typed as plain text
+    m2 = re.match(r"^/(a|b|both)(?:@\S+)?\s+", t, re.I)
     if m2:
         cmd = m2.group(1).lower(); t = t[m2.end():]
-        return ([{'a':'peerA','b':'peerB','both':'peerA'}[cmd]] + (["peerB"] if cmd=='both' else []), t)
+        if cmd == 'a':
+            return ['peerA'], t
+        if cmd == 'b':
+            return ['peerB'], t
+        return ['peerA','peerB'], t
     if default_route == 'a': return ['peerA'], t
     if default_route == 'b': return ['peerB'], t
     return ['peerA','peerB'], t
@@ -458,13 +468,15 @@ def main():
             text = str(event.get('text') or '')
             ch = str(event.get('channel') or '')
             user = str(event.get('user') or '')
-            # Routing prefixes only; ignore general chatter without explicit route
-            prefix_re = re.compile(r"^\s*(a:|b:|both:)\s*", re.I)
-            has_prefix = bool(prefix_re.search(text))
-            # Mention form: <@BOT_USER_ID> a: ...
-            if (not has_prefix) and BOT_USER_ID:
-                if re.search(rf"^\s*<@{re.escape(BOT_USER_ID)}>\s+(a:|b:|both:)\s*", text, re.I):
-                    has_prefix = True
+            # Strip leading self-mention once for routing parse
+            stripped = text
+            if BOT_USER_ID:
+                stripped = re.sub(rf"^\s*<@{re.escape(BOT_USER_ID)}>\s+", "", stripped)
+            # Routing prefixes only; ignore general chatter without explicit route (support fullwidth colon & /a forms)
+            has_prefix = bool(
+                re.search(r"^\s*(a|b|both)[:：]", stripped, re.I) or
+                re.search(r"^\s*/(a|b|both)(?:@\S+)?\s+", stripped, re.I)
+            )
             # Ignore self/bot messages to avoid echo loops
             if event.get('bot_id') or (BOT_USER_ID and user == BOT_USER_ID):
                 return
@@ -541,7 +553,7 @@ def main():
                 # Allow only subscribe/unsubscribe without prefix; drop other chatter
                 _append_log(f"[inbound] drop without prefix ch={ch}")
                 return
-            routes, body = _route_from_text(text, default_route)
+            routes, body = _route_from_text(stripped, default_route)
             mid = f"slack-{int(time.time())}-{user[-4:]}"
             _write_inbox(routes, body, mid)
         except Exception:

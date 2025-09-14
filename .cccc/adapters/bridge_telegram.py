@@ -85,14 +85,14 @@ def _mid() -> str:
 
 def _route_from_text(text: str, default_route: str):
     t = text.strip()
-    # Support plain prefixes: a:/b:/both:
-    m = re.match(r"^(a:|b:|both:)\s*", t, re.I)
+    # Support plain prefixes: a:/b:/both: (ASCII or fullwidth colon)
+    m = re.match(r"^(a|b|both)[:：]\s*", t, re.I)
     if m:
-        tag = m.group(1).lower()
+        kind = m.group(1).lower()
         t = t[m.end():]
-        if tag == 'a:':
+        if kind == 'a':
             return ['peerA'], t
-        if tag == 'b:':
+        if kind == 'b':
             return ['peerB'], t
         return ['peerA','peerB'], t
     # Support slash commands (group privacy mode): /a …, /b …, /both …, with optional @BotName
@@ -106,13 +106,13 @@ def _route_from_text(text: str, default_route: str):
             return ['peerB'], t
         return ['peerA','peerB'], t
     # Support mention form: @BotName a: … or @BotName /a …
-    m3 = re.match(r"^@\S+\s+(a:|b:|both:)\s*", t, re.I)
+    m3 = re.match(r"^@\S+\s+(a|b|both)[:：]\s*", t, re.I)
     if m3:
-        tag = m3.group(1).lower()
+        kind = m3.group(1).lower()
         t = t[m3.end():]
-        if tag == 'a:':
+        if kind == 'a':
             return ['peerA'], t
-        if tag == 'b:':
+        if kind == 'b':
             return ['peerB'], t
         return ['peerA','peerB'], t
     m4 = re.match(r"^@\S+\s+/(a|b|both)(?:@\S+)?\s+", t, re.I)
@@ -982,7 +982,7 @@ def main():
                     _maybe_hint(chat_id, int((msg.get('from') or {}).get('id', 0) or 0))
                     continue
             # Enforce explicit routing for groups
-            has_explicit = bool(re.match(r"^(?:/(?:a|b|both)(?:@\S+)?|(?:a:|b:|both:))", (route_source or '').strip(), re.I))
+    has_explicit = bool(re.match(r"^(?:/(?:a|b|both)(?:@\S+)?|(?:a[:：]|b[:：]|both[:：]))", (route_source or '').strip(), re.I))
             dr = dm_route_default if is_dm else default_route
             if (not is_dm) and require_explicit and not has_explicit and not (msg.get('document') or msg.get('photo')):
                 _maybe_hint(chat_id, int((msg.get('from') or {}).get('id', 0) or 0))
