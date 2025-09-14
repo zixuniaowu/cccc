@@ -18,7 +18,7 @@ peerA:
     from_system: " ultrathink"
   # Optional NUDGE suffix (system [NUDGE] lines only)
   # e.g., " Read the oldest file and first echo ack: <seq> before processing"
-  nudge_suffix: " Always send messages by UPDATING message files (do NOT create/'write new' these files nor just print messages to console). Also use ASCII-only (7-bit). If inbox is empty: do not reply; widen perspective — re-check goals, constraints, and assumptions; look for cheap probes, small optimizations, or creative next steps; Just do sth truely helpful. ultrathink"
+  nudge_suffix: " Always send messages by UPDATING message files (do NOT create/'write new' these files nor just print messages to console). Also use ASCII-only (7-bit). If inbox is empty: just continue your tasks. If you are totally idle, do widen perspective — review goals, constraints, risks and assumptions from higher levels. ultrathink"
 peerB:
   prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # Adjust to your PeerB CLI prompt if needed
   busy_regexes:
@@ -45,7 +45,7 @@ peerB:
     from_peer: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line; propose a Hook. If nothing critical to add other than an pure ACK, stay silent and do not reply."
     from_system: " "
   # Optional NUDGE suffix
-  nudge_suffix: " Always send messages by updating message files (do not just print messages to console). If inbox is empty: do not reply; widen perspective — re-check goals, constraints, and assumptions; look for cheap probes, small optimizations, or creative next steps; Just do sth truely helpful."
+  nudge_suffix: " Always send messages by updating message files (do not just print messages to console). If inbox is empty: just continue your tasks. If you are totally idle, do widen perspective — review goals, constraints, risks and assumptions at higher levels."
 delivery:
   paste_max_wait_seconds: 6       # Max wait for idle before paste
   recheck_interval_seconds: 0.6   # Poll interval
