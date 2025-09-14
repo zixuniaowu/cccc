@@ -556,7 +556,9 @@ def main():
     # Outbound files watcher
     def _send_file_to_channels(fp: Path, caption: str) -> bool:
         cap = _summarize(caption or '', 1200, 10)
-        chs = list(dict.fromkeys((channels_to_user or []) + (channels_peer or [])))
+        # Include dynamically subscribed channels as well
+        with SUBS_LOCK:
+            chs = list(dict.fromkeys((channels_to_user or []) + (channels_peer or []) + (SUBS or [])))
         try:
             from slack_sdk import WebClient  # type: ignore
             cli = WebClient(token=bot_token)
@@ -572,6 +574,8 @@ def main():
                     time.sleep(0.5)
                 except Exception as e:
                     _append_log(f"[error] slack file upload failed to {ch}: {e}")
+            if not chs:
+                _append_log(f"[warn] no slack channels configured/subscribed for file send: {fp.name}")
             return ok_any
         except Exception as e:
             _append_log(f"[error] slack_sdk missing or upload failed: {e}")

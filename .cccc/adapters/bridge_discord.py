@@ -409,8 +409,10 @@ def main():
                     if not route:
                         route = 'both'
                     label = 'PeerA' if route=='peerA' else ('PeerB' if route=='peerB' else 'PeerA+PeerB')
-                    # queue send for all configured channels (to_user + to_peer_summary)
-                    for ch_id in (chans_user or []) + (chans_peer or []):
+                        # queue send for all configured + subscribed channels (to_user + to_peer_summary + SUBS)
+                    with SUBS_LOCK:
+                        all_chs = list(dict.fromkeys((chans_user or []) + (chans_peer or []) + (SUBS or [])))
+                    for ch_id in all_chs:
                         try:
                             asyncio.run_coroutine_threadsafe(_send_file(ch_id, f, f"[{label}]\n" + cap0), client.loop)
                         except Exception as e:
