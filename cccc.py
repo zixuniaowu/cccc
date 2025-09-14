@@ -278,7 +278,7 @@ def main():
         """Manage a single bridge by name."""
         state = home/"state"; state.mkdir(parents=True, exist_ok=True)
         script = {
-            'telegram': home/"adapters"/"telegram_bridge.py",
+            'telegram': home/"adapters"/"bridge_telegram.py",
             'slack':    home/"adapters"/"bridge_slack.py",
             'discord':  home/"adapters"/"bridge_discord.py",
         }.get(name)
@@ -530,8 +530,9 @@ def main():
                         from pathlib import Path as _P
                         if _P(cmdline_path).exists():
                             cmd=_P(cmdline_path).read_bytes().decode('utf-8','ignore')
-                            # Must contain this repo's telegram_bridge.py path (under current project's .cccc)
-                            if str((home/'adapters'/'telegram_bridge.py').resolve()) in cmd:
+                            # Must contain this repo's bridge_telegram.py path
+                            newp = str((home/'adapters'/'bridge_telegram.py').resolve())
+                            if newp in cmd:
                                 belongs=True
                     except Exception:
                         pass
@@ -572,7 +573,7 @@ def main():
             pass
 
     def _spawn_telegram_bridge(env_extra: dict):
-        bridge = home/"adapters"/"telegram_bridge.py"
+        bridge = home/"adapters"/"bridge_telegram.py"
         if not bridge.exists():
             print("[WARN] Telegram bridge script not found; skipping.")
             return None

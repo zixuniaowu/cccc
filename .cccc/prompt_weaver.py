@@ -59,7 +59,7 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     lines.append("IM Bridges (unified):")
     lines.append("• Routing: only messages with explicit prefix are forwarded — a:/b:/both:. Use 'showpeers on|off' to toggle Peer↔Peer summaries (global). Others are ignored as chatter.")
     lines.append("• Inbound: uploads are saved to .cccc/work/upload/inbound/YYYYMMDD/MID__name with a sibling .meta.json (platform/chat-or-channel/mime/bytes/sha256/caption/mid/ts); also indexed into state/inbound-index.jsonl.")
-    lines.append("• Outbound: drop files into .cccc/work/upload/outbound/{peer}/. Optional <name>.caption.txt adds message text; Telegram may add <name>.sendas with 'photo'|'document'. On success a <name>.sent.json ACK is written.")
+    lines.append("• Outbound: drop files into .cccc/work/upload/outbound/ (flat). Use the first line of <name>.caption.txt to route with a:/b:/both: (prefix is removed), or a <name>.route sidecar with a|b|both. On success a <name>.sent.json ACK is written.")
     lines.append("• Platform details are abstracted by adapters; do not rely on platform-specific folders. Cite files by their saved path and meta.")
     lines.append("")
     lines.append("Rules:")

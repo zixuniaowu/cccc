@@ -38,6 +38,10 @@ class OutboxConsumer:
         self._seen: Set[str] = set()
         self._baseline_done = False
         self._load_seen()
+        # If we already have a non-empty seen set from previous runs,
+        # do not swallow the first window as baseline again on restart.
+        if self.reset_on_start == 'baseline' and self._seen:
+            self._baseline_done = True
 
     def _load_seen(self):
         if self.reset_on_start == 'clear':
@@ -109,4 +113,3 @@ class OutboxConsumer:
                 # Swallow errors; bridges should not crash orchestrator
                 pass
             time.sleep(self.poll_seconds)
-

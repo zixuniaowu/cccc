@@ -1,18 +1,22 @@
 # Slack bridge settings (MVP)
-# Keep this file gitignored by default; tokens can also be provided via env vars.
+# Tokens
+app_token_env: SLACK_APP_TOKEN   # xapp-... for Socket Mode (optional inbound)
+bot_token_env: SLACK_BOT_TOKEN   # xoxb-... for Web API (required)
 
-app_token_env: SLACK_APP_TOKEN   # xapp-... for Socket Mode (optional for inbound)
-bot_token_env: SLACK_BOT_TOKEN   # xoxb-... for Web API
+# Routing & display
 show_peer_messages: true
-default_route: both   # a|b|both when no explicit prefix provided
+default_route: both              # a|b|both when no explicit prefix
 
+# Channels (channel IDs)
 channels:
-  to_user: []         # e.g., ["C0123456789"]
-  to_peer_summary: [] # e.g., ["C0123456789"]
+  to_user: []
+  to_peer_summary: []
 
+# Outbound
 outbound:
-  reset_on_start: baseline  # baseline|clear
+  reset_on_start: clear          # baseline|clear
 
+# Files
 files:
   enabled: true
   max_mb: 16

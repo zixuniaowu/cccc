@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Telegram Bridge (MVP skeleton)
+Telegram Bridge (MVP)
 - Network mode: gate by token/allowlist (long-poll getUpdates).
 - Inbound: messages -> .cccc/mailbox/<peer>/inbox (numbered files with [MID]); supports a:/b:/both: routing.
 - Outbound: read .cccc/state/outbox.jsonl (single source) and send concise summaries to chat(s).
@@ -17,9 +17,9 @@ except Exception:
     fcntl = None  # type: ignore
 
 try:
-    import yaml  # type: ignore
+    from common.config import read_config as _read_config  # type: ignore
 except Exception:
-    yaml = None
+    _read_config = None
 
 ROOT = Path.cwd()
 HOME = ROOT/".cccc"
@@ -28,13 +28,16 @@ if str(HOME) not in sys.path:
     sys.path.insert(0, str(HOME))
 
 def read_yaml(p: Path) -> Dict[str, Any]:
-    if not p.exists():
-        return {}
+    if _read_config is not None:
+        try:
+            return _read_config(p)
+        except Exception:
+            pass
+    # Fallback parsers
     try:
         import yaml as _y
         return _y.safe_load(p.read_text(encoding='utf-8')) or {}
     except Exception:
-        # Try JSON fallback
         try:
             return json.loads(p.read_text(encoding='utf-8'))
         except Exception:
@@ -656,10 +659,7 @@ def main():
 
         # Outbox consumer (unified across bridges)
         try:
-            try:
-                from adapters.outbox_consumer import OutboxConsumer
-            except Exception:
-                from outbox_consumer import OutboxConsumer
+            from adapters.outbox_consumer import OutboxConsumer  # type: ignore
             # Respect reset_on_start from config (baseline|clear)
             reset = str((cfg.get('outbound') or {}).get('reset_on_start') or cfg.get('reset_on_start') or 'baseline')
             oc = OutboxConsumer(HOME, seen_name='telegram', reset_on_start=reset)
@@ -680,8 +680,10 @@ def main():
                 if eff_show:
                     send_peer_summary(sp, text)
             threading.Thread(target=lambda: oc.loop(_on_to_user, _on_to_peer_summary), daemon=True).start()
-        except Exception:
-            pass
+        except Exception as e:
+            _append_ledger({'kind':'error','where':'telegram.outbox_consumer','error': str(e)})
+            # Fail fast: missing OutboxConsumer is a code/config error
+            raise
         # Outbound files watcher state
         # Track attempts within this run only (avoid rapid duplicates if filesystem timestamps don't change)
         sent_files: Dict[str, float] = {}
@@ -838,32 +840,61 @@ def main():
             pass
         # No mailbox baseline: OutboxConsumer ensures baseline for structured events
 
+        def _read_caption(fp: Path) -> str:
+            cap_fp = fp.with_suffix(fp.suffix + '.caption.txt')
+            if cap_fp.exists():
+                try:
+                    return cap_fp.read_text(encoding='utf-8').strip()
+                except Exception:
+                    return ''
+            return ''
+        def _detect_route_from_caption(cap: str) -> Tuple[str, str]:
+            t = (cap or '').lstrip()
+            m = re.match(r"^(a:|b:|both:)\s*", t, re.I)
+            if m:
+                tag = m.group(1).lower(); body = t[m.end():]
+                return ({'a:':'peerA','b:':'peerB','both:':'both'}[tag], body)
+            return ('', cap)
+        def _route_sidecar(fp: Path) -> str:
+            for sc in (fp.with_suffix(fp.suffix + '.route'), fp.with_name(fp.name + '.route')):
+                if sc.exists():
+                    try:
+                        val = (sc.read_text(encoding='utf-8').strip() or '').lower()
+                        if val in ('a','peera','peera','peera'.lower(), 'peera'):
+                            return 'peerA'
+                        if val in ('b','peerb','peerb','peerb'.lower(), 'peerb'):
+                            return 'peerB'
+                        if val in ('both','all','ab','a+b'):
+                            return 'both'
+                    except Exception:
+                        pass
+            return ''
+        def _iter_targets():
+            # Flat-only scheme: scan outbound root directory for files
+            if outbound_dir.exists():
+                for f in sorted(outbound_dir.glob('*')):
+                    if f.is_file():
+                        yield f
         while True:
             now = time.time()
             # Peer↔Peer summaries now come from outbox (no file polling)
-            # Outbound files
+            # Outbound files (flat-only directory)
             try:
-                for peer in ('peerA','peerB'):
-                    d = outbound_dir/peer
-                    if not d.exists():
+                for fp in _iter_targets():
+                    if fp.is_dir():
                         continue
-                    for fp in sorted(d.glob('*')):
-                        if fp.is_dir():
-                            continue
-                        name=str(fp.name).lower()
-                        if name.endswith('.caption.txt') or name.endswith('.sendas') or name.endswith('.meta.json') or name.endswith('.sent.json'):
-                            continue
-                            # optional caption sidecar
-                            cap_fp = fp.with_suffix(fp.suffix + '.caption.txt')
-                            if cap_fp.exists():
-                                try:
-                                    cap = cap_fp.read_text(encoding='utf-8').strip()
-                                except Exception:
-                                    cap = ''
-                            else:
-                                cap = ''
-                            # Send and delete on success; on failure, keep file for retry
-                            _send_file(peer, fp, cap)
+                    name=str(fp.name).lower()
+                    if name.endswith('.caption.txt') or name.endswith('.sendas') or name.endswith('.meta.json') or name.endswith('.sent.json'):
+                        continue
+                    cap = _read_caption(fp)
+                    route = _route_sidecar(fp)
+                    if not route:
+                        route, cap = _detect_route_from_caption(cap)
+                    if not route:
+                        route = 'both'
+                    peer = 'peerA' if route=='peerA' else ('peerB' if route=='peerB' else 'peerA')
+                    # Send and delete on success; on failure, keep file for retry
+                    _send_file(peer, fp, cap)
             except Exception as e:
                 _append_log(outlog, f"[error] watch_outbound: {e}")
             time.sleep(1.0)

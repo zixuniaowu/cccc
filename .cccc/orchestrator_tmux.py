@@ -2793,25 +2793,7 @@ def main(home: Path):
             eff = handoff_filter_override if handoff_filter_override is not None else pol_enabled
             src = "override" if handoff_filter_override is not None else "policy"
             print(f"[ANTI] Low-signal filter: {eff} (source={src})"); continue
-        # Lazy preamble: prepend on the first user message per peer (config-driven)
-        LAZY = (delivery_conf.get("lazy_preamble") or {}) if isinstance(delivery_conf.get("lazy_preamble"), dict) else {}
-        LAZY_ENABLED = bool(LAZY.get("enabled", True))
-
-        # State helpers for preamble-sent flags
-        def _preamble_state_path() -> Path:
-            return home/"state"/"preamble_sent.json"
-        def _load_preamble_sent() -> Dict[str,bool]:
-            p = _preamble_state_path();
-            try:
-                return json.loads(p.read_text(encoding="utf-8"))
-            except Exception:
-                return {"PeerA": False, "PeerB": False}
-        def _save_preamble_sent(st: Dict[str,bool]):
-            p = _preamble_state_path(); p.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding="utf-8")
-            except Exception:
-                pass
+        # Lazy preamble: helpers defined earlier in this function
         def _maybe_prepend_preamble(receiver_label: str, user_payload: str) -> str:
             if not LAZY_ENABLED:
                 return user_payload

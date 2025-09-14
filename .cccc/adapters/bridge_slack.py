@@ -19,13 +19,19 @@ ROOT = Path.cwd(); HOME = ROOT/".cccc"
 if str(HOME) not in sys.path: sys.path.insert(0, str(HOME))
 
 def read_yaml(p: Path) -> Dict[str, Any]:
-    if not p.exists(): return {}
+    # Back-compat shim: delegate to common config reader
     try:
-        import yaml  # type: ignore
-        return yaml.safe_load(p.read_text(encoding='utf-8')) or {}
+        from common.config import read_config as _rc  # type: ignore
+        return _rc(p)
     except Exception:
-        try: return json.loads(p.read_text(encoding='utf-8'))
-        except Exception: return {}
+        try:
+            import yaml  # type: ignore
+            return yaml.safe_load(p.read_text(encoding='utf-8')) or {}
+        except Exception:
+            try:
+                return json.loads(p.read_text(encoding='utf-8'))
+            except Exception:
+                return {}
 
 def _now(): return time.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -158,9 +164,10 @@ def main():
 
     # Outbound consumer
     try:
-        from adapters.outbox_consumer import OutboxConsumer
-    except Exception:
-        from outbox_consumer import OutboxConsumer
+        from adapters.outbox_consumer import OutboxConsumer  # type: ignore
+    except Exception as e:
+        _append_log(f"[error] OutboxConsumer import failed: {e}; exiting")
+        sys.exit(1)
     oc = OutboxConsumer(HOME, seen_name='slack', reset_on_start=reset)
 
     # Dynamic channel subscriptions persist under state; used to avoid editing YAML.
@@ -576,38 +583,72 @@ def main():
             return
         out_root = Path(str(files_cfg.get('outbound_dir') or (HOME/"work"/"upload"/"outbound")))
         sent_files: Dict[str, float] = {}
+        def _read_caption(fp: Path) -> str:
+            cap = ''
+            try:
+                for sc in (fp.with_suffix(fp.suffix + '.caption.txt'), fp.with_name(fp.name + '.caption.txt')):
+                    if sc.exists():
+                        cap = sc.read_text(encoding='utf-8')
+                        break
+            except Exception:
+                pass
+            return cap
+        def _detect_route_from_caption(cap: str) -> Tuple[str, str]:
+            # Returns (route, caption_wo_prefix); route in {'peerA','peerB','both'}
+            t = (cap or '').lstrip()
+            m = re.match(r"^(a:|b:|both:)\s*", t, re.I)
+            if m:
+                tag = m.group(1).lower();
+                body = t[m.end():]
+                return ({'a:':'peerA','b:':'peerB','both:':'both'}[tag], body)
+            return ('', cap)
+        def _route_sidecar(fp: Path) -> str:
+            try:
+                for sc in (fp.with_suffix(fp.suffix + '.route'), fp.with_name(fp.name + '.route')):
+                    if sc.exists():
+                        val = (sc.read_text(encoding='utf-8').strip() or '').lower()
+                        if val in ('a','peera','peerA'.lower()):
+                            return 'peerA'
+                        if val in ('b','peerb','peerB'.lower()):
+                            return 'peerB'
+                        if val in ('both','all','ab','a+b'):
+                            return 'both'
+            except Exception:
+                pass
+            return ''
+        def _iter_targets():
+            # Flat-only scheme: scan outbound root directory for files
+            if out_root.exists():
+                for f in out_root.iterdir():
+                    if f.is_file():
+                        yield f
         while True:
             try:
-                for peer in ('peerA','peerB'):
-                    d = out_root/peer
-                    if not d.exists():
+                for f in _iter_targets():
+                    if not f.is_file():
                         continue
-                    for f in d.iterdir():
-                            if not f.is_file():
-                                continue
-                            if f.suffix.endswith('.json') or f.name.endswith('.sent.json'):
-                                continue
-                            key = str(f.resolve())
-                            if key in sent_files and (time.time() - sent_files[key] < 3):
-                                continue
-                            # caption sidecar
-                            cap = ''
-                            try:
-                                for sc in (f.with_suffix(f.suffix + '.caption.txt'), f.with_name(f.name + '.caption.txt')):
-                                    if sc.exists():
-                                        cap = sc.read_text(encoding='utf-8')
-                                        break
-                            except Exception:
-                                pass
-                            ok = _send_file_to_channels(f, f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + cap)
-                            if ok:
-                                meta = {'platform':'slack','ts': int(time.time()), 'file': str(f.name)}
-                                try:
-                                    with open(f.with_name(f.name + '.sent.json'), 'w', encoding='utf-8') as mf:
-                                        json.dump(meta, mf, ensure_ascii=False)
-                                except Exception:
-                                    pass
-                                sent_files[key] = time.time()
+                    nm = f.name.lower()
+                    if nm.endswith('.sent.json') or nm.endswith('.meta.json') or nm.endswith('.caption.txt') or nm.endswith('.route'):
+                        continue
+                    key = str(f.resolve())
+                    if key in sent_files and (time.time() - sent_files[key] < 3):
+                        continue
+                    cap0 = _read_caption(f)
+                    route = _route_sidecar(f)
+                    if not route:
+                        route, cap0 = _detect_route_from_caption(cap0)
+                    if not route:
+                        route = 'both'
+                    label = 'PeerA' if route=='peerA' else ('PeerB' if route=='peerB' else 'PeerA+PeerB')
+                    ok = _send_file_to_channels(f, f"[{label}]\n" + cap0)
+                    if ok:
+                        meta = {'platform':'slack','ts': int(time.time()), 'file': str(f.name)}
+                        try:
+                            with open(f.with_name(f.name + '.sent.json'), 'w', encoding='utf-8') as mf:
+                                json.dump(meta, mf, ensure_ascii=False)
+                        except Exception:
+                            pass
+                        sent_files[key] = time.time()
             except Exception:
                 pass
             time.sleep(1.0)

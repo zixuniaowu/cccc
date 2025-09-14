@@ -116,9 +116,9 @@ That’s it. You can refine policies later.
   - `/whoami` shows your chat_id; `/subscribe` (if `autoregister: open`)
   - `/showpeers on|off` toggles Peer↔Peer summaries
 - File exchange
-  - Outbound (AIs → IM): save under `.cccc/work/upload/outbound/<peer>/{photos,files}/`
-  - Optional caption: same‑name `.caption.txt`; force send‑as via `.sendas` (`photo|document`)
-  - Sent files are deleted on success; `outbound.reset_on_start: clear` avoids blasting residuals on restart
+  - Outbound (AIs → IM): save files to `.cccc/work/upload/outbound/` (flat)
+  - Routing: either a `<name>.route` sidecar with `a|b|both`, or the first line of `<name>.caption.txt` starts with `a:`/`b:`/`both:` (the prefix is removed from the caption)
+  - ACK: on success, a `<name>.sent.json` sidecar is written
   - Inbound (IM → AIs): bridge writes `<FROM_USER>` with sidecar meta; peers act on it
 - Governance: RFD cards in chat with Approve/Reject; decisions go to the ledger and unlock execution.
 
@@ -154,7 +154,7 @@ RFD is not required here. It triggers automatically only for protected areas or 
 
 ```
 .cccc/
-  adapters/telegram_bridge.py    # Telegram long‑poll bridge (MVP)
+  adapters/bridge_telegram.py    # Telegram long‑poll bridge (MVP)
   adapters/bridge_slack.py       # Slack bridge (Socket Mode + Web API, MVP)
   adapters/bridge_discord.py     # Discord bridge (Gateway + REST, MVP)
   adapters/outbox_consumer.py    # Shared Outbox reader (to_user/to_peer_summary)
@@ -162,9 +162,9 @@ RFD is not required here. It triggers automatically only for protected areas or 
     cli_profiles.yaml            # tmux/paste/type behavior; echo; idle regexes; self‑check
     policies.yaml                # patch queue size; allowlist; RFD gates
     roles.yaml                   # leader; specialties; rotation
-    telegram.yaml                # token/autostart/allowlist/dry_run/routing/files
-    slack.yaml                   # app/bot tokens, channels, autostart, dry_run
-    discord.yaml                 # bot token, channels, autostart, dry_run
+    telegram.yaml                # token/autostart/allowlist/routing/files
+    slack.yaml                   # app/bot tokens, channels, routing/files
+    discord.yaml                 # bot token, channels, routing/files
   mailbox/                       # peerA/peerB with to_user.md/to_peer.md/patch.diff; inbox/processed
   work/                          # shared workspace; upload inbound/outbound; ephemeral
   state/                         # ledger.jsonl, bridge logs, status/session; ephemeral
@@ -186,7 +186,7 @@ RFD is not required here. It triggers automatically only for protected areas or 
 Adapter dependencies (optional)
 - Slack bridge requires `slack_sdk` (install via `pip install slack_sdk`).
 - Discord bridge requires `discord.py` (install via `pip install discord.py`).
-If these packages are not installed, adapters run in dry-run/outbound-only mode and log a hint.
+If these packages or tokens are missing, adapters exit fast with a clear error. Slack inbound requires an App token (Socket Mode) while outbound requires a Bot token.
 
 CLI prerequisites (summary)
 - Peer A = Claude Code; Peer B = Codex CLI. Install and log in as required by each vendor.
@@ -212,14 +212,51 @@ handoff_filter:
 `.cccc/settings/telegram.yaml`
 
 ```
-token_env: "TELEGRAM_BOT_TOKEN"
+token_env: TELEGRAM_BOT_TOKEN
 autostart: true
 discover_allowlist: true
-autoregister: open
-dry_run: false
+autoregister: open           # open|off
+allow_chats: []              # optional explicit allowlist (numeric chat IDs)
+max_auto_subs: 3
+
+show_peer_messages: true
+default_route: both          # a|b|both
+
+# Message sizing and pacing
+debounce_seconds: 30
+max_msg_chars: 4096
+max_msg_lines: 32
+peer_debounce_seconds: 30
+peer_message_max_chars: 4096
+peer_message_max_lines: 32
+
+routing:
+  require_explicit: true     # require a:/b:/both: (groups)
+  allow_prefix: true         # allow a:/b:/both: prefixes
+  require_mention: false     # require @BotName in groups (false = more convenient)
+
+dm:
+  route_default: both        # default when in DM
+
+hints:
+  cooldown_seconds: 300
+
 files:
   enabled: true
-  outbound_dir: ".cccc/work/upload/outbound"
+  max_mb: 16
+  allowed_mime: ["text/*","image/png","image/jpeg","application/pdf","application/zip"]
+  inbound_dir: .cccc/work/upload/inbound
+  outbound_dir: .cccc/work/upload/outbound
+
+inbound_retention_days: 14
+outbound_retention_days: 14
+autowrap_from_user: true
+run_clamav: false
+redact_patterns:
+  - (?i)api[_-]?key\s*[:=]\s*\S+
+  - (?i)secret\s*[:=]\s*\S+
+  - (?i)password\s*[:=]\s*\S+
+
 outbound:
   reset_on_start: clear
 ```
@@ -227,33 +264,61 @@ outbound:
 `.cccc/settings/slack.yaml`
 
 ```
-app_token_env: SLACK_APP_TOKEN   # xapp-... (Socket Mode)
-bot_token_env: SLACK_BOT_TOKEN   # xoxb-... (Web API)
-autostart: false
-dry_run: true
+# Tokens
+app_token_env: SLACK_APP_TOKEN   # xapp-... for Socket Mode (optional inbound)
+bot_token_env: SLACK_BOT_TOKEN   # xoxb-... for Web API (required)
+
+# Routing & display
+show_peer_messages: true
+default_route: both              # a|b|both when no explicit prefix
+
+# Channels (channel IDs)
 channels:
   to_user: []
   to_peer_summary: []
+
+# Outbound
 outbound:
-  reset_on_start: baseline
+  reset_on_start: clear          # baseline|clear
+
+# Files
+files:
+  enabled: true
+  max_mb: 16
+  inbound_dir: .cccc/work/upload/inbound
+  outbound_dir: .cccc/work/upload/outbound
 ```
 
 `.cccc/settings/discord.yaml`
 
 ```
+# Token
 bot_token_env: DISCORD_BOT_TOKEN
-autostart: false
-dry_run: true
+
+# Routing & display
+show_peer_messages: true
+default_route: both              # a|b|both when no explicit prefix
+
+# Channels (numeric IDs)
 channels:
-  to_user: []           # numeric channel IDs
+  to_user: []
   to_peer_summary: []
+
+# Outbound
 outbound:
-  reset_on_start: baseline
+  reset_on_start: clear          # baseline|clear
+
+# Files
+files:
+  enabled: true
+  max_mb: 16
+  inbound_dir: .cccc/work/upload/inbound
+  outbound_dir: .cccc/work/upload/outbound
 ```
 
 ## Feature Overview (selected)
 
-- Bridges: Telegram (inbound/outbound), Slack (Socket Mode + Web API, MVP), Discord (Gateway + REST, MVP). Outbound reads single‑source Outbox (`.cccc/state/outbox.jsonl`) via a shared consumer; inbound routes `a:/b:/both:` to mailbox inbox. Dry‑run by default; enable via `.cccc/settings/{slack,discord}.yaml` or env tokens.
+- Bridges: Telegram (inbound/outbound), Slack (Socket Mode + Web API, MVP), Discord (Gateway + REST, MVP). Outbound reads single‑source Outbox (`.cccc/state/outbox.jsonl`) via a shared consumer; inbound routes `a:/b:/both:` to mailbox inbox. No dry‑run: tokens/SDKs are required and adapters fail fast when missing.
 - Unified bridge CLI: `cccc bridge <telegram|slack|discord|all> start|stop|status|restart|logs` and an optional connect wizard in `cccc run`. Bridges can autostart via YAML.
 - Context maintenance: on a cadence (config `delivery.context_compact_every_self_checks`), send `/compact` to both CLIs and immediately reinject the full SYSTEM with a leading “Now: … TZ” line.
 - Self‑check enhancements: inject current time/TZ; add an insight‑channel reminder to generate new angles (hook/assumption/risk/trade‑off/next/delta) rather than restating.
@@ -268,7 +333,7 @@ outbound:
 **Telegram bot silent?**
 - `cccc token show` (token saved?) → `cccc bridge status` (running?) → `cccc bridge logs -n 200`
 - In group chats, route explicitly (`a:`/`/a`), and run `/whoami` or `/subscribe` once to register
-- Ensure `autostart: true`, `dry_run: false`
+- Ensure `autostart: true`
 
 **Claude/Codex CLI not found?**
 - Install the CLIs and make sure the binaries are on PATH; otherwise set explicit commands:
