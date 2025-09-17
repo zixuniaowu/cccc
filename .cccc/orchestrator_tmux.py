@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
 from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox
+from por_manager import ensure_por, save_por, append_note, compact_summary, por_status_snapshot
 
 ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # strip ANSI color/control sequences
 # Console echo of AI output blocks. Default OFF to avoid disrupting typing.
@@ -23,6 +24,13 @@ CONSOLE_ECHO = False
 PATCH_RE = re.compile(r"```(?:patch|diff)\s*([\s\S]*?)```", re.I)
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
+
+# Plan-of-Record cache (shared with prompt weaving)
+POR_CACHE: Dict[str, Any] = {}
+
+# Coach helper state
+COACH_MODES = {"off", "manual", "key_nodes"}
+COACH_WORK_ROOT_NAME = "coach_sessions"
 
 # ---------- REV state helpers (lightweight) ----------
 def _rev_state_path(home: Path) -> Path:
@@ -1092,6 +1100,7 @@ def log_ledger(home: Path, entry: Dict[str,Any]):
     with (state/"ledger.jsonl").open("a",encoding="utf-8") as f:
         f.write(json.dumps(entry,ensure_ascii=False)+"\n")
 
+
 def outbox_write(home: Path, event: Dict[str,Any]) -> Dict[str,Any]:
     """Append a structured outbound event for bridges to consume.
     Returns the full event with id/ts populated.
@@ -1310,13 +1319,13 @@ def git_commit(msg: str):
 # ---------- prompt weaving ----------
 def weave_system(home: Path, peer: str) -> str:
     from prompt_weaver import weave_system_prompt
-    return weave_system_prompt(home, peer)
+    return weave_system_prompt(home, peer, POR_CACHE or None)
 
 def weave_preamble_text(home: Path, peer: str) -> str:
     """Single-source preamble (same source as SYSTEM)."""
     try:
         from prompt_weaver import weave_preamble
-        return weave_preamble(home, peer)
+        return weave_preamble(home, peer, POR_CACHE or None)
     except Exception:
         # Fallback to full system when preamble helper not present
         return weave_system(home, peer)
@@ -1607,6 +1616,171 @@ def main(home: Path):
 
     leader   = (roles.get("leader") or "peerA").strip().lower()
     session  = f"cccc-{Path.cwd().name}"
+
+    global POR_CACHE
+    def _log_por(entry: Dict[str, Any]):
+        log_ledger(home, entry)
+
+    por = ensure_por(home, _log_por)
+    POR_CACHE = por
+
+    def _persist_por(reason: Optional[str] = None):
+        nonlocal por
+        global POR_CACHE
+        por = save_por(home, por, _log_por, reason=reason)
+        POR_CACHE = por
+
+    coach_conf = read_yaml(settings/"coach_helper.yaml") if (settings/"coach_helper.yaml").exists() else {}
+    helper_conf = (coach_conf.get("helper") or {}) if isinstance(coach_conf.get("helper"), dict) else {}
+    coach_command = str(helper_conf.get("command") or "").strip()
+    rate_limit_per_minute = int(coach_conf.get("rate_limit_per_minute") or 2)
+    if rate_limit_per_minute <= 0:
+        rate_limit_per_minute = 1
+    coach_min_interval = 60.0 / rate_limit_per_minute
+
+    triggers_conf = coach_conf.get("triggers") if isinstance(coach_conf.get("triggers"), dict) else {}
+    coach_mode = str(triggers_conf.get("mode") or "off").lower()
+    if coach_mode not in COACH_MODES:
+        if coach_mode in ("on", "keynodes"):
+            coach_mode = "key_nodes"
+        else:
+            coach_mode = "off"
+
+    def _coach_state_path() -> Path:
+        return state/"coach_helper_state.json"
+
+    def _load_coach_state() -> Dict[str, Any]:
+        path = _coach_state_path()
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _persist_coach_state():
+        payload = json.dumps({"mode": coach_mode}, ensure_ascii=False, indent=2)
+        path = _coach_state_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(payload, encoding="utf-8")
+
+    state_conf = _load_coach_state()
+    if state_conf.get("mode") in COACH_MODES:
+        coach_mode = state_conf.get("mode")
+
+    coach_last_reason = ""
+    coach_last_reminder: Dict[str, float] = {"PeerA": 0.0, "PeerB": 0.0}
+    KEY_NODE_INTENTS = {"shape", "review", "contract", "release", "final", "accept"}
+    coach_work_root = home/"work"/COACH_WORK_ROOT_NAME
+    coach_work_root.mkdir(parents=True, exist_ok=True)
+
+    _persist_coach_state()
+
+    def _coach_snapshot() -> Dict[str, Any]:
+        return {
+            "mode": coach_mode,
+            "command": coach_command,
+            "last_reason": coach_last_reason,
+        }
+
+    def _prepare_coach_bundle(reason: str, stage: str, peer_label: Optional[str], payload: Optional[str]) -> Optional[Path]:
+        try:
+            session_id = time.strftime("%Y%m%d-%H%M%S")
+            if peer_label:
+                session_id += f"-{peer_label.lower()}"
+            session_path = coach_work_root/session_id
+            session_path.mkdir(parents=True, exist_ok=True)
+            (session_path/"por.json").write_text(json.dumps(por, ensure_ascii=False, indent=2), encoding="utf-8")
+            details: List[str] = []
+            details.append("# Coach Helper Context")
+            details.append(f"Reason: {reason}")
+            details.append(f"Stage: {stage}")
+            if coach_command:
+                details.append(f"Suggested command: {coach_command}")
+            details.append("")
+            details.append("## What you can do")
+            details.append("- You may inspect repository files and `.cccc/work` artifacts as needed.")
+            details.append("- Feel free to create additional notes or scratch files under `.cccc/work/` (e.g., run experiments, capture logs).")
+            details.append("- If changes to source code are required, prepare unified diffs (≤150 lines) so the primary peers can apply them.")
+            details.append("- Summarize findings, highlight risks, and propose concrete next steps for the peers.")
+            details.append("")
+            details.append("## Gemini CLI (non-interactive) examples")
+            details.append("```bash")
+            details.append("# Prompt with inline text")
+            details.append("gemini -p \"Review the latest POR context and suggest improvements\"")
+            details.append("# Pipe input")
+            details.append("echo \"List open risks based on the current plan\" | gemini")
+            details.append("# Point to specific files or directories")
+            details.append("gemini -p \"@docs/ @.cccc/work/coach_sessions/{session_id} Provide a review summary\"")
+            details.append("```")
+            details.append("")
+            details.append("## Data in this bundle")
+            details.append("- `por.json`: snapshot of the current Plan-of-Record.")
+            details.append("- `peer_message.txt`: the triggering message or artifact from the peer.")
+            details.append("- `notes.txt`: this instruction file.")
+            (session_path/"notes.txt").write_text("\n".join(details), encoding="utf-8")
+            if payload:
+                (session_path/"peer_message.txt").write_text(payload, encoding="utf-8")
+            return session_path
+        except Exception:
+            return None
+
+    def _send_coach_reminder(reason: str, peers: Optional[List[str]] = None, *, stage: str = "manual", payload: Optional[str] = None, source_peer: Optional[str] = None):
+        nonlocal coach_last_reason
+        bundle_path = _prepare_coach_bundle(reason, stage, source_peer, payload)
+        targets = peers or ["PeerA", "PeerB"]
+        lines = ["Coach helper reminder.", f"Reason: {reason}."]
+        if coach_command:
+            lines.append(f"Run helper command: {coach_command}")
+        lines.append("You may inspect `.cccc/work` resources created for this session and perform extended analysis.")
+        lines.append("Share verdict/actions/checks in your next response.")
+        if bundle_path:
+            lines.append(f"Context bundle: {bundle_path}")
+        message = "\n".join(lines)
+        for label in targets:
+            payload = f"<FROM_SYSTEM>\n{message}\n</FROM_SYSTEM>\n"
+            _send_handoff("System", label, payload)
+            coach_last_reminder[label] = time.time()
+        coach_last_reason = reason
+        log_ledger(home, {"from": "system", "kind": "coach_reminder", "peers": targets, "reason": reason})
+        write_status(deliver_paused)
+
+    def _infer_stage(msg_type: str, intent: str, has_acceptance: bool) -> str:
+        if msg_type == "evidence" and intent in {"release", "final", "signoff", "accept"}:
+            return "final_acceptance"
+        if msg_type == "claim" and has_acceptance:
+            return "contract_signoff"
+        if msg_type == "claim" and intent in KEY_NODE_INTENTS:
+            return "plan_finalization"
+        return "analysis"
+
+    def _maybe_trigger_coach_from_payload(peer_label: str, payload: str):
+        if coach_mode != "key_nodes" or not payload.strip():
+            return
+        try:
+            import yaml  # type: ignore
+            data = yaml.safe_load(payload)
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        intent = str(data.get("intent") or "").lower()
+        msg_type = str(data.get("type") or "").lower()
+        has_acceptance = bool(data.get("acceptance"))
+        reason = None
+        if msg_type == "claim" and (intent in KEY_NODE_INTENTS or has_acceptance):
+            reason = f"{peer_label} claim intent={intent or 'n/a'}"
+        elif msg_type == "evidence" and intent in {"release", "final", "signoff", "accept"}:
+            reason = f"{peer_label} evidence intent={intent or 'n/a'}"
+        if not reason:
+            return
+        now = time.time()
+        if now - coach_last_reminder.get(peer_label, 0.0) < coach_min_interval:
+            return
+        stage = _infer_stage(msg_type, intent, has_acceptance)
+        _send_coach_reminder(reason, stage=stage, payload=payload, source_peer=peer_label)
+
 
     cli_profiles = read_yaml(settings/"cli_profiles.yaml")
     profileA = cli_profiles.get("peerA", {})
@@ -2175,6 +2349,11 @@ def main(home: Path):
                                     log_ledger(home, {"from":"system","kind":"context-system-reinject","peer":"PeerB","chars": len(reinjB)})
                                 except Exception:
                                     pass
+                                summary = compact_summary(home, por, sc_index)
+                                append_note(por, summary)
+                                _persist_por(reason="compact")
+                                log_ledger(home, {"from":"system","kind":"reset","mode":"compact","trigger":"auto","index": sc_index})
+                                write_status(deliver_paused)
 
                             # Build self-check payloads (after any context maintenance)
                             peerA_msg = now_line + "\n" + self_check_text
@@ -2295,6 +2474,8 @@ def main(home: Path):
             "mailbox_counts": mbox_counts,
             "mailbox_last": mbox_last,
             "handoff_filter_enabled": eff_filter,
+            "por": por_status_snapshot(por),
+            "coach": _coach_snapshot(),
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         try:
@@ -2524,6 +2705,7 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
+                    _maybe_trigger_coach_from_payload("PeerA", payload)
                     # Hard gate: if PeerA owes a REV (due to prior COUNTER/QUESTION from PeerB),
                     # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
                     try:
@@ -2657,6 +2839,7 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
+                        _maybe_trigger_coach_from_payload("PeerB", payload)
                         # Hard gate: if PeerB owes a REV (due to prior COUNTER/QUESTION from PeerA),
                         # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
                         try:
@@ -2751,6 +2934,7 @@ def main(home: Path):
             print("  a! <cmd> / b! <cmd>     → passthrough to respective CLI (no wrapper)")
             print("  /pause | /resume        → pause/resume A↔B handoff")
             print("  /refresh                → re-inject SYSTEM prompt")
+            print("  /reset compact|clear    → POR maintenance (compact = fold context, clear = fresh restart)")
             print("  /echo on|off|<empty>    → console echo on/off/show")
             print("  q                       → quit orchestrator")
             # Reprint prompt
@@ -2764,6 +2948,67 @@ def main(home: Path):
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
             print("[SYSTEM] Refreshed (mailbox delivery)."); continue
+        if line.startswith("/reset"):
+            parts = line.split()
+            mode = parts[1].lower() if len(parts) > 1 else "compact"
+            if mode not in ("compact", "clear"):
+                print("[RESET] Usage: /reset compact|clear")
+                continue
+            ts = time.strftime('%Y-%m-%d %H:%M')
+            if mode == "compact":
+                try:
+                    _send_raw_to_cli(home, 'PeerA', '/compact', modeA, modeB, left, right)
+                    _send_raw_to_cli(home, 'PeerB', '/compact', modeA, modeB, left, right)
+                except Exception:
+                    pass
+                try:
+                    sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
+                    _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\nManual compact at {ts}.\n{sysA}\n</FROM_SYSTEM>\n")
+                    _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\nManual compact at {ts}.\n{sysB}\n</FROM_SYSTEM>\n")
+                except Exception:
+                    pass
+                summary = compact_summary(home, por, int(time.time()))
+                append_note(por, summary)
+                _persist_por(reason="manual-compact")
+                log_ledger(home, {"from": "system", "kind": "reset", "mode": "compact", "trigger": "manual"})
+                print("[RESET] Manual compact complete (POR updated).")
+            else:
+                clear_msg = (
+                    "<FROM_SYSTEM>\nReset requested: treat this as a fresh exchange. Discard interim scratch context, rely on POR goal/acceptance/next_step.\n"
+                    "</FROM_SYSTEM>\n"
+                )
+                _send_handoff("System", "PeerA", clear_msg)
+                _send_handoff("System", "PeerB", clear_msg)
+                append_note(por, f"[reset-clear] {ts} manual clear issued")
+                _persist_por(reason="manual-clear")
+                log_ledger(home, {"from": "system", "kind": "reset", "mode": "clear", "trigger": "manual"})
+                print("[RESET] Issued manual clear notice (POR noted).")
+            write_status(deliver_paused)
+            continue
+        if line == "/review":
+            _send_coach_reminder("manual-review")
+            continue
+        if line.startswith("/coach"):
+            parts = line.split()
+            sub = parts[1].lower() if len(parts) > 1 else "status"
+            if sub == "remind" and len(parts) >= 3:
+                new_mode = parts[2].lower()
+                if new_mode == "on":
+                    new_mode = "key_nodes"
+                if new_mode not in COACH_MODES:
+                    print("[COACH] Modes: off | manual | key_nodes")
+                    continue
+                coach_mode = new_mode
+                _persist_coach_state()
+                write_status(deliver_paused)
+                print(f"[COACH] Reminder mode set to {coach_mode}")
+            elif sub == "status":
+                cmd_display = coach_command or "-"
+                last = coach_last_reason or "-"
+                print(f"[COACH] mode={coach_mode} command={cmd_display} last_reason={last}")
+            else:
+                print("[COACH] Usage: /coach remind off|manual|key_nodes  |  /coach status")
+            continue
         if line == "/pause":
             deliver_paused = True
             print("[PAUSE] Paused A↔B handoff (still collect <TO_USER> and patch preflight)"); write_status(True); continue

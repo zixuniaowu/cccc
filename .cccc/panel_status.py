@@ -120,6 +120,8 @@ def render(home: Path):
     mcounts = (status.get("mailbox_counts") or {})
     mlast = (status.get("mailbox_last") or {})
     anti = status.get("handoff_filter_enabled")
+    por = status.get("por") or {}
+    coach = status.get("coach") or {}
 
     lines: List[str] = []
     # Header (fixed height; avoid runaway growth)
@@ -131,6 +133,12 @@ def render(home: Path):
     if mcounts:
         ca = mcounts.get('peerA') or {}; cb = mcounts.get('peerB') or {}
         lines.append(f"Mailbox: A tu={ca.get('to_user',0)} tp={ca.get('to_peer',0)} pa={ca.get('patch',0)}  |  B tu={cb.get('to_user',0)} tp={cb.get('to_peer',0)} pa={cb.get('patch',0)}")
+    if por:
+        lines.append(f"POR goal={por.get('goal','-')}  next={por.get('next_step','-')}  note={(por.get('last_note') or '')[:80]}")
+    if coach:
+        lines.append(f"Coach mode={coach.get('mode','off')} command={(coach.get('command') or '-')}")
+        if coach.get('last_reason'):
+            lines.append(f"Coach last={coach.get('last_reason')}")
     lines.append(f"Handoff: delivered={stats['handoff'].get('delivered',0)} queued={stats['handoff'].get('queued',0)} failed={stats['handoff'].get('failed',0)}  Flow A→B={stats['handoff'].get('A2B',0)} B→A={stats['handoff'].get('B2A',0)}")
     lines.append(f"Patches: commits={stats['patch']['commit']} tests_ok={stats['patch']['tests_ok']} tests_fail={stats['patch']['tests_fail']} rejects={stats['patch']['reject']}")
     # Recent (limited items)

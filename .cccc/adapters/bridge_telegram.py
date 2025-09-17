@@ -1153,12 +1153,25 @@ def main():
                 phase = st.get('phase'); paused = st.get('paused'); leader = st.get('leader')
                 counts = st.get('mailbox_counts') or {}
                 a = counts.get('peerA') or {}; b = counts.get('peerB') or {}
+                por = st.get('por') or {}
+                por_goal = por.get('goal') or '-' 
+                por_next = por.get('next_step') or '-'
+                por_note = por.get('last_note') or ''
+                coach = st.get('coach') or {}
                 lines = [
                     f"Phase: {phase}  Paused: {paused}",
                     f"Leader: {leader}",
                     f"peerA to_user:{a.get('to_user',0)} to_peer:{a.get('to_peer',0)} patch:{a.get('patch',0)}",
                     f"peerB to_user:{b.get('to_user',0)} to_peer:{b.get('to_peer',0)} patch:{b.get('patch',0)}",
+                    f"POR.goal: {por_goal}",
+                    f"POR.next_step: {por_next}",
                 ]
+                if por_note:
+                    lines.append(f"POR.note: {por_note}")
+                if coach:
+                    lines.append(f"Coach.mode: {coach.get('mode','off')} (cmd: {(coach.get('command') or '-')})")
+                    if coach.get('last_reason'):
+                        lines.append(f"Coach.last: {coach.get('last_reason')}")
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
                 continue
             if is_cmd(text, 'queue'):

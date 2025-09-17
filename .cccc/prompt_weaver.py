@@ -1,9 +1,19 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+
+from por_manager import read_por, normalize_por
 
 
-def weave_system_prompt(home: Path, peer: str) -> str:
+def _ensure_str(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return str(value).strip()
+
+
+def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:
     """
     Runtime SYSTEM prompt for mailbox mode — lean but complete.
     Principles:
@@ -22,6 +32,42 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     lines = []
     lines.append("CCCC Mailbox Contract (runtime)")
     lines.append("")
+
+    por_data = por if isinstance(por, dict) else read_por(home)
+    por_data = normalize_por(por_data)
+    goal = _ensure_str(por_data.get("goal"))
+    subtask = _ensure_str(por_data.get("subtask"))
+    next_step = _ensure_str(por_data.get("next_step"))
+    notes = list(por_data.get("notes") or [])
+    constraints = list(por_data.get("constraints") or [])
+    acceptance = list(por_data.get("acceptance") or [])
+    risks = list(por_data.get("risks") or [])
+
+    lines.append("Plan-of-Record (POR):")
+    if not goal and not next_step and not acceptance and not constraints:
+        lines.append("• POR not initialized: run /focus to set goal / acceptance / next_step before making changes.")
+    else:
+        lines.append(f"• Goal: {goal or 'not set'}")
+        if subtask:
+            lines.append(f"• Subtask: {subtask}")
+        if next_step:
+            lines.append(f"• Next Step: {next_step}")
+        if constraints:
+            lines.append("• Constraints:")
+            for item in constraints[:6]:
+                lines.append(f"  - {item}")
+        if acceptance:
+            lines.append("• Acceptance:")
+            for item in acceptance[:6]:
+                lines.append(f"  - {item}")
+        if risks:
+            lines.append("• Risks:")
+            for item in risks[:5]:
+                lines.append(f"  - {item}")
+        if notes:
+            lines.append(f"• Recent POR Note: {notes[-1][:220]}")
+    lines.append("")
+
     # Why (purpose) — make collaboration resemble two human experts, not an autopilot
     lines.append("Why (purpose):")
     lines.append("• The trailing ```insight block is not a format tax: it enforces a moment of reflection and an explicit next move or counter. This resists quick, shallow ‘autopilot’ replies and raises decision density.")
@@ -126,9 +172,9 @@ def weave_system_prompt(home: Path, peer: str) -> str:
     return "\n".join(lines)
 
 
-def weave_preamble(home: Path, peer: str) -> str:
+def weave_preamble(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:
     """
     Preamble text used for the first user message — identical source as SYSTEM
-    to ensure single‑source truth. By default returns weave_system_prompt.
+    to ensure single-source truth. By default returns weave_system_prompt.
     """
-    return weave_system_prompt(home, peer)
+    return weave_system_prompt(home, peer, por)
