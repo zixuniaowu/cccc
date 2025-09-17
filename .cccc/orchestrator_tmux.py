@@ -1355,6 +1355,35 @@ def context_blob(policies: Dict[str,Any], phase: str) -> str:
     return (f"# PHASE: {phase}\n# REPO FILES (partial):\n{list_repo_files(policies)}\n\n"
             f"# POLICIES:\n{json.dumps({'patch_queue':policies.get('patch_queue',{}),'rfd':policies.get('rfd',{}),'autonomy_level':policies.get('autonomy_level')},ensure_ascii=False)}\n")
 
+
+# ---------- POR helpers (runtime updates) ----------
+def _split_list_value(raw: str) -> List[str]:
+    if not raw:
+        return []
+    items = []
+    for part in re.split(r"[|,]", raw):
+        part = part.strip()
+        if part:
+            items.append(part)
+    return items
+
+
+def _apply_por_updates(por: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+    if "goal" in updates:
+        por["goal"] = updates["goal"].strip()
+    if "subtask" in updates:
+        por["subtask"] = updates["subtask"].strip()
+    if "next_step" in updates:
+        por["next_step"] = updates["next_step"].strip()
+    if "constraints" in updates:
+        por["constraints"] = updates["constraints"]
+    if "acceptance" in updates:
+        por["acceptance"] = updates["acceptance"]
+    if "risks" in updates:
+        por["risks"] = updates["risks"]
+    return por
+
+
 # ---------- Weekly diary helpers (minimal, single-writer) ----------
 def _week_file_path(home: Path, dt=None) -> Path:
     import datetime as _dt
@@ -2943,11 +2972,55 @@ def main(home: Path):
         except Exception:
             pass
         continue
+
         if line == "/refresh":
             sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
             print("[SYSTEM] Refreshed (mailbox delivery)."); continue
+        if line.startswith("/focus"):
+            tokens = line.split(maxsplit=1)
+            if len(tokens) == 1:
+                print("[FOCUS] Usage: /focus goal=... next=... constraints=a|b acceptance=x|y risks=r1|r2")
+            else:
+                try:
+                    kv_pairs = {}
+                    for part in shlex.split(tokens[1]):
+                        if '=' not in part:
+                            raise ValueError(f"Invalid segment: {part}")
+                        key, value = part.split('=', 1)
+                        kv_pairs[key.strip().lower()] = value.strip()
+                    allowed_keys = {"goal", "next", "next_step", "constraints", "acceptance", "risks", "subtask", "note", "notes"}
+                    invalid = [k for k in kv_pairs if k not in allowed_keys]
+                    if invalid:
+                        raise ValueError("Allowed keys: goal,next,next_step,constraints,acceptance,risks,subtask,note")
+                    updates = {}
+                    if "goal" in kv_pairs:
+                        updates["goal"] = kv_pairs["goal"]
+                    if "subtask" in kv_pairs:
+                        updates["subtask"] = kv_pairs["subtask"]
+                    nxt_val = kv_pairs.get("next_step", kv_pairs.get("next"))
+                    if nxt_val is not None:
+                        updates["next_step"] = nxt_val
+                    if "constraints" in kv_pairs:
+                        updates["constraints"] = _split_list_value(kv_pairs["constraints"])
+                    if "acceptance" in kv_pairs:
+                        updates["acceptance"] = _split_list_value(kv_pairs["acceptance"])
+                    if "risks" in kv_pairs:
+                        updates["risks"] = _split_list_value(kv_pairs["risks"])
+                    note_value = kv_pairs.get("note", kv_pairs.get("notes"))
+                    if updates:
+                        _apply_por_updates(por, updates)
+                    if note_value:
+                        append_note(por, note_value)
+                    _persist_por(reason="manual-focus")
+                    write_status(deliver_paused)
+                    print("[FOCUS] POR updated.")
+                except ValueError as exc:
+                    print(f"[FOCUS] {exc}")
+                except Exception as exc:
+                    print(f"[FOCUS] failed: {exc}")
+            continue
         if line.startswith("/reset"):
             parts = line.split()
             mode = parts[1].lower() if len(parts) > 1 else "compact"
