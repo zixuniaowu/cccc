@@ -66,6 +66,7 @@ delivery:
     3) What was missed?
     4) Are you actively using the insight channel for a new meta angle (hook/assumption/risk/trade-off/next/delta) rather than restating the body?
     5) As a top-tier human generalist, what broad insights prevent narrow, one-sided, or shallow execution on this task?
+    Please add refs to the exact rule item you follow (file + section), e.g., .cccc/rules/PEER*.md#mailbox-contract.
     Continue only after answering.
   # Context maintenance cadence: every N self-check cycles, run /compact + SYSTEM reinjection (0=disable)
   context_compact_every_self_checks: 5

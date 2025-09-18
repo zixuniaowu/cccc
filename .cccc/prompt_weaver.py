@@ -154,9 +154,28 @@ def _write_rules_for_peer(home: Path, peer: str) -> Path:
         lines.append("")
     # Coach — include only when not off
     if coach != "off":
-        lines.append("## Third-Party Coach")
-        lines.append(f"- Mode: {coach}. Stateless, short review at key nodes; you may be asked to act on its verdict.")
+        lines.append("## Third-Party Coach (Full Agent)")
+        lines.append(f"- Mode: {coach}. Acts as an on-demand helper (no long-lived session).")
+        lines.append("- Capabilities: investigate, create files under .cccc/work/**, and write a diff.")
+        if is_peera:
+            lines.append("- Patch authority: the coach MAY directly write a unified diff to .cccc/mailbox/peerA/patch.diff when invoked by PeerA.")
+        else:
+            lines.append("- Patch authority: the coach MAY directly write a unified diff to .cccc/mailbox/peerB/patch.diff when invoked by PeerB.")
+        lines.append("- Responsibility: you still review/iterate on the coach's output like any peer evidence.")
         lines.append("- If unavailable/timeout: proceed with baseline workflow and note it.")
+        lines.append("")
+        lines.append("### Coach Non-interactive CLI Examples (Gemini)")
+        lines.append("```")
+        lines.append("gemini -p \"Write a Python function\"")
+        lines.append("echo \"Write fizzbuzz in Python\" | gemini")
+        lines.append("gemini -p \"@gemini-test/fibonacci.py Explain this code\"")
+        lines.append("")
+        lines.append("# Multiple files")
+        lines.append("gemini -p \"@package.json @src/index.js Check dependencies\"")
+        lines.append("")
+        lines.append("# Whole project")
+        lines.append("gemini -p \"@project/ Summarize the system\"")
+        lines.append("```")
         lines.append("")
     # Reset policy excerpt
     lines.append("## Context Hygiene")
