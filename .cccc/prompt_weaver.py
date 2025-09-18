@@ -2,7 +2,7 @@
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from por_manager import read_por, normalize_por
+from por_manager import ensure_por, por_path
 
 
 def _ensure_str(value: Any) -> str:
@@ -33,58 +33,27 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
     lines.append("CCCC Mailbox Contract (runtime)")
     lines.append("")
 
-    por_data = por if isinstance(por, dict) else read_por(home)
-    por_data = normalize_por(por_data)
-    goal = _ensure_str(por_data.get("goal"))
-    subtask = _ensure_str(por_data.get("subtask"))
-    next_step = _ensure_str(por_data.get("next_step"))
-    notes = list(por_data.get("notes") or [])
-    constraints = list(por_data.get("constraints") or [])
-    acceptance = list(por_data.get("acceptance") or [])
-    risks = list(por_data.get("risks") or [])
-
+    ensure_por(home)
+    por_file = por_path(home)
     lines.append("Plan-of-Record (POR):")
-    if not goal and not next_step and not acceptance and not constraints:
-        lines.append("• POR not initialized: run /focus to set goal / acceptance / next_step before making changes.")
-    else:
-        lines.append(f"• Goal: {goal or 'not set'}")
-        if subtask:
-            lines.append(f"• Subtask: {subtask}")
-        if next_step:
-            lines.append(f"• Next Step: {next_step}")
-        if constraints:
-            lines.append("• Constraints:")
-            for item in constraints[:6]:
-                lines.append(f"  - {item}")
-        if acceptance:
-            lines.append("• Acceptance:")
-            for item in acceptance[:6]:
-                lines.append(f"  - {item}")
-        if risks:
-            lines.append("• Risks:")
-            for item in risks[:5]:
-                lines.append(f"  - {item}")
-        if notes:
-            lines.append(f"• Recent POR Note: {notes[-1][:220]}")
+    lines.append(f"• Single source: {por_file.as_posix()} — update this document at self-check or whenever direction changes.")
+    lines.append("• Read and maintain the POR (objectives, roadmap, risks, decisions) via patch diff; do not rely on old prompt text.")
     lines.append("")
 
     # Why (purpose) — make collaboration resemble two human experts, not an autopilot
     lines.append("Why (purpose):")
     lines.append("• The trailing ```insight block is not a format tax: it enforces a moment of reflection and an explicit next move or counter. This resists quick, shallow ‘autopilot’ replies and raises decision density.")
-    lines.append("• Side quests as TODOs (PROJECT.md / Weekly diary) externalize intent and ask for consent. This reduces context thrash, welcomes rework when evidence changes, and protects the mainline from derailment.")
+    lines.append("• Side quests as TODOs (PROJECT.md or other shared docs) externalize intent and ask for consent. This reduces context thrash, welcomes rework when evidence changes, and protects the mainline from derailment.")
     lines.append("• Act like human experts: suspend early judgment, probe from multiple angles, time‑box small experiments (≤10 min), communicate trade‑offs, and be willing to change course when a better path appears.")
     lines.append("")
-    # Boot context (lightweight): current time/TZ and weekly path (computed at runtime)
+    # Boot context (lightweight): current time/TZ (computed at runtime)
     try:
         import datetime as _dt
         now = _dt.datetime.now(_dt.timezone.utc).astimezone()
         tz = now.strftime('%z')
         tz_fmt = f"UTC{tz[:3]}:{tz[3:]}" if tz else "local"
-        iso = now.isocalendar(); year = int(iso[0]); week = int(iso[1])
-        weekly_path = f".cccc/work/docs/weekly/{year}-W{week:02d}.md"
         lines.append("Boot Context:")
         lines.append(f"• Now: {now.strftime('%Y-%m-%d %H:%M')} {tz_fmt}")
-        lines.append(f"• Weekly: {weekly_path}")
         lines.append("")
     except Exception:
         pass
@@ -135,17 +104,11 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
     # INSIGHT invariant (high‑level meta channel)
     lines.append("INSIGHT invariant (meta‑only; not a body duplicate):")
     lines.append("• Append exactly one trailing fenced ```insight block to every message. Do not restate or summarize the body; write only meta: a new hook/assumption/risk/trade‑off/next or a revise delta.")
-    lines.append("  Example:\n  ```insight\n  to: peerB  |  kind: ask\n  msg: Two valid interpretations → write one acceptance example each, then converge\n  refs: [.cccc/work/docs/weekly/…#L40-45]\n  ```")
+    lines.append("  Example:\n  ```insight\n  to: peerB  |  kind: ask\n  msg: Two valid interpretations → write one acceptance example each, then converge\n  refs: [LOG:tests#L12-28]\n  ```")
     lines.append("• Start the first line with a lens (meta stance), e.g., lens: clarity|risk|tradeoff|assumption|next|revise. No code/patch in insight; if you need details, put them in the body and keep insight meta‑only.")
     # Tone & GPS (concise rule; warm only in allowed areas)
     lines.append("• Tone: warm, concise, professional. Warm phrases or light humor are allowed only in to_user.md and in the trailing ```insight; keep the to_peer.md body strictly neutral, precise, and evidence‑driven.")
     lines.append("• If two consecutive turns focus on the same detail without new evidence, add a three‑line GPS in the insight block: Goal (why this step), Partner (the ask for the other peer), Step (the next minimal action + evidence). Otherwise omit GPS.")
-    lines.append("")
-    # Weekly Dev Diary (light-weight habit, do not bloat)
-    lines.append("Weekly Dev Diary (light-weight):")
-    lines.append("• Single weekly file: .cccc/work/docs/weekly/YYYY-Www.md (PeerB writes; PeerA co-thinks in to_peer).")
-    lines.append("• Daily: create/replace today's section ≤40 lines (Today / Changes / Risks-Next). Keep concise; refine by replacement, not duplication.")
-    lines.append("• Next week's first self-check: append '## Retrospective' with 3–5 bullets (wins, drift, next focus).")
     lines.append("")
     lines.append("Speak‑up triggers (minimal, high‑signal):")
     lines.append("• If you have a small result: send EVIDENCE (small patch/test; else a 3–5 line stable log with cmd/LOC).")

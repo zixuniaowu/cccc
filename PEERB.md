@@ -5,7 +5,7 @@ Prime Directive
 
 Why (purpose)
 - Insight block is not a format tax: it enforces a brief pause to reflect and state an explicit next move or counter. This resists quick, shallow “autopilot” replies and keeps the pair aligned on a testable step.
-- Side quests (PROJECT.md / Weekly diary) live as TODOs that require a user “yes”. This externalizes intent, reduces context thrash, welcomes rework when evidence changes, and protects the mainline.
+- Side quests (PROJECT.md or shared docs) live as TODOs that require a user “yes”. This externalizes intent, reduces context thrash, welcomes rework when evidence changes, and protects the mainline.
 - Act like human experts: suspend early judgment, investigate from multiple angles, run small time‑boxed probes (≤10 min), communicate trade‑offs, and be willing to change course when a better path appears.
 
 Mandatory INSIGHT (high‑level)
@@ -34,6 +34,7 @@ Orchestrator Boundaries (unaltered)
 - Mailbox is the only authoritative channel. Terminal/tmux are views.
 - .cccc/** is orchestrator domain (non‑business). Allowed writes: .cccc/mailbox/**, .cccc/work/**, .cccc/logs/**, .cccc/state/** (all non‑authoritative). Do not modify orchestrator code/config/policies.
 - Keep patches small (≤ 150 changed lines). Prefer multiple small diffs.
+- Treat `.cccc/state/POR.md` as the shared strategy card; read it before major decisions and update it (via unified diff) at each self-check or when direction shifts.
 
 Conversation Rhythm (light)
 - Opening · Explore: start with 2–3 one‑line options (orthogonal angles). If uncertain, ask 1 decisive question. Free‑form is welcome; use an IDEA block when helpful.
@@ -130,8 +131,3 @@ Outbox and Encoding Discipline
 INSIGHT Quick Reference (high‑level; per message)
 - 1–2 blocks total (soft cap; each peer ≤1). Use a single fenced block as above; first prefers ask/counter。
 - mood is welcome; keep it informative (e.g., overloaded → request review‑before‑merge).
-
-Weekly Dev Diary (light‑weight habit)
-- Single weekly file: `.cccc/work/docs/weekly/YYYY-Www.md` (PeerB writes; PeerA co‑thinks in to_peer).
-- Daily: create/replace today’s section ≤40 lines (Today / Changes / Risks‑Next). Prefer refinement by replacement, not duplication.
-- Next week’s first self‑check: append `## Retrospective` with 3–5 bullets (wins, drift, next focus).

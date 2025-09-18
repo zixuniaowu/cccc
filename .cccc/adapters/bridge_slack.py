@@ -8,7 +8,7 @@ Slack Bridge (MVP)
 from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Any, List, Tuple, Optional
-import os, sys, json, time, re, threading, hashlib, datetime, urllib.request, urllib.parse
+import os, sys, json, time, re, threading, hashlib, datetime, urllib.request, urllib.parse, secrets
 from urllib.error import HTTPError, URLError
 try:
     import fcntl  # type: ignore
@@ -38,6 +38,44 @@ def _now(): return time.strftime('%Y-%m-%d %H:%M:%S')
 def _append_log(line: str):
     p = HOME/"state"/"bridge-slack.log"; p.parent.mkdir(parents=True, exist_ok=True)
     with p.open('a', encoding='utf-8') as f: f.write(f"{_now()} {line}\n")
+
+
+def _enqueue_im_command(command: str, args: Dict[str, Any], *, source: str, channel: str,
+                        wait_seconds: float = 1.5) -> Tuple[Optional[Dict[str, Any]], str]:
+    request_id = f"{source}-{channel}-{int(time.time()*1000)}-{secrets.token_hex(4)}"
+    payload = {
+        'request_id': request_id,
+        'command': command,
+        'args': args,
+        'source': source,
+        'channel': channel,
+        'ts': _now(),
+    }
+    queue_dir = HOME/"state"/"im_commands"
+    processed_dir = queue_dir/"processed"
+    try:
+        queue_dir.mkdir(parents=True, exist_ok=True)
+        processed_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    path = queue_dir/f"{request_id}.json"
+    tmp = path.with_suffix('.tmp')
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+        tmp.replace(path)
+    except Exception:
+        return None, request_id
+    deadline = time.time() + max(0.2, float(wait_seconds))
+    result_path = processed_dir/f"{request_id}.result.json"
+    while time.time() < deadline:
+        if result_path.exists():
+            try:
+                data = json.loads(result_path.read_text(encoding='utf-8'))
+                return data, request_id
+            except Exception:
+                break
+        time.sleep(0.1)
+    return None, request_id
 
 def _acquire_singleton_lock(name: str = "slack-bridge"):
     """Prevent multiple slack bridge instances from running concurrently."""
@@ -543,6 +581,103 @@ def main():
             stripped = text
             if BOT_USER_ID:
                 stripped = re.sub(rf"^\s*<@{re.escape(BOT_USER_ID)}>\s+", "", stripped)
+            command_text = stripped.strip()
+
+            def _send_reply(msg: str):
+                try:
+                    web.chat_postMessage(channel=ch, text=msg)
+                except Exception:
+                    pass
+
+            if command_text and re.match(r'^[abAB][!！]', command_text):
+                m = re.match(r'^([abAB])[!！]\s*(.*)$', command_text)
+                cmd_body = m.group(2).strip() if m else ""
+                if not cmd_body:
+                    _send_reply('Usage: a! <command> or b! <command>')
+                else:
+                    peer_key = 'a' if (m.group(1).lower() == 'a') else 'b'
+                    result, req_id = _enqueue_im_command('passthrough', {'peer': peer_key, 'text': cmd_body}, source='slack', channel=ch)
+                    if result and result.get('ok'):
+                        reply = result.get('message') or f'Command sent to peer {peer_key.upper()}.'
+                    elif result:
+                        reply = f"Command error: {result.get('message')}"
+                    else:
+                        reply = f"Command queued (id={req_id})."
+                    _send_reply(reply)
+                    _append_log(f"[cmd] passthrough peer={peer_key} ch={ch} req={req_id}")
+                return
+
+            if re.match(r'^/?focus\b', command_text, re.I):
+                parts = command_text.split(None, 1)
+                hint = parts[1] if len(parts) > 1 else ''
+                result, req_id = _enqueue_im_command('focus', {'raw': hint}, source='slack', channel=ch)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'POR refresh requested.'
+                elif result:
+                    reply = f"POR refresh error: {result.get('message')}"
+                else:
+                    reply = f"POR refresh queued (id={req_id})."
+                _send_reply(reply)
+                _append_log(f"[cmd] focus ch={ch} req={req_id}")
+                return
+
+            if re.match(r'^/?reset\b', command_text, re.I):
+                parts = command_text.split()
+                mode = parts[1].lower() if len(parts) > 1 else ''
+                if mode and mode not in ('compact','clear'):
+                    _send_reply('Usage: /reset compact|clear')
+                else:
+                    args = {} if not mode else {'mode': mode}
+                    result, req_id = _enqueue_im_command('reset', args, source='slack', channel=ch)
+                    if result and result.get('ok'):
+                        reply = result.get('message') or f"Reset {mode or 'default'} triggered."
+                    elif result:
+                        reply = f"Reset error: {result.get('message')}"
+                    else:
+                        reply = f"Reset request queued (id={req_id})."
+                    _send_reply(reply)
+                    _append_log(f"[cmd] reset mode={mode or 'default'} ch={ch} req={req_id}")
+                return
+
+            if re.match(r'^/?coach\b', command_text, re.I):
+                parts = command_text.split()
+                action = parts[1].lower() if len(parts) > 1 else 'status'
+                if action == 'status':
+                    result, req_id = _enqueue_im_command('coach', {'action': 'status'}, source='slack', channel=ch)
+                    if result and result.get('ok'):
+                        reply = result.get('message') or 'Coach status fetched.'
+                    elif result:
+                        reply = f"Coach status error: {result.get('message')}"
+                    else:
+                        reply = f"Coach status pending (id={req_id})."
+                    _send_reply(reply)
+                elif action == 'remind' and len(parts) >= 3:
+                    value = parts[2].lower()
+                    result, req_id = _enqueue_im_command('coach', {'action': 'remind', 'value': value}, source='slack', channel=ch)
+                    if result and result.get('ok'):
+                        reply = result.get('message') or f'Coach mode set to {value}.'
+                    elif result:
+                        reply = f"Coach command error: {result.get('message')}"
+                    else:
+                        reply = f"Coach command queued (id={req_id})."
+                    _send_reply(reply)
+                else:
+                    _send_reply('Usage: /coach status | /coach remind off|manual|key_nodes')
+                _append_log(f"[cmd] coach action={action} ch={ch}")
+                return
+
+            if re.match(r'^/?review\b', command_text, re.I):
+                result, req_id = _enqueue_im_command('review', {}, source='slack', channel=ch)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'Review reminder sent.'
+                elif result:
+                    reply = f"Review error: {result.get('message')}"
+                else:
+                    reply = f"Review request queued (id={req_id})."
+                _send_reply(reply)
+                _append_log(f"[cmd] review ch={ch} req={req_id}")
+                return
+
             # Routing prefixes only; ignore general chatter without explicit route (support fullwidth colon & /a forms)
             has_prefix = bool(
                 re.search(r"^\s*(a|b|both)[:：]", stripped, re.I) or

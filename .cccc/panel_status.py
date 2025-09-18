@@ -134,7 +134,10 @@ def render(home: Path):
         ca = mcounts.get('peerA') or {}; cb = mcounts.get('peerB') or {}
         lines.append(f"Mailbox: A tu={ca.get('to_user',0)} tp={ca.get('to_peer',0)} pa={ca.get('patch',0)}  |  B tu={cb.get('to_user',0)} tp={cb.get('to_peer',0)} pa={cb.get('patch',0)}")
     if por:
-        lines.append(f"POR goal={por.get('goal','-')}  next={por.get('next_step','-')}  note={(por.get('last_note') or '')[:80]}")
+        lines.append(f"POR path={por.get('path','-')}  updated={por.get('updated_at','-')}")
+        summary = (por.get('summary') or '')
+        if summary:
+            lines.append(f"POR summary: {summary[:160]}")
     if coach:
         lines.append(f"Coach mode={coach.get('mode','off')} command={(coach.get('command') or '-')}")
         if coach.get('last_reason'):

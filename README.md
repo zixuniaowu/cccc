@@ -115,6 +115,11 @@ That’s it. You can refine policies later.
   - `/status` project stats; `/queue` handoff queue; `/locks` internal locks
   - `/whoami` shows your chat_id; `/subscribe` (if `autoregister: open`)
   - `/showpeers on|off` toggles Peer↔Peer summaries
+- Control & passthrough
+  - `/focus [hint]` asks PeerB to refresh `.cccc/state/POR.md`
+  - `/reset compact|clear` issues manual compact/clear; `/review` triggers the coach reminder flow
+  - `/coach status|remind off|manual|key_nodes` inspects or toggles the optional third-agent coach
+  - `a! <command>` / `b! <command>` sends a raw CLI command to PeerA/PeerB (non-interactive; advanced)
 - File exchange
   - Outbound (AIs → IM): save files to `.cccc/work/upload/outbound/` (flat)
   - Routing: either a `<name>.route` sidecar with `a|b|both`, or the first line of `<name>.caption.txt` starts with `a:`/`b:`/`both:` (the prefix is removed from the caption)
@@ -161,7 +166,7 @@ RFD is not required here. It triggers automatically only for protected areas or 
   settings/
     cli_profiles.yaml            # tmux/paste/type behavior; echo; idle regexes; self‑check
     policies.yaml                # patch queue size; allowlist; RFD gates
-    roles.yaml                   # leader; specialties; rotation
+    governance.yaml              # POR/reset cadence; future governance knobs
     telegram.yaml                # token/autostart/allowlist/routing/files
     slack.yaml                   # app/bot tokens, channels, routing/files
     discord.yaml                 # bot token, channels, routing/files
@@ -187,6 +192,12 @@ Adapter dependencies (optional)
 - Slack bridge requires `slack_sdk` (install via `pip install slack_sdk`).
 - Discord bridge requires `discord.py` (install via `pip install discord.py`).
 If these packages or tokens are missing, adapters exit fast with a clear error. Slack inbound requires an App token (Socket Mode) while outbound requires a Bot token.
+
+## Plan-of-Record (POR)
+
+- `.cccc/state/POR.md` is the single source of truth for objectives, roadmap, active tasks, risks, and reflections.
+- PeerB（或启用的第三体）在每轮自检或方向变化时，通过 patch diff 更新这份文档；无需在其他位置重复记录。
+- 编排器和桥接端只会指向该文件；确保所有战略/决策信息集中在此，避免散落的笔记被遗忘。
 
 CLI prerequisites (summary)
 - Peer A = Claude Code; Peer B = Codex CLI. Install and log in as required by each vendor.

@@ -5,7 +5,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER> and fenced ```patch```, then preflights/applies/tests/logs.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
-import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random
+import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random, math
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
     import fcntl  # type: ignore
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
 from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox
-from por_manager import ensure_por, save_por, append_note, compact_summary, por_status_snapshot
+from por_manager import ensure_por, por_path, por_status_snapshot, read_por_text
 
 ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # strip ANSI color/control sequences
 # Console echo of AI output blocks. Default OFF to avoid disrupting typing.
@@ -24,9 +24,6 @@ CONSOLE_ECHO = False
 PATCH_RE = re.compile(r"```(?:patch|diff)\s*([\s\S]*?)```", re.I)
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
-
-# Plan-of-Record cache (shared with prompt weaving)
-POR_CACHE: Dict[str, Any] = {}
 
 # Coach helper state
 COACH_MODES = {"off", "manual", "key_nodes"}
@@ -1318,14 +1315,16 @@ def git_commit(msg: str):
 
 # ---------- prompt weaving ----------
 def weave_system(home: Path, peer: str) -> str:
+    ensure_por(home)
     from prompt_weaver import weave_system_prompt
-    return weave_system_prompt(home, peer, POR_CACHE or None)
+    return weave_system_prompt(home, peer)
 
 def weave_preamble_text(home: Path, peer: str) -> str:
     """Single-source preamble (same source as SYSTEM)."""
     try:
         from prompt_weaver import weave_preamble
-        return weave_preamble(home, peer, POR_CACHE or None)
+        ensure_por(home)
+        return weave_preamble(home, peer)
     except Exception:
         # Fallback to full system when preamble helper not present
         return weave_system(home, peer)
@@ -1355,79 +1354,6 @@ def context_blob(policies: Dict[str,Any], phase: str) -> str:
     return (f"# PHASE: {phase}\n# REPO FILES (partial):\n{list_repo_files(policies)}\n\n"
             f"# POLICIES:\n{json.dumps({'patch_queue':policies.get('patch_queue',{}),'rfd':policies.get('rfd',{}),'autonomy_level':policies.get('autonomy_level')},ensure_ascii=False)}\n")
 
-
-# ---------- POR helpers (runtime updates) ----------
-def _split_list_value(raw: str) -> List[str]:
-    if not raw:
-        return []
-    items = []
-    for part in re.split(r"[|,]", raw):
-        part = part.strip()
-        if part:
-            items.append(part)
-    return items
-
-
-def _apply_por_updates(por: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
-    if "goal" in updates:
-        por["goal"] = updates["goal"].strip()
-    if "subtask" in updates:
-        por["subtask"] = updates["subtask"].strip()
-    if "next_step" in updates:
-        por["next_step"] = updates["next_step"].strip()
-    if "constraints" in updates:
-        por["constraints"] = updates["constraints"]
-    if "acceptance" in updates:
-        por["acceptance"] = updates["acceptance"]
-    if "risks" in updates:
-        por["risks"] = updates["risks"]
-    return por
-
-
-# ---------- Weekly diary helpers (minimal, single-writer) ----------
-def _week_file_path(home: Path, dt=None) -> Path:
-    import datetime as _dt
-    dt = dt or _dt.datetime.now(_dt.timezone.utc).astimezone()
-    iso = dt.isocalendar()
-    year = int(iso[0]); week = int(iso[1])
-    # Store weekly diary under orchestrator workdir to minimize repo intrusion
-    # .cccc/work/docs/weekly/YYYY-Www.md (non-authoritative; ignored by VCS)
-    return home/"work"/"docs"/"weekly"/f"{year}-W{week:02d}.md"
-
-def _today_heading(dt=None) -> str:
-    import datetime as _dt
-    dt = dt or _dt.datetime.now(_dt.timezone.utc).astimezone()
-    return f"## {dt.strftime('%Y-%m-%d')}"
-
-def _file_tail_lines(p: Path, n: int = 10) -> List[str]:
-    try:
-        with p.open('r', encoding='utf-8') as f:
-            from collections import deque
-            dq = deque(f, maxlen=max(1, int(n)))
-            return [ln.rstrip('\n') for ln in dq]
-    except Exception:
-        return []
-
-def _weekly_has_today(home: Path, dt=None) -> Tuple[Path, bool]:
-    p = _week_file_path(home, dt)
-    if not p.exists():
-        return p, False
-    try:
-        heading = _today_heading(dt)
-        for ln in p.read_text(encoding='utf-8').splitlines():
-            if ln.strip().startswith(heading):
-                return p, True
-    except Exception:
-        pass
-    return p, False
-
-def _weekly_has_retro(p: Path) -> bool:
-    try:
-        if not p.exists():
-            return False
-        return any(ln.strip().startswith("## Retrospective") for ln in p.read_text(encoding='utf-8').splitlines())
-    except Exception:
-        return False
 
 # ---------- watcher ----------
 # Note: runtime hot-reload of settings/prompts/personas removed for simplicity.
@@ -1640,24 +1566,49 @@ def main(home: Path):
     except Exception:
         pass
 
-    roles    = read_yaml(settings/"roles.yaml")
     policies = read_yaml(settings/"policies.yaml")
+    governance_cfg = read_yaml(settings/"governance.yaml") if (settings/"governance.yaml").exists() else {}
 
-    leader   = (roles.get("leader") or "peerA").strip().lower()
     session  = f"cccc-{Path.cwd().name}"
 
-    global POR_CACHE
-    def _log_por(entry: Dict[str, Any]):
-        log_ledger(home, entry)
+    por_markdown = ensure_por(home)
+    try:
+        por_display_path = por_markdown.relative_to(Path.cwd())
+    except ValueError:
+        por_display_path = por_markdown
+    por_update_last_request = 0.0
 
-    por = ensure_por(home, _log_por)
-    POR_CACHE = por
-
-    def _persist_por(reason: Optional[str] = None):
-        nonlocal por
-        global POR_CACHE
-        por = save_por(home, por, _log_por, reason=reason)
-        POR_CACHE = por
+    def _perform_reset(mode: str, *, trigger: str, reason: str) -> str:
+        mode_norm = (mode or "").lower()
+        if mode_norm not in ("compact", "clear"):
+            raise ValueError("reset mode must be compact or clear")
+        ts = time.strftime('%Y-%m-%d %H:%M')
+        if mode_norm == "compact":
+            try:
+                _send_raw_to_cli(home, 'PeerA', '/compact', modeA, modeB, left, right)
+                _send_raw_to_cli(home, 'PeerB', '/compact', modeA, modeB, left, right)
+            except Exception:
+                pass
+            try:
+                sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
+                _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\nManual compact at {ts}.\n{sysA}\n</FROM_SYSTEM>\n")
+                _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\nManual compact at {ts}.\n{sysB}\n</FROM_SYSTEM>\n")
+            except Exception:
+                pass
+            log_ledger(home, {"from": "system", "kind": "reset", "mode": "compact", "trigger": trigger})
+            write_status(deliver_paused)
+            _request_por_refresh(f"reset-{mode_norm}", force=True)
+            return "Manual compact executed"
+        clear_msg = (
+            "<FROM_SYSTEM>\nReset requested: treat this as a fresh exchange. Discard interim scratch context and rely on POR.md for direction.\n"
+            "</FROM_SYSTEM>\n"
+        )
+        _send_handoff("System", "PeerA", clear_msg)
+        _send_handoff("System", "PeerB", clear_msg)
+        log_ledger(home, {"from": "system", "kind": "reset", "mode": "clear", "trigger": trigger})
+        write_status(deliver_paused)
+        _request_por_refresh(f"reset-{mode_norm}", force=True)
+        return "Manual clear notice issued"
 
     coach_conf = read_yaml(settings/"coach_helper.yaml") if (settings/"coach_helper.yaml").exists() else {}
     helper_conf = (coach_conf.get("helper") or {}) if isinstance(coach_conf.get("helper"), dict) else {}
@@ -1667,6 +1618,16 @@ def main(home: Path):
         rate_limit_per_minute = 1
     coach_min_interval = 60.0 / rate_limit_per_minute
 
+    conversation_cfg = governance_cfg.get("conversation") if isinstance(governance_cfg.get("conversation"), dict) else {}
+    reset_cfg = conversation_cfg.get("reset") if isinstance(conversation_cfg.get("reset"), dict) else {}
+    conversation_reset_policy = str(reset_cfg.get("policy") or "compact").strip().lower()
+    if conversation_reset_policy not in ("compact", "clear"):
+        conversation_reset_policy = "compact"
+    try:
+        conversation_reset_interval = int(reset_cfg.get("interval_handoffs") or 0)
+    except Exception:
+        conversation_reset_interval = 0
+
     triggers_conf = coach_conf.get("triggers") if isinstance(coach_conf.get("triggers"), dict) else {}
     coach_mode = str(triggers_conf.get("mode") or "off").lower()
     if coach_mode not in COACH_MODES:
@@ -1674,6 +1635,8 @@ def main(home: Path):
             coach_mode = "key_nodes"
         else:
             coach_mode = "off"
+
+    default_reset_mode = conversation_reset_policy if conversation_reset_policy in ("compact", "clear") else "compact"
 
     def _coach_state_path() -> Path:
         return state/"coach_helper_state.json"
@@ -1720,7 +1683,11 @@ def main(home: Path):
                 session_id += f"-{peer_label.lower()}"
             session_path = coach_work_root/session_id
             session_path.mkdir(parents=True, exist_ok=True)
-            (session_path/"por.json").write_text(json.dumps(por, ensure_ascii=False, indent=2), encoding="utf-8")
+            try:
+                por_snapshot = read_por_text(home)
+            except Exception:
+                por_snapshot = ""
+            (session_path/"POR.md").write_text(por_snapshot, encoding="utf-8")
             details: List[str] = []
             details.append("# Coach Helper Context")
             details.append(f"Reason: {reason}")
@@ -1745,7 +1712,7 @@ def main(home: Path):
             details.append("```")
             details.append("")
             details.append("## Data in this bundle")
-            details.append("- `por.json`: snapshot of the current Plan-of-Record.")
+            details.append("- `POR.md`: snapshot of the current Plan-of-Record.")
             details.append("- `peer_message.txt`: the triggering message or artifact from the peer.")
             details.append("- `notes.txt`: this instruction file.")
             (session_path/"notes.txt").write_text("\n".join(details), encoding="utf-8")
@@ -1967,6 +1934,106 @@ def main(home: Path):
     cmd_status = f"bash -lc {shlex.quote(f'{py} {status_py} --home {str(home)} --interval 1.0')}"
     tmux_respawn_pane(pos['rb'], cmd_status)
 
+    # IM command queue (bridge initiated)
+    im_command_dir = state/"im_commands"
+    im_command_processed = im_command_dir/"processed"
+    try:
+        im_command_dir.mkdir(parents=True, exist_ok=True)
+        im_command_processed.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+
+    def _record_im_command_result(src_path: Path, request_id: str, result: Dict[str, Any]):
+        try:
+            im_command_processed.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        res_path = im_command_processed/f"{request_id}.result.json"
+        tmp = res_path.with_suffix('.tmp')
+        try:
+            tmp.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+            tmp.replace(res_path)
+        except Exception:
+            pass
+        archive_path = im_command_processed/f"{request_id}.req.json"
+        try:
+            src_path.replace(archive_path)
+        except Exception:
+            try:
+                src_path.unlink()
+            except Exception:
+                pass
+
+    def _process_im_commands():
+        nonlocal coach_mode
+        try:
+            files = sorted(im_command_dir.glob("*.json"))
+        except Exception:
+            return
+        for fp in files:
+            try:
+                data = json.loads(fp.read_text(encoding='utf-8'))
+            except Exception:
+                data = {}
+            request_id = str(data.get("request_id") or fp.stem)
+            command = str(data.get("command") or "").lower().strip()
+            source = str(data.get("source") or "im")
+            args = data.get("args") or {}
+            result: Dict[str, Any] = {"ok": False, "message": "unsupported"}
+            try:
+                if command == "focus":
+                    raw = str(args.get("raw") or "")
+                    _request_por_refresh(f"focus-{source}", hint=raw or None, force=True)
+                    result = {"ok": True, "message": "POR refresh requested."}
+                elif command == "reset":
+                    mode = str(args.get("mode") or default_reset_mode)
+                    message = _perform_reset(mode, trigger=source, reason=f"{source}-{mode}")
+                    result = {"ok": True, "message": message}
+                elif command == "coach":
+                    action = str(args.get("action") or "").lower()
+                    if action in ("remind", "mode"):
+                        new_mode = str(args.get("value") or "").lower()
+                        if new_mode == "on":
+                            new_mode = "key_nodes"
+                        if new_mode not in COACH_MODES:
+                            raise ValueError("mode must be off/manual/key_nodes")
+                        coach_mode = new_mode
+                        _persist_coach_state()
+                        write_status(deliver_paused)
+                        result = {"ok": True, "message": f"Coach mode set to {coach_mode}"}
+                    elif action == "status":
+                        last = coach_last_reason or "-"
+                        cmd_display = coach_command or "-"
+                        result = {"ok": True, "message": f"Coach status: mode={coach_mode}, command={cmd_display}, last_reason={last}"}
+                    elif action == "reminder":
+                        stage = str(args.get("stage") or "manual")
+                        _send_coach_reminder(stage)
+                        result = {"ok": True, "message": f"Coach reminder triggered ({stage})"}
+                    else:
+                        raise ValueError("unsupported coach action")
+                elif command == "review":
+                    _send_coach_reminder("manual-review")
+                    result = {"ok": True, "message": "Coach review reminder triggered"}
+                elif command == "passthrough":
+                    peer = str(args.get("peer") or "").lower()
+                    text = str(args.get("text") or "").strip()
+                    if not text:
+                        raise ValueError("empty command text")
+                    if peer in ("a", "peera", "peer_a"):
+                        label = "PeerA"
+                    elif peer in ("b", "peerb", "peer_b"):
+                        label = "PeerB"
+                    else:
+                        raise ValueError("unknown peer")
+                    _send_raw_to_cli(home, label, text, modeA, modeB, left, right)
+                    result = {"ok": True, "message": f"Command sent to {label}"}
+                else:
+                    raise ValueError("unknown command")
+            except Exception as exc:
+                result = {"ok": False, "message": str(exc)}
+            result.update({"command": command or "unknown", "request_id": request_id, "source": source, "ts": time.strftime('%Y-%m-%d %H:%M:%S')})
+            _record_im_command_result(fp, request_id, result)
+
     # PROJECT.md bootstrap branch: choose before starting the CLIs
     project_md_path = Path.cwd()/"PROJECT.md"
     project_md_exists = project_md_path.exists()
@@ -2149,7 +2216,7 @@ def main(home: Path):
     dedup_user = {}
     dedup_peer = {}
 
-    # Simplify: no hot-reload; changes to roles/policies/personas require restart
+    # Simplify: no hot-reload; changes to governance/policies/personas require restart
 
     # Initialize mailbox (do not clear inbox; honor startup policy)
     ensure_mailbox(home)
@@ -2192,6 +2259,14 @@ def main(home: Path):
         "Continue only after answering."
     )
     self_check_text = _sc_text if _sc_text else DEFAULT_SELF_CHECK
+
+    auto_reset_interval_cfg = conversation_reset_interval
+    reset_interval_effective = 0
+    if auto_reset_interval_cfg > 0 and self_check_enabled:
+        CONTEXT_COMPACT_EVERY_SELF_CHECKS = max(1, math.ceil(auto_reset_interval_cfg / self_check_every))
+        reset_interval_effective = self_check_every * CONTEXT_COMPACT_EVERY_SELF_CHECKS
+    elif auto_reset_interval_cfg > 0:
+        reset_interval_effective = auto_reset_interval_cfg
     # Append a minimal, always-on reminder to end with one insight block (never verbose)
     try:
         INSIGHT_REMINDER = (
@@ -2319,14 +2394,12 @@ def main(home: Path):
         log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": mid, "seq": seq, "chars": len(payload)})
         print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
 
-        # Count non-NUDGE, non-low-signal handoffs; every K sends, broadcast a self-check to both peers.
+        # Self-check cadence: count meaningful handoffs and trigger periodic check-ins.
         try:
-            if self_check_enabled and (not in_self_check):
-                pl = (payload or "")
+            if self_check_enabled and (not in_self_check) and self_check_every > 0:
+                pl = payload or ""
                 is_nudge = pl.strip().startswith("[NUDGE]")
-                # Treat any meaningful handoff (User/System/PeerA/PeerB) as a step toward self-check
-                meaningful_sender = sender_label in ("User","System","PeerA","PeerB")
-                low_signal = False
+                meaningful_sender = sender_label in ("User", "System", "PeerA", "PeerB")
                 try:
                     low_signal = is_low_signal(pl, policies)
                 except Exception:
@@ -2336,68 +2409,79 @@ def main(home: Path):
                     if instr_counter % self_check_every == 0:
                         in_self_check = True
                         try:
-                            # Prepend dynamic time/TZ line
                             try:
                                 lt = time.localtime()
                                 ts = time.strftime('%Y-%m-%d %H:%M:%S', lt)
                                 tzname = time.tzname[lt.tm_isdst] if isinstance(time.tzname, (list, tuple)) else str(time.tzname)
-                                # Compute UTC offset
                                 off = -time.altzone if (time.daylight and lt.tm_isdst) else -time.timezone
                                 sign = '+' if off >= 0 else '-'
                                 off = abs(off)
-                                hh = off // 3600; mm = (off % 3600) // 60
+                                hh = off // 3600
+                                mm = (off % 3600) // 60
                                 now_line = f"Now: {ts} {tzname} (UTC{sign}{hh:02d}:{mm:02d})"
                             except Exception:
                                 now_line = "Now: unknown"
 
-                            # Context maintenance: at every 5th self-check, compact and reinject SYSTEM (simple, once-only per trigger)
                             try:
                                 sc_index = int(instr_counter // self_check_every) if self_check_every > 0 else 0
                             except Exception:
                                 sc_index = 0
+
                             if (CONTEXT_COMPACT_EVERY_SELF_CHECKS > 0) and (sc_index > 0) and (sc_index % CONTEXT_COMPACT_EVERY_SELF_CHECKS == 0):
                                 try:
-                                    # Send passthrough /compact to both peers (no retries, no preconditions)
                                     _send_raw_to_cli(home, 'PeerA', '/compact', modeA, modeB, left, right)
-                                    log_ledger(home, {"from":"system","kind":"context-compact-try","peer":"PeerA","self_check_index": sc_index})
+                                    log_ledger(home, {"from": "system", "kind": "context-compact-try", "peer": "PeerA", "self_check_index": sc_index})
                                 except Exception:
                                     pass
                                 try:
                                     _send_raw_to_cli(home, 'PeerB', '/compact', modeA, modeB, left, right)
-                                    log_ledger(home, {"from":"system","kind":"context-compact-try","peer":"PeerB","self_check_index": sc_index})
+                                    log_ledger(home, {"from": "system", "kind": "context-compact-try", "peer": "PeerB", "self_check_index": sc_index})
                                 except Exception:
                                     pass
-                                # Immediately reinject full SYSTEM to both peers with a Now line prefix
                                 try:
-                                    sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
+                                    sysA = weave_system(home, "peerA")
+                                    sysB = weave_system(home, "peerB")
                                     reinjA = f"<FROM_SYSTEM>\n{now_line}\n{sysA}\n</FROM_SYSTEM>\n"
                                     reinjB = f"<FROM_SYSTEM>\n{now_line}\n{sysB}\n</FROM_SYSTEM>\n"
                                     _send_handoff("System", "PeerA", reinjA)
                                     _send_handoff("System", "PeerB", reinjB)
-                                    log_ledger(home, {"from":"system","kind":"context-system-reinject","peer":"PeerA","chars": len(reinjA)})
-                                    log_ledger(home, {"from":"system","kind":"context-system-reinject","peer":"PeerB","chars": len(reinjB)})
+                                    log_ledger(home, {"from": "system", "kind": "context-system-reinject", "peer": "PeerA", "chars": len(reinjA)})
+                                    log_ledger(home, {"from": "system", "kind": "context-system-reinject", "peer": "PeerB", "chars": len(reinjB)})
                                 except Exception:
                                     pass
-                                summary = compact_summary(home, por, sc_index)
-                                append_note(por, summary)
-                                _persist_por(reason="compact")
-                                log_ledger(home, {"from":"system","kind":"reset","mode":"compact","trigger":"auto","index": sc_index})
-                                write_status(deliver_paused)
+                                _request_por_refresh("auto-compact", force=False)
 
-                            # Build self-check payloads (after any context maintenance)
                             peerA_msg = now_line + "\n" + self_check_text
                             peerB_msg = now_line + "\n" + self_check_text
 
-                            # Append Weekly Dev Diary reminder for PeerB (single-writer) with daily cooldown
-                            # Diary/retrospective prompts are managed as side-quest TODOs by the AI; do not inject from system here.
-
                             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{peerA_msg}\n</FROM_SYSTEM>\n")
                             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{peerB_msg}\n</FROM_SYSTEM>\n")
-                            log_ledger(home, {"from":"system","kind":"self-check","every": self_check_every, "count": instr_counter})
+                            log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": instr_counter})
+                            _request_por_refresh("self-check", force=False)
                         finally:
                             in_self_check = False
         except Exception:
             pass
+
+    def _request_por_refresh(trigger: str, hint: Optional[str] = None, *, force: bool = False):
+        nonlocal por_update_last_request
+        now = time.time()
+        if (not force) and (now - por_update_last_request) < 60.0:
+            return
+        lines = [
+            f"POR update requested (trigger: {trigger}).",
+            f"File: {por_display_path}",
+            "Review recent work and ensure objectives, roadmap, active tasks, risks, decisions, and reflections are accurate.",
+            "Update the document by emitting a patch diff that rewrites the relevant sections; do not invent progress.",
+            "If POR is already up to date, acknowledge in to_peer.md with the key points you verified."
+        ]
+        if hint:
+            lines.append(f"Hint: {hint}")
+        lines.append("Keep the POR as the single source of truth; avoid duplicating content elsewhere.")
+        payload = f"<FROM_SYSTEM>\n{'\n'.join(lines)}\n</FROM_SYSTEM>\n"
+        _send_handoff("System", "PeerB", payload)
+        por_update_last_request = now
+        log_ledger(home, {"from": "system", "kind": "por-refresh", "trigger": trigger, "hint": hint or ""})
 
     def _ack_receiver(label: str, event_text: Optional[str] = None):
         # ACK policy:
@@ -2498,13 +2582,19 @@ def main(home: Path):
             "session": session,
             "paused": paused,
             "phase": phase,
-            "leader": leader,
             "require_ack": bool(delivery_conf.get("require_ack", False)),
             "mailbox_counts": mbox_counts,
             "mailbox_last": mbox_last,
             "handoff_filter_enabled": eff_filter,
-            "por": por_status_snapshot(por),
+            "por": por_status_snapshot(home),
             "coach": _coach_snapshot(),
+            "reset": {
+                "policy": conversation_reset_policy,
+                "default_mode": default_reset_mode,
+                "interval_handoffs": auto_reset_interval_cfg if auto_reset_interval_cfg > 0 else None,
+                "interval_effective": reset_interval_effective if reset_interval_effective > 0 else None,
+                "self_check_every": self_check_every if self_check_enabled else None,
+            },
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         }
         try:
@@ -2575,6 +2665,7 @@ def main(home: Path):
         # Keep it simple: no phase locks; send clear instructions at start; remove runtime SYSTEM hot-reload
 
         # Non-blocking loop: prioritize console input; otherwise scan A/B mailbox outputs
+        _process_im_commands()
         line = None
         # Handle ACK first: by mode (file_move watches moves; ack_text parses echoes)
         try:
@@ -2961,9 +3052,10 @@ def main(home: Path):
             print("  a: <text>    → PeerA    |  b: <text> → PeerB")
             print("  both:/u: <text>         → send to both A/B")
             print("  a! <cmd> / b! <cmd>     → passthrough to respective CLI (no wrapper)")
+            print("  /focus [hint]           → ask PeerB to refresh POR.md (optional hint)")
             print("  /pause | /resume        → pause/resume A↔B handoff")
             print("  /refresh                → re-inject SYSTEM prompt")
-            print("  /reset compact|clear    → POR maintenance (compact = fold context, clear = fresh restart)")
+            print("  /reset compact|clear    → context maintenance (compact = fold context, clear = fresh restart)")
             print("  /echo on|off|<empty>    → console echo on/off/show")
             print("  q                       → quit orchestrator")
             # Reprint prompt
@@ -2980,83 +3072,18 @@ def main(home: Path):
             print("[SYSTEM] Refreshed (mailbox delivery)."); continue
         if line.startswith("/focus"):
             tokens = line.split(maxsplit=1)
-            if len(tokens) == 1:
-                print("[FOCUS] Usage: /focus goal=... next=... constraints=a|b acceptance=x|y risks=r1|r2")
-            else:
-                try:
-                    kv_pairs = {}
-                    for part in shlex.split(tokens[1]):
-                        if '=' not in part:
-                            raise ValueError(f"Invalid segment: {part}")
-                        key, value = part.split('=', 1)
-                        kv_pairs[key.strip().lower()] = value.strip()
-                    allowed_keys = {"goal", "next", "next_step", "constraints", "acceptance", "risks", "subtask", "note", "notes"}
-                    invalid = [k for k in kv_pairs if k not in allowed_keys]
-                    if invalid:
-                        raise ValueError("Allowed keys: goal,next,next_step,constraints,acceptance,risks,subtask,note")
-                    updates = {}
-                    if "goal" in kv_pairs:
-                        updates["goal"] = kv_pairs["goal"]
-                    if "subtask" in kv_pairs:
-                        updates["subtask"] = kv_pairs["subtask"]
-                    nxt_val = kv_pairs.get("next_step", kv_pairs.get("next"))
-                    if nxt_val is not None:
-                        updates["next_step"] = nxt_val
-                    if "constraints" in kv_pairs:
-                        updates["constraints"] = _split_list_value(kv_pairs["constraints"])
-                    if "acceptance" in kv_pairs:
-                        updates["acceptance"] = _split_list_value(kv_pairs["acceptance"])
-                    if "risks" in kv_pairs:
-                        updates["risks"] = _split_list_value(kv_pairs["risks"])
-                    note_value = kv_pairs.get("note", kv_pairs.get("notes"))
-                    if updates:
-                        _apply_por_updates(por, updates)
-                    if note_value:
-                        append_note(por, note_value)
-                    _persist_por(reason="manual-focus")
-                    write_status(deliver_paused)
-                    print("[FOCUS] POR updated.")
-                except ValueError as exc:
-                    print(f"[FOCUS] {exc}")
-                except Exception as exc:
-                    print(f"[FOCUS] failed: {exc}")
+            hint = tokens[1].strip() if len(tokens) > 1 else ""
+            _request_por_refresh("focus-cli", hint=hint or None, force=True)
+            print("[FOCUS] Requested POR refresh from PeerB.")
             continue
         if line.startswith("/reset"):
             parts = line.split()
-            mode = parts[1].lower() if len(parts) > 1 else "compact"
-            if mode not in ("compact", "clear"):
-                print("[RESET] Usage: /reset compact|clear")
-                continue
-            ts = time.strftime('%Y-%m-%d %H:%M')
-            if mode == "compact":
-                try:
-                    _send_raw_to_cli(home, 'PeerA', '/compact', modeA, modeB, left, right)
-                    _send_raw_to_cli(home, 'PeerB', '/compact', modeA, modeB, left, right)
-                except Exception:
-                    pass
-                try:
-                    sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
-                    _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\nManual compact at {ts}.\n{sysA}\n</FROM_SYSTEM>\n")
-                    _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\nManual compact at {ts}.\n{sysB}\n</FROM_SYSTEM>\n")
-                except Exception:
-                    pass
-                summary = compact_summary(home, por, int(time.time()))
-                append_note(por, summary)
-                _persist_por(reason="manual-compact")
-                log_ledger(home, {"from": "system", "kind": "reset", "mode": "compact", "trigger": "manual"})
-                print("[RESET] Manual compact complete (POR updated).")
-            else:
-                clear_msg = (
-                    "<FROM_SYSTEM>\nReset requested: treat this as a fresh exchange. Discard interim scratch context, rely on POR goal/acceptance/next_step.\n"
-                    "</FROM_SYSTEM>\n"
-                )
-                _send_handoff("System", "PeerA", clear_msg)
-                _send_handoff("System", "PeerB", clear_msg)
-                append_note(por, f"[reset-clear] {ts} manual clear issued")
-                _persist_por(reason="manual-clear")
-                log_ledger(home, {"from": "system", "kind": "reset", "mode": "clear", "trigger": "manual"})
-                print("[RESET] Issued manual clear notice (POR noted).")
-            write_status(deliver_paused)
+            mode = parts[1].lower() if len(parts) > 1 else default_reset_mode
+            try:
+                message = _perform_reset(mode, trigger="manual", reason=f"manual-{mode}")
+                print(f"[RESET] {message}")
+            except ValueError as exc:
+                print(f"[RESET] {exc}")
             continue
         if line == "/review":
             _send_coach_reminder("manual-review")

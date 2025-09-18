@@ -8,8 +8,8 @@ Telegram Bridge (MVP)
 """
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
-import os, sys, time, json, re, threading
+from typing import Dict, Any, List, Tuple, Optional
+import os, sys, time, json, re, threading, secrets
 import urllib.request, urllib.parse
 try:
     import fcntl  # POSIX lock for inbox sequencing
@@ -78,6 +78,43 @@ def _append_log(p: Path, line: str):
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open('a', encoding='utf-8') as f:
         f.write(f"{_now()} {line}\n")
+
+
+def _enqueue_im_command(command: str, args: Dict[str, Any], *, source: str, chat_id: int,
+                        wait_seconds: float = 1.5) -> Tuple[Optional[Dict[str, Any]], str]:
+    request_id = f"{source}-{chat_id}-{int(time.time()*1000)}-{secrets.token_hex(4)}"
+    payload = {
+        'request_id': request_id,
+        'command': command,
+        'args': args,
+        'source': source,
+        'chat_id': chat_id,
+        'ts': _now(),
+    }
+    queue_dir = HOME/"state"/"im_commands"
+    processed_dir = queue_dir/"processed"
+    try:
+        queue_dir.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    path = queue_dir/f"{request_id}.json"
+    tmp = path.with_suffix('.tmp')
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding='utf-8')
+        tmp.replace(path)
+    except Exception:
+        return None, request_id
+    deadline = time.time() + max(0.2, float(wait_seconds))
+    result_path = processed_dir/f"{request_id}.result.json"
+    while time.time() < deadline:
+        if result_path.exists():
+            try:
+                data = json.loads(result_path.read_text(encoding='utf-8'))
+                return data, request_id
+            except Exception:
+                break
+        time.sleep(0.1)
+    return None, request_id
 
 def _mid() -> str:
     import uuid, time
@@ -974,6 +1011,95 @@ def main():
             caption = (msg.get('caption') or '').strip()
             is_dm = (chat_type == 'private')
             route_source = text or caption
+
+            if text and re.match(r'^[abAB][!！]', text):
+                m = re.match(r'^([abAB])[!！]\s*(.*)$', text)
+                cmd_body = m.group(2).strip() if m else ""
+                if not cmd_body:
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: a! <command> or b! <command>'}, timeout=15)
+                else:
+                    peer_key = 'a' if (m.group(1).lower() == 'a') else 'b'
+                    result, req_id = _enqueue_im_command('passthrough', {'peer': peer_key, 'text': cmd_body}, source='telegram', chat_id=chat_id)
+                    if result and result.get('ok'):
+                        reply = result.get('message') or f'Command sent to peer {peer_key.upper()}.'
+                    elif result:
+                        reply = f"Command error: {result.get('message')}"
+                    else:
+                        reply = f"Command queued (id={req_id})."
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                    _append_log(outlog, f"[cmd] passthrough peer={peer_key} chat={chat_id} req={req_id}")
+                continue
+
+            if is_cmd(text, 'focus'):
+                parts = text.split(None, 1)
+                hint = parts[1] if len(parts) > 1 else ''
+                result, req_id = _enqueue_im_command('focus', {'raw': hint}, source='telegram', chat_id=chat_id)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'POR refresh requested.'
+                elif result:
+                    reply = f"POR refresh error: {result.get('message')}"
+                else:
+                    reply = f"POR refresh queued (id={req_id})."
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                _append_log(outlog, f"[cmd] focus chat={chat_id} req={req_id}")
+                continue
+
+            if is_cmd(text, 'reset'):
+                parts = text.split()
+                mode = parts[1].lower() if len(parts) > 1 else 'compact'
+                if mode not in ('compact', 'clear'):
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /reset compact|clear'}, timeout=15)
+                else:
+                    result, req_id = _enqueue_im_command('reset', {'mode': mode}, source='telegram', chat_id=chat_id)
+                    if result and result.get('ok'):
+                        reply = result.get('message') or f'Reset {mode} triggered.'
+                    elif result:
+                        reply = f"Reset error: {result.get('message')}"
+                    else:
+                        reply = f"Reset request queued (id={req_id})."
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                    _append_log(outlog, f"[cmd] reset mode={mode} chat={chat_id} req={req_id}")
+                continue
+
+            if is_cmd(text, 'coach'):
+                parts = text.split()
+                action = parts[1].lower() if len(parts) > 1 else 'status'
+                if action == 'status':
+                    result, req_id = _enqueue_im_command('coach', {'action': 'status'}, source='telegram', chat_id=chat_id)
+                    if result and result.get('ok'):
+                        reply = result.get('message') or 'Coach status fetched.'
+                    elif result:
+                        reply = f"Coach status error: {result.get('message')}"
+                    else:
+                        reply = f"Coach status pending (id={req_id})."
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                elif action == 'remind' and len(parts) >= 3:
+                    value = parts[2].lower()
+                    result, req_id = _enqueue_im_command('coach', {'action': 'remind', 'value': value}, source='telegram', chat_id=chat_id)
+                    if result and result.get('ok'):
+                        reply = result.get('message') or f'Coach mode set to {value}.'
+                    elif result:
+                        reply = f"Coach command error: {result.get('message')}"
+                    else:
+                        reply = f"Coach command queued (id={req_id})."
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                else:
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /coach status | /coach remind off|manual|key_nodes'}, timeout=15)
+                _append_log(outlog, f"[cmd] coach action={action} chat={chat_id}")
+                continue
+
+            if is_cmd(text, 'review'):
+                result, req_id = _enqueue_im_command('review', {}, source='telegram', chat_id=chat_id)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'Review reminder sent.'
+                elif result:
+                    reply = f"Review error: {result.get('message')}"
+                else:
+                    reply = f"Review request queued (id={req_id})."
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                _append_log(outlog, f"[cmd] review chat={chat_id} req={req_id}")
+                continue
+
             # Enforce mention in group if configured
             if (not is_dm) and require_mention:
                 ents = msg.get('entities') or []
@@ -1150,24 +1276,31 @@ def main():
                     st = json.loads(st_path.read_text(encoding='utf-8')) if st_path.exists() else {}
                 except Exception:
                     st = {}
-                phase = st.get('phase'); paused = st.get('paused'); leader = st.get('leader')
+                phase = st.get('phase'); paused = st.get('paused')
                 counts = st.get('mailbox_counts') or {}
                 a = counts.get('peerA') or {}; b = counts.get('peerB') or {}
                 por = st.get('por') or {}
-                por_goal = por.get('goal') or '-' 
-                por_next = por.get('next_step') or '-'
-                por_note = por.get('last_note') or ''
+                por_path = por.get('path') or '.cccc/state/POR.md'
+                por_updated = por.get('updated_at') or '-'
+                por_summary = (por.get('summary') or '')
                 coach = st.get('coach') or {}
+                reset = st.get('reset') or {}
                 lines = [
                     f"Phase: {phase}  Paused: {paused}",
-                    f"Leader: {leader}",
                     f"peerA to_user:{a.get('to_user',0)} to_peer:{a.get('to_peer',0)} patch:{a.get('patch',0)}",
                     f"peerB to_user:{b.get('to_user',0)} to_peer:{b.get('to_peer',0)} patch:{b.get('patch',0)}",
-                    f"POR.goal: {por_goal}",
-                    f"POR.next_step: {por_next}",
+                    f"POR: {por_path}",
+                    f"POR.updated: {por_updated}",
                 ]
-                if por_note:
-                    lines.append(f"POR.note: {por_note}")
+                if por_summary:
+                    lines.append(f"POR.summary: {por_summary}")
+                if reset:
+                    policy = reset.get('policy') or '-'
+                    interval = reset.get('interval_handoffs')
+                    eff = reset.get('interval_effective')
+                    lines.append(f"Reset.policy: {policy} (default={reset.get('default_mode') or '-'})")
+                    if interval:
+                        lines.append(f"Reset.interval: {interval} handoffs (effective {eff or interval})")
                 if coach:
                     lines.append(f"Coach.mode: {coach.get('mode','off')} (cmd: {(coach.get('command') or '-')})")
                     if coach.get('last_reason'):
@@ -1204,8 +1337,10 @@ def main():
                 continue
             if is_cmd(text, 'help'):
                 help_txt = (
-                    "Usage: a:/b:/both: or /a /b /both to route to PeerA/PeerB/both; /whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; "
-                    "/subscribe opt-in (if enabled); /unsubscribe opt-out; /showpeers on|off toggle Peer↔Peer summary; /files [in|out] [N] list recent files; /file N view; /rfd list|show <id>."
+                    "Usage: a:/b:/both: or /a /b /both to route to PeerA/PeerB/both; a! <cmd>/b! <cmd> passthrough to CLI;\n"
+                    "/focus [hint] 请求 PeerB 刷新 POR.md; /reset [compact|clear] 执行重置; /coach status|remind off|manual|key_nodes; /review 触发教练提醒;\n"
+                    "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
+                    "/showpeers on|off toggle Peer↔Peer summary; /files [in|out] [N] list recent files; /file N view; /rfd list|show <id>."
                 )
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
                 continue
