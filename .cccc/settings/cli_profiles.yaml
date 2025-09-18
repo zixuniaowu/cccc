@@ -18,9 +18,9 @@ peerA:
     from_system: " ultrathink"
   # Optional NUDGE suffix (system [NUDGE] lines only)
   # e.g., " Read the oldest file and first echo ack: <seq> before processing"
-  nudge_suffix: " Always send messages by UPDATING message files (do NOT create/'write new' these files nor just print messages to console). Also use ASCII-only (7-bit). If inbox is empty: just continue your tasks. If you are totally idle, do widen perspective — review goals, constraints, risks and assumptions from higher levels. ultrathink"
+  nudge_suffix: " Always send messages by UPDATING message files (do NOT create/'write new' these files nor just print messages to console). Support Unicode/UTF-8 for multilingual responses. If inbox is empty: just continue your tasks. If you are totally idle, do widen perspective — review goals, constraints, risks and assumptions from higher levels. ultrathink"
 peerB:
-  prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # Adjust to your PeerB CLI prompt if needed
+  prompt_regex: "(?mi)^\\s*(?:gemini|>>>|>)\\s*$" # Adjust to your PeerB CLI prompt if needed
   busy_regexes:
     - "\\bRunning\\b"
     - "\\bExecuting\\b"
@@ -28,16 +28,16 @@ peerB:
     - "\\bpytest\\b|\\bnpm\\s+test\\b|\\bjest\\b"
     - "\\b\\d{1,3}%\\b"
   idle_quiet_seconds: 1.5
-  # Codex CLI: send on Enter; use Ctrl-J for newline (no submit)
-  post_paste_keys: ["Enter"]
-  input_mode: paste
+  # Gemini CLI: more robust with type mode like PeerA
+  post_paste_keys: ["Enter", "Enter"]
+  input_mode: type
   compose_newline_key: "C-j"
   send_sequence: "Enter"
   type_send_at_end: true
   chunk_lines: 12
   chunk_delay_ms: 180
   # NUDGE robustness (tmux): after sending a line, extra Enters and delay (ms)
-  nudge_extra_enters: 0
+  nudge_extra_enters: 1
   nudge_enter_delay_ms: 250
   # Optional inbound suffix per source
   inbound_suffix:
@@ -93,10 +93,10 @@ tmux:
   alternate_screen_off: true      # Keep scrollback (turn off alt-screen)
 commands:
   peerA: "claude --dangerously-skip-permissions"
-  peerB: "codex --dangerously-bypass-approvals-and-sandbox"
+  peerB: "gemini --approval-mode yolo"
 delivery_mode:
-  peerA: tmux     # Use tmux injection (more stable)
-  peerB: tmux
+  peerA: bridge     # Use tmux injection (more stable)
+  peerB: bridge
   
   # NUDGE backoff tuning
   # Exponential backoff base and cap for repeated nudges

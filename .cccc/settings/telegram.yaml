@@ -1,47 +1,71 @@
 token_env: TELEGRAM_BOT_TOKEN
 autostart: true
 discover_allowlist: true
-autoregister: open           # open|off
-allow_chats: []              # optional explicit allowlist (numeric chat IDs)
+autoregister: open
+allow_chats: []
 max_auto_subs: 3
-
 show_peer_messages: true
-default_route: both          # a|b|both
-
-# Message sizing and pacing
+default_route: both
 debounce_seconds: 30
 max_msg_chars: 4096
 max_msg_lines: 32
 peer_debounce_seconds: 30
 peer_message_max_chars: 4096
 peer_message_max_lines: 32
-
 routing:
-  require_explicit: true     # require a:/b:/both: (groups)
-  allow_prefix: true         # allow a:/b:/both: prefixes
-  require_mention: false     # require @BotName in groups (false = more convenient)
-
+  require_explicit: true
+  allow_prefix: true
+  require_mention: false
 dm:
-  route_default: both        # default when in DM
-
+  route_default: both
 hints:
   cooldown_seconds: 300
-
 files:
   enabled: true
   max_mb: 16
-  allowed_mime: ["text/*","image/png","image/jpeg","application/pdf","application/zip"]
+  allowed_mime:
+  - text/*
+  - image/png
+  - image/jpeg
+  - application/pdf
+  - application/zip
+  - audio/ogg
+  - audio/mpeg
+  - audio/wav
+  - audio/m4a
   inbound_dir: .cccc/work/upload/inbound
   outbound_dir: .cccc/work/upload/outbound
-
+voice:
+  enabled: true
+  speech_to_text:
+    enabled: true
+    languages:
+    - en-US
+    - zh-CN
+    - ja-JP
+    default_language: en-US
+  text_to_speech:
+    enabled: true
+    languages:
+    - en-US
+    - zh-CN
+    - ja-JP
+    default_language: en-US
+    voice_gender: female
+  auto_voice_reply:
+    enabled: true
+    for_user_messages: true
+    for_peer_messages: false
+    min_text_length: 10
+    max_text_length: 500
 inbound_retention_days: 14
 outbound_retention_days: 14
 autowrap_from_user: true
 run_clamav: false
 redact_patterns:
-  - (?i)api[_-]?key\s*[:=]\s*\S+
-  - (?i)secret\s*[:=]\s*\S+
-  - (?i)password\s*[:=]\s*\S+
-
+- (?i)api[_-]?key\s*[:=]\s*\S+
+- (?i)secret\s*[:=]\s*\S+
+- (?i)password\s*[:=]\s*\S+
 outbound:
   reset_on_start: clear
+token: 8376530835:AAGIBCxS_UhP6xUoRk8jxG-_058jcoZ6Ohc

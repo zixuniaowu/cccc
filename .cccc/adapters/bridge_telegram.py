@@ -21,6 +21,19 @@ try:
 except Exception:
     _read_config = None
 
+# Voice processing support
+try:
+    import speech_recognition as sr
+    import edge_tts
+    import asyncio
+    from pydub import AudioSegment
+    from langdetect import detect, DetectorFactory
+    # Set seed for consistent results
+    DetectorFactory.seed = 0
+    VOICE_DEPS_AVAILABLE = True
+except ImportError:
+    VOICE_DEPS_AVAILABLE = False
+
 ROOT = Path.cwd()
 HOME = ROOT/".cccc"
 # Ensure we can import modules from .cccc (single-source preamble via prompt_weaver)
@@ -423,6 +436,23 @@ def main():
                 continue
         return out
 
+    def clean_text(text: str) -> str:
+        """Clean text by removing control characters that cause display issues"""
+        if not text:
+            return text
+        
+        # Remove control characters (except \n, \r, \t)
+        # Keep only printable characters plus newline, carriage return, and tab
+        cleaned = ""
+        for char in text:
+            code = ord(char)
+            # Keep normal printable characters (32-126), newline (10), carriage return (13), tab (9)
+            # and Unicode characters above 127
+            if (32 <= code <= 126) or code in (9, 10, 13) or code > 127:
+                cleaned += char
+        
+        return cleaned
+
     def is_cmd(s: str, name: str) -> bool:
         return re.match(rf"^/{name}(?:@\S+)?(?:\s|$)", s.strip(), re.I) is not None
 
@@ -458,8 +488,32 @@ def main():
     inbound_dir = Path(files_conf.get('inbound_dir') or HOME/"work"/"upload"/"inbound")
     outbound_dir = Path(files_conf.get('outbound_dir') or HOME/"work"/"upload"/"outbound")
 
+    # Voice policy
+    voice_conf = cfg.get('voice') or {}
+    voice_enabled = bool(voice_conf.get('enabled', False)) and VOICE_DEPS_AVAILABLE
+    stt_conf = voice_conf.get('speech_to_text') or {}
+    stt_enabled = bool(stt_conf.get('enabled', False))
+    stt_languages = stt_conf.get('languages', ['zh-CN'])
+    stt_default_lang = stt_conf.get('default_language', 'zh-CN')
+    tts_conf = voice_conf.get('text_to_speech') or {}
+    tts_enabled = bool(tts_conf.get('enabled', False))
+    tts_languages = tts_conf.get('languages', ['zh-CN'])
+    tts_default_lang = tts_conf.get('default_language', 'zh-CN')
+    tts_voice_gender = tts_conf.get('voice_gender', 'female')
+    
+    # Auto voice reply policy
+    auto_voice_conf = voice_conf.get('auto_voice_reply') or {}
+    auto_voice_enabled = bool(auto_voice_conf.get('enabled', False))
+    auto_voice_for_user = bool(auto_voice_conf.get('for_user_messages', True))
+    auto_voice_for_peer = bool(auto_voice_conf.get('for_peer_messages', False))
+    auto_voice_min_len = int(auto_voice_conf.get('min_text_length', 10))
+    auto_voice_max_len = int(auto_voice_conf.get('max_text_length', 500))
+
     # Hint cooldown memory { (chat_id,user_id): ts }
     hint_last: Dict[Tuple[int,int], float] = {}
+    
+    # Track user input method for smart voice reply { chat_id: 'voice' | 'text' }
+    user_input_method: Dict[int, str] = {}
 
     def _mime_allowed(m: str) -> bool:
         if not allowed_mime:
@@ -471,6 +525,131 @@ def main():
             if m.lower() == pat.lower():
                 return True
         return False
+
+    def _detect_language(text: str) -> str:
+        """Detect language of text and return appropriate language code"""
+        try:
+            detected = detect(text)
+            # Map detected languages to our supported codes
+            lang_map = {
+                'zh-cn': 'zh-CN',
+                'zh': 'zh-CN',
+                'en': 'en-US', 
+                'ja': 'ja-JP',
+                'so': 'en-US'  # Sometimes 'so' is detected for short English text
+            }
+            result = lang_map.get(detected, 'zh-CN')
+            
+            # Additional heuristics for better detection
+            if any(ord(c) > 127 for c in text):  # Contains non-ASCII characters
+                if any('\u4e00' <= c <= '\u9fff' for c in text):  # Chinese characters
+                    result = 'zh-CN'
+                elif any('\u3040' <= c <= '\u309f' or '\u30a0' <= c <= '\u30ff' for c in text):  # Japanese characters
+                    result = 'ja-JP'
+            
+            return result
+        except:
+            return 'zh-CN'  # Default fallback
+
+    def _convert_voice_to_text(audio_path: Path, language: str = 'zh-CN') -> Tuple[str, str]:
+        """Convert voice file to text using speech recognition, return (text, detected_language)"""
+        if not voice_enabled or not stt_enabled:
+            return "", language
+        
+        try:
+            # Convert audio to WAV format if necessary
+            if audio_path.suffix.lower() in ['.ogg', '.m4a', '.mp3']:
+                audio = AudioSegment.from_file(str(audio_path))
+                wav_path = audio_path.with_suffix('.wav')
+                audio.export(str(wav_path), format="wav")
+                audio_path = wav_path
+            
+            # Initialize recognizer
+            recognizer = sr.Recognizer()
+            
+            # Load audio file
+            with sr.AudioFile(str(audio_path)) as source:
+                audio_data = recognizer.record(source)
+            
+            # Try to recognize with multiple languages
+            text = ""
+            detected_lang = language
+            
+            # First try with default Chinese
+            try:
+                text = recognizer.recognize_google(audio_data, language='zh-CN')
+                detected_lang = 'zh-CN'
+            except:
+                # If Chinese fails, try English
+                try:
+                    text = recognizer.recognize_google(audio_data, language='en-US')
+                    detected_lang = 'en-US'
+                except:
+                    # If English fails, try Japanese
+                    try:
+                        text = recognizer.recognize_google(audio_data, language='ja-JP')
+                        detected_lang = 'ja-JP'
+                    except:
+                        # Final fallback
+                        text = recognizer.recognize_google(audio_data)
+                        detected_lang = _detect_language(text) if text else language
+            
+            # If we got text, refine language detection
+            if text:
+                detected_lang = _detect_language(text)
+            
+            return text.strip(), detected_lang
+            
+        except Exception as e:
+            _append_log(outlog, f"[voice-stt-error] {e}")
+            return "", language
+
+    def _convert_text_to_voice(text: str, output_path: Path, language: str = 'zh-CN') -> bool:
+        """Convert text to voice file using Edge-TTS"""
+        if not voice_enabled or not tts_enabled:
+            return False
+            
+        try:
+            # Map language codes to Edge-TTS voice names
+            voice_map = {
+                'zh-CN': 'zh-CN-XiaoxiaoNeural',  # 中文女声
+                'zh-TW': 'zh-TW-HsiaoyuNeural',   # 台湾中文女声
+                'en-US': 'en-US-AriaNeural',      # 英文女声
+                'ja-JP': 'ja-JP-NanamiNeural',    # 日文女声
+            }
+            
+            voice_name = voice_map.get(language, 'zh-CN-XiaoxiaoNeural')
+            
+            # Create async function to handle Edge-TTS
+            async def generate_speech():
+                communicate = edge_tts.Communicate(text, voice_name)
+                await communicate.save(str(output_path))
+            
+            # Run the async function
+            asyncio.run(generate_speech())
+            
+            # Wait a bit to ensure file is fully written
+            time.sleep(0.1)
+            
+            # Check if file exists and has content
+            if output_path.exists():
+                file_size = output_path.stat().st_size
+                _append_log(outlog, f"[voice-tts] generated {file_size} bytes for {voice_name}")
+                
+                # Double check - wait a bit more if file is empty initially
+                if file_size == 0:
+                    time.sleep(0.5)
+                    file_size = output_path.stat().st_size
+                    _append_log(outlog, f"[voice-tts] after wait: {file_size} bytes")
+                
+                return file_size > 0  # Return True only if file has content
+            else:
+                _append_log(outlog, f"[voice-tts] file not created: {output_path}")
+                return False
+            
+        except Exception as e:
+            _append_log(outlog, f"[voice-edge-tts-error] {e}")
+            return False
 
     def _sanitize_name(name: str) -> str:
         name = re.sub(r"[^A-Za-z0-9_.\-]+", "_", name)
@@ -545,8 +724,9 @@ def main():
     def send_summary(peer: str, text: str):
         # peer in {'peerA','peerB'}
         label = "PeerA" if peer == 'peerA' else "PeerB"
-        # Build final message first, then preflight the actual payload (rate only)
-        msg = f"[{label}]\n" + _summarize(redact(text), max_chars, max_lines)
+        # Clean text to remove control characters, then build final message
+        cleaned_text = clean_text(text)
+        msg = f"[{label}]\n" + _summarize(redact(cleaned_text), max_chars, max_lines)
         ok, reason = _preflight_msg(peer, msg, float(str(cfg.get('to_user_min_interval_s') or 1.5)))
         if not ok:
             _append_ledger({'kind':'bridge-outbox-blocked','type':'to_user','peer': peer, 'reason': reason})
@@ -564,7 +744,8 @@ def main():
     def send_peer_summary(sender_peer: str, text: str):
         # sender_peer in {'peerA','peerB'}. Build summarized message then preflight
         label = "PeerA→PeerB" if sender_peer == 'peerA' else "PeerB→PeerA"
-        msg = f"[{label}]\n" + _summarize(redact(text), peer_max_chars, peer_max_lines)
+        cleaned_text = clean_text(text)
+        msg = f"[{label}]\n" + _summarize(redact(cleaned_text), peer_max_chars, peer_max_lines)
         ok, reason = _preflight_msg(sender_peer, msg, float(str(cfg.get('peer_summary_min_interval_s') or 1.5)))
         if not ok:
             _append_ledger({'kind':'bridge-outbox-blocked','type':'to_peer_summary','peer': sender_peer, 'reason': reason})
@@ -665,11 +846,73 @@ def main():
             oc = OutboxConsumer(HOME, seen_name='telegram', reset_on_start=reset)
             def _on_to_user(ev: Dict[str, Any]):
                 peer = str(ev.get('peer') or '')
-                text = str(ev.get('text') or '')
-                if not peer or not text:
+                original_text = str(ev.get('text') or '')
+                if not peer or not original_text:
                     return
                 p = 'peerA' if peer.lower() in ('peera','peera') or peer=='PeerA' else 'peerB'
-                send_summary(p, text)
+                
+                # Send text message first (no translation wrapper)
+                send_summary(p, original_text)
+                
+                # Auto voice reply if enabled and user used voice input
+                _append_log(outlog, f"[auto-voice-check] voice_enabled={voice_enabled}, tts_enabled={tts_enabled}, auto_voice_enabled={auto_voice_enabled}, auto_voice_for_user={auto_voice_for_user}")
+                _append_log(outlog, f"[auto-voice-check] text_len={len(original_text)}, min_len={auto_voice_min_len}, max_len={auto_voice_max_len}")
+                if (voice_enabled and tts_enabled and auto_voice_enabled and auto_voice_for_user and 
+                    len(original_text) >= auto_voice_min_len):  # Remove max length check, we'll truncate if needed
+                    try:
+                        # Check if any user in allowed chats used voice input recently
+                        rt = load_runtime()
+                        user_input_methods = rt.get('user_input_methods', {})
+                        should_send_voice = False
+                        
+                        for chat_id in allow:
+                            if user_input_methods.get(str(chat_id)) == 'voice':
+                                should_send_voice = True
+                                break
+                        
+                        if should_send_voice:
+                            # Determine language to use based on user's detected language
+                            user_languages = rt.get('user_languages', {})
+                            reply_lang = tts_default_lang
+                            
+                            # Use the language from the chat that used voice input
+                            for chat_id in allow:
+                                if user_input_methods.get(str(chat_id)) == 'voice':
+                                    detected_lang = user_languages.get(str(chat_id))
+                                    if detected_lang:
+                                        reply_lang = detected_lang
+                                        break
+                            
+                            # Generate voice file
+                            timestamp = int(time.time())
+                            voice_filename = f"auto_voice_{peer}_{timestamp}.mp3"
+                            voice_path = outbound_dir / voice_filename
+                            outbound_dir.mkdir(parents=True, exist_ok=True)
+                            
+                            # Convert text to voice (limit text length for voice and clean control characters)
+                            cleaned_text = clean_text(original_text)
+                            if len(cleaned_text) > auto_voice_max_len:
+                                voice_text = cleaned_text[:auto_voice_max_len]
+                                _append_log(outlog, f"[auto-voice] text truncated from {len(cleaned_text)} to {len(voice_text)} chars")
+                            else:
+                                voice_text = cleaned_text
+                            _append_log(outlog, f"[auto-voice] generating for {peer} in {reply_lang}, text_len={len(voice_text)}")
+                            if _convert_text_to_voice(voice_text, voice_path, reply_lang):
+                                # Create route file to send to telegram
+                                route_file = voice_path.with_suffix('.route')
+                                route_file.write_text('telegram', encoding='utf-8')
+                                
+                                # Create sendas file to specify it should be sent as voice
+                                sendas_file = voice_path.with_suffix('.mp3.sendas')
+                                sendas_file.write_text('voice', encoding='utf-8')
+                                
+                                _append_log(outlog, f"[auto-voice] generated for {peer} in {reply_lang}: '{voice_text[:50]}...'")
+                            else:
+                                _append_log(outlog, f"[auto-voice-error] failed to generate voice for {peer}")
+                        else:
+                            _append_log(outlog, f"[auto-voice] skipped for {peer} - user used text input")
+                    except Exception as e:
+                        _append_log(outlog, f"[auto-voice-error] {peer}: {e}")
             def _on_to_peer_summary(ev: Dict[str, Any]):
                 fromp = str(ev.get('from') or '')
                 text = str(ev.get('text') or '')
@@ -692,7 +935,12 @@ def main():
         def _send_file(peer: str, fp: Path, caption: str) -> bool:
             cap = f"[{ 'PeerA' if peer=='peerA' else 'PeerB' }]\n" + _summarize(redact(caption or ''), max_chars, max_lines)
             # Choose send method: sidecar override > dir/ext heuristic
-            method = 'sendPhoto' if _is_image(fp) or fp.parent.name == 'photos' else 'sendDocument'
+            if _is_image(fp) or fp.parent.name == 'photos':
+                method = 'sendPhoto'
+            elif fp.suffix.lower() in ['.ogg', '.mp3', '.wav', '.m4a'] or 'voice' in fp.name.lower():
+                method = 'sendVoice'
+            else:
+                method = 'sendDocument'
             any_fail = False
             try:
                 sidecars = [fp.with_suffix(fp.suffix + '.sendas'), fp.with_name(fp.name + '.sendas')]
@@ -704,6 +952,8 @@ def main():
                                 method = 'sendPhoto'
                             elif m == 'document':
                                 method = 'sendDocument'
+                            elif m == 'voice':
+                                method = 'sendVoice'
                         except Exception:
                             pass
                         break
@@ -744,9 +994,14 @@ def main():
                     mt = mimetypes.guess_type(fp.name)[0] or ''
                     if method=='sendPhoto':
                         mime = mt if mt.startswith('image/') else 'image/jpeg'
+                        field_name = 'photo'
+                    elif method=='sendVoice':
+                        mime = 'audio/ogg' if fp.suffix.lower() == '.ogg' else (mt or 'audio/mpeg')
+                        field_name = 'voice'
                     else:
                         mime = mt or 'application/octet-stream'
-                    files = { ('photo' if method=='sendPhoto' else 'document'): (fp.name, data, mime) }
+                        field_name = 'document'
+                    files = { field_name: (fp.name, data, mime) }
                     body, bnd = _multipart(fields, files)
                     req = urllib.request.Request(api_url, data=body, method='POST')
                     req.add_header('Content-Type', f'multipart/form-data; boundary={bnd}')
@@ -1056,6 +1311,68 @@ def main():
                         _append_ledger({'kind': 'bridge-file-inbound', 'chat': chat_id, 'routes': routes,
                                         'files': [{'path': m['path'], 'sha256': m['sha256']} for m in metas]})
                         continue
+# Inbound voice messages
+            if voice_enabled and stt_enabled and msg.get('voice'):
+                if (not is_dm) and require_explicit and not has_explicit:
+                    _maybe_hint(chat_id, int((msg.get('from') or {}).get('id', 0) or 0))
+                    continue
+                try:
+                    voice = msg['voice']
+                    file_id = voice.get('file_id')
+                    duration = voice.get('duration', 0)
+                    mime_type = voice.get('mime_type', 'audio/ogg')
+                    
+                    # Save voice file
+                    midf = _mid()
+                    fn = f"voice_{midf}.ogg"
+                    path, meta = _save_file_from_telegram(file_id, fn, chat_id, midf)
+                    
+                    # Convert voice to text with language detection
+                    detected_text, detected_lang = _convert_voice_to_text(path, stt_default_lang)
+                    
+                    if detected_text:
+                        # Track that user used voice input and the detected language
+                        user_input_method[chat_id] = 'voice'
+                        # Save to runtime for outbound callbacks
+                        rt = load_runtime()
+                        rt.setdefault('user_input_methods', {})[str(chat_id)] = 'voice'
+                        rt.setdefault('user_languages', {})[str(chat_id)] = detected_lang
+                        save_runtime(rt)
+                        
+                        # Build inbox payload with voice transcription and language instruction
+                        routes, _ = _route_from_text(route_source or '', dr)
+                        
+                        # Add language instruction for AI
+                        lang_instruction = ""
+                        if detected_lang == 'zh-CN':
+                            lang_instruction = "请用中文回复。"
+                        elif detected_lang == 'en-US':
+                            lang_instruction = "Please reply in English."
+                        elif detected_lang == 'ja-JP':
+                            lang_instruction = "日本語で返事してください。"
+                        
+                        lines = ["<FROM_USER>"]
+                        lines.append(f"[MID: {_mid()}]")
+                        lines.append(f"Voice message (duration: {duration}s, language: {detected_lang}):")
+                        if lang_instruction:
+                            lines.append(f"[Language instruction: {lang_instruction}]")
+                        lines.append(detected_text)
+                        if caption:
+                            lines.append(f"Caption: {caption}")
+                        lines.append("</FROM_USER>")
+                        payload = "\n".join(lines) + "\n"
+                        _deliver_inbound(HOME, routes, payload, _mid())
+                        _append_log(outlog, f"[inbound-voice] routes={routes} lang={detected_lang} text='{detected_text[:50]}...' chat={chat_id}")
+                        _append_ledger({"kind":"bridge-voice-inbound","chat":chat_id,"routes":routes,"text":detected_text,"language":detected_lang,"duration":duration})
+                    else:
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Sorry, I could not understand the voice message.'}, timeout=15)
+                        _append_log(outlog, f"[voice-stt-failed] chat={chat_id}")
+                        
+                except Exception as e:
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': f'Failed to process voice message: {e}'}, timeout=15)
+                    _append_log(outlog, f"[error] inbound-voice: {e}")
+                continue
+
 # Inbound files
             if files_enabled and (msg.get('document') or msg.get('photo')):
                 if (not is_dm) and require_explicit and not has_explicit:
@@ -1202,11 +1519,43 @@ def main():
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': f"chat_id={chat_id}"}, timeout=15)
                 _append_log(outlog, f"[meta] whoami chat={chat_id}")
                 continue
+            # /voice <text> - convert text to voice and send as audio
+            if voice_enabled and tts_enabled and re.match(r"^/voice(?:@\S+)?\s+.+", text.strip(), re.I):
+                voice_text = re.sub(r"^/voice(?:@\S+)?\s+", "", text.strip(), flags=re.I)
+                if voice_text:
+                    try:
+                        # Create voice file
+                        timestamp = int(time.time())
+                        voice_filename = f"voice_response_{timestamp}.wav"
+                        voice_path = outbound_dir / voice_filename
+                        outbound_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        # Convert text to voice (clean control characters first)
+                        clean_voice_text = clean_text(voice_text)
+                        if _convert_text_to_voice(clean_voice_text, voice_path, tts_default_lang):
+                            # Create route file to send to current chat
+                            route_file = voice_path.with_suffix('.route')
+                            route_file.write_text('telegram', encoding='utf-8')
+                            
+                            # Create sendas file to specify it should be sent as voice
+                            sendas_file = voice_path.with_suffix('.wav.sendas')
+                            sendas_file.write_text('voice', encoding='utf-8')
+                            
+                            tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Voice message generated and will be sent shortly.'}, timeout=15)
+                            _append_log(outlog, f"[voice-command] text='{voice_text[:50]}...' chat={chat_id}")
+                        else:
+                            tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Failed to generate voice message.'}, timeout=15)
+                    except Exception as e:
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': f'Voice command error: {e}'}, timeout=15)
+                        _append_log(outlog, f"[error] voice-command: {e}")
+                continue
             if is_cmd(text, 'help'):
                 help_txt = (
                     "Usage: a:/b:/both: or /a /b /both to route to PeerA/PeerB/both; /whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; "
                     "/subscribe opt-in (if enabled); /unsubscribe opt-out; /showpeers on|off toggle Peer↔Peer summary; /files [in|out] [N] list recent files; /file N view; /rfd list|show <id>."
                 )
+                if voice_enabled:
+                    help_txt += " /voice <text> convert text to voice message."
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
                 continue
             # /rfd list|show <id>
@@ -1340,6 +1689,14 @@ def main():
                 else:
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Self-unsubscribe disabled; contact admin.'}, timeout=15)
                 continue
+            
+            # Track that user used text input for smart voice reply
+            user_input_method[chat_id] = 'text'
+            # Save to runtime for outbound callbacks
+            rt = load_runtime()
+            rt.setdefault('user_input_methods', {})[str(chat_id)] = 'text'
+            save_runtime(rt)
+            
             routes, body = _route_from_text(route_source, dr)
             mid = _mid()
             body2 = _wrap_user_if_needed(body)
