@@ -1316,7 +1316,11 @@ def git_commit(msg: str):
 # ---------- prompt weaving ----------
 def weave_system(home: Path, peer: str) -> str:
     ensure_por(home)
-    from prompt_weaver import weave_system_prompt
+    from prompt_weaver import weave_system_prompt, ensure_rules_docs
+    try:
+        ensure_rules_docs(home)
+    except Exception:
+        pass
     return weave_system_prompt(home, peer)
 
 def weave_preamble_text(home: Path, peer: str) -> str:
