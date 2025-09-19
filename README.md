@@ -118,7 +118,7 @@ That’s it. You can refine policies later.
 - Control & passthrough
   - `/focus [hint]` asks PeerB to refresh `.cccc/state/POR.md`
   - `/reset compact|clear` issues manual compact/clear; `/review` triggers the aux reminder flow
-  - `/aux status|on|off` inspects or toggles the optional third agent (alias: `/coach ...`)
+  - `/aux status|on|off` inspects or toggles the optional third agent
   - `a! <command>` / `b! <command>` sends a raw CLI command to PeerA/PeerB (non-interactive; advanced)
 - File exchange
   - Outbound (AIs → IM): save files to `.cccc/work/upload/outbound/` (flat)

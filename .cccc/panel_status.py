@@ -121,7 +121,7 @@ def render(home: Path):
     mlast = (status.get("mailbox_last") or {})
     anti = status.get("handoff_filter_enabled")
     por = status.get("por") or {}
-    coach = status.get("coach") or {}
+    coach = status.get("aux") or {}
 
     lines: List[str] = []
     # Header (fixed height; avoid runaway growth)
@@ -139,9 +139,9 @@ def render(home: Path):
         if summary:
             lines.append(f"POR summary: {summary[:160]}")
     if coach:
-        lines.append(f"Coach mode={coach.get('mode','off')} command={(coach.get('command') or '-')}")
+        lines.append(f"Aux mode={coach.get('mode','off')} command={(coach.get('command') or '-')}")
         if coach.get('last_reason'):
-            lines.append(f"Coach last={coach.get('last_reason')}")
+            lines.append(f"Aux last={coach.get('last_reason')}")
     lines.append(f"Handoff: delivered={stats['handoff'].get('delivered',0)} queued={stats['handoff'].get('queued',0)} failed={stats['handoff'].get('failed',0)}  Flow A→B={stats['handoff'].get('A2B',0)} B→A={stats['handoff'].get('B2A',0)}")
     lines.append(f"Patches: commits={stats['patch']['commit']} tests_ok={stats['patch']['tests_ok']} tests_fail={stats['patch']['tests_fail']} rejects={stats['patch']['reject']}")
     # Recent (limited items)

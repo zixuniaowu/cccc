@@ -2598,7 +2598,7 @@ def main(home: Path):
             "mailbox_last": mbox_last,
             "handoff_filter_enabled": eff_filter,
             "por": por_status_snapshot(home),
-            "coach": _coach_snapshot(),
+            "aux": _coach_snapshot(),
             "reset": {
                 "policy": conversation_reset_policy,
                 "default_mode": default_reset_mode,

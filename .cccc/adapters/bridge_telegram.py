@@ -1294,7 +1294,7 @@ def main():
                 por_path = por.get('path') or '.cccc/state/POR.md'
                 por_updated = por.get('updated_at') or '-'
                 por_summary = (por.get('summary') or '')
-                coach = st.get('coach') or {}
+                coach = st.get('aux') or {}
                 reset = st.get('reset') or {}
                 lines = [
                     f"Phase: {phase}  Paused: {paused}",
@@ -1313,9 +1313,9 @@ def main():
                     if interval:
                         lines.append(f"Reset.interval: {interval} handoffs (effective {eff or interval})")
                 if coach:
-                    lines.append(f"Coach.mode: {coach.get('mode','off')} (cmd: {(coach.get('command') or '-')})")
+                    lines.append(f"Aux.mode: {coach.get('mode','off')} (cmd: {(coach.get('command') or '-')})")
                     if coach.get('last_reason'):
-                        lines.append(f"Coach.last: {coach.get('last_reason')}")
+                        lines.append(f"Aux.last: {coach.get('last_reason')}")
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
                 continue
             if is_cmd(text, 'queue'):
@@ -1349,7 +1349,7 @@ def main():
             if is_cmd(text, 'help'):
                 help_txt = (
                     "Usage: a:/b:/both: or /a /b /both to route to PeerA/PeerB/both; a! <cmd>/b! <cmd> passthrough to CLI;\n"
-                    "/focus [hint] 请求 PeerB 刷新 POR.md; /reset [compact|clear] 执行重置; /coach status|remind off|manual|key_nodes; /review 触发教练提醒;\n"
+                    "/focus [hint] 请求 PeerB 刷新 POR.md; /reset [compact|clear] 执行重置; /aux status|on|off; /review 触发第三体辅助提醒;\n"
                     "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
                     "/showpeers on|off toggle Peer↔Peer summary; /files [in|out] [N] list recent files; /file N view; /rfd list|show <id>."
                 )
