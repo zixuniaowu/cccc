@@ -117,8 +117,8 @@ That’s it. You can refine policies later.
   - `/showpeers on|off` toggles Peer↔Peer summaries
 - Control & passthrough
   - `/focus [hint]` asks PeerB to refresh `.cccc/state/POR.md`
-  - `/reset compact|clear` issues manual compact/clear; `/review` triggers the coach reminder flow
-  - `/coach status|remind off|manual|key_nodes` inspects or toggles the optional third-agent coach
+  - `/reset compact|clear` issues manual compact/clear; `/review` triggers the aux reminder flow
+  - `/aux status|on|off` inspects or toggles the optional third agent (alias: `/coach ...`)
   - `a! <command>` / `b! <command>` sends a raw CLI command to PeerA/PeerB (non-interactive; advanced)
 - File exchange
   - Outbound (AIs → IM): save files to `.cccc/work/upload/outbound/` (flat)

@@ -1993,8 +1993,15 @@ def main(home: Path):
                     mode = str(args.get("mode") or default_reset_mode)
                     message = _perform_reset(mode, trigger=source, reason=f"{source}-{mode}")
                     result = {"ok": True, "message": message}
-                elif command == "coach":
+                elif command in ("coach","aux"):
                     action = str(args.get("action") or "").lower()
+                    # Normalize /aux on|off to coach remind key_nodes|off
+                    if command == "aux" and action in ("on","off","status",""):
+                        if action in ("", "status"):
+                            action = "status"
+                        else:
+                            action = "remind"
+                            args["value"] = "key_nodes" if args.get("action") == "on" else "off"
                     if action in ("remind", "mode"):
                         new_mode = str(args.get("value") or "").lower()
                         if new_mode == "on":
@@ -2004,15 +2011,15 @@ def main(home: Path):
                         coach_mode = new_mode
                         _persist_coach_state()
                         write_status(deliver_paused)
-                        result = {"ok": True, "message": f"Coach mode set to {coach_mode}"}
+                        result = {"ok": True, "message": f"Aux/Coach mode set to {coach_mode}"}
                     elif action == "status":
                         last = coach_last_reason or "-"
                         cmd_display = coach_command or "-"
-                        result = {"ok": True, "message": f"Coach status: mode={coach_mode}, command={cmd_display}, last_reason={last}"}
+                        result = {"ok": True, "message": f"Aux/Coach status: mode={coach_mode}, command={cmd_display}, last_reason={last}"}
                     elif action == "reminder":
                         stage = str(args.get("stage") or "manual")
                         _send_coach_reminder(stage)
-                        result = {"ok": True, "message": f"Coach reminder triggered ({stage})"}
+                        result = {"ok": True, "message": f"Aux/Coach reminder triggered ({stage})"}
                     else:
                         raise ValueError("unsupported coach action")
                 elif command == "review":

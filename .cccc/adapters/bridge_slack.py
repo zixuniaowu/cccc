@@ -639,6 +639,22 @@ def main():
                     _append_log(f"[cmd] reset mode={mode or 'default'} ch={ch} req={req_id}")
                 return
 
+            if re.match(r'^/?aux\b', command_text, re.I):
+                parts = command_text.split()
+                action = parts[1].lower() if len(parts) > 1 else 'status'
+                if action in ('on','off'):
+                    result, req_id = _enqueue_im_command('aux', {'action': action}, source='slack', channel=ch)
+                else:
+                    result, req_id = _enqueue_im_command('aux', {'action': 'status'}, source='slack', channel=ch)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'Aux status fetched.'
+                elif result:
+                    reply = f"Aux error: {result.get('message')}"
+                else:
+                    reply = f"Aux request queued (id={req_id})."
+                _send_reply(reply)
+                _append_log(f"[cmd] aux action={action} ch={ch} req={req_id}")
+                return
             if re.match(r'^/?coach\b', command_text, re.I):
                 parts = command_text.split()
                 action = parts[1].lower() if len(parts) > 1 else 'status'
@@ -662,7 +678,7 @@ def main():
                         reply = f"Coach command queued (id={req_id})."
                     _send_reply(reply)
                 else:
-                    _send_reply('Usage: /coach status | /coach remind off|manual|key_nodes')
+                    _send_reply('Usage: /aux status|on|off  (alias: /coach status | /coach remind off|manual|key_nodes)')
                 _append_log(f"[cmd] coach action={action} ch={ch}")
                 return
 

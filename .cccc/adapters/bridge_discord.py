@@ -356,6 +356,17 @@ def main():
                     _log(f"[cmd] reset mode={mode or 'default'} ch={message.channel.id} req={req_id}")
                 return
 
+            if re.match(r'^/?aux\b', stripped, re.I):
+                parts = stripped.split()
+                action = parts[1].lower() if len(parts) > 1 else 'status'
+                if action in ('on','off'):
+                    result, req_id = _enqueue_im_command('aux', {'action': action}, source='discord', channel=str(message.channel.id))
+                else:
+                    result, req_id = _enqueue_im_command('aux', {'action': 'status'}, source='discord', channel=str(message.channel.id))
+                reply = result.get('message') if result and result.get('ok') else (f"Aux error: {result.get('message')}" if result else f"Aux queued (id={req_id}).")
+                await _send_reply(reply)
+                _log(f"[cmd] aux action={action} ch={message.channel.id}")
+                return
             if re.match(r'^/?coach\b', stripped, re.I):
                 parts = stripped.split()
                 action = parts[1].lower() if len(parts) > 1 else 'status'
@@ -379,7 +390,7 @@ def main():
                         reply = f"Coach command queued (id={req_id})."
                     await _send_reply(reply)
                 else:
-                    await _send_reply('Usage: /coach status | /coach remind off|manual|key_nodes')
+                    await _send_reply('Usage: /aux status|on|off  (alias: /coach status | /coach remind off|manual|key_nodes)')
                 _log(f"[cmd] coach action={action} ch={message.channel.id}")
                 return
 

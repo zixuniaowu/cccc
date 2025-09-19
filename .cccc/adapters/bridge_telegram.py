@@ -1061,9 +1061,20 @@ def main():
                     _append_log(outlog, f"[cmd] reset mode={mode} chat={chat_id} req={req_id}")
                 continue
 
-            if is_cmd(text, 'coach'):
+            if is_cmd(text, 'aux') or is_cmd(text, 'coach'):
                 parts = text.split()
                 action = parts[1].lower() if len(parts) > 1 else 'status'
+                # Normalize /aux on|off to coach remind key_nodes|off
+                if parts and parts[0].lstrip('/').lower().startswith('aux'):
+                    if action in ('on','off'):
+                        result, req_id = _enqueue_im_command('aux', {'action': action}, source='telegram', chat_id=chat_id)
+                    else:
+                        result, req_id = _enqueue_im_command('aux', {'action': 'status'}, source='telegram', chat_id=chat_id)
+                    reply = (result.get('message') if result and result.get('ok') else
+                             (f"Command error: {result.get('message')}" if result else f"Command queued (id={req_id})."))
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                    _append_log(outlog, f"[cmd] aux action={action} chat={chat_id} req={req_id}")
+                    continue
                 if action == 'status':
                     result, req_id = _enqueue_im_command('coach', {'action': 'status'}, source='telegram', chat_id=chat_id)
                     if result and result.get('ok'):
@@ -1084,7 +1095,7 @@ def main():
                         reply = f"Coach command queued (id={req_id})."
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
                 else:
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /coach status | /coach remind off|manual|key_nodes'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /aux status|on|off  (alias: /coach status | /coach remind off|manual|key_nodes)'}, timeout=15)
                 _append_log(outlog, f"[cmd] coach action={action} chat={chat_id}")
                 continue
 
