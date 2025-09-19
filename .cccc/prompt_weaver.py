@@ -219,15 +219,15 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         if aux_mode == "auto":
             ch3.append("  - Mode: auto — expect FROM_SYSTEM reminders at contracts/sign-off moments; respond quickly and feed outcomes back to your peer.")
         ch3 += [
-            "  - Non-interactive CLI examples (replace paths/prompts as needed):",
-            "    - gemini -p \"Write a Python function\"",
+            "  - Non-interactive CLI examples (replace paths/prompts as needed; construt the paths/prompts as detailed as possible;):",
+            "    - gemini -p \"Write a Python function\" --yolo",
             "    - echo \"Write fizzbuzz in Python\" | gemini",
-            "    - gemini -p \"@path/to/file.py Explain this code\"",
-            "    - gemini -p \"@package.json @src/index.js Check dependencies\"",
-            "    - gemini -p \"@project/ Summarize the system\"",
+            "    - gemini -p \"@path/to/file.py Explain this code\" --yolo",
+            "    - gemini -p \"@package.json @src/index.js Check dependencies\" --yolo",
+            "    - gemini -p \"@project/ Summarize the system\" --yolo",
             "    - Engineering prompts:",
-            "      - gemini -p \"@src/**/*.ts Generate minimal diffs to rename X to Y; preserve tests\"",
-            "      - gemini -p \"@project/ Ensure all READMEs reference 'cccc'; propose unified diffs only\"",
+            "      - gemini -p \"@src/**/*.ts Generate minimal diffs to rename X to Y; preserve tests\" --yolo",
+            "      - gemini -p \"@project/ Ensure all READMEs reference 'cccc'; propose unified diffs only\" --yolo",
         ]
     else:
         ch3 += [
