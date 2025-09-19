@@ -32,7 +32,7 @@ def _calc_rules_hash(home: Path) -> str:
     for name in [
         "settings/cli_profiles.yaml",
         "settings/governance.yaml",
-        "settings/coach_helper.yaml",
+        "settings/aux_helper.yaml",
         "settings/telegram.yaml",
         "settings/slack.yaml",
         "settings/discord.yaml",
@@ -43,7 +43,13 @@ def _calc_rules_hash(home: Path) -> str:
                 parts.append(fp.read_text(encoding="utf-8"))
             except Exception:
                 pass
-    payload = "\n".join(parts) + "\nGEN:1"  # bump suffix to invalidate older generations
+    state_fp = home / "state" / "aux_helper_state.json"
+    if state_fp.exists():
+        try:
+            parts.append(state_fp.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    payload = "\n".join(parts) + "\nGEN:3"  # bump suffix to invalidate older generations
     return hashlib.sha1(payload.encode("utf-8", errors="replace")).hexdigest()
 
 def _is_im_enabled(home: Path) -> bool:
@@ -75,17 +81,24 @@ def _is_im_enabled(home: Path) -> bool:
             return True
     return False
 
-def _coach_mode(home: Path) -> str:
-    cf = home/"settings"/"coach_helper.yaml"
-    if not cf.exists():
-        return "off"
-    d = _read_yaml_or_json(cf)
-    t = d.get("triggers") if isinstance(d.get("triggers"), dict) else {}
-    mode = str(t.get("mode") or "off").lower().strip()
-    if mode in ("off", "manual", "key_nodes"):
-        return mode
-    if mode == "on":
-        return "key_nodes"
+def _aux_mode(home: Path) -> str:
+    conf_path = home/"settings"/"aux_helper.yaml"
+    conf = _read_yaml_or_json(conf_path) if conf_path.exists() else {}
+    mode_raw = "off"
+    triggers = conf.get("triggers") if isinstance(conf.get("triggers"), dict) else {}
+    mode_raw = str(triggers.get("mode") or "off").lower().strip()
+
+    state_fp = home/"state"/"aux_helper_state.json"
+    if state_fp.exists():
+        try:
+            state_obj = json.loads(state_fp.read_text(encoding="utf-8"))
+            if isinstance(state_obj, dict) and state_obj.get("mode"):
+                mode_raw = str(state_obj.get("mode")).lower().strip()
+        except Exception:
+            pass
+
+    if mode_raw in ("auto", "on", "key_nodes", "keynodes", "manual"):
+        return "auto"
     return "off"
 
 def _conversation_reset(home: Path) -> Tuple[str, Optional[int]]:
@@ -104,14 +117,16 @@ def _conversation_reset(home: Path) -> Tuple[str, Optional[int]]:
         interval = 0
     return policy, (interval if interval > 0 else None)
 
-def _write_rules_for_peer(home: Path, peer: str) -> Path:
+def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: str) -> Path:
     is_peera = (peer.lower() == "peera" or peer == "peerA")
     role_name = "PeerA" if is_peera else "PeerB"
+    rules_filename = "PEERA.md" if is_peera else "PEERB.md"
     base = f".cccc/mailbox/{peer}"
     to_user = f"{base}/to_user.md"
     to_peer = f"{base}/to_peer.md"
     patchf  = f"{base}/patch.diff"
     por_rel = por_path(home).as_posix()
+    aux_enabled = aux_mode in ("manual", "key_nodes")
 
     ch1 = [
         "1) Who You Are · Collaborators · Purpose & Style",
@@ -126,10 +141,20 @@ def _write_rules_for_peer(home: Path, peer: str) -> Path:
         "- Complementary stances",
         "  - Both peers plan, implement, test, review risks, and shape decisions.",
         "  - Per loop, one leans builder, the other leans critic; stances may flip any time.",
-        "- On‑demand helper: PeerC (Aux) — purpose & direction",
-        "  - Use Aux at the two ends only: top‑level correction (sanity checks, alternative routes, assumption‑killing) and bottom heavy‑lifting (broad refactors, bulk edits, consistency fixes).",
-        "  - Invoke silently when useful (no prior announcement). Prefer offloading uncoupled tasks to Aux to protect attention for mid‑layer decisions/integration. You own and integrate the outcome.",
     ]
+    if aux_enabled:
+        ch1 += [
+            "- On-demand helper: PeerC (Aux) — purpose & direction",
+            "  - Use Aux at the two ends only: top-level correction (sanity checks, alternative routes, assumption-killing) and bottom heavy-lifting (broad refactors, bulk edits, consistency fixes).",
+            "  - Invoke silently when useful (no prior announcement). Prefer offloading uncoupled tasks to Aux to protect attention for mid-layer decisions/integration. You own and integrate the outcome.",
+        ]
+        if aux_mode == "auto":
+            ch1.append("  - Mode: auto — orchestrator issues FROM_SYSTEM reminders around key decisions; you can also call Aux proactively for heavy lifts.")
+    else:
+        ch1 += [
+            "- Aux availability",
+            "  - No third helper is connected right now. You and your peer handle top-level correction and heavy lifting directly; break work into reversible probes. Rules refresh automatically if Aux becomes available.",
+        ]
 
     ch2 = [
         "",
@@ -147,7 +172,7 @@ def _write_rules_for_peer(home: Path, peer: str) -> Path:
         "- PROJECT.md — project context and scope",
         "  - Path: PROJECT.md (repo root). Use as scope/context reference. If it conflicts with reality or POR, clarify and align POR.",
         "- This rules document",
-        f"  - Path: .cccc/rules/{role_name}.md. Reference concrete anchors from this file in insight refs when relevant.",
+        f"  - Path: .cccc/rules/{rules_filename}. Reference concrete anchors from this file in insight refs when relevant.",
         "- Work directory — scratchpad / canvas / evidence material",
         "  - Path: .cccc/work/**",
         "  - Purpose: keep investigation outputs, temporary scripts, analysis artifacts, sample data, before/after snapshots. Cite paths in messages instead of pasting big blobs. Make artifacts minimal and reproducible. Finalized changes still land as patch.diff.",
@@ -182,28 +207,45 @@ def _write_rules_for_peer(home: Path, peer: str) -> Path:
         "  - Strategic checkpoint (top‑down): periodically scan goal ↔ constraints ↔ current path. If drift is detected, state a correction or call Aux for a brief sanity sweep (e.g., `gemini -p \"@project/ sanity‑check current plan vs POR\"`).",
         "  - Large/irreversible (interface, migration, release): add a one‑sentence decision note (choice, why, rollback) in the same message before landing.",
         "  - If a real risk exists, add a single `Risk:` line in the body with one‑line mitigation.",
-        "- NUDGE behavior (one‑liner)",
+        "- NUDGE behavior (one-liner)",
         "  - On [NUDGE]: read the oldest inbox item; after processing, move it to processed/; continue until empty; reply only when blocked.",
-        "- Using PeerC (Aux) — compact usage {#aux}",
-        "  - When: top‑level sanity/alternatives/assumption‑killing; bottom heavy‑lifting/bulk/consistency.",
-        "  - How: invoke silently during execution; Aux may write your patch.diff or produce artifacts under .cccc/work/**; you integrate and own the outcome.",
-        "  - Non‑interactive CLI examples (replace paths/prompts as needed):",
-        "    - gemini -p \"Write a Python function\"",
-        "    - echo \"Write fizzbuzz in Python\" | gemini",
-        "    - gemini -p \"@path/to/file.py Explain this code\"",
-        "    - gemini -p \"@package.json @src/index.js Check dependencies\"",
-        "    - gemini -p \"@project/ Summarize the system\"",
-        "    - Engineering prompts:",
-        "      - gemini -p \"@src/**/*.ts Generate minimal diffs to rename X to Y; preserve tests\"",
-        "      - gemini -p \"@project/ Ensure all READMEs reference ‘cccc’; propose unified diffs only\"",
     ]
+    if aux_enabled:
+        ch3 += [
+            "- Using PeerC (Aux) — compact usage {#aux}",
+            "  - When: top-level sanity/alternatives/assumption-killing; bottom heavy-lifting/bulk/consistency.",
+            "  - How: invoke silently during execution; Aux may write your patch.diff or produce artifacts under .cccc/work/**; you integrate and own the outcome.",
+        ]
+        if aux_mode == "auto":
+            ch3.append("  - Mode: auto — expect FROM_SYSTEM reminders at contracts/sign-off moments; respond quickly and feed outcomes back to your peer.")
+        ch3 += [
+            "  - Non-interactive CLI examples (replace paths/prompts as needed):",
+            "    - gemini -p \"Write a Python function\"",
+            "    - echo \"Write fizzbuzz in Python\" | gemini",
+            "    - gemini -p \"@path/to/file.py Explain this code\"",
+            "    - gemini -p \"@package.json @src/index.js Check dependencies\"",
+            "    - gemini -p \"@project/ Summarize the system\"",
+            "    - Engineering prompts:",
+            "      - gemini -p \"@src/**/*.ts Generate minimal diffs to rename X to Y; preserve tests\"",
+            "      - gemini -p \"@project/ Ensure all READMEs reference 'cccc'; propose unified diffs only\"",
+        ]
+    else:
+        ch3 += [
+            "- Aux {#aux}",
+            "  - No Aux helper is available in this run. Use peer collaboration, POR updates, or targeted user questions to cover top-level review and bulk work.",
+        ]
 
-    ascii_rule = "  - Temporary constraint (PeerA only): content in to_user.md and to_peer.md must be ASCII‑only (7‑bit). Use plain ASCII punctuation." if is_peera else None
+    ascii_rule = "  - Temporary constraint (PeerA only): content in to_user.md and to_peer.md must be ASCII-only (7-bit). Use plain ASCII punctuation." if is_peera else None
+    update_targets = [to_peer, patchf]
+    if is_peera:
+        update_targets.insert(0, to_user)
+    target_list = ", ".join(update_targets)
+
     ch4 = [
         "",
         "4) Communicate with the Outside (Message Skeleton · Templates · File I/O)",
         "- Writing rules (strict)",
-        f"  - Update‑only: always overwrite {to_user if is_peera else ''}{',' if is_peera else ''}{to_peer},{patchf}; do NOT append or create new variants.",
+        f"  - Update-only: always overwrite {target_list}; do NOT append or create new variants.",
         "  - Encoding: UTF‑8 (no BOM).",
     ]
     if ascii_rule:
@@ -211,7 +253,7 @@ def _write_rules_for_peer(home: Path, peer: str) -> Path:
     ch4 += [
         "  - Keep <TO_USER>/<TO_PEER> wrappers around message bodies; end with exactly one fenced `insight` block.",
         "  - Do not modify orchestrator code/config/policies.",
-        "- Message skeleton (rules + ready‑to‑copy templates) {#message-skeleton}",
+        "- Message skeleton (rules + ready-to-copy templates) {#message-skeleton}",
         "  - First line — PCR+Hook",
         "    - Rule: [P|C|R] <<=12‑word headline> ; Hook: <path|cmd|diff|log> ; Next: <one smallest step>",
         "    - Note: if no Hook, prefer C/R; do not use P.",
@@ -241,13 +283,77 @@ def _write_rules_for_peer(home: Path, peer: str) -> Path:
         "  - • Inbound: uploads are saved to .cccc/work/upload/inbound/YYYYMMDD/MID__name with a sibling .meta.json (platform/chat-or-channel/mime/bytes/sha256/caption/mid/ts); also indexed into state/inbound-index.jsonl.",
         "  - • Outbound: drop files into .cccc/work/upload/outbound/ (flat). Use the first line of <name>.caption.txt to route with a:/b:/both: (prefix is removed), or a <name>.route sidecar with a|b|both. On success a <name>.sent.json ACK is written.",
         "- Channel notes (minimal)",
-        "  - Peer‑to‑peer: high signal; one smallest Next per message; avoid pure ACK; steelman before COUNTER.",
+        "  - Peer-to-peer: high signal; one smallest Next per message; avoid pure ACK; steelman before COUNTER.",
         "  - If you agree, add exactly one new angle (risk/hook/smaller next) or stay silent; avoid pure ACK.",
-        "  - User‑facing (when used): ≤6 lines; conclusion first, then evidence paths; questions must be decidable with minimal noise.",
+        "  - User-facing (when used): ≤6 lines; conclusion first, then evidence paths; questions must be decidable with minimal noise.",
     ]
+    if im_enabled:
+        route_prefix = "a" if is_peera else "b"
+        ch4 += [
+            "- IM routing & passthrough (active) {#im}",
+            "  - Chat routing: `a:`, `b:`, `both:` or `/a`, `/b`, `/both` from IM land in your mailbox; process them like any other inbox item.",
+            f"  - Direct CLI passthrough: `{route_prefix}! <command>` runs inside your CLI pane; capture outputs in .cccc/work/** when they matter.",
+            "  - System commands such as /focus, /reset, /aux, /review from IM arrive as <FROM_SYSTEM> notes; act and report in your next turn.",
+        ]
 
     text = "\n".join([f"# {role_name} Rules (Generated)", "", *ch1, *ch2, *ch3, *ch4, ""])
-    target = _rules_dir(home)/("PEERA.md" if is_peera else "PEERB.md")
+    target = _rules_dir(home)/rules_filename
+    target.write_text(text, encoding="utf-8")
+    return target
+
+
+def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
+    por_rel = por_path(home).as_posix()
+    session_root = (home/"work"/"aux_sessions").as_posix()
+
+    ch1 = [
+        "1) Role - Activation - Expectations",
+        "- You are Aux (PeerC), the on-demand third peer. PeerA/PeerB summon you for strategic corrections and heavy execution that stay reversible.",
+        "- Activation: orchestrator drops a bundle under .cccc/work/aux_sessions/<session-id>/ containing POR.md, notes.txt, peer_message.txt, and any extra context.",
+        "- Rhythm: operate with the same evidence-first standards as the primary peers - small, testable moves and explicit next checks.",
+    ]
+    if aux_mode == "auto":
+        ch1.append("- Mode: auto - orchestrator may summon you automatically around contract/sign-off moments. Treat those requests as high priority.")
+    else:
+        ch1.append("- Mode: off - you will only run when a peer explicitly invokes you. Stay ready for ad-hoc calls.")
+
+    ch2 = [
+        "",
+        "2) Critical References & Inputs",
+        f"- POR.md - single source of direction (path: {por_rel}). Always reconcile the bundle against the latest POR before proposing actions.",
+        f"- Session bundle - {session_root}/<session-id>/",
+        "  - Read notes.txt first: it captures the ask, expectations, and any suggested commands.",
+        "  - peer_message.txt (when present) mirrors the triggering CLAIM/COUNTER/EVIDENCE; use it to align tone and scope.",
+        "  - Additional artifacts (logs, diffs, datasets) live alongside; cite exact paths in your outputs.",
+        "- This rules document - .cccc/rules/PEERC.md. Reference anchors from here in any summary you produce for the peers.",
+    ]
+
+    ch3 = [
+        "",
+        "3) Execution Cadence",
+        "- Intake",
+        "  - Read POR.md -> notes.txt -> peer_message.txt. Confirm the objective, constraints, and success criteria before editing.",
+        "- Plan",
+        "  - Break work into <=15-minute probes. Prefer deterministic scripts, focused diffs, or tight analyses over sprawling exploration.",
+        "- Build",
+        "  - Use .cccc/work/aux_sessions/<session-id>/ for all scratch files, analysis notebooks, and proposed diffs (e.g., store patches under `diffs/` or `patch.diff`).",
+        "  - Run validations as you go. Capture exact commands and 3-5 stable log lines in `<session-id>/logs/`.",
+        "- Wrap",
+        "  - Summarize the outcome in `<session-id>/outcome.md` (what changed, checks performed, residual risks, next suggestion).",
+        "  - Highlight any assumptions that still need falsification so the invoking peer can follow up.",
+    ]
+
+    ch4 = [
+        "",
+        "4) Deliverables & Boundaries",
+        "- Never edit .cccc/mailbox/** directly; the summoning peer integrates your artifacts into their next message.",
+        "- Keep diffs reversible and scoped (<=150 changed lines). If you create multiple options, name them clearly (e.g., option-a.patch, option-b.patch).",
+        "- Record every check you run (command + stable output) so peers can cite them as evidence.",
+        "- If you uncover strategic misalignment, document it succinctly in outcome.md with a proposed correction path keyed to POR.md sections.",
+    ]
+
+    text = "\n".join(["# PEERC Rules (Generated)", "", *ch1, *ch2, *ch3, *ch4, ""])
+    target = _rules_dir(home)/"PEERC.md"
     target.write_text(text, encoding="utf-8")
     return target
 
@@ -261,10 +367,13 @@ def ensure_rules_docs(home: Path):
         old = json.loads(stamp.read_text(encoding="utf-8"))
     except Exception:
         old = {}
-    if not (home/"rules"/"PEERA.md").exists() or not (home/"rules"/"PEERB.md").exists() or old.get("hash") != h:
+    if not (home/"rules"/"PEERA.md").exists() or not (home/"rules"/"PEERB.md").exists() or not (home/"rules"/"PEERC.md").exists() or old.get("hash") != h:
         ensure_por(home)  # make sure POR exists for path rendering
-        _write_rules_for_peer(home, "peerA")
-        _write_rules_for_peer(home, "peerB")
+        im_enabled = _is_im_enabled(home)
+        aux_mode = _aux_mode(home)
+        _write_rules_for_peer(home, "peerA", im_enabled=im_enabled, aux_mode=aux_mode)
+        _write_rules_for_peer(home, "peerB", im_enabled=im_enabled, aux_mode=aux_mode)
+        _write_rules_for_aux(home, aux_mode=aux_mode)
         try:
             stamp.write_text(json.dumps({"hash": h}, ensure_ascii=False), encoding="utf-8")
         except Exception:

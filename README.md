@@ -196,8 +196,8 @@ If these packages or tokens are missing, adapters exit fast with a clear error. 
 ## Plan-of-Record (POR)
 
 - `.cccc/state/POR.md` is the single source of truth for objectives, roadmap, active tasks, risks, and reflections.
-- PeerB（或启用的第三体）在每轮自检或方向变化时，通过 patch diff 更新这份文档；无需在其他位置重复记录。
-- 编排器和桥接端只会指向该文件；确保所有战略/决策信息集中在此，避免散落的笔记被遗忘。
+- PeerB (or the optional third agent) updates the document via patch diff at every self-check or when direction changes; no other source should duplicate it.
+- The orchestrator and bridges only point to this file; keep all strategic and decision context here so nothing goes missing.
 
 CLI prerequisites (summary)
 - Peer A = Claude Code; Peer B = Codex CLI. Install and log in as required by each vendor.

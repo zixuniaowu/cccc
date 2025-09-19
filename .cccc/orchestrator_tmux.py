@@ -25,9 +25,9 @@ PATCH_RE = re.compile(r"```(?:patch|diff)\s*([\s\S]*?)```", re.I)
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
 
-# Coach helper state
-COACH_MODES = {"off", "manual", "key_nodes"}
-COACH_WORK_ROOT_NAME = "coach_sessions"
+# Aux helper state
+AUX_MODES = {"off", "auto"}
+AUX_WORK_ROOT_NAME = "aux_sessions"
 
 # ---------- REV state helpers (lightweight) ----------
 def _rev_state_path(home: Path) -> Path:
@@ -1088,6 +1088,16 @@ def read_yaml(p: Path) -> Dict[str,Any]:
             d[k.strip()] = v.strip().strip('"\'')
         return d
 
+# helper for lightweight YAML write without introducing hard dependency at call sites
+def write_yaml(p: Path, obj: Dict[str, Any]) -> None:
+    try:
+        import yaml  # type: ignore
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(yaml.safe_dump(obj, allow_unicode=False, sort_keys=False), encoding="utf-8")
+    except Exception:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(obj, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+
 # Removed legacy file reader helper; config is loaded via read_yaml at startup.
 
 # ---------- ledger & policies ----------
@@ -1614,13 +1624,15 @@ def main(home: Path):
         _request_por_refresh(f"reset-{mode_norm}", force=True)
         return "Manual clear notice issued"
 
-    coach_conf = read_yaml(settings/"coach_helper.yaml") if (settings/"coach_helper.yaml").exists() else {}
-    helper_conf = (coach_conf.get("helper") or {}) if isinstance(coach_conf.get("helper"), dict) else {}
-    coach_command = str(helper_conf.get("command") or "").strip()
-    rate_limit_per_minute = int(coach_conf.get("rate_limit_per_minute") or 2)
+    aux_conf_path = settings/"aux_helper.yaml"
+    aux_conf = read_yaml(aux_conf_path) if aux_conf_path.exists() else {}
+
+    helper_conf = (aux_conf.get("helper") or {}) if isinstance(aux_conf.get("helper"), dict) else {}
+    aux_command = str(helper_conf.get("command") or "").strip()
+    rate_limit_per_minute = int(aux_conf.get("rate_limit_per_minute") or 2)
     if rate_limit_per_minute <= 0:
         rate_limit_per_minute = 1
-    coach_min_interval = 60.0 / rate_limit_per_minute
+    aux_min_interval = 60.0 / rate_limit_per_minute
 
     conversation_cfg = governance_cfg.get("conversation") if isinstance(governance_cfg.get("conversation"), dict) else {}
     reset_cfg = conversation_cfg.get("reset") if isinstance(conversation_cfg.get("reset"), dict) else {}
@@ -1632,21 +1644,60 @@ def main(home: Path):
     except Exception:
         conversation_reset_interval = 0
 
-    triggers_conf = coach_conf.get("triggers") if isinstance(coach_conf.get("triggers"), dict) else {}
-    coach_mode = str(triggers_conf.get("mode") or "off").lower()
-    if coach_mode not in COACH_MODES:
-        if coach_mode in ("on", "keynodes"):
-            coach_mode = "key_nodes"
-        else:
-            coach_mode = "off"
+    triggers_conf = aux_conf.get("triggers") if isinstance(aux_conf.get("triggers"), dict) else {}
+    mode_raw = str(triggers_conf.get("mode") or "off").lower().strip()
+    if mode_raw in ("auto", "on", "key_nodes", "keynodes", "manual"):
+        aux_mode = "auto"
+    else:
+        aux_mode = "off"
+
+    def _maybe_configure_aux() -> None:
+        nonlocal aux_conf, helper_conf, aux_command, aux_mode, rate_limit_per_minute, aux_min_interval
+        if not sys.stdin.isatty():
+            return
+        missing_config = not aux_conf_path.exists()
+        no_command = not aux_command
+        mode_disabled = aux_mode == "off"
+        if not (missing_config or no_command or mode_disabled):
+            return
+        print("\n[Aux] Auxiliary helper (PeerC) is not fully configured.")
+        print("[Aux] You can enable it now to offload decoupled tasks and high-level reviews.")
+        ans = read_console_line("Enable Aux now? [y/N]: ").strip().lower()
+        if ans not in {"y", "yes"}:
+            print("[Aux] Continuing with Aux disabled. You can run /aux on later.")
+            return
+        command = read_console_line("Command to invoke Aux (default: gemini): ").strip()
+        if not command:
+            command = "gemini"
+        rate_input = read_console_line("Max reminders per minute (default: 2): ").strip()
+        try:
+            rate_val = int(rate_input) if rate_input else 2
+        except Exception:
+            rate_val = 2
+        if rate_val <= 0:
+            rate_val = 2
+        aux_conf = {
+            "triggers": {"mode": "auto"},
+            "helper": {"command": command},
+            "rate_limit_per_minute": rate_val,
+        }
+        write_yaml(aux_conf_path, aux_conf)
+        helper_conf = aux_conf["helper"]
+        aux_command = command
+        rate_limit_per_minute = rate_val
+        aux_min_interval = 60.0 / rate_limit_per_minute
+        aux_mode = "auto"
+        print(f"[Aux] Enabled with command '{aux_command}' (rate {rate_limit_per_minute}/min).")
+
+    _maybe_configure_aux()
 
     default_reset_mode = conversation_reset_policy if conversation_reset_policy in ("compact", "clear") else "compact"
 
-    def _coach_state_path() -> Path:
-        return state/"coach_helper_state.json"
+    def _aux_state_path() -> Path:
+        return state/"aux_helper_state.json"
 
-    def _load_coach_state() -> Dict[str, Any]:
-        path = _coach_state_path()
+    def _load_aux_state() -> Dict[str, Any]:
+        path = _aux_state_path()
         if not path.exists():
             return {}
         try:
@@ -1655,37 +1706,41 @@ def main(home: Path):
         except Exception:
             return {}
 
-    def _persist_coach_state():
-        payload = json.dumps({"mode": coach_mode}, ensure_ascii=False, indent=2)
-        path = _coach_state_path()
+    def _persist_aux_state():
+        payload = json.dumps({"mode": aux_mode}, ensure_ascii=False, indent=2)
+        path = _aux_state_path()
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(payload, encoding="utf-8")
 
-    state_conf = _load_coach_state()
-    if state_conf.get("mode") in COACH_MODES:
-        coach_mode = state_conf.get("mode")
+    state_conf = _load_aux_state()
+    if isinstance(state_conf.get("mode"), str):
+        mode_raw = state_conf.get("mode").lower().strip()
+        if mode_raw in ("auto", "on", "key_nodes", "keynodes", "manual"):
+            aux_mode = "auto"
+        elif mode_raw in ("off", "disabled"):
+            aux_mode = "off"
 
-    coach_last_reason = ""
-    coach_last_reminder: Dict[str, float] = {"PeerA": 0.0, "PeerB": 0.0}
-    KEY_NODE_INTENTS = {"shape", "review", "contract", "release", "final", "accept"}
-    coach_work_root = home/"work"/COACH_WORK_ROOT_NAME
-    coach_work_root.mkdir(parents=True, exist_ok=True)
+    aux_last_reason = ""
+    aux_last_reminder: Dict[str, float] = {"PeerA": 0.0, "PeerB": 0.0}
+    AUX_TRIGGER_INTENTS = {"shape", "review", "contract", "release", "final", "accept"}
+    aux_work_root = home/"work"/AUX_WORK_ROOT_NAME
+    aux_work_root.mkdir(parents=True, exist_ok=True)
 
-    _persist_coach_state()
+    _persist_aux_state()
 
-    def _coach_snapshot() -> Dict[str, Any]:
+    def _aux_snapshot() -> Dict[str, Any]:
         return {
-            "mode": coach_mode,
-            "command": coach_command,
-            "last_reason": coach_last_reason,
+            "mode": aux_mode,
+            "command": aux_command,
+            "last_reason": aux_last_reason,
         }
 
-    def _prepare_coach_bundle(reason: str, stage: str, peer_label: Optional[str], payload: Optional[str]) -> Optional[Path]:
+    def _prepare_aux_bundle(reason: str, stage: str, peer_label: Optional[str], payload: Optional[str]) -> Optional[Path]:
         try:
             session_id = time.strftime("%Y%m%d-%H%M%S")
             if peer_label:
                 session_id += f"-{peer_label.lower()}"
-            session_path = coach_work_root/session_id
+            session_path = aux_work_root/session_id
             session_path.mkdir(parents=True, exist_ok=True)
             try:
                 por_snapshot = read_por_text(home)
@@ -1693,11 +1748,11 @@ def main(home: Path):
                 por_snapshot = ""
             (session_path/"POR.md").write_text(por_snapshot, encoding="utf-8")
             details: List[str] = []
-            details.append("# Coach Helper Context")
+            details.append("# Aux Helper Context")
             details.append(f"Reason: {reason}")
             details.append(f"Stage: {stage}")
-            if coach_command:
-                details.append(f"Suggested command: {coach_command}")
+            if aux_command:
+                details.append(f"Suggested command: {aux_command}")
             details.append("")
             details.append("## What you can do")
             details.append("- You may inspect repository files and `.cccc/work` artifacts as needed.")
@@ -1712,7 +1767,7 @@ def main(home: Path):
             details.append("# Pipe input")
             details.append("echo \"List open risks based on the current plan\" | gemini")
             details.append("# Point to specific files or directories")
-            details.append("gemini -p \"@docs/ @.cccc/work/coach_sessions/{session_id} Provide a review summary\"")
+            details.append("gemini -p \"@docs/ @.cccc/work/aux_sessions/{session_id} Provide a review summary\"")
             details.append("```")
             details.append("")
             details.append("## Data in this bundle")
@@ -1726,13 +1781,13 @@ def main(home: Path):
         except Exception:
             return None
 
-    def _send_coach_reminder(reason: str, peers: Optional[List[str]] = None, *, stage: str = "manual", payload: Optional[str] = None, source_peer: Optional[str] = None):
-        nonlocal coach_last_reason
-        bundle_path = _prepare_coach_bundle(reason, stage, source_peer, payload)
+    def _send_aux_reminder(reason: str, peers: Optional[List[str]] = None, *, stage: str = "manual", payload: Optional[str] = None, source_peer: Optional[str] = None):
+        nonlocal aux_last_reason
+        bundle_path = _prepare_aux_bundle(reason, stage, source_peer, payload)
         targets = peers or ["PeerA", "PeerB"]
-        lines = ["Coach helper reminder.", f"Reason: {reason}."]
-        if coach_command:
-            lines.append(f"Run helper command: {coach_command}")
+        lines = ["Aux helper reminder.", f"Reason: {reason}."]
+        if aux_command:
+            lines.append(f"Run helper command: {aux_command}")
         lines.append("You may inspect `.cccc/work` resources created for this session and perform extended analysis.")
         lines.append("Share verdict/actions/checks in your next response.")
         if bundle_path:
@@ -1741,9 +1796,9 @@ def main(home: Path):
         for label in targets:
             payload = f"<FROM_SYSTEM>\n{message}\n</FROM_SYSTEM>\n"
             _send_handoff("System", label, payload)
-            coach_last_reminder[label] = time.time()
-        coach_last_reason = reason
-        log_ledger(home, {"from": "system", "kind": "coach_reminder", "peers": targets, "reason": reason})
+            aux_last_reminder[label] = time.time()
+        aux_last_reason = reason
+        log_ledger(home, {"from": "system", "kind": "aux_reminder", "peers": targets, "reason": reason})
         write_status(deliver_paused)
 
     def _infer_stage(msg_type: str, intent: str, has_acceptance: bool) -> str:
@@ -1751,12 +1806,12 @@ def main(home: Path):
             return "final_acceptance"
         if msg_type == "claim" and has_acceptance:
             return "contract_signoff"
-        if msg_type == "claim" and intent in KEY_NODE_INTENTS:
+        if msg_type == "claim" and intent in AUX_TRIGGER_INTENTS:
             return "plan_finalization"
         return "analysis"
 
-    def _maybe_trigger_coach_from_payload(peer_label: str, payload: str):
-        if coach_mode != "key_nodes" or not payload.strip():
+    def _maybe_trigger_aux_from_payload(peer_label: str, payload: str):
+        if aux_mode != "auto" or not payload.strip():
             return
         try:
             import yaml  # type: ignore
@@ -1769,17 +1824,17 @@ def main(home: Path):
         msg_type = str(data.get("type") or "").lower()
         has_acceptance = bool(data.get("acceptance"))
         reason = None
-        if msg_type == "claim" and (intent in KEY_NODE_INTENTS or has_acceptance):
+        if msg_type == "claim" and (intent in AUX_TRIGGER_INTENTS or has_acceptance):
             reason = f"{peer_label} claim intent={intent or 'n/a'}"
         elif msg_type == "evidence" and intent in {"release", "final", "signoff", "accept"}:
             reason = f"{peer_label} evidence intent={intent or 'n/a'}"
         if not reason:
             return
         now = time.time()
-        if now - coach_last_reminder.get(peer_label, 0.0) < coach_min_interval:
+        if now - aux_last_reminder.get(peer_label, 0.0) < aux_min_interval:
             return
         stage = _infer_stage(msg_type, intent, has_acceptance)
-        _send_coach_reminder(reason, stage=stage, payload=payload, source_peer=peer_label)
+        _send_aux_reminder(reason, stage=stage, payload=payload, source_peer=peer_label)
 
 
     cli_profiles = read_yaml(settings/"cli_profiles.yaml")
@@ -1969,7 +2024,7 @@ def main(home: Path):
                 pass
 
     def _process_im_commands():
-        nonlocal coach_mode
+        nonlocal aux_mode
         try:
             files = sorted(im_command_dir.glob("*.json"))
         except Exception:
@@ -1993,38 +2048,31 @@ def main(home: Path):
                     mode = str(args.get("mode") or default_reset_mode)
                     message = _perform_reset(mode, trigger=source, reason=f"{source}-{mode}")
                     result = {"ok": True, "message": message}
-                elif command in ("coach","aux"):
+                elif command == "aux":
                     action = str(args.get("action") or "").lower()
-                    # Normalize /aux on|off to coach remind key_nodes|off
-                    if command == "aux" and action in ("on","off","status",""):
-                        if action in ("", "status"):
-                            action = "status"
-                        else:
-                            action = "remind"
-                            args["value"] = "key_nodes" if args.get("action") == "on" else "off"
-                    if action in ("remind", "mode"):
-                        new_mode = str(args.get("value") or "").lower()
-                        if new_mode == "on":
-                            new_mode = "key_nodes"
-                        if new_mode not in COACH_MODES:
-                            raise ValueError("mode must be off/manual/key_nodes")
-                        coach_mode = new_mode
-                        _persist_coach_state()
+                    if action in ("", "status"):
+                        last = aux_last_reason or "-"
+                        cmd_display = aux_command or "-"
+                        result = {"ok": True, "message": f"Aux status: mode={aux_mode}, command={cmd_display}, last_reason={last}"}
+                    elif action in ("on", "off", "auto", "key_nodes", "manual"):
+                        new_mode = action
+                        if new_mode in ("on", "key_nodes", "manual"):
+                            new_mode = "auto"
+                        if new_mode not in AUX_MODES:
+                            raise ValueError("mode must be off/auto")
+                        aux_mode = new_mode
+                        _persist_aux_state()
                         write_status(deliver_paused)
-                        result = {"ok": True, "message": f"Aux/Coach mode set to {coach_mode}"}
-                    elif action == "status":
-                        last = coach_last_reason or "-"
-                        cmd_display = coach_command or "-"
-                        result = {"ok": True, "message": f"Aux/Coach status: mode={coach_mode}, command={cmd_display}, last_reason={last}"}
+                        result = {"ok": True, "message": f"Aux mode set to {aux_mode}"}
                     elif action == "reminder":
                         stage = str(args.get("stage") or "manual")
-                        _send_coach_reminder(stage)
-                        result = {"ok": True, "message": f"Aux/Coach reminder triggered ({stage})"}
+                        _send_aux_reminder(stage)
+                        result = {"ok": True, "message": f"Aux reminder triggered ({stage})"}
                     else:
-                        raise ValueError("unsupported coach action")
+                        raise ValueError("unsupported aux action")
                 elif command == "review":
-                    _send_coach_reminder("manual-review")
-                    result = {"ok": True, "message": "Coach review reminder triggered"}
+                    _send_aux_reminder("manual-review")
+                    result = {"ok": True, "message": "Aux review reminder triggered"}
                 elif command == "passthrough":
                     peer = str(args.get("peer") or "").lower()
                     text = str(args.get("text") or "").strip()
@@ -2281,13 +2329,18 @@ def main(home: Path):
     # Append a minimal, always-on reminder to end with one insight block (never verbose)
     try:
         INSIGHT_REMINDER = (
-            "Insight: add one new angle not restating body (lens + hook/assumption/risk/trade‑off/next/delta)."
+            "Insight: add one new angle not restating body (lens + hook/assumption/risk/trade-off/next/delta)."
         )
         if INSIGHT_REMINDER not in self_check_text:
-            # Ensure single trailing newline then append reminder as the last line
             self_check_text = self_check_text.rstrip("\n") + "\n" + INSIGHT_REMINDER
+        if aux_mode == "auto":
+            aux_prompts = (
+                "Note: Could Aux take over any task right now? Just trigger Aux for any task in which you think it would be helpful.\n"
+                " Does POR or your latest output need an Aux sanity check? If yes, schedule Aux review and note what must be verified."
+            )
+            if "Note: Could Aux" not in self_check_text:
+                self_check_text = self_check_text.rstrip("\n") + "\n" + aux_prompts
     except Exception:
-        # Fail-safe: keep original self_check_text
         pass
 
     def _receiver_map(name: str) -> Tuple[str, Dict[str,Any]]:
@@ -2598,7 +2651,7 @@ def main(home: Path):
             "mailbox_last": mbox_last,
             "handoff_filter_enabled": eff_filter,
             "por": por_status_snapshot(home),
-            "aux": _coach_snapshot(),
+            "aux": _aux_snapshot(),
             "reset": {
                 "policy": conversation_reset_policy,
                 "default_mode": default_reset_mode,
@@ -2836,7 +2889,7 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
-                    _maybe_trigger_coach_from_payload("PeerA", payload)
+                    _maybe_trigger_aux_from_payload("PeerA", payload)
                     # Hard gate: if PeerA owes a REV (due to prior COUNTER/QUESTION from PeerB),
                     # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
                     try:
@@ -2970,7 +3023,7 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":reason or "rfd-required","lines":lines})
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
-                        _maybe_trigger_coach_from_payload("PeerB", payload)
+                        _maybe_trigger_aux_from_payload("PeerB", payload)
                         # Hard gate: if PeerB owes a REV (due to prior COUNTER/QUESTION from PeerA),
                         # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
                         try:
@@ -3067,6 +3120,8 @@ def main(home: Path):
             print("  /pause | /resume        → pause/resume A↔B handoff")
             print("  /refresh                → re-inject SYSTEM prompt")
             print("  /reset compact|clear    → context maintenance (compact = fold context, clear = fresh restart)")
+            print("  /aux status|on|off|auto → inspect or set Aux availability")
+            print("  /review                → request Aux review bundle")
             print("  /echo on|off|<empty>    → console echo on/off/show")
             print("  q                       → quit orchestrator")
             # Reprint prompt
@@ -3097,28 +3152,28 @@ def main(home: Path):
                 print(f"[RESET] {exc}")
             continue
         if line == "/review":
-            _send_coach_reminder("manual-review")
+            _send_aux_reminder("manual-review")
             continue
-        if line.startswith("/coach"):
+        if line.startswith("/aux"):
             parts = line.split()
             sub = parts[1].lower() if len(parts) > 1 else "status"
-            if sub == "remind" and len(parts) >= 3:
-                new_mode = parts[2].lower()
-                if new_mode == "on":
-                    new_mode = "key_nodes"
-                if new_mode not in COACH_MODES:
-                    print("[COACH] Modes: off | manual | key_nodes")
+            if sub in ("on", "off", "auto", "key_nodes", "manual"):
+                new_mode = sub
+                if new_mode in ("on", "key_nodes", "manual"):
+                    new_mode = "auto"
+                if new_mode not in AUX_MODES:
+                    print("[AUX] Modes: off | auto")
                     continue
-                coach_mode = new_mode
-                _persist_coach_state()
+                aux_mode = new_mode
+                _persist_aux_state()
                 write_status(deliver_paused)
-                print(f"[COACH] Reminder mode set to {coach_mode}")
+                print(f"[AUX] Mode set to {aux_mode}")
             elif sub == "status":
-                cmd_display = coach_command or "-"
-                last = coach_last_reason or "-"
-                print(f"[COACH] mode={coach_mode} command={cmd_display} last_reason={last}")
+                cmd_display = aux_command or "-"
+                last = aux_last_reason or "-"
+                print(f"[AUX] mode={aux_mode} command={cmd_display} last_reason={last}")
             else:
-                print("[COACH] Usage: /coach remind off|manual|key_nodes  |  /coach status")
+                print("[AUX] Usage: /aux status|on|off|auto")
             continue
         if line == "/pause":
             deliver_paused = True

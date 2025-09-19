@@ -1061,42 +1061,23 @@ def main():
                     _append_log(outlog, f"[cmd] reset mode={mode} chat={chat_id} req={req_id}")
                 continue
 
-            if is_cmd(text, 'aux') or is_cmd(text, 'coach'):
+            if is_cmd(text, 'aux'):
                 parts = text.split()
                 action = parts[1].lower() if len(parts) > 1 else 'status'
-                # Normalize /aux on|off to coach remind key_nodes|off
-                if parts and parts[0].lstrip('/').lower().startswith('aux'):
-                    if action in ('on','off'):
-                        result, req_id = _enqueue_im_command('aux', {'action': action}, source='telegram', chat_id=chat_id)
-                    else:
-                        result, req_id = _enqueue_im_command('aux', {'action': 'status'}, source='telegram', chat_id=chat_id)
-                    reply = (result.get('message') if result and result.get('ok') else
-                             (f"Command error: {result.get('message')}" if result else f"Command queued (id={req_id})."))
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
-                    _append_log(outlog, f"[cmd] aux action={action} chat={chat_id} req={req_id}")
+                if action not in ('on', 'off', 'status'):
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /aux status|on|off'}, timeout=15)
+                    _append_log(outlog, f"[cmd] aux invalid action={action} chat={chat_id}")
                     continue
-                if action == 'status':
-                    result, req_id = _enqueue_im_command('coach', {'action': 'status'}, source='telegram', chat_id=chat_id)
-                    if result and result.get('ok'):
-                        reply = result.get('message') or 'Coach status fetched.'
-                    elif result:
-                        reply = f"Coach status error: {result.get('message')}"
-                    else:
-                        reply = f"Coach status pending (id={req_id})."
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
-                elif action == 'remind' and len(parts) >= 3:
-                    value = parts[2].lower()
-                    result, req_id = _enqueue_im_command('coach', {'action': 'remind', 'value': value}, source='telegram', chat_id=chat_id)
-                    if result and result.get('ok'):
-                        reply = result.get('message') or f'Coach mode set to {value}.'
-                    elif result:
-                        reply = f"Coach command error: {result.get('message')}"
-                    else:
-                        reply = f"Coach command queued (id={req_id})."
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                payload = {'action': action}
+                result, req_id = _enqueue_im_command('aux', payload, source='telegram', chat_id=chat_id)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'Aux command applied.'
+                elif result:
+                    reply = f"Aux command error: {result.get('message')}"
                 else:
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /aux status|on|off  (alias: /coach status | /coach remind off|manual|key_nodes)'}, timeout=15)
-                _append_log(outlog, f"[cmd] coach action={action} chat={chat_id}")
+                    reply = f"Aux command queued (id={req_id})."
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                _append_log(outlog, f"[cmd] aux action={action} chat={chat_id} req={req_id}")
                 continue
 
             if is_cmd(text, 'review'):

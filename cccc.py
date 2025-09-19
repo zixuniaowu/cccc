@@ -344,7 +344,7 @@ def main():
                 if not env.get(bt_env):
                     v = os.environ.get(bt_env, '')
                     if v: env[bt_env] = v; src = (src or '') + f" bot_token=env:{bt_env}"
-                # Allow outbound-only when仅 bot_token; inbound需要app_token
+                # Allow outbound-only when only a bot token is present; inbound requires an app token
                 if not env.get(bt_env):
                     print("[BRIDGE] Slack bot token missing; set slack.yaml bot_token or env SLACK_BOT_TOKEN."); return
             elif name == 'discord':
@@ -354,7 +354,8 @@ def main():
                 if not env.get(be):
                     v = os.environ.get(be, '')
                     if v: env[be] = v; src = f"env:{be}"
-                # Discord 需要有效的 Bot Token；否则退出
+                # Discord requires a valid Bot Token; otherwise exit
+
             # Run from project root
             p = subprocess.Popen([sys.executable, str(script)], env=env, cwd=str(Path.cwd()), start_new_session=True)
             pid_path.write_text(str(p.pid), encoding='utf-8')

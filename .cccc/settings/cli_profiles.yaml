@@ -60,7 +60,7 @@ delivery:
   # --- periodic self-check ---
   self_check_every_handoffs: 12   # Push a self-check after N handoffs (0=disable)
   self_check_text: |-
-    [Self-check] Briefly answer (≤2 lines each):
+    [Self-check] Briefly answer (<=2 lines each):
     1) Any drift from goal?
     2) What remains unclear? Any new confusion? Any better ideas?
     3) What was missed?
