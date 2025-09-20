@@ -103,8 +103,10 @@ def _smart_decode(raw: bytes) -> Tuple[str, str, bool]:
     # UTF-8 salvage with replacement (prefer this over mojibake when content is mostly ASCII)
     try:
         tmp = raw.decode("utf-8", errors="replace")
-        # Heuristic: prefer salvage if replacement ratio is low and ASCII share is high
         rep = tmp.count("\ufffd")
+        if rep == 0:
+            return tmp, "utf-8", False
+        # Heuristic: prefer salvage if replacement ratio is low and ASCII share is high
         ascii_count = sum(1 for ch in tmp if ord(ch) < 128)
         total = max(1, len(tmp))
         if (rep / total) <= 0.02 and (ascii_count / total) >= 0.6:
@@ -143,26 +145,23 @@ def read_if_changed(path: Path, last_sha: str) -> Tuple[bool, str, str]:
     try:
         raw = path.read_bytes()
         text, enc, diag = _smart_decode(raw)
-        # Emit a lightweight diagnostic on suspicious encoding (no raw content)
-        if diag or (enc.startswith('latin1') or 'ignore' in enc or enc.startswith('gb')):
-            # home = path.parents[2]; state dir under it
-            try:
-                home = path.parents[2]
-                # Log a short byte prefix (hex) for forensics (no content leakage)
-                prefix = raw[:24].hex()
-                nul_ratio = (raw.count(b"\x00") / max(1, len(raw)))
-                _ledger_append(home/"state", {
-                    "kind":"mailbox-diag", "file": str(path), "encoding": enc,
-                    "bytes": len(raw), "prefix_hex": prefix, "nul_ratio": round(nul_ratio,4)
-                })
-            except Exception:
-                pass
     except Exception:
         return False, "", last_sha
     text = text.strip()
     if not text:
         return False, "", last_sha
     sha = sha256_text(text)
+    if (diag or (enc.startswith('latin1') or 'ignore' in enc or enc.startswith('gb'))) and sha != last_sha:
+        try:
+            home = path.parents[2]
+            prefix = raw[:24].hex()
+            nul_ratio = (raw.count(b"\x00") / max(1, len(raw)))
+            _ledger_append(home/"state", {
+                "kind":"mailbox-diag", "file": str(path), "encoding": enc,
+                "bytes": len(raw), "prefix_hex": prefix, "nul_ratio": round(nul_ratio,4)
+            })
+        except Exception:
+            pass
     if sha != last_sha:
         return True, text, sha
     return False, "", last_sha
