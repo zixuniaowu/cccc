@@ -279,6 +279,41 @@ def _inbox_dir(home: Path, receiver_label: str) -> Path:
 def _processed_dir(home: Path, receiver_label: str) -> Path:
     return home/"mailbox"/_peer_folder_name(receiver_label)/"processed"
 
+def _patches_archive_dir(home: Path, receiver_label: str) -> Path:
+    d = _processed_dir(home, receiver_label)/"patches"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+def _short_sha(text: str) -> str:
+    try:
+        return hashlib.sha1(text.encode('utf-8', errors='ignore')).hexdigest()[:8]
+    except Exception:
+        return f"{int(time.time())}"
+
+def _archive_patch(home: Path, receiver_label: str, patch: str, reason: str) -> Path:
+    """Archive a processed patch under processed/patches with reason tag.
+    Returns the archive path.
+    """
+    ts = time.strftime('%Y%m%d-%H%M%S')
+    name = f"{ts}__{reason}__{_short_sha(patch)}.patch"
+    out = _patches_archive_dir(home, receiver_label)/name
+    try:
+        out.write_text(patch, encoding='utf-8')
+    except Exception:
+        pass
+    try:
+        log_ledger(home, {"from": receiver_label, "kind": "patch-archive", "reason": reason, "file": str(out)})
+    except Exception:
+        pass
+    return out
+
+def _clear_mailbox_patch_file(home: Path, receiver_label: str):
+    try:
+        peer = _peer_folder_name(receiver_label)
+        (home/"mailbox"/peer/"patch.diff").write_text("", encoding='utf-8')
+    except Exception:
+        pass
+
 def _next_seq_for_inbox(inbox: Path, processed: Path) -> str:
     def _max_seq_in(d: Path) -> int:
         mx = 0
@@ -2902,34 +2937,53 @@ def main(home: Path):
                     else:
                         log_ledger(home, {"from":"PeerA","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
                 if events["peerA"].get("patch"):
-                    norm = normalize_mailbox_patch(events["peerA"]["patch"]) or ""
+                    raw_patch = events["peerA"]["patch"]
+                    norm = normalize_mailbox_patch(raw_patch) or ""
                     if not norm:
-                        print("[PATCH] Skipped: patch.diff is not a unified diff or contains invalid content")
+                        print("[PATCH] Invalid: not a unified diff or contains invalid content")
+                        _archive_patch(home, "PeerA", raw_patch, "invalid-diff")
+                        _clear_mailbox_patch_file(home, "PeerA")
+                        _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPatch invalid: not a standard unified diff. Use fenced ```diff or diff --git headers (see rules #message-skeleton).\n</FROM_SYSTEM>\n")
                     else:
                         patch = norm
                         print_block("PeerA patch", "Preflight …")
                         lines = count_changed_lines(patch)
-                        allowed, reason = True, None
-                        # Path allowlist check
+                        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
                         paths = extract_paths_from_patch(patch)
-                        if not allowed_by_policies(paths, policies):
+                        if lines > max_lines:
+                            log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"too-many-lines","lines":lines});
+                            _archive_patch(home, "PeerA", patch, "too-many-lines")
+                            _clear_mailbox_patch_file(home, "PeerA")
+                            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\nPatch rejected: changed lines {lines} > {max_lines}. Split into smaller diffs.\n</FROM_SYSTEM>\n")
+                        elif not allowed_by_policies(paths, policies):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
+                            _archive_patch(home, "PeerA", patch, "path-not-allowed")
+                            _clear_mailbox_patch_file(home, "PeerA")
+                            _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPatch touches disallowed paths. Adjust to allowed_paths or seek approval.\n</FROM_SYSTEM>\n")
                         else:
                             ok,err = git_apply_check(patch)
                             if not ok:
                                 print("[PATCH] Preflight failed:\n"+err.strip())
                                 log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                                _archive_patch(home, "PeerA", patch, "precheck-fail")
+                                _clear_mailbox_patch_file(home, "PeerA")
+                                _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPrecheck failed: patch does not match current baseline. Pull latest or reduce scope.\n</FROM_SYSTEM>\n")
                             else:
                                 ok2,err2 = git_apply(patch)
                                 if not ok2:
                                     print("[PATCH] Apply failed:\n"+err2.strip())
                                     log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                                    _archive_patch(home, "PeerA", patch, "apply-fail")
+                                    _clear_mailbox_patch_file(home, "PeerA")
+                                    _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nApply failed: conflicts with current tree. Rebase or split into smaller diffs.\n</FROM_SYSTEM>\n")
                                 else:
                                     try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply patch (mailbox)")
                                     log_ledger(home, {"from":"PeerA","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
-                            mbox_counts["peerA"]["patch"] += 1
-                            _ack_receiver("PeerA", events["peerA"].get("patch"))
-                            last_event_ts["PeerA"] = time.time()
+                                    _archive_patch(home, "PeerA", patch, "applied")
+                                    _clear_mailbox_patch_file(home, "PeerA")
+                        mbox_counts["peerA"]["patch"] += 1
+                        _ack_receiver("PeerA", raw_patch)
+                        last_event_ts["PeerA"] = time.time()
                 # PeerB events
                 if events["peerB"].get("to_user"):
                     # Removed soft REV reminder in favor of hard gate on to_peer
@@ -3033,32 +3087,53 @@ def main(home: Path):
                         else:
                             log_ledger(home, {"from":"PeerB","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
                 if events["peerB"].get("patch"):
-                    norm = normalize_mailbox_patch(events["peerB"]["patch"]) or ""
+                    raw_patch = events["peerB"]["patch"]
+                    norm = normalize_mailbox_patch(raw_patch) or ""
                     if not norm:
-                        print("[PATCH] Skipped: patch.diff is not a unified diff or contains invalid content")
+                        print("[PATCH] Invalid: not a unified diff or contains invalid content")
+                        _archive_patch(home, "PeerB", raw_patch, "invalid-diff")
+                        _clear_mailbox_patch_file(home, "PeerB")
+                        _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPatch invalid: not a standard unified diff. Use fenced ```diff or diff --git headers (see rules #message-skeleton).\n</FROM_SYSTEM>\n")
                     else:
                         patch = norm
                         print_block("PeerB patch", "Preflight …")
                         lines = count_changed_lines(patch)
+                        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
                         paths = extract_paths_from_patch(patch)
-                        if not allowed_by_policies(paths, policies):
+                        if lines > max_lines:
+                            log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":"too-many-lines","lines":lines});
+                            _archive_patch(home, "PeerB", patch, "too-many-lines")
+                            _clear_mailbox_patch_file(home, "PeerB")
+                            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\nPatch rejected: changed lines {lines} > {max_lines}. Split into smaller diffs.\n</FROM_SYSTEM>\n")
+                        elif not allowed_by_policies(paths, policies):
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
+                            _archive_patch(home, "PeerB", patch, "path-not-allowed")
+                            _clear_mailbox_patch_file(home, "PeerB")
+                            _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPatch touches disallowed paths. Adjust to allowed_paths or seek approval.\n</FROM_SYSTEM>\n")
                         else:
                             ok,err = git_apply_check(patch)
                             if not ok:
                                 print("[PATCH] Preflight failed:\n"+err.strip())
                                 log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                                _archive_patch(home, "PeerB", patch, "precheck-fail")
+                                _clear_mailbox_patch_file(home, "PeerB")
+                                _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPrecheck failed: patch does not match current baseline. Pull latest or reduce scope.\n</FROM_SYSTEM>\n")
                             else:
                                 ok2,err2 = git_apply(patch)
                                 if not ok2:
                                     print("[PATCH] Apply failed:\n"+err2.strip())
                                     log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
+                                    _archive_patch(home, "PeerB", patch, "apply-fail")
+                                    _clear_mailbox_patch_file(home, "PeerB")
+                                    _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nApply failed: conflicts with current tree. Rebase or split into smaller diffs.\n</FROM_SYSTEM>\n")
                                 else:
                                     try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply patch (mailbox)")
                                     log_ledger(home, {"from":"PeerB","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
-                            mbox_counts["peerB"]["patch"] += 1
-                            _ack_receiver("PeerB", events["peerB"].get("patch"))
-                            last_event_ts["PeerB"] = time.time()
+                                    _archive_patch(home, "PeerB", patch, "applied")
+                                    _clear_mailbox_patch_file(home, "PeerB")
+                        mbox_counts["peerB"]["patch"] += 1
+                        _ack_receiver("PeerB", raw_patch)
+                        last_event_ts["PeerB"] = time.time()
                 # Persist index
                 mbox_idx.save()
                 # Refresh status for panel
