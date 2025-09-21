@@ -74,7 +74,7 @@ delivery:
     Please add refs to the exact rule item you follow (file + section), e.g., .cccc/rules/PEER*.md#mailbox-contract.
     Continue only after answering.
   # Context maintenance cadence: every N self-check cycles, run /compact + SYSTEM reinjection (0=disable)
-  context_compact_every_self_checks: 5
+  context_compact_every_self_checks: 3
   # --- mailbox pull + nudge mode ---
   mailbox_pull_enabled: true      # Enable inbox + NUDGE (instead of direct paste)
   inbox_dirname: "inbox"          # Inbox dir (relative to .cccc/mailbox/<peer>/)

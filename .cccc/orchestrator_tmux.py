@@ -2083,6 +2083,10 @@ def main(home: Path):
                     else:
                         raise ValueError("unknown peer")
                     _send_raw_to_cli(home, label, text, modeA, modeB, left, right)
+                    try:
+                        log_ledger(home, {"from": source, "kind": "im-passthrough", "to": label, "chars": len(text)})
+                    except Exception:
+                        pass
                     result = {"ok": True, "message": f"Command sent to {label}"}
                 else:
                     raise ValueError("unknown command")
