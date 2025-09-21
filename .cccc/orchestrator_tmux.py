@@ -2966,7 +2966,14 @@ def main(home: Path):
                         print("[PATCH] Invalid: not a unified diff or contains invalid content")
                         _archive_patch(home, "PeerA", raw_patch, "invalid-diff")
                         _clear_mailbox_patch_file(home, "PeerA")
-                        _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPatch invalid: not a standard unified diff. Use fenced ```diff or diff --git headers (see rules #message-skeleton).\n</FROM_SYSTEM>\n")
+                        tip = (
+                            "<FROM_SYSTEM>\n"
+                            "Patch invalid (not a unified diff). Follow rules #diff-template. Minimal form:\n"
+                            "```diff\n--- a/.cccc/state/POR.md\n+++ b/.cccc/state/POR.md\n@@ -1,1 +1,1 @@\n-Old\n+New\n```\n"
+                            "Do not include *** Begin Patch/Update File lines.\n"
+                            "</FROM_SYSTEM>\n"
+                        )
+                        _send_handoff("System", "PeerA", tip)
                     else:
                         patch = norm
                         print_block("PeerA patch", "Preflight …")
@@ -2982,7 +2989,14 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
                             _archive_patch(home, "PeerA", patch, "path-not-allowed")
                             _clear_mailbox_patch_file(home, "PeerA")
-                            _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPatch touches disallowed paths. Adjust to allowed_paths or seek approval.\n</FROM_SYSTEM>\n")
+                            allow_hint = ", ".join((policies.get("patch_queue",{}) or {}).get("allowed_paths", []) or ["**"])
+                            msg = (
+                                "<FROM_SYSTEM>\n"
+                                "Patch rejected: path not allowed by policy.\n"
+                                f"Allowed patterns: {allow_hint}. Note: .cccc/work/** should NOT go through patch.\n"
+                                "</FROM_SYSTEM>\n"
+                            )
+                            _send_handoff("System", "PeerA", msg)
                         else:
                             ok,err = git_apply_check(patch)
                             if not ok:
@@ -2990,7 +3004,7 @@ def main(home: Path):
                                 log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                                 _archive_patch(home, "PeerA", patch, "precheck-fail")
                                 _clear_mailbox_patch_file(home, "PeerA")
-                                _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPrecheck failed: patch does not match current baseline. Pull latest or reduce scope.\n</FROM_SYSTEM>\n")
+                                _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPrecheck failed: patch does not match current baseline. Pull latest or reduce scope; keep unified diff format per rules #diff-template.\n</FROM_SYSTEM>\n")
                             else:
                                 ok2,err2 = git_apply(patch)
                                 if not ok2:
@@ -2998,7 +3012,7 @@ def main(home: Path):
                                     log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
                                     _archive_patch(home, "PeerA", patch, "apply-fail")
                                     _clear_mailbox_patch_file(home, "PeerA")
-                                    _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nApply failed: conflicts with current tree. Rebase or split into smaller diffs.\n</FROM_SYSTEM>\n")
+                                    _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nApply failed: conflicts with current tree. Update baseline or split into smaller diffs; keep unified diff format per rules #diff-template.\n</FROM_SYSTEM>\n")
                                 else:
                                     try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply patch (mailbox)")
                                     log_ledger(home, {"from":"PeerA","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
@@ -3116,7 +3130,14 @@ def main(home: Path):
                         print("[PATCH] Invalid: not a unified diff or contains invalid content")
                         _archive_patch(home, "PeerB", raw_patch, "invalid-diff")
                         _clear_mailbox_patch_file(home, "PeerB")
-                        _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPatch invalid: not a standard unified diff. Use fenced ```diff or diff --git headers (see rules #message-skeleton).\n</FROM_SYSTEM>\n")
+                        tip = (
+                            "<FROM_SYSTEM>\n"
+                            "Patch invalid (not a unified diff). Follow rules #diff-template. Minimal form:\n"
+                            "```diff\n--- a/.cccc/state/POR.md\n+++ b/.cccc/state/POR.md\n@@ -1,1 +1,1 @@\n-Old\n+New\n```\n"
+                            "Do not include *** Begin Patch/Update File lines.\n"
+                            "</FROM_SYSTEM>\n"
+                        )
+                        _send_handoff("System", "PeerB", tip)
                     else:
                         patch = norm
                         print_block("PeerB patch", "Preflight …")
@@ -3132,7 +3153,14 @@ def main(home: Path):
                             log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
                             _archive_patch(home, "PeerB", patch, "path-not-allowed")
                             _clear_mailbox_patch_file(home, "PeerB")
-                            _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPatch touches disallowed paths. Adjust to allowed_paths or seek approval.\n</FROM_SYSTEM>\n")
+                            allow_hint = ", ".join((policies.get("patch_queue",{}) or {}).get("allowed_paths", []) or ["**"])
+                            msg = (
+                                "<FROM_SYSTEM>\n"
+                                "Patch rejected: path not allowed by policy.\n"
+                                f"Allowed patterns: {allow_hint}. Note: .cccc/work/** should NOT go through patch.\n"
+                                "</FROM_SYSTEM>\n"
+                            )
+                            _send_handoff("System", "PeerB", msg)
                         else:
                             ok,err = git_apply_check(patch)
                             if not ok:
@@ -3140,7 +3168,7 @@ def main(home: Path):
                                 log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
                                 _archive_patch(home, "PeerB", patch, "precheck-fail")
                                 _clear_mailbox_patch_file(home, "PeerB")
-                                _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPrecheck failed: patch does not match current baseline. Pull latest or reduce scope.\n</FROM_SYSTEM>\n")
+                                _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPrecheck failed: patch does not match current baseline. Pull latest or reduce scope; keep unified diff format per rules #diff-template.\n</FROM_SYSTEM>\n")
                             else:
                                 ok2,err2 = git_apply(patch)
                                 if not ok2:
@@ -3148,7 +3176,7 @@ def main(home: Path):
                                     log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
                                     _archive_patch(home, "PeerB", patch, "apply-fail")
                                     _clear_mailbox_patch_file(home, "PeerB")
-                                    _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nApply failed: conflicts with current tree. Rebase or split into smaller diffs.\n</FROM_SYSTEM>\n")
+                                    _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nApply failed: conflicts with current tree. Update baseline or split into smaller diffs; keep unified diff format per rules #diff-template.\n</FROM_SYSTEM>\n")
                                 else:
                                     try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply patch (mailbox)")
                                     log_ledger(home, {"from":"PeerB","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
