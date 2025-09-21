@@ -420,6 +420,29 @@ def _write_inbox_message(home: Path, receiver_label: str, payload: str, mid: str
                     pass
     return seq, fpath
 
+# ---------- POR auto‑diff helper ----------
+def _por_file_path(home: Path) -> Path:
+    return home/"state"/"POR.md"
+
+def _mailbox_por_new_path(home: Path, peer_label: str) -> Path:
+    peer = _peer_folder_name(peer_label)
+    return home/"mailbox"/peer/"POR.new.md"
+
+def _make_unified_diff(path_rel: str, old_text: str, new_text: str) -> str:
+    """Build a minimal unified diff acceptable to git apply.
+    Includes a diff --git header plus ---/+++ and @@ hunks.
+    """
+    old_lines = [(ln if ln.endswith("\n") else ln+"\n") for ln in old_text.splitlines()]
+    new_lines = [(ln if ln.endswith("\n") else ln+"\n") for ln in new_text.splitlines()]
+    fromf = f"a/{path_rel}"; tof = f"b/{path_rel}"
+    # difflib.unified_diff returns header lines starting with ---/+++
+    diff_body = list(difflib.unified_diff(old_lines, new_lines, fromfile=fromf, tofile=tof, lineterm=""))
+    if not diff_body:
+        return ""
+    header = [f"diff --git {fromf} {tof}\n"]
+    return "".join(header + diff_body)
+    return seq, fpath
+
 def _nudge_state_path(home: Path, receiver_label: str) -> Path:
     peer = _peer_folder_name(receiver_label)
     return home/"state"/f"nudge.{peer}.json"
@@ -3021,6 +3044,51 @@ def main(home: Path):
                         mbox_counts["peerA"]["patch"] += 1
                         _ack_receiver("PeerA", raw_patch)
                         last_event_ts["PeerA"] = time.time()
+                # POR auto-diff (PeerA)
+                try:
+                    por_new = _mailbox_por_new_path(home, "PeerA")
+                    if por_new.exists():
+                        new_text = por_new.read_text(encoding='utf-8')
+                        try:
+                            old_text = _por_file_path(home).read_text(encoding='utf-8')
+                        except Exception:
+                            old_text = ""
+                        rel = ".cccc/state/POR.md"
+                        patch = _make_unified_diff(rel, old_text, new_text)
+                        if patch.strip():
+                            print_block("PeerA POR update", "Preflight …")
+                            lines = count_changed_lines(patch)
+                            max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
+                            paths = extract_paths_from_patch(patch)
+                            if lines > max_lines:
+                                _archive_patch(home, "PeerA", patch, "too-many-lines")
+                                _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\nPOR update rejected: changed lines {lines} > {max_lines}. Split into smaller edits.\n</FROM_SYSTEM>\n")
+                            elif not allowed_by_policies(paths, policies):
+                                _archive_patch(home, "PeerA", patch, "path-not-allowed")
+                                _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPOR update touches disallowed paths (policy).\n</FROM_SYSTEM>\n")
+                            else:
+                                ok,err = git_apply_check(patch)
+                                if not ok:
+                                    _archive_patch(home, "PeerA", patch, "precheck-fail")
+                                    _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPOR update precheck failed; update baseline or reduce scope.\n</FROM_SYSTEM>\n")
+                                else:
+                                    ok2,err2 = git_apply(patch)
+                                    if not ok2:
+                                        _archive_patch(home, "PeerA", patch, "apply-fail")
+                                        _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPOR update apply failed; rebase or split smaller.\n</FROM_SYSTEM>\n")
+                                    else:
+                                        try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply POR update (auto-diff)")
+                                        log_ledger(home, {"from":"PeerA","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
+                                        _archive_patch(home, "PeerA", patch, "applied")
+                        # move POR.new.md to processed for audit
+                        try:
+                            proc = _processed_dir(home, "PeerA"); proc.mkdir(parents=True, exist_ok=True)
+                            ts = time.strftime('%Y%m%d-%H%M%S')
+                            por_new.rename(proc/f"{ts}.POR.new.md")
+                        except Exception:
+                            por_new.unlink(missing_ok=True)
+                except Exception:
+                    pass
                 # PeerB events
                 if events["peerB"].get("to_user"):
                     # Removed soft REV reminder in favor of hard gate on to_peer
@@ -3185,6 +3253,51 @@ def main(home: Path):
                         mbox_counts["peerB"]["patch"] += 1
                         _ack_receiver("PeerB", raw_patch)
                         last_event_ts["PeerB"] = time.time()
+                # POR auto-diff (PeerB)
+                try:
+                    por_new = _mailbox_por_new_path(home, "PeerB")
+                    if por_new.exists():
+                        new_text = por_new.read_text(encoding='utf-8')
+                        try:
+                            old_text = _por_file_path(home).read_text(encoding='utf-8')
+                        except Exception:
+                            old_text = ""
+                        rel = ".cccc/state/POR.md"
+                        patch = _make_unified_diff(rel, old_text, new_text)
+                        if patch.strip():
+                            print_block("PeerB POR update", "Preflight …")
+                            lines = count_changed_lines(patch)
+                            max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
+                            paths = extract_paths_from_patch(patch)
+                            if lines > max_lines:
+                                _archive_patch(home, "PeerB", patch, "too-many-lines")
+                                _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\nPOR update rejected: changed lines {lines} > {max_lines}. Split into smaller edits.\n</FROM_SYSTEM>\n")
+                            elif not allowed_by_policies(paths, policies):
+                                _archive_patch(home, "PeerB", patch, "path-not-allowed")
+                                _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPOR update touches disallowed paths (policy).\n</FROM_SYSTEM>\n")
+                            else:
+                                ok,err = git_apply_check(patch)
+                                if not ok:
+                                    _archive_patch(home, "PeerB", patch, "precheck-fail")
+                                    _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPOR update precheck failed; update baseline or reduce scope.\n</FROM_SYSTEM>\n")
+                                else:
+                                    ok2,err2 = git_apply(patch)
+                                    if not ok2:
+                                        _archive_patch(home, "PeerB", patch, "apply-fail")
+                                        _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPOR update apply failed; rebase or split smaller.\n</FROM_SYSTEM>\n")
+                                    else:
+                                        try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply POR update (auto-diff)")
+                                        log_ledger(home, {"from":"PeerB","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
+                                        _archive_patch(home, "PeerB", patch, "applied")
+                        # move POR.new.md to processed
+                        try:
+                            proc = _processed_dir(home, "PeerB"); proc.mkdir(parents=True, exist_ok=True)
+                            ts = time.strftime('%Y%m%d-%H%M%S')
+                            por_new.rename(proc/f"{ts}.POR.new.md")
+                        except Exception:
+                            por_new.unlink(missing_ok=True)
+                except Exception:
+                    pass
                 # Persist index
                 mbox_idx.save()
                 # Refresh status for panel
