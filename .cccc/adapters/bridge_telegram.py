@@ -436,7 +436,7 @@ def main():
         res = tg_api('getUpdates', {
             'offset': offset,
             'timeout': 25,
-            'allowed_updates': json.dumps(["message", "edited_message", "callback_query"])  # type: ignore
+            'allowed_updates': json.dumps(["message", "edited_message", "channel_post", "callback_query"])  # type: ignore
         }, timeout=35)
         updates = []
         new_offset = offset
@@ -908,7 +908,7 @@ def main():
                 except Exception:
                     pass
                 continue
-            msg = u.get('message') or u.get('edited_message') or {}
+            msg = u.get('message') or u.get('edited_message') or u.get('channel_post') or {}
             chat = (msg.get('chat') or {})
             chat_id = int(chat.get('id', 0) or 0)
             chat_type = str(chat.get('type') or '')
@@ -949,8 +949,8 @@ def main():
             is_dm = (chat_type == 'private')
             route_source = text or caption
 
-            if text and re.match(r'^[abAB][!！]', text):
-                m = re.match(r'^([abAB])[!！]\s*(.*)$', text)
+            if text and re.match(r'^\s*[abAB][!！]', text):
+                m = re.match(r'^\s*([abAB])[!！]\s*(.*)$', text)
                 cmd_body = m.group(2).strip() if m else ""
                 if not cmd_body:
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: a! <command> or b! <command>'}, timeout=15)

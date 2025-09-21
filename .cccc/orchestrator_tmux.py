@@ -1862,7 +1862,10 @@ def main(home: Path):
         NUDGE_KEEPALIVE = bool(delivery_conf.get("nudge_keepalive", NUDGE_KEEPALIVE))
         NUDGE_BACKOFF_BASE_MS = float(delivery_conf.get("nudge_backoff_base_ms", NUDGE_BACKOFF_BASE_MS))
         NUDGE_BACKOFF_MAX_MS = float(delivery_conf.get("nudge_backoff_max_ms", NUDGE_BACKOFF_MAX_MS))
-        CONTEXT_COMPACT_EVERY_SELF_CHECKS = int(delivery_conf.get("context_compact_every_self_checks", CONTEXT_COMPACT_EVERY_SELF_CHECKS))
+        # Detect if delivery explicitly sets compact cadence; if so, do not let governance override it later
+        explicit_compact_key = "context_compact_every_self_checks"
+        explicit_compact_from_delivery = explicit_compact_key in (delivery_conf or {})
+        CONTEXT_COMPACT_EVERY_SELF_CHECKS = int(delivery_conf.get(explicit_compact_key, CONTEXT_COMPACT_EVERY_SELF_CHECKS))
     except Exception:
         pass
 
@@ -2324,8 +2327,13 @@ def main(home: Path):
     auto_reset_interval_cfg = conversation_reset_interval
     reset_interval_effective = 0
     if auto_reset_interval_cfg > 0 and self_check_enabled:
-        CONTEXT_COMPACT_EVERY_SELF_CHECKS = max(1, math.ceil(auto_reset_interval_cfg / self_check_every))
-        reset_interval_effective = self_check_every * CONTEXT_COMPACT_EVERY_SELF_CHECKS
+        # Only derive from governance when delivery did not explicitly specify cadence
+        try:
+            if not explicit_compact_from_delivery:
+                CONTEXT_COMPACT_EVERY_SELF_CHECKS = max(1, math.ceil(auto_reset_interval_cfg / self_check_every))
+                reset_interval_effective = self_check_every * CONTEXT_COMPACT_EVERY_SELF_CHECKS
+        except Exception:
+            pass
     elif auto_reset_interval_cfg > 0:
         reset_interval_effective = auto_reset_interval_cfg
     # Append a minimal, always-on reminder to end with one insight block (never verbose)
