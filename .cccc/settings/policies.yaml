@@ -1,5 +1,5 @@
 patch_queue:
-  max_diff_lines: 150
+  max_diff_lines: 500
   allowed_paths:
     - "src/**"
     - "tests/**"
