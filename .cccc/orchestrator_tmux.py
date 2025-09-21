@@ -223,6 +223,17 @@ def _append_suffix_inside(payload: str, suffix: str) -> str:
     except Exception:
         return payload
 
+def _plain_text_without_tags_and_mid(s: str) -> str:
+    try:
+        # Remove MID markers and XML-like tags so we can judge real content
+        s2 = re.sub(r"\[\s*MID\s*:[^\]]+\]", " ", s, flags=re.I)
+        s2 = re.sub(r"<[^>]+>", " ", s2)
+        # Collapse whitespace
+        s2 = re.sub(r"\s+", " ", s2)
+        return s2.strip()
+    except Exception:
+        return s
+
 def _send_raw_to_cli(home: Path, receiver_label: str, text: str,
                      modeA: str, modeB: str,
                      left_pane: str, right_pane: str):
@@ -2366,6 +2377,14 @@ def main(home: Path):
             queued[receiver_label].append({"sender": sender_label, "payload": payload})
             log_ledger(home, {"from": sender_label, "kind": "handoff-queued", "to": receiver_label, "chars": len(payload)})
             return
+        # Drop empty-body peer handoffs early (avoid forwarding suffix-only messages)
+        try:
+            plain = _plain_text_without_tags_and_mid(payload)
+            if not plain:
+                log_ledger(home, {"from": sender_label, "kind": "handoff-drop", "to": receiver_label, "reason": "empty-body", "chars": len(payload)})
+                return
+        except Exception:
+            pass
         # Append inbound suffix (per source: from_user/from_peer/from_system); keep backward-compatible string config
         def _suffix_for(receiver: str, sender: str) -> str:
             key = 'from_peer'
