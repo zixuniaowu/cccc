@@ -1,4 +1,0 @@
-conversation:
-  reset:
-    policy: compact        # compact | clear
-    interval_handoffs: 60  # auto-compact cadence in handoffs (0 = inherit legacy behaviour)
