@@ -949,6 +949,7 @@ def main():
             is_dm = (chat_type == 'private')
             route_source = text or caption
 
+            # Passthrough via a!/b! (DM recommended; in groups requires privacy off or @mention)
             if text and re.match(r'^\s*[abAB][!！]', text):
                 m = re.match(r'^\s*([abAB])[!！]\s*(.*)$', text)
                 cmd_body = m.group(2).strip() if m else ""
@@ -965,6 +966,25 @@ def main():
                         reply = f"Command queued (id={req_id})."
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
                     _append_log(outlog, f"[cmd] passthrough peer={peer_key} chat={chat_id} req={req_id}")
+                continue
+
+            # Slash passthrough aliases for group-friendly usage: /pa /pb [/pboth]
+            if is_cmd(text, 'pa') or is_cmd(text, 'pb') or is_cmd(text, 'pboth'):
+                pieces = text.split(None, 1)
+                body = pieces[1].strip() if len(pieces) > 1 else ''
+                if not body:
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /pa <command> or /pb <command> (optional: /pboth <command>)'}, timeout=15)
+                    continue
+                peer_key = 'a' if is_cmd(text, 'pa') else ('b' if is_cmd(text, 'pb') else 'both')
+                result, req_id = _enqueue_im_command('passthrough', {'peer': peer_key, 'text': body}, source='telegram', chat_id=chat_id)
+                if result and result.get('ok'):
+                    reply = result.get('message') or (f'Command sent to peer {peer_key.upper()}' if peer_key != 'both' else 'Command sent to both peers')
+                elif result:
+                    reply = f"Command error: {result.get('message')}"
+                else:
+                    reply = f"Command queued (id={req_id})."
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                _append_log(outlog, f"[cmd] passthrough peer={peer_key} chat={chat_id} req={req_id}")
                 continue
 
             stripped = text.strip()
@@ -1288,7 +1308,8 @@ def main():
                 continue
             if is_cmd(text, 'help'):
                 help_txt = (
-                    "Usage: a:/b:/both: or /a /b /both to route to PeerA/PeerB/both; a! <cmd>/b! <cmd> passthrough to CLI;\n"
+                    "Routing: a:/b:/both: or /a /b /both → deliver to peers;\n"
+                    "Passthrough (CLI): a! <cmd>/b! <cmd> (DM recommended) or /pa <cmd>/pb <cmd> [/pboth <cmd>] in groups;\n"
                     "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux status|on|off; /review trigger Aux reminder;\n"
                     "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
                     "/showpeers on|off toggle Peer<->Peer summary; /files [in|out] [N] list recent files; /file N view."

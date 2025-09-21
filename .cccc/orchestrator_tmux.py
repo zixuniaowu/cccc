@@ -2080,17 +2080,21 @@ def main(home: Path):
                     if not text:
                         raise ValueError("empty command text")
                     if peer in ("a", "peera", "peer_a"):
-                        label = "PeerA"
+                        labels = ["PeerA"]
                     elif peer in ("b", "peerb", "peer_b"):
-                        label = "PeerB"
+                        labels = ["PeerB"]
+                    elif peer in ("both", "ab", "ba"):
+                        labels = ["PeerA", "PeerB"]
                     else:
                         raise ValueError("unknown peer")
-                    _send_raw_to_cli(home, label, text, modeA, modeB, left, right)
-                    try:
-                        log_ledger(home, {"from": source, "kind": "im-passthrough", "to": label, "chars": len(text)})
-                    except Exception:
-                        pass
-                    result = {"ok": True, "message": f"Command sent to {label}"}
+                    for label in labels:
+                        _send_raw_to_cli(home, label, text, modeA, modeB, left, right)
+                        try:
+                            log_ledger(home, {"from": source, "kind": "im-passthrough", "to": label, "chars": len(text)})
+                        except Exception:
+                            pass
+                    msg = f"Command sent to {' & '.join(labels)}"
+                    result = {"ok": True, "message": msg}
                 else:
                     raise ValueError("unknown command")
             except Exception as exc:
