@@ -11,13 +11,16 @@ POR_TEMPLATE = """# POR Summary
 - Objective: _fill in_
 - Current Focus: _fill in_
 - Key Constraints: _fill in_
-- Acceptance Benchmarks: _fill in_
+- Acceptance Benchmarks (tick items; reference when declaring Done):
+  - [ ] _criterion 1_
+  - [ ] _criterion 2_
 
 ## Roadmap & Milestones
 - _Describe upcoming milestones, checkpoints, dependencies._
 
 ## Active Tasks & Next Steps
-- _List concrete next actions with owners or expectations._
+- _List concrete next actions; include owner: PeerA|PeerB._
+- _Example_: <task title> (owner: PeerA)
 
 ## Risks & Mitigations
 - _Enumerate key risks, weak signals, mitigation plans._
@@ -72,3 +75,36 @@ def por_status_snapshot(home: Path) -> Dict[str, str]:
         "updated_at": updated,
         "summary": summary,
     }
+
+
+# --- Aux section management ---
+AUX_SECTION_TITLE = "## Aux Delegations - Subtasks & Meta-Review/Revise"
+
+def ensure_aux_section(home: Path) -> bool:
+    """Ensure the POR file contains the Aux delegations section.
+
+    Returns True if the file was modified (section appended), False otherwise.
+    This function is idempotent and only appends when the exact heading is missing.
+    """
+    path = ensure_por(home)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return False
+    if AUX_SECTION_TITLE in text:
+        return False
+    lines = [
+        "",
+        AUX_SECTION_TITLE,
+        "Maintain a short list of decoupled sub-tasks you intend to offload to Aux, and brief meta-review/revise passes.",
+        "Keep each item compact: what (one line), why (one line), optional acceptance.",
+        "After integrating Aux results, either remove the item or mark it done in place.",
+        "- [ ] <task — why — acceptance(optional)>",
+        "- [ ] <task — why — acceptance(optional)>",
+        "",
+    ]
+    try:
+        path.write_text(text.rstrip("\n") + "\n" + "\n".join(lines), encoding="utf-8")
+        return True
+    except Exception:
+        return False

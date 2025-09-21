@@ -2,7 +2,7 @@
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
-from por_manager import ensure_por, por_path
+from por_manager import ensure_por, por_path, ensure_aux_section
 import json
 
 def _read_yaml_or_json(p: Path) -> Dict[str, Any]:
@@ -42,7 +42,7 @@ def _calc_rules_hash(home: Path) -> str:
                 parts.append(fp.read_text(encoding="utf-8"))
             except Exception:
                 pass
-    payload = "\n".join(parts) + "\nGEN:4"  # bump suffix to invalidate older generations
+    payload = "\n".join(parts) + "\nGEN:6"  # bump suffix to invalidate older generations
     return hashlib.sha1(payload.encode("utf-8", errors="replace")).hexdigest()
 
 def _is_im_enabled(home: Path) -> bool:
@@ -148,8 +148,9 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - Purpose: goals / constraints / risks / next steps. Read before major actions. When direction changes or at phase closure, update POR via a patch diff. Do not duplicate POR content elsewhere.",
         "  - Structure (keep concise and current):",
         "    - Summary: Objective, Current Focus, Key Constraints, Acceptance Benchmarks.",
+        "      (Note: Ticked Acceptance items must be referenced when declaring Done.)",
         "    - Roadmap & Milestones.",
-        "    - Active Tasks & Next Steps.",
+        "    - Active Tasks & Next Steps (each item should include owner: PeerA|PeerB).",
         "    - Risks & Mitigations.",
         "    - Decisions, Alternatives & Rationale (choice/why/rollback).",
         "    - Reflections & Open Questions.",
@@ -174,6 +175,8 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - 4 Write the message (see Chapter 4 skeleton).",
         "  - 5 Write one insight (WHY + Next + refs to POR and this rules file; do not repeat the body).",
         "  - 6 If goals/constraints changed, update POR via a patch diff.",
+        "- Scope & Quality Contract (one‑liner before heavy tasks)",
+        "  - scale: depth=<sections|pages>, breadth=<axes>, rigor=<checks|tests>, aux_quota=≥<M>, target_size≈<N lines>, min_sources=≥<K>",
         "- Evidence & change budget",
         "  - Only diffs/tests/logs change the system. Keep patches ≤150 lines where possible; split large changes; avoid speculative big refactors. Always provide a minimal, reproducible check.",
         "- Collaboration guardrails {#guardrails}",
@@ -191,18 +194,27 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - Strategic checkpoint (top‑down): periodically scan goal ↔ constraints ↔ current path. If drift is detected, state a correction or call Aux for a brief sanity sweep (e.g., `gemini -p \"@project/ sanity‑check current plan vs POR\"`).",
         "  - Large/irreversible (interface, migration, release): add a one‑sentence decision note (choice, why, rollback) in the same message before landing.",
         "  - If a real risk exists, add a single `Risk:` line in the body with one‑line mitigation.",
+        "- Review micro‑templates (copy‑ready, compact)",
+        "  - Reset proposal (when broadly unsatisfactory, ≤8 lines):",
+        "    Why reset: <core misfit or gap (≤1 line each)>",
+        "    Salvage: <kept results/insights>",
+        "    New plan: <3 smallest, verifiable probes>",
+        "    Cost/Risks: <estimate/protections>",
+        "    Next: <one smallest action>",
+        "  - Approve‑as‑peer (acceptable but needs polish, ≤5 lines):",
+        "    Approve scope: <what you accept>",
+        "    One new angle: <risk/hook/smaller next>",
+        "    Smallest next: <one step>",
+        "    Refs: [POR.md#…, paths/logs]",
         "- NUDGE behavior (one-liner)",
         "  - On [NUDGE]: read the oldest inbox item; after processing, move it to processed/; continue until empty; reply only when blocked.",
     ]
     if aux_enabled:
         ch3 += [
-            "- Using Aux (PeerC) - compact usage {#aux}",
-            "  - When: offload decoupled subplans or request high-level sanity checks that keep the main loop sharp.",
-            "  - How: invoke silently during execution; Aux may write diffs or artifacts under .cccc/work/**. You remain accountable for integration.",
-            "  - CLI quickstarts:",
-            '    - gemini -p "Write a Python function" --yolo',
-            '    - gemini -p "@path/to/file.py Explain this code" --yolo',
-            '    - gemini -p "@project/ Summarize the system" --yolo',
+            "- Aux (PeerC) — Default Delegation {#aux}",
+            "  - Default: delegate execution of any decoupled sub-task to Aux; you manage review/revise and integration, and you own the final evidence.",
+            "  - If you choose not to use Aux, add one line in your insight — no-aux: <brief reason>. This is a soft nudge, not a gate.",
+            '  - One-liner command: gemini -p "<detailed goal +instruction +context>@<paths>" --yolo',
         ]
     else:
         ch3 += [
@@ -222,6 +234,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "- Writing rules (strict)",
         f"  - Update-only: always overwrite {target_list}; do NOT append or create new variants.",
         "  - Encoding: UTF‑8 (no BOM).",
+        "  - Do not claim ‘completed/done/finished’ unless you reference checked Acceptance items in POR.md and include minimal verifiable evidence (diff/test/stable logs).",
     ]
     if ascii_rule:
         ch4.append(ascii_rule)
@@ -349,6 +362,12 @@ def ensure_rules_docs(home: Path):
         _write_rules_for_peer(home, "peerA", im_enabled=im_enabled, aux_mode=aux_mode)
         _write_rules_for_peer(home, "peerB", im_enabled=im_enabled, aux_mode=aux_mode)
         _write_rules_for_aux(home, aux_mode=aux_mode)
+        # Append Aux section in POR only when Aux is enabled and the section does not exist yet
+        if aux_mode == "on":
+            try:
+                ensure_aux_section(home)
+            except Exception:
+                pass
         try:
             stamp.write_text(json.dumps({"hash": h}, ensure_ascii=False), encoding="utf-8")
         except Exception:

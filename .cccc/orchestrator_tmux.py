@@ -468,14 +468,15 @@ def _compose_nudge_suffix_for(peer_label: str,
     base = ((profileA.get('nudge_suffix') if peer_label == 'PeerA' else profileB.get('nudge_suffix')) or '').strip()
     aux_tip_local = ""
     if aux_mode == "on":
-        aux_tip_local = "Aux tip: Aux is active—before you dive deeper, consider offloading any decoupled slice (analysis, heavy prep, sanity sweep) to Aux via your gemini CLI."
+        aux_tip_local = "Aux tip: Aux is ON - delegate any decoupled sub-task now by running command: gemini -p \"<goal + context>@<paths>\" --yolo"
     combined = " ".join(filter(None, [base, aux_tip_local]))
     return combined.strip()
 
 def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
                 left_pane: str, right_pane: str,
                 profileA: Dict[str,Any], profileB: Dict[str,Any],
-                modeA: str, modeB: str):
+                modeA: str, modeB: str,
+                aux_mode: str = "off"):
     inbox_path = str(_inbox_dir(home, receiver_label))
     combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
     # Include concrete seq and mid to simplify ACK on CLI side
@@ -1372,7 +1373,7 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
             try:
                 seq, _ = _write_inbox_message(home, recv, text_with_mid, mid)
                 _send_nudge(home, recv, seq, mid, left, right, profileA, profileB,
-                            modeA, modeB)
+                            modeA, modeB, aux_mode)
                 try:
                     last_nudge_ts[recv] = time.time()
                 except Exception:
@@ -2286,7 +2287,7 @@ def main(home: Path):
             self_check_text = self_check_text.rstrip("\n") + "\n" + INSIGHT_REMINDER
         if aux_mode == "on":
             aux_prompts = (
-                "Note: Could Aux take over any task right now? Just trigger Aux for any task in which you think it would be helpful.\n"
+                "Note: Just trigger Aux for any task in which you think it would help.\n"
                 " Does POR or your latest output need an Aux sanity check? If yes, schedule Aux review and note what must be verified."
             )
             if "Note: Could Aux" not in self_check_text:
@@ -2338,22 +2339,25 @@ def main(home: Path):
             return False
 
     def _teach_intercept_missing_insight(home: Path, peer_label: str, payload: str) -> bool:
-        """Return True if intercepted and forwarded a system teaching message (payload not forwarded)."""
+        """Warn (do not block) when the trailing insight block is missing.
+
+        Returns False so that callers never suppress forwarding. We still send a
+        short system reminder to reinforce the invariant.
+        """
         if _has_trailing_insight_block(payload):
             return False
-        # Minimal 3-line message in Chinese; no templates or verbosity.
         peer_name = "peerA" if peer_label == "PeerA" else "peerB"
         tip = (
-            "Missing trailing ```insight fenced block in the last message you sent; end with one insight block (include a next step or a ≤10‑min micro‑experiment).\n"
+            "Missing trailing ```insight fenced block; please end each to_peer message with exactly one insight block (include a Next or a ≤10‑min micro‑experiment).\n"
             f"Overwrite .cccc/mailbox/{peer_name}/to_peer.md and resend (do NOT append).\n"
-            "If exploring, use kind: note with a one‑line next step to indicate direction."
+            "If exploring, use kind: note with a one‑line Next to indicate direction."
         )
         _send_handoff("System", peer_label, f"<FROM_SYSTEM>\n{tip}\n</FROM_SYSTEM>\n")
         try:
-            log_ledger(home, {"from": "system", "kind": "teach-intercept", "peer": peer_label, "reason": "missing-insight"})
+            log_ledger(home, {"from": "system", "kind": "teach-warn", "peer": peer_label, "reason": "missing-insight"})
         except Exception:
             pass
-        return True
+        return False
 
     def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None):
         nonlocal instr_counter, in_self_check
@@ -2396,7 +2400,7 @@ def main(home: Path):
         text_with_mid = wrap_with_mid(payload, mid)
         try:
             seq, _ = _write_inbox_message(home, receiver_label, text_with_mid, mid)
-            _send_nudge(home, receiver_label, seq, mid, left, right, profileA, profileB, modeA, modeB)
+            _send_nudge(home, receiver_label, seq, mid, left, right, profileA, profileB, modeA, modeB, aux_mode)
             try:
                 last_nudge_ts[receiver_label] = time.time()
             except Exception:
@@ -2783,6 +2787,10 @@ def main(home: Path):
                         pass
                 if events["peerA"].get("to_peer"):
                     payload = events["peerA"]["to_peer"].strip()
+                    try:
+                        log_ledger(home, {"from":"PeerA","kind":"to_peer-seen","route":"mailbox","chars":len(payload)})
+                    except Exception:
+                        pass
                     # Update REV state from PeerA's to_peer message
                     try:
                         _update_rev_state_from_to_peer(home, "PeerA", payload)
@@ -2860,6 +2868,10 @@ def main(home: Path):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                         _send_handoff("PeerA", "PeerB", wrapped)
                         try:
+                            log_ledger(home, {"from":"PeerA","to":"PeerB","kind":"to_peer-forward","route":"mailbox","chars":len(payload)})
+                        except Exception:
+                            pass
+                        try:
                             outbox_write(home, {"type":"to_peer_summary","from":"PeerA","to":"PeerB","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
                         except Exception:
                             pass
@@ -2914,6 +2926,10 @@ def main(home: Path):
                         pass
                 if events["peerB"].get("to_peer"):
                     payload = events["peerB"]["to_peer"].strip()
+                    try:
+                        log_ledger(home, {"from":"PeerB","kind":"to_peer-seen","route":"mailbox","chars":len(payload)})
+                    except Exception:
+                        pass
                     try:
                         _update_rev_state_from_to_peer(home, "PeerB", payload)
                     except Exception:
@@ -2982,6 +2998,10 @@ def main(home: Path):
                         if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
                             wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
                             _send_handoff("PeerB", "PeerA", wrapped)
+                            try:
+                                log_ledger(home, {"from":"PeerB","to":"PeerA","kind":"to_peer-forward","route":"mailbox","chars":len(payload)})
+                            except Exception:
+                                pass
                             try:
                                 outbox_write(home, {"type":"to_peer_summary","from":"PeerB","to":"PeerA","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
                             except Exception:

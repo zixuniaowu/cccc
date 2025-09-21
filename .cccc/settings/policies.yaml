@@ -8,6 +8,8 @@ patch_queue:
     - "README.md"
     - "AGENTS.md"
     - "PROJECT.md"
+    # Allow peers to maintain POR via patch diffs (authoritative planning doc)
+    - ".cccc/state/POR.md"
 rfd:
   trigger:
     both_confidence_below: 0.6
