@@ -679,7 +679,7 @@ def normalize_mailbox_patch(text: str) -> Optional[str]:
         # start after the first recognizable header
         start = 0
         for i, ln in enumerate(lines):
-            if ln.startswith('diff --git ') or ln.startswith('--- ') or ln.startswith('*** Begin Patch'):
+            if ln.startswith('diff --git ') or ln.startswith('--- '):
                 start = i; break
         if start > 0:
             lines = lines[start:]
@@ -691,6 +691,9 @@ def normalize_mailbox_patch(text: str) -> Optional[str]:
         )
         kept = []
         for ln in lines:
+            # Drop apply_patch meta-lines like *** Begin Patch / *** Update File etc.
+            if ln.startswith('*** '):
+                continue
             if ln.startswith(allowed_prefixes):
                 kept.append(ln)
             # ignore mailbox banners and UI traces
@@ -1171,8 +1174,12 @@ def outbox_write(home: Path, event: Dict[str,Any]) -> Dict[str,Any]:
 
 def allowed_by_policies(paths: List[str], policies: Dict[str,Any]) -> bool:
     allowed = policies.get("patch_queue",{}).get("allowed_paths",["**"])
+    def _norm(p: str) -> str:
+        return p[2:] if (p.startswith('a/') or p.startswith('b/')) else p
     for pth in paths:
-        if not any(fnmatch.fnmatch(pth,pat) for pat in allowed):
+        p1 = pth
+        p2 = _norm(pth)
+        if not any(fnmatch.fnmatch(p1,pat) or fnmatch.fnmatch(p2,pat) for pat in allowed):
             print(f"[POLICY] Path not allowed: {pth}")
             return False
     return True
