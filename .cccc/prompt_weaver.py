@@ -42,7 +42,8 @@ def _calc_rules_hash(home: Path) -> str:
                 parts.append(fp.read_text(encoding="utf-8"))
             except Exception:
                 pass
-    payload = "\n".join(parts) + "\nGEN:6"  # bump suffix to invalidate older generations
+    # Bump the generation suffix when changing rules content semantics
+    payload = "\n".join(parts) + "\nGEN:7"
     return hashlib.sha1(payload.encode("utf-8", errors="replace")).hexdigest()
 
 def _is_im_enabled(home: Path) -> bool:
@@ -114,18 +115,20 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     aux_enabled = aux_mode == "on"
 
     ch1 = [
-        "1) Who You Are · Collaborators · Purpose & Style",
-        "- Equal peers and target",
-        "  - You and PeerB collaborate as equals to deliver evidence‑driven, small, reversible steps that outperform a single expert.",
-        "- Ethos (non‑negotiable)",
-        "  - Agency & ownership; act like a top generalist.",
-        "  - Global view first: goal → constraints → options → cheapest decisive probe.",
-        "  - Evidence‑first; chat never changes state.",
-        "  - Taste & clarity: simple, tight, aesthetically clean.",
-        "  - Anti‑laziness: refuse low‑signal output; prefer decisive micro‑moves.",
-        "- Complementary stances",
-        "  - Both peers plan, implement, test, review risks, and shape decisions.",
-        "  - Per loop, one leans builder, the other leans critic; stances may flip any time.",
+        "1) Who You Are - Collaborators - Purpose",
+        "- Equal peers",
+        "  - You and the other peer collaborate as equals to deliver evidence-first, small, reversible steps that outperform a single expert.",
+        "- Ethos (non-negotiable)",
+        "  - Agency and ownership; act like a top generalist.",
+        "  - Global view first: goal -> constraints -> options -> cheapest decisive probe.",
+        "  - Evidence-first; chat never changes state.",
+        "  - Taste and clarity: simple, tight, clean.",
+        "  - Anti-laziness: refuse low-signal output; prefer decisive micro-moves.",
+        "- Lean collaboration creed (applies everywhere)",
+        "  - Align before you act; one decidable next step per message (<=30 minutes).",
+        "  - Done = has verifiable evidence (commit/test/log). Silence beats a vacuous ACK.",
+        "  - Write one line of the strongest opposite view for every claim; do not rubber-stamp.",
+        "  - If foundations are crooked or the artifact is low quality, refuse review and propose the smallest re-do-from-scratch probe instead of patching a mess.",
     ]
     if aux_enabled:
         ch1 += [
@@ -141,78 +144,42 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
 
     ch2 = [
         "",
-        "2) Canonical Docs · Where · Why · How to Maintain",
-        "- POR.md — single source of direction {#por}",
-        f"  - Path: {por_rel}",
-        "  - Purpose: goals / constraints / risks / next steps. Read before major actions. When direction changes or at phase closure, update POR. Do not duplicate POR content elsewhere.",
-        "  - Structure (keep concise and current):",
-        "    - Summary: Objective, Current Focus, Key Constraints, Acceptance Benchmarks.",
-        "      (Note: Ticked Acceptance items must be referenced when declaring Done.)",
-        "    - Roadmap & Milestones.",
-        "    - Active Tasks & Next Steps (each item should include owner: PeerA|PeerB).",
-        "    - Risks & Mitigations.",
-        "    - Decisions, Alternatives & Rationale (choice/why/rollback).",
-        "    - Reflections & Open Questions.",
-        "- PROJECT.md — project context and scope",
-        "  - Path: PROJECT.md (repo root). Use as scope/context reference. If it conflicts with reality or POR, clarify and align POR.",
-        "- This rules document",
-        f"  - Path: .cccc/rules/{rules_filename}. Reference concrete anchors from this file in insight refs when relevant.",
-        "- Work directory — scratchpad / canvas / evidence material",
-        "  - Path: .cccc/work/**",
-        "  - Purpose: keep investigation outputs, temporary scripts, analysis artifacts, sample data, before/after snapshots. Cite paths in messages instead of pasting big blobs. Make artifacts minimal and reproducible.",
+        "2) Canonical references and anchors",
+        f"- POR.md - single source of direction (path: {por_rel})",
+        "  - Keep North-star, guardrails, bets/assumptions, Now/Next/Later, and portfolio health here (no details).",
+        "- SUBPOR - execution anchor (one task = one SUBPOR)",
+        "  - Location: docs/por/T######-slug/SUBPOR.md",
+        "  - Sections: goal/scope; non-goals; deliverable and interface; 3-5 acceptance items; cheapest probe; evidence refs; risks/deps; next (single, decidable).",
+        "  - Generate before you act: python .cccc/por_subpor.py subpor new --title \"...\" --owner peerA|peerB [--slug s] [--timebox 1d]",
+        "- Work surfaces",
+        "  - Use .cccc/work/** for scratch, samples, logs. Cite exact paths and line ranges instead of pasting large blobs.",
         "  - Boundary: do not modify orchestrator code/config/policies; use mailbox/work/state/logs exactly as documented.",
     ]
 
     ch3 = [
         "",
-        "3) How to Execute (Rules and Notes)",
-        "- One‑round execution loop (follow in order)",
-        "  - 0 Read POR (goals/constraints/risks/next).",
-        "  - 1 Choose exactly one smallest decisional probe.",
-        "  - 2 Build (do the work; invoke Aux silently if helpful).",
-        "  - 3 Minimal validation (command + 3–5 stable lines / smallest sample; include paths/line ranges when needed).",
-        "  - 4 Write the message (see Chapter 4 skeleton).",
-        "  - 5 Write one insight (WHY + Next + refs to POR and this rules file; do not repeat the body).",
-        "  - 6 If goals/constraints changed, update POR accordingly.",
-        "- Scope & Quality Contract (one‑liner before heavy tasks)",
-        "  - scale: depth=<sections|pages>, breadth=<axes>, rigor=<checks|tests>, aux_quota=≥<M>, target_size≈<N lines>, min_sources=≥<K>",
-        "- Evidence & change budget",
-        "  - Only tests/logs/commits act as evidence. Avoid speculative big refactors; always provide a minimal, reproducible check.",
-        "- Collaboration guardrails {#guardrails}",
-        "  - Two rounds with no new information → shrink the probe or change angle.",
-        "  - Strong COUNTER quota: for substantive topics, maintain ≥2 COUNTERs (incl. one strong opposition) unless falsified early; or explain why not applicable.",
-        "  - No quick hammer: never ship the first idea unchallenged. Attempt at least one cheap falsification (test/log/probe) before you settle.",
-        "  - Claims must name assumptions to kill: in CLAIM, list 1–2 key assumptions and the cheapest probe to kill each. If none, state why.",
-        "  - REV micro‑pass (≤5 min) before large changes or user‑facing summaries: polish reasoning and artifacts, then add a `revise` insight:",
-        "    ```insight",
-        "    kind: revise",
-        "    delta: +clarify goal; -narrow scope; tests added A,B",
-        "    refs: [\"POR.md#...\", \".cccc/work/...\"]",
-        "    next: <one refinement or check>",
-        "    ```",
-        "  - Strategic checkpoint (top‑down): periodically scan goal ↔ constraints ↔ current path. If drift is detected, state a correction or call Aux for a brief sanity sweep (e.g., `gemini -p \"@project/ sanity‑check current plan vs POR\"`).",
-        "  - Large/irreversible (interface, migration, release): add a one‑sentence decision note (choice, why, rollback) in the same message before landing.",
-        "  - If a real risk exists, add a single `Risk:` line in the body with one‑line mitigation.",
-        "- Review micro‑templates (copy‑ready, compact)",
-        "  - Reset proposal (when broadly unsatisfactory, ≤8 lines):",
-        "    Why reset: <core misfit or gap (≤1 line each)>",
-        "    Salvage: <kept results/insights>",
-        "    New plan: <3 smallest, verifiable probes>",
-        "    Cost/Risks: <estimate/protections>",
-        "    Next: <one smallest action>",
-        "  - Approve‑as‑peer (acceptable but needs polish, ≤5 lines):",
-        "    Approve scope: <what you accept>",
-        "    One new angle: <risk/hook/smaller next>",
-        "    Smallest next: <one step>",
-        "    Refs: [POR.md#…, paths/logs]",
+        "3) How to execute (lean and decisive)",
+        "- One-round loop (follow in order)",
+        "  - 0 Read POR (goal/guardrails/bets/roadmap).",
+        "  - 1 Pick exactly one smallest decisional probe.",
+        "  - 2 Build; keep changes small and reversible.",
+        "  - 3 Validate (command + 1-3 stable lines; cite exact paths/line ranges).",
+        "  - 4 Write the message using the skeleton in Chapter 4.",
+        "  - 5 Add one insight (WHY + Next + refs); do not repeat the body.",
+        "  - 6 If direction changed, update POR and the relevant SUBPOR.",
+        "- Evidence and change budget",
+        "  - Only tests/logs/commits count as evidence. Avoid speculative big refactors; always show the smallest reproducible check.",
+        "- Pivot and refusal (signals and judgment; not quotas)",
+        "  - Pivot when two or more hold: negative evidence piles up; a simpler alternative is clearly smaller or safer; infra cost exceeds benefit; guardrails are repeatedly hit; roadmap Now/Next has shifted.",
+        "  - Refuse and rebuild: when foundations are bad or artifact quality is low, refuse review and propose the smallest from-scratch probe instead of patching a mess.",
         "- NUDGE behavior (one-liner)",
-        "  - On [NUDGE]: read the oldest inbox item; after processing, move it to processed/; continue until empty; reply only when blocked.",
+        "  - On [NUDGE]: read oldest inbox item -> act -> move to processed/ -> next; reply only when blocked.",
     ]
     if aux_enabled:
         ch3 += [
-            "- Aux (PeerC) — Default Delegation {#aux}",
+            "- Aux (PeerC) - Default Delegation {#aux}",
             "  - Default: delegate execution of any decoupled sub-task to Aux; you manage review/revise and integration, and you own the final evidence.",
-            "  - If you choose not to use Aux, add one line in your insight — no-aux: <brief reason>. This is a soft nudge, not a gate.",
+            "  - If you choose not to use Aux, add one line in your insight - no-aux: <brief reason>. This is a soft nudge, not a gate.",
             '  - One-liner command: gemini -p "<detailed goal +instruction +context>@<paths>" --yolo',
         ]
     else:
@@ -229,51 +196,43 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
 
     ch4 = [
         "",
-        "4) Communicate with the Outside (Message Skeleton · Templates · File I/O)",
+        "4) Communicate (message skeleton and file I/O)",
         "- Writing rules (strict)",
         f"  - Update-only: always overwrite {target_list}; do NOT append or create new variants.",
-        "  - Encoding: UTF‑8 (no BOM).",
-        "  - Do not claim ‘completed/done/finished’ unless you reference checked Acceptance items in POR.md and include minimal verifiable evidence (tests/stable logs/commit refs).",
+        "  - Encoding: UTF-8 (no BOM).",
+        "  - Do not claim done unless acceptance is checked in SUBPOR and you include minimal verifiable evidence (tests/stable logs/commit refs).",
     ]
     if ascii_rule:
         ch4.append(ascii_rule)
     ch4 += [
-        "  - Keep <TO_USER>/<TO_PEER> wrappers around message bodies; end with exactly one fenced `insight` block.",
+        "  - Keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced `insight` block.",
         "  - Do not modify orchestrator code/config/policies.",
-        # diff template removed by design
-        "- Message skeleton (rules + ready-to-copy templates) {#message-skeleton}",
-        "  - First line — PCR+Hook",
-        "    - Rule: [P|C|R] <<=12‑word headline> ; Hook: <path|cmd|log> ; Next: <one smallest step>",
-        "    - Note: if no Hook, prefer C/R; do not use P.",
-        "  - One main block (choose exactly one; compact)",
-        "    - IDEA — headline; one‑line why; one cheapest sniff test (cmd/path).",
-        "    - CLAIM — 1–3 tasks with constraints + acceptance (≤2 checks); list 1–2 assumptions to kill.",
-        "    - COUNTER — steelman peer first; then falsifiable alternative/risk with a minimal repro/metric.",
-        "    - EVIDENCE — test / 3–5 stable log lines with command + ranges; cite paths or commits.",
-        "    - QUESTION — one focused, decidable blocker; propose the cheapest probe alongside.",
-        "  - One insight (mandatory, do not repeat body) {#insight}",
-        "    - Template:",
-        "      to: peerA|peerB|system|user",
-        "      kind: ask|counter|evidence|reflect|risk",
-        "      msg: action‑oriented; prefer a next step or ≤10‑min probe",
-        f"      refs: [\"POR.md#...\", \".cccc/rules/{role_name}.md#...\"]",
-        "    - Value: forces quick reflection and an explicit Next so each round stays discriminative and testable.",
-        "    - Quick reference: single block; prefer ask|counter; include one Next and refs to POR.md and to a concrete anchor in this file; do not restate the body.",
-        "- Consolidated EVIDENCE (end‑of‑execution; single message; neutral to who did the work)",
-        "  - Template (8–10 lines):",
-        "    - Changes: files=N, +X/‑Y; key paths: [...]",
-        "    - What changed & Why: <one line>",
-        "    - Quick checks: <cmd + stable 1–2 lines> → pass|fail|n/a",
-        "    - Risks/unknowns: [...]",
-        "    - Next: <one smallest decisive step>",
-        f"    - refs: [\"POR.md#...\", \".cccc/rules/{role_name}.md#...\"]",
+        "- Message skeleton (ready to copy) {#message-skeleton}",
+        "  <TO_PEER>",
+        "  Outcome: <one-line conclusion> ; Why: <one-line reason> ; Opposite: <one-line strongest opposite>",
+        "  Evidence: <<=3 lines stable output or commit refs>",
+        "  Next: <single, decidable, <=30 minutes>",
+        "  </TO_PEER>",
+        "  ```insight",
+        "  to: peerA|peerB",
+        "  kind: ask|counter|evidence|revise|risk",
+        "  task_id: T000123",
+        "  refs: [\"commit:abc123\", \"cmd:pytest -q::OK\", \"log:.cccc/work/...#L20-32\"]",
+        "  next: <one next step>",
+        "  ```",
+        "- Consolidated EVIDENCE (end-of-execution; single message)",
+        "  - Changes: files=N, +X/-Y; key paths: [...]",
+        "  - What changed and why: <one line>",
+        "  - Checks: <cmd + stable 1-2 lines> -> pass|fail|n/a",
+        "  - Risks/unknowns: [...]",
+        "  - Next: <one smallest decisive step>",
+        f"  - refs: [\"POR.md#...\", \".cccc/rules/{role_name}.md#...\"]",
         "- File I/O (keep these two lines verbatim) {#file-io}",
-        "  - • Inbound: uploads are saved to .cccc/work/upload/inbound/YYYYMMDD/MID__name with a sibling .meta.json (platform/chat-or-channel/mime/bytes/sha256/caption/mid/ts); also indexed into state/inbound-index.jsonl.",
-        "  - • Outbound: drop files into .cccc/work/upload/outbound/ (flat). Use the first line of <name>.caption.txt to route with a:/b:/both: (prefix is removed), or a <name>.route sidecar with a|b|both. On success a <name>.sent.json ACK is written.",
+        "  - Inbound: uploads go to .cccc/work/upload/inbound/YYYYMMDD/MID__name with a sibling .meta.json; also indexed into state/inbound-index.jsonl.",
+        "  - Outbound: drop files into .cccc/work/upload/outbound/ (flat). Use <name>.route with a|b|both or first line of <name>.caption.txt starting with a:/b:/both:. On success a <name>.sent.json ACK is written.",
         "- Channel notes (minimal)",
-        "  - Peer-to-peer: high signal; one smallest Next per message; avoid pure ACK; steelman before COUNTER.",
-        "  - If you agree, add exactly one new angle (risk/hook/smaller next) or stay silent; avoid pure ACK.",
-        "  - User-facing (when used): ≤6 lines; conclusion first, then evidence paths; questions must be decidable with minimal noise.",
+        "  - Peer-to-peer: high signal; one smallest Next per message; steelman before COUNTER; silence is better than a pure ACK.",
+        "  - User-facing (when used): <=6 lines; conclusion first, then evidence paths; questions must be decidable.",
     ]
     if im_enabled:
         route_prefix = "a" if is_peera else "b"
@@ -383,7 +342,7 @@ def _ensure_str(value: Any) -> str:
 
 
 def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:
-    """Minimal SYSTEM: role, POR, rules path — no duplication."""
+    """Minimal SYSTEM: role, POR, rules path - no duplication."""
     peer = (peer or "peerA").strip()
     try:
         ensure_rules_docs(home)
@@ -394,16 +353,16 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
     other = "peerB" if (peer.lower()=="peera" or peer=="peerA") else "peerA"
     return "\n".join([
         "CCCC Runtime SYSTEM (minimal)",
-        f"• You are {peer}. Collaborate as equals with {other}.",
-        f"• POR: {por_file.as_posix()} (single source; update when direction changes).",
-        f"• Rules: {rules_path} — follow this document; keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced insight block.",
+        f"* You are {peer}. Collaborate as equals with {other}.",
+        f"* POR: {por_file.as_posix()} (single source; update when direction changes).",
+        f"* Rules: {rules_path} - follow this document; keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced insight block.",
         "",
     ])
 
 
 def weave_preamble(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:
     """
-    Preamble text used for the first user message — identical source as SYSTEM
+    Preamble text used for the first user message - identical source as SYSTEM
     to ensure single-source truth. By default returns weave_system_prompt.
     """
     return weave_system_prompt(home, peer, por)

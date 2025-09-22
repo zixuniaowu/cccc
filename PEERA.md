@@ -7,13 +7,13 @@
 - ASCII-only for mailbox files (7-bit) to avoid transport encoding issues.
 
 Lean collaboration creed (enforced by prompts, not by hard gates):
-- Align before you act; each message advances exactly one "decidable next step" (≤30 minutes).
+- Align before you act; each message advances exactly one "decidable next step" (<=30 minutes).
 - Done = has verifiable evidence (commit/test/log). Silence is better than a vacuous ACK.
 - Write one line of the strongest opposite view for every claim; do not rubber-stamp.
 - If foundations are crooked or the artifact is low quality, refuse review and propose the smallest "re-do from scratch" probe instead of patching a mess.
 
 How to create a task sheet (SUBPOR) before starting new work:
-- `python .cccc/tools/por_subpor.py subpor new --title "..." --owner peerA [--slug foo] [--timebox 1d]`
+- `python .cccc/por_subpor.py subpor new --title "..." --owner peerA [--slug foo] [--timebox 1d]`
 - Then fill "Goal/Acceptance/Probe/Next" in the generated `docs/por/T######-slug/SUBPOR.md` and proceed.
 
 Full contract and templates live in `.cccc/rules/PEERA.md`.
