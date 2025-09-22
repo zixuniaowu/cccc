@@ -110,7 +110,6 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     base = f".cccc/mailbox/{peer}"
     to_user = f"{base}/to_user.md"
     to_peer = f"{base}/to_peer.md"
-    patchf  = f"{base}/patch.diff"
     por_rel = por_path(home).as_posix()
     aux_enabled = aux_mode == "on"
 
@@ -145,7 +144,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "2) Canonical Docs · Where · Why · How to Maintain",
         "- POR.md — single source of direction {#por}",
         f"  - Path: {por_rel}",
-        "  - Purpose: goals / constraints / risks / next steps. Read before major actions. When direction changes or at phase closure, update POR via a patch diff. Do not duplicate POR content elsewhere.",
+        "  - Purpose: goals / constraints / risks / next steps. Read before major actions. When direction changes or at phase closure, update POR. Do not duplicate POR content elsewhere.",
         "  - Structure (keep concise and current):",
         "    - Summary: Objective, Current Focus, Key Constraints, Acceptance Benchmarks.",
         "      (Note: Ticked Acceptance items must be referenced when declaring Done.)",
@@ -160,7 +159,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         f"  - Path: .cccc/rules/{rules_filename}. Reference concrete anchors from this file in insight refs when relevant.",
         "- Work directory — scratchpad / canvas / evidence material",
         "  - Path: .cccc/work/**",
-        "  - Purpose: keep investigation outputs, temporary scripts, analysis artifacts, sample data, before/after snapshots. Cite paths in messages instead of pasting big blobs. Make artifacts minimal and reproducible. Finalized changes still land as patch.diff.",
+        "  - Purpose: keep investigation outputs, temporary scripts, analysis artifacts, sample data, before/after snapshots. Cite paths in messages instead of pasting big blobs. Make artifacts minimal and reproducible.",
         "  - Boundary: do not modify orchestrator code/config/policies; use mailbox/work/state/logs exactly as documented.",
     ]
 
@@ -174,11 +173,11 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - 3 Minimal validation (command + 3–5 stable lines / smallest sample; include paths/line ranges when needed).",
         "  - 4 Write the message (see Chapter 4 skeleton).",
         "  - 5 Write one insight (WHY + Next + refs to POR and this rules file; do not repeat the body).",
-        "  - 6 If goals/constraints changed, update POR via a patch diff.",
+        "  - 6 If goals/constraints changed, update POR accordingly.",
         "- Scope & Quality Contract (one‑liner before heavy tasks)",
         "  - scale: depth=<sections|pages>, breadth=<axes>, rigor=<checks|tests>, aux_quota=≥<M>, target_size≈<N lines>, min_sources=≥<K>",
         "- Evidence & change budget",
-        "  - Only diffs/tests/logs change the system. Keep patches ≤150 lines where possible; split large changes; avoid speculative big refactors. Always provide a minimal, reproducible check.",
+        "  - Only tests/logs/commits act as evidence. Avoid speculative big refactors; always provide a minimal, reproducible check.",
         "- Collaboration guardrails {#guardrails}",
         "  - Two rounds with no new information → shrink the probe or change angle.",
         "  - Strong COUNTER quota: for substantive topics, maintain ≥2 COUNTERs (incl. one strong opposition) unless falsified early; or explain why not applicable.",
@@ -223,7 +222,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         ]
 
     ascii_rule = "  - Temporary constraint (PeerA only): content in to_user.md and to_peer.md must be ASCII-only (7-bit). Use plain ASCII punctuation." if is_peera else None
-    update_targets = [to_peer, patchf]
+    update_targets = [to_peer]
     if is_peera:
         update_targets.insert(0, to_user)
     target_list = ", ".join(update_targets)
@@ -234,38 +233,23 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "- Writing rules (strict)",
         f"  - Update-only: always overwrite {target_list}; do NOT append or create new variants.",
         "  - Encoding: UTF‑8 (no BOM).",
-        "  - Do not claim ‘completed/done/finished’ unless you reference checked Acceptance items in POR.md and include minimal verifiable evidence (diff/test/stable logs).",
+        "  - Do not claim ‘completed/done/finished’ unless you reference checked Acceptance items in POR.md and include minimal verifiable evidence (tests/stable logs/commit refs).",
     ]
     if ascii_rule:
         ch4.append(ascii_rule)
     ch4 += [
         "  - Keep <TO_USER>/<TO_PEER> wrappers around message bodies; end with exactly one fenced `insight` block.",
         "  - Do not modify orchestrator code/config/policies.",
-        "- Unified diff quick template {#diff-template}",
-        "  - Headers: either `diff --git a/<path> b/<path>` or the pair of `--- a/<path>` and `+++ b/<path>`.",
-        "  - Hunk: start with `@@` then context; changed lines begin with `+` or `-` (keep context minimal but present when possible).",
-        "  - New/Delete: use `/dev/null` on one side for creations/deletions.",
-        "  - Allowed patch paths (policy excerpt): `.cccc/state/POR.md` is allowed; `.cccc/work/**` must NOT go through patch (keep as scratch). See .cccc/settings/policies.yaml.",
-        "  - Do NOT paste apply_patch meta lines like `*** Begin Patch` / `*** Update File` / `*** End Patch` — those are not unified diffs.",
-        "  - Prefer inline diff in to_peer for small edits; use mailbox patch.diff for multi-file or larger hunks.",
-        "  - Minimal example:",
-        "    ```diff",
-        "    diff --git a/.cccc/state/POR.md b/.cccc/state/POR.md",
-        "    --- a/.cccc/state/POR.md",
-        "    +++ b/.cccc/state/POR.md",
-        "    @@ -1,1 +1,1 @@",
-        "    -Old line",
-        "    +New line",
-        "    ```",
+        # diff template removed by design
         "- Message skeleton (rules + ready-to-copy templates) {#message-skeleton}",
         "  - First line — PCR+Hook",
-        "    - Rule: [P|C|R] <<=12‑word headline> ; Hook: <path|cmd|diff|log> ; Next: <one smallest step>",
+        "    - Rule: [P|C|R] <<=12‑word headline> ; Hook: <path|cmd|log> ; Next: <one smallest step>",
         "    - Note: if no Hook, prefer C/R; do not use P.",
         "  - One main block (choose exactly one; compact)",
         "    - IDEA — headline; one‑line why; one cheapest sniff test (cmd/path).",
         "    - CLAIM — 1–3 tasks with constraints + acceptance (≤2 checks); list 1–2 assumptions to kill.",
         "    - COUNTER — steelman peer first; then falsifiable alternative/risk with a minimal repro/metric.",
-        "    - EVIDENCE — unified diff / test / 3–5 stable log lines with command + ranges; cite paths.",
+        "    - EVIDENCE — test / 3–5 stable log lines with command + ranges; cite paths or commits.",
         "    - QUESTION — one focused, decidable blocker; propose the cheapest probe alongside.",
         "  - One insight (mandatory, do not repeat body) {#insight}",
         "    - Template:",
@@ -328,7 +312,7 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         f"- Session bundle - {session_root}/<session-id>/",
         "  - Read notes.txt first: it captures the ask, expectations, and any suggested commands.",
         "  - peer_message.txt (when present) mirrors the triggering CLAIM/COUNTER/EVIDENCE; use it to align tone and scope.",
-        "  - Additional artifacts (logs, diffs, datasets) live alongside; cite exact paths in your outputs.",
+        "  - Additional artifacts (logs, datasets) live alongside; cite exact paths in your outputs.",
         "- This rules document - .cccc/rules/PEERC.md. Reference anchors from here in any summary you produce for the peers.",
     ]
 
@@ -338,9 +322,9 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "- Intake",
         "  - Read POR.md -> notes.txt -> peer_message.txt. Confirm the objective, constraints, and success criteria before editing.",
         "- Plan",
-        "  - Break work into <=15-minute probes. Prefer deterministic scripts, focused diffs, or tight analyses over sprawling exploration.",
+        "  - Break work into <=15-minute probes. Prefer deterministic scripts or tight analyses over sprawling exploration.",
         "- Build",
-        "  - Use .cccc/work/aux_sessions/<session-id>/ for all scratch files, analysis notebooks, and proposed diffs (e.g., store patches under `diffs/` or `patch.diff`).",
+        "  - Use .cccc/work/aux_sessions/<session-id>/ for all scratch files, analysis notebooks, and outputs.",
         "  - Run validations as you go. Capture exact commands and 3-5 stable log lines in `<session-id>/logs/`.",
         "- Wrap",
         "  - Summarize the outcome in `<session-id>/outcome.md` (what changed, checks performed, residual risks, next suggestion).",
@@ -351,7 +335,7 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "",
         "4) Deliverables & Boundaries",
         "- Never edit .cccc/mailbox/** directly; the summoning peer integrates your artifacts into their next message.",
-        "- Keep diffs reversible and scoped (<=150 changed lines). If you create multiple options, name them clearly (e.g., option-a.patch, option-b.patch).",
+        "- Keep changes small and reversible. If you create multiple options, name them clearly (e.g., option-a, option-b).",
         "- Record every check you run (command + stable output) so peers can cite them as evidence.",
         "- If you uncover strategic misalignment, document it succinctly in outcome.md with a proposed correction path keyed to POR.md sections.",
     ]
@@ -411,7 +395,7 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
     return "\n".join([
         "CCCC Runtime SYSTEM (minimal)",
         f"• You are {peer}. Collaborate as equals with {other}.",
-        f"• POR: {por_file.as_posix()} (single source; update via patch when direction changes).",
+        f"• POR: {por_file.as_posix()} (single source; update when direction changes).",
         f"• Rules: {rules_path} — follow this document; keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced insight block.",
         "",
     ])

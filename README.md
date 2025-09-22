@@ -6,7 +6,7 @@ Not a chatbot UI. Not an IDE plugin. A production‑minded orchestrator for 24/7
 
 ## Why It’s Different
 
-- Dual‑AI Autonomy: peers continuously plan → build → critique → refine. They don’t wait for prompts; they follow a mailbox contract and change the world only with EVIDENCE (diff/tests/logs/benchmarks).
+- Dual‑AI Autonomy: peers continuously plan → build → critique → refine. They don’t wait for prompts; they follow a mailbox contract and change the world only with EVIDENCE (tests/logs/benchmarks).
 - Agent‑as‑a‑Service (AaaS): agents are long‑running services with a mailbox contract, not ad‑hoc prompts. They keep rhythm, produce evidence, and integrate with IM (Telegram/Slack/Discord via bridges; Teams outbound planned) without coupling core logic to any single transport.
 - IM Collaboration: a 24/7 agent lives in your team chat. High‑signal summaries, clear decision summaries, explicit routing (a:/b:/both:) so normal conversation remains normal. Files flow both ways with captions and sidecars.
 - Builder–Critic Synergy: peers challenge CLAIMs with COUNTERs and converge via verifiable EVIDENCE. In practice this beats single‑model quality on complex, multi‑day tasks.
@@ -16,11 +16,11 @@ Not a chatbot UI. Not an IDE plugin. A production‑minded orchestrator for 24/7
 
 ## What You Get
 
-- Evidence‑first loop: tiny diffs/tests/logs; only green changes commit.
-- Single‑branch queue: preflight `git apply` → (optional) lint/tests → commit.
+- Evidence‑first loop: small tests/logs; only green changes commit.
+- Single‑branch queue: (optional) lint/tests → commit.
 - Decision loop: surface context, discuss options, log the agreed outcome.
 - AaaS integration: explicit routing; `/status`, `/queue`, `/locks`, `/showpeers on|off`, file send/receive with meta. Bridges mirror events; orchestrator remains transport‑agnostic.
-- Ledger: append‑only `.cccc/state/ledger.jsonl` (patch/test/log/decision) for audit.
+- Ledger: append‑only `.cccc/state/ledger.jsonl` (test/log/decision) for audit.
 
 ## Requirements
 
@@ -116,7 +116,7 @@ That’s it. You can refine policies later.
   - `/whoami` shows your chat_id; `/subscribe` (if `autoregister: open`)
   - `/showpeers on|off` toggles Peer↔Peer summaries
 - Control & passthrough
-  - `/focus [hint]` asks PeerB to refresh `.cccc/state/POR.md`
+  - `/focus [hint]` asks PeerB to refresh `docs/por/POR.md`
   - `/reset compact|clear` issues manual compact/clear; `/review` triggers the aux reminder flow
   - `/aux status|on|off` inspects or toggles the optional third agent; the choice is persisted to `.cccc/settings/cli_profiles.yaml`
   - `/c <prompt>` (or `c: <prompt>`) runs the Aux GEMINI CLI with your prompt and returns the output
@@ -141,8 +141,8 @@ Goal: ship a small, reversible change with dual‑AI collaboration.
 - PeerB COUNTERs if there’s a sharper place or a safer rollout.
 
 3) Build (evidence‑first)
-- PeerB produces a tiny unified diff in `peerB/patch.diff` (e.g., add a new README subsection) and a 1–2 line EVIDENCE note (tests OK/lines/paths/MID).
-- Orchestrator preflights → applies → (optional) lint/tests → commits on green and logs to ledger.
+- PeerB proposes a small, verifiable change with a 1–2 line EVIDENCE note (tests OK / paths / MID).
+- Orchestrator runs (optional) lint/tests → commits on green and logs to ledger.
 
 4) Team visibility
 - Telegram posts a concise summary (debounced); peers stay quiet unless blocked.
@@ -166,12 +166,12 @@ No automatic decision prompts fire here; peers simply note the choices and ask f
   adapters/outbox_consumer.py    # Shared Outbox reader (to_user/to_peer_summary)
   settings/
     cli_profiles.yaml            # tmux/paste/type behavior; echo; idle regexes; self‑check
-    policies.yaml                # patch queue size; allowlist; legacy gates (RFD disabled by default)
+    policies.yaml                # governance knobs; protected paths; redundancy filter
     governance.yaml              # POR/reset cadence; future governance knobs
     telegram.yaml                # token/autostart/allowlist/routing/files
     slack.yaml                   # app/bot tokens, channels, routing/files
     discord.yaml                 # bot token, channels, routing/files
-  mailbox/                       # peerA/peerB with to_user.md/to_peer.md/patch.diff; inbox/processed
+  mailbox/                       # peerA/peerB with to_user.md/to_peer.md; inbox/processed
   work/                          # shared workspace; upload inbound/outbound; ephemeral
   state/                         # ledger.jsonl, bridge logs, status/session; ephemeral
   logs/                          # extra logs; ephemeral
@@ -196,9 +196,9 @@ If these packages or tokens are missing, adapters exit fast with a clear error. 
 
 ## Plan-of-Record (POR)
 
-- `.cccc/state/POR.md` is the single source of truth for objectives, roadmap, active tasks, risks, and reflections.
-- PeerB (or the optional third agent) updates the document via patch diff at every self-check or when direction changes; no other source should duplicate it.
-- The orchestrator and bridges only point to this file; keep all strategic and decision context here so nothing goes missing.
+- `docs/por/POR.md` is the single source of truth for objectives, roadmap, active tasks, risks, and reflections.
+- PeerB (or the optional third agent) updates the document at every self-check or when direction changes; no other source should duplicate it.
+- The orchestrator and bridges point to this file; keep strategic and decision context here so nothing goes missing.
 
 CLI prerequisites (summary)
 - Peer A = Claude Code; Peer B = Codex CLI. Install and log in as required by each vendor.
@@ -209,13 +209,9 @@ CLI prerequisites (summary)
 `.cccc/settings/policies.yaml`
 
 ```
-patch_queue:
-  max_diff_lines: 150
-  allowed_paths: ["src/**","tests/**","docs/**","infra/**","README.md","PROJECT.md"]
 rfd:
   gates:
     protected_paths: [".cccc/**","src/api/public/**"]
-    large_diff_requires_rfd: false
 handoff_filter:
   enabled: true
   cooldown_seconds: 15
@@ -335,7 +331,7 @@ files:
 - Context maintenance: on a cadence (config `delivery.context_compact_every_self_checks`), send `/compact` to both CLIs and immediately reinject the full SYSTEM with a leading “Now: … TZ” line.
 - Self‑check enhancements: inject current time/TZ; add an insight‑channel reminder to generate new angles (hook/assumption/risk/trade‑off/next/delta) rather than restating.
 - NUDGE improvements: exponential backoff, jitter, progress timeout; guidance for productive action when inbox is empty.
-- REV gate: after a COUNTER/QUESTION, the next to_peer must be a valid revise (insight.kind=revise with delta/refs/next and not restating) or carry direct evidence (inline unified diff). Otherwise the message is intercepted with a short tip and logged.
+- REV gate: after a COUNTER/QUESTION, the next to_peer must be a valid revise (insight.kind=revise with delta/refs/next and not restating). Otherwise the message is intercepted with a short tip and logged.
 
 ## FAQ / Troubleshooting
 

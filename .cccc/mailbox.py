@@ -13,8 +13,8 @@ def ensure_mailbox(home: Path) -> Dict[str, Path]:
     for p in PEERS:
         d = base/p
         d.mkdir(parents=True, exist_ok=True)
-        # legacy files
-        for fname in ("to_user.md", "to_peer.md", "patch.diff", "inbox.md"):
+        # message files (runtime contract)
+        for fname in ("to_user.md", "to_peer.md", "inbox.md"):
             f = d/fname
             if not f.exists():
                 f.write_text("", encoding="utf-8")
@@ -170,7 +170,7 @@ def scan_mailboxes(home: Path, idx: MailboxIndex) -> Dict[str, Dict[str, Any]]:
     """
     Return events per peer when mailbox files change and are non-empty.
     Example:
-      { 'peerA': {'to_user': '...', 'to_peer': '...', 'patch': '...'}, 'peerB': {...} }
+      { 'peerA': {'to_user': '...', 'to_peer': '...'}, 'peerB': {...} }
     """
     ensure_mailbox(home)
     base = home/"mailbox"
@@ -187,22 +187,18 @@ def scan_mailboxes(home: Path, idx: MailboxIndex) -> Dict[str, Dict[str, Any]]:
         if changed:
             events[p]["to_peer"] = text
             idx.update_hash(p, "to_peer.md", sha)
-        # patch
-        changed, text, sha = read_if_changed(d/"patch.diff", idx.seen_hash(p, "patch.diff"))
-        if changed:
-            events[p]["patch"] = text
-            idx.update_hash(p, "patch.diff", sha)
+        # no patch channel (diff mechanism removed)
     return events
 
 def reset_mailbox(home: Path):
-    """Clear mailbox files (to_user.md, to_peer.md, patch.diff) for both peers and
+    """Clear mailbox files (to_user.md, to_peer.md) for both peers and
     reset the seen-index to avoid stale reads at startup.
     """
     base = home/"mailbox"
     ensure_mailbox(home)
     for p in PEERS:
         d = base/p
-        for fname in ("to_user.md", "to_peer.md", "patch.diff", "inbox.md"):
+        for fname in ("to_user.md", "to_peer.md", "inbox.md"):
             try:
                 (d/fname).write_text("", encoding="utf-8")
             except Exception:

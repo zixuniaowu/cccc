@@ -1251,15 +1251,16 @@ def main():
                 counts = st.get('mailbox_counts') or {}
                 a = counts.get('peerA') or {}; b = counts.get('peerB') or {}
                 por = st.get('por') or {}
-                por_path = por.get('path') or '.cccc/state/POR.md'
+                # Default to business-domain POR path when status payload lacks it
+                por_path = por.get('path') or 'docs/por/POR.md'
                 por_updated = por.get('updated_at') or '-'
                 por_summary = (por.get('summary') or '')
                 coach = st.get('aux') or {}
                 reset = st.get('reset') or {}
                 lines = [
                     f"Phase: {phase}  Paused: {paused}",
-                    f"peerA to_user:{a.get('to_user',0)} to_peer:{a.get('to_peer',0)} patch:{a.get('patch',0)}",
-                    f"peerB to_user:{b.get('to_user',0)} to_peer:{b.get('to_peer',0)} patch:{b.get('patch',0)}",
+                    f"peerA to_user:{a.get('to_user',0)} to_peer:{a.get('to_peer',0)}",
+                    f"peerB to_user:{b.get('to_user',0)} to_peer:{b.get('to_peer',0)}",
                     f"POR: {por_path}",
                     f"POR.updated: {por_updated}",
                 ]

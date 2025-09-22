@@ -2,7 +2,7 @@
 """
 CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Left/right panes run PeerA (Claude) and PeerB (Codex) interactive sessions.
-- Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER> and fenced ```patch```, then preflights/applies/tests/logs.
+- Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER>, and runs optional lint/tests before committing.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
 import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random, math
@@ -21,7 +21,7 @@ from por_manager import ensure_por, por_path, por_status_snapshot, read_por_text
 ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # strip ANSI color/control sequences
 # Console echo of AI output blocks. Default OFF to avoid disrupting typing.
 CONSOLE_ECHO = False
-PATCH_RE = re.compile(r"```(?:patch|diff)\s*([\s\S]*?)```", re.I)
+# legacy patch/diff handling removed
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
 
@@ -279,40 +279,11 @@ def _inbox_dir(home: Path, receiver_label: str) -> Path:
 def _processed_dir(home: Path, receiver_label: str) -> Path:
     return home/"mailbox"/_peer_folder_name(receiver_label)/"processed"
 
-def _patches_archive_dir(home: Path, receiver_label: str) -> Path:
-    d = _processed_dir(home, receiver_label)/"patches"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
-
 def _short_sha(text: str) -> str:
     try:
         return hashlib.sha1(text.encode('utf-8', errors='ignore')).hexdigest()[:8]
     except Exception:
         return f"{int(time.time())}"
-
-def _archive_patch(home: Path, receiver_label: str, patch: str, reason: str) -> Path:
-    """Archive a processed patch under processed/patches with reason tag.
-    Returns the archive path.
-    """
-    ts = time.strftime('%Y%m%d-%H%M%S')
-    name = f"{ts}__{reason}__{_short_sha(patch)}.patch"
-    out = _patches_archive_dir(home, receiver_label)/name
-    try:
-        out.write_text(patch, encoding='utf-8')
-    except Exception:
-        pass
-    try:
-        log_ledger(home, {"from": receiver_label, "kind": "patch-archive", "reason": reason, "file": str(out)})
-    except Exception:
-        pass
-    return out
-
-def _clear_mailbox_patch_file(home: Path, receiver_label: str):
-    try:
-        peer = _peer_folder_name(receiver_label)
-        (home/"mailbox"/peer/"patch.diff").write_text("", encoding='utf-8')
-    except Exception:
-        pass
 
 def _next_seq_for_inbox(inbox: Path, processed: Path) -> str:
     def _max_seq_in(d: Path) -> int:
@@ -635,158 +606,7 @@ def parse_section(text: str, tag: str) -> str:
     m = re.search(SECTION_RE_TPL.format(tag=tag), text, re.I)
     return (m.group(1).strip() if m else "")
 
-def extract_patches(text: str) -> List[str]:
-    """Extract raw unified diff blocks from fenced ```patch|diff``` without wrapping.
-    The orchestrator expects standard unified diffs consumable by `git apply`.
-    """
-    out=[]
-    for m in PATCH_RE.finditer(text):
-        body=m.group(1).strip()
-        out.append(body)
-    return out
-
-def extract_inline_diff_if_any(text: str) -> Optional[str]:
-    """Detect unified diff inside arbitrary text (e.g., to_peer message) and normalize."""
-    # Try fenced first
-    fences = extract_patches(text)
-    for p in fences:
-        if is_valid_diff(p):
-            return p
-    # Try salvage on raw text
-    cand = normalize_mailbox_patch(text)
-    return cand
-
-def is_valid_diff(patch: str) -> bool:
-    """Heuristic check to filter out instructional fences like ```patch ...```.
-    Accept if it looks like a real unified diff.
-    """
-    lines = patch.splitlines()
-    if any(ln.startswith("diff --git ") for ln in lines):
-        return True
-    has_headers = any(ln.startswith("--- ") for ln in lines) and any(ln.startswith("+++ ") for ln in lines)
-    if has_headers:
-        return True
-    if "*** Begin Patch" in patch or "*** PATCH" in patch:
-        return True
-    return False
-
-def normalize_mailbox_patch(text: str) -> Optional[str]:
-    """Try hard to obtain a clean unified diff from mailbox content.
-    Strategy:
-    - Prefer fenced ```patch|diff``` blocks that look like real diffs.
-    - Else, if raw content contains a diff header, salvage only allowed lines.
-    - Allowed lines are standard unified diff headers and hunk lines.
-    - Drop ledger banners, prompts, and non-diff chatter.
-    """
-    def _salvage(raw: str) -> Optional[str]:
-        lines = raw.splitlines()
-        # start after the first recognizable header
-        start = 0
-        for i, ln in enumerate(lines):
-            if ln.startswith('diff --git ') or ln.startswith('--- '):
-                start = i; break
-        if start > 0:
-            lines = lines[start:]
-        allowed_prefixes = (
-            'diff --git ', 'index ', '--- ', '+++ ', '@@', ' ', '+', '-',
-            'Binary files ', 'new file mode ', 'deleted file mode ', 'similarity index ',
-            'rename from ', 'rename to ', 'copy from ', 'copy to ', 'old mode ', 'new mode ',
-            '\\ No newline at end of file', 'GIT binary patch'
-        )
-        kept = []
-        for ln in lines:
-            # Drop apply_patch meta-lines like *** Begin Patch / *** Update File etc.
-            if ln.startswith('*** '):
-                continue
-            if ln.startswith(allowed_prefixes):
-                kept.append(ln)
-            # ignore mailbox banners and UI traces
-            elif ln.strip().startswith('========') or 'Pasted text #' in ln or 'Ctrl+J' in ln:
-                continue
-            else:
-                # also drop obvious panel/UI frames
-                if ln.strip().startswith('╭') or ln.strip().startswith('│') or ln.strip().startswith('╰'):
-                    continue
-                # skip stray noise lines
-                continue
-        raw_joined = "\n".join(kept).rstrip("\n")
-        if not raw_joined:
-            return None
-        # Post-process: ensure required headers are present and normalized
-        lines = raw_joined.splitlines()
-        new_lines: List[str] = []
-        i = 0
-        while i < len(lines):
-            ln = lines[i]
-            # Drop residual apply_patch meta lines defensively
-            if ln.startswith('*** '):
-                i += 1; continue
-            m = re.match(r"^diff --git\s+a/(\S+)\s+b/(\S+)$", ln)
-            if m:
-                a_path = f"a/{m.group(1)}"; b_path = f"b/{m.group(2)}"
-                new_lines.append(ln)
-                i += 1
-                # Emit metadata lines (index/mode/rename etc.) untouched
-                meta_prefixes = (
-                    'index ', 'new file mode ', 'deleted file mode ', 'similarity index ',
-                    'rename from ', 'rename to ', 'copy from ', 'copy to ', 'old mode ', 'new mode '
-                )
-                while i < len(lines) and (lines[i].startswith(meta_prefixes) or not lines[i].strip()):
-                    new_lines.append(lines[i]); i += 1
-                # Normalize ---/+++; insert if missing
-                seen_minus = False; seen_plus = False
-                if i < len(lines) and lines[i].startswith('--- '):
-                    p = lines[i][4:].strip()
-                    if p != '/dev/null' and not p.startswith('a/'):
-                        new_lines.append('--- a/' + p)
-                    else:
-                        new_lines.append(lines[i])
-                    seen_minus = True; i += 1
-                if i < len(lines) and lines[i].startswith('+++ '):
-                    p = lines[i][4:].strip()
-                    if p != '/dev/null' and not p.startswith('b/'):
-                        new_lines.append('+++ b/' + p)
-                    else:
-                        new_lines.append(lines[i])
-                    seen_plus = True; i += 1
-                if not seen_minus:
-                    new_lines.append(f'--- {a_path}')
-                if not seen_plus:
-                    new_lines.append(f'+++ {b_path}')
-                continue
-            # Standalone ---/+++ normalization
-            if ln.startswith('--- '):
-                p = ln[4:].strip()
-                if p != '/dev/null' and not p.startswith('a/'):
-                    new_lines.append('--- a/' + p)
-                else:
-                    new_lines.append(ln)
-                i += 1; continue
-            if ln.startswith('+++ '):
-                p = ln[4:].strip()
-                if p != '/dev/null' and not p.startswith('b/'):
-                    new_lines.append('+++ b/' + p)
-                else:
-                    new_lines.append(ln)
-                i += 1; continue
-            new_lines.append(ln)
-            i += 1
-        out = "\n".join(new_lines).strip() + "\n"
-        if out and is_valid_diff(out):
-            return out
-        return None
-
-    # Prefer fenced blocks, but always salvage to remove any stray noise
-    fences = extract_patches(text)
-    for p in fences:
-        salv = _salvage(p) or (p if is_valid_diff(p) else None)
-        if salv:
-            return salv
-    # No fences; check raw and salvage regardless
-    salv = _salvage(text)
-    if salv:
-        return salv
-    return None
+## Legacy diff/patch helpers removed (extract_patches/normalize/inline detection)
 
 # ---------- handoff anti-loop ----------
 def _read_json_safe(p: Path) -> Dict[str,Any]:
@@ -835,7 +655,7 @@ def is_high_signal(text: str, policies: Dict[str,Any]) -> bool:
     t = text.strip()
     if not t:
         return False
-    # obvious high-signal: diff fences, unified diff, explicit sections
+    # obvious high-signal: explicit sections, substantial content, questions
     boosts_k = [k.lower() for k in (cfg.get("boost_keywords_any") or [])]
     boosts_r = cfg.get("boost_regexes") or []
     tl = t.lower()
@@ -949,25 +769,7 @@ def should_forward(payload: str, sender: str, receiver: str, policies: Dict[str,
     _write_json_safe(guard_path, guard)
     return True
 
-def count_changed_lines(patch: str) -> int:
-    n=0
-    for ln in patch.splitlines():
-        if ln.startswith("+++ ") or ln.startswith("--- "): continue
-        if ln.startswith("+") or ln.startswith("-"): n+=1
-    return n
-
-def extract_paths_from_patch(patch: str) -> List[str]:
-    paths=set()
-    for ln in patch.splitlines():
-        if ln.startswith("--- ") or ln.startswith("+++ "):
-            pth=ln.split("\t")[0].split(" ",1)[1].strip()
-            # Ignore /dev/null (new/delete markers)
-            if pth == "/dev/null":
-                continue
-            if pth.startswith("a/") or pth.startswith("b/"):
-                pth=pth[2:]
-            paths.add(pth)
-    return sorted(paths)
+## Legacy diff helpers removed (count_changed_lines/extract_paths_from_patch)
 
 # ---------- tmux ----------
 def tmux(*args: str) -> Tuple[int,str,str]:
@@ -1238,17 +1040,7 @@ def outbox_write(home: Path, event: Dict[str,Any]) -> Dict[str,Any]:
         f.write(json.dumps(ev, ensure_ascii=False) + "\n")
     return ev
 
-def allowed_by_policies(paths: List[str], policies: Dict[str,Any]) -> bool:
-    allowed = policies.get("patch_queue",{}).get("allowed_paths",["**"])
-    def _norm(p: str) -> str:
-        return p[2:] if (p.startswith('a/') or p.startswith('b/')) else p
-    for pth in paths:
-        p1 = pth
-        p2 = _norm(pth)
-        if not any(fnmatch.fnmatch(p1,pat) or fnmatch.fnmatch(p2,pat) for pat in allowed):
-            print(f"[POLICY] Path not allowed: {pth}")
-            return False
-    return True
+## Legacy policy helper removed (allowed_by_policies)
 
 
 
@@ -1319,17 +1111,7 @@ def try_tests() -> bool:
     if err.strip(): print(err.strip())
     return ok
 
-def git_apply_check(patch: str) -> Tuple[bool,str]:
-    with tempfile.NamedTemporaryFile("w",delete=False,suffix=".patch") as f:
-        f.write(patch); path=f.name
-    code,out,err=run(f"git apply --check {shlex.quote(path)}")
-    return (code==0, (out+err))
-
-def git_apply(patch: str) -> Tuple[bool,str]:
-    with tempfile.NamedTemporaryFile("w",delete=False,suffix=".patch") as f:
-        f.write(patch); path=f.name
-    code,out,err=run(f"git apply {shlex.quote(path)}")
-    return (code==0, (out+err))
+## Legacy apply helpers removed (git apply precheck/apply)
 
 def git_commit(msg: str):
     run("git add -A"); run(f"git commit -m {shlex.quote(msg)}")
@@ -1365,19 +1147,18 @@ def _matches_any(path: str, patterns: List[str]) -> bool:
 def list_repo_files(policies: Dict[str,Any], limit:int=200)->str:
     code,out,_ = run("git ls-files")
     files = out.splitlines()
-    allowed = (policies.get("patch_queue",{}).get("allowed_paths") or ["**"])
     context_conf = policies.get("context", {}) if isinstance(policies.get("context", {}), dict) else {}
     excludes = context_conf.get("exclude", DEFAULT_CONTEXT_EXCLUDES)
     max_items = int(context_conf.get("files_limit", limit))
-
-    # include by allowed paths first, then drop excluded patterns
-    selected = [p for p in files if _matches_any(p, allowed)]
-    filtered = [p for p in selected if not _matches_any(p, excludes)]
+    # Drop excluded patterns only; no diff/patch-based allowlist
+    filtered = [p for p in files if not _matches_any(p, excludes)]
     return "\n".join(filtered[:max_items])
 
 def context_blob(policies: Dict[str,Any], phase: str) -> str:
+    # Present a compact policy snapshot (without any diff/patch settings)
+    pol_view = {k: v for k, v in policies.items() if k not in ("patch_queue",)}
     return (f"# PHASE: {phase}\n# REPO FILES (partial):\n{list_repo_files(policies)}\n\n"
-            f"# POLICIES:\n{json.dumps({'patch_queue':policies.get('patch_queue',{}),'autonomy_level':policies.get('autonomy_level')},ensure_ascii=False)}\n")
+            f"# POLICIES:\n{json.dumps(pol_view, ensure_ascii=False)}\n")
 
 
 # ---------- watcher ----------
@@ -1404,7 +1185,7 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
     # Paste minimal message; no extra context/wrappers (caller supplies FROM_* tags)
     before_len = len(tmux_capture(sender_pane, lines=800))
     paste_when_ready(sender_pane, sender_profile, payload)
-    # Wait for response: prefer <TO_USER>/<TO_PEER>/```diff, or idle prompt
+    # Wait for response: prefer <TO_USER>/<TO_PEER>, or idle prompt
     judge = PaneIdleJudge(sender_profile)
     start = time.time()
     timeout = float(delivery_conf.get("read_timeout_seconds", 8))
@@ -1413,7 +1194,7 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
         content = tmux_capture(sender_pane, lines=800)
         window = content[before_len:]
         # Do not strip wrappers here; keep window for diagnostics (mailbox path does not rely on this)
-        if ("<TO_USER>" in window) or ("<TO_PEER>" in window) or ("```diff" in window) or ("```patch" in window):
+        if ("<TO_USER>" in window) or ("<TO_PEER>" in window):
             break
         idle, _ = judge.refresh(sender_pane)
         if idle and time.time() - start > 1.2:
@@ -1434,39 +1215,9 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
             return ""
     # Note: insight is present in window for diagnostics only; forwarding uses mailbox path
     _insight_diag = _last_insight(window)
-    # Do not print <TO_USER> here (the background poller will report it); focus on patches and handoffs only
+    # Do not print <TO_USER> here (the background poller will report it); focus on handoffs only
 
-    # Only scan fenced patches visible in the window; ignore non-diff fences
-    patches = [p for p in extract_patches(window) if is_valid_diff(p)]
-    for i,patch in enumerate(patches,1):
-        print_block(f"{who} Patch#{i}", "Preflight …")
-        lines = count_changed_lines(patch)
-        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
-        if lines>max_lines:
-            print(f"[POLICY] Changed lines {lines} > {max_lines}; rejecting.")
-            log_ledger(home, {"from":who,"kind":"patch-reject","reason":"too-many-lines","lines":lines}); 
-            continue
-        paths = extract_paths_from_patch(patch)
-        if not allowed_by_policies(paths, policies):
-            log_ledger(home, {"from":who,"kind":"patch-reject","reason":"path-not-allowed","paths":paths}); 
-            continue
-        ok,err = git_apply_check(patch)
-        if not ok:
-            print("[PATCH] Preflight failed:\n"+err.strip()); 
-            log_ledger(home, {"from":who,"kind":"patch-precheck-fail","stderr":err.strip()[:2000]}); 
-            continue
-        ok2,err2 = git_apply(patch)
-        if not ok2:
-            print("[PATCH] Apply failed:\n"+err2.strip()); 
-            log_ledger(home, {"from":who,"kind":"patch-apply-fail","stderr":err2.strip()[:2000]}); 
-            continue
-        try_lint()
-        tests_ok = try_tests()
-        git_commit(f"cccc({who}): apply patch (phase {phase})")
-        log_ledger(home, {"from":who,"kind":"patch-commit","paths":paths,"lines":lines,"tests_ok":tests_ok})
-        if not tests_ok:
-            fb = "<TO_PEER>\ntype: EVIDENCE\nintent: fix\ntasks:\n  - desc: 'Tests failed; please provide the minimal fix patch'\n</TO_PEER>\n"
-            paste_when_ready(sender_pane, sender_profile, f"[INPUT]\n{fb}\n")
+    # patch/diff scanning removed
 
     if to_peer.strip():
         # De-duplicate: avoid handing off the same content repeatedly
@@ -1529,36 +1280,7 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
             print_block(f"{who} → USER", to_user_print)
             log_ledger(home, {"from":who,"kind":"to_user","chars":len(to_user)})
 
-    patches = [p for p in extract_patches(sanitized) if is_valid_diff(p)]
-    for i,patch in enumerate(patches,1):
-        print_block(f"{who} Patch#{i}", "Preflight …")
-        lines = count_changed_lines(patch)
-        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
-        if lines>max_lines:
-            print(f"[POLICY] Changed lines {lines} > {max_lines}; rejecting.")
-            log_ledger(home, {"from":who,"kind":"patch-reject","reason":"too-many-lines","lines":lines}); 
-            continue
-        paths = extract_paths_from_patch(patch)
-        if not allowed_by_policies(paths, policies):
-            log_ledger(home, {"from":who,"kind":"patch-reject","reason":"path-not-allowed","paths":paths}); 
-            continue
-        ok,err = git_apply_check(patch)
-        if not ok:
-            print("[PATCH] Preflight failed:\n"+err.strip()); 
-            log_ledger(home, {"from":who,"kind":"patch-precheck-fail","stderr":err.strip()[:2000]}); 
-            continue
-        ok2,err2 = git_apply(patch)
-        if not ok2:
-            print("[PATCH] Apply failed:\n"+err2.strip()); 
-            log_ledger(home, {"from":who,"kind":"patch-apply-fail","stderr":err2.strip()[:2000]}); 
-            continue
-        try_lint()
-        tests_ok = try_tests()
-        git_commit(f"cccc({who}): apply patch (phase {phase})")
-        log_ledger(home, {"from":who,"kind":"patch-commit","paths":paths,"lines":lines,"tests_ok":tests_ok})
-        if not tests_ok:
-            fb = "<TO_PEER>\ntype: EVIDENCE\nintent: fix\ntasks:\n  - desc: 'Tests failed; please provide a minimal fix patch'\n</TO_PEER>\n"
-            tmux_paste(pane, f"[INPUT]\n{fb}\n")
+    # patch/diff scanning removed
 
     if to_peer and to_peer.strip():
         h2 = hashlib.sha1(to_peer.encode("utf-8", errors="replace")).hexdigest()
@@ -1684,7 +1406,7 @@ def main(home: Path):
             details.append("## What you can do")
             details.append("- You may inspect repository files and `.cccc/work` artifacts as needed.")
             details.append("- Feel free to create additional notes or scratch files under `.cccc/work/` (e.g., run experiments, capture logs).")
-            details.append("- If changes to source code are required, prepare unified diffs (≤150 lines) so the primary peers can apply them.")
+            # No special change format required; peers validate via minimal checks/tests/logs.
             details.append("- Summarize findings, highlight risks, and propose concrete next steps for the peers.")
             details.append("")
             details.append("## Gemini CLI (non-interactive) examples")
@@ -2362,10 +2084,10 @@ def main(home: Path):
     # Initialize mailbox (do not clear inbox; honor startup policy)
     ensure_mailbox(home)
     mbox_idx = MailboxIndex(state)
-    mbox_counts = {"peerA": {"to_user":0, "to_peer":0, "patch":0},
-                   "peerB": {"to_user":0, "to_peer":0, "patch":0}}
-    mbox_last = {"peerA": {"to_user": "-", "to_peer": "-", "patch": "-"},
-                 "peerB": {"to_user": "-", "to_peer": "-", "patch": "-"}}
+    mbox_counts = {"peerA": {"to_user":0, "to_peer":0},
+                   "peerB": {"to_user":0, "to_peer":0}}
+    mbox_last = {"peerA": {"to_user": "-", "to_peer": "-"},
+                 "peerB": {"to_user": "-", "to_peer": "-"}}
     # Track last mailbox activity per peer (used for timeout-based soft ACK)
     last_event_ts = {"PeerA": 0.0, "PeerB": 0.0}
     handoff_filter_override: Optional[bool] = None
@@ -2634,7 +2356,7 @@ def main(home: Path):
             f"POR update requested (trigger: {trigger}).",
             f"File: {por_display_path}",
             "Review recent work and ensure objectives, roadmap, active tasks, risks, decisions, and reflections are accurate.",
-            "Update the document by emitting a patch diff that rewrites the relevant sections; do not invent progress.",
+            "Update the document directly in place; reflect the latest reality (no speculative progress).",
             "If POR is already up to date, acknowledge in to_peer.md with the key points you verified."
         ]
         if hint:
@@ -2950,63 +2672,29 @@ def main(home: Path):
                             payload = ""
                     except Exception:
                         pass
-                    # If to_peer contains a unified diff, try to apply it (avoid "discuss diff but not land")
-                    inline = extract_inline_diff_if_any(payload) or ""
-                    if inline:
-                        print_block("PeerA inline patch", "Preflight …")
-                        lines = count_changed_lines(inline)
-                        ok,err = git_apply_check(inline)
-                        if ok:
-                            ok2,err2 = git_apply(inline)
-                            if ok2:
-                                try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply inline patch (mailbox)")
-                                log_ledger(home, {"from":"PeerA","kind":"patch-commit-inline","lines":lines,"tests_ok":tests_ok})
-                                standby = (
-                                    "<FROM_SYSTEM>\n"
-                                    "Patch applied. Please standby and await the next instruction.\n"
-                                    "</FROM_SYSTEM>\n"
-                                )
-                                _send_handoff("System", "PeerA", standby)
-                                _send_handoff("System", "PeerB", standby)
-                                try:
-                                    (home/"mailbox"/"peerA"/"to_peer.md").write_text("", encoding="utf-8")
-                                except Exception:
-                                    pass
-                                try:
-                                    outbox_write(home, {"type":"to_peer_summary","from":"PeerA","to":"PeerB","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
-                                except Exception:
-                                    pass
-                                payload = ""
-                            else:
-                                print("[PATCH] Apply failed:\n"+err2.strip())
-                                log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
-                        else:
-                            print("[PATCH] Preflight failed:\n"+err.strip())
-                            log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                    # inline patch/diff handling removed
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
                     _maybe_trigger_aux_from_payload("PeerA", payload)
                     # Hard gate: if PeerA owes a REV (due to prior COUNTER/QUESTION from PeerB),
-                    # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
+                    # require this to_peer to be a valid revise (delta/refs/next).
                     try:
                         owed = bool((_load_rev_state(home).get("PeerA") or {}).get("pending", False))
                     except Exception:
                         owed = False
                     if owed:
-                        has_inline = bool(extract_inline_diff_if_any(payload) or "" )
-                        if not has_inline:
-                            okq, why = _revise_quality_ok(payload)
-                            if not okq:
-                                tip = (
-                                    "<FROM_SYSTEM>\n"
-                                    "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
-                                    "</FROM_SYSTEM>\n"
-                                )
-                                _send_handoff("System", "PeerA", tip)
-                                log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerA","reason": why})
-                                # Ensure debt remains pending (in case kind=revise but low quality)
-                                _rev_mark_pending(home, "PeerA", True)
-                                payload = ""
+                        okq, why = _revise_quality_ok(payload)
+                        if not okq:
+                            tip = (
+                                "<FROM_SYSTEM>\n"
+                                "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
+                                "</FROM_SYSTEM>\n"
+                            )
+                            _send_handoff("System", "PeerA", tip)
+                            log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerA","reason": why})
+                            # Ensure debt remains pending (in case kind=revise but low quality)
+                            _rev_mark_pending(home, "PeerA", True)
+                            payload = ""
                     if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                         _send_handoff("PeerA", "PeerB", wrapped)
@@ -3025,68 +2713,7 @@ def main(home: Path):
                             pass
                     else:
                         log_ledger(home, {"from":"PeerA","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
-                if events["peerA"].get("patch"):
-                    raw_patch = events["peerA"]["patch"]
-                    norm = normalize_mailbox_patch(raw_patch) or ""
-                    if not norm:
-                        print("[PATCH] Invalid: not a unified diff or contains invalid content")
-                        _archive_patch(home, "PeerA", raw_patch, "invalid-diff")
-                        _clear_mailbox_patch_file(home, "PeerA")
-                        tip = (
-                            "<FROM_SYSTEM>\n"
-                            "Patch invalid (not a unified diff). Follow rules #diff-template. Minimal form:\n"
-                            "```diff\n--- a/.cccc/state/POR.md\n+++ b/.cccc/state/POR.md\n@@ -1,1 +1,1 @@\n-Old\n+New\n```\n"
-                            "Do not include *** Begin Patch/Update File lines.\n"
-                            "</FROM_SYSTEM>\n"
-                        )
-                        _send_handoff("System", "PeerA", tip)
-                    else:
-                        patch = norm
-                        print_block("PeerA patch", "Preflight …")
-                        lines = count_changed_lines(patch)
-                        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
-                        paths = extract_paths_from_patch(patch)
-                        if lines > max_lines:
-                            log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"too-many-lines","lines":lines});
-                            _archive_patch(home, "PeerA", patch, "too-many-lines")
-                            _clear_mailbox_patch_file(home, "PeerA")
-                            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\nPatch rejected: changed lines {lines} > {max_lines}. Split into smaller diffs.\n</FROM_SYSTEM>\n")
-                        elif not allowed_by_policies(paths, policies):
-                            log_ledger(home, {"from":"PeerA","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
-                            _archive_patch(home, "PeerA", patch, "path-not-allowed")
-                            _clear_mailbox_patch_file(home, "PeerA")
-                            allow_hint = ", ".join((policies.get("patch_queue",{}) or {}).get("allowed_paths", []) or ["**"])
-                            msg = (
-                                "<FROM_SYSTEM>\n"
-                                "Patch rejected: path not allowed by policy.\n"
-                                f"Allowed patterns: {allow_hint}. Note: .cccc/work/** should NOT go through patch.\n"
-                                "</FROM_SYSTEM>\n"
-                            )
-                            _send_handoff("System", "PeerA", msg)
-                        else:
-                            ok,err = git_apply_check(patch)
-                            if not ok:
-                                print("[PATCH] Preflight failed:\n"+err.strip())
-                                log_ledger(home, {"from":"PeerA","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
-                                _archive_patch(home, "PeerA", patch, "precheck-fail")
-                                _clear_mailbox_patch_file(home, "PeerA")
-                                _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nPrecheck failed: patch does not match current baseline. Pull latest or reduce scope; keep unified diff format per rules #diff-template.\n</FROM_SYSTEM>\n")
-                            else:
-                                ok2,err2 = git_apply(patch)
-                                if not ok2:
-                                    print("[PATCH] Apply failed:\n"+err2.strip())
-                                    log_ledger(home, {"from":"PeerA","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
-                                    _archive_patch(home, "PeerA", patch, "apply-fail")
-                                    _clear_mailbox_patch_file(home, "PeerA")
-                                    _send_handoff("System", "PeerA", "<FROM_SYSTEM>\nApply failed: conflicts with current tree. Update baseline or split into smaller diffs; keep unified diff format per rules #diff-template.\n</FROM_SYSTEM>\n")
-                                else:
-                                    try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerA): apply patch (mailbox)")
-                                    log_ledger(home, {"from":"PeerA","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
-                                    _archive_patch(home, "PeerA", patch, "applied")
-                                    _clear_mailbox_patch_file(home, "PeerA")
-                        mbox_counts["peerA"]["patch"] += 1
-                        _ack_receiver("PeerA", raw_patch)
-                        last_event_ts["PeerA"] = time.time()
+                # patch/diff mailbox path removed
                 # POR.new.md auto-diff removed (per latest design)
                 # PeerB events
                 if events["peerB"].get("to_user"):
@@ -3121,57 +2748,28 @@ def main(home: Path):
                             payload = ""
                     except Exception:
                         pass
-                    inline = extract_inline_diff_if_any(payload) or ""
-                    if inline:
-                        print_block("PeerB inline patch", "Preflight …")
-                        lines = count_changed_lines(inline)
-                        ok,err = git_apply_check(inline)
-                        if ok:
-                            ok2,err2 = git_apply(inline)
-                            if ok2:
-                                try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply inline patch (mailbox)")
-                                log_ledger(home, {"from":"PeerB","kind":"patch-commit-inline","lines":lines,"tests_ok":tests_ok})
-                                standby = ("<FROM_SYSTEM>\nPatch applied. Please standby and await the next instruction.\n</FROM_SYSTEM>\n")
-                                _send_handoff("System", "PeerA", standby)
-                                _send_handoff("System", "PeerB", standby)
-                                try:
-                                    (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")
-                                except Exception:
-                                    pass
-                                try:
-                                    outbox_write(home, {"type":"to_peer_summary","from":"PeerB","to":"PeerA","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
-                                except Exception:
-                                    pass
-                                payload = ""
-                            else:
-                                print("[PATCH] Apply failed:\n"+err2.strip())
-                                log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
-                        else:
-                            print("[PATCH] Preflight failed:\n"+err.strip())
-                            log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
+                    # inline patch/diff handling removed
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
                         _maybe_trigger_aux_from_payload("PeerB", payload)
                         # Hard gate: if PeerB owes a REV (due to prior COUNTER/QUESTION from PeerA),
-                        # require this to_peer to be a valid revise (delta/refs/next), unless carrying direct evidence (inline diff).
+                        # require this to_peer to be a valid revise (delta/refs/next).
                         try:
                             owed = bool((_load_rev_state(home).get("PeerB") or {}).get("pending", False))
                         except Exception:
                             owed = False
                         if owed:
-                            has_inline = bool(extract_inline_diff_if_any(payload) or "")
-                            if not has_inline:
-                                okq, why = _revise_quality_ok(payload)
-                                if not okq:
-                                    tip = (
-                                        "<FROM_SYSTEM>\n"
-                                        "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
-                                        "</FROM_SYSTEM>\n"
-                                    )
-                                    _send_handoff("System", "PeerB", tip)
-                                    log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerB","reason": why})
-                                    _rev_mark_pending(home, "PeerB", True)
-                                    payload = ""
+                            okq, why = _revise_quality_ok(payload)
+                            if not okq:
+                                tip = (
+                                    "<FROM_SYSTEM>\n"
+                                    "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
+                                    "</FROM_SYSTEM>\n"
+                                )
+                                _send_handoff("System", "PeerB", tip)
+                                log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerB","reason": why})
+                                _rev_mark_pending(home, "PeerB", True)
+                                payload = ""
                         if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
                             wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
                             _send_handoff("PeerB", "PeerA", wrapped)
@@ -3190,68 +2788,7 @@ def main(home: Path):
                                 pass
                         else:
                             log_ledger(home, {"from":"PeerB","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
-                if events["peerB"].get("patch"):
-                    raw_patch = events["peerB"]["patch"]
-                    norm = normalize_mailbox_patch(raw_patch) or ""
-                    if not norm:
-                        print("[PATCH] Invalid: not a unified diff or contains invalid content")
-                        _archive_patch(home, "PeerB", raw_patch, "invalid-diff")
-                        _clear_mailbox_patch_file(home, "PeerB")
-                        tip = (
-                            "<FROM_SYSTEM>\n"
-                            "Patch invalid (not a unified diff). Follow rules #diff-template. Minimal form:\n"
-                            "```diff\n--- a/.cccc/state/POR.md\n+++ b/.cccc/state/POR.md\n@@ -1,1 +1,1 @@\n-Old\n+New\n```\n"
-                            "Do not include *** Begin Patch/Update File lines.\n"
-                            "</FROM_SYSTEM>\n"
-                        )
-                        _send_handoff("System", "PeerB", tip)
-                    else:
-                        patch = norm
-                        print_block("PeerB patch", "Preflight …")
-                        lines = count_changed_lines(patch)
-                        max_lines = int(policies.get("patch_queue",{}).get("max_diff_lines",150))
-                        paths = extract_paths_from_patch(patch)
-                        if lines > max_lines:
-                            log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":"too-many-lines","lines":lines});
-                            _archive_patch(home, "PeerB", patch, "too-many-lines")
-                            _clear_mailbox_patch_file(home, "PeerB")
-                            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\nPatch rejected: changed lines {lines} > {max_lines}. Split into smaller diffs.\n</FROM_SYSTEM>\n")
-                        elif not allowed_by_policies(paths, policies):
-                            log_ledger(home, {"from":"PeerB","kind":"patch-reject","reason":"path-not-allowed","paths":paths});
-                            _archive_patch(home, "PeerB", patch, "path-not-allowed")
-                            _clear_mailbox_patch_file(home, "PeerB")
-                            allow_hint = ", ".join((policies.get("patch_queue",{}) or {}).get("allowed_paths", []) or ["**"])
-                            msg = (
-                                "<FROM_SYSTEM>\n"
-                                "Patch rejected: path not allowed by policy.\n"
-                                f"Allowed patterns: {allow_hint}. Note: .cccc/work/** should NOT go through patch.\n"
-                                "</FROM_SYSTEM>\n"
-                            )
-                            _send_handoff("System", "PeerB", msg)
-                        else:
-                            ok,err = git_apply_check(patch)
-                            if not ok:
-                                print("[PATCH] Preflight failed:\n"+err.strip())
-                                log_ledger(home, {"from":"PeerB","kind":"patch-precheck-fail","stderr":err.strip()[:2000]});
-                                _archive_patch(home, "PeerB", patch, "precheck-fail")
-                                _clear_mailbox_patch_file(home, "PeerB")
-                                _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nPrecheck failed: patch does not match current baseline. Pull latest or reduce scope; keep unified diff format per rules #diff-template.\n</FROM_SYSTEM>\n")
-                            else:
-                                ok2,err2 = git_apply(patch)
-                                if not ok2:
-                                    print("[PATCH] Apply failed:\n"+err2.strip())
-                                    log_ledger(home, {"from":"PeerB","kind":"patch-apply-fail","stderr":err2.strip()[:2000]});
-                                    _archive_patch(home, "PeerB", patch, "apply-fail")
-                                    _clear_mailbox_patch_file(home, "PeerB")
-                                    _send_handoff("System", "PeerB", "<FROM_SYSTEM>\nApply failed: conflicts with current tree. Update baseline or split into smaller diffs; keep unified diff format per rules #diff-template.\n</FROM_SYSTEM>\n")
-                                else:
-                                    try_lint(); tests_ok = try_tests(); git_commit("cccc(PeerB): apply patch (mailbox)")
-                                    log_ledger(home, {"from":"PeerB","kind":"patch-commit","lines":lines,"tests_ok":tests_ok})
-                                    _archive_patch(home, "PeerB", patch, "applied")
-                                    _clear_mailbox_patch_file(home, "PeerB")
-                        mbox_counts["peerB"]["patch"] += 1
-                        _ack_receiver("PeerB", raw_patch)
-                        last_event_ts["PeerB"] = time.time()
+                # patch/diff mailbox path removed
                 # POR.new.md auto-diff removed (per latest design)
                 # Persist index
                 mbox_idx.save()
@@ -3356,7 +2893,7 @@ def main(home: Path):
             continue
         if line == "/pause":
             deliver_paused = True
-            print("[PAUSE] Paused A↔B handoff (still collect <TO_USER> and patch preflight)"); write_status(True); continue
+            print("[PAUSE] Paused A↔B handoff (still collect <TO_USER>)"); write_status(True); continue
         if line == "/resume":
             deliver_paused = False
             write_status(False)

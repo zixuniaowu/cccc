@@ -1,47 +1,104 @@
 # -*- coding: utf-8 -*-
-"""POR helper utilities (Markdown-based)."""
+"""POR helper utilities (Markdown-based).
+
+This module defines the canonical POR file location and ensures it exists.
+It now points to docs/por/POR.md (business domain), not .cccc/state/.
+When creating a new POR, we prefer rendering from the repository template
+at .cccc/settings/templates/por.md.j2; if missing, we fall back to a
+minimal built-in skeleton. No external templating dependency is used.
+"""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Dict
 import datetime as _dt
+import hashlib as _hash
+
+# Keep ASCII-only content and comments.
 
 POR_FILENAME = "POR.md"
-POR_TEMPLATE = """# POR Summary
-- Objective: _fill in_
-- Current Focus: _fill in_
-- Key Constraints: _fill in_
-- Acceptance Benchmarks (tick items; reference when declaring Done):
-  - [ ] _criterion 1_
-  - [ ] _criterion 2_
 
-## Roadmap & Milestones
-- _Describe upcoming milestones, checkpoints, dependencies._
+# Built-in minimal skeleton (used only when the template is missing).
+POR_TEMPLATE = """# POR · Strategic Board
+- North Star: <one line>; Guardrails: <quality/safety/cost/latency 2–3 items>
+- Non-Goals / Boundaries: <1–3 lines>
 
-## Active Tasks & Next Steps
-- _List concrete next actions; include owner: PeerA|PeerB._
-- _Example_: <task title> (owner: PeerA)
+## Bets & Assumptions
+- Bet 1: <one intent line> | Probe: <cmd/script> | Evidence: <one line> | Window: <date/threshold>
+- Bet 2: <...>
 
-## Risks & Mitigations
-- _Enumerate key risks, weak signals, mitigation plans._
+## Roadmap (Now/Next/Later)
+- Now (<= 2 weeks): <3–5 lines of intent + criteria>
+- Next (<= 6 weeks): <...>
+- Later (> 6 weeks): <...>
 
-## Decisions, Alternatives & Rationale
-- _Capture recent choices, rejected options, and why._
+## Portfolio Health (in-progress / at-risk only)
+| ID | Title | Owner | Stage | Latest evidence (one line) | SUBPOR |
+|----|-------|-------|-------|----------------------------|--------|
 
-## Reflections & Open Questions
-- _Record lessons learned, doubts, follow-up investigations._
+<!-- Generated: fallback skeleton (por_manager). Consider generating via .cccc/tools/por_subpor.py for the full template. -->
 """
 
 
 def por_path(home: Path) -> Path:
-    return (home/"state")/POR_FILENAME
+    """Return the canonical POR path under docs/por/.
+
+    This moves POR to the business domain (docs/), keeping .cccc/ for
+    orchestrator internals only.
+    """
+    return (Path.cwd()/"docs"/"por")/POR_FILENAME
+
+
+def _render_from_template(template_path: Path) -> str:
+    """Very small placeholder renderer: replaces {{name}} with values.
+
+    We intentionally avoid external deps (no Jinja). Only a few vars are
+    provided and the template should remain simple.
+    """
+    raw = template_path.read_text(encoding="utf-8")
+    sha1 = _hash.sha1(raw.encode("utf-8", errors="replace")).hexdigest()
+    subs = {
+        "generated_on": _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        "template_sha1": sha1,
+        "tool": "por_manager.ensure_por",
+        "tool_version": "0.1.0",
+    }
+    out = raw
+    for k, v in subs.items():
+        out = out.replace("{{" + k + "}}", str(v))
+    return out
 
 
 def ensure_por(home: Path) -> Path:
+    """Ensure docs/por/POR.md exists.
+
+    Preference order:
+      1) Render from .cccc/settings/templates/por.md.j2 when present.
+      2) Fall back to a built-in minimal skeleton.
+    The function never overwrites an existing POR.md.
+    """
     path = por_path(home)
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(POR_TEMPLATE.strip() + "\n", encoding="utf-8")
+    if path.exists():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tpl = (Path.cwd()/".cccc"/"settings"/"templates"/"por.md.j2")
+    try:
+        if tpl.exists():
+            text = _render_from_template(tpl)
+        else:
+            text = POR_TEMPLATE.strip() + "\n"
+        # Prepend a small provenance header for traceability (ASCII only)
+        header = (
+            f"<!-- Generated on {_dt.datetime.utcnow().isoformat(timespec='seconds')}Z by por_manager; "
+            f"template={'present' if tpl.exists() else 'builtin'} -->\n\n"
+        )
+        path.write_text(header + text, encoding="utf-8")
+    except Exception:
+        # Last resort: try writing the fallback skeleton
+        try:
+            path.write_text(POR_TEMPLATE.strip() + "\n", encoding="utf-8")
+        except Exception:
+            pass
     return path
 
 
