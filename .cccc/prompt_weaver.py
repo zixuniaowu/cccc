@@ -43,7 +43,7 @@ def _calc_rules_hash(home: Path) -> str:
             except Exception:
                 pass
     # Bump the generation suffix when changing rules content semantics
-    payload = "\n".join(parts) + "\nGEN:7"
+    payload = "\n".join(parts) + "\nGEN:8"
     return hashlib.sha1(payload.encode("utf-8", errors="replace")).hexdigest()
 
 def _is_im_enabled(home: Path) -> bool:
@@ -147,6 +147,9 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "2) Canonical references and anchors",
         f"- POR.md - single source of direction (path: {por_rel})",
         "  - Keep North-star, guardrails, bets/assumptions, Now/Next/Later, and portfolio health here (no details).",
+        "- PROJECT.md - project scope and context (path: PROJECT.md at repo root)",
+        "  - Use as the stable charter: vision, constraints, stakeholders, non-goals, external links. Do not duplicate into POR.",
+        "  - If you find conflicts or drift between PROJECT.md and POR, clarify briefly in POR and proceed with the updated direction.",
         "- SUBPOR - execution anchor (one task = one SUBPOR)",
         "  - Location: docs/por/T######-slug/SUBPOR.md",
         "  - Sections: goal/scope; non-goals; deliverable and interface; 3-5 acceptance items; cheapest probe; evidence refs; risks/deps; next (single, decidable).",

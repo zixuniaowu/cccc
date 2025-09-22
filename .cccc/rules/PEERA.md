@@ -20,6 +20,9 @@
 2) Canonical references and anchors
 - POR.md - single source of direction (path: /home/dodd/dev/cccc/docs/por/POR.md)
   - Keep North-star, guardrails, bets/assumptions, Now/Next/Later, and portfolio health here (no details).
+- PROJECT.md - project scope and context (path: PROJECT.md at repo root)
+  - Use as the stable charter: vision, constraints, stakeholders, non-goals, external links. Do not duplicate into POR.
+  - If you find conflicts or drift between PROJECT.md and POR, clarify briefly in POR and proceed with the updated direction.
 - SUBPOR - execution anchor (one task = one SUBPOR)
   - Location: docs/por/T######-slug/SUBPOR.md
   - Sections: goal/scope; non-goals; deliverable and interface; 3-5 acceptance items; cheapest probe; evidence refs; risks/deps; next (single, decidable).

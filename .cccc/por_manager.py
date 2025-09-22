@@ -58,7 +58,7 @@ def _render_from_template(template_path: Path) -> str:
     """
     raw = template_path.read_text(encoding="utf-8")
     sha1 = _hash.sha1(raw.encode("utf-8", errors="replace")).hexdigest()
-        subs = {
+    subs = {
         "generated_on": _dt.datetime.now(_tz.utc).isoformat(timespec="seconds"),
         "template_sha1": sha1,
         "tool": "por_manager.ensure_por",
