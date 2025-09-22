@@ -23,9 +23,10 @@ from __future__ import annotations
 import argparse, sys, os, re, json
 from pathlib import Path
 import datetime as _dt
+from datetime import timezone as _tz
 import hashlib as _hash
 
-TOOL_VERSION = "0.1.0"
+TOOL_VERSION = "0.1.1"
 
 
 def _cwd() -> Path:
@@ -44,7 +45,9 @@ def _logs_write(line: str) -> None:
     try:
         p = _log_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        ts = _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        ts = _dt.datetime.now(_tz.utc).isoformat(timespec="seconds")
+        if not ts.endswith("+00:00"):
+            ts += "Z"
         p.open("a", encoding="utf-8").write(f"{ts} {line}\n")
     except Exception:
         pass
@@ -116,12 +119,11 @@ def por_init() -> int:
         return 0
     por.parent.mkdir(parents=True, exist_ok=True)
     tpl = _tmpl_dir() / "por.md.j2"
-    header = (
-        f"<!-- Generated on {_dt.datetime.utcnow().isoformat(timespec='seconds')}Z by por_subpor.py {TOOL_VERSION} -->\n\n"
-    )
+    _ts = _dt.datetime.now(_tz.utc).isoformat(timespec='seconds')
+    header = (f"<!-- Generated on {_ts} by por_subpor.py {TOOL_VERSION} -->\n\n")
     if tpl.exists():
         text = _render_template(tpl, {
-            "generated_on": _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "generated_on": _dt.datetime.now(_tz.utc).isoformat(timespec="seconds"),
             "tool": "por_subpor.py",
             "tool_version": TOOL_VERSION,
         })
@@ -167,12 +169,11 @@ def subpor_new(title: str, owner: str, slug: str | None, timebox: str | None, ta
         "owner": owner,
         "stage": "proposed",
         "timebox": (timebox or "1d"),
-        "date": _dt.datetime.utcnow().strftime("%Y-%m-%d"),
+        "date": _dt.datetime.now(_tz.utc).strftime("%Y-%m-%d"),
         "slug": slug,
     }
-    header = (
-        f"<!-- Generated on {_dt.datetime.utcnow().isoformat(timespec='seconds')}Z by por_subpor.py {TOOL_VERSION} -->\n\n"
-    )
+    _ts2 = _dt.datetime.now(_tz.utc).isoformat(timespec='seconds')
+    header = (f"<!-- Generated on {_ts2} by por_subpor.py {TOOL_VERSION} -->\n\n")
     if tpl.exists():
         text = _render_template(tpl, subs)
     else:
@@ -272,4 +273,3 @@ def main(argv: list[str]) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main(sys.argv[1:]))
-

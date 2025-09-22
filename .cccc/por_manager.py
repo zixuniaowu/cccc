@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict
 import datetime as _dt
+from datetime import timezone as _tz
 import hashlib as _hash
 
 # Keep ASCII-only content and comments.
@@ -57,12 +58,12 @@ def _render_from_template(template_path: Path) -> str:
     """
     raw = template_path.read_text(encoding="utf-8")
     sha1 = _hash.sha1(raw.encode("utf-8", errors="replace")).hexdigest()
-    subs = {
-        "generated_on": _dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+        subs = {
+        "generated_on": _dt.datetime.now(_tz.utc).isoformat(timespec="seconds"),
         "template_sha1": sha1,
         "tool": "por_manager.ensure_por",
-        "tool_version": "0.1.0",
-    }
+        "tool_version": "0.1.1",
+        }
     out = raw
     for k, v in subs.items():
         out = out.replace("{{" + k + "}}", str(v))
@@ -88,10 +89,8 @@ def ensure_por(home: Path) -> Path:
         else:
             text = POR_TEMPLATE.strip() + "\n"
         # Prepend a small provenance header for traceability (ASCII only)
-        header = (
-            f"<!-- Generated on {_dt.datetime.utcnow().isoformat(timespec='seconds')}Z by por_manager; "
-            f"template={'present' if tpl.exists() else 'builtin'} -->\n\n"
-        )
+        _ts = _dt.datetime.now(_tz.utc).isoformat(timespec='seconds')
+        header = (f"<!-- Generated on {_ts} by por_manager; template={'present' if tpl.exists() else 'builtin'} -->\n\n")
         path.write_text(header + text, encoding="utf-8")
     except Exception:
         # Last resort: try writing the fallback skeleton
