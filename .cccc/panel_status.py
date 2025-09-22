@@ -12,6 +12,11 @@ from __future__ import annotations
 import sys, json, time, argparse
 from pathlib import Path
 from typing import Dict, Any, List
+try:
+    # Local import (script runs from .cccc). Used for a reliable POR fallback.
+    from por_manager import por_status_snapshot as _por_snap  # type: ignore
+except Exception:
+    _por_snap = None  # type: ignore
 
 
 def read_jsonl(path: Path, limit: int = 2000) -> List[Dict[str, Any]]:
@@ -98,6 +103,12 @@ def render(home: Path):
     mlast = (status.get("mailbox_last") or {})
     anti = status.get("handoff_filter_enabled")
     por = status.get("por") or {}
+    # Always show POR path/updated; fall back to computing when status lacks it
+    if not por and _por_snap is not None:
+        try:
+            por = _por_snap(home)
+        except Exception:
+            por = {}
     coach = status.get("aux") or {}
 
     lines: List[str] = []
@@ -110,11 +121,11 @@ def render(home: Path):
     if mcounts:
         ca = mcounts.get('peerA') or {}; cb = mcounts.get('peerB') or {}
         lines.append(f"Mailbox: A tu={ca.get('to_user',0)} tp={ca.get('to_peer',0)}  |  B tu={cb.get('to_user',0)} tp={cb.get('to_peer',0)}")
-    if por:
-        lines.append(f"POR path={por.get('path','-')}  updated={por.get('updated_at','-')}")
-        summary = (por.get('summary') or '')
-        if summary:
-            lines.append(f"POR summary: {summary[:160]}")
+    # Show POR path and updated time even without summary
+    lines.append(f"POR path={(por.get('path') if isinstance(por, dict) else '-') or '-'}  updated={(por.get('updated_at') if isinstance(por, dict) else '-') or '-'}")
+    summary = (por.get('summary') if isinstance(por, dict) else '') or ''
+    if summary:
+        lines.append(f"POR summary: {summary[:160]}")
     if coach:
         lines.append(f"Aux mode={coach.get('mode','off')} command={(coach.get('command') or '-')}")
         if coach.get('last_reason'):
