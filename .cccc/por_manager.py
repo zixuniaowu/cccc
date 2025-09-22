@@ -20,24 +20,40 @@ import hashlib as _hash
 POR_FILENAME = "POR.md"
 
 # Built-in minimal skeleton (used only when the template is missing).
-POR_TEMPLATE = """# POR · Strategic Board
-- North Star: <one line>; Guardrails: <quality/safety/cost/latency 2–3 items>
-- Non-Goals / Boundaries: <1–3 lines>
+POR_TEMPLATE = """# POR - Strategic Board
+- North Star: <one line>; Guardrails: <quality/safety/cost/latency 2-3 items>
+- Non-Goals / Boundaries: <1-3 lines>
+
+## Deliverables (top-level)
+- <deliverable A> — path/interface/format — owner
+- <deliverable B> — path/interface/format — owner
 
 ## Bets & Assumptions
 - Bet 1: <one intent line> | Probe: <cmd/script> | Evidence: <one line> | Window: <date/threshold>
 - Bet 2: <...>
 
 ## Roadmap (Now/Next/Later)
-- Now (<= 2 weeks): <3–5 lines of intent + criteria>
+- Now (<= 2 weeks): <3-5 lines of intent + criteria>
 - Next (<= 6 weeks): <...>
 - Later (> 6 weeks): <...>
+
+## Decision & Pivot Log (recent 5)
+- YYYY-MM-DD | context | choice/pivot | evidence | impact/rollback | default
+
+## Risk Radar & Mitigations (up/down/flat)
+- R1: signal/impact/minimal counter (up)
 
 ## Portfolio Health (in-progress / at-risk only)
 | ID | Title | Owner | Stage | Latest evidence (one line) | SUBPOR |
 |----|-------|-------|-------|----------------------------|--------|
 
-<!-- Generated: fallback skeleton (por_manager). Consider generating via .cccc/tools/por_subpor.py for the full template. -->
+## Operating Principles (short)
+- Falsify before expand; one decidable next step; stop when wrong; Done = evidence.
+
+## Maintenance & Change Log (append-only, one line each)
+- YYYY-MM-DD HH:MM | who | reason | evidence
+
+<!-- Generated: fallback skeleton (por_manager). Consider generating via .cccc/por_subpor.py for the full template. -->
 """
 
 
@@ -134,7 +150,7 @@ def por_status_snapshot(home: Path) -> Dict[str, str]:
 
 
 # --- Aux section management ---
-AUX_SECTION_TITLE = "## Aux Delegations - Subtasks & Meta-Review/Revise"
+AUX_SECTION_TITLE = "## Aux Delegations - Meta-Review/Revise (strategic)"
 
 def ensure_aux_section(home: Path) -> bool:
     """Ensure the POR file contains the Aux delegations section.
@@ -152,11 +168,12 @@ def ensure_aux_section(home: Path) -> bool:
     lines = [
         "",
         AUX_SECTION_TITLE,
-        "Maintain a short list of decoupled sub-tasks you intend to offload to Aux, and brief meta-review/revise passes.",
+        "Strategic only: list meta-review/revise items offloaded to Aux.",
         "Keep each item compact: what (one line), why (one line), optional acceptance.",
-        "After integrating Aux results, either remove the item or mark it done in place.",
-        "- [ ] <task — why — acceptance(optional)>",
-        "- [ ] <task — why — acceptance(optional)>",
+        "Tactical Aux subtasks now live in each SUBPOR under 'Aux (tactical)'; do not list them here.",
+        "After integrating Aux results, either remove the item or mark it done.",
+        "- [ ] <meta-review — why — acceptance(optional)>",
+        "- [ ] <revise — why — acceptance(optional)>",
         "",
     ]
     try:

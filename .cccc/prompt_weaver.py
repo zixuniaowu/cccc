@@ -147,9 +147,6 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "2) Canonical references and anchors",
         f"- POR.md - single source of direction (path: {por_rel})",
         "  - Keep North-star, guardrails, bets/assumptions, Now/Next/Later, and portfolio health here (no details).",
-        "- PROJECT.md - user-facing scope and context (repo root, maintained by user)",
-        "  - Read to align on vision, constraints, stakeholders, non-goals, and links. Do NOT edit unless explicitly asked by the user.",
-        "  - If PROJECT.md and POR drift, note a one-line clarification in POR and continue with the updated direction; propose edits to the user via <TO_USER> if needed.",
         "- SUBPOR - execution anchor (one task = one SUBPOR)",
         "  - Location: docs/por/T######-slug/SUBPOR.md",
         "  - Sections: goal/scope; non-goals; deliverable and interface; 3-5 acceptance items; cheapest probe; evidence refs; risks/deps; next (single, decidable).",
@@ -157,6 +154,9 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "- Work surfaces",
         "  - Use .cccc/work/** for scratch, samples, logs. Cite exact paths and line ranges instead of pasting large blobs.",
         "  - Boundary: do not modify orchestrator code/config/policies; use mailbox/work/state/logs exactly as documented.",
+        "- PROJECT.md - user-facing scope and context (repo root, maintained by user)",
+        "  - Read to align on vision, constraints, stakeholders, non-goals, and links. Do NOT edit unless explicitly asked by the user.",
+        "  - If PROJECT.md and POR drift, note a one-line clarification in POR and continue with the updated direction; propose edits to the user via <TO_USER> if needed.",
     ]
 
     ch3 = [

@@ -7,10 +7,10 @@ POR/SUBPOR generator (small tool)
 - Instances live under docs/por/{POR.md, T######-slug/SUBPOR.md}
 -
 Usage:
-  python .cccc/tools/por_subpor.py por init
-  python .cccc/tools/por_subpor.py subpor new --title "My Task" --owner peerB [--slug my-task] [--timebox 1d]
-  python .cccc/tools/por_subpor.py subpor open T000123
-  python .cccc/tools/por_subpor.py subpor lint T000123
+  python .cccc/por_subpor.py por init|sync
+  python .cccc/por_subpor.py subpor new --title "My Task" --owner peerB [--slug my-task] [--timebox 1d]
+  python .cccc/por_subpor.py subpor open T000123
+  python .cccc/por_subpor.py subpor lint T000123
 
 Design:
   - Idempotent; never overwrites existing files.
@@ -230,10 +230,44 @@ def subpor_lint(task_id: str) -> int:
         missing.append("probe")
     if "Next (single" not in text:
         missing.append("next")
+    if "Implementation Approach" not in text:
+        missing.append("impl")
+    if "## REV" not in text:
+        missing.append("rev")
     if missing:
         print("lint: missing sections -> " + ", ".join(missing))
         return 1
     print("lint: ok")
+    return 0
+
+
+def por_sync() -> int:
+    p = _por_path()
+    if not p.exists():
+        print("POR.md not found; run 'por init' first", file=sys.stderr)
+        return 2
+    text = p.read_text(encoding="utf-8")
+    append_blocks: list[str] = []
+    def _has(h: str) -> bool:
+        return (h in text)
+    if not _has("## Deliverables"):
+        append_blocks.append("\n## Deliverables (top-level)\n- <deliverable> — path/interface/format — owner\n")
+    if not _has("## Decision & Pivot Log"):
+        append_blocks.append("\n## Decision & Pivot Log (recent 5)\n- YYYY-MM-DD | context | choice/pivot | evidence | impact/rollback | default\n")
+    if not _has("## Risk Radar"):
+        append_blocks.append("\n## Risk Radar & Mitigations (up/down/flat)\n- R1: signal/impact/minimal counter (up)\n")
+    if not _has("## Operating Principles"):
+        append_blocks.append("\n## Operating Principles (short)\n- Falsify before expand; one decidable next step; stop when wrong; Done = evidence.\n")
+    if not _has("## Maintenance & Change Log"):
+        append_blocks.append("\n## Maintenance & Change Log (append-only, one line each)\n- YYYY-MM-DD HH:MM | who | reason | evidence\n")
+    if not append_blocks:
+        print("por sync: nothing to add (all sections present)")
+        return 0
+    p.write_text(text.rstrip("\n") + "\n" + "\n".join(append_blocks) + "\n", encoding="utf-8")
+    _logs_write("por sync appended=" + ",".join([b.splitlines()[0] for b in append_blocks]))
+    print("por sync: appended sections:")
+    for b in append_blocks:
+        print("-", b.splitlines()[0].strip())
     return 0
 
 
@@ -244,6 +278,7 @@ def main(argv: list[str]) -> int:
     por = sub.add_parser("por", help="POR commands")
     por_sub = por.add_subparsers(dest="subcmd")
     por_sub.add_parser("init", help="Create docs/por/POR.md if missing")
+    por_sub.add_parser("sync", help="Append missing high-ROI sections to POR.md (non-destructive)")
 
     sp = sub.add_parser("subpor", help="SUBPOR commands")
     sp_sub = sp.add_subparsers(dest="subcmd")
@@ -261,6 +296,8 @@ def main(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     if args.cmd == "por" and args.subcmd == "init":
         return por_init()
+    if args.cmd == "por" and args.subcmd == "sync":
+        return por_sync()
     if args.cmd == "subpor" and args.subcmd == "new":
         return subpor_new(args.title, args.owner, args.slug, args.timebox, args.id)
     if args.cmd == "subpor" and args.subcmd == "open":
