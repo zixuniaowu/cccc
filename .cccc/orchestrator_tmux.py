@@ -1316,6 +1316,12 @@ def main(home: Path):
     # Directories
     settings = home/"settings"; state = home/"state"
     state.mkdir(exist_ok=True)
+    # Rebuild rules docs once per orchestrator start so timestamps/IM/Aux state are fresh.
+    try:
+        from prompt_weaver import rebuild_rules_docs  # type: ignore
+        rebuild_rules_docs(home)
+    except Exception:
+        pass
     # Reset preamble sent flags on each orchestrator start to ensure the first
     # user message per peer carries the preamble in this session.
     try:

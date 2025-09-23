@@ -325,6 +325,11 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
     return target
 
 def ensure_rules_docs(home: Path):
+    """Ensure rules docs exist and reflect current config hash.
+    - Behavior: generate when missing OR when the computed hash changes.
+    - Rationale: cheap, safe, idempotent guard to keep rules reasonably fresh
+      without forcing disk writes on every call.
+    """
     # Generate rules if missing or when config hash changed
     h = _calc_rules_hash(home)
     state = _state_dir(home)
@@ -351,6 +356,33 @@ def ensure_rules_docs(home: Path):
             stamp.write_text(json.dumps({"hash": h}, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
+
+def rebuild_rules_docs(home: Path):
+    """Rebuild rules docs unconditionally (used once at orchestrator startup).
+    - Always rewrites .cccc/rules/PEERA.md, PEERB.md, PEERC.md with fresh
+      timestamps and current IM/Aux mode derived from settings/env.
+    - Updates state/rules_hash.json to the current computed hash so that
+      subsequent ensure_rules_docs() calls are no-ops for this run unless
+      settings change.
+    """
+    ensure_por(home)
+    im_enabled = _is_im_enabled(home)
+    aux_mode = _aux_mode(home)
+    _write_rules_for_peer(home, "peerA", im_enabled=im_enabled, aux_mode=aux_mode)
+    _write_rules_for_peer(home, "peerB", im_enabled=im_enabled, aux_mode=aux_mode)
+    _write_rules_for_aux(home, aux_mode=aux_mode)
+    if aux_mode == "on":
+        try:
+            ensure_aux_section(home)
+        except Exception:
+            pass
+    # Record hash so later 'ensure' calls can skip
+    try:
+        h = _calc_rules_hash(home)
+        state = _state_dir(home)
+        (state/"rules_hash.json").write_text(json.dumps({"hash": h}, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def _ensure_str(value: Any) -> str:
