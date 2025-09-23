@@ -34,7 +34,7 @@ CCCC payoff with two peers and repo-native anchors:
 
 ## Peers & Models (default choices, not a lock-in)
 
-- :large_blue_circle: Peer A = Claude Code CLI (default). We pick it for strong reasoning, careful code edits, and robust long sessions.
+- :large_blue_circle: Peer A = Claude Code (default). We pick it for strong reasoning, careful code edits, and robust long sessions.
 - :yellow_circle: Peer B = Codex CLI (default). We pick it for decisive implementation, fast iteration, and stable CLI behavior.
 - :sparkles: Optional Aux = Gemini CLI (on-demand). We use it when a burst of non-interactive work helps (broad reviews, heavy tests, bulk transforms). Rationale: Gemini's long interactive sessions can be less stable in some setups, but it shines at short, structured jobs - perfect for an Aux you summon and dismiss.
 
