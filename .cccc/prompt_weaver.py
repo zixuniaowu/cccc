@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
-from datetime import datetime, timezone as _tz
+from datetime import datetime, timezone as _tz, timedelta
 
 from por_manager import ensure_por, por_path, ensure_aux_section
 import json
@@ -104,6 +104,22 @@ def _conversation_reset(home: Path) -> Tuple[str, Optional[int]]:
     except Exception:
         interval = 0
     return policy, (interval if interval > 0 else None)
+
+def _format_local_ts() -> str:
+    """Return a human-friendly local timestamp with tz abbrev and UTC offset.
+    Example: 2025-09-24 00:17:50 PDT (UTC-07:00)
+    """
+    dt = datetime.now().astimezone()
+    tzname = dt.tzname() or ""
+    off = dt.utcoffset() or timedelta(0)
+    total = int(off.total_seconds())
+    sign = '+' if total >= 0 else '-'
+    total = abs(total)
+    hh = total // 3600
+    mm = (total % 3600) // 60
+    offset_str = f"UTC{sign}{hh:02d}:{mm:02d}"
+    main = dt.strftime("%Y-%m-%d %H:%M:%S")
+    return f"{main} {tzname} ({offset_str})" if tzname else f"{main} ({offset_str})"
 
 def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: str) -> Path:
     is_peera = (peer.lower() == "peera" or peer == "peerA")
@@ -251,8 +267,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - System commands such as /focus, /reset, /aux, /review from IM arrive as <FROM_SYSTEM> notes; act and report in your next turn.",
         ]
 
-    # Use system local time with timezone offset for friendlier readability
-    ts = datetime.now().astimezone().isoformat(timespec='seconds')
+    ts = _format_local_ts()
     text = "\n".join([
         f"# {role_name} Rules (Generated)",
         f"Generated on {ts}",
@@ -315,8 +330,7 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "- If you uncover strategic misalignment, document it succinctly in outcome.md with a proposed correction path keyed to POR.md sections.",
     ]
 
-    # Use system local time with timezone offset for friendlier readability
-    ts = datetime.now().astimezone().isoformat(timespec='seconds')
+    ts = _format_local_ts()
     text = "\n".join([
         "# PEERC Rules (Generated)",
         f"Generated on {ts}",
