@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
+from datetime import datetime, timezone as _tz
 
 from por_manager import ensure_por, por_path, ensure_aux_section
 import json
@@ -248,7 +249,14 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - System commands such as /focus, /reset, /aux, /review from IM arrive as <FROM_SYSTEM> notes; act and report in your next turn.",
         ]
 
-    text = "\n".join([f"# {role_name} Rules (Generated)", "", *ch1, *ch2, *ch3, *ch4, ""])
+    ts = datetime.now(_tz.utc).isoformat(timespec='seconds')
+    text = "\n".join([
+        f"# {role_name} Rules (Generated)",
+        f"Generated on {ts}Z",
+        "",
+        *ch1, *ch2, *ch3, *ch4,
+        "",
+    ])
     target = _rules_dir(home)/rules_filename
     target.write_text(text, encoding="utf-8")
     return target
@@ -304,7 +312,14 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "- If you uncover strategic misalignment, document it succinctly in outcome.md with a proposed correction path keyed to POR.md sections.",
     ]
 
-    text = "\n".join(["# PEERC Rules (Generated)", "", *ch1, *ch2, *ch3, *ch4, ""])
+    ts = datetime.now(_tz.utc).isoformat(timespec='seconds')
+    text = "\n".join([
+        "# PEERC Rules (Generated)",
+        f"Generated on {ts}Z",
+        "",
+        *ch1, *ch2, *ch3, *ch4,
+        "",
+    ])
     target = _rules_dir(home)/"PEERC.md"
     target.write_text(text, encoding="utf-8")
     return target
