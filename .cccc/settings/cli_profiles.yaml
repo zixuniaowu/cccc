@@ -61,6 +61,8 @@ delivery:
   resend_attempts: 2              # Max resends after timeout (avoid noise)
   ack_require_mid: false          # Strictly require [MID: ...] echo to ACK? (default false)
   duplicate_window_seconds: 90    # De-dup guard window
+  # Main loop poll interval (seconds). For unattended runs 2.0 is sufficient.
+  main_loop_tick_seconds: 2.0
   # --- periodic self-check ---
   self_check_every_handoffs: 10   # Stronger cadence; push a self-check after N handoffs (0=disable)
   self_check_text: |-
@@ -80,6 +82,10 @@ delivery:
   nudge_jitter_pct: 0.05          # Small jitter to avoid synchronized reminders
   nudge_progress_timeout_s: 300   # Allow resend only if no progress for this long (seconds)
   soft_ack_on_mailbox_activity: false  # Consider later mailbox activity as soft ACK (default off)
+  # Progress keepalive (light): when a peer sends insight.kind=progress and the other side is silent,
+  # orchestrator may send a delayed FROM_SYSTEM keepalive to the sender to sustain execution.
+  keepalive_enabled: true
+  keepalive_delay_seconds: 60
   # Startup policy for leftover inbox files (resume | discard | archive)
   inbox_startup_policy: resume
   inbox_startup_prompt: true      # Prompt by default to avoid acting on stale files
