@@ -469,16 +469,14 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
                 st['inflight'] = False
                 st['retries'] = 0
             else:
-                st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
-                _save_nudge_state(home, receiver_label, st)
+                # Skip quietly; avoid high-frequency disk writes on no-op
                 return False
     except Exception:
         pass
 
     # Debounce shortly after progress (drop nudges within this window)
     if (not force) and (now - last_prog) * 1000.0 < max(0.0, float(NUDGE_DEBOUNCE_MS)):
-        st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
-        _save_nudge_state(home, receiver_label, st)
+        # Debounce window: skip without persisting to reduce disk churn
         return False
 
     if inflight and not force:
@@ -497,15 +495,12 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
             except Exception:
                 pass
             if (now - last_sent) < interval:
-                st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
-                _save_nudge_state(home, receiver_label, st)
+                # Backoff window not yet elapsed: skip quietly
                 return False
             # send keepalive
             st['retries'] = retries + 1
         else:
-            # inflight and still within timeout → drop
-            st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
-            _save_nudge_state(home, receiver_label, st)
+            # inflight and still within timeout → skip quietly
             return False
 
     # Build message
@@ -2155,6 +2150,13 @@ def main(home: Path):
     ack_require_mid = bool(delivery_cfg.get("ack_require_mid", False))
     duplicate_window = float(delivery_cfg.get("duplicate_window_seconds", 90))
     ack_mode = str(delivery_cfg.get("ack_mode", "ack_text")).strip().lower()
+    # Main loop tick (poll interval)
+    try:
+        main_loop_tick_seconds = float(delivery_cfg.get("main_loop_tick_seconds", 2.0))
+        if main_loop_tick_seconds < 0.2:
+            main_loop_tick_seconds = 0.2
+    except Exception:
+        main_loop_tick_seconds = 2.0
     # Progress keepalive (lightweight): delayed system echo back to sender to keep CLI alive
     keepalive_enabled = bool(delivery_cfg.get("keepalive_enabled", True))
     try:
@@ -2760,7 +2762,7 @@ def main(home: Path):
                     last_nudge_ts[label] = nowt
         except Exception:
             pass
-        rlist, _, _ = select.select([sys.stdin], [], [], 0.5)
+        rlist, _, _ = select.select([sys.stdin], [], [], float(main_loop_tick_seconds))
         if rlist:
             line = read_console_line("> ").strip()
         else:
