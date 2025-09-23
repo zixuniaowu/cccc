@@ -251,10 +251,11 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - System commands such as /focus, /reset, /aux, /review from IM arrive as <FROM_SYSTEM> notes; act and report in your next turn.",
         ]
 
-    ts = datetime.now(_tz.utc).isoformat(timespec='seconds')
+    # Use system local time with timezone offset for friendlier readability
+    ts = datetime.now().astimezone().isoformat(timespec='seconds')
     text = "\n".join([
         f"# {role_name} Rules (Generated)",
-        f"Generated on {ts}Z",
+        f"Generated on {ts}",
         "",
         *ch1, *ch2, *ch3, *ch4,
         "",
@@ -314,10 +315,11 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "- If you uncover strategic misalignment, document it succinctly in outcome.md with a proposed correction path keyed to POR.md sections.",
     ]
 
-    ts = datetime.now(_tz.utc).isoformat(timespec='seconds')
+    # Use system local time with timezone offset for friendlier readability
+    ts = datetime.now().astimezone().isoformat(timespec='seconds')
     text = "\n".join([
         "# PEERC Rules (Generated)",
-        f"Generated on {ts}Z",
+        f"Generated on {ts}",
         "",
         *ch1, *ch2, *ch3, *ch4,
         "",

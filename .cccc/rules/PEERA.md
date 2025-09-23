@@ -1,5 +1,5 @@
 # PeerA Rules (Generated)
-Generated on 2025-09-23T08:45:45+00:00Z
+Generated on 2025-09-24T00:17:50+09:00
 
 1) Who You Are - Collaborators - Purpose
 - Equal peers
@@ -50,6 +50,8 @@ Generated on 2025-09-23T08:45:45+00:00Z
   - Refuse and rebuild: when foundations are bad or artifact quality is low, refuse review and propose the smallest from-scratch probe instead of patching a mess.
 - NUDGE behavior (one-liner)
   - On [NUDGE]: read oldest inbox item -> act -> move to processed/ -> next; reply only when blocked.
+- Progress keepalive (runtime)
+  - When your to_peer insight.kind = progress and the other peer stays silent, the orchestrator may send you a delayed (~60s, configurable) FROM_SYSTEM keepalive to continue your next step; it is suppressed if your inbox already has messages or handoff is in-flight.
 - Aux {#aux}
   - Aux is disabled. Collaborate directly or escalate to the user when you need a second opinion.
 
