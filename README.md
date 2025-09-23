@@ -1,26 +1,33 @@
-# CCCC Pair - Dual-AI Orchestrator (Evidence-first) · Agent-as-a-Service (AaaS)
+# CCCC Pair - Multi-Peer Orchestrator for Evidence-First Delivery
 
-Two best-in-class AI CLIs (Claude Code + Codex CLI) co-drive your work as equal peers. They collaborate, self-review, and ship small, reversible changes with built-in governance. You observe and nudge from tmux or IM. CCCC treats agents as long-lived services - Agent-as-a-Service (AaaS) - that speak the same contract, produce auditable evidence, and integrate with your team's tools.
+CCCC turns two AI CLIs into always-on collaborators that plan, build, and review as equals. You stay in control from tmux or your team chat; the peers keep rhythm, produce auditable evidence, and capture decisions in lightweight docs.
 
-Not a chatbot UI. Not an IDE plugin. A production-minded orchestrator for 24/7, long-running work.
+Not a chatbot UI. Not an IDE plugin. A production-minded orchestrator for long-running, real-world work.
 
-## Why It's Different
+## Why Teams Choose CCCC
 
-- Dual-AI Autonomy: peers continuously plan → build → critique → refine. They don't wait for prompts; they follow a mailbox contract and change the world only with EVIDENCE (tests/logs/benchmarks).
-- Agent-as-a-Service (AaaS): agents are long-running services with a mailbox contract, not ad-hoc prompts. They keep rhythm, produce evidence, and integrate with IM (Telegram/Slack/Discord via bridges; Teams outbound planned) without coupling core logic to any single transport.
-- IM Collaboration: a 24/7 agent lives in your team chat. High-signal summaries, clear decision summaries, explicit routing (a:/b:/both:) so normal conversation remains normal. Files flow both ways with captions and sidecars.
-- Builder-Critic Synergy: peers challenge CLAIMs with COUNTERs and converge via verifiable EVIDENCE. In practice this beats single-model quality on complex, multi-day tasks.
-- tmux Transparency: dual panes (PeerA/PeerB) + compact status panel. You can peek, nudge, or inject text without disrupting flows-and without a GUI.
-- Governance at the Core: protected areas and irreversible changes are surfaced in chat with explicit context; approvals are logged in the ledger once participants agree.
-- Team-level Efficiency: one always-on bot concentrates orchestration and approvals for the whole team. You reduce duplicated "per-seat" sessions and still retain control.
+- Multi-peer collaboration that compounds: peers alternate builder/critic, challenge each other, and converge by evidence (tests/logs/commits), not by talk.
+- Agent-as-a-Service: agents run continuously with a small mailbox contract. They integrate with IM bridges (Telegram/Slack/Discord) without locking you into a custom UI.
+- POR/SUBPOR anchors: one strategic board and simple per-task sheets keep everyone aligned without ceremony. You can read them in your repo under `docs/por/`.
+- Low-noise, high-signal: built-in nudge and self-check cadence reduce chatter. The status panel shows what matters, including "Next self-check" and "Next auto-compact".
+- tmux transparency: see both peers, watch the status panel, and intervene at any time. No GUI needed.
+- Decisions you can audit: approvals and outcomes are logged; irreversible changes are explicit and deliberate.
 
-## What You Get
+## Core Ideas (in 60 seconds)
 
-- Evidence-first loop: small tests/logs; only green changes commit.
-- Single-branch queue: (optional) lint/tests → commit.
-- Decision loop: surface context, discuss options, log the agreed outcome.
-- AaaS integration: explicit routing; `/status`, `/queue`, `/locks`, `/showpeers on|off`, file send/receive with meta. Bridges mirror events; orchestrator remains transport-agnostic.
-- Ledger: append-only `.cccc/state/ledger.jsonl` (test/log/decision) for audit.
+- Evidence-first: chats never change state; peers cite tests, stable log lines, or commit refs when claiming "done".
+- Single contract: messages are `<TO_USER>` / `<TO_PEER>` blocks that end with one fenced `insight` (who/kind/next/refs). Simple, portable, tool-agnostic.
+- Two anchors in your repo:
+  - `docs/por/POR.md` (strategic board): North-star, deliverables, roadmap (Now/Next/Later), risk radar, recent decisions/pivots, and a short maintenance log.
+  - `docs/por/T######-slug/SUBPOR.md` (per-task sheet): goal/scope, acceptance (3-5 checks), cheapest probe, kill criteria, implementation notes, REV log, next step.
+- Optional third peer (Aux): an on-demand helper for big reviews or heavy lifting. Strategic Aux notes live in POR; tactical offloads sit in each task's SUBPOR.
+
+## What You Can Do With It
+
+- Ship small, reversible changes continuously with two peers driving; keep everything visible from tmux or IM.
+- Keep strategy and execution in sync without meetings: POR captures the board; SUBPOR captures the work; both live in your repo.
+- Bring the collaboration to where your team is: Telegram/Slack/Discord bridges handle routing, replies, and files.
+
 
 ## Requirements
 
@@ -73,7 +80,7 @@ Run wizard (interactive TTY) lets you optionally connect a bridge:
 - 2) Local + Telegram
 - 3) Local + Slack
 - 4) Local + Discord
-You can also manage bridges later via `cccc bridge …` or set `autostart` in `.cccc/settings/*.yaml`.
+You can also manage bridges later via `cccc bridge ...` or set `autostart` in `.cccc/settings/*.yaml`.
 
 5) First-time CLI setup (required)
 
@@ -96,8 +103,8 @@ Do just these to get a clean, working setup:
 1) `cccc init` (creates `./.cccc` and ignores runtime dirs)
 2) `cccc doctor` (git/tmux/python)
 3) Prepare system prompts (required once per repo)
-   - Copy `PEERA.md` → `CLAUDE.md` (root)
-   - Copy `PEERB.md` → `AGENTS.md` (root)
+   - Copy `PEERA.md` -> `CLAUDE.md` (root)
+   - Copy `PEERB.md` -> `AGENTS.md` (root)
    - Put your brief/scope in `PROJECT.md` (root)
 4) Optional Telegram (highly recommended)
    - `cccc token set`
@@ -122,10 +129,10 @@ That's it. You can refine policies later.
   - `/c <prompt>` (or `c: <prompt>`) runs the Aux GEMINI CLI with your prompt and returns the output
   - `a! <command>` / `b! <command>` sends a raw CLI command to PeerA/PeerB (non-interactive; advanced)
 - File exchange
-  - Outbound (AIs → IM): save files to `.cccc/work/upload/outbound/` (flat)
+  - Outbound (AIs -> IM): save files to `.cccc/work/upload/outbound/` (flat)
   - Routing: either a `<name>.route` sidecar with `a|b|both`, or the first line of `<name>.caption.txt` starts with `a:`/`b:`/`both:` (the prefix is removed from the caption)
   - ACK: on success, a `<name>.sent.json` sidecar is written
-  - Inbound (IM → AIs): bridge writes `<FROM_USER>` with sidecar meta; peers act on it
+  - Inbound (IM -> AIs): bridge writes `<FROM_USER>` with sidecar meta; peers act on it
 - Governance: peers surface decisions in chat; once resolved, the outcome is logged to the ledger and work continues.
 
 ## A Typical Session (End-to-End, ~3 minutes)
@@ -137,12 +144,12 @@ Goal: ship a small, reversible change with dual-AI collaboration.
 - PeerA summarizes intent; PeerB asks 1 focused question if needed.
 
 2) Decide (concise CLAIM)
-- PeerA writes a CLAIM in `peerA/to_peer.md` with acceptance and constraints (≤150 lines; links to where to edit).
+- PeerA writes a CLAIM in `peerA/to_peer.md` with acceptance and constraints (link to where to edit if needed).
 - PeerB COUNTERs if there's a sharper place or a safer rollout.
 
 3) Build (evidence-first)
-- PeerB proposes a small, verifiable change with a 1-2 line EVIDENCE note (tests OK / paths / MID).
-- Orchestrator runs (optional) lint/tests → commits on green and logs to ledger.
+- PeerB proposes a small, verifiable change with a 1-2 line EVIDENCE note (tests OK / stable logs / commit refs).
+- Orchestrator can run quick checks and logs outcomes to the ledger.
 
 4) Team visibility
 - Telegram posts a concise summary (debounced); peers stay quiet unless blocked.
@@ -177,6 +184,11 @@ No automatic decision prompts fire here; peers simply note the choices and ask f
   logs/                          # extra logs; ephemeral
   orchestrator_tmux.py delivery.py mailbox.py panel_status.py prompt_weaver.py
   evidence_runner.py mock_agent.py
+
+docs/
+  por/                           # POR and per-task SUBPOR sheets live here
+    POR.md                       # strategic board (North-star, deliverables, roadmap, risks, decisions)
+    T000123-your-task/SUBPOR.md  # per-task sheet (goal/acceptance/probe/kill/impl/REV/next)
 ```
 
 ## CLI Reference
@@ -194,11 +206,11 @@ Adapter dependencies (optional)
 - Discord bridge requires `discord.py` (install via `pip install discord.py`).
 If these packages or tokens are missing, adapters exit fast with a clear error. Slack inbound requires an App token (Socket Mode) while outbound requires a Bot token.
 
-## Plan-of-Record (POR)
+## POR/SUBPOR Anchors (in your repo)
 
-- `docs/por/POR.md` is the single source of truth for objectives, roadmap, active tasks, risks, and reflections.
-- PeerB (or the optional third agent) updates the document at every self-check or when direction changes; no other source should duplicate it.
-- The orchestrator and bridges point to this file; keep strategic and decision context here so nothing goes missing.
+- `docs/por/POR.md` is the strategic board: North-star, deliverables, roadmap (Now/Next/Later), risk radar, recent decisions/pivots, and a short maintenance log.
+- `docs/por/T######-slug/SUBPOR.md` is a per-task sheet: goal/scope, 3-5 acceptance checks, cheapest probe, kill criteria, implementation notes, REV log, and the next step.
+- Peers keep these brief and current as they work; you can read them at any time. They are lightweight and live with your code.
 
 CLI prerequisites (summary)
 - Peer A = Claude Code; Peer B = Codex CLI. Install and log in as required by each vendor.
@@ -328,7 +340,7 @@ files:
 
 - Bridges: Telegram (inbound/outbound), Slack (Socket Mode + Web API, MVP), Discord (Gateway + REST, MVP). Outbound reads single-source Outbox (`.cccc/state/outbox.jsonl`) via a shared consumer; inbound routes `a:/b:/both:` to mailbox inbox. No dry-run: tokens/SDKs are required and adapters fail fast when missing.
 - Unified bridge CLI: `cccc bridge <telegram|slack|discord|all> start|stop|status|restart|logs` and an optional connect wizard in `cccc run`. Bridges can autostart via YAML.
-- Context maintenance: on a cadence (config `delivery.context_compact_every_self_checks`), send `/compact` to both CLIs and immediately reinject the full SYSTEM with a leading "Now: … TZ" line.
+- Context maintenance: on a cadence (config `delivery.context_compact_every_self_checks`), send `/compact` to both CLIs and immediately reinject the full SYSTEM with a leading "Now: ... TZ" line.
 - Self-check enhancements: inject current time/TZ; add an insight-channel reminder to generate new angles (hook/assumption/risk/trade-off/next/delta) rather than restating.
 - NUDGE improvements: exponential backoff, jitter, progress timeout; guidance for productive action when inbox is empty.
 - REV gate: after a COUNTER/QUESTION, the next to_peer must be a valid revise (insight.kind=revise with delta/refs/next and not restating). Otherwise the message is intercepted with a short tip and logged.
@@ -339,7 +351,7 @@ files:
 - Install tmux (`tmux -V`), run in a TTY, then `cccc run`. Check `cccc doctor`.
 
 **Telegram bot silent?**
-- `cccc token show` (token saved?) → `cccc bridge status` (running?) → `cccc bridge logs -n 200`
+- `cccc token show` (token saved?) -> `cccc bridge status` (running?) -> `cccc bridge logs -n 200`
 - In group chats, route explicitly (`a:`/`/a`), and run `/whoami` or `/subscribe` once to register
 - Ensure `autostart: true`
 
