@@ -60,6 +60,21 @@ def _extract_insight_kind(text: str) -> str:
     except Exception:
         return ""
 
+def _extract_insight_field(text: str, name: str) -> str:
+    """Return the value for a simple 'name: value' line from the last insight block."""
+    try:
+        m = INSIGHT_BLOCK_RE.findall(text or '')
+        if not m:
+            return ""
+        block = m[-1]
+        pat = re.compile(rf"(?mi)^\s*{re.escape(name)}\s*:\s*(.+)$")
+        mm = pat.findall(block)
+        if not mm:
+            return ""
+        return mm[-1].strip()
+    except Exception:
+        return ""
+
 def _extract_rev_delta(text: str) -> str:
     try:
         m = INSIGHT_BLOCK_RE.findall(text or '')
@@ -2124,6 +2139,15 @@ def main(home: Path):
     ack_require_mid = bool(delivery_cfg.get("ack_require_mid", False))
     duplicate_window = float(delivery_cfg.get("duplicate_window_seconds", 90))
     ack_mode = str(delivery_cfg.get("ack_mode", "ack_text")).strip().lower()
+    # Progress keepalive (lightweight): delayed system echo back to sender to keep CLI alive
+    keepalive_enabled = bool(delivery_cfg.get("keepalive_enabled", True))
+    try:
+        keepalive_delay_s = float(delivery_cfg.get("keepalive_delay_seconds", 60))
+        if keepalive_delay_s < 5:
+            keepalive_delay_s = 5.0
+    except Exception:
+        keepalive_delay_s = 60.0
+    pending_keepalive: Dict[str, Optional[Dict[str, Any]]] = {"PeerA": None, "PeerB": None}
 
     # Periodic self-check configuration
     _sc_every = int(delivery_cfg.get("self_check_every_handoffs", 0) or 0)
@@ -2235,6 +2259,28 @@ def main(home: Path):
         except Exception:
             pass
         return False
+
+    # --- progress keepalive helpers (lightweight) ---
+    def _schedule_keepalive(sender_label: str, payload: str):
+        """Schedule a delayed system keepalive back to the sender on progress messages.
+        - Only when keepalive_enabled and insight.kind == progress.
+        - Coalesce to a single pending item per sender (update due/next).
+        """
+        if not keepalive_enabled:
+            return
+        try:
+            k = _extract_insight_kind(payload)
+        except Exception:
+            k = ""
+        if k != "progress":
+            return
+        nx = _extract_insight_field(payload, "next") or ""
+        due = time.time() + float(keepalive_delay_s)
+        pending_keepalive[sender_label] = {"due": due, "next": nx}
+        try:
+            log_ledger(home, {"from":"system","kind":"keepalive-scheduled","peer": sender_label, "delay_s": keepalive_delay_s})
+        except Exception:
+            pass
 
     def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None):
         nonlocal instr_counter, in_self_check
@@ -2589,6 +2635,46 @@ def main(home: Path):
 
         # Non-blocking loop: prioritize console input; otherwise scan A/B mailbox outputs
         _process_im_commands()
+        # Progress keepalive: fire when due and still needed (inbox empty, no inflight/queue)
+        try:
+            if keepalive_enabled:
+                nowk = time.time()
+                for label in ("PeerA","PeerB"):
+                    pend = pending_keepalive.get(label)
+                    if not pend:
+                        continue
+                    if nowk < float(pend.get("due", 0)):
+                        continue
+                    # Check conditions to avoid noise: skip when inbox has messages or handoff already in flight/queued
+                    inbox_files = _list_inbox_files(label)
+                    reason = None
+                    if inbox_files:
+                        reason = "inbox-not-empty"
+                    elif inflight.get(label):
+                        reason = "inflight"
+                    elif queued.get(label):
+                        reason = "queued"
+                    if reason:
+                        try:
+                            log_ledger(home, {"from":"system","kind":"keepalive-skipped","peer":label, "reason": reason})
+                        except Exception:
+                            pass
+                        pending_keepalive[label] = None
+                        continue
+                    # Safe to send a minimal FROM_SYSTEM nudge back to the sender
+                    nxt = (pend.get("next") or "").strip()
+                    if nxt:
+                        msg = f"<FROM_SYSTEM>\nOK. Continue: {nxt}\n</FROM_SYSTEM>\n"
+                    else:
+                        msg = "<FROM_SYSTEM>\nOK. Continue.\n</FROM_SYSTEM>\n"
+                    _send_handoff("System", label, msg)
+                    try:
+                        log_ledger(home, {"from":"system","kind":"keepalive-sent","peer":label})
+                    except Exception:
+                        pass
+                    pending_keepalive[label] = None
+        except Exception:
+            pass
         line = None
         # Handle ACK first: by mode (file_move watches moves; ack_text parses echoes)
         try:
@@ -2737,6 +2823,11 @@ def main(home: Path):
                     if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                         _send_handoff("PeerA", "PeerB", wrapped)
+                        # Schedule a delayed self keepalive for continuous execution on progress
+                        try:
+                            _schedule_keepalive("PeerA", payload)
+                        except Exception:
+                            pass
                         try:
                             log_ledger(home, {"from":"PeerA","to":"PeerB","kind":"to_peer-forward","route":"mailbox","chars":len(payload)})
                         except Exception:
@@ -2812,6 +2903,11 @@ def main(home: Path):
                         if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
                             wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
                             _send_handoff("PeerB", "PeerA", wrapped)
+                            # Schedule a delayed self keepalive for continuous execution on progress
+                            try:
+                                _schedule_keepalive("PeerB", payload)
+                            except Exception:
+                                pass
                             try:
                                 log_ledger(home, {"from":"PeerB","to":"PeerA","kind":"to_peer-forward","route":"mailbox","chars":len(payload)})
                             except Exception:

@@ -180,6 +180,8 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - Refuse and rebuild: when foundations are bad or artifact quality is low, refuse review and propose the smallest from-scratch probe instead of patching a mess.",
         "- NUDGE behavior (one-liner)",
         "  - On [NUDGE]: read oldest inbox item -> act -> move to processed/ -> next; reply only when blocked.",
+        "- Progress keepalive (runtime)",
+        "  - When your to_peer insight.kind = progress and the other peer stays silent, the orchestrator may send you a delayed (~60s, configurable) FROM_SYSTEM keepalive to continue your next step; it is suppressed if your inbox already has messages or handoff is in-flight.",
     ]
     if aux_enabled:
         ch3 += [
