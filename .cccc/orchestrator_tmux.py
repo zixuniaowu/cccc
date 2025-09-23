@@ -450,13 +450,28 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
     last_sent = float(st.get('last_sent_ts') or 0.0)
     last_prog = float(st.get('last_progress_ts') or 0.0)
     retries = int(st.get('retries') or 0)
+    # Current inbox count for this receiver (used to reset retry window when backlog grows)
+    try:
+        inbox_files_now = [f for f in _inbox_dir(home, receiver_label).iterdir() if f.is_file()]
+        inbox_count_now = len(inbox_files_now)
+    except Exception:
+        inbox_files_now = []
+        inbox_count_now = 0
+    last_inbox_count = int(st.get('last_inbox_count') or 0)
 
     # Hard cap on number of resends (do not spam tmux)
+    # If cap exceeded but backlog has grown since the last send, reset the window to allow one more nudge.
     try:
-        if (not force) and (retries >= int(NUDGE_MAX_RETRIES)):
-            st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
-            _save_nudge_state(home, receiver_label, st)
-            return False
+        if (not force) and inflight and (retries >= int(NUDGE_MAX_RETRIES)):
+            if inbox_count_now > last_inbox_count:
+                # Backlog increased → give another chance: reset inflight/retries
+                inflight = False
+                st['inflight'] = False
+                st['retries'] = 0
+            else:
+                st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
+                _save_nudge_state(home, receiver_label, st)
+                return False
     except Exception:
         pass
 
@@ -506,6 +521,7 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
     paste_when_ready(pane, profile, nmsg, timeout=6.0, poke=False)
     st['inflight'] = True
     st['last_sent_ts'] = now
+    st['last_inbox_count'] = inbox_count_now
     _save_nudge_state(home, receiver_label, st)
     return True
 
