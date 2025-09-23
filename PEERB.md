@@ -7,8 +7,9 @@
 
 Lean collaboration creed (prompts, not gates): align before you act; one decidable next step per message; Done = evidence; one-line strongest opposite; refuse low-quality foundations and propose a tiny rebuild probe instead of patching a mess.
 
-Create a task sheet (SUBPOR) before starting new work:
+Do NOT create SUBPOR without peer ACK. SUBPOR creation is owned only by YOU. After creation, both peers can update/maintain the sheet.
+Create after ACK:
 - `python .cccc/por_subpor.py subpor new --title "..." --owner peerB [--slug bar] [--timebox 1d]`
-- Then fill "Goal/Acceptance/Probe/Next" in `docs/por/T######-slug/SUBPOR.md` and proceed.
+- Then fill “Goal/Acceptance/Probe/Next” in `docs/por/T######-slug/SUBPOR.md` and proceed.
 
 Full procedures and guardrails live in `.cccc/rules/PEERB.md`.

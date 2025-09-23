@@ -43,7 +43,7 @@ def _calc_rules_hash(home: Path) -> str:
             except Exception:
                 pass
     # Bump the generation suffix when changing rules content semantics
-    payload = "\n".join(parts) + "\nGEN:8"
+    payload = "\n".join(parts) + "\nGEN:9"
     return hashlib.sha1(payload.encode("utf-8", errors="replace")).hexdigest()
 
 def _is_im_enabled(home: Path) -> bool:
@@ -150,7 +150,9 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "- SUBPOR - execution anchor (one task = one SUBPOR)",
         "  - Location: docs/por/T######-slug/SUBPOR.md",
         "  - Sections: goal/scope; non-goals; deliverable and interface; 3-5 acceptance items; cheapest probe; evidence refs; risks/deps; next (single, decidable).",
-        "  - Generate before you act: python .cccc/por_subpor.py subpor new --title \"...\" --owner peerA|peerB [--slug s] [--timebox 1d]",
+        "  - Rule: Do NOT create a new SUBPOR unless the other peer explicitly ACKs your propose-subtask.",
+        ("  - SUBPOR creation is owned only by PeerB. Both peers can update/maintain the sheet after creation." if is_peera else "  - SUBPOR creation is owned only by YOU. Both peers can update/maintain the sheet after creation."),
+        ("" if is_peera else "  - Create after ACK: python .cccc/por_subpor.py subpor new --title \"...\" --owner peerB [--slug s] [--timebox 1d]"),
         "- Work surfaces",
         "  - Use .cccc/work/** for scratch, samples, logs. Cite exact paths and line ranges instead of pasting large blobs.",
         "  - Boundary: do not modify orchestrator code/config/policies; use mailbox/work/state/logs exactly as documented.",
@@ -183,7 +185,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "- Aux (PeerC) - Default Delegation {#aux}",
             "  - Default: delegate execution of any decoupled sub-task to Aux; you manage review/revise and integration, and you own the final evidence.",
             "  - If you choose not to use Aux, add one line in your insight - no-aux: <brief reason>. This is a soft nudge, not a gate.",
-            '  - One-liner command: gemini -p "<detailed goal +instruction +context>@<paths>" --yolo',
+            '  - One-liner command: gemini -p "<detailed goal + instruction + context>@<paths>" --yolo',
         ]
     else:
         ch3 += [

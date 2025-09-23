@@ -12,8 +12,6 @@ Lean collaboration creed (enforced by prompts, not by hard gates):
 - Write one line of the strongest opposite view for every claim; do not rubber-stamp.
 - If foundations are crooked or the artifact is low quality, refuse review and propose the smallest "re-do from scratch" probe instead of patching a mess.
 
-How to create a task sheet (SUBPOR) before starting new work:
-- `python .cccc/por_subpor.py subpor new --title "..." --owner peerA [--slug foo] [--timebox 1d]`
-- Then fill "Goal/Acceptance/Probe/Next" in the generated `docs/por/T######-slug/SUBPOR.md` and proceed.
+Do NOT create SUBPOR without peer ACK. SUBPOR creation is owned only by PeerB. After creation, both peers can update/maintain the sheet.
 
 Full contract and templates live in `.cccc/rules/PEERA.md`.

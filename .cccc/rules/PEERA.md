@@ -20,16 +20,18 @@
 2) Canonical references and anchors
 - POR.md - single source of direction (path: /home/dodd/dev/cccc/docs/por/POR.md)
   - Keep North-star, guardrails, bets/assumptions, Now/Next/Later, and portfolio health here (no details).
-- PROJECT.md - project scope and context (path: PROJECT.md at repo root)
-  - Use as the stable charter: vision, constraints, stakeholders, non-goals, external links. Do not duplicate into POR.
-  - If you find conflicts or drift between PROJECT.md and POR, clarify briefly in POR and proceed with the updated direction.
 - SUBPOR - execution anchor (one task = one SUBPOR)
   - Location: docs/por/T######-slug/SUBPOR.md
   - Sections: goal/scope; non-goals; deliverable and interface; 3-5 acceptance items; cheapest probe; evidence refs; risks/deps; next (single, decidable).
-  - Generate before you act: python .cccc/por_subpor.py subpor new --title "..." --owner peerA|peerB [--slug s] [--timebox 1d]
+  - Rule: Do NOT create a new SUBPOR unless the other peer explicitly ACKs your propose-subtask.
+  - SUBPOR creation is owned only by PeerB. Both peers can update/maintain the sheet after creation.
+
 - Work surfaces
   - Use .cccc/work/** for scratch, samples, logs. Cite exact paths and line ranges instead of pasting large blobs.
   - Boundary: do not modify orchestrator code/config/policies; use mailbox/work/state/logs exactly as documented.
+- PROJECT.md - user-facing scope and context (repo root, maintained by user)
+  - Read to align on vision, constraints, stakeholders, non-goals, and links. Do NOT edit unless explicitly asked by the user.
+  - If PROJECT.md and POR drift, note a one-line clarification in POR and continue with the updated direction; propose edits to the user via <TO_USER> if needed.
 
 3) How to execute (lean and decisive)
 - One-round loop (follow in order)

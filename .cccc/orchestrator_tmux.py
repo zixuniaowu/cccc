@@ -499,7 +499,7 @@ def _compose_nudge_suffix_for(peer_label: str,
     base = ((profileA.get('nudge_suffix') if peer_label == 'PeerA' else profileB.get('nudge_suffix')) or '').strip()
     aux_tip_local = ""
     if aux_mode == "on":
-        aux_tip_local = "Aux tip: Aux is ON - delegate any decoupled sub-task now by running command: gemini -p \"<goal + context>@<paths>\" --yolo"
+        aux_tip_local = "Aux tip: Aux is ON - delegate any decoupled sub-task now by running command: gemini -p \"<detailed goal + instruction + context>@<paths>\" --yolo"
     combined = " ".join(filter(None, [base, aux_tip_local]))
     return combined.strip()
 
