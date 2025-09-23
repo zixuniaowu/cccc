@@ -77,9 +77,9 @@ delivery:
   mailbox_pull_enabled: true      # Enable inbox + NUDGE (instead of direct paste)
   inbox_dirname: "inbox"          # Inbox dir (relative to .cccc/mailbox/<peer>/)
   processed_retention: 200        # Max kept entries in processed/ (remove oldest beyond)
-  nudge_resend_seconds: 90        # If inbox not ACKed for this interval, re-NUDGE
-  nudge_jitter_pct: 0.15          # Optional jitter (0.0~0.3) to avoid synchronized reminders
-  nudge_progress_timeout_s: 90    # Allow resend only if no progress for this long (seconds)
+  nudge_resend_seconds: 300       # If inbox not ACKed for this interval, re-NUDGE (5 minutes)
+  nudge_jitter_pct: 0.05          # Small jitter to avoid synchronized reminders
+  nudge_progress_timeout_s: 300   # Allow resend only if no progress for this long (seconds)
   soft_ack_on_mailbox_activity: false  # Consider later mailbox activity as soft ACK (default off)
   # Startup policy for leftover inbox files (resume | discard | archive)
   inbox_startup_policy: resume

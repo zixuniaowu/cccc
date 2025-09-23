@@ -201,6 +201,7 @@ NUDGE_PROGRESS_TIMEOUT_S = 45.0
 NUDGE_KEEPALIVE = True
 NUDGE_BACKOFF_BASE_MS = 1000.0
 NUDGE_BACKOFF_MAX_MS = 60000.0
+NUDGE_MAX_RETRIES = 1.0  # allow at most one resend (0 = never resend)
 # Context maintenance cadence: every N self-check cycles, run /compact + SYSTEM reinjection (0=disable)
 CONTEXT_COMPACT_EVERY_SELF_CHECKS = 5
 
@@ -434,6 +435,15 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
     last_sent = float(st.get('last_sent_ts') or 0.0)
     last_prog = float(st.get('last_progress_ts') or 0.0)
     retries = int(st.get('retries') or 0)
+
+    # Hard cap on number of resends (do not spam tmux)
+    try:
+        if (not force) and (retries >= int(NUDGE_MAX_RETRIES)):
+            st['dropped_count'] = int(st.get('dropped_count') or 0) + 1
+            _save_nudge_state(home, receiver_label, st)
+            return False
+    except Exception:
+        pass
 
     # Debounce shortly after progress (drop nudges within this window)
     if (not force) and (now - last_prog) * 1000.0 < max(0.0, float(NUDGE_DEBOUNCE_MS)):
@@ -1651,12 +1661,16 @@ def main(home: Path):
         INBOX_STARTUP_POLICY = str(delivery_conf.get("inbox_startup_policy", "resume") or "resume").strip().lower()
         INBOX_STARTUP_PROMPT = bool(delivery_conf.get("inbox_startup_prompt", False))
         # Progress-aware NUDGE parameters
-        global NUDGE_DEBOUNCE_MS, NUDGE_PROGRESS_TIMEOUT_S, NUDGE_KEEPALIVE, NUDGE_BACKOFF_BASE_MS, NUDGE_BACKOFF_MAX_MS, CONTEXT_COMPACT_EVERY_SELF_CHECKS
+        global NUDGE_DEBOUNCE_MS, NUDGE_PROGRESS_TIMEOUT_S, NUDGE_KEEPALIVE, NUDGE_BACKOFF_BASE_MS, NUDGE_BACKOFF_MAX_MS, CONTEXT_COMPACT_EVERY_SELF_CHECKS, NUDGE_MAX_RETRIES
         NUDGE_DEBOUNCE_MS = float(delivery_conf.get("nudge_debounce_ms", NUDGE_DEBOUNCE_MS))
         NUDGE_PROGRESS_TIMEOUT_S = float(delivery_conf.get("nudge_progress_timeout_s", NUDGE_PROGRESS_TIMEOUT_S))
         NUDGE_KEEPALIVE = bool(delivery_conf.get("nudge_keepalive", NUDGE_KEEPALIVE))
         NUDGE_BACKOFF_BASE_MS = float(delivery_conf.get("nudge_backoff_base_ms", NUDGE_BACKOFF_BASE_MS))
         NUDGE_BACKOFF_MAX_MS = float(delivery_conf.get("nudge_backoff_max_ms", NUDGE_BACKOFF_MAX_MS))
+        try:
+            NUDGE_MAX_RETRIES = float(delivery_conf.get("nudge_max_retries", NUDGE_MAX_RETRIES))
+        except Exception:
+            pass
         # Detect if delivery explicitly sets compact cadence; if so, do not let governance override it later
         explicit_compact_key = "context_compact_every_self_checks"
         explicit_compact_from_delivery = explicit_compact_key in (delivery_conf or {})
@@ -2462,6 +2476,21 @@ def main(home: Path):
         state = home/"state"
         pol_enabled = bool((policies.get("handoff_filter") or {}).get("enabled", True))
         eff_filter = handoff_filter_override if handoff_filter_override is not None else pol_enabled
+        # Compute remaining rounds to next self-check and auto-compact
+        next_self = None
+        next_compact = None
+        if self_check_enabled and self_check_every > 0:
+            try:
+                rem = (self_check_every - (instr_counter % self_check_every))
+                next_self = (rem if rem > 0 else self_check_every)
+                sc_index = int(instr_counter // self_check_every)
+                if CONTEXT_COMPACT_EVERY_SELF_CHECKS > 0:
+                    nxt_index = ((sc_index // CONTEXT_COMPACT_EVERY_SELF_CHECKS) + 1) * CONTEXT_COMPACT_EVERY_SELF_CHECKS
+                    target = nxt_index * self_check_every
+                    delta = target - instr_counter
+                    next_compact = (delta if delta > 0 else (CONTEXT_COMPACT_EVERY_SELF_CHECKS * self_check_every))
+            except Exception:
+                pass
         payload = {
             "session": session,
             "paused": paused,
@@ -2478,6 +2507,10 @@ def main(home: Path):
                 "interval_handoffs": auto_reset_interval_cfg if auto_reset_interval_cfg > 0 else None,
                 "interval_effective": reset_interval_effective if reset_interval_effective > 0 else None,
                 "self_check_every": self_check_every if self_check_enabled else None,
+                "compact_every_self_checks": CONTEXT_COMPACT_EVERY_SELF_CHECKS if (CONTEXT_COMPACT_EVERY_SELF_CHECKS > 0) else None,
+                "handoffs_total": instr_counter,
+                "next_self_check_in": next_self,
+                "next_auto_compact_in": next_compact,
             },
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         }

@@ -25,8 +25,8 @@ POR_TEMPLATE = """# POR - Strategic Board
 - Non-Goals / Boundaries: <1-3 lines>
 
 ## Deliverables (top-level)
-- <deliverable A> — path/interface/format — owner
-- <deliverable B> — path/interface/format — owner
+- <deliverable A> - path/interface/format - owner
+- <deliverable B> - path/interface/format - owner
 
 ## Bets & Assumptions
 - Bet 1: <one intent line> | Probe: <cmd/script> | Evidence: <one line> | Window: <date/threshold>

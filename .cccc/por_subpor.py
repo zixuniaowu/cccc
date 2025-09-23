@@ -251,7 +251,7 @@ def por_sync() -> int:
     def _has(h: str) -> bool:
         return (h in text)
     if not _has("## Deliverables"):
-        append_blocks.append("\n## Deliverables (top-level)\n- <deliverable> — path/interface/format — owner\n")
+        append_blocks.append("\n## Deliverables (top-level)\n- <deliverable> - path/interface/format - owner\n")
     if not _has("## Decision & Pivot Log"):
         append_blocks.append("\n## Decision & Pivot Log (recent 5)\n- YYYY-MM-DD | context | choice/pivot | evidence | impact/rollback | default\n")
     if not _has("## Risk Radar"):

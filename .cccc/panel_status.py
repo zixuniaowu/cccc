@@ -126,6 +126,15 @@ def render(home: Path):
     summary = (por.get('summary') if isinstance(por, dict) else '') or ''
     if summary:
         lines.append(f"POR summary: {summary[:160]}")
+    # Reset cadence / remaining rounds (if present)
+    rst = status.get("reset") or {}
+    k = rst.get("next_self_check_in")
+    m = rst.get("next_auto_compact_in")
+    pol = rst.get("policy") or "compact"
+    if (k is not None) or (m is not None):
+        ks = (str(k) if k is not None else "-")
+        ms = (str(m) if m is not None else "-")
+        lines.append(f"Next: self-check in {ks} | auto-compact in {ms} ({pol})")
     if coach:
         lines.append(f"Aux mode={coach.get('mode','off')} command={(coach.get('command') or '-')}")
         if coach.get('last_reason'):
