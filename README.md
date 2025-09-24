@@ -56,7 +56,7 @@ Notes
 - git
 
 Recommended CLIs
-- :large_blue_circle: Peer A: Claude Code CLI
+- :large_blue_circle: Peer A: Claude Code
 - :yellow_circle: Peer B: Codex CLI
 - :sparkles: Aux (optional): Gemini CLI
 
