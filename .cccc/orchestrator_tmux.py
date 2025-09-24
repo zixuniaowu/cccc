@@ -5,7 +5,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER>, and runs optional lint/tests before committing.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
-import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random, math
+import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
     import fcntl  # type: ignore
@@ -217,8 +217,6 @@ NUDGE_KEEPALIVE = True
 NUDGE_BACKOFF_BASE_MS = 1000.0
 NUDGE_BACKOFF_MAX_MS = 60000.0
 NUDGE_MAX_RETRIES = 1.0  # allow at most one resend (0 = never resend)
-# Context maintenance cadence: every N self-check cycles, run /compact + SYSTEM reinjection (0=disable)
-CONTEXT_COMPACT_EVERY_SELF_CHECKS = 5
 
 def _append_suffix_inside(payload: str, suffix: str) -> str:
     """Append a short suffix to the end of the main body inside the outermost tag, if present.
@@ -1693,7 +1691,7 @@ def main(home: Path):
         INBOX_STARTUP_POLICY = str(delivery_conf.get("inbox_startup_policy", "resume") or "resume").strip().lower()
         INBOX_STARTUP_PROMPT = bool(delivery_conf.get("inbox_startup_prompt", False))
         # Progress-aware NUDGE parameters
-        global NUDGE_DEBOUNCE_MS, NUDGE_PROGRESS_TIMEOUT_S, NUDGE_KEEPALIVE, NUDGE_BACKOFF_BASE_MS, NUDGE_BACKOFF_MAX_MS, CONTEXT_COMPACT_EVERY_SELF_CHECKS, NUDGE_MAX_RETRIES
+        global NUDGE_DEBOUNCE_MS, NUDGE_PROGRESS_TIMEOUT_S, NUDGE_KEEPALIVE, NUDGE_BACKOFF_BASE_MS, NUDGE_BACKOFF_MAX_MS, NUDGE_MAX_RETRIES
         NUDGE_DEBOUNCE_MS = float(delivery_conf.get("nudge_debounce_ms", NUDGE_DEBOUNCE_MS))
         NUDGE_PROGRESS_TIMEOUT_S = float(delivery_conf.get("nudge_progress_timeout_s", NUDGE_PROGRESS_TIMEOUT_S))
         NUDGE_KEEPALIVE = bool(delivery_conf.get("nudge_keepalive", NUDGE_KEEPALIVE))
@@ -1703,10 +1701,6 @@ def main(home: Path):
             NUDGE_MAX_RETRIES = float(delivery_conf.get("nudge_max_retries", NUDGE_MAX_RETRIES))
         except Exception:
             pass
-        # Detect if delivery explicitly sets compact cadence; if so, do not let governance override it later
-        explicit_compact_key = "context_compact_every_self_checks"
-        explicit_compact_from_delivery = explicit_compact_key in (delivery_conf or {})
-        CONTEXT_COMPACT_EVERY_SELF_CHECKS = int(delivery_conf.get(explicit_compact_key, CONTEXT_COMPACT_EVERY_SELF_CHECKS))
     except Exception:
         pass
 
@@ -2186,17 +2180,7 @@ def main(home: Path):
     self_check_text = _sc_text if _sc_text else DEFAULT_SELF_CHECK
 
     auto_reset_interval_cfg = conversation_reset_interval
-    reset_interval_effective = 0
-    if auto_reset_interval_cfg > 0 and self_check_enabled:
-        # Only derive from governance when delivery did not explicitly specify cadence
-        try:
-            if not explicit_compact_from_delivery:
-                CONTEXT_COMPACT_EVERY_SELF_CHECKS = max(1, math.ceil(auto_reset_interval_cfg / self_check_every))
-                reset_interval_effective = self_check_every * CONTEXT_COMPACT_EVERY_SELF_CHECKS
-        except Exception:
-            pass
-    elif auto_reset_interval_cfg > 0:
-        reset_interval_effective = auto_reset_interval_cfg
+    reset_interval_effective = auto_reset_interval_cfg if auto_reset_interval_cfg > 0 else 0
     # Append a minimal, always-on reminder to end with one insight block (never verbose)
     try:
         INSIGHT_REMINDER = (
@@ -2395,30 +2379,6 @@ def main(home: Path):
                             except Exception:
                                 sc_index = 0
 
-                            if (CONTEXT_COMPACT_EVERY_SELF_CHECKS > 0) and (sc_index > 0) and (sc_index % CONTEXT_COMPACT_EVERY_SELF_CHECKS == 0):
-                                try:
-                                    _send_raw_to_cli(home, 'PeerA', '/compact', modeA, modeB, left, right)
-                                    log_ledger(home, {"from": "system", "kind": "context-compact-try", "peer": "PeerA", "self_check_index": sc_index})
-                                except Exception:
-                                    pass
-                                try:
-                                    _send_raw_to_cli(home, 'PeerB', '/compact', modeA, modeB, left, right)
-                                    log_ledger(home, {"from": "system", "kind": "context-compact-try", "peer": "PeerB", "self_check_index": sc_index})
-                                except Exception:
-                                    pass
-                                try:
-                                    sysA = weave_system(home, "peerA")
-                                    sysB = weave_system(home, "peerB")
-                                    reinjA = f"<FROM_SYSTEM>\n{now_line}\n{sysA}\n</FROM_SYSTEM>\n"
-                                    reinjB = f"<FROM_SYSTEM>\n{now_line}\n{sysB}\n</FROM_SYSTEM>\n"
-                                    _send_handoff("System", "PeerA", reinjA)
-                                    _send_handoff("System", "PeerB", reinjB)
-                                    log_ledger(home, {"from": "system", "kind": "context-system-reinject", "peer": "PeerA", "chars": len(reinjA)})
-                                    log_ledger(home, {"from": "system", "kind": "context-system-reinject", "peer": "PeerB", "chars": len(reinjB)})
-                                except Exception:
-                                    pass
-                                _request_por_refresh("auto-compact", force=False)
-
                             peerA_msg = now_line + "\n" + self_check_text
                             peerB_msg = now_line + "\n" + self_check_text
 
@@ -2546,19 +2506,12 @@ def main(home: Path):
         state = home/"state"
         pol_enabled = bool((policies.get("handoff_filter") or {}).get("enabled", True))
         eff_filter = handoff_filter_override if handoff_filter_override is not None else pol_enabled
-        # Compute remaining rounds to next self-check and auto-compact
+        # Compute remaining rounds to next self-check
         next_self = None
-        next_compact = None
         if self_check_enabled and self_check_every > 0:
             try:
                 rem = (self_check_every - (instr_counter % self_check_every))
                 next_self = (rem if rem > 0 else self_check_every)
-                sc_index = int(instr_counter // self_check_every)
-                if CONTEXT_COMPACT_EVERY_SELF_CHECKS > 0:
-                    nxt_index = ((sc_index // CONTEXT_COMPACT_EVERY_SELF_CHECKS) + 1) * CONTEXT_COMPACT_EVERY_SELF_CHECKS
-                    target = nxt_index * self_check_every
-                    delta = target - instr_counter
-                    next_compact = (delta if delta > 0 else (CONTEXT_COMPACT_EVERY_SELF_CHECKS * self_check_every))
             except Exception:
                 pass
         payload = {
@@ -2577,10 +2530,8 @@ def main(home: Path):
                 "interval_handoffs": auto_reset_interval_cfg if auto_reset_interval_cfg > 0 else None,
                 "interval_effective": reset_interval_effective if reset_interval_effective > 0 else None,
                 "self_check_every": self_check_every if self_check_enabled else None,
-                "compact_every_self_checks": CONTEXT_COMPACT_EVERY_SELF_CHECKS if (CONTEXT_COMPACT_EVERY_SELF_CHECKS > 0) else None,
                 "handoffs_total": instr_counter,
                 "next_self_check_in": next_self,
-                "next_auto_compact_in": next_compact,
             },
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
         }

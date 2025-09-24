@@ -72,8 +72,6 @@ delivery:
     3) Where is the latest low-quality artifact or tech-debt mountain? Should we refuse review and rebuild from scratch? Provide the smallest probe and estimate.
     4) Any misalignment, unclear boundary, or ambiguous acceptance? Fix it in the corresponding SUBPOR first, then proceed.
     5) If we only had 1 day: what to drop, what to keep, what to do first? List three bullets.
-  # Context maintenance cadence: every N self-check cycles, run /compact + SYSTEM reinjection (0=disable)
-  context_compact_every_self_checks: 3
   # --- mailbox pull + nudge mode ---
   mailbox_pull_enabled: true      # Enable inbox + NUDGE (instead of direct paste)
   inbox_dirname: "inbox"          # Inbox dir (relative to .cccc/mailbox/<peer>/)
