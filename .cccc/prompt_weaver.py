@@ -191,12 +191,6 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - 6 If direction changed, update POR and the relevant SUBPOR.",
         "- Evidence and change budget",
         "  - Only tests/logs/commits count as evidence. Avoid speculative big refactors; always show the smallest reproducible check.",
-        "- Personal checklist (ownership)",
-        "  - When you commit to a probe/task, write a 2-line personal checklist in your next message or insight: (owner/goal signal) and (primary risk + mitigation).",
-        "- Progress heartbeats (responsibility)",
-        "  - Every progress heartbeat includes current % or state, the planned next step, and one optional fallback/alternate probe when success is uncertain.",
-        "- Explore when unsure (creativity)",
-        "  - If direction is ambiguous, add one short explore line (question or contrarian plan) before continuing; label it so the peer can respond or counter quickly.",
         "- Pivot and refusal (signals and judgment; not quotas)",
         "  - Pivot when two or more hold: negative evidence piles up; a simpler alternative is clearly smaller or safer; infra cost exceeds benefit; guardrails are repeatedly hit; roadmap Now/Next has shifted.",
         "  - Refuse and rebuild: when foundations are bad or artifact quality is low, refuse review and propose the smallest from-scratch probe instead of patching a mess.",
@@ -257,23 +251,12 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - Risks/unknowns: [...]",
         "  - Next: <one smallest decisive step>",
         f"  - refs: [\"POR.md#...\", \".cccc/rules/{role_name}.md#...\"]",
-        "- Insight kinds (purpose)",
-        "  - progress: status + next + optional fallback (default keepalive path).",
-        "  - explore: short creative probe/question with expected value and next check (use when searching for alternatives).",
-        "  - ask/counter/evidence/revise/risk: same as baseline governance; use them when a decision or correction is required.",
         "- File I/O (keep these two lines verbatim) {#file-io}",
         "  - Inbound: uploads go to .cccc/work/upload/inbound/YYYYMMDD/MID__name with a sibling .meta.json; also indexed into state/inbound-index.jsonl.",
         "  - Outbound: drop files into .cccc/work/upload/outbound/ (flat). Use <name>.route with a|b|both or first line of <name>.caption.txt starting with a:/b:/both:. On success a <name>.sent.json ACK is written.",
         "- Channel notes (minimal)",
         "  - Peer-to-peer: high signal; one smallest Next per message; steelman before COUNTER; silence is better than a pure ACK.",
         "  - User-facing (when used): <=6 lines; conclusion first, then evidence paths; questions must be decidable.",
-    ]
-    ch5 = [
-        "",
-        "5) Persona nuances (v0)",
-        "- Hold the baton: declare ownership + success signal + top risk whenever you take on work, and close the loop when done.",
-        "- Fan-out options: when uncertainty is high, surface one alternate probe or fallback path so your peer can choose or counter.",
-        "- Anticipate counters: write the strongest opposite view (and the experiment that would falsify you) before you wait for the peer.",
     ]
     if im_enabled:
         route_prefix = "a" if is_peera else "b"
@@ -289,7 +272,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         f"# {role_name} Rules (Generated)",
         f"Generated on {ts}",
         "",
-        *ch1, *ch2, *ch3, *ch4, *ch5,
+        *ch1, *ch2, *ch3, *ch4,
         "",
     ])
     target = _rules_dir(home)/rules_filename
@@ -336,12 +319,6 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "- Wrap",
         "  - Summarize the outcome in `<session-id>/outcome.md` (what changed, checks performed, residual risks, next suggestion).",
         "  - Highlight any assumptions that still need falsification so the invoking peer can follow up.",
-        "- Personal checklist",
-        "  - When you accept an Aux request, log a 2-line checklist (owner/success signal + dominant risk) in outcome.md or your return note.",
-        "- Progress heartbeats",
-        "  - Progress pings include current %/state, next probe, and one optional fallback so the invoking peer can keep momentum.",
-        "- Explore channel",
-        "  - Offer at least one alternate or contrarian recommendation when the brief or evidence is ambiguous; label it clearly for the peers to evaluate.",
     ]
 
     ch4 = [
@@ -351,17 +328,6 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "- Keep changes small and reversible. If you create multiple options, name them clearly (e.g., option-a, option-b).",
         "- Record every check you run (command + stable output) so peers can cite them as evidence.",
         "- If you uncover strategic misalignment, document it succinctly in outcome.md with a proposed correction path keyed to POR.md sections.",
-        "- Insight kinds",
-        "  - progress: status + next + fallback to unblock the primary peers.",
-        "  - explore: package creative alternatives with expected value and suggested validation.",
-    ]
-
-    ch5 = [
-        "",
-        "5) Persona nuances (v0)",
-        "- Be the amplifier: return artifacts peers can drop into CLAIM/EVIDENCE without rewriting.",
-        "- Default to two options: primary recommendation plus one credible alternative or fallback.",
-        "- Surface latent risk: flag any assumption needing a check and propose the leanest validation.",
     ]
 
     ts = _format_local_ts()
@@ -369,7 +335,7 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "# PEERC Rules (Generated)",
         f"Generated on {ts}",
         "",
-        *ch1, *ch2, *ch3, *ch4, *ch5,
+        *ch1, *ch2, *ch3, *ch4,
         "",
     ])
     target = _rules_dir(home)/"PEERC.md"
