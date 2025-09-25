@@ -301,6 +301,8 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
 
     # Hard cap on number of resends (do not spam tmux)
     # If cap exceeded but backlog has grown since the last send, reset the window to allow one more nudge.
+    # Additionally, if backlog is stuck (no growth) yet no progress has been observed for a while,
+    # allow a stale resend after a minimum interval to avoid deadlock.
     try:
         if (not force) and inflight and (retries >= int(NUDGE_MAX_RETRIES)):
             if inbox_count_now > last_inbox_count:
@@ -309,8 +311,16 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
                 st['inflight'] = False
                 st['retries'] = 0
             else:
-                # Skip quietly; avoid high-frequency disk writes on no-op
-                return False
+                # Backlog did not grow. If no progress for long enough and resend interval elapsed, allow a stale resend.
+                no_progress = (now - last_prog) >= max(1.0, float(NUDGE_PROGRESS_TIMEOUT_S))
+                elapsed = (now - last_sent) >= max(1.0, float(NUDGE_RESEND_SECONDS))
+                if inbox_count_now > 0 and no_progress and elapsed:
+                    inflight = False
+                    st['inflight'] = False
+                    st['retries'] = 0
+                else:
+                    # Skip quietly; avoid high-frequency disk writes on no-op
+                    return False
     except Exception:
         pass
 
