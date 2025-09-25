@@ -3,6 +3,7 @@
 .cccc/state/**
 .cccc/logs/**
 .cccc/mailbox/**
+.cccc/rules/**
 # Optional local personas (not used at runtime)
 .cccc/personas/**
 # Local, non-tracked runtime config (no secrets in repo)

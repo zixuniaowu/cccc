@@ -6,6 +6,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
 import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random
+from datetime import datetime, timedelta
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
     import fcntl  # type: ignore
@@ -30,176 +31,7 @@ AUX_MODES = {"off", "on"}
 AUX_WORK_ROOT_NAME = "aux_sessions"
 
 # ---------- REV state helpers (lightweight) ----------
-def _rev_state_path(home: Path) -> Path:
-    return home/"state"/"review_rev_state.json"
-
-def _load_rev_state(home: Path) -> Dict[str, Any]:
-    p = _rev_state_path(home)
-    try:
-        return json.loads(p.read_text(encoding='utf-8'))
-    except Exception:
-        return {"PeerA": {"pending": False, "since": 0.0, "last_rev_ts": 0.0, "last_deltas": [], "last_remind_since": 0.0},
-                "PeerB": {"pending": False, "since": 0.0, "last_rev_ts": 0.0, "last_deltas": [], "last_remind_since": 0.0}}
-
-def _save_rev_state(home: Path, st: Dict[str, Any]):
-    p = _rev_state_path(home); p.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding='utf-8')
-    except Exception:
-        pass
-
 INSIGHT_BLOCK_RE = re.compile(r"```\s*insight\s*([\s\S]*?)```", re.I)
-def _extract_insight_kind(text: str) -> str:
-    try:
-        m = INSIGHT_BLOCK_RE.findall(text or '')
-        if not m:
-            return ""
-        block = m[-1]
-        k = re.findall(r"(?mi)^\s*kind\s*:\s*([A-Za-z0-9_\-]+)", block)
-        return (k[-1].strip().lower() if k else "")
-    except Exception:
-        return ""
-
-def _extract_insight_field(text: str, name: str) -> str:
-    """Return the value for a simple 'name: value' line from the last insight block."""
-    try:
-        m = INSIGHT_BLOCK_RE.findall(text or '')
-        if not m:
-            return ""
-        block = m[-1]
-        pat = re.compile(rf"(?mi)^\s*{re.escape(name)}\s*:\s*(.+)$")
-        mm = pat.findall(block)
-        if not mm:
-            return ""
-        return mm[-1].strip()
-    except Exception:
-        return ""
-
-def _extract_rev_delta(text: str) -> str:
-    try:
-        m = INSIGHT_BLOCK_RE.findall(text or '')
-        if not m:
-            return ""
-        block = m[-1]
-        # Heuristic: look for 'delta:' in any line of block
-        for ln in block.splitlines():
-            if 'delta:' in ln.lower():
-                return ln.strip()
-        return ""
-    except Exception:
-        return ""
-
-def _extract_last_insight_block(text: str) -> str:
-    try:
-        m = INSIGHT_BLOCK_RE.findall(text or '')
-        return m[-1] if m else ""
-    except Exception:
-        return ""
-
-def _insight_has_field(block: str, name: str) -> bool:
-    try:
-        return bool(re.search(rf"(?mi)^\s*{re.escape(name)}\s*:\s*\S", block))
-    except Exception:
-        return False
-
-def _revise_quality_ok(full_text: str) -> Tuple[bool, str]:
-    """Check if payload has a valid revise insight: kind=revise and has delta/refs/next and not restating body."""
-    try:
-        kind = _extract_insight_kind(full_text)
-        if kind not in ("revise","rev","polish"):
-            return False, "not-revise-kind"
-        block = _extract_last_insight_block(full_text)
-        miss = []
-        if not _insight_has_field(block, 'delta'):
-            miss.append('delta')
-        if not (_insight_has_field(block, 'refs') or _insight_has_field(block, 'ref')):
-            miss.append('refs')
-        if not _insight_has_field(block, 'next'):
-            miss.append('next')
-        if miss:
-            return False, f"missing:{','.join(miss)}"
-        # Similarity guard: avoid restating body as insight
-        try:
-            body = full_text
-            bi = block
-            body = body.replace(block, " ")
-            toks_body = _tokenize_for_similarity(body)
-            toks_ins = _tokenize_for_similarity(bi)
-            sim = _jaccard(toks_body, toks_ins)
-            if sim >= 0.85:
-                return False, "similar-to-body"
-        except Exception:
-            pass
-        return True, "ok"
-    except Exception:
-        return False, "error"
-
-def _rev_mark_pending(home: Path, peer_label: str, pending: bool = True):
-    st = _load_rev_state(home)
-    ent = st.get(peer_label) or {}
-    ent["pending"] = bool(pending)
-    st[peer_label] = ent
-    _save_rev_state(home, st)
-
-## Insight soft reminder removed (keep meta-only guidance in prompt; no runtime nudges)
-
-def _update_rev_state_from_to_peer(home: Path, sender_label: str, payload: str):
-    st = _load_rev_state(home)
-    kind = _extract_insight_kind(payload)
-    now = time.time()
-    # Sender does a revise → clear their pending and record delta
-    if kind in ("revise","rev","polish"):
-        me = sender_label
-        try:
-            ent = st.get(me) or {}
-            ent["pending"] = False
-            ent["last_rev_ts"] = now
-            delta = _extract_rev_delta(payload)
-            if delta:
-                arr = (ent.get("last_deltas") or []) + [delta]
-                ent["last_deltas"] = arr[-3:]
-            st[me] = ent
-        except Exception:
-            pass
-    # Sender raises a review trigger → the other peer owes a revise
-    if kind in ("counter","question","risk"):
-        other = "PeerB" if sender_label == "PeerA" else "PeerA"
-        try:
-            ent = st.get(other) or {}
-            ent["pending"] = True
-            ent["since"] = now
-            st[other] = ent
-        except Exception:
-            pass
-    _save_rev_state(home, st)
-
-def _maybe_rev_remind(home: Path, receiver_label: str, send_fn):
-    """If there is an outstanding review trigger without a later revise, send one gentle reminder."""
-    st = _load_rev_state(home)
-    ent = st.get(receiver_label) or {}
-    if not ent.get("pending"):
-        return
-    since = float(ent.get("since") or 0.0)
-    last_rev_ts = float(ent.get("last_rev_ts") or 0.0)
-    last_remind_since = float(ent.get("last_remind_since") or 0.0)
-    if since <= 0.0 or last_rev_ts > since:
-        return
-    if last_remind_since == since:
-        return
-    tip = (
-        "<FROM_SYSTEM>\n"
-        "Gentle nudge: consider a quick REV pass (≤10 min) to address recent COUNTER/QUESTION before broad announce.\n"
-        "Submit one `insight` with kind: revise (include delta:+/‑/tests and refs to the review).\n"
-        "</FROM_SYSTEM>\n"
-    )
-    try:
-        send_fn(tip)
-        ent["last_remind_since"] = since
-        st[receiver_label] = ent
-        _save_rev_state(home, st)
-        log_ledger(home, {"kind":"revise-remind","peer":receiver_label})
-    except Exception:
-        pass
 
 # --- inbox/nudge settings (read at startup from cli_profiles.delivery) ---
 MB_PULL_ENABLED = True
@@ -249,32 +81,15 @@ def _plain_text_without_tags_and_mid(s: str) -> str:
         return s
 
 def _send_raw_to_cli(home: Path, receiver_label: str, text: str,
-                     modeA: str, modeB: str,
                      left_pane: str, right_pane: str):
-    """Direct passthrough: send raw text to CLI without any wrappers/MID.
-    - For bridge: write text directly into mailbox/<peer>/inbox.md (adapter submits with Enter)
-    - For tmux: paste to pane with a single Enter
-    """
+    """Direct passthrough: send raw text to CLI without any wrappers/MID (tmux paste)."""
     ts = time.strftime('%Y-%m-%d %H:%M:%S')
-    if receiver_label == 'PeerA' and modeA == 'bridge':
-        try:
-            (home/"mailbox"/"peerA"/"inbox.md").write_text(text, encoding='utf-8')
-            print(f"[RAW] → PeerA @ {ts}: {text[:80]}")
-        except Exception as e:
-            print(f"[RAW] PeerA inject failed: {e}")
-    elif receiver_label == 'PeerB' and modeB == 'bridge':
-        try:
-            (home/"mailbox"/"peerB"/"inbox.md").write_text(text, encoding='utf-8')
-            print(f"[RAW] → PeerB @ {ts}: {text[:80]}")
-        except Exception as e:
-            print(f"[RAW] PeerB inject failed: {e}")
+    # tmux direct paste
+    if receiver_label == 'PeerA':
+        tmux_paste(left_pane, text)
     else:
-        # tmux direct paste
-        if receiver_label == 'PeerA':
-            tmux_paste(left_pane, text)
-        else:
-            tmux_paste(right_pane, text)
-        print(f"[RAW] → {receiver_label} @ {ts}: {text[:80]}")
+        tmux_paste(right_pane, text)
+    print(f"[RAW] → {receiver_label} @ {ts}: {text[:80]}")
 
 def run(cmd: str, *, cwd: Optional[Path]=None, timeout: int=600) -> Tuple[int,str,str]:
     p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=str(cwd) if cwd else None)
@@ -312,6 +127,33 @@ def _next_seq_for_inbox(inbox: Path, processed: Path) -> str:
         return mx
     current = max(_max_seq_in(inbox), _max_seq_in(processed))
     return f"{current+1:06d}"
+
+def _format_local_ts() -> str:
+    dt = datetime.now().astimezone()
+    tzname = dt.tzname() or ""
+    off = dt.utcoffset() or timedelta(0)
+    total = int(off.total_seconds())
+    sign = '+' if total >= 0 else '-'
+    total = abs(total)
+    hh = total // 3600
+    mm = (total % 3600) // 60
+    offset_str = f"UTC{sign}{hh:02d}:{mm:02d}"
+    main = dt.strftime("%Y-%m-%d %H:%M:%S")
+    return f"{main} {tzname} ({offset_str})" if tzname else f"{main} ({offset_str})"
+
+def _inject_ts_after_mid(payload: str) -> str:
+    try:
+        if "[TS:" in payload:
+            return payload
+        lines = payload.splitlines()
+        for i, ln in enumerate(lines):
+            if ln.strip().startswith("[MID:"):
+                ts_line = f"[TS: {_format_local_ts()}]"
+                lines.insert(i+1, ts_line)
+                return "\n".join(lines)
+        return f"[TS: {_format_local_ts()}]\n" + payload
+    except Exception:
+        return payload
 
 def _write_inbox_message(home: Path, receiver_label: str, payload: str, mid: str) -> Tuple[str, Path]:
     inbox = _inbox_dir(home, receiver_label)
@@ -357,7 +199,7 @@ def _write_inbox_message(home: Path, receiver_label: str, payload: str, mid: str
             seq = f"{seq_int:06d}"
             fpath = inbox/f"{seq}.{mid}.txt"
             try:
-                fpath.write_text(payload, encoding='utf-8')
+                fpath.write_text(_inject_ts_after_mid(payload), encoding='utf-8')
             except Exception as e:
                 raise RuntimeError(f"write inbox failed: {e}")
             # Persist the last-used sequence for the next writer
@@ -390,7 +232,7 @@ def _write_inbox_message(home: Path, receiver_label: str, payload: str, mid: str
             seq = f"{seq_int:06d}"
             fpath = inbox/f"{seq}.{mid}.txt"
             try:
-                fpath.write_text(payload, encoding='utf-8')
+                fpath.write_text(_inject_ts_after_mid(payload), encoding='utf-8')
             except Exception as e:
                 raise RuntimeError(f"write inbox failed: {e}")
             try:
@@ -530,7 +372,6 @@ def _compose_nudge_suffix_for(peer_label: str,
 def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
                 left_pane: str, right_pane: str,
                 profileA: Dict[str,Any], profileB: Dict[str,Any],
-                modeA: str, modeB: str,
                 aux_mode: str = "off"):
     inbox_path = str(_inbox_dir(home, receiver_label))
     combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
@@ -543,23 +384,11 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
         f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
     )
     msg = base + (" " + combined_suffix if combined_suffix else "")
-    # Route by delivery mode
+    # Always send via tmux injection (delivery_mode 'bridge' removed)
     if receiver_label == 'PeerA':
-        if modeA == 'bridge':
-            try:
-                (home/"mailbox"/"peerA"/"inbox.md").write_text(msg + "\n", encoding='utf-8')
-            except Exception:
-                pass
-        else:
-            _maybe_send_nudge(home, 'PeerA', left_pane, profileA, suffix=combined_suffix)
+        _maybe_send_nudge(home, 'PeerA', left_pane, profileA, suffix=combined_suffix)
     else:
-        if modeB == 'bridge':
-            try:
-                (home/"mailbox"/"peerB"/"inbox.md").write_text(msg + "\n", encoding='utf-8')
-            except Exception:
-                pass
-        else:
-            _maybe_send_nudge(home, 'PeerB', right_pane, profileB, suffix=combined_suffix)
+        _maybe_send_nudge(home, 'PeerB', right_pane, profileB, suffix=combined_suffix)
 
 def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
     # token may be seq (000123) or mid; prefer seq match first
@@ -1277,7 +1106,7 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
             try:
                 seq, _ = _write_inbox_message(home, recv, text_with_mid, mid)
                 _send_nudge(home, recv, seq, mid, left, right, profileA, profileB,
-                            modeA, modeB, aux_mode)
+                            aux_mode)
                 try:
                     last_nudge_ts[recv] = time.time()
                 except Exception:
@@ -1372,8 +1201,8 @@ def main(home: Path):
         ts = time.strftime('%Y-%m-%d %H:%M')
         if mode_norm == "compact":
             try:
-                _send_raw_to_cli(home, 'PeerA', '/compact', modeA, modeB, left, right)
-                _send_raw_to_cli(home, 'PeerB', '/compact', modeA, modeB, left, right)
+                _send_raw_to_cli(home, 'PeerA', '/compact', left, right)
+                _send_raw_to_cli(home, 'PeerB', '/compact', left, right)
             except Exception:
                 pass
             try:
@@ -1413,7 +1242,6 @@ def main(home: Path):
 
     aux_last_reason = ""
     aux_last_reminder: Dict[str, float] = {"PeerA": 0.0, "PeerB": 0.0}
-    AUX_TRIGGER_INTENTS = {"shape", "review", "contract", "release", "final", "accept"}
     aux_work_root = home/"work"/AUX_WORK_ROOT_NAME
     aux_work_root.mkdir(parents=True, exist_ok=True)
 
@@ -1503,40 +1331,7 @@ def main(home: Path):
         log_ledger(home, {"from": "system", "kind": "aux_reminder", "peers": targets, "reason": reason})
         write_status(deliver_paused)
 
-    def _infer_stage(msg_type: str, intent: str, has_acceptance: bool) -> str:
-        if msg_type == "evidence" and intent in {"release", "final", "signoff", "accept"}:
-            return "final_acceptance"
-        if msg_type == "claim" and has_acceptance:
-            return "contract_signoff"
-        if msg_type == "claim" and intent in AUX_TRIGGER_INTENTS:
-            return "plan_finalization"
-        return "analysis"
-
-    def _maybe_trigger_aux_from_payload(peer_label: str, payload: str):
-        if aux_mode != "on" or not payload.strip():
-            return
-        try:
-            import yaml  # type: ignore
-            data = yaml.safe_load(payload)
-        except Exception:
-            return
-        if not isinstance(data, dict):
-            return
-        intent = str(data.get("intent") or "").lower()
-        msg_type = str(data.get("type") or "").lower()
-        has_acceptance = bool(data.get("acceptance"))
-        reason = None
-        if msg_type == "claim" and (intent in AUX_TRIGGER_INTENTS or has_acceptance):
-            reason = f"{peer_label} claim intent={intent or 'n/a'}"
-        elif msg_type == "evidence" and intent in {"release", "final", "signoff", "accept"}:
-            reason = f"{peer_label} evidence intent={intent or 'n/a'}"
-        if not reason:
-            return
-        now = time.time()
-        if now - aux_last_reminder.get(peer_label, 0.0) < aux_min_interval:
-            return
-        stage = _infer_stage(msg_type, intent, has_acceptance)
-        _send_aux_reminder(reason, stage=stage, payload=payload, source_peer=peer_label)
+    # Note: auto Aux trigger based on YAML payload has been removed. Manual /review and /aux remain.
 
 
     cli_profiles_path = settings/"cli_profiles.yaml"
@@ -1616,9 +1411,14 @@ def main(home: Path):
     profileA = cli_profiles.get("peerA", {})
     profileB = cli_profiles.get("peerB", {})
     delivery_conf = cli_profiles.get("delivery", {})
-    delivery_mode = cli_profiles.get("delivery_mode", {}) if isinstance(cli_profiles.get("delivery_mode", {}), dict) else {}
-    modeA = (delivery_mode.get('peerA') or 'tmux').lower()
-    modeB = (delivery_mode.get('peerB') or 'tmux').lower()
+    try:
+        SYSTEM_REFRESH_EVERY = int(delivery_conf.get("system_refresh_every_self_checks") or 3)
+        if SYSTEM_REFRESH_EVERY <= 0:
+            SYSTEM_REFRESH_EVERY = 3
+    except Exception:
+        SYSTEM_REFRESH_EVERY = 3
+    # Delivery mode (tmux only). Legacy 'bridge' mode removed.
+    # Delivery mode fixed to tmux (legacy bridge removed)
     aux_conf = cli_profiles.get("aux", {}) if isinstance(cli_profiles.get("aux", {}), dict) else {}
     aux_command_template = str(aux_conf.get("invoke_command") or 'gemini -p "{prompt}" --yolo').strip()
     aux_command = aux_command_template
@@ -1923,7 +1723,7 @@ def main(home: Path):
                     else:
                         raise ValueError("unknown peer")
                     for label in labels:
-                        _send_raw_to_cli(home, label, text, modeA, modeB, left, right)
+                        _send_raw_to_cli(home, label, text, left, right)
                         try:
                             log_ledger(home, {"from": source, "kind": "im-passthrough", "to": label, "chars": len(text)})
                         except Exception:
@@ -1970,51 +1770,10 @@ def main(home: Path):
     else:
         print("[INFO] Using CLI commands from configuration (overridable by env).")
     if start_mode in ("has_doc", "ai_bootstrap"):
-        if modeA == 'bridge':
-            # Ensure pexpect is available; otherwise fallback to tmux mode for visibility
-            pyexe = shlex.quote(sys.executable or 'python3')
-            code,_,_ = run(f"{pyexe} -c 'import pexpect'")
-            if code != 0:
-                print("[WARN] pexpect not installed; PeerA bridge mode disabled. Falling back to tmux input injection (pip install pexpect).")
-                modeA = 'tmux'
-        if modeB == 'bridge':
-            # Ensure pexpect is available; otherwise fallback to tmux mode
-            pyexe = shlex.quote(sys.executable or 'python3')
-            code,_,_ = run(f"{pyexe} -c 'import pexpect'")
-            if code != 0:
-                print("[WARN] pexpect not installed; PeerB bridge mode disabled. Falling back to tmux input injection (pip install pexpect).")
-                modeB = 'tmux'
-        if modeA == 'bridge':
-            # Run bridge adapter in pane; it will spawn the CLI child and proxy stdout
-            py = sys.executable or 'python3'
-            bridge_py = str(home/"adapters"/"bridge.py")
-            inbox = str(home/"mailbox"/"peerA"/"inbox.md")
-            # Pass prompt regex if available to help the adapter time submission
-            prx = str((profileA or {}).get('prompt_regex') or '')
-            inner = f"{shlex.quote(py)} {shlex.quote(bridge_py)} --home {shlex.quote(str(home))} --peer peerA --cmd {shlex.quote(CLAUDE_I_CMD)} --inbox {shlex.quote(inbox)}"
-            if prx:
-                inner += f" --prompt-regex {shlex.quote(prx)}"
-            cmd = f"bash -lc {shlex.quote(inner)}"
-            tmux_respawn_pane(left, cmd)
-            print(f"[LAUNCH] PeerA mode=bridge pane={left} bridge_cmd={inner}")
-        else:
-            tmux_start_interactive(left, CLAUDE_I_CMD)
-            print(f"[LAUNCH] PeerA mode=tmux pane={left} cmd={CLAUDE_I_CMD}")
-        if modeB == 'bridge':
-            # Run bridge adapter for PeerB
-            py = sys.executable or 'python3'
-            bridge_py = str(home/"adapters"/"bridge.py")
-            inbox = str(home/"mailbox"/"peerB"/"inbox.md")
-            prx = str((profileB or {}).get('prompt_regex') or '')
-            inner = f"{shlex.quote(py)} {shlex.quote(bridge_py)} --home {shlex.quote(str(home))} --peer peerB --cmd {shlex.quote(CODEX_I_CMD)} --inbox {shlex.quote(inbox)}"
-            if prx:
-                inner += f" --prompt-regex {shlex.quote(prx)}"
-            cmd = f"bash -lc {shlex.quote(inner)}"
-            tmux_respawn_pane(right, cmd)
-            print(f"[LAUNCH] PeerB mode=bridge pane={right} bridge_cmd={inner}")
-        else:
-            tmux_start_interactive(right, CODEX_I_CMD)
-            print(f"[LAUNCH] PeerB mode=tmux pane={right} cmd={CODEX_I_CMD}")
+        tmux_start_interactive(left, CLAUDE_I_CMD)
+        print(f"[LAUNCH] PeerA mode=tmux pane={left} cmd={CLAUDE_I_CMD}")
+        tmux_start_interactive(right, CODEX_I_CMD)
+        print(f"[LAUNCH] PeerB mode=tmux pane={right} cmd={CODEX_I_CMD}")
         # Debug: show current commands per pane
         try:
             code,out,err = tmux('list-panes','-F','#{pane_id} #{pane_current_command}')
@@ -2263,24 +2022,127 @@ def main(home: Path):
         return False
 
     # --- progress keepalive helpers (lightweight) ---
+    # Body event-line detection (Progress/Next) — do not rely on insight.kind anymore
+    EVENT_PROGRESS_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?(?:Progress|进度)\s*(?:\(|:)\s*")
+    EVENT_NEXT_RE     = re.compile(r"(?mi)^\s*(?:[-*]\s*)?(?:Next|下一步)\s*(?:\(|:)\s*(.+)$")
+
+    def _has_progress_event(payload: str) -> bool:
+        try:
+            m = re.search(r"<\s*TO_PEER\s*>([\s\S]*?)<\s*/TO_PEER\s*>", payload or "", re.I)
+            body = m.group(1) if m else (payload or "")
+            return bool(EVENT_PROGRESS_RE.search(body))
+        except Exception:
+            return False
+
+    def _extract_next_from_body(payload: str) -> str:
+        try:
+            m = re.search(r"<\s*TO_PEER\s*>([\s\S]*?)<\s*/TO_PEER\s*>", payload or "", re.I)
+            body = m.group(1) if m else (payload or "")
+            mm = EVENT_NEXT_RE.findall(body)
+            return (mm[0].strip() if mm else "")
+        except Exception:
+            return ""
+
     def _schedule_keepalive(sender_label: str, payload: str):
         """Schedule a delayed system keepalive back to the sender on progress messages.
-        - Only when keepalive_enabled and insight.kind == progress.
-        - Coalesce to a single pending item per sender (update due/next).
+        Trigger: presence of a Progress: line in the body; suppressed at dispatch time.
         """
         if not keepalive_enabled:
             return
-        try:
-            k = _extract_insight_kind(payload)
-        except Exception:
-            k = ""
-        if k != "progress":
+        # Only consider <TO_PEER> messages
+        if "<TO_PEER>" not in (payload or ""):
             return
-        nx = _extract_insight_field(payload, "next") or ""
+        if not _has_progress_event(payload):
+            return
+        nx = _extract_next_from_body(payload)
         due = time.time() + float(keepalive_delay_s)
         pending_keepalive[sender_label] = {"due": due, "next": nx}
         try:
             log_ledger(home, {"from":"system","kind":"keepalive-scheduled","peer": sender_label, "delay_s": keepalive_delay_s})
+        except Exception:
+            pass
+
+    # --- Passive event parser: Item + event lines → ledger (no reminders, no gates) ---
+    ITEM_HEAD_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?Item\s*\(\s*([^\)]+?)\s*\)\s*:\s*(.+)$")
+    # Keys with CN aliases
+    KEY_ALIASES = {
+        'progress': { 'progress', '进度' },
+        'evidence': { 'evidence', '证据' },
+        'ask':      { 'ask', '提问' },
+        'counter':  { 'counter', '反方' },
+        'risk':     { 'risk', '风险' },
+        'next':     { 'next', '下一步' },
+    }
+    CANON_KEYS = {a: k for k, vv in KEY_ALIASES.items() for a in vv}
+    EVENT_LINE_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?([A-Za-z\u4e00-\u9fff]+)\s*(?:\(([^)]*)\))?\s*:\s*(.*)$")
+
+    def _parse_params(s: str) -> Dict[str,str]:
+        out: Dict[str,str] = {}
+        if not s:
+            return out
+        try:
+            # split by comma not inside brackets
+            parts = re.split(r",(?=(?:[^\[]*\[[^\]]*\])*[^\]]*$)", s)
+            for p in parts:
+                if '=' in p:
+                    k,v = p.split('=',1)
+                    out[k.strip().lower()] = v.strip().strip()
+        except Exception:
+            pass
+        return out
+
+    def _extract_body(payload: str) -> str:
+        m = re.search(r"<\s*TO_PEER\s*>([\s\S]*?)<\s*/TO_PEER\s*>", payload or "", re.I)
+        return m.group(1) if m else (payload or "")
+
+    def _parse_events_from_body(body: str) -> List[Dict[str,Any]]:
+        events: List[Dict[str,Any]] = []
+        cur_label = 'misc'
+        for raw in (body or '').splitlines():
+            m = ITEM_HEAD_RE.match(raw)
+            if m:
+                cur_label = m.group(1).strip() or 'misc'
+                continue
+            mm = EVENT_LINE_RE.match(raw)
+            if not mm:
+                continue
+            key_raw, param_s, text = mm.group(1).strip(), (mm.group(2) or '').strip(), (mm.group(3) or '').strip()
+            key = CANON_KEYS.get(key_raw.lower())
+            if key not in KEY_ALIASES:
+                continue
+            params = _parse_params(param_s)
+            tag = (params.get('tag') or cur_label or 'misc').strip()
+            ent: Dict[str,Any] = {'type': key, 'tag': tag, 'text': text}
+            # optional fields
+            if 'to' in params:
+                ent['to'] = params.get('to')
+            if 'strength' in params:
+                ent['strength'] = params.get('strength')
+            if 'sev' in params:
+                ent['sev'] = params.get('sev')
+            # refs=[...] minimal parse
+            refs = params.get('refs') or ''
+            if refs.startswith('[') and refs.endswith(']'):
+                inside = refs[1:-1]
+                ent['refs'] = [r.strip() for r in inside.split(',') if r.strip()]
+            events.append(ent)
+        return events
+
+    def _ledger_events_from_payload(home: Path, sender_label: str, payload: str):
+        try:
+            body = _extract_body(payload)
+            evs = _parse_events_from_body(body)
+            for ev in evs:
+                rec = {
+                    'from': sender_label,
+                    'kind': f"event-{ev.get('type')}",
+                    'tag': ev.get('tag'),
+                    'text': ev.get('text'),
+                }
+                for k in ('to','strength','sev','refs'):
+                    if ev.get(k) is not None:
+                        rec[k] = ev.get(k)
+                log_ledger(home, rec)
         except Exception:
             pass
 
@@ -2297,6 +2159,12 @@ def main(home: Path):
             if not plain:
                 log_ledger(home, {"from": sender_label, "kind": "handoff-drop", "to": receiver_label, "reason": "empty-body", "chars": len(payload)})
                 return
+        except Exception:
+            pass
+        # Progress keepalive: schedule when a peer sends a to_peer message with Progress lines
+        try:
+            if sender_label in ("PeerA","PeerB"):
+                _schedule_keepalive(sender_label, payload)
         except Exception:
             pass
         # Append inbound suffix (per source: from_user/from_peer/from_system); keep backward-compatible string config
@@ -2333,7 +2201,7 @@ def main(home: Path):
         text_with_mid = wrap_with_mid(payload, mid)
         try:
             seq, _ = _write_inbox_message(home, receiver_label, text_with_mid, mid)
-            _send_nudge(home, receiver_label, seq, mid, left, right, profileA, profileB, modeA, modeB, aux_mode)
+            _send_nudge(home, receiver_label, seq, mid, left, right, profileA, profileB, aux_mode)
             try:
                 last_nudge_ts[receiver_label] = time.time()
             except Exception:
@@ -2362,25 +2230,32 @@ def main(home: Path):
                         in_self_check = True
                         try:
                             try:
-                                lt = time.localtime()
-                                ts = time.strftime('%Y-%m-%d %H:%M:%S', lt)
-                                tzname = time.tzname[lt.tm_isdst] if isinstance(time.tzname, (list, tuple)) else str(time.tzname)
-                                off = -time.altzone if (time.daylight and lt.tm_isdst) else -time.timezone
-                                sign = '+' if off >= 0 else '-'
-                                off = abs(off)
-                                hh = off // 3600
-                                mm = (off % 3600) // 60
-                                now_line = f"Now: {ts} {tzname} (UTC{sign}{hh:02d}:{mm:02d})"
-                            except Exception:
-                                now_line = "Now: unknown"
-
-                            try:
                                 sc_index = int(instr_counter // self_check_every) if self_check_every > 0 else 0
                             except Exception:
                                 sc_index = 0
+                            # Base self-check message (no inline timestamp; inbox file now contains [TS: ...])
+                            peerA_msg = self_check_text
+                            peerB_msg = self_check_text
 
-                            peerA_msg = now_line + "\n" + self_check_text
-                            peerB_msg = now_line + "\n" + self_check_text
+                            # Every K-th self-check, append full SYSTEM rules for each peer
+                            try:
+                                K = SYSTEM_REFRESH_EVERY
+                                rules_dir = home/"rules"
+                                if sc_index > 0 and (sc_index % K) == 0:
+                                    try:
+                                        rulesA = (rules_dir/"PEERA.md").read_text(encoding='utf-8')
+                                    except Exception:
+                                        rulesA = ""
+                                    try:
+                                        rulesB = (rules_dir/"PEERB.md").read_text(encoding='utf-8')
+                                    except Exception:
+                                        rulesB = ""
+                                    if rulesA:
+                                        peerA_msg = peerA_msg.rstrip("\n") + "\n\n" + rulesA.strip()
+                                    if rulesB:
+                                        peerB_msg = peerB_msg.rstrip("\n") + "\n\n" + rulesB.strip()
+                            except Exception:
+                                pass
 
                             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{peerA_msg}\n</FROM_SYSTEM>\n")
                             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{peerB_msg}\n</FROM_SYSTEM>\n")
@@ -2436,13 +2311,8 @@ def main(home: Path):
         for label, infl in list(inflight.items()):
             if not infl:
                 continue
-            # Per-label overrides: for bridge receivers, avoid resends by default; allow limited resends when require_mid=True
             eff_timeout = ack_timeout
             eff_resend = resend_attempts
-            if (label == 'PeerA' and modeA == 'bridge') or (label == 'PeerB' and modeB == 'bridge'):
-                eff_timeout = max(eff_timeout, 90.0)
-                if not bool(infl.get('require_mid', False)):
-                    eff_resend = 0
             # Soft-ACK: if receiver pane is idle, consider delivery successful
             pane, prof = _receiver_map(label)
             idle, _r = judges[label].refresh(pane)
@@ -2450,38 +2320,54 @@ def main(home: Path):
             # Still allow strong ACK via [MID]
             if now - infl.get("ts", 0) >= eff_timeout:
                 if int(infl.get("attempts", 0)) < eff_resend:
-                    mid = infl.get("mid")
-                    payload = infl.get("payload")
-                    if label == 'PeerA' and modeA == 'bridge':
-                        inbox = home/"mailbox"/"peerA"/"inbox.md"
-                        try:
-                            inbox.write_text(wrap_with_mid(payload, mid), encoding='utf-8')
-                            status = 'delivered'; out_mid = mid
-                        except Exception:
-                            status = 'failed'; out_mid = mid
-                    elif label == 'PeerB' and modeB == 'bridge':
-                        inbox = home/"mailbox"/"peerB"/"inbox.md"
-                        try:
-                            inbox.write_text(wrap_with_mid(payload, mid), encoding='utf-8')
-                            status = 'delivered'; out_mid = mid
-                        except Exception:
-                            status = 'failed'; out_mid = mid
-                    else:
-                        status, out_mid = deliver_or_queue(home, pane, _mailbox_peer_name(label), payload, prof, delivery_conf, mid=mid)
+                    mid = infl.get("mid"); payload = infl.get("payload")
+                    status, out_mid = deliver_or_queue(home, pane, _mailbox_peer_name(label), payload, prof, delivery_conf, mid=mid)
                     infl["attempts"] = int(infl.get("attempts", 0)) + 1
                     infl["ts"] = now
                     log_ledger(home, {"from": infl.get("sender"), "kind": "handoff-resend", "to": label, "status": status, "mid": out_mid})
                     print(f"[RESEND] {infl.get('sender')} → {label} (mid={out_mid}, attempt={infl['attempts']})")
                 else:
-                    # Exceeded retries (or eff_resend=0): in bridge mode, treat any mailbox activity as soft ACK; otherwise drop to avoid duplicate injection
-                    last_ts = last_event_ts.get(label, 0.0)
-                    if last_ts and last_ts > float(infl.get("ts", 0)):
-                        kind = "handoff-timeout-soft-ack"
-                    else:
-                        kind = "handoff-timeout-drop"
+                    # Exceeded retries: drop to avoid duplicate injection
+                    kind = "handoff-timeout-drop"
                     log_ledger(home, {"from": infl.get("sender"), "kind": kind, "to": label, "mid": infl.get("mid")})
                     print(f"[TIMEOUT] handoff to {label} mid={infl.get('mid')} — {kind}")
                     inflight[label] = None
+        # Also check delayed keepalives (coalesced per sender)
+        _maybe_dispatch_keepalive()
+
+    def _maybe_dispatch_keepalive():
+        """Send pending keepalive if due and not suppressed by inbox/inflight/queued."""
+        if not keepalive_enabled:
+            return
+        now = time.time()
+        for label in ("PeerA","PeerB"):
+            ent = pending_keepalive.get(label)
+            if not ent:
+                continue
+            if float(ent.get('due') or 0.0) > now:
+                continue
+            # Suppress when inbox has pending files
+            try:
+                ib = _inbox_dir(home, label)
+                has_inbox = any(ib.iterdir())
+            except Exception:
+                has_inbox = False
+            if has_inbox:
+                pending_keepalive[label] = None
+                continue
+            # Suppress when there are in-flight/queued handoffs targeting this label
+            if inflight.get(label) is not None or (queued.get(label) or []):
+                pending_keepalive[label] = None
+                continue
+            nxt = str(ent.get('next') or '').strip()
+            hint = f"Continue: {nxt}" if nxt else "Continue with your next step."
+            txt = f"<FROM_SYSTEM>\n[keepalive] {hint}\n</FROM_SYSTEM>\n"
+            _send_handoff("System", label, txt)
+            pending_keepalive[label] = None
+            try:
+                log_ledger(home, {"from":"system","kind":"keepalive-sent","peer": label})
+            except Exception:
+                pass
 
     def _try_send_from_queue(label: str):
         if inflight.get(label) is not None:
@@ -2750,11 +2636,9 @@ def main(home: Path):
                         log_ledger(home, {"from":"PeerA","kind":"to_peer-seen","route":"mailbox","chars":len(payload)})
                     except Exception:
                         pass
-                    # Update REV state from PeerA's to_peer message
-                    try:
-                        _update_rev_state_from_to_peer(home, "PeerA", payload)
-                    except Exception:
-                        pass
+                    # Passive: parse Item/event lines and write to ledger (no reminders)
+                    _ledger_events_from_payload(home, "PeerA", payload)
+                    # (revise soft reminder/state removed)
                     # Any mailbox activity can count as ACK
                     _ack_receiver("PeerA", payload)
                     mbox_counts["peerA"]["to_peer"] += 1
@@ -2769,34 +2653,11 @@ def main(home: Path):
                     # inline patch/diff handling removed
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
-                    _maybe_trigger_aux_from_payload("PeerA", payload)
-                    # Hard gate: if PeerA owes a REV (due to prior COUNTER/QUESTION from PeerB),
-                    # require this to_peer to be a valid revise (delta/refs/next).
-                    try:
-                        owed = bool((_load_rev_state(home).get("PeerA") or {}).get("pending", False))
-                    except Exception:
-                        owed = False
-                    if owed:
-                        okq, why = _revise_quality_ok(payload)
-                        if not okq:
-                            tip = (
-                                "<FROM_SYSTEM>\n"
-                                "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
-                                "</FROM_SYSTEM>\n"
-                            )
-                            _send_handoff("System", "PeerA", tip)
-                            log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerA","reason": why})
-                            # Ensure debt remains pending (in case kind=revise but low quality)
-                            _rev_mark_pending(home, "PeerA", True)
-                            payload = ""
+                    # auto Aux trigger removed; manual /review or /aux on|off only
+                    
                     if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                         _send_handoff("PeerA", "PeerB", wrapped)
-                        # Schedule a delayed self keepalive for continuous execution on progress
-                        try:
-                            _schedule_keepalive("PeerA", payload)
-                        except Exception:
-                            pass
                         try:
                             log_ledger(home, {"from":"PeerA","to":"PeerB","kind":"to_peer-forward","route":"mailbox","chars":len(payload)})
                         except Exception:
@@ -2833,10 +2694,9 @@ def main(home: Path):
                         log_ledger(home, {"from":"PeerB","kind":"to_peer-seen","route":"mailbox","chars":len(payload)})
                     except Exception:
                         pass
-                    try:
-                        _update_rev_state_from_to_peer(home, "PeerB", payload)
-                    except Exception:
-                        pass
+                    # Passive: parse Item/event lines and write to ledger (no reminders)
+                    _ledger_events_from_payload(home, "PeerB", payload)
+                    
                     _ack_receiver("PeerB", payload)
                     mbox_counts["peerB"]["to_peer"] += 1
                     mbox_last["peerB"]["to_peer"] = time.strftime("%H:%M:%S")
@@ -2850,33 +2710,11 @@ def main(home: Path):
                     # inline patch/diff handling removed
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
-                        _maybe_trigger_aux_from_payload("PeerB", payload)
-                        # Hard gate: if PeerB owes a REV (due to prior COUNTER/QUESTION from PeerA),
-                        # require this to_peer to be a valid revise (delta/refs/next).
-                        try:
-                            owed = bool((_load_rev_state(home).get("PeerB") or {}).get("pending", False))
-                        except Exception:
-                            owed = False
-                        if owed:
-                            okq, why = _revise_quality_ok(payload)
-                            if not okq:
-                                tip = (
-                                    "<FROM_SYSTEM>\n"
-                                    "REV required: respond with insight(kind: revise) including 'delta:' (+/‑/tests), 'refs:' (paths/log ranges or MID), and 'next:' (one smallest step). Do not restate the body. Your last message was held.\n"
-                                    "</FROM_SYSTEM>\n"
-                                )
-                                _send_handoff("System", "PeerB", tip)
-                                log_ledger(home, {"from":"system","kind":"revise-intercept","peer":"PeerB","reason": why})
-                                _rev_mark_pending(home, "PeerB", True)
-                                payload = ""
+                        # auto Aux trigger removed; manual /review or /aux on|off only
+                        
                         if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
                             wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
                             _send_handoff("PeerB", "PeerA", wrapped)
-                            # Schedule a delayed self keepalive for continuous execution on progress
-                            try:
-                                _schedule_keepalive("PeerB", payload)
-                            except Exception:
-                                pass
                             try:
                                 log_ledger(home, {"from":"PeerB","to":"PeerA","kind":"to_peer-forward","route":"mailbox","chars":len(payload)})
                             except Exception:
@@ -3055,12 +2893,12 @@ def main(home: Path):
         if line.startswith("a!"):
             msg = line[2:].strip()
             if msg:
-                _send_raw_to_cli(home, 'PeerA', msg, modeA, modeB, left, right)
+                _send_raw_to_cli(home, 'PeerA', msg, left, right)
             continue
         if line.startswith("b!"):
             msg = line[2:].strip()
             if msg:
-                _send_raw_to_cli(home, 'PeerB', msg, modeA, modeB, left, right)
+                _send_raw_to_cli(home, 'PeerB', msg, left, right)
             continue
         # Normal wrapped routing
         if line.startswith("a:"):

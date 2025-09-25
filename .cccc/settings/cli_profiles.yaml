@@ -80,10 +80,13 @@ delivery:
   nudge_jitter_pct: 0.05          # Small jitter to avoid synchronized reminders
   nudge_progress_timeout_s: 300   # Allow resend only if no progress for this long (seconds)
   soft_ack_on_mailbox_activity: false  # Consider later mailbox activity as soft ACK (default off)
-  # Progress keepalive (light): when a peer sends insight.kind=progress and the other side is silent,
-  # orchestrator may send a delayed FROM_SYSTEM keepalive to the sender to sustain execution.
+  # Progress keepalive (light): when a peer's <TO_PEER> body contains a 'Progress:' line and the other side is silent,
+  # orchestrator sends a delayed FROM_SYSTEM keepalive to the sender to sustain execution.
   keepalive_enabled: true
   keepalive_delay_seconds: 60
+  # --- periodic SYSTEM refresh ---
+  # Append full RULES (PEERA.md/PEERB.md) after every K-th self-check message
+  system_refresh_every_self_checks: 3
   # Startup policy for leftover inbox files (resume | discard | archive)
   inbox_startup_policy: resume
   inbox_startup_prompt: true      # Prompt by default to avoid acting on stale files
@@ -101,10 +104,7 @@ tmux:
 commands:
   peerA: "claude --dangerously-skip-permissions"
   peerB: "codex --dangerously-bypass-approvals-and-sandbox"
-delivery_mode:
-  peerA: tmux     # Use tmux injection (more stable)
-  peerB: tmux
-  
+
   # NUDGE backoff tuning
   # Exponential backoff base and cap for repeated nudges
   # Effective interval = max(nudge_resend_seconds, base * 2^retries) up to max cap

@@ -1,13 +1,3 @@
-rfd:
-  trigger:
-    both_confidence_below: 0.6
-    max_dispute_rounds: 2
-  gates:
-    # Protected paths require an approved RFD decision before merging
-    # Protected paths require an approved RFD decision before merging
-    protected_paths:
-      - ".cccc/**"           # Orchestrator domain protected
-      - "src/api/public/**"  # Example: public API protected (adjust per project)
 autonomy_level: L1
 context:
   files_limit: 120
