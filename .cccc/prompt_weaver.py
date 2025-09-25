@@ -155,6 +155,13 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - Aux is disabled for this run. You and your peer handle strategy checks and heavy lifting directly until you enable Aux.",
         ]
 
+    # PeerB must not address USER directly. Make the I/O boundary explicit early.
+    if not is_peera:
+        ch1 += [
+            "- IO contract (strict)",
+            "  - Outbound routes: to_peer only. Never send to USER. All user-facing messages are owned by PeerA or System.",
+        ]
+
     ch2 = [
         "",
         "2) Canonical references and anchors",
@@ -219,6 +226,13 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         ch3 += [
             "- Aux {#aux}",
             "  - Aux is disabled. Collaborate directly or escalate to the user when you need a second opinion.",
+        ]
+
+    # PeerB: correct path when user input is required.
+    if not is_peera:
+        ch3 += [
+            "- When you need USER input (PeerB)",
+            "  - Write an Ask(to=peerA, action=relay_to_user, ...) line under the relevant Item. Do not address USER directly.",
         ]
 
     ascii_rule = "  - Temporary constraint (PeerA only): content in to_user.md and to_peer.md must be ASCII-only (7-bit). Use plain ASCII punctuation." if is_peera else None

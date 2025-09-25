@@ -141,6 +141,48 @@ def _format_local_ts() -> str:
     main = dt.strftime("%Y-%m-%d %H:%M:%S")
     return f"{main} {tzname} ({offset_str})" if tzname else f"{main} ({offset_str})"
 
+def _safe_headline(path: Path, *, max_bytes: int = 4096, max_chars: int = 32) -> str:
+    """Extract a short, printable first-line preview from a mailbox file.
+    - Reads up to max_bytes, decodes as UTF-8 with replacement.
+    - Skips wrapper/fence lines (e.g., <TO_*> or ```... ).
+    - Strips control characters and collapses whitespace.
+    - Returns at most max_chars; appends an ellipsis when truncated.
+    """
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(max(512, int(max_bytes)))
+        text = raw.decode("utf-8", errors="replace")
+        lines = [ln.strip() for ln in text.splitlines()]
+        # helper: skip wrappers/fences/empty
+        def is_wrapped(ln: str) -> bool:
+            if not ln:
+                return True
+            if ln.startswith("<") and ln.endswith(">"):
+                return True
+            if ln.startswith("```"):
+                return True
+            return False
+        head = ""
+        for ln in lines:
+            if is_wrapped(ln):
+                continue
+            head = ln
+            if head:
+                break
+        if not head:
+            return "[unreadable-or-binary]"
+        # remove C0 controls except tab/space
+        head = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", head)
+        # zero-width characters
+        head = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", head)
+        # collapse whitespace
+        head = re.sub(r"\s+", " ", head).strip()
+        if len(head) > max_chars:
+            return head[:max_chars].rstrip() + " …"
+        return head
+    except Exception:
+        return "[unreadable-or-binary]"
+
 def _inject_ts_after_mid(payload: str) -> str:
     try:
         if "[TS:" in payload:
@@ -280,7 +322,8 @@ def _nudge_mark_progress(home: Path, receiver_label: str, *, seq: Optional[str] 
     _save_nudge_state(home, receiver_label, st)
 
 def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
-                      profile: Dict[str,Any], *, force: bool = False, suffix: str = "") -> bool:
+                     profile: Dict[str,Any], *, force: bool = False, suffix: str = "",
+                     custom_text: Optional[str] = None) -> bool:
     """Progress-aware, single-flight NUDGE sender. Returns True if a NUDGE was sent.
     No-miss guarantee: if no progress, keepalive resends with capped backoff.
     """
@@ -345,16 +388,19 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
             # inflight and still within timeout → skip quietly
             return False
 
-    # Build message
-    inbox_path = str(_inbox_dir(home, receiver_label))
-    nmsg = (
-        f"[NUDGE] inbox={inbox_path} "
-        f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
-    )
-    if suffix:
-        sfx = suffix.strip()
-        if sfx:
-            nmsg = nmsg + ' ' + sfx
+    # Build message (allow override text for immediate, stateful nudges)
+    if custom_text and custom_text.strip():
+        nmsg = custom_text.strip()
+    else:
+        # Default periodic nudge text (no dynamic inbox counts)
+        nmsg = (
+            "[NUDGE] "
+            "Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
+        )
+        if suffix:
+            sfx = suffix.strip()
+            if sfx:
+                nmsg = nmsg + ' ' + sfx
     paste_when_ready(pane, profile, nmsg, timeout=6.0, poke=False)
     st['inflight'] = True
     st['last_sent_ts'] = now
@@ -375,22 +421,30 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
                 left_pane: str, right_pane: str,
                 profileA: Dict[str,Any], profileB: Dict[str,Any],
                 aux_mode: str = "off"):
-    inbox_path = str(_inbox_dir(home, receiver_label))
     combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
-    # Include concrete seq and mid to simplify ACK on CLI side
-    if str((profileA if receiver_label=='PeerA' else profileB).get('dummy', '')):
-        pass
-    # Simplified NUDGE: only show inbox path and handling rules (no seq/mid)
-    base = (
-        f"[NUDGE] inbox={inbox_path} "
-        f"Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
+    # Compose state-anchored one‑liner with trigger + preview
+    try:
+        inbox = _inbox_dir(home, receiver_label)
+        # Find the path of the triggering file by seq
+        trigger_file = None
+        for f in sorted(inbox.iterdir(), key=lambda p: p.name):
+            if f.name.startswith(str(seq)):
+                trigger_file = f; break
+        preview = _safe_headline(trigger_file) if trigger_file else "[unreadable-or-binary]"
+    except Exception:
+        preview = "[unreadable-or-binary]"
+    ts = _format_local_ts()
+    custom = (
+        f"[NUDGE] [TS: {ts}] trigger={seq} preview='{preview}' — "
+        f"Open oldest first, process oldest→newest."
     )
-    msg = base + (" " + combined_suffix if combined_suffix else "")
+    if combined_suffix:
+        custom = custom + " " + combined_suffix
     # Always send via tmux injection (delivery_mode 'bridge' removed)
     if receiver_label == 'PeerA':
-        _maybe_send_nudge(home, 'PeerA', left_pane, profileA, suffix=combined_suffix, force=True)
+        _maybe_send_nudge(home, 'PeerA', left_pane, profileA, custom_text=custom, force=True)
     else:
-        _maybe_send_nudge(home, 'PeerB', right_pane, profileB, suffix=combined_suffix, force=True)
+        _maybe_send_nudge(home, 'PeerB', right_pane, profileB, custom_text=custom, force=True)
 
 def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
     # token may be seq (000123) or mid; prefer seq match first
