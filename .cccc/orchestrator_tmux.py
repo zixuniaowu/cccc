@@ -161,6 +161,9 @@ def _safe_headline(path: Path, *, max_bytes: int = 4096, max_chars: int = 32) ->
                 return True
             if ln.startswith("```"):
                 return True
+            # Skip runtime markers injected at file head
+            if ln.startswith("[MID:") or ln.startswith("[TS:"):
+                return True
             return False
         head = ""
         for ln in lines:
@@ -2607,6 +2610,34 @@ def main(home: Path):
                                 _nudge_mark_progress(home, label, seq=seq)
                             except Exception:
                                 pass
+                    # Detect newly arrived inbox files (external sources), send an immediate detailed NUDGE once per loop
+                    try:
+                        added = [fn for fn in cur if fn not in prev]
+                        if added:
+                            # Choose the oldest newly added to avoid spamming
+                            fn = sorted(added)[0]
+                            # Skip files created by our own orchestrator handoff (mid starts with 'cccc-')
+                            if ".cccc-" not in fn:
+                                seq = fn[:6]
+                                path = _inbox_dir(home, label)/fn
+                                preview = _safe_headline(path)
+                                ts = _format_local_ts()
+                                custom = (
+                                    f"[NUDGE] [TS: {ts}] trigger={seq} preview='{preview}' — "
+                                    f"Open oldest first, process oldest→newest."
+                                )
+                                suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
+                                if suffix:
+                                    custom = custom + " " + suffix
+                                pane = left if label == "PeerA" else right
+                                prof = profileA if label == "PeerA" else profileB
+                                _maybe_send_nudge(home, label, pane, prof, custom_text=custom, force=True)
+                                try:
+                                    last_nudge_ts[label] = time.time()
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
                     prev_inbox[label] = cur
             else:
                 for label, pane in (("PeerA", left), ("PeerB", right)):
