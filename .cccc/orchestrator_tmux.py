@@ -311,16 +311,8 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
                 st['inflight'] = False
                 st['retries'] = 0
             else:
-                # Backlog did not grow. If no progress for long enough and resend interval elapsed, allow a stale resend.
-                no_progress = (now - last_prog) >= max(1.0, float(NUDGE_PROGRESS_TIMEOUT_S))
-                elapsed = (now - last_sent) >= max(1.0, float(NUDGE_RESEND_SECONDS))
-                if inbox_count_now > 0 and no_progress and elapsed:
-                    inflight = False
-                    st['inflight'] = False
-                    st['retries'] = 0
-                else:
-                    # Skip quietly; avoid high-frequency disk writes on no-op
-                    return False
+                # Skip quietly; avoid high-frequency disk writes on no-op
+                return False
     except Exception:
         pass
 
@@ -396,9 +388,9 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
     msg = base + (" " + combined_suffix if combined_suffix else "")
     # Always send via tmux injection (delivery_mode 'bridge' removed)
     if receiver_label == 'PeerA':
-        _maybe_send_nudge(home, 'PeerA', left_pane, profileA, suffix=combined_suffix)
+        _maybe_send_nudge(home, 'PeerA', left_pane, profileA, suffix=combined_suffix, force=True)
     else:
-        _maybe_send_nudge(home, 'PeerB', right_pane, profileB, suffix=combined_suffix)
+        _maybe_send_nudge(home, 'PeerB', right_pane, profileB, suffix=combined_suffix, force=True)
 
 def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
     # token may be seq (000123) or mid; prefer seq match first
