@@ -116,6 +116,13 @@ class OutboxConsumer:
                         try:
                             ev = json.loads(text)
                             et = str(ev.get('type') or '').lower()
+                            evid = str(ev.get('id') or ev.get('eid') or '')
+                            # Diagnostic: record dispatch attempt (cheap)
+                            try:
+                                from .orchestrator_tmux import log_ledger  # type: ignore
+                                log_ledger(self.home, {"kind":"bridge-dispatch-attempt","type":et,"id":evid,"offset":self._offset})
+                            except Exception:
+                                pass
                             if et == 'to_user' and on_to_user:
                                 ok_commit = bool(on_to_user(ev))
                             elif et == 'to_peer_summary' and on_to_peer_summary:
@@ -124,11 +131,26 @@ class OutboxConsumer:
                                 ok_commit = True  # ignore unknown types but advance
                         except Exception:
                             ok_commit = True  # malformed line: skip to avoid deadlock
+                            try:
+                                from .orchestrator_tmux import log_ledger  # type: ignore
+                                log_ledger(self.home, {"kind":"bridge-outbox-json-error","offset": self._offset, "snippet": text[:120]})
+                            except Exception:
+                                pass
                         if ok_commit:
                             self._offset += pos_advance
                             advanced += pos_advance
+                            try:
+                                from .orchestrator_tmux import log_ledger  # type: ignore
+                                log_ledger(self.home, {"kind":"bridge-dispatch-ok","offset": self._offset})
+                            except Exception:
+                                pass
                         else:
                             # Stop processing further lines; keep buffer for retry
+                            try:
+                                from .orchestrator_tmux import log_ledger  # type: ignore
+                                log_ledger(self.home, {"kind":"bridge-dispatch-retry","offset": self._offset})
+                            except Exception:
+                                pass
                             break
                     # Persist cursor if advanced
                     if advanced:
