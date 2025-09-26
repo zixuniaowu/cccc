@@ -141,6 +141,19 @@ def _format_local_ts() -> str:
     main = dt.strftime("%Y-%m-%d %H:%M:%S")
     return f"{main} {tzname} ({offset_str})" if tzname else f"{main} ({offset_str})"
 
+def _compose_detailed_nudge(seq: str, preview: str, *, suffix: str = "") -> str:
+    """Compose a one-line, state-anchored NUDGE with TS + trigger + preview.
+    Keeps action instruction stable; optional suffix appended at the end.
+    """
+    ts = _format_local_ts()
+    msg = (
+        f"[NUDGE] [TS: {ts}] trigger={seq} preview='{preview}' — "
+        f"Open oldest first, process oldest→newest."
+    )
+    if suffix:
+        msg = msg + " " + suffix.strip()
+    return msg
+
 def _safe_headline(path: Path, *, max_bytes: int = 4096, max_chars: int = 32) -> str:
     """Extract a short, printable first-line preview from a mailbox file.
     - Reads up to max_bytes, decodes as UTF-8 with replacement.
@@ -436,13 +449,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
         preview = _safe_headline(trigger_file) if trigger_file else "[unreadable-or-binary]"
     except Exception:
         preview = "[unreadable-or-binary]"
-    ts = _format_local_ts()
-    custom = (
-        f"[NUDGE] [TS: {ts}] trigger={seq} preview='{preview}' — "
-        f"Open oldest first, process oldest→newest."
-    )
-    if combined_suffix:
-        custom = custom + " " + combined_suffix
+    custom = _compose_detailed_nudge(seq, preview, suffix=combined_suffix)
     # Always send via tmux injection (delivery_mode 'bridge' removed)
     if receiver_label == 'PeerA':
         _maybe_send_nudge(home, 'PeerA', left_pane, profileA, custom_text=custom, force=True)
@@ -2621,14 +2628,8 @@ def main(home: Path):
                                 seq = fn[:6]
                                 path = _inbox_dir(home, label)/fn
                                 preview = _safe_headline(path)
-                                ts = _format_local_ts()
-                                custom = (
-                                    f"[NUDGE] [TS: {ts}] trigger={seq} preview='{preview}' — "
-                                    f"Open oldest first, process oldest→newest."
-                                )
                                 suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
-                                if suffix:
-                                    custom = custom + " " + suffix
+                                custom = _compose_detailed_nudge(seq, preview, suffix=suffix)
                                 pane = left if label == "PeerA" else right
                                 prof = profileA if label == "PeerA" else profileB
                                 _maybe_send_nudge(home, label, pane, prof, custom_text=custom, force=True)
