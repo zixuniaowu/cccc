@@ -585,12 +585,12 @@ def main():
         msg = f"[{label}]\n" + _summarize(redact(text), max_chars, max_lines)
         ok, reason = _preflight_msg(peer, msg, float(str(cfg.get('to_user_min_interval_s') or 1.5)))
         if not ok:
-            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_user','peer': peer, 'reason': reason})
+            _append_ledger({'kind':'bridge-outbox-blocked','route':'to_user','from': label, 'reason': reason})
             return False
         # Rebuild allowlist dynamically (config allowlist ∪ current subscriptions)
         dynamic_allow = set(allow_cfg) | set(load_subs())
         if not dynamic_allow:
-            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_user','peer': peer, 'reason': 'no-allowed-chats'})
+            _append_ledger({'kind':'bridge-outbox-blocked','route':'to_user','from': label, 'reason': 'no-allowed-chats'})
             return False
         delivered = 0
         for chat_id in sorted(dynamic_allow):
@@ -603,24 +603,26 @@ def main():
                 delivered += 1
             else:
                 _append_log(outlog, f"[error] to_user send chat={chat_id} err={res.get('error')}")
-                _append_ledger({'kind':'bridge-outbox-error','type':'to_user','peer':peer,'chat':chat_id,'error':str(res.get('error'))})
+                _append_ledger({'kind':'bridge-outbox-error','route':'to_user','from':label,'chat':chat_id,'error':str(res.get('error'))})
         if delivered > 0:
             _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars to {delivered} chats")
-            _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":label.lower(),"chars":len(msg),"chats":delivered})
+            _append_ledger({"kind":"bridge-outbound","to":"telegram","route":"to_user","from":label,"chars":len(msg),"chats":delivered})
             last_sent_ts[peer] = time.time()
             return True
         return False
 
     def send_peer_summary(sender_peer: str, text: str) -> bool:
         label = "PeerA→PeerB" if sender_peer == 'peerA' else "PeerB→PeerA"
+        from_label = "PeerA" if sender_peer == 'peerA' else "PeerB"
+        to_label = "PeerB" if sender_peer == 'peerA' else "PeerA"
         msg = f"[{label}]\n" + _summarize(redact(text), peer_max_chars, peer_max_lines)
         ok, reason = _preflight_msg(sender_peer, msg, float(str(cfg.get('peer_summary_min_interval_s') or 1.5)))
         if not ok:
-            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_peer_summary','peer': sender_peer, 'reason': reason})
+            _append_ledger({'kind':'bridge-outbox-blocked','route':'to_peer','from': from_label, 'to': to_label, 'reason': reason})
             return False
         dynamic_allow = set(allow_cfg) | set(load_subs())
         if not dynamic_allow:
-            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_peer_summary','peer': sender_peer, 'reason': 'no-allowed-chats'})
+            _append_ledger({'kind':'bridge-outbox-blocked','route':'to_peer','from': from_label, 'to': to_label, 'reason': 'no-allowed-chats'})
             return False
         delivered = 0
         for chat_id in sorted(dynamic_allow):
@@ -633,10 +635,10 @@ def main():
                 delivered += 1
             else:
                 _append_log(outlog, f"[error] to_peer_summary send chat={chat_id} err={res.get('error')}")
-                _append_ledger({'kind':'bridge-outbox-error','type':'to_peer_summary','peer':sender_peer,'chat':chat_id,'error':str(res.get('error'))})
+                _append_ledger({'kind':'bridge-outbox-error','route':'to_peer','from':from_label,'to':to_label,'chat':chat_id,'error':str(res.get('error'))})
         if delivered > 0:
             _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars to {delivered} chats")
-            _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":"to_peer","chars":len(msg),"chats":delivered})
+            _append_ledger({"kind":"bridge-outbound","to":"telegram","route":"to_peer","from":from_label,"to":to_label,"chars":len(msg),"chats":delivered})
             last_sent_ts['peerA' if sender_peer=='peerA' else 'peerB'] = time.time()
             return True
         return False

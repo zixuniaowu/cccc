@@ -51,6 +51,8 @@ NUDGE_BACKOFF_MAX_MS = 60000.0
 NUDGE_MAX_RETRIES = 1.0  # allow at most one resend (0 = never resend)
 # Debug: reduce ledger noise for outbox enqueue diagnostics
 OUTBOX_DEBUG = False
+# Debug: keepalive skip reasons are high-frequency; gate behind this flag
+KEEPALIVE_DEBUG = False
 
 def _append_suffix_inside(payload: str, suffix: str) -> str:
     """Append a short suffix to the end of the main body inside the outermost tag, if present.
@@ -2593,10 +2595,11 @@ def main(home: Path):
                     elif queued.get(label):
                         reason = "queued"
                     if reason:
-                        try:
-                            log_ledger(home, {"from":"system","kind":"keepalive-skipped","peer":label, "reason": reason})
-                        except Exception:
-                            pass
+                        if KEEPALIVE_DEBUG:
+                            try:
+                                log_ledger(home, {"from":"system","kind":"keepalive-skipped","peer":label, "reason": reason})
+                            except Exception:
+                                pass
                         pending_keepalive[label] = None
                         continue
                     # Safe to send a minimal FROM_SYSTEM nudge back to the sender
