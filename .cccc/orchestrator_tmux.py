@@ -967,6 +967,11 @@ def outbox_write(home: Path, event: Dict[str,Any]) -> Dict[str,Any]:
         ev.setdefault('ts', time.strftime('%Y-%m-%d %H:%M:%S'))
     with (state/"outbox.jsonl").open('a', encoding='utf-8') as f:
         f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    # Diagnostic: record enqueue
+    try:
+        log_ledger(home, {"kind":"bridge-outbox-enqueued","type": ev.get('type'), "id": ev.get('id'), "chars": len(str(ev.get('text') or ''))})
+    except Exception:
+        pass
     return ev
 
 ## Legacy policy helper removed (allowed_by_policies)
@@ -2212,7 +2217,7 @@ def main(home: Path):
         except Exception:
             pass
 
-    def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None):
+    def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None, *, nudge_text: Optional[str]=None):
         nonlocal instr_counter, in_self_check
         # Backpressure: if receiver has in-flight, enqueue
         if inflight[receiver_label] is not None:
@@ -2267,7 +2272,13 @@ def main(home: Path):
         text_with_mid = wrap_with_mid(payload, mid)
         try:
             seq, _ = _write_inbox_message(home, receiver_label, text_with_mid, mid)
-            _send_nudge(home, receiver_label, seq, mid, left, right, profileA, profileB, aux_mode)
+            if nudge_text and nudge_text.strip():
+                if receiver_label == 'PeerA':
+                    _maybe_send_nudge(home, 'PeerA', left, profileA, custom_text=nudge_text, force=True)
+                else:
+                    _maybe_send_nudge(home, 'PeerB', right, profileB, custom_text=nudge_text, force=True)
+            else:
+                _send_nudge(home, receiver_label, seq, mid, left, right, profileA, profileB, aux_mode)
             try:
                 last_nudge_ts[receiver_label] = time.time()
             except Exception:
@@ -2428,7 +2439,10 @@ def main(home: Path):
             nxt = str(ent.get('next') or '').strip()
             hint = f"Continue: {nxt}" if nxt else "Continue with your next step."
             txt = f"<FROM_SYSTEM>\n[keepalive] {hint}\n</FROM_SYSTEM>\n"
-            _send_handoff("System", label, txt)
+            # Keepalive NUDGE: neutral, no preview/trigger
+            ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
+            ka_nudge = f"[NUDGE] [TS: {_format_local_ts()}] continue your work; open inbox oldest→newest." + (f" {ka_suffix}" if ka_suffix else "")
+            _send_handoff("System", label, txt, nudge_text=ka_nudge)
             pending_keepalive[label] = None
             try:
                 log_ledger(home, {"from":"system","kind":"keepalive-sent","peer": label})
@@ -2588,7 +2602,10 @@ def main(home: Path):
                         msg = f"<FROM_SYSTEM>\nOK. Continue: {nxt}\n</FROM_SYSTEM>\n"
                     else:
                         msg = "<FROM_SYSTEM>\nOK. Continue.\n</FROM_SYSTEM>\n"
-                    _send_handoff("System", label, msg)
+                    # Keepalive NUDGE: neutral, no preview/trigger
+                    ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
+                    ka_nudge = f"[NUDGE] [TS: {_format_local_ts()}] continue your work; open inbox oldest→newest." + (f" {ka_suffix}" if ka_suffix else "")
+                    _send_handoff("System", label, msg, nudge_text=ka_nudge)
                     try:
                         log_ledger(home, {"from":"system","kind":"keepalive-sent","peer":label})
                     except Exception:

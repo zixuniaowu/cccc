@@ -25,6 +25,18 @@ from pathlib import Path
 from typing import Dict, Any, Callable, Optional
 import json, time, os
 
+# Debug switch for high-frequency logs (heartbeats, read snapshots)
+DEBUG_OUTBOX = False
+
+def _ledger_append_local(home: Path, entry: Dict[str, Any]):
+    try:
+        state = home/"state"; state.mkdir(parents=True, exist_ok=True)
+        ent = {"ts": time.strftime('%Y-%m-%d %H:%M:%S'), **entry}
+        with (state/"ledger.jsonl").open('a', encoding='utf-8') as f:
+            f.write(json.dumps(ent, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
 Event = Dict[str, Any]
 
 class OutboxConsumer:
@@ -41,6 +53,7 @@ class OutboxConsumer:
         self._dev = None
         self._ino = None
         self._load_cursor()
+        self._last_hb_ts = 0.0
 
     def _load_cursor(self):
         try:
@@ -48,6 +61,8 @@ class OutboxConsumer:
             self._dev = cur.get('dev'); self._ino = cur.get('ino'); self._offset = int(cur.get('offset') or 0)
         except Exception:
             self._dev = None; self._ino = None; self._offset = 0
+        # Diagnostic: cursor loaded
+        _ledger_append_local(self.home, {"kind":"bridge-consumer-cursor-load","offset": self._offset, "dev": self._dev, "ino": self._ino})
 
     def _save_cursor(self, dev: int, ino: int, offset: int):
         try:
@@ -57,6 +72,8 @@ class OutboxConsumer:
             os.replace(tmp, self.cursor_path)
         except Exception:
             pass
+        # Diagnostic: cursor saved
+        _ledger_append_local(self.home, {"kind":"bridge-consumer-cursor-save","offset": int(offset)})
 
     def loop(self,
              on_to_user: Optional[Callable[[Event], bool]] = None,
@@ -71,32 +88,38 @@ class OutboxConsumer:
                     time.sleep(self.poll_seconds); continue
                 st = os.stat(self.outbox)
                 dev, ino, size = st.st_dev, st.st_ino, st.st_size
+                # Periodic heartbeat (≤1 per 2s)
+                now = time.time()
+                if DEBUG_OUTBOX and (now - self._last_hb_ts >= 2.0):
+                    _ledger_append_local(self.home, {"kind":"bridge-consumer-heartbeat","offset": self._offset, "size": size, "dev": dev, "ino": ino})
+                    self._last_hb_ts = now
                 # Handle rotation/truncate or first run
                 rotated = (self._dev is None) or (self._dev != dev or self._ino != ino or self._offset > size)
                 if rotated:
                     # Initialize according to start_mode
+                    reason = "first" if self._dev is None else ("inode-change" if (self._dev != dev or self._ino != ino) else "truncate")
                     if self.start_mode == 'from_start':
                         self._offset = 0
                     else:
-                        self._offset = size
-                        # Optional small replay
-                        if first_run and self.replay_last > 0:
+                        if self._dev is None:
+                            # First time seeing the file; if the file looks freshly created, read from start to avoid skipping the first event
                             try:
-                                lines = self.outbox.read_text(encoding='utf-8').splitlines()
-                                tail = lines[-self.replay_last:]
-                                for ln in tail:
-                                    ev = json.loads(ln)
-                                    et = str(ev.get('type') or '').lower()
-                                    if et == 'to_user' and on_to_user:
-                                        on_to_user(ev)
-                                    elif et == 'to_peer_summary' and on_to_peer_summary:
-                                        on_to_peer_summary(ev)
+                                is_fresh = (now - os.stat(self.outbox).st_mtime) <= 5.0
                             except Exception:
-                                pass
+                                is_fresh = True
+                            if is_fresh:
+                                self._offset = 0
+                            else:
+                                self._offset = size
+                        else:
+                            # Rotation/truncate: default to tail (do not replay history)
+                            self._offset = size
                     self._dev, self._ino = dev, ino
                     self._save_cursor(dev, ino, self._offset)
+                    _ledger_append_local(self.home, {"kind":"bridge-consumer-rotated","reason": reason, "set_offset": self._offset, "size": size})
                 # Read new bytes
                 if size > self._offset:
+                    prev_off = self._offset
                     with open(self.outbox, 'r', encoding='utf-8', errors='replace') as f:
                         f.seek(self._offset)
                         chunk = f.read()
@@ -104,12 +127,22 @@ class OutboxConsumer:
                         time.sleep(self.poll_seconds); first_run = False; continue
                     data = self._buf + chunk
                     lines = data.splitlines(keepends=True)
+                    if DEBUG_OUTBOX:
+                        _ledger_append_local(self.home, {
+                            "kind": "bridge-consumer-read",
+                            "offset_before": prev_off,
+                            "size": size,
+                            "chunk": len(chunk),
+                            "data": len(data),
+                            "lines": len(lines),
+                            "buf_prev": len(self._buf),
+                        })
                     # Keep last line if it has no newline
                     pending = ''
                     if lines and not lines[-1].endswith('\n'):
                         pending = lines.pop().rstrip('\r\n')
                     advanced = 0
-                    for ln in lines:
+                    for idx, ln in enumerate(lines):
                         pos_advance = len(ln)
                         text = ln.rstrip('\r\n')
                         ok_commit = True
@@ -117,40 +150,25 @@ class OutboxConsumer:
                             ev = json.loads(text)
                             et = str(ev.get('type') or '').lower()
                             evid = str(ev.get('id') or ev.get('eid') or '')
-                            # Diagnostic: record dispatch attempt (cheap)
-                            try:
-                                from .orchestrator_tmux import log_ledger  # type: ignore
-                                log_ledger(self.home, {"kind":"bridge-dispatch-attempt","type":et,"id":evid,"offset":self._offset})
-                            except Exception:
-                                pass
+                            # Diagnostic: record dispatch attempt
+                            _ledger_append_local(self.home, {"kind":"bridge-dispatch-attempt","type":et,"id":evid,"offset":self._offset, "idx": idx, "len": pos_advance})
                             if et == 'to_user' and on_to_user:
                                 ok_commit = bool(on_to_user(ev))
                             elif et == 'to_peer_summary' and on_to_peer_summary:
                                 ok_commit = bool(on_to_peer_summary(ev))
                             else:
+                                _ledger_append_local(self.home, {"kind":"bridge-dispatch-skip","reason":"unknown-type","offset": self._offset, "idx": idx})
                                 ok_commit = True  # ignore unknown types but advance
                         except Exception:
                             ok_commit = True  # malformed line: skip to avoid deadlock
-                            try:
-                                from .orchestrator_tmux import log_ledger  # type: ignore
-                                log_ledger(self.home, {"kind":"bridge-outbox-json-error","offset": self._offset, "snippet": text[:120]})
-                            except Exception:
-                                pass
+                            _ledger_append_local(self.home, {"kind":"bridge-outbox-json-error","offset": self._offset, "snippet": text[:120]})
                         if ok_commit:
                             self._offset += pos_advance
                             advanced += pos_advance
-                            try:
-                                from .orchestrator_tmux import log_ledger  # type: ignore
-                                log_ledger(self.home, {"kind":"bridge-dispatch-ok","offset": self._offset})
-                            except Exception:
-                                pass
+                            _ledger_append_local(self.home, {"kind":"bridge-dispatch-ok","offset": self._offset, "idx": idx})
                         else:
                             # Stop processing further lines; keep buffer for retry
-                            try:
-                                from .orchestrator_tmux import log_ledger  # type: ignore
-                                log_ledger(self.home, {"kind":"bridge-dispatch-retry","offset": self._offset})
-                            except Exception:
-                                pass
+                            _ledger_append_local(self.home, {"kind":"bridge-dispatch-retry","offset": self._offset, "idx": idx})
                             break
                     # Persist cursor if advanced
                     if advanced:

@@ -687,6 +687,7 @@ def main():
             return
         try:
             oc = OutboxConsumer(HOME, seen_name='telegram', start_mode=start_mode, replay_last=replay_last)
+            _append_ledger({'kind':'bridge-consumer-start','seen':'telegram','start_mode':start_mode,'replay_last':replay_last})
         except Exception as e:
             _append_ledger({'kind': 'error', 'where': 'telegram.outbox_consumer', 'error': str(e)})
             raise

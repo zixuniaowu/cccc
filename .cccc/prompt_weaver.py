@@ -464,7 +464,20 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
 
 def weave_preamble(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:
     """
-    Preamble text used for the first user message - identical source as SYSTEM
-    to ensure single-source truth. By default returns weave_system_prompt.
+    Preamble text for the very first user message.
+    Change: return the full rules document for the target peer, so the
+    initial injection carries the complete SYSTEM details (not the minimal
+    banner). Falls back to the minimal SYSTEM when rules are unavailable.
     """
+    try:
+        ensure_rules_docs(home)
+    except Exception:
+        pass
+    try:
+        rules_file = (home/"rules"/("PEERA.md" if (peer.lower()=="peera" or peer=="peerA") else "PEERB.md"))
+        if rules_file.exists():
+            return rules_file.read_text(encoding="utf-8")
+    except Exception:
+        pass
+    # Fallback to the minimal SYSTEM if anything goes wrong
     return weave_system_prompt(home, peer, por)
