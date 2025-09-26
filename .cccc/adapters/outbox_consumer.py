@@ -61,8 +61,9 @@ class OutboxConsumer:
             self._dev = cur.get('dev'); self._ino = cur.get('ino'); self._offset = int(cur.get('offset') or 0)
         except Exception:
             self._dev = None; self._ino = None; self._offset = 0
-        # Diagnostic: cursor loaded
-        _ledger_append_local(self.home, {"kind":"bridge-consumer-cursor-load","offset": self._offset, "dev": self._dev, "ino": self._ino})
+        # Diagnostic: cursor loaded (debug only)
+        if DEBUG_OUTBOX:
+            _ledger_append_local(self.home, {"kind":"bridge-consumer-cursor-load","offset": self._offset, "dev": self._dev, "ino": self._ino})
 
     def _save_cursor(self, dev: int, ino: int, offset: int):
         try:
@@ -72,8 +73,9 @@ class OutboxConsumer:
             os.replace(tmp, self.cursor_path)
         except Exception:
             pass
-        # Diagnostic: cursor saved
-        _ledger_append_local(self.home, {"kind":"bridge-consumer-cursor-save","offset": int(offset)})
+        # Diagnostic: cursor saved (debug only)
+        if DEBUG_OUTBOX:
+            _ledger_append_local(self.home, {"kind":"bridge-consumer-cursor-save","offset": int(offset)})
 
     def loop(self,
              on_to_user: Optional[Callable[[Event], bool]] = None,
@@ -116,7 +118,8 @@ class OutboxConsumer:
                             self._offset = size
                     self._dev, self._ino = dev, ino
                     self._save_cursor(dev, ino, self._offset)
-                    _ledger_append_local(self.home, {"kind":"bridge-consumer-rotated","reason": reason, "set_offset": self._offset, "size": size})
+                    if DEBUG_OUTBOX:
+                        _ledger_append_local(self.home, {"kind":"bridge-consumer-rotated","reason": reason, "set_offset": self._offset, "size": size})
                 # Read new bytes
                 if size > self._offset:
                     prev_off = self._offset
@@ -150,14 +153,16 @@ class OutboxConsumer:
                             ev = json.loads(text)
                             et = str(ev.get('type') or '').lower()
                             evid = str(ev.get('id') or ev.get('eid') or '')
-                            # Diagnostic: record dispatch attempt
-                            _ledger_append_local(self.home, {"kind":"bridge-dispatch-attempt","type":et,"id":evid,"offset":self._offset, "idx": idx, "len": pos_advance})
+                            # Diagnostic: record dispatch attempt (debug only)
+                            if DEBUG_OUTBOX:
+                                _ledger_append_local(self.home, {"kind":"bridge-dispatch-attempt","type":et,"id":evid,"offset":self._offset, "idx": idx, "len": pos_advance})
                             if et == 'to_user' and on_to_user:
                                 ok_commit = bool(on_to_user(ev))
                             elif et == 'to_peer_summary' and on_to_peer_summary:
                                 ok_commit = bool(on_to_peer_summary(ev))
                             else:
-                                _ledger_append_local(self.home, {"kind":"bridge-dispatch-skip","reason":"unknown-type","offset": self._offset, "idx": idx})
+                                if DEBUG_OUTBOX:
+                                    _ledger_append_local(self.home, {"kind":"bridge-dispatch-skip","reason":"unknown-type","offset": self._offset, "idx": idx})
                                 ok_commit = True  # ignore unknown types but advance
                         except Exception:
                             ok_commit = True  # malformed line: skip to avoid deadlock
@@ -165,10 +170,12 @@ class OutboxConsumer:
                         if ok_commit:
                             self._offset += pos_advance
                             advanced += pos_advance
-                            _ledger_append_local(self.home, {"kind":"bridge-dispatch-ok","offset": self._offset, "idx": idx})
+                            if DEBUG_OUTBOX:
+                                _ledger_append_local(self.home, {"kind":"bridge-dispatch-ok","offset": self._offset, "idx": idx})
                         else:
-                            # Stop processing further lines; keep buffer for retry
-                            _ledger_append_local(self.home, {"kind":"bridge-dispatch-retry","offset": self._offset, "idx": idx})
+                            # Stop processing further lines; keep buffer for retry (debug only)
+                            if DEBUG_OUTBOX:
+                                _ledger_append_local(self.home, {"kind":"bridge-dispatch-retry","offset": self._offset, "idx": idx})
                             break
                     # Persist cursor if advanced
                     if advanced:

@@ -49,6 +49,8 @@ NUDGE_KEEPALIVE = True
 NUDGE_BACKOFF_BASE_MS = 1000.0
 NUDGE_BACKOFF_MAX_MS = 60000.0
 NUDGE_MAX_RETRIES = 1.0  # allow at most one resend (0 = never resend)
+# Debug: reduce ledger noise for outbox enqueue diagnostics
+OUTBOX_DEBUG = False
 
 def _append_suffix_inside(payload: str, suffix: str) -> str:
     """Append a short suffix to the end of the main body inside the outermost tag, if present.
@@ -967,11 +969,12 @@ def outbox_write(home: Path, event: Dict[str,Any]) -> Dict[str,Any]:
         ev.setdefault('ts', time.strftime('%Y-%m-%d %H:%M:%S'))
     with (state/"outbox.jsonl").open('a', encoding='utf-8') as f:
         f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-    # Diagnostic: record enqueue
-    try:
-        log_ledger(home, {"kind":"bridge-outbox-enqueued","type": ev.get('type'), "id": ev.get('id'), "chars": len(str(ev.get('text') or ''))})
-    except Exception:
-        pass
+    # Diagnostic: record enqueue (debug only)
+    if OUTBOX_DEBUG:
+        try:
+            log_ledger(home, {"kind":"bridge-outbox-enqueued","type": ev.get('type'), "id": ev.get('id'), "chars": len(str(ev.get('text') or ''))})
+        except Exception:
+            pass
     return ev
 
 ## Legacy policy helper removed (allowed_by_policies)
@@ -2725,6 +2728,11 @@ def main(home: Path):
                         eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
                     except Exception:
                         eid = str(int(time.time()))
+                    # Mark a single concise event in ledger for human audit
+                    try:
+                        log_ledger(home, {"from":"PeerA","kind":"to_user","eid": eid, "chars": len(txt)})
+                    except Exception:
+                        pass
                     outbox_write(home, {"type":"to_user","peer":"PeerA","text":txt,"eid":eid})
                     _ack_receiver("PeerA", events["peerA"]["to_user"])  # Consider as ACK (responded after peer handoff)
                     mbox_counts["peerA"]["to_user"] += 1
@@ -2788,6 +2796,11 @@ def main(home: Path):
                         eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
                     except Exception:
                         eid = str(int(time.time()))
+                    # Still record for diagnostics if PeerB emits to_user
+                    try:
+                        log_ledger(home, {"from":"PeerB","kind":"to_user","eid": eid, "chars": len(txt)})
+                    except Exception:
+                        pass
                     outbox_write(home, {"type":"to_user","peer":"PeerB","text":txt,"eid":eid})
                     try:
                         (home/"mailbox"/"peerB"/"to_user.md").write_text("", encoding="utf-8")
