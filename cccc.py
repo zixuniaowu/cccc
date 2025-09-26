@@ -815,7 +815,7 @@ def main():
                 "bot_token_env": "SLACK_BOT_TOKEN",
                 "autostart": False,
                 "channels": {"to_user": [], "to_peer_summary": []},
-                "outbound": {"reset_on_start": "baseline"},
+                "outbound": {"cursor": {"start_mode": "tail", "replay_last": 0}},
             }
             at_env = str(scfg.get('app_token_env') or 'SLACK_APP_TOKEN')
             bt_env = str(scfg.get('bot_token_env') or 'SLACK_BOT_TOKEN')
@@ -869,7 +869,7 @@ def main():
                 "bot_token_env": "DISCORD_BOT_TOKEN",
                 "autostart": False,
                 "channels": {"to_user": [], "to_peer_summary": []},
-                "outbound": {"reset_on_start": "baseline"},
+                "outbound": {"cursor": {"start_mode": "tail", "replay_last": 0}},
             }
             be = str(dcfg.get('bot_token_env') or 'DISCORD_BOT_TOKEN')
             saved = str(dcfg.get('bot_token') or '')

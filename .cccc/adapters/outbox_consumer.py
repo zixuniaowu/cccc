@@ -1,124 +1,140 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Outbox consumer utility (shared by chat adapters)
+Outbox consumer utility (shared by chat adapters) — cursor-based tail (exactly-once).
 
 Purpose
 - Tail the single-source outbox stream at .cccc/state/outbox.jsonl
-- Persist a compact seen-baseline to avoid resending history across restarts
-- Dispatch new events to adapter callbacks with minimal ceremony
+- Persist a file cursor (device, inode, offset) to resume exactly once across restarts
+- Dispatch only newly appended events to adapter callbacks
 
 Design
 - No external deps; JSONL tail via periodic reads (poll)
-- Idempotent: stores last seen ids in .cccc/state/outbox-seen-<name>.json
+- Cursor file: .cccc/state/outbox-cursor-<name>.json {dev, ino, offset}
 - Scope: text events only (type in {'to_user','to_peer_summary'})
+- Callback should return bool: True = delivered → commit; False = not delivered → retry later
 
 Usage
 from pathlib import Path
 from .outbox_consumer import OutboxConsumer
-oc = OutboxConsumer(Path('.cccc'), seen_name='slack')
+oc = OutboxConsumer(Path('.cccc'), seen_name='slack', start_mode='tail', replay_last=0)
 oc.loop(on_to_user=fn1, on_to_peer_summary=fn2)
 """
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, Any, Callable, Optional, Set
-import json, time, hashlib
+from typing import Dict, Any, Callable, Optional
+import json, time, os
 
 Event = Dict[str, Any]
 
 class OutboxConsumer:
-    def __init__(self, home: Path, *, seen_name: str = 'generic', poll_seconds: float = 1.0, window: int = 2000,
-                 reset_on_start: str = 'baseline'):
+    def __init__(self, home: Path, *, seen_name: str = 'generic', poll_seconds: float = 1.0,
+                 start_mode: str = 'tail', replay_last: int = 0):
         self.home = home
         self.outbox = home/"state"/"outbox.jsonl"
-        self.seen_path = home/"state"/f"outbox-seen-{seen_name}.json"
+        self.cursor_path = home/"state"/f"outbox-cursor-{seen_name}.json"
         self.poll_seconds = float(poll_seconds)
-        self.window = int(window)
-        self.reset_on_start = str(reset_on_start or 'baseline')
-        self._seen: Set[str] = set()
-        self._baseline_done = False
-        self._load_seen()
-        # If we already have a non-empty seen set from previous runs,
-        # do not swallow the first window as baseline again on restart.
-        if self.reset_on_start == 'baseline' and self._seen:
-            self._baseline_done = True
+        self.start_mode = (start_mode or 'tail').strip().lower()
+        self.replay_last = int(replay_last or 0)
+        self._buf = ""
+        self._offset = 0
+        self._dev = None
+        self._ino = None
+        self._load_cursor()
 
-    def _load_seen(self):
-        if self.reset_on_start == 'clear':
-            # Start fresh and deliver immediately; do not swallow a baseline window.
-            try:
-                if self.seen_path.exists():
-                    self.seen_path.unlink()
-            except Exception:
-                pass
-            self._seen = set()
-            self._baseline_done = True
-            return
+    def _load_cursor(self):
         try:
-            if self.seen_path.exists():
-                obj = json.loads(self.seen_path.read_text(encoding='utf-8'))
-                ids = obj.get('ids') or []
-                self._seen = set(str(x) for x in ids)
+            cur = json.loads(self.cursor_path.read_text(encoding='utf-8'))
+            self._dev = cur.get('dev'); self._ino = cur.get('ino'); self._offset = int(cur.get('offset') or 0)
         except Exception:
-            self._seen = set()
+            self._dev = None; self._ino = None; self._offset = 0
 
-    def _save_seen(self):
+    def _save_cursor(self, dev: int, ino: int, offset: int):
         try:
-            self.seen_path.parent.mkdir(parents=True, exist_ok=True)
-            ids = list(self._seen)[-5000:]
-            self.seen_path.write_text(json.dumps({'ids': ids}, ensure_ascii=False, indent=2), encoding='utf-8')
+            tmp = self.cursor_path.with_suffix('.tmp')
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps({'dev': dev, 'ino': ino, 'offset': int(offset)}, ensure_ascii=False, indent=2), encoding='utf-8')
+            os.replace(tmp, self.cursor_path)
         except Exception:
             pass
 
-    @staticmethod
-    def _id_of(ev: Event) -> str:
-        oid = str(ev.get('id') or ev.get('eid') or '').strip()
-        if oid:
-            return oid
-        # Fallback to SHA1(text+peer+type)
-        raw = json.dumps({'t': ev.get('type'), 'p': ev.get('peer') or ev.get('from'), 'x': ev.get('text') or ''}, ensure_ascii=False)
-        return hashlib.sha1(raw.encode('utf-8', errors='ignore')).hexdigest()
-
     def loop(self,
-             on_to_user: Optional[Callable[[Event], None]] = None,
-             on_to_peer_summary: Optional[Callable[[Event], None]] = None):
+             on_to_user: Optional[Callable[[Event], bool]] = None,
+             on_to_peer_summary: Optional[Callable[[Event], bool]] = None):
         """Poll outbox.jsonl and dispatch new events.
-        - on_to_user(ev): ev {'type':'to_user','peer':'peerA|peerB','text':...}
-        - on_to_peer_summary(ev): ev {'type':'to_peer_summary','from':'PeerA|PeerB','text':...}
+        Callback returns True → commit cursor; False → retry later.
         """
+        first_run = True
         while True:
             try:
                 if not self.outbox.exists():
                     time.sleep(self.poll_seconds); continue
-                # Read only a window from tail to bound CPU
-                lines = self.outbox.read_text(encoding='utf-8').splitlines()[-self.window:]
-                changed = False
-                for ln in lines:
-                    try:
-                        ev = json.loads(ln)
-                    except Exception:
-                        continue
-                    et = str(ev.get('type') or '').lower()
-                    if et not in ('to_user','to_peer_summary'):
-                        continue
-                    oid = self._id_of(ev)
-                    if oid and oid in self._seen:
-                        continue
-                    if not self._baseline_done:
-                        # First pass (baseline): mark current tail as seen without dispatch,
-                        # then switch to delivery mode on the next loop.
-                        if oid:
-                            self._seen.add(oid); changed = True
-                        continue
-                    if et == 'to_user' and on_to_user:
-                        on_to_user(ev)
-                    elif et == 'to_peer_summary' and on_to_peer_summary:
-                        on_to_peer_summary(ev)
-                    if oid:
-                        self._seen.add(oid); changed = True
-                if changed:
-                    self._save_seen()
-                self._baseline_done = True
+                st = os.stat(self.outbox)
+                dev, ino, size = st.st_dev, st.st_ino, st.st_size
+                # Handle rotation/truncate or first run
+                rotated = (self._dev is None) or (self._dev != dev or self._ino != ino or self._offset > size)
+                if rotated:
+                    # Initialize according to start_mode
+                    if self.start_mode == 'from_start':
+                        self._offset = 0
+                    else:
+                        self._offset = size
+                        # Optional small replay
+                        if first_run and self.replay_last > 0:
+                            try:
+                                lines = self.outbox.read_text(encoding='utf-8').splitlines()
+                                tail = lines[-self.replay_last:]
+                                for ln in tail:
+                                    ev = json.loads(ln)
+                                    et = str(ev.get('type') or '').lower()
+                                    if et == 'to_user' and on_to_user:
+                                        on_to_user(ev)
+                                    elif et == 'to_peer_summary' and on_to_peer_summary:
+                                        on_to_peer_summary(ev)
+                            except Exception:
+                                pass
+                    self._dev, self._ino = dev, ino
+                    self._save_cursor(dev, ino, self._offset)
+                # Read new bytes
+                if size > self._offset:
+                    with open(self.outbox, 'r', encoding='utf-8', errors='replace') as f:
+                        f.seek(self._offset)
+                        chunk = f.read()
+                    if not chunk:
+                        time.sleep(self.poll_seconds); first_run = False; continue
+                    data = self._buf + chunk
+                    lines = data.splitlines(keepends=True)
+                    # Keep last line if it has no newline
+                    pending = ''
+                    if lines and not lines[-1].endswith('\n'):
+                        pending = lines.pop().rstrip('\r\n')
+                    advanced = 0
+                    for ln in lines:
+                        pos_advance = len(ln)
+                        text = ln.rstrip('\r\n')
+                        ok_commit = True
+                        try:
+                            ev = json.loads(text)
+                            et = str(ev.get('type') or '').lower()
+                            if et == 'to_user' and on_to_user:
+                                ok_commit = bool(on_to_user(ev))
+                            elif et == 'to_peer_summary' and on_to_peer_summary:
+                                ok_commit = bool(on_to_peer_summary(ev))
+                            else:
+                                ok_commit = True  # ignore unknown types but advance
+                        except Exception:
+                            ok_commit = True  # malformed line: skip to avoid deadlock
+                        if ok_commit:
+                            self._offset += pos_advance
+                            advanced += pos_advance
+                        else:
+                            # Stop processing further lines; keep buffer for retry
+                            break
+                    # Persist cursor if advanced
+                    if advanced:
+                        self._save_cursor(dev, ino, self._offset)
+                    self._buf = pending
+                first_run = False
             except Exception:
                 # Swallow errors; bridges should not crash orchestrator
                 pass

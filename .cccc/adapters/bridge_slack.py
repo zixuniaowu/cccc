@@ -216,7 +216,7 @@ def main():
     except Exception as e:
         _append_log(f"[error] OutboxConsumer import failed: {e}; exiting")
         sys.exit(1)
-    oc = OutboxConsumer(HOME, seen_name='slack', reset_on_start=reset)
+    oc = OutboxConsumer(HOME, seen_name='slack', start_mode=str((cfg.get('outbound') or {}).get('cursor',{}).get('start_mode','tail')), replay_last=int((cfg.get('outbound') or {}).get('cursor',{}).get('replay_last',0)))
 
     # Dynamic channel subscriptions persist under state; used to avoid editing YAML.
     SUBS_LOCK = threading.Lock()
@@ -314,7 +314,7 @@ def main():
 
     threading.Thread(target=_sender_loop, daemon=True).start()
 
-    def on_to_user(ev: Dict[str,Any]):
+    def on_to_user(ev: Dict[str,Any]) -> bool:
         p = str(ev.get('peer') or '').lower()
         label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
@@ -323,13 +323,15 @@ def main():
         if chs:
             with SEND_LOCK:
                 SEND_QUEUE.append(msg)
+            return True
         else:
             # Buffer until first channel is available and warn for diagnostics
             _append_log("[warn] no slack channels configured/subscribed for to_user; buffering until subscribe or channels configured")
             with PENDING_LOCK:
                 PENDING_TO_USER.append({'msg': msg})
+            return False
 
-    def on_to_peer_summary(ev: Dict[str,Any]):
+    def on_to_peer_summary(ev: Dict[str,Any]) -> bool:
         # Runtime override via shared bridge-runtime.json
         eff_show = show_peers
         try:
@@ -339,7 +341,7 @@ def main():
         except Exception:
             pass
         if not eff_show:
-            return
+            return True
         frm = str(ev.get('from') or '')
         label = 'PeerA→PeerB' if frm in ('PeerA','peera','peera') else 'PeerB→PeerA'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
@@ -347,6 +349,8 @@ def main():
             chs = list(dict.fromkeys((channels_peer or []) + (SUBS or [])))
         if chs:
             send_text(chs, msg)
+            return True
+        return False
 
     th = threading.Thread(target=lambda: oc.loop(on_to_user, on_to_peer_summary), daemon=True)
     th.start()

@@ -14,7 +14,9 @@ channels:
 
 # Outbound
 outbound:
-  reset_on_start: clear          # baseline|clear
+  cursor:
+    start_mode: tail             # tail | from_start
+    replay_last: 0               # 0 = none
 
 # Files
 files:

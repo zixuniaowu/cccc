@@ -44,4 +44,6 @@ redact_patterns:
   - (?i)password\s*[:=]\s*\S+
 
 outbound:
-  reset_on_start: clear
+  cursor:
+    start_mode: tail       # tail | from_start
+    replay_last: 0         # replay last N events on startup (0 = none)

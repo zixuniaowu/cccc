@@ -628,14 +628,20 @@ def main():
             return 'peerB'
         return default
 
-    def on_to_user(ev: Dict[str, Any]):
+    def on_to_user(ev: Dict[str, Any]) -> bool:
         peer_key = _normalize_peer_label(str(ev.get('peer') or ''), default='peerA')
         text = str(ev.get('text') or '')
         if not text:
-            return
+            return True
+        # Preflight for rate; if blocked, signal not delivered so consumer retries later
+        ok, reason = _preflight_msg(peer_key, f"[{ 'PeerA' if peer_key=='peerA' else 'PeerB' }]\n" + _summarize(redact(text), max_chars, max_lines), float(str(cfg.get('to_user_min_interval_s') or 1.5)))
+        if not ok:
+            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_user','peer': peer_key, 'reason': reason})
+            return False
         send_summary(peer_key, text)
+        return True
 
-    def on_to_peer_summary(ev: Dict[str, Any]):
+    def on_to_peer_summary(ev: Dict[str, Any]) -> bool:
         nonlocal show_peers
         try:
             runtime_now = load_runtime()
@@ -643,23 +649,30 @@ def main():
         except Exception:
             pass
         if not show_peers:
-            return
+            return True
         text = str(ev.get('text') or '')
         if not text:
-            return
+            return True
         sender_peer = _normalize_peer_label(str(ev.get('from') or ''), default='peerA')
+        ok, reason = _preflight_msg(sender_peer, f"[{ 'PeerA→PeerB' if sender_peer=='peerA' else 'PeerB→PeerA' }]\n" + _summarize(redact(text), peer_max_chars, peer_max_lines), float(str(cfg.get('peer_summary_min_interval_s') or 1.5)))
+        if not ok:
+            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_peer_summary','peer': sender_peer, 'reason': reason})
+            return False
         send_peer_summary(sender_peer, text)
+        return True
 
     def watch_outputs():
         outbound_conf = cfg.get('outbound') or {}
-        reset = str(outbound_conf.get('reset_on_start') or cfg.get('reset_on_start') or 'baseline')
+        cursor_conf = outbound_conf.get('cursor') or {}
+        start_mode = str(cursor_conf.get('start_mode') or 'tail')
+        replay_last = int(cursor_conf.get('replay_last') or 0)
         try:
             from adapters.outbox_consumer import OutboxConsumer  # type: ignore
         except Exception as e:
             _append_ledger({'kind': 'error', 'where': 'telegram.outbox_consumer', 'error': f'import failed: {e}'})
             return
         try:
-            oc = OutboxConsumer(HOME, seen_name='telegram', reset_on_start=reset)
+            oc = OutboxConsumer(HOME, seen_name='telegram', start_mode=start_mode, replay_last=replay_last)
         except Exception as e:
             _append_ledger({'kind': 'error', 'where': 'telegram.outbox_consumer', 'error': str(e)})
             raise

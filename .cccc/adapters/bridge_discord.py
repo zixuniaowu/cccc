@@ -184,7 +184,9 @@ def main():
     token = os.environ.get(str(cfg.get('bot_token_env') or 'DISCORD_BOT_TOKEN')) or cfg.get('bot_token')
     chans_user = [int(x) for x in (cfg.get('channels') or {}).get('to_user', [])]
     chans_peer = [int(x) for x in (cfg.get('channels') or {}).get('to_peer_summary', [])]
-    reset = str((cfg.get('outbound') or {}).get('reset_on_start', 'baseline'))
+    cursor_conf = (cfg.get('outbound') or {}).get('cursor', {})
+    start_mode = str(cursor_conf.get('start_mode','tail'))
+    replay_last = int(cursor_conf.get('replay_last',0))
     show_peers = bool(cfg.get('show_peer_messages', True))
     default_route = str(cfg.get('default_route','both')).lower() if cfg.get('default_route') else 'both'
 
@@ -194,7 +196,7 @@ def main():
     except Exception as e:
         _log(f"[error] OutboxConsumer import failed: {e}; exiting")
         sys.exit(1)
-    oc = OutboxConsumer(HOME, seen_name='discord', reset_on_start=reset)
+    oc = OutboxConsumer(HOME, seen_name='discord', start_mode=start_mode, replay_last=replay_last)
     # Dynamic subscriptions (channel IDs)
     SUBS_LOCK = threading.Lock()
     def _subs_path() -> Path:
@@ -228,7 +230,7 @@ def main():
             for ch in ch_list:
                 send_queue.append((ch, text))
 
-    def on_to_user(ev: Dict[str,Any]):
+    def on_to_user(ev: Dict[str,Any]) -> bool:
         p = str(ev.get('peer') or '').lower()
         label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
@@ -237,6 +239,7 @@ def main():
                 chs = list(dict.fromkeys((chans_user or []) + (SUBS or [])))
         if chs:
             enqueue(chs, msg)
+            return True
         else:
             # Buffer until a channel subscribes
             try:
@@ -247,8 +250,9 @@ def main():
             else:
                 with threading.Lock():
                     PENDING_TO_USER.append(msg)
+            return False
 
-    def on_to_peer_summary(ev: Dict[str,Any]):
+    def on_to_peer_summary(ev: Dict[str,Any]) -> bool:
         # Runtime override via shared bridge-runtime.json
         eff_show = show_peers
         try:
@@ -258,7 +262,7 @@ def main():
         except Exception:
             pass
         if not eff_show:
-            return
+            return True
         frm = str(ev.get('from') or '')
         label = 'PeerA→PeerB' if frm in ('PeerA','peera','peera') else 'PeerB→PeerA'
         msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
@@ -267,6 +271,8 @@ def main():
                 chs = list(dict.fromkeys((chans_peer or []) + (SUBS or [])))
         if chs:
             enqueue(chs, msg)
+            return True
+        return False
 
     t = threading.Thread(target=lambda: oc.loop(on_to_user, on_to_peer_summary), daemon=True)
     t.start()
