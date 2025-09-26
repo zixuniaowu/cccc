@@ -579,42 +579,67 @@ def main():
             return False, f'rate-limited: interval<{min_interval_s}s'
         return True, ''
 
-    def send_summary(peer: str, text: str):
-        # peer in {'peerA','peerB'}
+    def send_summary(peer: str, text: str) -> bool:
+        """Send to_user summary. Returns True iff at least one chat received the message."""
         label = "PeerA" if peer == 'peerA' else "PeerB"
-        # Build final message first, then preflight the actual payload (rate only)
         msg = f"[{label}]\n" + _summarize(redact(text), max_chars, max_lines)
         ok, reason = _preflight_msg(peer, msg, float(str(cfg.get('to_user_min_interval_s') or 1.5)))
         if not ok:
             _append_ledger({'kind':'bridge-outbox-blocked','type':'to_user','peer': peer, 'reason': reason})
-            return
-        for chat_id in allow:
-            tg_api('sendMessage', {
+            return False
+        # Rebuild allowlist dynamically (config allowlist ∪ current subscriptions)
+        dynamic_allow = set(allow_cfg) | set(load_subs())
+        if not dynamic_allow:
+            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_user','peer': peer, 'reason': 'no-allowed-chats'})
+            return False
+        delivered = 0
+        for chat_id in sorted(dynamic_allow):
+            res = tg_api('sendMessage', {
                 'chat_id': chat_id,
                 'text': msg,
                 'disable_web_page_preview': True
             }, timeout=15)
-        _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars")
-        _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":label.lower(),"chars":len(msg)})
-        last_sent_ts[peer] = time.time()
+            if bool(res.get('ok')):
+                delivered += 1
+            else:
+                _append_log(outlog, f"[error] to_user send chat={chat_id} err={res.get('error')}")
+                _append_ledger({'kind':'bridge-outbox-error','type':'to_user','peer':peer,'chat':chat_id,'error':str(res.get('error'))})
+        if delivered > 0:
+            _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars to {delivered} chats")
+            _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":label.lower(),"chars":len(msg),"chats":delivered})
+            last_sent_ts[peer] = time.time()
+            return True
+        return False
 
-    def send_peer_summary(sender_peer: str, text: str):
-        # sender_peer in {'peerA','peerB'}. Build summarized message then preflight
+    def send_peer_summary(sender_peer: str, text: str) -> bool:
         label = "PeerA→PeerB" if sender_peer == 'peerA' else "PeerB→PeerA"
         msg = f"[{label}]\n" + _summarize(redact(text), peer_max_chars, peer_max_lines)
         ok, reason = _preflight_msg(sender_peer, msg, float(str(cfg.get('peer_summary_min_interval_s') or 1.5)))
         if not ok:
             _append_ledger({'kind':'bridge-outbox-blocked','type':'to_peer_summary','peer': sender_peer, 'reason': reason})
-            return
-        for chat_id in allow:
-            tg_api('sendMessage', {
+            return False
+        dynamic_allow = set(allow_cfg) | set(load_subs())
+        if not dynamic_allow:
+            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_peer_summary','peer': sender_peer, 'reason': 'no-allowed-chats'})
+            return False
+        delivered = 0
+        for chat_id in sorted(dynamic_allow):
+            res = tg_api('sendMessage', {
                 'chat_id': chat_id,
                 'text': msg,
                 'disable_web_page_preview': True
             }, timeout=15)
-        _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars")
-        _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":"to_peer","chars":len(msg)})
-        last_sent_ts['peerA' if sender_peer=='peerA' else 'peerB'] = time.time()
+            if bool(res.get('ok')):
+                delivered += 1
+            else:
+                _append_log(outlog, f"[error] to_peer_summary send chat={chat_id} err={res.get('error')}")
+                _append_ledger({'kind':'bridge-outbox-error','type':'to_peer_summary','peer':sender_peer,'chat':chat_id,'error':str(res.get('error'))})
+        if delivered > 0:
+            _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars to {delivered} chats")
+            _append_ledger({"kind":"bridge-outbound","to":"telegram","peer":"to_peer","chars":len(msg),"chats":delivered})
+            last_sent_ts['peerA' if sender_peer=='peerA' else 'peerB'] = time.time()
+            return True
+        return False
 
     def _normalize_peer_label(raw: str, *, default: str = 'peerA') -> str:
         v = (raw or '').strip().lower()
@@ -633,13 +658,7 @@ def main():
         text = str(ev.get('text') or '')
         if not text:
             return True
-        # Preflight for rate; if blocked, signal not delivered so consumer retries later
-        ok, reason = _preflight_msg(peer_key, f"[{ 'PeerA' if peer_key=='peerA' else 'PeerB' }]\n" + _summarize(redact(text), max_chars, max_lines), float(str(cfg.get('to_user_min_interval_s') or 1.5)))
-        if not ok:
-            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_user','peer': peer_key, 'reason': reason})
-            return False
-        send_summary(peer_key, text)
-        return True
+        return bool(send_summary(peer_key, text))
 
     def on_to_peer_summary(ev: Dict[str, Any]) -> bool:
         nonlocal show_peers
@@ -654,12 +673,7 @@ def main():
         if not text:
             return True
         sender_peer = _normalize_peer_label(str(ev.get('from') or ''), default='peerA')
-        ok, reason = _preflight_msg(sender_peer, f"[{ 'PeerA→PeerB' if sender_peer=='peerA' else 'PeerB→PeerA' }]\n" + _summarize(redact(text), peer_max_chars, peer_max_lines), float(str(cfg.get('peer_summary_min_interval_s') or 1.5)))
-        if not ok:
-            _append_ledger({'kind':'bridge-outbox-blocked','type':'to_peer_summary','peer': sender_peer, 'reason': reason})
-            return False
-        send_peer_summary(sender_peer, text)
-        return True
+        return bool(send_peer_summary(sender_peer, text))
 
     def watch_outputs():
         outbound_conf = cfg.get('outbound') or {}
