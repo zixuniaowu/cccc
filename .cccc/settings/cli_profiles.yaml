@@ -110,3 +110,14 @@ commands:
   # Effective interval = max(nudge_resend_seconds, base * 2^retries) up to max cap
   # See orchestrator_tmux.py for runtime application
   
+roles:
+  peerA:
+    actor: claude
+    cwd: "."
+  peerB:
+    actor: codex
+    cwd: "."
+  aux:
+    actor: gemini
+    cwd: "."
+    rate_limit_per_minute: 2
