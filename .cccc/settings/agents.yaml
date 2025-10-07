@@ -5,14 +5,15 @@ actors:
       input_mode: "type"
       post_paste_keys: ["Enter", "Enter"]
       send_sequence: "Enter"
-      compose_newline_key: "C-j"
       idle_quiet_seconds: 1.0
+      # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
       prompt_regex: '(?mi)^\s*(?:claude|assistant|a:|>)\s*$'
+      # DEPRECATED: busy_regexes will be removed in a future release.
       busy_regexes: []
     aux:
-      invoke_command: 'claude -p "{prompt}"'
+      invoke_command: 'claude --dangerously-skip-permissions -p "{prompt}"'
       rate_limit_per_minute: 2
-    capabilities: "Strong coding; no built-in web browsing; vision via API (model-dependent)"
+    capabilities: "Strong coding; no built-in web browsing; no built-in vision support"
     env_require: []
 
   codex:
@@ -22,28 +23,32 @@ actors:
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
+      compose_newline_key: "C-j"
       prompt_regex: '(?mi)^\s*(?:codex(?:\s*chat)?|>>>|>)\s*$'
+      # DEPRECATED: busy_regexes will be removed in a future release.
       busy_regexes: []
     aux:
-      invoke_command: 'codex exec "{prompt}"'
+      invoke_command: 'codex exec --sandbox danger-full-access "{prompt}"'
       rate_limit_per_minute: 2
-    capabilities: "Local coding agent; multimodal input incl. images; Suggest/Auto Edit/Full Auto modes"
+    capabilities: "Strong coding; multimodal input incl. images"
     env_require: ["OPENAI_API_KEY"]
 
   gemini:
     # Can be bound to Peer and Aux roles
     peer:
-      command: "gemini"
+      command: "gemini --yolo"
       input_mode: "paste"
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
+      # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
       prompt_regex: '(?mi)^\s*(?:gemini|>>>|>)\s*$'
+      # DEPRECATED: busy_regexes will be removed in a future release.
       busy_regexes: []
     aux:
       invoke_command: 'gemini -p "{prompt}" --yolo'
       rate_limit_per_minute: 2
-    capabilities: "External reviewer/executor; good at analysis & summaries; no direct repo edits"
+    capabilities: "Strong coding; Strong web-searching; Support large context; built-in image support"
     env_require: []
 
 # Note: Bindings (which actor each role uses) live in cli_profiles.yaml under roles.*.actor

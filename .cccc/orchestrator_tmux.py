@@ -2891,7 +2891,7 @@ def main(home: Path):
             print("  /pause | /resume        → pause/resume A↔B handoff")
             print("  /refresh                → re-inject SYSTEM prompt")
             print("  /reset compact|clear    → context maintenance (compact = fold context, clear = fresh restart)")
-            print("  /aux status|reminder    → show Aux status or trigger reminder")
+            print("  /aux status             → show Aux status")
             print("  /review                → request Aux review bundle")
             print("  /echo on|off|<empty>    → console echo on/off/show")
             print("  q                       → quit orchestrator")

@@ -4,7 +4,9 @@ aux:
   rate_limit_per_minute: 2
 
 peerA:
+  # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
   prompt_regex: "(?mi)^\\s*(?:claude|assistant|a:|>)\\s*$"   # Adjust to your PeerA CLI prompt if needed
+  # DEPRECATED: busy_regexes will be removed in a future release.
   busy_regexes: []                                           # Usually not required for LLM shells
   idle_quiet_seconds: 1.0
   # Input & send: send on Enter; for robustness, send Enter twice after paste
@@ -24,7 +26,9 @@ peerA:
   # Optional NUDGE suffix (system [NUDGE] lines only)
   nudge_suffix: " Send messages by updating message files only (ASCII). If inbox is empty or whenever you are idle: do ONE high-value item with higher-order thinking - (A) strategic review (drift/priority/ideas), (B) tactical review or rework (REV/Pivot), or (C) any other works which are truly valuable. Send a message only with new evidence, a risk/pivot, or a decisional ask; otherwise stay silent. ultrathink"
 peerB:
+  # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
   prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # Adjust to your PeerB CLI prompt if needed
+  # DEPRECATED: busy_regexes will be removed in a future release.
   busy_regexes:
     - "\\bRunning\\b"
     - "\\bExecuting\\b"
