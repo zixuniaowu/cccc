@@ -2026,7 +2026,7 @@ def main(home: Path):
         if aux_mode == "on":
             aux_prompts = (
                 "Note: Just trigger Aux for any task in which you think it would help.\n"
-                " Does POR or your latest output need an Aux sanity check? If yes, schedule Aux review and note what must be verified."
+                " Schedule a thorough high-order Aux review to your recent works based on the goal now."
             )
             if "Note: Could Aux" not in self_check_text:
                 self_check_text = self_check_text.rstrip("\n") + "\n" + aux_prompts

@@ -1,0 +1,28 @@
+actors:
+  claude:
+    peer:
+      command: "claude --dangerously-skip-permissions"
+      input_mode: "type"
+      post_paste_keys: ["Enter", "Enter"]
+      send_sequence: "Enter"
+      compose_newline_key: "C-j"
+      idle_quiet_seconds: 1.0
+      prompt_regex: "(?mi)^\s*(?:claude|assistant|a:|>)\s*$"
+      busy_regexes: []
+    aux:
+      invoke_command: 'claude -p "{prompt}"'
+      rate_limit_per_minute: 2
+    capabilities:
+      code: strong
+      web_search: api
+      multimodal: { vision_in: false, vision_out: false, audio_stt: false, audio_tts: false, video_in: false }
+      tools: { shell: false, python: false, git: false }
+      limits: { latency: low, cost: med }
+      constraints: { ascii_only: false }
+    env_require: []
+
+bindings:
+  peerA: claude
+  peerB: claude
+  aux:   claude
+
