@@ -104,6 +104,8 @@ def main():
     p_clean = sub.add_parser("clean", help="Purge .cccc/{mailbox,work,logs,state}/ runtime artifacts")
 
     p_doctor = sub.add_parser("doctor", help="Environment check (git/tmux/python/telegram)")
+    p_doctor.add_argument("what", nargs="?", default="all", choices=["all","roles"], help="Subset to check: all|roles (default: all)")
+    p_roles = sub.add_parser("roles", help="Show roles/actors/commands and availability (same as: doctor roles)")
 
     p_token = sub.add_parser("token", help="Manage Telegram token (stored in .cccc/settings/telegram.yaml; gitignored)")
     p_token.add_argument("action", choices=["set","unset","show"], help="Action: set/unset/show")
@@ -176,7 +178,7 @@ def main():
             except Exception as e:
                 print(f"[CLEAN] Failed to purge {d}: {e}")
 
-    def _cmd_doctor():
+    def _cmd_doctor(what: str = "all"):
         print("[DOCTOR] Starting checks…")
         ok_git = _which("git")
         ok_tmux = _which("tmux")
@@ -185,10 +187,11 @@ def main():
             subprocess.run([sys.executable, "-V"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception:
             ok_py = False
-        print(f"- git:  {'OK' if ok_git else 'MISSING'}")
-        print(f"- tmux: {'OK' if ok_tmux else 'MISSING'}")
-        print(f"- python: {'OK' if ok_py else 'MISSING'} ({sys.executable})")
-        print(f"- CCCC_HOME: {home} ({'EXISTS' if home.exists() else 'MISSING'})")
+        if what in ("all",):
+            print(f"- git:  {'OK' if ok_git else 'MISSING'}")
+            print(f"- tmux: {'OK' if ok_tmux else 'MISSING'}")
+            print(f"- python: {'OK' if ok_py else 'MISSING'} ({sys.executable})")
+            print(f"- CCCC_HOME: {home} ({'EXISTS' if home.exists() else 'MISSING'})")
         cfg = _read_yaml(home/"settings"/"telegram.yaml") if home.exists() else {}
         def _resolve_token(c):
             src = None
@@ -215,35 +218,64 @@ def main():
             pass
         if not ok_tmux:
             print("Hint: install tmux (e.g., apt install tmux / brew install tmux).")
-        # Slack quick check
-        try:
-            scfg = _read_yaml(home/"settings"/"slack.yaml")
-            at_env = str((scfg or {}).get('app_token_env') or 'SLACK_APP_TOKEN')
-            bt_env = str((scfg or {}).get('bot_token_env') or 'SLACK_BOT_TOKEN')
-            at = (scfg or {}).get('app_token') or os.environ.get(at_env)
-            bt = (scfg or {}).get('bot_token') or os.environ.get(bt_env)
-            print(f"- slack config: {'FOUND' if scfg else 'NONE'}; bot_token: {'SET' if bt else 'NOT SET'}; app_token: {'SET' if at else 'NOT SET'}")
-            # SDK presence
+        if what in ("all",):
+            # Slack quick check
             try:
-                import slack_sdk  # type: ignore
-                print("  - slack_sdk: OK")
+                scfg = _read_yaml(home/"settings"/"slack.yaml")
+                at_env = str((scfg or {}).get('app_token_env') or 'SLACK_APP_TOKEN')
+                bt_env = str((scfg or {}).get('bot_token_env') or 'SLACK_BOT_TOKEN')
+                at = (scfg or {}).get('app_token') or os.environ.get(at_env)
+                bt = (scfg or {}).get('bot_token') or os.environ.get(bt_env)
+                print(f"- slack config: {'FOUND' if scfg else 'NONE'}; bot_token: {'SET' if bt else 'NOT SET'}; app_token: {'SET' if at else 'NOT SET'}")
+                # SDK presence
+                try:
+                    import slack_sdk  # type: ignore
+                    print("  - slack_sdk: OK")
+                except Exception:
+                    print("  - slack_sdk: MISSING (install with: pip install slack_sdk)")
             except Exception:
-                print("  - slack_sdk: MISSING (install with: pip install slack_sdk)")
-        except Exception:
-            pass
-        # Discord quick check
-        try:
-            dcfg = _read_yaml(home/"settings"/"discord.yaml")
-            be = str((dcfg or {}).get('bot_token_env') or 'DISCORD_BOT_TOKEN')
-            bt = (dcfg or {}).get('bot_token') or os.environ.get(be)
-            print(f"- discord config: {'FOUND' if dcfg else 'NONE'}; bot_token: {'SET' if bt else 'NOT SET'}")
+                pass
+            # Discord quick check
             try:
-                import discord  # type: ignore
-                print("  - discord.py: OK")
+                dcfg = _read_yaml(home/"settings"/"discord.yaml")
+                be = str((dcfg or {}).get('bot_token_env') or 'DISCORD_BOT_TOKEN')
+                bt = (dcfg or {}).get('bot_token') or os.environ.get(be)
+                print(f"- discord config: {'FOUND' if dcfg else 'NONE'}; bot_token: {'SET' if bt else 'NOT SET'}")
+                try:
+                    import discord  # type: ignore
+                    print("  - discord.py: OK")
+                except Exception:
+                    print("  - discord.py: MISSING (install with: pip install discord.py)")
             except Exception:
-                print("  - discord.py: MISSING (install with: pip install discord.py)")
-        except Exception:
-            pass
+                pass
+        # Roles/actors/commands summary (always available via 'doctor roles')
+        try:
+            cp = _read_yaml(home/"settings"/"cli_profiles.yaml") if home.exists() else {}
+            roles = (cp.get('roles') or {}) if isinstance(cp.get('roles'), dict) else {}
+            cmds  = (cp.get('commands') or {}) if isinstance(cp.get('commands'), dict) else {}
+            aux   = (cp.get('aux') or {}) if isinstance(cp.get('aux'), dict) else {}
+            def _first_bin(cmd: str) -> str:
+                if not cmd:
+                    return ''
+                return cmd.strip().split()[0]
+            pa_actor = str((roles.get('peerA') or {}).get('actor') or '').strip() or 'claude'
+            pb_actor = str((roles.get('peerB') or {}).get('actor') or '').strip() or 'codex'
+            aux_actor = str((roles.get('aux') or {}).get('actor') or '').strip() or 'gemini'
+            pa_cwd = str((roles.get('peerA') or {}).get('cwd') or '.')
+            pb_cwd = str((roles.get('peerB') or {}).get('cwd') or '.')
+            aux_cwd = str((roles.get('aux') or {}).get('cwd') or '.')
+            pa_cmd = str(cmds.get('peerA') or pa_actor).strip()
+            pb_cmd = str(cmds.get('peerB') or pb_actor).strip()
+            aux_cmd = str(aux.get('invoke_command') or aux_actor).strip()
+            pa_bin, pb_bin, aux_bin = _first_bin(pa_cmd), _first_bin(pb_cmd), _first_bin(aux_cmd)
+            print("- roles:")
+            def _ok(b):
+                return 'OK' if _which(b) else 'MISSING'
+            print(f"  peerA: actor={pa_actor} cwd={pa_cwd} cmd=`{pa_cmd}` (bin={pa_bin}:{_ok(pa_bin)})")
+            print(f"  peerB: actor={pb_actor} cwd={pb_cwd} cmd=`{pb_cmd}` (bin={pb_bin}:{_ok(pb_bin)})")
+            print(f"  aux:   actor={aux_actor} cwd={aux_cwd} cmd=`{aux_cmd}` (bin={aux_bin}:{_ok(aux_bin)})")
+        except Exception as e:
+            print(f"- roles: failed to read: {e}")
 
     def _cmd_token(action: str, value: str|None):
         cfg_path = home/"settings"/"telegram.yaml"
@@ -447,7 +479,9 @@ def main():
     if args.cmd == 'clean':
         _cmd_clean(); return
     if args.cmd == 'doctor':
-        _cmd_doctor(); return
+        _cmd_doctor(getattr(args,'what','all')); return
+    if args.cmd == 'roles':
+        _cmd_doctor('roles'); return
     if args.cmd == 'token':
         _cmd_token(args.action, getattr(args, 'value', None)); return
     if args.cmd == 'bridge':
