@@ -1763,12 +1763,8 @@ def main(home: Path):
                         last = aux_last_reason or "-"
                         cmd_display = aux_command or "-"
                         result = {"ok": True, "message": f"Aux status: mode={aux_mode}, command={cmd_display}, last_reason={last}"}
-                    elif action == "reminder":
-                        stage = str(args.get("stage") or "manual")
-                        _send_aux_reminder(stage)
-                        result = {"ok": True, "message": f"Aux reminder triggered ({stage})"}
                     else:
-                        result = {"ok": False, "message": "unsupported (only status|reminder)"}
+                        result = {"ok": False, "message": "unsupported (only status)"}
                 elif command == "aux_cli":
                     prompt_text = str(args.get("prompt") or "").strip()
                     if not prompt_text:
@@ -2950,7 +2946,7 @@ def main(home: Path):
                 last = aux_last_reason or '-'
                 print(f'[AUX] mode={aux_mode} command={cmd_display} last_reason={last}')
             else:
-                print('[AUX] Usage: /aux status|reminder')
+                print('[AUX] Usage: /aux status')
             continue
         if line == "/pause":
             deliver_paused = True
