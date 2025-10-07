@@ -94,9 +94,9 @@ cccc run
 - Copy the content of `PEERA.md` / `PEERB.md` into files your CLIs use as system prompts (e.g., `CLAUDE.md` / `AGENTS.md` at repo root; gitignored).
 - Put your project brief/scope in `PROJECT.md` (repo root). CCCC will weave it into the runtime SYSTEM so both peers align.
 
-Optional: enable the Aux (Gemini CLI)
+Optional: choose Aux (Gemini CLI)
 - Install Gemini CLI and make sure the command is available (e.g., `gemini ...`).
-- You can enable or disable Aux at runtime; it will be summoned only for on-demand reviews or heavy execution you choose to delegate.
+- Select the Aux agent during startup (a small role-binding wizard will ask once). You can reconfigure it on the next start; at runtime we don't toggle Aux on/off to keep behavior clear.
 
 ## A typical session (end-to-end, ~3 minutes)
 1) Explore (short)
