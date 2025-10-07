@@ -2772,7 +2772,7 @@ def main(home: Path):
                     # inline patch/diff handling removed
                 eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                 if payload:
-                    # auto Aux trigger removed; manual /review or /aux on|off only
+                    # auto Aux trigger removed; /review remains as the simple reminder
                     
                     if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                         wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
@@ -2834,7 +2834,7 @@ def main(home: Path):
                     # inline patch/diff handling removed
                     eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
                     if payload:
-                        # auto Aux trigger removed; manual /review or /aux on|off only
+                        # auto Aux trigger removed; /review remains as the simple reminder
                         
                         if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
                             wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
