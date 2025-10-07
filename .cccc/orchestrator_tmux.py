@@ -434,7 +434,7 @@ def _compose_nudge_suffix_for(peer_label: str,
     base = ((profileA.get('nudge_suffix') if peer_label == 'PeerA' else profileB.get('nudge_suffix')) or '').strip()
     aux_tip_local = ""
     if aux_mode == "on":
-        aux_tip_local = "Aux tip: Aux is ON - delegate any decoupled sub-task now by running command: gemini -p \"<detailed goal + instruction + context>@<paths>\" --yolo"
+        aux_tip_local = "Aux tip: Aux is ON — delegate any decoupled sub-task; capture evidence and summarize outcome."
     combined = " ".join(filter(None, [base, aux_tip_local]))
     return combined.strip()
 
@@ -1524,49 +1524,7 @@ def main(home: Path):
     except Exception:
         pass
 
-    def _rewrite_aux_mode_block(src: str, new_mode: str) -> Tuple[str, bool]:
-        lines = src.splitlines()
-        inside = False
-        aux_indent = ""
-        inserted = False
-        rewritten: List[str] = []
-        for line in lines:
-            if not inside:
-                rewritten.append(line)
-                m = re.match(r"^(\s*)aux\s*:", line)
-                if m:
-                    inside = True
-                    aux_indent = m.group(1)
-                continue
-            stripped = line.strip()
-            # Determine whether we've exited the aux block (next top-level or sibling key)
-            if stripped and not line.startswith(aux_indent + "  "):
-                if not inserted:
-                    rewritten.append(f"{aux_indent}  mode: {new_mode}")
-                    inserted = True
-                rewritten.append(line)
-                inside = False
-                continue
-            if stripped.startswith("mode:"):
-                comment = ""
-                comment_idx = line.find('#')
-                if comment_idx != -1:
-                    comment = line[comment_idx:]
-                new_line = f"{aux_indent}  mode: '{new_mode}'"
-                if comment:
-                    if not comment.startswith(" "):
-                        new_line += " "
-                    new_line += comment
-                rewritten.append(new_line)
-                inserted = True
-            else:
-                rewritten.append(line)
-        if inside and not inserted:
-            rewritten.append(f"{aux_indent}  mode: '{new_mode}'")
-        new_text = "\n".join(rewritten)
-        if src.endswith("\n") and not new_text.endswith("\n"):
-            new_text += "\n"
-        return new_text, new_text != src
+    # legacy _rewrite_aux_mode_block removed; aux on/off is derived from roles.aux.actor
 
     def _persist_aux_mode(new_mode: str):
         """Compatibility shim: 'on' ensures roles.aux.actor is set; 'off' clears it.
