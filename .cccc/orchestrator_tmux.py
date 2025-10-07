@@ -1438,10 +1438,8 @@ def main(home: Path):
         roles = cp.get('roles') if isinstance(cp.get('roles'), dict) else {}
         pa = str(((roles.get('peerA') or {}).get('actor')) or 'claude').strip() or 'claude'
         pb = str(((roles.get('peerB') or {}).get('actor')) or 'codex').strip() or 'codex'
-        ax = str(((roles.get('aux') or {}).get('actor')) or 'gemini').strip() or 'gemini'
-        aux_mode = str(((cp.get('aux') or {}).get('mode')) or 'off').strip().lower()
-        if aux_mode not in ('on','off'):
-            aux_mode = 'off'
+        ax = str(((roles.get('aux') or {}).get('actor')) or '').strip()
+        aux_mode = 'on' if ax else 'off'
         return pa, pb, ax, aux_mode
 
     def _persist_roles(cp: Dict[str, Any], peerA_actor: str, peerB_actor: str, aux_actor: str, aux_mode: str):
@@ -1457,9 +1455,6 @@ def main(home: Path):
         roles['peerB'].setdefault('cwd','.')
         roles['aux'].setdefault('cwd','.')
         cp['roles'] = roles
-        aux = dict(cp.get('aux') or {})
-        aux['mode'] = 'on' if aux_mode == 'on' else 'off'
-        cp['aux'] = aux
         _write_yaml(cli_profiles_path, cp)
 
     try:
