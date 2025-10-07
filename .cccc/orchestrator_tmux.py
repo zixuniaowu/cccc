@@ -1354,14 +1354,16 @@ def main(home: Path):
             # No special change format required; peers validate via minimal checks/tests/logs.
             details.append("- Summarize findings, highlight risks, and propose concrete next steps for the peers.")
             details.append("")
-            details.append("## Gemini CLI (non-interactive) examples")
+            # Aux CLI examples - reflect current binding when available
+            details.append(f"## Aux CLI examples (actor={(_resolve_bindings(home).get('aux_actor') or 'none')})")
             details.append("```bash")
-            details.append("# Prompt with inline text")
-            details.append("gemini -p \"Review the latest POR context and suggest improvements\"")
-            details.append("# Pipe input")
-            details.append("echo \"List open risks based on the current plan\" | gemini")
-            details.append("# Point to specific files or directories")
-            details.append("gemini -p \"@docs/ @.cccc/work/aux_sessions/{session_id} Provide a review summary\"")
+            if aux_command:
+                details.append("# Prompt with inline text")
+                details.append(f"{aux_command.replace('{prompt}', 'Review the latest POR context and suggest improvements')}")
+                details.append("# Point to specific files or directories")
+                details.append(f"{aux_command.replace('{prompt}', '@docs/ @.cccc/work/aux_sessions/{session_id} Provide a review summary')}")
+            else:
+                details.append("# Aux not configured; select an Aux actor at startup to enable one-line invokes.")
             details.append("```")
             details.append("")
             details.append("## Data in this bundle")
@@ -1398,6 +1400,8 @@ def main(home: Path):
         lines = ["Aux helper reminder.", f"Reason: {reason}."]
         if aux_command:
             lines.append(f"Run helper command: {aux_command}")
+        else:
+            lines.append("Aux not configured (no actor bound). Bind an Aux actor at next start to enable one-line invokes.")
         lines.append("You may inspect `.cccc/work` resources created for this session and perform extended analysis.")
         lines.append("Share verdict/actions/checks in your next response.")
         if bundle_path:

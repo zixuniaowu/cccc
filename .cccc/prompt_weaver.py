@@ -76,6 +76,65 @@ def _is_im_enabled(home: Path) -> bool:
             return True
     return False
 
+def _read_yaml_or_json_safe(p: Path) -> Dict[str, Any]:
+    try:
+        import yaml  # type: ignore
+        return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    except Exception:
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+def _resolve_bindings(home: Path) -> Dict[str, Any]:
+    """Return a small dict with current role bindings and aux details.
+    Keys: pa, pb, aux_actor, aux_invoke, aux_cwd, aux_rate.
+    Missing values become empty strings (actor/invoke) or sensible defaults (cwd='.', rate=2).
+    """
+    roles_cfg = _read_yaml_or_json_safe(home/"settings"/"cli_profiles.yaml")
+    actors_cfg = _read_yaml_or_json_safe(home/"settings"/"agents.yaml")
+    roles = roles_cfg.get('roles') if isinstance(roles_cfg.get('roles'), dict) else roles_cfg
+    a = roles.get('peerA') if isinstance(roles.get('peerA'), dict) else {}
+    b = roles.get('peerB') if isinstance(roles.get('peerB'), dict) else {}
+    x = roles.get('aux')   if isinstance(roles.get('aux'), dict)   else {}
+    pa = str((a.get('actor') or '')).strip()
+    pb = str((b.get('actor') or '')).strip()
+    xa = str((x.get('actor') or '')).strip()
+    xc = str((x.get('cwd') or '.')).strip() or '.'
+    try:
+        rate = int(x.get('rate_limit_per_minute') or 2)
+    except Exception:
+        rate = 2
+    aux_invoke = ''
+    if xa:
+        acts = actors_cfg.get('actors') if isinstance(actors_cfg.get('actors'), dict) else {}
+        ad = acts.get(xa) if isinstance(acts.get(xa), dict) else {}
+        aux = ad.get('aux') if isinstance(ad.get('aux'), dict) else {}
+        aux_invoke = str((aux.get('invoke_command') or '')).strip()
+        try:
+            rate = int(x.get('rate_limit_per_minute') or aux.get('rate_limit_per_minute') or rate)
+        except Exception:
+            pass
+    return {
+        'pa': pa,
+        'pb': pb,
+        'aux_actor': xa,
+        'aux_invoke': aux_invoke,
+        'aux_cwd': xc,
+        'aux_rate': rate,
+    }
+
+def _runtime_bindings_one_liner(home: Path) -> str:
+    b = _resolve_bindings(home)
+    pa = b['pa'] or '-'
+    pb = b['pb'] or '-'
+    aux = b['aux_actor'] or 'none'
+    line = f"Bindings: PeerA={pa}; PeerB={pb}; Aux={aux}"
+    if b['aux_actor'] and b['aux_invoke']:
+        # Preserve {prompt} literally
+        inv = str(b['aux_invoke']).replace('{prompt}', '{prompt}')
+        line += f" invoke=\"{inv}\""
+    return line
 def _aux_mode(home: Path) -> str:
     """Aux is ON when roles.aux.actor is configured; otherwise OFF."""
     conf_path = home/"settings"/"cli_profiles.yaml"
@@ -211,17 +270,24 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "- Progress keepalive (runtime)",
         "  - When your message contains a `Progress:` line and the other peer stays silent, the orchestrator may send you a delayed (~60s, configurable) FROM_SYSTEM keepalive to continue your next step; it is suppressed when your inbox already has messages or there are in‑flight/queued handoffs for you.",
     ]
-    if aux_enabled:
+    # Aux section reflects current binding (actor/invoke/cwd/rate)
+    from pathlib import Path as _P
+    bnd = _resolve_bindings(home)
+    if aux_enabled and bnd.get('aux_actor'):
+        actor = bnd.get('aux_actor') or '-'
+        inv = (bnd.get('aux_invoke') or '').replace('{prompt}', '{prompt}')
+        cwd = bnd.get('aux_cwd') or './'
+        rate = bnd.get('aux_rate') or 2
         ch3 += [
-            "- Aux (PeerC) - Default Delegation {#aux}",
-            "  - Default: delegate execution of any decoupled sub-task to Aux; you manage review/revise and integration, and you own the final evidence.",
-            "  - If you choose not to use Aux, add one line in your insight - no-aux: <brief reason>. This is a soft nudge, not a gate.",
-            '  - One-liner command: gemini -p "<detailed goal + instruction + context>@<paths>" --yolo',
+            "- Aux (this run) {#aux}",
+            f"  - Actor: {actor}; cwd: {cwd}; rate: {rate}/min",
+            f"  - Invoke (template): {inv if inv else '-'}",
+            "  - Delegate decoupled sub-tasks; you remain reviewer/integrator and own final evidence.",
         ]
     else:
         ch3 += [
-            "- Aux {#aux}",
-            "  - Aux is disabled. Collaborate directly or escalate to the user when you need a second opinion.",
+            "- Aux (this run) {#aux}",
+            "  - Aux is disabled (no actor bound). Use the startup roles wizard to bind Aux when needed.",
         ]
 
     # PeerB: correct path when user input is required.
@@ -318,10 +384,14 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "- Activation: orchestrator drops a bundle under .cccc/work/aux_sessions/<session-id>/ containing POR.md, notes.txt, peer_message.txt, and any extra context.",
         "- Rhythm: operate with the same evidence-first standards as the primary peers - small, testable moves and explicit next checks.",
     ]
-    if aux_mode == "on":
-        ch1.append("- Mode: on - orchestrator may summon you automatically around contract/sign-off moments. Treat those requests as high priority.")
+    bnd = _resolve_bindings(home)
+    if bnd.get('aux_actor'):
+        ch1.append(f"- Binding: actor={bnd.get('aux_actor')}; cwd={bnd.get('aux_cwd') or './'}; rate={bnd.get('aux_rate') or 2}/min")
+        inv = (bnd.get('aux_invoke') or '').replace('{prompt}', '{prompt}')
+        if inv:
+            ch1.append(f"- Invoke (template): {inv}")
     else:
-        ch1.append("- Mode: off - you will only run when a peer explicitly invokes you. Stay ready for ad-hoc calls.")
+        ch1.append("- Binding: none (Aux disabled). Bind an Aux actor at startup via the roles wizard to enable offloads.")
 
     ch2 = [
         "",
@@ -449,13 +519,20 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
     por_file = por_path(home)
     rules_path = (home/"rules"/("PEERA.md" if (peer.lower()=="peera" or peer=="peerA") else "PEERB.md")).as_posix()
     other = "peerB" if (peer.lower()=="peera" or peer=="peerA") else "peerA"
-    return "\n".join([
+    lines = [
         "CCCC Runtime SYSTEM (minimal)",
         f"* You are {peer}. Collaborate as equals with {other}.",
         f"* POR: {por_file.as_posix()} (single source; update when direction changes).",
         f"* Rules: {rules_path} - follow this document; keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced insight block.",
         "",
-    ])
+    ]
+    # Always append a concise one-liner with current bindings
+    try:
+        lines.append(_runtime_bindings_one_liner(home))
+        lines.append("")
+    except Exception:
+        pass
+    return "\n".join(lines)
 
 
 def weave_preamble(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:
@@ -472,7 +549,13 @@ def weave_preamble(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) 
     try:
         rules_file = (home/"rules"/("PEERA.md" if (peer.lower()=="peera" or peer=="peerA") else "PEERB.md"))
         if rules_file.exists():
-            return rules_file.read_text(encoding="utf-8")
+            txt = rules_file.read_text(encoding="utf-8")
+            # Append runtime bindings one-liner for this session
+            try:
+                txt = txt.rstrip() + "\n\n" + _runtime_bindings_one_liner(home) + "\n"
+            except Exception:
+                pass
+            return txt
     except Exception:
         pass
     # Fallback to the minimal SYSTEM if anything goes wrong
@@ -520,6 +603,6 @@ def _runtime_bindings_snippet(home: Path) -> str:
         "Runtime Bindings (this run)",
         f"- PeerA: actor={pa or '-'}, cwd={a.get('cwd') or './'}, capabilities: {_cap(pa) or '-'}",
         f"- PeerB: actor={pb or '-'}, cwd={b.get('cwd') or './'}, capabilities: {_cap(pb) or '-'}",
-        f"- Aux:   actor={px or '-'}, invoke=\"{_aux_inv(px)}\", rate={str(_role('aux').get('rate_limit_per_minute') or 2)}/min",
+        f"- Aux:   actor={px or 'none'}, invoke=\"{_aux_inv(px)}\""
     ]
     return "\n".join(sc)
