@@ -358,7 +358,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "- IM routing & passthrough (active) {#im}",
             "  - Chat routing: `a:`, `b:`, `both:` or `/a`, `/b`, `/both` from IM land in your mailbox; process them like any other inbox item.",
             f"  - Direct CLI passthrough: `{route_prefix}! <command>` runs inside your CLI pane; capture outputs in .cccc/work/** when they matter.",
-            "  - System commands such as /focus, /reset, /aux, /review from IM arrive as <FROM_SYSTEM> notes; act and report in your next turn.",
+            "  - System commands such as /focus, /reset, /aux-cli, /review from IM arrive as <FROM_SYSTEM> notes; act and report in your next turn.",
         ]
 
     ts = _format_local_ts()
@@ -386,10 +386,11 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
     ]
     bnd = _resolve_bindings(home)
     if bnd.get('aux_actor'):
+        # For Aux's own rulebook, show binding state (who I am, cwd, rate),
+        # but do NOT include the caller-side invoke template. That template
+        # belongs in PeerA/PeerB docs — Aux does not need to know how peers
+        # invoke it.
         ch1.append(f"- Binding: actor={bnd.get('aux_actor')}; cwd={bnd.get('aux_cwd') or './'}; rate={bnd.get('aux_rate') or 2}/min")
-        inv = (bnd.get('aux_invoke') or '').replace('{prompt}', '{prompt}')
-        if inv:
-            ch1.append(f"- Invoke (template): {inv}")
     else:
         ch1.append("- Binding: none (Aux disabled). Bind an Aux actor at startup via the roles wizard to enable offloads.")
 

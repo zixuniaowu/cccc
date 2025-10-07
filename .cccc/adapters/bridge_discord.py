@@ -383,22 +383,8 @@ def main():
                 return
 
             if re.match(r'^/?aux\b', stripped, re.I):
-                parts = stripped.split()
-                action = parts[1].lower() if len(parts) > 1 else 'status'
-                if action not in ('on', 'off', 'status'):
-                    await _send_reply('Usage: /aux status|on|off')
-                    _log(f"[cmd] aux invalid action={action} ch={message.channel.id}")
-                    return
-                payload = {'action': action}
-                result, req_id = _enqueue_im_command('aux', payload, source='discord', channel=str(message.channel.id))
-                if result and result.get('ok'):
-                    reply = result.get('message') or 'Aux command applied.'
-                elif result:
-                    reply = f"Aux command error: {result.get('message')}"
-                else:
-                    reply = f"Aux command queued (id={req_id})."
-                await _send_reply(reply)
-                _log(f"[cmd] aux action={action} ch={message.channel.id} req={req_id}")
+                await _send_reply('Aux toggles are not supported. Use /aux-cli "<prompt>" for a one-off helper run, or /review.')
+                _log(f"[cmd] aux toggles unsupported ch={message.channel.id}")
                 return
 
             if re.match(r'^/?review\b', stripped, re.I):

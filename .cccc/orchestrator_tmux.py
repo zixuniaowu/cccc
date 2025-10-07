@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 CCCC Orchestrator (tmux + long‑lived CLI sessions)
-- Left/right panes run PeerA (Claude) and PeerB (Codex) interactive sessions.
+- Left/right panes run PeerA and PeerB interactive sessions (actors are bound at startup).
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER>, and runs optional lint/tests before committing.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
@@ -1382,7 +1382,10 @@ def main(home: Path):
 
     def _run_aux_cli(prompt: str) -> Tuple[int, str, str, str]:
         safe_prompt = prompt.replace('"', '\\"')
-        template = aux_command_template or 'gemini -p "{prompt}" --yolo'
+        template = aux_command_template  # no hard fallback to a specific actor/CLI
+        if not template:
+            # Aux not configured — explicit error instead of silently falling back
+            return 1, "", "Aux is not configured (no actor bound or invoke_command missing).", ""
         if "{prompt}" in template:
             command = template.replace("{prompt}", safe_prompt)
         else:
@@ -1418,7 +1421,7 @@ def main(home: Path):
         log_ledger(home, {"from": "system", "kind": "aux_reminder", "peers": targets, "reason": reason})
         write_status(deliver_paused)
 
-    # Note: auto Aux trigger based on YAML payload has been removed. Manual /review and /aux remain.
+    # Note: auto Aux trigger based on YAML payload has been removed. Use manual /review or one-off /c (Aux CLI).
 
 
     cli_profiles_path = settings/"cli_profiles.yaml"
@@ -1443,8 +1446,9 @@ def main(home: Path):
 
     def _current_roles(cp: Dict[str, Any]) -> Tuple[str, str, str, str]:
         roles = cp.get('roles') if isinstance(cp.get('roles'), dict) else {}
-        pa = str(((roles.get('peerA') or {}).get('actor')) or 'claude').strip() or 'claude'
-        pb = str(((roles.get('peerB') or {}).get('actor')) or 'codex').strip() or 'codex'
+        # Do not fall back to specific actors; reflect config as-is.
+        pa = str(((roles.get('peerA') or {}).get('actor')) or '').strip()
+        pb = str(((roles.get('peerB') or {}).get('actor')) or '').strip()
         ax = str(((roles.get('aux') or {}).get('actor')) or '').strip()
         aux_mode = 'on' if ax else 'off'
         return pa, pb, ax, aux_mode
@@ -2897,8 +2901,8 @@ def main(home: Path):
             print("  /pause | /resume        → pause/resume A↔B handoff")
             print("  /refresh                → re-inject SYSTEM prompt")
             print("  /reset compact|clear    → context maintenance (compact = fold context, clear = fresh restart)")
-            print("  /aux status             → show Aux status")
-            print("  /review                → request Aux review bundle")
+            print("  /c <prompt> | c: <prompt> → run configured Aux once (one-off helper)")
+            print("  /review                 → request Aux review bundle")
             print("  /echo on|off|<empty>    → console echo on/off/show")
             print("  q                       → quit orchestrator")
             # Reprint prompt
@@ -2949,16 +2953,7 @@ def main(home: Path):
         if line == "/review":
             _send_aux_reminder("manual-review")
             continue
-        if line.startswith("/aux"):
-            parts = line.split()
-            sub = parts[1].lower() if len(parts) > 1 else "status"
-            if sub == "status":
-                cmd_display = aux_command or '-'
-                last = aux_last_reason or '-'
-                print(f'[AUX] mode={aux_mode} command={cmd_display} last_reason={last}')
-            else:
-                print('[AUX] Usage: /aux status')
-            continue
+        # /aux toggles/status removed. Use /c or /review instead.
         if line == "/pause":
             deliver_paused = True
             print("[PAUSE] Paused A↔B handoff (still collect <TO_USER>)"); write_status(True); continue

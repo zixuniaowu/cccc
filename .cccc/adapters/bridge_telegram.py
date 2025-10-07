@@ -1071,22 +1071,9 @@ def main():
                 continue
 
             if is_cmd(text, 'aux'):
-                parts = text.split()
-                action = parts[1].lower() if len(parts) > 1 else 'status'
-                if action not in ('on', 'off', 'status'):
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /aux status|on|off'}, timeout=15)
-                    _append_log(outlog, f"[cmd] aux invalid action={action} chat={chat_id}")
-                    continue
-                payload = {'action': action}
-                result, req_id = _enqueue_im_command('aux', payload, source='telegram', chat_id=chat_id)
-                if result and result.get('ok'):
-                    reply = result.get('message') or 'Aux command applied.'
-                elif result:
-                    reply = f"Aux command error: {result.get('message')}"
-                else:
-                    reply = f"Aux command queued (id={req_id})."
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
-                _append_log(outlog, f"[cmd] aux action={action} chat={chat_id} req={req_id}")
+                # Runtime Aux on/off toggles are removed. Keep UX explicit.
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Aux toggles are not supported. Use /aux-cli "<prompt>" for a one-off helper run, or /review.'}, timeout=15)
+                _append_log(outlog, f"[cmd] aux toggles unsupported chat={chat_id}")
                 continue
 
             if is_cmd(text, 'review'):
@@ -1341,7 +1328,7 @@ def main():
                 help_txt = (
                     "Routing: a:/b:/both: or /a /b /both → deliver to peers;\n"
                     "Passthrough (CLI): a! <cmd>/b! <cmd> (DM recommended) or /pa <cmd>/pb <cmd> [/pboth <cmd>] in groups;\n"
-                    "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux status|on|off; /review trigger Aux reminder;\n"
+                    "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux-cli \"<prompt>\" run configured Aux once; /review trigger Aux reminder;\n"
                     "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
                     "/showpeers on|off toggle Peer<->Peer summary; /files [in|out] [N] list recent files; /file N view."
                 )

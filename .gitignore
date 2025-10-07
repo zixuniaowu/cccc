@@ -29,6 +29,7 @@
 /CLAUDE.md
 /AGENTS.md
 /GEMINI.md
+/examples/agents/*.yaml
 
 # Local/editor/platform noise
 .DS_Store

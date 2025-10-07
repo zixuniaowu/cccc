@@ -172,7 +172,7 @@ ANY_ACK_RE = re.compile(r"(?i)(?:^|[\s\[<])ack\s*:\s*([A-Za-z0-9\-\._:]+)")
 def find_acks_from_output(output: str) -> Tuple[List[str], List[str]]:
     """Return (acks, nacks) tokens detected in CLI output.
     - Prefer tokens inside <SYSTEM_NOTES>…</SYSTEM_NOTES>
-    - Fallback: accept bare "ack: <token>" anywhere in output (Claude often omits SYSTEM_NOTES)
+    - Fallback: accept bare "ack: <token>" anywhere in output (some CLIs omit SYSTEM_NOTES)
     """
     notes = SYS_NOTES_RE.findall(output)
     acks, nacks = [], []
