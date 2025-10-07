@@ -38,7 +38,7 @@ actors:
     peer:
       command: "gemini --yolo"
       input_mode: "paste"
-      post_paste_keys: ["Enter"]
+      post_paste_keys: ["Enter", "Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
       # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
