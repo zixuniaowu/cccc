@@ -146,14 +146,14 @@ def _format_local_ts() -> str:
     main = dt.strftime("%Y-%m-%d %H:%M:%S")
     return f"{main} {tzname} ({offset_str})" if tzname else f"{main} ({offset_str})"
 
-def _compose_detailed_nudge(seq: str, preview: str, *, suffix: str = "") -> str:
+def _compose_detailed_nudge(seq: str, preview: str, inbox_path: str, *, suffix: str = "") -> str:
     """Compose a one-line, state-anchored NUDGE with TS + trigger + preview.
     Keeps action instruction stable; optional suffix appended at the end.
     """
     ts = _format_local_ts()
     msg = (
         f"[NUDGE] [TS: {ts}] trigger={seq} preview='{preview}' — "
-        f"Open oldest first, process oldest→newest."
+        f"Inbox: {inbox_path} — open oldest first, process oldest→newest."
     )
     if suffix:
         msg = msg + " " + suffix.strip()
@@ -414,9 +414,12 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
         nmsg = custom_text.strip()
     else:
         # Default periodic nudge text (no dynamic inbox counts)
+        try:
+            inbox_path = _inbox_dir(home, receiver_label).as_posix()
+        except Exception:
+            inbox_path = ".cccc/mailbox/peerX/inbox"
         nmsg = (
-            "[NUDGE] "
-            "Read the oldest message file in order. After reading/processing, move that file into the processed/ directory alongside this inbox (same mailbox). Repeat until inbox is empty."
+            f"[NUDGE] Inbox: {inbox_path} — read the oldest message file, then move it to processed/. Repeat until inbox is empty."
         )
         if suffix:
             sfx = suffix.strip()
@@ -454,7 +457,7 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
         preview = _safe_headline(trigger_file) if trigger_file else "[unreadable-or-binary]"
     except Exception:
         preview = "[unreadable-or-binary]"
-    custom = _compose_detailed_nudge(seq, preview, suffix=combined_suffix)
+    custom = _compose_detailed_nudge(seq, preview, inbox.as_posix() if 'inbox' in locals() else ".cccc/mailbox/peerX/inbox", suffix=combined_suffix)
     # Always send via tmux injection (delivery_mode 'bridge' removed)
     if receiver_label == 'PeerA':
         _maybe_send_nudge(home, 'PeerA', left_pane, profileA, custom_text=custom, force=True)
@@ -2449,7 +2452,11 @@ def main(home: Path):
             txt = f"<FROM_SYSTEM>\n[keepalive] {hint}\n</FROM_SYSTEM>\n"
             # Keepalive NUDGE: neutral, no preview/trigger
             ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
-            ka_nudge = f"[NUDGE] [TS: {_format_local_ts()}] continue your work; open inbox oldest→newest." + (f" {ka_suffix}" if ka_suffix else "")
+            try:
+                inbox_path = _inbox_dir(home, label).as_posix()
+            except Exception:
+                inbox_path = ".cccc/mailbox/peerX/inbox"
+            ka_nudge = f"[NUDGE] [TS: {_format_local_ts()}] Inbox: {inbox_path} — continue your work; open oldest→newest." + (f" {ka_suffix}" if ka_suffix else "")
             _send_handoff("System", label, txt, nudge_text=ka_nudge)
             pending_keepalive[label] = None
             try:
@@ -2613,7 +2620,11 @@ def main(home: Path):
                         msg = "<FROM_SYSTEM>\nOK. Continue.\n</FROM_SYSTEM>\n"
                     # Keepalive NUDGE: neutral, no preview/trigger
                     ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
-                    ka_nudge = f"[NUDGE] [TS: {_format_local_ts()}] continue your work; open inbox oldest→newest." + (f" {ka_suffix}" if ka_suffix else "")
+                    try:
+                        inbox_path = _inbox_dir(home, label).as_posix()
+                    except Exception:
+                        inbox_path = ".cccc/mailbox/peerX/inbox"
+                    ka_nudge = f"[NUDGE] [TS: {_format_local_ts()}] Inbox: {inbox_path} — continue your work; open oldest→newest." + (f" {ka_suffix}" if ka_suffix else "")
                     _send_handoff("System", label, msg, nudge_text=ka_nudge)
                     try:
                         log_ledger(home, {"from":"system","kind":"keepalive-sent","peer":label})
@@ -2655,7 +2666,7 @@ def main(home: Path):
                                 path = _inbox_dir(home, label)/fn
                                 preview = _safe_headline(path)
                                 suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
-                                custom = _compose_detailed_nudge(seq, preview, suffix=suffix)
+                                custom = _compose_detailed_nudge(seq, preview, (_inbox_dir(home, label).as_posix()), suffix=suffix)
                                 pane = left if label == "PeerA" else right
                                 prof = profileA if label == "PeerA" else profileB
                                 _maybe_send_nudge(home, label, pane, prof, custom_text=custom, force=True)
