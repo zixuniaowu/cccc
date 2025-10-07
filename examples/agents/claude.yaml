@@ -12,17 +12,7 @@ actors:
     aux:
       invoke_command: 'claude -p "{prompt}"'
       rate_limit_per_minute: 2
-    capabilities:
-      code: strong
-      web_search: api
-      multimodal: { vision_in: false, vision_out: false, audio_stt: false, audio_tts: false, video_in: false }
-      tools: { shell: false, python: false, git: false }
-      limits: { latency: low, cost: med }
-      constraints: { ascii_only: false }
+    capabilities: "Strong coding; API web‑search; no vision"
     env_require: []
 
-bindings:
-  peerA: claude
-  peerB: claude
-  aux:   claude
-
+## Note: Actor selection (bindings) is defined in cli_profiles.yaml under roles.*.actor.
