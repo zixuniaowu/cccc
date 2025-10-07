@@ -1383,7 +1383,10 @@ def main(home: Path):
         else:
             command = f"{template} {safe_prompt}"
         try:
-            proc = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=str(Path.cwd()))
+            run_cwd = Path(aux_cwd) if aux_cwd else Path.cwd()
+            if not run_cwd.is_absolute():
+                run_cwd = Path.cwd()/run_cwd
+            proc = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=str(run_cwd))
             return proc.returncode, proc.stdout, proc.stderr, command
         except Exception as exc:
             return 1, "", str(exc), command
@@ -1511,6 +1514,7 @@ def main(home: Path):
     aux_resolved = resolved.get('aux') or {}
     aux_command_template = str(aux_resolved.get('invoke_command') or 'echo {prompt}').strip()
     aux_command = aux_command_template
+    aux_cwd = str(aux_resolved.get('cwd') or '.')
     rate_limit_per_minute = int(aux_resolved.get("rate_limit_per_minute") or 2)
     if rate_limit_per_minute <= 0:
         rate_limit_per_minute = 1
@@ -1856,10 +1860,10 @@ def main(home: Path):
     CLAUDE_I_CMD = os.environ.get("CLAUDE_I_CMD") or pa_cmd or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerA"
     CODEX_I_CMD  = os.environ.get("CODEX_I_CMD")  or pb_cmd or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerB"
     if start_mode in ("has_doc", "ai_bootstrap"):
-        # Wrap with role cwd when provided
+        # Wrap with role cwd when provided; tmux_start_interactive will add bash -lc
         def _wrap_cwd(cmd: str, cwd: str | None) -> str:
             if cwd and cwd not in (".", ""):
-                return f"bash -lc {shlex.quote(f'cd {cwd} && {cmd}') }"
+                return f"cd {cwd} && {cmd}"
             return cmd
         pa_cwd = (resolved.get('peerA') or {}).get('cwd') or '.'
         pb_cwd = (resolved.get('peerB') or {}).get('cwd') or '.'

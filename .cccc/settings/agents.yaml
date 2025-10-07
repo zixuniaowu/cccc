@@ -7,7 +7,7 @@ actors:
       send_sequence: "Enter"
       compose_newline_key: "C-j"
       idle_quiet_seconds: 1.0
-      prompt_regex: "(?mi)^\s*(?:claude|assistant|a:|>)\s*$"
+      prompt_regex: '(?mi)^\s*(?:claude|assistant|a:|>)\s*$'
       busy_regexes: []
     aux:
       invoke_command: 'claude -p "{prompt}"'
@@ -22,7 +22,7 @@ actors:
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
-      prompt_regex: "(?mi)^\s*(?:codex(?:\s*chat)?|>>>|>)\s*$"
+      prompt_regex: '(?mi)^\s*(?:codex(?:\s*chat)?|>>>|>)\s*$'
       busy_regexes: []
     aux:
       invoke_command: 'codex exec "{prompt}"'
@@ -30,5 +30,12 @@ actors:
     capabilities: "Local coding agent; multimodal input incl. images; Suggest/Auto Edit/Full Auto modes"
     env_require: ["OPENAI_API_KEY"]
 
-# Note: Bindings (which actor each role uses) live in cli_profiles.yaml under roles.*.actor
+  gemini:
+    # Aux-only actor by default; can be bound to Aux role via roles.aux.actor: gemini
+    aux:
+      invoke_command: 'gemini -p "{prompt}" --yolo'
+      rate_limit_per_minute: 2
+    capabilities: "External reviewer/executor; good at analysis & summaries; no direct repo edits"
+    env_require: []
 
+# Note: Bindings (which actor each role uses) live in cli_profiles.yaml under roles.*.actor
