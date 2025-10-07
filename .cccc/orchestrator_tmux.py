@@ -2366,9 +2366,12 @@ def main(home: Path):
         lines = [
             f"POR update requested (trigger: {trigger}).",
             f"File: {por_display_path}",
-            "Review recent work and ensure objectives, roadmap, active tasks, risks, decisions, and reflections are accurate.",
-            "Update the document directly in place; reflect the latest reality (no speculative progress).",
-            "If POR is already up to date, acknowledge in to_peer.md with the key points you verified."
+            "Also review all active SUBPORs (docs/por/T######-slug/SUBPOR.md):",
+            "- For each: confirm Goal/Scope, 3-5 Acceptance, Cheapest Probe, Kill, single Next (decidable).",
+            "- Align POR Now/Next with each SUBPOR Next; close/rescope stale items; ensure evidence/risks/decisions have recent refs (commit/test/log).",
+            "- Check for gaps: missing tasks, unowned work, new risks; propose a new SUBPOR (after peer ACK) when needed.",
+            "- Sanity-check portfolio coherence across POR/SUBPOR: priorities, sequencing, ownership.",
+            "If everything is current, reply in to_peer.md with 1-2 verified points. Tools: .cccc/por_subpor.py subpor new | lint"
         ]
         if hint:
             lines.append(f"Hint: {hint}")
