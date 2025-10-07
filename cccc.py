@@ -250,32 +250,37 @@ def main():
                 pass
         # Roles/actors/commands summary (always available via 'doctor roles')
         try:
-            cp = _read_yaml(home/"settings"/"cli_profiles.yaml") if home.exists() else {}
-            roles = (cp.get('roles') or {}) if isinstance(cp.get('roles'), dict) else {}
-            cmds  = (cp.get('commands') or {}) if isinstance(cp.get('commands'), dict) else {}
-            aux   = (cp.get('aux') or {}) if isinstance(cp.get('aux'), dict) else {}
+            sys.path.insert(0, str(home))
+            from common.config import load_profiles  # type: ignore
+            resolved = load_profiles(home)
             def _first_bin(cmd: str) -> str:
                 if not cmd:
                     return ''
                 return cmd.strip().split()[0]
-            pa_actor = str((roles.get('peerA') or {}).get('actor') or '').strip() or 'claude'
-            pb_actor = str((roles.get('peerB') or {}).get('actor') or '').strip() or 'codex'
-            aux_actor = str((roles.get('aux') or {}).get('actor') or '').strip() or 'gemini'
-            pa_cwd = str((roles.get('peerA') or {}).get('cwd') or '.')
-            pb_cwd = str((roles.get('peerB') or {}).get('cwd') or '.')
-            aux_cwd = str((roles.get('aux') or {}).get('cwd') or '.')
-            pa_cmd = str(cmds.get('peerA') or pa_actor).strip()
-            pb_cmd = str(cmds.get('peerB') or pb_actor).strip()
-            aux_cmd = str(aux.get('invoke_command') or aux_actor).strip()
+            pa = resolved.get('peerA') or {}
+            pb = resolved.get('peerB') or {}
+            ax = resolved.get('aux') or {}
+            # read aux.mode for display
+            cp = _read_yaml(home/"settings"/"cli_profiles.yaml") if home.exists() else {}
+            aux_mode = str(((cp.get('aux') or {}).get('mode')) or 'off').strip().lower()
+            pa_actor = str(pa.get('actor') or '')
+            pb_actor = str(pb.get('actor') or '')
+            aux_actor = str(ax.get('actor') or '')
+            pa_cwd = str(pa.get('cwd') or '.')
+            pb_cwd = str(pb.get('cwd') or '.')
+            aux_cwd = str(ax.get('cwd') or '.')
+            pa_cmd = str(pa.get('command') or '')
+            pb_cmd = str(pb.get('command') or '')
+            aux_cmd = str(ax.get('invoke_command') or '')
             pa_bin, pb_bin, aux_bin = _first_bin(pa_cmd), _first_bin(pb_cmd), _first_bin(aux_cmd)
-            print("- roles:")
+            print("- roles (effective):")
             def _ok(b):
                 return 'OK' if _which(b) else 'MISSING'
             print(f"  peerA: actor={pa_actor} cwd={pa_cwd} cmd=`{pa_cmd}` (bin={pa_bin}:{_ok(pa_bin)})")
             print(f"  peerB: actor={pb_actor} cwd={pb_cwd} cmd=`{pb_cmd}` (bin={pb_bin}:{_ok(pb_bin)})")
-            print(f"  aux:   actor={aux_actor} cwd={aux_cwd} cmd=`{aux_cmd}` (bin={aux_bin}:{_ok(aux_bin)})")
+            print(f"  aux:   actor={aux_actor} cwd={aux_cwd} mode={aux_mode} cmd=`{aux_cmd}` (bin={aux_bin}:{_ok(aux_bin)})")
         except Exception as e:
-            print(f"- roles: failed to read: {e}")
+            print(f"- roles: failed to resolve: {e}")
 
     def _cmd_token(action: str, value: str|None):
         cfg_path = home/"settings"/"telegram.yaml"

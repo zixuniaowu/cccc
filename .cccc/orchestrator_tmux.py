@@ -1416,6 +1416,98 @@ def main(home: Path):
 
     cli_profiles_path = settings/"cli_profiles.yaml"
     cli_profiles = read_yaml(cli_profiles_path)
+    # --- Roles/Actors interactive binding (first thing; before load_profiles) ---
+    def _write_yaml(p: Path, obj: Dict[str, Any]):
+        try:
+            import yaml  # type: ignore
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(yaml.safe_dump(obj, allow_unicode=True, sort_keys=False), encoding='utf-8')
+        except Exception:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
+
+    def _actors_available() -> List[str]:
+        try:
+            actors_doc = read_yaml(settings/"agents.yaml")
+            acts = actors_doc.get('actors') if isinstance(actors_doc.get('actors'), dict) else {}
+            return sorted(list(acts.keys()))
+        except Exception:
+            return []
+
+    def _current_roles(cp: Dict[str, Any]) -> Tuple[str, str, str, str]:
+        roles = cp.get('roles') if isinstance(cp.get('roles'), dict) else {}
+        pa = str(((roles.get('peerA') or {}).get('actor')) or 'claude').strip() or 'claude'
+        pb = str(((roles.get('peerB') or {}).get('actor')) or 'codex').strip() or 'codex'
+        ax = str(((roles.get('aux') or {}).get('actor')) or 'gemini').strip() or 'gemini'
+        aux_mode = str(((cp.get('aux') or {}).get('mode')) or 'off').strip().lower()
+        if aux_mode not in ('on','off'):
+            aux_mode = 'off'
+        return pa, pb, ax, aux_mode
+
+    def _persist_roles(cp: Dict[str, Any], peerA_actor: str, peerB_actor: str, aux_actor: str, aux_mode: str):
+        cp = dict(cp or {})
+        roles = dict(cp.get('roles') or {})
+        roles['peerA'] = dict(roles.get('peerA') or {})
+        roles['peerB'] = dict(roles.get('peerB') or {})
+        roles['aux']   = dict(roles.get('aux') or {})
+        roles['peerA']['actor'] = peerA_actor
+        roles['peerB']['actor'] = peerB_actor
+        roles['aux']['actor']   = aux_actor
+        roles['peerA'].setdefault('cwd','.')
+        roles['peerB'].setdefault('cwd','.')
+        roles['aux'].setdefault('cwd','.')
+        cp['roles'] = roles
+        aux = dict(cp.get('aux') or {})
+        aux['mode'] = 'on' if aux_mode == 'on' else 'off'
+        cp['aux'] = aux
+        _write_yaml(cli_profiles_path, cp)
+
+    try:
+        interactive = sys.stdin.isatty()
+    except Exception:
+        interactive = False
+    if interactive:
+        pa, pb, ax, aum = _current_roles(cli_profiles)
+        acts = _actors_available()
+        if not acts:
+            print("[WARN] No actors found in settings/agents.yaml; skipping role binding wizard.")
+        else:
+            print("\n[ROLES] Current bindings:")
+            print(f"  - PeerA: {pa}\n  - PeerB: {pb}\n  - Aux:   {ax} (mode={aum})")
+            ans = read_console_line_timeout("> Use previous bindings? Enter=yes / r=reconfigure [10s]: ", 10.0).strip().lower()
+            if ans in ("r","reconf","reconfigure","no","n"):
+                # PeerA selection
+                while True:
+                    print("[ROLES] Available actors:", ", ".join(acts))
+                    sel = read_console_line("> Choose actor for PeerA: ").strip()
+                    if sel in acts:
+                        pa = sel; break
+                    print("[HINT] Enter one of:", ", ".join(acts))
+                # PeerB selection (must differ)
+                while True:
+                    left = [x for x in acts if x != pa]
+                    print("[ROLES] Available actors:", ", ".join(left))
+                    sel = read_console_line("> Choose actor for PeerB (different from PeerA): ").strip()
+                    if sel in left:
+                        pb = sel; break
+                    print("[HINT] Must differ from PeerA.")
+                # Aux selection (can be off; otherwise must differ from A/B)
+                while True:
+                    left = [x for x in acts if (x != pa and x != pb)]
+                    print("[ROLES] Available actors for Aux:", ", ".join(left + ['off']))
+                    sel = read_console_line("> Choose actor for Aux (or 'off'): ").strip().lower()
+                    if sel == 'off':
+                        aum = 'off'
+                        # keep previous aux actor (or fallback to a distinct one if invalid)
+                        ax = ax if ax in acts else (left[0] if left else acts[0])
+                        break
+                    if sel in left:
+                        ax = sel; aum = 'on'; break
+                    print("[HINT] Enter one of:", ", ".join(left + ['off']))
+                _persist_roles(cli_profiles, pa, pb, ax, aum)
+                print(f"[ROLES] Saved: PeerA={pa} PeerB={pb} Aux={ax} (mode={aum})")
+                # Reload profiles snapshot for downstream reads in this function
+                cli_profiles = read_yaml(cli_profiles_path)
     # Load roles + actors; ensure required env vars in memory (never persist)
     try:
         resolved = load_profiles(home)

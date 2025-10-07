@@ -31,7 +31,15 @@ actors:
     env_require: ["OPENAI_API_KEY"]
 
   gemini:
-    # Aux-only actor by default; can be bound to Aux role via roles.aux.actor: gemini
+    # Can be bound to Peer and Aux roles
+    peer:
+      command: "gemini"
+      input_mode: "paste"
+      post_paste_keys: ["Enter"]
+      send_sequence: "Enter"
+      idle_quiet_seconds: 1.0
+      prompt_regex: '(?mi)^\s*(?:gemini|>>>|>)\s*$'
+      busy_regexes: []
     aux:
       invoke_command: 'gemini -p "{prompt}" --yolo'
       rate_limit_per_minute: 2
