@@ -1,132 +1,89 @@
-aux:
-  mode: 'off'
-  invoke_command: 'gemini -p "{prompt}" --yolo'
-  rate_limit_per_minute: 2
-
-peerA:
-  # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
-  prompt_regex: "(?mi)^\\s*(?:claude|assistant|a:|>)\\s*$"   # Adjust to your PeerA CLI prompt if needed
-  # DEPRECATED: busy_regexes will be removed in a future release.
-  busy_regexes: []                                           # Usually not required for LLM shells
-  idle_quiet_seconds: 1.0
-  # Input & send: send on Enter; for robustness, send Enter twice after paste
-  # Note: Ctrl-J inserts newline (no submit)
-  post_paste_keys: ["Enter", "Enter"]
-  input_mode: type                                           # paste | type (type can be more stable)
-  compose_newline_key: "C-j"                                 # Use Ctrl-J to insert newline (no submit)
-  send_sequence: "Enter"                                     # Final send key
-  type_send_at_end: true                                     # Submit once after typing all lines
-  chunk_lines: 14                                            # Break long messages by this number of lines
-  chunk_delay_ms: 160                                        # Delay between chunks (ms)
-  # Optional inbound suffix per source
-  inbound_suffix:
-    from_user: " Explore first: 2-3 quick options (1-liners), ask 1 decisive Q; then hand baton to PeerB. ultrathink"
-    from_peer: " Please review my work/opinion with first principles against our global goal; If nothing critical to add other than an pure ACK, stay silent and do not reply. ultrathink"
-    from_system: " ultrathink"
-  # Optional NUDGE suffix (system [NUDGE] lines only)
-  nudge_suffix: " Send messages by updating message files only (ASCII). If inbox is empty or whenever you are idle: do ONE high-value item with higher-order thinking - (A) strategic review (drift/priority/ideas), (B) tactical review or rework (REV/Pivot), or (C) any other works which are truly valuable. Send a message only with new evidence, a risk/pivot, or a decisional ask; otherwise stay silent. ultrathink"
-peerB:
-  # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
-  prompt_regex: "(?mi)^\\s*(?:codex(?:\\s*chat)?|>>>|>)\\s*$" # Adjust to your PeerB CLI prompt if needed
-  # DEPRECATED: busy_regexes will be removed in a future release.
-  busy_regexes:
-    - "\\bRunning\\b"
-    - "\\bExecuting\\b"
-    - "\\bBuilding\\b|\\bCompiling\\b"
-    - "\\bpytest\\b|\\bnpm\\s+test\\b|\\bjest\\b"
-    - "\\b\\d{1,3}%\\b"
-  idle_quiet_seconds: 1.5
-  # Codex CLI: send on Enter; use Ctrl-J for newline (no submit)
-  post_paste_keys: ["Enter"]
-  input_mode: paste
-  compose_newline_key: "C-j"
-  send_sequence: "Enter"
-  type_send_at_end: true
-  chunk_lines: 12
-  chunk_delay_ms: 180
-  # NUDGE robustness (tmux): after sending a line, extra Enters and delay (ms)
-  nudge_extra_enters: 0
-  nudge_enter_delay_ms: 250
-  # Optional inbound suffix per source
-  inbound_suffix:
-    from_user: " Do not act yet; wait for PeerA’s framing. Ask 1 decisive Q or propose a 2min micro-experiment."
-    from_peer: " No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter in 1 line; propose a Hook. If nothing critical to add other than an pure ACK, stay silent and do not reply."
-    from_system: " "
-  # Optional NUDGE suffix (system [NUDGE] lines only)
-  nudge_suffix: " Send messages by updating message files only. If inbox is empty or whenever you are idle: do ONE high-value item with higher-order thinking - (A) strategic review (drift/priority/ideas), (B) tactical review or rework (REV/Pivot), or (C) any other works which are truly valuable. Send a message only with new evidence, a risk/pivot, or a decisional ask; otherwise stay silent."
 delivery:
-  paste_max_wait_seconds: 6       # Max wait for idle before paste
-  recheck_interval_seconds: 0.6   # Poll interval
-  max_flush_batch: 3              # Max flush items per loop
-  require_ack: false              # Treat mailbox events as ACK; do not require CLI echo ACK
-  ack_mode: file_move             # ack_text | file_move; prefer file_move (CLI moves file to processed/)
-  read_timeout_seconds: 8         # Max wait to read one response round
-  ack_timeout_seconds: 40         # Mailbox ACK timeout threshold
-  resend_attempts: 2              # Max resends after timeout (avoid noise)
-  ack_require_mid: false          # Strictly require [MID: ...] echo to ACK? (default false)
-  duplicate_window_seconds: 90    # De-dup guard window
-  # Main loop poll interval (seconds). For unattended runs 2.0 is sufficient.
+  paste_max_wait_seconds: 6
+  recheck_interval_seconds: 0.6
+  max_flush_batch: 3
+  require_ack: false
+  ack_mode: file_move
+  read_timeout_seconds: 8
+  ack_timeout_seconds: 40
+  resend_attempts: 2
+  ack_require_mid: false
+  duplicate_window_seconds: 90
   main_loop_tick_seconds: 2.0
-  # --- periodic self-check ---
-  self_check_every_handoffs: 10   # Stronger cadence; push a self-check after N handoffs (0=disable)
-  self_check_text: |-
-    [Strategic Self-check · strict · <=1 line each]
-    1) Using POR (North-star/Guardrails/Now-Next-Later), are we off-course? Point the smallest divergence and the evidence.
-    2) Which current task is least worth continuing? Remove sunk cost; propose stop/change and one next step.
-    3) Where is the latest low-quality artifact or tech-debt mountain? Should we refuse review and rebuild from scratch? Provide the smallest probe and estimate.
-    4) Any misalignment, unclear boundary, or ambiguous acceptance? Fix it in the corresponding SUBPOR first, then proceed.
-    5) If we only had 1 day: what to drop, what to keep, what to do first? List three bullets.
-  # --- mailbox pull + nudge mode ---
-  mailbox_pull_enabled: true      # Enable inbox + NUDGE (instead of direct paste)
-  inbox_dirname: "inbox"          # Inbox dir (relative to .cccc/mailbox/<peer>/)
-  processed_retention: 200        # Max kept entries in processed/ (remove oldest beyond)
-  nudge_resend_seconds: 300       # If inbox not ACKed for this interval, re-NUDGE (5 minutes)
-  nudge_jitter_pct: 0.05          # Small jitter to avoid synchronized reminders
-  nudge_progress_timeout_s: 300   # Allow resend only if no progress for this long (seconds)
-  soft_ack_on_mailbox_activity: false  # Consider later mailbox activity as soft ACK (default off)
-  # Progress keepalive (light): when a peer's <TO_PEER> body contains a 'Progress:' line and the other side is silent,
-  # orchestrator sends a delayed FROM_SYSTEM keepalive to the sender to sustain execution.
+  self_check_every_handoffs: 10
+  self_check_text: '[Strategic Self-check · strict · <=1 line each]
+
+    1) Using POR (North-star/Guardrails/Now-Next-Later), are we off-course? Point
+    the smallest divergence and the evidence.
+
+    2) Which current task is least worth continuing? Remove sunk cost; propose stop/change
+    and one next step.
+
+    3) Where is the latest low-quality artifact or tech-debt mountain? Should we refuse
+    review and rebuild from scratch? Provide the smallest probe and estimate.
+
+    4) Any misalignment, unclear boundary, or ambiguous acceptance? Fix it in the
+    corresponding SUBPOR first, then proceed.
+
+    5) If we only had 1 day: what to drop, what to keep, what to do first? List three
+    bullets.'
+  mailbox_pull_enabled: true
+  inbox_dirname: inbox
+  processed_retention: 200
+  nudge_resend_seconds: 300
+  nudge_jitter_pct: 0.05
+  nudge_progress_timeout_s: 300
+  soft_ack_on_mailbox_activity: false
   keepalive_enabled: true
   keepalive_delay_seconds: 60
-  # --- periodic SYSTEM refresh ---
-  # Append full RULES (PEERA.md/PEERB.md) after every K-th self-check message
   system_refresh_every_self_checks: 3
-  # Startup policy for leftover inbox files (resume | discard | archive)
   inbox_startup_policy: resume
-  inbox_startup_prompt: true      # Prompt by default to avoid acting on stale files
+  inbox_startup_prompt: true
   inbox_startup_prompt_timeout_seconds: 30
   inbox_startup_prompt_noninteractive_timeout_seconds: 0
-  # --- lazy preamble ---
   lazy_preamble:
-    enabled: true              # Prepend preamble (from prompt_weaver) to the first user message per peer
-
-startup_wait_seconds: 12          # Wait time for first CLI prompt
-startup_nudge_seconds: 10         # Max wait before activating NUDGE
-console_echo: true                # Echo AI output in console (debug friendly; restart to apply)
+    enabled: true
+startup_wait_seconds: 12
+startup_nudge_seconds: 10
+console_echo: true
 tmux:
-  alternate_screen_off: true      # Keep scrollback (turn off alt-screen)
-commands:
-  peerA: "claude --dangerously-skip-permissions"
-  peerB: "codex --dangerously-bypass-approvals-and-sandbox"
-
-  # NUDGE backoff tuning
-  # Exponential backoff base and cap for repeated nudges
-  # Effective interval = max(nudge_resend_seconds, base * 2^retries) up to max cap
-  # See orchestrator_tmux.py for runtime application
-  
+  alternate_screen_off: true
 roles:
   peerA:
     actor: claude
-    cwd: "."
+    cwd: .
+    inbound_suffix:
+      from_user: ' Explore first: 2-3 quick options (1-liners), ask 1 decisive Q;
+        then hand baton to PeerB. ultrathink'
+      from_peer: ' Please review my work/opinion with first principles against our
+        global goal; If nothing critical to add other than an pure ACK, stay silent
+        and do not reply. ultrathink'
+      from_system: ' ultrathink'
+    nudge_suffix: ' Send messages by updating message files only (ASCII). If inbox
+      is empty or whenever you are idle: do ONE high-value item with higher-order
+      thinking - (A) strategic review (drift/priority/ideas), (B) tactical review
+      or rework (REV/Pivot), or (C) any other works which are truly valuable. Send
+      a message only with new evidence, a risk/pivot, or a decisional ask; otherwise
+      stay silent. ultrathink'
   peerB:
     actor: codex
-    cwd: "."
+    cwd: .
+    inbound_suffix:
+      from_user: ' Do not act yet; wait for PeerA’s framing. Ask 1 decisive Q or propose
+        a 2min micro-experiment.'
+      from_peer: ' No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter
+        in 1 line; propose a Hook. If nothing critical to add other than an pure ACK,
+        stay silent and do not reply.'
+      from_system: ' '
+    nudge_suffix: ' Send messages by updating message files only. If inbox is empty
+      or whenever you are idle: do ONE high-value item with higher-order thinking
+      - (A) strategic review (drift/priority/ideas), (B) tactical review or rework
+      (REV/Pivot), or (C) any other works which are truly valuable. Send a message
+      only with new evidence, a risk/pivot, or a decisional ask; otherwise stay silent.'
   aux:
     actor: gemini
-    cwd: "."
+    cwd: .
     rate_limit_per_minute: 2
-
-# Roles binding wizard (startup)
 roles_wizard:
   enabled: true
   timeout_seconds: 10

@@ -31,7 +31,7 @@ actors:
       invoke_command: 'codex exec --sandbox danger-full-access "{prompt}"'
       rate_limit_per_minute: 2
     capabilities: "Strong coding; multimodal input incl. images"
-    env_require: ["OPENAI_API_KEY"]
+    env_require: []
 
   gemini:
     # Can be bound to Peer and Aux roles
