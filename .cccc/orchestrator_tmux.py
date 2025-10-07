@@ -28,7 +28,7 @@ SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
 
 # Aux helper state
-AUX_MODES = {"off", "on"}
+# Aux on/off is derived from presence of roles.aux.actor; no explicit mode set
 AUX_WORK_ROOT_NAME = "aux_sessions"
 
 # ---------- REV state helpers (lightweight) ----------
@@ -1526,50 +1526,7 @@ def main(home: Path):
 
     # legacy _rewrite_aux_mode_block removed; aux on/off is derived from roles.aux.actor
 
-    def _persist_aux_mode(new_mode: str):
-        """Compatibility shim: 'on' ensures roles.aux.actor is set; 'off' clears it.
-        When turning on without a current actor, pick the first available actor not used by PeerA/PeerB.
-        """
-        # Read current profiles fresh
-        cp = read_yaml(cli_profiles_path)
-        roles = cp.get('roles') if isinstance(cp.get('roles'), dict) else {}
-        pa_actor = str(((roles.get('peerA') or {}).get('actor')) or '').strip()
-        pb_actor = str(((roles.get('peerB') or {}).get('actor')) or '').strip()
-        aux_role = roles.get('aux') if isinstance(roles.get('aux'), dict) else {}
-        cur_aux = str((aux_role.get('actor') or '')).strip()
-        actors_doc = read_yaml(settings/"agents.yaml")
-        acts = list((actors_doc.get('actors') or {}).keys()) if isinstance(actors_doc.get('actors'), dict) else []
-        if new_mode == 'off':
-            # Clear aux actor
-            if isinstance(aux_role, dict):
-                aux_role['actor'] = ''
-                roles['aux'] = aux_role
-                cp['roles'] = roles
-                try:
-                    import yaml
-                    cli_profiles_path.write_text(yaml.safe_dump(cp, allow_unicode=True, sort_keys=False), encoding='utf-8')
-                except Exception:
-                    cli_profiles_path.write_text(json.dumps(cp, ensure_ascii=False, indent=2), encoding='utf-8')
-        else:
-            # Ensure aux actor present
-            if not cur_aux:
-                candidates = [x for x in acts if x not in (pa_actor, pb_actor)]
-                pick = candidates[0] if candidates else (acts[0] if acts else '')
-                if not isinstance(aux_role, dict):
-                    aux_role = {}
-                aux_role['actor'] = pick
-                roles['aux'] = aux_role
-                cp['roles'] = roles
-                try:
-                    import yaml
-                    cli_profiles_path.write_text(yaml.safe_dump(cp, allow_unicode=True, sort_keys=False), encoding='utf-8')
-                except Exception:
-                    cli_profiles_path.write_text(json.dumps(cp, ensure_ascii=False, indent=2), encoding='utf-8')
-        try:
-            from prompt_weaver import ensure_rules_docs  # type: ignore
-            ensure_rules_docs(home)
-        except Exception:
-            pass
+    
     # Role profiles merged with actor IO settings
     profileA = (resolved.get('peerA') or {}).get('profile', {})
     profileB = (resolved.get('peerB') or {}).get('profile', {})
@@ -1807,20 +1764,12 @@ def main(home: Path):
                         last = aux_last_reason or "-"
                         cmd_display = aux_command or "-"
                         result = {"ok": True, "message": f"Aux status: mode={aux_mode}, command={cmd_display}, last_reason={last}"}
-                    elif action in ("on", "off", "auto", "key_nodes", "manual"):
-                        new_mode = "on" if action in ("on", "auto", "key_nodes", "manual") else "off"
-                        if new_mode not in AUX_MODES:
-                            raise ValueError("mode must be off/on")
-                        aux_mode = new_mode
-                        _persist_aux_mode(new_mode)
-                        write_status(deliver_paused)
-                        result = {"ok": True, "message": f"Aux mode set to {aux_mode}"}
                     elif action == "reminder":
                         stage = str(args.get("stage") or "manual")
                         _send_aux_reminder(stage)
                         result = {"ok": True, "message": f"Aux reminder triggered ({stage})"}
                     else:
-                        raise ValueError("unsupported aux action")
+                        result = {"ok": False, "message": "unsupported (only status|reminder)"}
                 elif command == "aux_cli":
                     prompt_text = str(args.get("prompt") or "").strip()
                     if not prompt_text:
@@ -2942,7 +2891,7 @@ def main(home: Path):
             print("  /pause | /resume        → pause/resume A↔B handoff")
             print("  /refresh                → re-inject SYSTEM prompt")
             print("  /reset compact|clear    → context maintenance (compact = fold context, clear = fresh restart)")
-            print("  /aux status|on|off      → inspect or set Aux availability")
+            print("  /aux status|reminder    → show Aux status or trigger reminder")
             print("  /review                → request Aux review bundle")
             print("  /echo on|off|<empty>    → console echo on/off/show")
             print("  q                       → quit orchestrator")
@@ -2997,21 +2946,12 @@ def main(home: Path):
         if line.startswith("/aux"):
             parts = line.split()
             sub = parts[1].lower() if len(parts) > 1 else "status"
-            if sub in ("on", "off", "auto", "key_nodes", "manual"):
-                new_mode = "on" if sub in ("on", "auto", "key_nodes", "manual") else "off"
-                if new_mode not in AUX_MODES:
-                    print("[AUX] Modes: off | on")
-                    continue
-                aux_mode = new_mode
-                _persist_aux_mode(new_mode)
-                write_status(deliver_paused)
-                print(f"[AUX] Mode set to {aux_mode}")
-            elif sub == "status":
-                cmd_display = aux_command or "-"
-                last = aux_last_reason or "-"
-                print(f"[AUX] mode={aux_mode} command={cmd_display} last_reason={last}")
+            if sub == "status":
+                cmd_display = aux_command or '-'
+                last = aux_last_reason or '-'
+                print(f'[AUX] mode={aux_mode} command={cmd_display} last_reason={last}')
             else:
-                print("[AUX] Usage: /aux status|on|off")
+                print('[AUX] Usage: /aux status|reminder')
             continue
         if line == "/pause":
             deliver_paused = True
