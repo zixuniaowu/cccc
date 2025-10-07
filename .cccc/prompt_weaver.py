@@ -509,39 +509,21 @@ def _ensure_str(value: Any) -> str:
     return str(value).strip()
 
 
+def weave_minimal_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:
+    """Minimal SYSTEM entry point (currently reuses the full system prompt).
+    We keep this function as a clear, future-friendly seam; at present it
+    returns the exact same text as weave_system_prompt to avoid diverging
+    sources of truth.
+    """
+    return weave_system_prompt(home, peer, por)
+
+
 def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:
-    """Minimal SYSTEM: role, POR, rules path - no duplication."""
+    """Full SYSTEM: rules document for the target peer (+ one-line bindings).
+    This is the single source we maintain; callers that want a minimal
+    variant should call weave_minimal_system_prompt (currently identical).
+    """
     peer = (peer or "peerA").strip()
-    try:
-        ensure_rules_docs(home)
-    except Exception:
-        pass
-    por_file = por_path(home)
-    rules_path = (home/"rules"/("PEERA.md" if (peer.lower()=="peera" or peer=="peerA") else "PEERB.md")).as_posix()
-    other = "peerB" if (peer.lower()=="peera" or peer=="peerA") else "peerA"
-    lines = [
-        "CCCC Runtime SYSTEM (minimal)",
-        f"* You are {peer}. Collaborate as equals with {other}.",
-        f"* POR: {por_file.as_posix()} (single source; update when direction changes).",
-        f"* Rules: {rules_path} - follow this document; keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced insight block.",
-        "",
-    ]
-    # Always append a concise one-liner with current bindings
-    try:
-        lines.append(_runtime_bindings_one_liner(home))
-        lines.append("")
-    except Exception:
-        pass
-    return "\n".join(lines)
-
-
-def weave_preamble(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:
-    """
-    Preamble text for the very first user message.
-    Change: return the full rules document for the target peer, so the
-    initial injection carries the complete SYSTEM details (not the minimal
-    banner). Falls back to the minimal SYSTEM when rules are unavailable.
-    """
     try:
         ensure_rules_docs(home)
     except Exception:
@@ -558,16 +540,23 @@ def weave_preamble(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) 
             return txt
     except Exception:
         pass
-    # Fallback to the minimal SYSTEM if anything goes wrong
-    base = weave_system_prompt(home, peer, por)
-    # Append runtime bindings (actor/cwd/capabilities/invoke) for this run
+    # Fallback: construct a minimal banner if rules are not yet available
+    por_file = por_path(home)
+    rules_path = (home/"rules"/("PEERA.md" if (peer.lower()=="peera" or peer=="peerA") else "PEERB.md")).as_posix()
+    other = "peerB" if (peer.lower()=="peera" or peer=="peerA") else "peerA"
+    lines = [
+        "CCCC Runtime SYSTEM (full)",
+        f"* You are {peer}. Collaborate as equals with {other}.",
+        f"* POR: {por_file.as_posix()} (single source; update when direction changes).",
+        f"* Rules: {rules_path} - follow this document; keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced insight block.",
+        "",
+    ]
     try:
-        snippet = _runtime_bindings_snippet(home)
-        if snippet:
-            return base.rstrip() + "\n\n" + snippet + "\n"
+        lines.append(_runtime_bindings_one_liner(home))
+        lines.append("")
     except Exception:
         pass
-    return base
+    return "\n".join(lines)
 
 def _runtime_bindings_snippet(home: Path) -> str:
     def _read_yaml(p: Path) -> Dict[str, Any]:

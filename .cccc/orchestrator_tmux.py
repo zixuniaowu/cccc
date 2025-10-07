@@ -1059,21 +1059,21 @@ def git_commit(msg: str):
 # ---------- prompt weaving ----------
 def weave_system(home: Path, peer: str) -> str:
     ensure_por(home)
-    from prompt_weaver import weave_system_prompt, ensure_rules_docs
+    from prompt_weaver import weave_minimal_system_prompt, ensure_rules_docs
     try:
         ensure_rules_docs(home)
     except Exception:
         pass
-    return weave_system_prompt(home, peer)
+    return weave_minimal_system_prompt(home, peer)
 
 def weave_preamble_text(home: Path, peer: str) -> str:
-    """Single-source preamble (same source as SYSTEM)."""
+    """Preamble for the very first user message (full SYSTEM)."""
     try:
-        from prompt_weaver import weave_preamble
+        from prompt_weaver import weave_system_prompt
         ensure_por(home)
-        return weave_preamble(home, peer)
+        return weave_system_prompt(home, peer)
     except Exception:
-        # Fallback to full system when preamble helper not present
+        # Fallback to minimal system if full generation fails
         return weave_system(home, peer)
 
 DEFAULT_CONTEXT_EXCLUDES = [
