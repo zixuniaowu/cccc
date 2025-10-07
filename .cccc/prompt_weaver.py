@@ -77,17 +77,13 @@ def _is_im_enabled(home: Path) -> bool:
     return False
 
 def _aux_mode(home: Path) -> str:
+    """Aux is ON when roles.aux.actor is configured; otherwise OFF."""
     conf_path = home/"settings"/"cli_profiles.yaml"
     conf = _read_yaml_or_json(conf_path) if conf_path.exists() else {}
-    aux_section = conf.get("aux") if isinstance(conf.get("aux"), dict) else {}
-    mode_val = aux_section.get("mode")
-    if isinstance(mode_val, bool):
-        mode_raw = "on" if mode_val else "off"
-    else:
-        mode_raw = str(mode_val or "off").lower().strip()
-    if mode_raw in ("on", "auto", "key_nodes", "keynodes", "manual", "true"):
-        return "on"
-    return "off"
+    roles = conf.get('roles') if isinstance(conf.get('roles'), dict) else {}
+    aux_role = roles.get('aux') if isinstance(roles.get('aux'), dict) else {}
+    actor = str((aux_role.get('actor') or '').strip())
+    return "on" if actor else "off"
 
 def _conversation_reset(home: Path) -> Tuple[str, Optional[int]]:
     gv = home/"settings"/"governance.yaml"

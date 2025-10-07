@@ -121,3 +121,8 @@ roles:
     actor: gemini
     cwd: "."
     rate_limit_per_minute: 2
+
+# Roles binding wizard (startup)
+roles_wizard:
+  enabled: true
+  timeout_seconds: 10

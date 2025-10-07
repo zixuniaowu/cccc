@@ -97,24 +97,29 @@ def load_profiles(home: Path) -> Dict[str, Any]:
     pa_actor, pa_profile, pa_cmd = _resolve_peer(peerA_role, 'peerA')
     pb_actor, pb_profile, pb_cmd = _resolve_peer(peerB_role, 'peerB')
 
-    # Aux
+    # Aux (new semantics): aux is ON when roles.aux.actor is set; otherwise OFF
     aux_actor_id = str(aux_role.get('actor') or '').strip()
-    if not aux_actor_id:
-        raise ValueError("Missing roles.aux.actor")
-    aux_ad = actors.get(aux_actor_id)
-    if not isinstance(aux_ad, dict):
-        raise ValueError(f"Actor '{aux_actor_id}' not found in agents.yaml")
-    aux_conf = aux_ad.get('aux') or {}
-    if not isinstance(aux_conf, dict):
-        raise ValueError(f"Actor '{aux_actor_id}' has no 'aux' section")
-    aux_inv = str(aux_conf.get('invoke_command') or '').strip()
-    if not aux_inv:
-        raise ValueError(f"Actor '{aux_actor_id}'.aux.invoke_command is empty")
-    rate = aux_role.get('rate_limit_per_minute') or aux_conf.get('rate_limit_per_minute') or 2
+    aux_inv = ''
+    rate = aux_role.get('rate_limit_per_minute') or 2
     try:
         rate = int(rate)
     except Exception:
         rate = 2
+    if aux_actor_id:
+        aux_ad = actors.get(aux_actor_id)
+        if not isinstance(aux_ad, dict):
+            raise ValueError(f"Actor '{aux_actor_id}' not found in agents.yaml")
+        aux_conf = aux_ad.get('aux') or {}
+        if not isinstance(aux_conf, dict):
+            raise ValueError(f"Actor '{aux_actor_id}' has no 'aux' section")
+        aux_inv = str(aux_conf.get('invoke_command') or '').strip()
+        if not aux_inv:
+            raise ValueError(f"Actor '{aux_actor_id}'.aux.invoke_command is empty")
+        # Default rate: role override > actor default
+        try:
+            rate = int(aux_role.get('rate_limit_per_minute') or aux_conf.get('rate_limit_per_minute') or rate)
+        except Exception:
+            pass
 
     # Capabilities for display
     caps: Dict[str, Dict[str, Any]] = {}
@@ -124,7 +129,7 @@ def load_profiles(home: Path) -> Dict[str, Any]:
 
     # Env requirements
     envs: List[str] = []
-    for aid in (pa_actor, pb_actor, aux_actor_id):
+    for aid in (pa_actor, pb_actor) + ((aux_actor_id,) if aux_actor_id else tuple()):
         ad = actors.get(aid) or {}
         need = ad.get('env_require') or []
         if isinstance(need, list):
@@ -145,7 +150,7 @@ def load_profiles(home: Path) -> Dict[str, Any]:
             'profile': pb_profile,
         },
         'aux': {
-            'actor': aux_actor_id,
+            'actor': aux_actor_id,  # empty/None means OFF
             'cwd': aux_role.get('cwd') or None,
             'invoke_command': aux_inv,
             'rate_limit_per_minute': rate,
@@ -172,4 +177,3 @@ def ensure_env_vars(keys: List[str], *, prompt: bool = True) -> List[str]:
             pass
         missing = [k for k in keys if not os.environ.get(k)]
     return missing
-

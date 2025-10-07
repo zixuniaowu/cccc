@@ -1467,46 +1467,47 @@ def main(home: Path):
     except Exception:
         interactive = False
     if interactive:
+        # Wizard config
+        wiz = cli_profiles.get('roles_wizard') if isinstance(cli_profiles.get('roles_wizard'), dict) else {}
+        wiz_enabled = bool(wiz.get('enabled', True))
+        try:
+            wiz_timeout = float(wiz.get('timeout_seconds', 10))
+        except Exception:
+            wiz_timeout = 10.0
         pa, pb, ax, aum = _current_roles(cli_profiles)
         acts = _actors_available()
-        if not acts:
-            print("[WARN] No actors found in settings/agents.yaml; skipping role binding wizard.")
-        else:
+        if wiz_enabled and acts:
             print("\n[ROLES] Current bindings:")
-            print(f"  - PeerA: {pa}\n  - PeerB: {pb}\n  - Aux:   {ax} (mode={aum})")
-            ans = read_console_line_timeout("> Use previous bindings? Enter=yes / r=reconfigure [10s]: ", 10.0).strip().lower()
+            print(f"  - PeerA: {pa}\n  - PeerB: {pb}\n  - Aux:   {ax if ax else 'none'}")
+            ans = read_console_line_timeout(f"> Use previous bindings? Enter=yes / r=reconfigure [{int(wiz_timeout)}s]: ", wiz_timeout).strip().lower()
             if ans in ("r","reconf","reconfigure","no","n"):
+                def _choose(label: str, options: list[str], allow_none: bool = False) -> str:
+                    opts = list(options)
+                    disp = [f"{i+1}) {name}" for i, name in enumerate(opts + (["none"] if allow_none else []))]
+                    print(f"[ROLES] Options for {label}: ", ", ".join(disp))
+                    while True:
+                        sel = read_console_line(f"> Choose {label}: ").strip().lower()
+                        if sel.isdigit():
+                            idx = int(sel) - 1
+                            if 0 <= idx < len(opts):
+                                return opts[idx]
+                            if allow_none and idx == len(opts):
+                                return ''
+                        if allow_none and sel in ("none","off"):
+                            return ''
+                        if sel in opts:
+                            return sel
+                        print("[HINT] Enter one of indices or names shown above.")
                 # PeerA selection
-                while True:
-                    print("[ROLES] Available actors:", ", ".join(acts))
-                    sel = read_console_line("> Choose actor for PeerA: ").strip()
-                    if sel in acts:
-                        pa = sel; break
-                    print("[HINT] Enter one of:", ", ".join(acts))
+                pa = _choose('PeerA', acts, allow_none=False)
                 # PeerB selection (must differ)
-                while True:
-                    left = [x for x in acts if x != pa]
-                    print("[ROLES] Available actors:", ", ".join(left))
-                    sel = read_console_line("> Choose actor for PeerB (different from PeerA): ").strip()
-                    if sel in left:
-                        pb = sel; break
-                    print("[HINT] Must differ from PeerA.")
-                # Aux selection (can be off; otherwise must differ from A/B)
-                while True:
-                    left = [x for x in acts if (x != pa and x != pb)]
-                    print("[ROLES] Available actors for Aux:", ", ".join(left + ['off']))
-                    sel = read_console_line("> Choose actor for Aux (or 'off'): ").strip().lower()
-                    if sel == 'off':
-                        aum = 'off'
-                        # keep previous aux actor (or fallback to a distinct one if invalid)
-                        ax = ax if ax in acts else (left[0] if left else acts[0])
-                        break
-                    if sel in left:
-                        ax = sel; aum = 'on'; break
-                    print("[HINT] Enter one of:", ", ".join(left + ['off']))
+                pb = _choose('PeerB', [x for x in acts if x != pa], allow_none=False)
+                # Aux selection: can be none; must differ from A/B when set
+                aux_choice = _choose('Aux', [x for x in acts if (x != pa and x != pb)], allow_none=True)
+                ax = aux_choice  # '' means none/off
+                aum = 'on' if ax else 'off'
                 _persist_roles(cli_profiles, pa, pb, ax, aum)
-                print(f"[ROLES] Saved: PeerA={pa} PeerB={pb} Aux={ax} (mode={aum})")
-                # Reload profiles snapshot for downstream reads in this function
+                print(f"[ROLES] Saved: PeerA={pa} PeerB={pb} Aux={ax or 'none'}")
                 cli_profiles = read_yaml(cli_profiles_path)
     # Load roles + actors; ensure required env vars in memory (never persist)
     try:
@@ -1568,22 +1569,44 @@ def main(home: Path):
         return new_text, new_text != src
 
     def _persist_aux_mode(new_mode: str):
-        canonical = "on" if new_mode in {"on", "auto", "key_nodes", "manual", True, "true"} else "off"
-        aux_section = cli_profiles.get("aux")
-        if not isinstance(aux_section, dict):
-            aux_section = {}
-            cli_profiles["aux"] = aux_section
-        aux_section["mode"] = canonical
-        try:
-            original = cli_profiles_path.read_text(encoding="utf-8")
-        except Exception:
-            return
-        updated, changed = _rewrite_aux_mode_block(original, canonical)
-        if not changed:
-            return
-        tmp = cli_profiles_path.with_suffix('.tmp')
-        tmp.write_text(updated, encoding='utf-8')
-        tmp.replace(cli_profiles_path)
+        """Compatibility shim: 'on' ensures roles.aux.actor is set; 'off' clears it.
+        When turning on without a current actor, pick the first available actor not used by PeerA/PeerB.
+        """
+        # Read current profiles fresh
+        cp = read_yaml(cli_profiles_path)
+        roles = cp.get('roles') if isinstance(cp.get('roles'), dict) else {}
+        pa_actor = str(((roles.get('peerA') or {}).get('actor')) or '').strip()
+        pb_actor = str(((roles.get('peerB') or {}).get('actor')) or '').strip()
+        aux_role = roles.get('aux') if isinstance(roles.get('aux'), dict) else {}
+        cur_aux = str((aux_role.get('actor') or '')).strip()
+        actors_doc = read_yaml(settings/"agents.yaml")
+        acts = list((actors_doc.get('actors') or {}).keys()) if isinstance(actors_doc.get('actors'), dict) else []
+        if new_mode == 'off':
+            # Clear aux actor
+            if isinstance(aux_role, dict):
+                aux_role['actor'] = ''
+                roles['aux'] = aux_role
+                cp['roles'] = roles
+                try:
+                    import yaml
+                    cli_profiles_path.write_text(yaml.safe_dump(cp, allow_unicode=True, sort_keys=False), encoding='utf-8')
+                except Exception:
+                    cli_profiles_path.write_text(json.dumps(cp, ensure_ascii=False, indent=2), encoding='utf-8')
+        else:
+            # Ensure aux actor present
+            if not cur_aux:
+                candidates = [x for x in acts if x not in (pa_actor, pb_actor)]
+                pick = candidates[0] if candidates else (acts[0] if acts else '')
+                if not isinstance(aux_role, dict):
+                    aux_role = {}
+                aux_role['actor'] = pick
+                roles['aux'] = aux_role
+                cp['roles'] = roles
+                try:
+                    import yaml
+                    cli_profiles_path.write_text(yaml.safe_dump(cp, allow_unicode=True, sort_keys=False), encoding='utf-8')
+                except Exception:
+                    cli_profiles_path.write_text(json.dumps(cp, ensure_ascii=False, indent=2), encoding='utf-8')
         try:
             from prompt_weaver import ensure_rules_docs  # type: ignore
             ensure_rules_docs(home)
@@ -1601,52 +1624,17 @@ def main(home: Path):
         SYSTEM_REFRESH_EVERY = 3
     # Delivery mode (tmux only). Legacy 'bridge' mode removed.
     # Delivery mode fixed to tmux (legacy bridge removed)
-    aux_conf = cli_profiles.get("aux", {}) if isinstance(cli_profiles.get("aux", {}), dict) else {}
     # Source AUX template from bound actor (agents.yaml); role may override rate
     aux_resolved = resolved.get('aux') or {}
-    aux_command_template = str(aux_resolved.get('invoke_command') or 'echo {prompt}').strip()
+    aux_command_template = str(aux_resolved.get('invoke_command') or '').strip()
     aux_command = aux_command_template
     aux_cwd = str(aux_resolved.get('cwd') or '.')
     rate_limit_per_minute = int(aux_resolved.get("rate_limit_per_minute") or 2)
     if rate_limit_per_minute <= 0:
         rate_limit_per_minute = 1
     aux_min_interval = 60.0 / rate_limit_per_minute
-    mode_val = aux_conf.get("mode")
-    if isinstance(mode_val, bool):
-        mode_raw = "on" if mode_val else "off"
-    else:
-        mode_raw = str(mode_val or "off").lower().strip()
-    if mode_raw in ("on", "auto"):
-        aux_mode = "on"
-    else:
-        aux_mode = "off"
-    if mode_raw not in ("on", "off"):
-        _persist_aux_mode(aux_mode)
-
-    try:
-        interactive = sys.stdin.isatty()
-    except Exception:
-        interactive = False
-    if interactive:
-        print(f"[AUX] Current mode: {aux_mode} (persisted in {cli_profiles_path.name}). Press Enter to keep, or type on/off.")
-        ans = read_console_line_timeout("> Aux mode [on/off/Enter=keep]: ", 10.0).strip().lower()
-        updated = False
-        if ans in ("on", "auto", "key_nodes", "manual"):
-            if aux_mode != "on":
-                aux_mode = "on"
-                _persist_aux_mode(aux_mode)
-                updated = True
-                print("[AUX] Mode set to on")
-        elif ans == "off":
-            if aux_mode != "off":
-                aux_mode = "off"
-                _persist_aux_mode(aux_mode)
-                updated = True
-                print("[AUX] Mode set to off")
-        if not updated and ans:
-            print("[AUX] Keeping previous mode. Adjust anytime via /aux on|off.")
-        else:
-            print("[AUX] Keeping previous mode. Adjust anytime via /aux on|off.")
+    # Aux on/off is derived from presence of roles.aux.actor (no separate mode flag)
+    aux_mode = "on" if str((aux_resolved.get('actor') or '')).strip() else "off"
 
     # Merge input_mode per peer if provided
     imodes = cli_profiles.get("input_mode", {}) if isinstance(cli_profiles.get("input_mode", {}), dict) else {}

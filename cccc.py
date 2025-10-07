@@ -262,7 +262,10 @@ def main():
             ax = resolved.get('aux') or {}
             # read aux.mode for display
             cp = _read_yaml(home/"settings"/"cli_profiles.yaml") if home.exists() else {}
-            aux_mode = str(((cp.get('aux') or {}).get('mode')) or 'off').strip().lower()
+            # aux is on iff roles.aux.actor is set
+            roles = (cp.get('roles') or {}) if isinstance(cp.get('roles'), dict) else {}
+            aux_role = (roles.get('aux') or {}) if isinstance(roles.get('aux'), dict) else {}
+            aux_mode = 'on' if str((aux_role.get('actor') or '')).strip() else 'off'
             pa_actor = str(pa.get('actor') or '')
             pb_actor = str(pb.get('actor') or '')
             aux_actor = str(ax.get('actor') or '')
@@ -278,7 +281,7 @@ def main():
                 return 'OK' if _which(b) else 'MISSING'
             print(f"  peerA: actor={pa_actor} cwd={pa_cwd} cmd=`{pa_cmd}` (bin={pa_bin}:{_ok(pa_bin)})")
             print(f"  peerB: actor={pb_actor} cwd={pb_cwd} cmd=`{pb_cmd}` (bin={pb_bin}:{_ok(pb_bin)})")
-            print(f"  aux:   actor={aux_actor} cwd={aux_cwd} mode={aux_mode} cmd=`{aux_cmd}` (bin={aux_bin}:{_ok(aux_bin)})")
+            print(f"  aux:   actor={aux_actor or 'none'} cwd={aux_cwd} mode={aux_mode} cmd=`{aux_cmd}` (bin={aux_bin}:{_ok(aux_bin)})")
         except Exception as e:
             print(f"- roles: failed to resolve: {e}")
 
