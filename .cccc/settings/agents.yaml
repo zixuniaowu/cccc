@@ -1,0 +1,34 @@
+actors:
+  claude:
+    peer:
+      command: "claude --dangerously-skip-permissions"
+      input_mode: "type"
+      post_paste_keys: ["Enter", "Enter"]
+      send_sequence: "Enter"
+      compose_newline_key: "C-j"
+      idle_quiet_seconds: 1.0
+      prompt_regex: "(?mi)^\s*(?:claude|assistant|a:|>)\s*$"
+      busy_regexes: []
+    aux:
+      invoke_command: 'claude -p "{prompt}"'
+      rate_limit_per_minute: 2
+    capabilities: "Strong coding; no built-in web browsing; vision via API (model-dependent)"
+    env_require: []
+
+  codex:
+    peer:
+      command: "codex --dangerously-bypass-approvals-and-sandbox"
+      input_mode: "paste"
+      post_paste_keys: ["Enter"]
+      send_sequence: "Enter"
+      idle_quiet_seconds: 1.0
+      prompt_regex: "(?mi)^\s*(?:codex(?:\s*chat)?|>>>|>)\s*$"
+      busy_regexes: []
+    aux:
+      invoke_command: 'codex exec "{prompt}"'
+      rate_limit_per_minute: 2
+    capabilities: "Local coding agent; multimodal input incl. images; Suggest/Auto Edit/Full Auto modes"
+    env_require: ["OPENAI_API_KEY"]
+
+# Note: Bindings (which actor each role uses) live in cli_profiles.yaml under roles.*.actor
+

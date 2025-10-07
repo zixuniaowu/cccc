@@ -1,7 +1,7 @@
 actors:
   claude:
     peer:
-      command: "claude --dangerously-skip-permissions"
+      command: "claude"
       input_mode: "type"
       post_paste_keys: ["Enter", "Enter"]
       send_sequence: "Enter"
@@ -12,7 +12,7 @@ actors:
     aux:
       invoke_command: 'claude -p "{prompt}"'
       rate_limit_per_minute: 2
-    capabilities: "Strong coding; API web‑search; no vision"
+    capabilities: "Strong coding; no built‑in web browsing; vision via API"
     env_require: []
 
 ## Note: Actor selection (bindings) is defined in cli_profiles.yaml under roles.*.actor.

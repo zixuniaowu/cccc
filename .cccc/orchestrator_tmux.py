@@ -16,6 +16,7 @@ from glob import glob
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
+from common.config import load_profiles, ensure_env_vars
 from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox
 from por_manager import ensure_por, por_path, por_status_snapshot, read_por_text
 
@@ -1412,6 +1413,15 @@ def main(home: Path):
 
     cli_profiles_path = settings/"cli_profiles.yaml"
     cli_profiles = read_yaml(cli_profiles_path)
+    # Load roles + actors; ensure required env vars in memory (never persist)
+    try:
+        resolved = load_profiles(home)
+        missing_env = ensure_env_vars(resolved.get('env_require') or [], prompt=True)
+        if missing_env:
+            log_ledger(home, {"kind":"missing-env", "keys": missing_env})
+    except Exception as exc:
+        print(f"[FATAL] config load failed: {exc}")
+        raise SystemExit(1)
     try:
         from prompt_weaver import ensure_rules_docs  # type: ignore
         ensure_rules_docs(home)
@@ -1484,8 +1494,9 @@ def main(home: Path):
             ensure_rules_docs(home)
         except Exception:
             pass
-    profileA = cli_profiles.get("peerA", {})
-    profileB = cli_profiles.get("peerB", {})
+    # Role profiles merged with actor IO settings
+    profileA = (resolved.get('peerA') or {}).get('profile', {})
+    profileB = (resolved.get('peerB') or {}).get('profile', {})
     delivery_conf = cli_profiles.get("delivery", {})
     try:
         SYSTEM_REFRESH_EVERY = int(delivery_conf.get("system_refresh_every_self_checks") or 3)
@@ -1496,9 +1507,11 @@ def main(home: Path):
     # Delivery mode (tmux only). Legacy 'bridge' mode removed.
     # Delivery mode fixed to tmux (legacy bridge removed)
     aux_conf = cli_profiles.get("aux", {}) if isinstance(cli_profiles.get("aux", {}), dict) else {}
-    aux_command_template = str(aux_conf.get("invoke_command") or 'gemini -p "{prompt}" --yolo').strip()
+    # Source AUX template from bound actor (agents.yaml); role may override rate
+    aux_resolved = resolved.get('aux') or {}
+    aux_command_template = str(aux_resolved.get('invoke_command') or 'echo {prompt}').strip()
     aux_command = aux_command_template
-    rate_limit_per_minute = int(aux_conf.get("rate_limit_per_minute") or 2)
+    rate_limit_per_minute = int(aux_resolved.get("rate_limit_per_minute") or 2)
     if rate_limit_per_minute <= 0:
         rate_limit_per_minute = 1
     aux_min_interval = 60.0 / rate_limit_per_minute
@@ -1837,19 +1850,23 @@ def main(home: Path):
             print("[HINT] Enter 1 or 2.")
 
     # Start interactive CLIs (fallback to built-in Mock when not configured)
-    commands = cli_profiles.get("commands", {}) if isinstance(cli_profiles.get("commands", {}), dict) else {}
-    CLAUDE_I_CMD = os.environ.get("CLAUDE_I_CMD") or commands.get("peerA") or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerA"
-    CODEX_I_CMD  = os.environ.get("CODEX_I_CMD")  or commands.get("peerB") or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerB"
-    if (commands.get("peerA") is None and os.environ.get("CLAUDE_I_CMD") is None) or \
-       (commands.get("peerB") is None and os.environ.get("CODEX_I_CMD") is None):
-        print("[INFO] Some CLI commands not provided; missing side will use built-in Mock (configure in cli_profiles.yaml or via env vars).")
-    else:
-        print("[INFO] Using CLI commands from configuration (overridable by env).")
+    # Build peer launch commands from actor templates (env can still override)
+    pa_cmd = (resolved.get('peerA') or {}).get('command') or ''
+    pb_cmd = (resolved.get('peerB') or {}).get('command') or ''
+    CLAUDE_I_CMD = os.environ.get("CLAUDE_I_CMD") or pa_cmd or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerA"
+    CODEX_I_CMD  = os.environ.get("CODEX_I_CMD")  or pb_cmd or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerB"
     if start_mode in ("has_doc", "ai_bootstrap"):
-        tmux_start_interactive(left, CLAUDE_I_CMD)
-        print(f"[LAUNCH] PeerA mode=tmux pane={left} cmd={CLAUDE_I_CMD}")
-        tmux_start_interactive(right, CODEX_I_CMD)
-        print(f"[LAUNCH] PeerB mode=tmux pane={right} cmd={CODEX_I_CMD}")
+        # Wrap with role cwd when provided
+        def _wrap_cwd(cmd: str, cwd: str | None) -> str:
+            if cwd and cwd not in (".", ""):
+                return f"bash -lc {shlex.quote(f'cd {cwd} && {cmd}') }"
+            return cmd
+        pa_cwd = (resolved.get('peerA') or {}).get('cwd') or '.'
+        pb_cwd = (resolved.get('peerB') or {}).get('cwd') or '.'
+        tmux_start_interactive(left, _wrap_cwd(CLAUDE_I_CMD, pa_cwd))
+        print(f"[LAUNCH] PeerA mode=tmux pane={left} cmd={CLAUDE_I_CMD} cwd={pa_cwd}")
+        tmux_start_interactive(right, _wrap_cwd(CODEX_I_CMD, pb_cwd))
+        print(f"[LAUNCH] PeerB mode=tmux pane={right} cmd={CODEX_I_CMD} cwd={pb_cwd}")
         # Debug: show current commands per pane
         try:
             code,out,err = tmux('list-panes','-F','#{pane_id} #{pane_current_command}')

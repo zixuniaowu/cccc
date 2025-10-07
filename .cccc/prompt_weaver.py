@@ -480,4 +480,50 @@ def weave_preamble(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) 
     except Exception:
         pass
     # Fallback to the minimal SYSTEM if anything goes wrong
-    return weave_system_prompt(home, peer, por)
+    base = weave_system_prompt(home, peer, por)
+    # Append runtime bindings (actor/cwd/capabilities/invoke) for this run
+    try:
+        snippet = _runtime_bindings_snippet(home)
+        if snippet:
+            return base.rstrip() + "\n\n" + snippet + "\n"
+    except Exception:
+        pass
+    return base
+
+def _runtime_bindings_snippet(home: Path) -> str:
+    def _read_yaml(p: Path) -> Dict[str, Any]:
+        try:
+            import yaml  # type: ignore
+            return yaml.safe_load(p.read_text(encoding='utf-8')) or {}
+        except Exception:
+            try:
+                return json.loads(p.read_text(encoding='utf-8'))
+            except Exception:
+                return {}
+    roles = _read_yaml(home/"settings"/"cli_profiles.yaml")
+    actors_doc = _read_yaml(home/"settings"/"agents.yaml")
+    actors = actors_doc.get('actors') or {}
+    def _role(key: str) -> Dict[str, Any]:
+        root = roles.get('roles') or roles
+        blk = root.get(key) or {}
+        return blk if isinstance(blk, dict) else {}
+    a = _role('peerA'); b = _role('peerB'); x = _role('aux')
+    def _cap(aid: str) -> str:
+        ad = actors.get(aid) or {}
+        cap = ad.get('capabilities')
+        return str(cap or '').strip()
+    def _aux_inv(aid: str) -> str:
+        ad = actors.get(aid) or {}
+        aux = ad.get('aux') or {}
+        inv = aux.get('invoke_command') or ''
+        s = str(inv or '').strip()
+        # mask braces to avoid accidental template expansion by models
+        return s.replace('{prompt}', "{prompt}")
+    pa = str(a.get('actor') or '').strip(); pb = str(b.get('actor') or '').strip(); px = str(x.get('actor') or '').strip()
+    sc = [
+        "Runtime Bindings (this run)",
+        f"- PeerA: actor={pa or '-'}, cwd={a.get('cwd') or './'}, capabilities: {_cap(pa) or '-'}",
+        f"- PeerB: actor={pb or '-'}, cwd={b.get('cwd') or './'}, capabilities: {_cap(pb) or '-'}",
+        f"- Aux:   actor={px or '-'}, invoke=\"{_aux_inv(px)}\", rate={str(_role('aux').get('rate_limit_per_minute') or 2)}/min",
+    ]
+    return "\n".join(sc)
