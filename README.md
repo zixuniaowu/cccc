@@ -58,9 +58,10 @@ Notes
 - git
 
 Recommended CLIs
-- :large_blue_circle: Peer A: Claude Code
-- :yellow_circle: Peer B: Codex CLI
-- :sparkles: Aux (optional): Gemini CLI
+- :large_blue_circle: Peer A: Claude Code (example)
+- :yellow_circle: Peer B: Codex CLI (example)
+- :sparkles: Aux (optional): Gemini CLI (example)
+- :robot: Also supported: Droid CLI (available for Peer/Aux)
 
 ## Install
 - pipx (recommended)
