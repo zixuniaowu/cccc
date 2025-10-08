@@ -1249,12 +1249,8 @@ def main(home: Path):
     # Directories
     settings = home/"settings"; state = home/"state"
     state.mkdir(exist_ok=True)
-    # Rebuild rules docs once per orchestrator start so timestamps/IM/Aux state are fresh.
-    try:
-        from prompt_weaver import rebuild_rules_docs  # type: ignore
-        rebuild_rules_docs(home)
-    except Exception:
-        pass
+    # Note: rules are rebuilt after the roles wizard (post-binding) to reflect
+    # the current Aux/IM state and avoid stale "Aux disabled" banners.
     # Reset preamble sent flags on each orchestrator start to ensure the first
     # user message per peer carries the preamble in this session.
     try:
@@ -1515,6 +1511,13 @@ def main(home: Path):
                 _persist_roles(cli_profiles, pa, pb, ax, aum)
                 print(f"[ROLES] Saved: PeerA={pa} PeerB={pb} Aux={ax or 'none'}")
                 cli_profiles = read_yaml(cli_profiles_path)
+    # Rebuild rules once after bindings are finalized (either from wizard or existing config),
+    # so that Aux mode and timestamps are accurate for this run.
+    try:
+        from prompt_weaver import rebuild_rules_docs  # type: ignore
+        rebuild_rules_docs(home)
+    except Exception:
+        pass
     # Load roles + actors; ensure required env vars in memory (never persist)
     try:
         resolved = load_profiles(home)
