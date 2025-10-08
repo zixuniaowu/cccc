@@ -202,12 +202,12 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         ch1 += [
             "- On-demand helper: Aux (PeerC) - purpose & direction",
             "  - Use Aux when a decoupled subtask or high-level sanity sweep is cheaper offloaded than done inline. You integrate the outcome.",
-            "  - Mode: on - orchestrator may issue FROM_SYSTEM reminders around key decisions; respond promptly and summarize outcomes for your peer.",
+            "  - Mode: on - Aux has the same FoV and permissions in this repo as you. Just call Aux for help.",
         ]
     else:
         ch1 += [
             "- Aux availability",
-            "  - Aux is disabled for this run. You and your peer handle strategy checks and heavy lifting directly until you enable Aux.",
+            "  - Aux is disabled for this run. You and your peer handle strategy checks and heavy lifting directly.",
         ]
 
     # PeerB must not address USER directly. Make the I/O boundary explicit early.

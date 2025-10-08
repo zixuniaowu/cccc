@@ -439,14 +439,14 @@ def _compose_nudge_suffix_for(peer_label: str,
     - Always include the role's configured nudge suffix (base).
     - When Aux is ON and an invoke template is available, add exactly one
       concise Aux line that embeds the raw invoke template (agent-facing):
-        "Aux is ON — delegate decoupled sub-tasks; invoke: <template>; capture evidence and summarize outcome."
+        "Aux is ON — delegate decoupled sub-tasks; just invoke: <template>; capture evidence and summarize outcome."
       Note: {prompt} must remain literal in the template.
     """
     base = ((profileA.get('nudge_suffix') if peer_label == 'PeerA' else profileB.get('nudge_suffix')) or '').strip()
     aux_line = ""
     if aux_mode == "on" and str(aux_invoke or '').strip():
         tpl = str(aux_invoke).replace('{prompt}', '{prompt}')
-        aux_line = f"Aux is ON — delegate decoupled sub-tasks; invoke: {tpl}; capture evidence and summarize outcome."
+        aux_line = f"Aux is ON — delegate decoupled sub-tasks; just invoke: {tpl}; capture evidence and summarize outcome."
     combined = " ".join(filter(None, [base, aux_line]))
     return combined.strip()
 
