@@ -42,7 +42,7 @@ actors:
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
       # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
-      prompt_regex: '(?mi)^\s*(?:gemini|>>>|>)\s*$'
+      prompt_regex: ''
       # DEPRECATED: busy_regexes will be removed in a future release.
       busy_regexes: []
     aux:
@@ -56,7 +56,7 @@ actors:
     peer:
       command: "droid --auto high"
       input_mode: "paste"
-      post_paste_keys: ["Enter", "Enter"]
+      post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
       # DEPRECATED: prompt_regex will be removed in a future release; leave empty.
