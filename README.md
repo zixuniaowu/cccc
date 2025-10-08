@@ -99,9 +99,9 @@ cccc run
 
 Aux (optional)
 - Aux runs as a one‑off helper when you ask for it; there are no runtime on/off toggles.
-- In tmux: `/c <prompt>` 或 `c: <prompt>` 触发一次 Aux。
-- 在聊天桥接中：`/aux-cli "<prompt>"` 触发一次 Aux。
-- 需要一次战略复盘/外部审阅时：`/review` 会下发一个明确的提醒包给两位主 Peer。
+- In tmux: run `/c <prompt>` or `c: <prompt>` to invoke Aux once.
+- In chat bridges: use `/aux-cli "<prompt>"` to invoke Aux once.
+- For a strategic review or external check, use `/review` to send a clear reminder bundle to both peers.
 
 ## A typical session (end-to-end, ~3 minutes)
 1) Explore (short)
@@ -117,7 +117,7 @@ Aux (optional)
 
 Cadence
 - Every N handoffs (configurable), the orchestrator triggers a short self‑check to keep both peers aligned.
-- PeerB also收到一条“POR update requested …”提醒：请同步检查 `POR.md` 与所有活跃的 `SUBPOR.md`（目标/验收/最小探针/终止标准/可判定的 Next），对齐 POR 的 Now/Next，清理过期项，补齐证据/风险/决策，识别缺口并在需要时（经同伴确认）创建新的 SUBPOR。
+- PeerB also receives a "POR update requested …" reminder: review `POR.md` and all active `SUBPOR.md` (Goal/Acceptance/Probe/Kill/Next), align POR Now/Next with each SUBPOR Next, close/rescope stale items, ensure evidence/risks/decisions have recent refs, and check for gaps (create a new SUBPOR after peer ACK if needed).
 
 ## Folder layout (after `cccc init`)
 ```

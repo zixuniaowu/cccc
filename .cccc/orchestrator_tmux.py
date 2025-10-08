@@ -2109,8 +2109,8 @@ def main(home: Path):
 
     # --- progress keepalive helpers (lightweight) ---
     # Body event-line detection (Progress/Next) — do not rely on insight.kind anymore
-    EVENT_PROGRESS_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?(?:Progress|进度)\s*(?:\(|:)\s*")
-    EVENT_NEXT_RE     = re.compile(r"(?mi)^\s*(?:[-*]\s*)?(?:Next|下一步)\s*(?:\(|:)\s*(.+)$")
+    EVENT_PROGRESS_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?Progress\s*(?:\(|:)\s*")
+    EVENT_NEXT_RE     = re.compile(r"(?mi)^\s*(?:[-*]\s*)?Next\s*(?:\(|:)\s*(.+)$")
 
     def _has_progress_event(payload: str) -> bool:
         try:
@@ -2150,17 +2150,17 @@ def main(home: Path):
 
     # --- Passive event parser: Item + event lines → ledger (no reminders, no gates) ---
     ITEM_HEAD_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?Item\s*\(\s*([^\)]+?)\s*\)\s*:\s*(.+)$")
-    # Keys with CN aliases
+    # Canonical keys (English only)
     KEY_ALIASES = {
-        'progress': { 'progress', '进度' },
-        'evidence': { 'evidence', '证据' },
-        'ask':      { 'ask', '提问' },
-        'counter':  { 'counter', '反方' },
-        'risk':     { 'risk', '风险' },
-        'next':     { 'next', '下一步' },
+        'progress': { 'progress' },
+        'evidence': { 'evidence' },
+        'ask':      { 'ask' },
+        'counter':  { 'counter' },
+        'risk':     { 'risk' },
+        'next':     { 'next' },
     }
     CANON_KEYS = {a: k for k, vv in KEY_ALIASES.items() for a in vv}
-    EVENT_LINE_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?([A-Za-z\u4e00-\u9fff]+)\s*(?:\(([^)]*)\))?\s*:\s*(.*)$")
+    EVENT_LINE_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?([A-Za-z]+)\s*(?:\(([^)]*)\))?\s*:\s*(.*)$")
 
     def _parse_params(s: str) -> Dict[str,str]:
         out: Dict[str,str] = {}
