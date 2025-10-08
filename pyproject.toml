@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cccc-pair"
-version = "0.3.3rc4"
+version = "0.3.3"
 description = "Autonomous dual-AI orchestration runtime delivering evidence-first, small-step software execution with tmux-managed peers, governed handoffs, and IM bridge integration"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
@@ -17,7 +17,7 @@ dependencies = [
   "PyYAML>=6.0"
 ]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python",
