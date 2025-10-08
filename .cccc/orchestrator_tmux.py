@@ -454,7 +454,15 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
                 left_pane: str, right_pane: str,
                 profileA: Dict[str,Any], profileB: Dict[str,Any],
                 aux_mode: str = "off"):
-    combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
+    # Resolve Aux invoke template on demand to avoid relying on outer scope variables
+    aux_invoke_tpl = ""
+    try:
+        from common.config import load_profiles as _lp  # late import; cheap read
+        aux_inv = ((_lp(home).get('aux') or {}).get('invoke_command') or '').strip()
+        aux_invoke_tpl = aux_inv
+    except Exception:
+        aux_invoke_tpl = ""
+    combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_invoke_tpl)
     # Compose state-anchored one‑liner with trigger + preview
     try:
         inbox = _inbox_dir(home, receiver_label)
