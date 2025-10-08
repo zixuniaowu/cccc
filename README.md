@@ -39,8 +39,10 @@ CCCC payoff with two peers and repo-native anchors:
 - :sparkles: Optional Aux = Gemini CLI (on-demand). We use it when a burst of non-interactive work helps (broad reviews, heavy tests, bulk transforms). Rationale: Gemini's long interactive sessions can be less stable in some setups, but it shines at short, structured jobs - perfect for an Aux you summon and dismiss.
 
 Notes
-- The two main peers collaborate as equals - both can think strategically and execute tactically. Aux is opt-in and task-oriented.
-- You can swap models: CCCC is vendor-agnostic; the orchestrator talks a simple mailbox contract.
+- The two main peers collaborate as equals - both can think strategically and execute tactically. Aux is opt-in and task‑oriented.
+- You can swap models at startup: a small roles wizard asks you to bind actors for PeerA, PeerB, and (optionally) Aux. Your choices are saved and reused next time; you can reconfigure on the next start.
+- Aux is ON when you pick an actor for Aux; otherwise Aux is OFF (no runtime on/off toggles).
+- CCCC is vendor‑agnostic; the orchestrator talks a simple mailbox contract.
 - Strategy lives in `docs/por/POR.md`; execution details live in task SUBPORs - the peers update these naturally while working.
 
 ## What you get
@@ -89,14 +91,17 @@ cccc run
 ```
 - tmux opens: left/right = PeerA/PeerB, bottom-right = status panel.
 - You can attach a bridge later with `cccc bridge ...` or set `autostart` in `.cccc/settings`.
-5) Prepare your two CLIs (one-time)
-- Ensure `claude` / `codex` are on PATH or set env vars (`CLAUDE_I_CMD`, `CODEX_I_CMD`).
-- Copy the content of `PEERA.md` / `PEERB.md` into files your CLIs use as system prompts (e.g., `CLAUDE.md` / `AGENTS.md` at repo root; gitignored).
+5) Prepare your CLIs (one‑time)
 - Put your project brief/scope in `PROJECT.md` (repo root). CCCC will weave it into the runtime SYSTEM so both peers align.
+- Ensure the CLI commands for the actors you select are on PATH (e.g., `claude`, `codex`, `gemini`), or set env overrides like `CLAUDE_I_CMD` / `CODEX_I_CMD` if needed.
+- On first run, the roles wizard will ask you to choose actors for PeerA/PeerB (and optionally Aux). You can reconfigure on the next run with the same wizard.
+- Inspect current bindings anytime: `cccc roles`.
 
-Optional: choose Aux (Gemini CLI)
-- Install Gemini CLI and make sure the command is available (e.g., `gemini ...`).
-- Select the Aux agent during startup (a small role-binding wizard will ask once). You can reconfigure it on the next start; at runtime we don't toggle Aux on/off to keep behavior clear.
+Aux (optional)
+- Aux runs as a one‑off helper when you ask for it; there are no runtime on/off toggles.
+- In tmux: `/c <prompt>` 或 `c: <prompt>` 触发一次 Aux。
+- 在聊天桥接中：`/aux-cli "<prompt>"` 触发一次 Aux。
+- 需要一次战略复盘/外部审阅时：`/review` 会下发一个明确的提醒包给两位主 Peer。
 
 ## A typical session (end-to-end, ~3 minutes)
 1) Explore (short)
@@ -109,6 +114,10 @@ Optional: choose Aux (Gemini CLI)
 - Orchestrator logs outcomes to the ledger; the status panel updates.
 4) Team visibility
 - Telegram/Slack/Discord (optional) receive concise summaries; peers stay quiet unless blocked.
+
+Cadence
+- Every N handoffs (configurable), the orchestrator triggers a short self‑check to keep both peers aligned.
+- PeerB also收到一条“POR update requested …”提醒：请同步检查 `POR.md` 与所有活跃的 `SUBPOR.md`（目标/验收/最小探针/终止标准/可判定的 Next），对齐 POR 的 Now/Next，清理过期项，补齐证据/风险/决策，识别缺口并在需要时（经同伴确认）创建新的 SUBPOR。
 
 ## Folder layout (after `cccc init`)
 ```
