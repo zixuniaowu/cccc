@@ -433,19 +433,28 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
     return True
 
 def _compose_nudge_suffix_for(peer_label: str,
-                              *, profileA: Dict[str,Any], profileB: Dict[str,Any], aux_mode: str) -> str:
+                              *, profileA: Dict[str,Any], profileB: Dict[str,Any], aux_mode: str,
+                              aux_invoke: str = "") -> str:
+    """Compose the trailing NUDGE suffix shown to the agent.
+    - Always include the role's configured nudge suffix (base).
+    - When Aux is ON and an invoke template is available, add exactly one
+      concise Aux line that embeds the raw invoke template (agent-facing):
+        "Aux is ON — delegate decoupled sub-tasks; invoke: <template>; capture evidence and summarize outcome."
+      Note: {prompt} must remain literal in the template.
+    """
     base = ((profileA.get('nudge_suffix') if peer_label == 'PeerA' else profileB.get('nudge_suffix')) or '').strip()
-    aux_tip_local = ""
-    if aux_mode == "on":
-        aux_tip_local = "Aux tip: Aux is ON — delegate any decoupled sub-task; capture evidence and summarize outcome."
-    combined = " ".join(filter(None, [base, aux_tip_local]))
+    aux_line = ""
+    if aux_mode == "on" and str(aux_invoke or '').strip():
+        tpl = str(aux_invoke).replace('{prompt}', '{prompt}')
+        aux_line = f"Aux is ON — delegate decoupled sub-tasks; invoke: {tpl}; capture evidence and summarize outcome."
+    combined = " ".join(filter(None, [base, aux_line]))
     return combined.strip()
 
 def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
                 left_pane: str, right_pane: str,
                 profileA: Dict[str,Any], profileB: Dict[str,Any],
                 aux_mode: str = "off"):
-    combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
+    combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
     # Compose state-anchored one‑liner with trigger + preview
     try:
         inbox = _inbox_dir(home, receiver_label)
@@ -2352,6 +2361,12 @@ def main(home: Path):
                             except Exception:
                                 pass
 
+                            # Append a stable rules path line for quick re-anchoring
+                            try:
+                                peerA_msg = (peerA_msg.rstrip("\n") + "\nRules: .cccc/rules/PEERA.md")
+                                peerB_msg = (peerB_msg.rstrip("\n") + "\nRules: .cccc/rules/PEERB.md")
+                            except Exception:
+                                pass
                             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{peerA_msg}\n</FROM_SYSTEM>\n")
                             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{peerB_msg}\n</FROM_SYSTEM>\n")
                             log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": instr_counter})
@@ -2461,7 +2476,7 @@ def main(home: Path):
             hint = f"Continue: {nxt}" if nxt else "Continue with your next step."
             txt = f"<FROM_SYSTEM>\n[keepalive] {hint}\n</FROM_SYSTEM>\n"
             # Keepalive NUDGE: neutral, no preview/trigger
-            ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
+            ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
             try:
                 inbox_path = _inbox_dir(home, label).as_posix()
             except Exception:
@@ -2629,7 +2644,7 @@ def main(home: Path):
                     else:
                         msg = "<FROM_SYSTEM>\nOK. Continue.\n</FROM_SYSTEM>\n"
                     # Keepalive NUDGE: neutral, no preview/trigger
-                    ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
+                    ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
                     try:
                         inbox_path = _inbox_dir(home, label).as_posix()
                     except Exception:
@@ -2675,7 +2690,7 @@ def main(home: Path):
                                 seq = fn[:6]
                                 path = _inbox_dir(home, label)/fn
                                 preview = _safe_headline(path)
-                                suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode)
+                                suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
                                 custom = _compose_detailed_nudge(seq, preview, (_inbox_dir(home, label).as_posix()), suffix=suffix)
                                 pane = left if label == "PeerA" else right
                                 prof = profileA if label == "PeerA" else profileB
@@ -2726,10 +2741,10 @@ def main(home: Path):
                 # Coalesced NUDGE: send only when needed; backoff otherwise
                 if label == "PeerA":
                     sent = _maybe_send_nudge(home, label, pane, profileA,
-                                              suffix=_compose_nudge_suffix_for('PeerA', profileA=profileA, profileB=profileB, aux_mode=aux_mode))
+                                              suffix=_compose_nudge_suffix_for('PeerA', profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command))
                 else:
                     sent = _maybe_send_nudge(home, label, pane, profileB,
-                                              suffix=_compose_nudge_suffix_for('PeerB', profileA=profileA, profileB=profileB, aux_mode=aux_mode))
+                                              suffix=_compose_nudge_suffix_for('PeerB', profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command))
                 if sent:
                     last_nudge_ts[label] = nowt
         except Exception:
