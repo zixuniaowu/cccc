@@ -2369,14 +2369,45 @@ def main(home: Path):
                             except Exception:
                                 pass
 
-                            # Append a stable rules path line for quick re-anchoring
+                            # Build final self-check payloads with consistent order:
+                            # 1) self-check text
+                            # 2) minimal anchors (Rules + Project)
+                            # 3) PROJECT.md full snapshot (only on K-th refresh, if exists)
+                            # 4) full SYSTEM rules (only on K-th refresh)
                             try:
-                                peerA_msg = (peerA_msg.rstrip("\n") + "\nRules: .cccc/rules/PEERA.md")
-                                peerB_msg = (peerB_msg.rstrip("\n") + "\nRules: .cccc/rules/PEERB.md")
+                                anchorsA = "Rules: .cccc/rules/PEERA.md\nProject: PROJECT.md"
+                                anchorsB = "Rules: .cccc/rules/PEERB.md\nProject: PROJECT.md"
+                                finalA = peerA_msg.rstrip("\n") + "\n" + anchorsA
+                                finalB = peerB_msg.rstrip("\n") + "\n" + anchorsB
+                                # K-th refresh: inject PROJECT.md full text (if present), then full SYSTEM
+                                if sc_index > 0 and (sc_index % K) == 0:
+                                    try:
+                                        proj_path = (Path.cwd()/"PROJECT.md")
+                                        if proj_path.exists():
+                                            proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
+                                            # Use a fenced block to keep snapshot visually distinct
+                                            block = "\nProject snapshot (path: PROJECT.md)\n```project\n" + proj_txt.rstrip("\n") + "\n```\n"
+                                            finalA = finalA + block
+                                            finalB = finalB + block
+                                    except Exception:
+                                        pass
+                                    # Append full SYSTEM rules captured above (rulesA/rulesB)
+                                    try:
+                                        if rulesA:
+                                            finalA = finalA.rstrip("\n") + "\n\n" + rulesA.strip() + "\n"
+                                    except Exception:
+                                        pass
+                                    try:
+                                        if rulesB:
+                                            finalB = finalB.rstrip("\n") + "\n\n" + rulesB.strip() + "\n"
+                                    except Exception:
+                                        pass
+                                _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{finalA}\n</FROM_SYSTEM>\n")
+                                _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{finalB}\n</FROM_SYSTEM>\n")
                             except Exception:
-                                pass
-                            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{peerA_msg}\n</FROM_SYSTEM>\n")
-                            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{peerB_msg}\n</FROM_SYSTEM>\n")
+                                # Fallback to original messages if anything above fails
+                                _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{peerA_msg}\n</FROM_SYSTEM>\n")
+                                _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{peerB_msg}\n</FROM_SYSTEM>\n")
                             log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": instr_counter})
                             _request_por_refresh("self-check", force=False)
                         finally:
