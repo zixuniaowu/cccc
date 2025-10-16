@@ -2362,10 +2362,7 @@ def main(home: Path):
                                         rulesB = (rules_dir/"PEERB.md").read_text(encoding='utf-8')
                                     except Exception:
                                         rulesB = ""
-                                    if rulesA:
-                                        peerA_msg = peerA_msg.rstrip("\n") + "\n\n" + rulesA.strip()
-                                    if rulesB:
-                                        peerB_msg = peerB_msg.rstrip("\n") + "\n\n" + rulesB.strip()
+                                    # Capture rules text only; actual appending happens in the final assembly
                             except Exception:
                                 pass
 
