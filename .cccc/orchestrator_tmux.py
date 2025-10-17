@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
 from common.config import load_profiles, ensure_env_vars
-from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox
+from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox, compose_sentinel, sha256_text
 from por_manager import ensure_por, por_path, por_status_snapshot, read_por_text
 
 ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # strip ANSI color/control sequences
@@ -2818,7 +2818,10 @@ def main(home: Path):
                     last_event_ts["PeerA"] = time.time()
                     # Clear mailbox file after logging to ledger (core is authoritative outbox)
                     try:
-                        (home/"mailbox"/"peerA"/"to_user.md").write_text("", encoding="utf-8")
+                        tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                        sha8 = sha256_text(txt)[:8]
+                        sentinel = compose_sentinel(ts=tsz, eid=eid, sha8=sha8, route="PeerA→User")
+                        (home/"mailbox"/"peerA"/"to_user.md").write_text(sentinel, encoding="utf-8")
                     except Exception:
                         pass
                 if events["peerA"].get("to_peer"):
@@ -2854,12 +2857,16 @@ def main(home: Path):
                         except Exception:
                             pass
                         try:
-                            outbox_write(home, {"type":"to_peer_summary","from":"PeerA","to":"PeerB","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
+                            eid2 = hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]
+                            outbox_write(home, {"type":"to_peer_summary","from":"PeerA","to":"PeerB","text": payload, "eid": eid2})
                         except Exception:
-                            pass
+                            eid2 = str(int(time.time()))
                         # Clear to_peer.md after successful forward to avoid accidental resends
                         try:
-                            (home/"mailbox"/"peerA"/"to_peer.md").write_text("", encoding="utf-8")
+                            tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                            sha8 = sha256_text(payload)[:8]
+                            sentinel = compose_sentinel(ts=tsz, eid=eid2, sha8=sha8, route="PeerA→PeerB")
+                            (home/"mailbox"/"peerA"/"to_peer.md").write_text(sentinel, encoding="utf-8")
                         except Exception:
                             pass
                     else:
@@ -2881,7 +2888,10 @@ def main(home: Path):
                         pass
                     outbox_write(home, {"type":"to_user","peer":"PeerB","text":txt,"eid":eid})
                     try:
-                        (home/"mailbox"/"peerB"/"to_user.md").write_text("", encoding="utf-8")
+                        tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                        sha8 = sha256_text(txt)[:8]
+                        sentinel = compose_sentinel(ts=tsz, eid=eid, sha8=sha8, route="PeerB→User")
+                        (home/"mailbox"/"peerB"/"to_user.md").write_text(sentinel, encoding="utf-8")
                     except Exception:
                         pass
                 if events["peerB"].get("to_peer"):
@@ -2916,12 +2926,16 @@ def main(home: Path):
                             except Exception:
                                 pass
                             try:
-                                outbox_write(home, {"type":"to_peer_summary","from":"PeerB","to":"PeerA","text": payload, "eid": hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]})
+                                eid2 = hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]
+                                outbox_write(home, {"type":"to_peer_summary","from":"PeerB","to":"PeerA","text": payload, "eid": eid2})
                             except Exception:
-                                pass
+                                eid2 = str(int(time.time()))
                             # Clear to_peer.md after successful forward
                             try:
-                                (home/"mailbox"/"peerB"/"to_peer.md").write_text("", encoding="utf-8")
+                                tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                                sha8 = sha256_text(payload)[:8]
+                                sentinel = compose_sentinel(ts=tsz, eid=eid2, sha8=sha8, route="PeerB→PeerA")
+                                (home/"mailbox"/"peerB"/"to_peer.md").write_text(sentinel, encoding="utf-8")
                             except Exception:
                                 pass
                         else:

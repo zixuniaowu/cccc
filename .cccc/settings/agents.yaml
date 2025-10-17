@@ -69,4 +69,22 @@ actors:
     capabilities: "Strong coding; robust auto mode; good long sessions"
     env_require: []
 
+  opencode:
+    # Can be bound to Peer and Aux roles
+    peer:
+      command: "opencode"
+      input_mode: "paste"
+      post_paste_keys: ["Enter"]
+      send_sequence: "Enter"
+      idle_quiet_seconds: 1.0
+      # DEPRECATED: prompt_regex will be removed in a future release; leave empty.
+      prompt_regex: ''
+      # DEPRECATED: busy_regexes will be removed in a future release.
+      busy_regexes: []
+    aux:
+      invoke_command: 'opencode run "{prompt}"'
+      rate_limit_per_minute: 2
+    capabilities: "Solid coding CLI; steady long sessions; no special env required"
+    env_require: []
+
 # Note: Bindings (which actor each role uses) live in cli_profiles.yaml under roles.*.actor

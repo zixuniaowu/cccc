@@ -7,6 +7,32 @@ import hashlib, json, time
 
 PEERS = ("peerA", "peerB")
 
+# Sentinel marker (single-line) written after a message is queued from mailbox
+SENTINEL_PREFIX = "<!-- MAILBOX:SENT v1"
+
+def is_sentinel_text(text: str) -> bool:
+    """Return True if the whole file content is a mailbox SENT sentinel.
+    Expect a single-line HTML comment like:
+      <!-- MAILBOX:SENT v1 ts=... eid=... sha=... route=... -->
+    We purposefully require the fixed prefix to avoid false positives.
+    """
+    if not text:
+        return False
+    s = text.strip()
+    return s.startswith(SENTINEL_PREFIX) and s.endswith("-->") and "\n" not in s
+
+def compose_sentinel(*, ts: str, eid: str, sha8: str, route: str) -> str:
+    """Compose a single-line sentinel comment stored in mailbox files after queueing."""
+    # Keep ASCII-only where possible; route may include unicode arrow which is fine.
+    # Example: <!-- MAILBOX:SENT v1 ts=2025-10-17T06:15:22Z eid=a1b2c3d4 sha=7c45dead route=PeerB→PeerA -->
+    parts = [
+        f"ts={ts}",
+        f"eid={eid}",
+        f"sha={sha8}",
+        f"route={route}",
+    ]
+    return f"{SENTINEL_PREFIX} " + " ".join(parts) + " -->"
+
 def ensure_mailbox(home: Path) -> Dict[str, Path]:
     base = home/"mailbox"
     paths = {}
@@ -150,6 +176,13 @@ def read_if_changed(path: Path, last_sha: str) -> Tuple[bool, str, str]:
     text = text.strip()
     if not text:
         return False, "", last_sha
+    # Ignore sentinel files entirely – treated as empty/no-event
+    try:
+        if is_sentinel_text(text):
+            return False, "", last_sha
+    except Exception:
+        # Be conservative: if detection fails, continue with normal flow
+        pass
     sha = sha256_text(text)
     if (diag or (enc.startswith('latin1') or 'ignore' in enc or enc.startswith('gb'))) and sha != last_sha:
         try:

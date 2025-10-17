@@ -62,6 +62,7 @@ Recommended CLIs
 - :yellow_circle: Peer B: Codex CLI (default, available for Peer/Aux)
 - :sparkles: Aux (optional): Gemini CLI (default, available for Peer/Aux)
 - :robot: Also supported: Factory Droid (available for Peer/Aux)
+- :hammer_and_wrench: Also supported: OpenCode (available for Peer/Aux)
 
 ## Install
 - pipx (recommended)
@@ -94,7 +95,7 @@ cccc run
 - You can attach a bridge later with `cccc bridge ...` or set `autostart` in `.cccc/settings`.
 5) Prepare your CLIs (one‑time)
 - Put your project brief/scope in `PROJECT.md` (repo root). CCCC will weave it into the runtime SYSTEM so both peers align.
-- Ensure the CLI commands for the actors you select are on PATH (e.g., `claude`, `codex`, `gemini`), or set env overrides like `CLAUDE_I_CMD` / `CODEX_I_CMD` if needed.
+- Ensure the CLI commands for the actors you select are on PATH (e.g., `claude`, `codex`, `gemini`, `droid`, `opencode`), or set env overrides like `CLAUDE_I_CMD` / `CODEX_I_CMD` if needed.
 - On first run, the roles wizard will ask you to choose actors for PeerA/PeerB (and optionally Aux). You can reconfigure on the next run with the same wizard.
 - Inspect current bindings anytime: `cccc roles`.
 
