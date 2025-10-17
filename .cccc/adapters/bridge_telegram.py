@@ -428,8 +428,25 @@ def main():
                 body = resp.read().decode('utf-8', errors='replace')
                 return json.loads(body)
         except Exception as e:
-            _append_log(HOME/"state"/"bridge-telegram.log", f"[error] api {method}: {e}")
-            return {"ok": False, "error": str(e)}
+            # Attach HTTP status and partial body when available for diagnostics
+            http_status = None; err_text = ''
+            try:
+                import urllib.error as _ue
+                if isinstance(e, _ue.HTTPError):
+                    http_status = e.code
+                    try:
+                        err_text = e.read().decode('utf-8','ignore')[:300]
+                    except Exception:
+                        err_text = ''
+            except Exception:
+                pass
+            _append_log(HOME/"state"/"bridge-telegram.log", f"[error] api {method}: {e} status={http_status} body={err_text}")
+            out = {"ok": False, "error": str(e)}
+            if http_status is not None:
+                out["http_status"] = http_status
+            if err_text:
+                out["error_text"] = err_text
+            return out
 
     def tg_poll(offset: int) -> Tuple[int, List[Dict[str, Any]]]:
         # Use POST for consistency
@@ -579,11 +596,39 @@ def main():
             return False, f'rate-limited: interval<{min_interval_s}s'
         return True, ''
 
+    def _compose_safe(prefix: str, body: str, cfg_limit: int, max_lines_cfg: int) -> str:
+        # Telegram hard limit: 4096 chars per message
+        HARD = 4096
+        # Keep a small margin to account for prefixes/newlines
+        margin = 32
+        safe_max = max(0, min(int(cfg_limit or HARD), HARD - len(prefix) - margin))
+        # First, summarize within safe window
+        body_sum = _summarize(redact(body), safe_max, max_lines_cfg)
+        msg = f"{prefix}\n{body_sum}" if prefix else body_sum
+        if len(msg) > HARD:
+            msg = msg[:HARD-1] + '…'
+        return msg
+
+    def _send_with_one_retry(chat_id: int, method_params: Dict[str, Any]) -> bool:
+        res = tg_api('sendMessage', method_params, timeout=15)
+        if bool(res.get('ok')):
+            return True
+        # One retry after a short pause
+        try:
+            time.sleep(1.0)
+        except Exception:
+            pass
+        res2 = tg_api('sendMessage', method_params, timeout=15)
+        return bool(res2.get('ok'))
+
     def send_summary(peer: str, text: str) -> bool:
         """Send to_user summary. Returns True iff at least one chat received the message."""
         label = "PeerA" if peer == 'peerA' else "PeerB"
-        msg = f"[{label}]\n" + _summarize(redact(text), max_chars, max_lines)
-        ok, reason = _preflight_msg(peer, msg, float(str(cfg.get('to_user_min_interval_s') or 1.5)))
+        prefix = f"[{label}]"
+        minint = float(str(cfg.get('to_user_min_interval_s') or cfg.get('peer_summary_min_interval_s') or 5))
+        # Build safe message respecting Telegram hard cap
+        msg = _compose_safe(prefix, text, int(cfg.get('max_msg_chars') or max_chars), int(cfg.get('max_msg_lines') or max_lines))
+        ok, reason = _preflight_msg(peer, msg, minint)
         if not ok:
             _append_ledger({'kind':'bridge-outbox-blocked','route':'to_user','from': label, 'reason': reason})
             return False
@@ -594,29 +639,27 @@ def main():
             return False
         delivered = 0
         for chat_id in sorted(dynamic_allow):
-            res = tg_api('sendMessage', {
-                'chat_id': chat_id,
-                'text': msg,
-                'disable_web_page_preview': True
-            }, timeout=15)
-            if bool(res.get('ok')):
+            ok_send = _send_with_one_retry(chat_id, {'chat_id': chat_id, 'text': msg, 'disable_web_page_preview': True})
+            if ok_send:
                 delivered += 1
             else:
-                _append_log(outlog, f"[error] to_user send chat={chat_id} err={res.get('error')}")
-                _append_ledger({'kind':'bridge-outbox-error','route':'to_user','from':label,'chat':chat_id,'error':str(res.get('error'))})
+                _append_log(outlog, f"[error] to_user send chat={chat_id} err=failed-after-retry")
+                _append_ledger({'kind':'bridge-outbox-error','route':'to_user','from':label,'chat':chat_id,'error':'failed-after-retry'})
         if delivered > 0:
             _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars to {delivered} chats")
             _append_ledger({"kind":"bridge-outbound","to":"telegram","route":"to_user","from":label,"chars":len(msg),"chats":delivered})
             last_sent_ts[peer] = time.time()
-            return True
-        return False
+        # Always commit cursor (do not block queue): even when 0 delivered, treat as handled
+        return True
 
     def send_peer_summary(sender_peer: str, text: str) -> bool:
         label = "PeerA→PeerB" if sender_peer == 'peerA' else "PeerB→PeerA"
         from_label = "PeerA" if sender_peer == 'peerA' else "PeerB"
         to_label = "PeerB" if sender_peer == 'peerA' else "PeerA"
-        msg = f"[{label}]\n" + _summarize(redact(text), peer_max_chars, peer_max_lines)
-        ok, reason = _preflight_msg(sender_peer, msg, float(str(cfg.get('peer_summary_min_interval_s') or 1.5)))
+        prefix = f"[{label}]"
+        minint = float(str(cfg.get('peer_summary_min_interval_s') or cfg.get('to_user_min_interval_s') or 5))
+        msg = _compose_safe(prefix, text, int(cfg.get('peer_message_max_chars') or peer_max_chars), int(cfg.get('peer_message_max_lines') or peer_max_lines))
+        ok, reason = _preflight_msg(sender_peer, msg, minint)
         if not ok:
             _append_ledger({'kind':'bridge-outbox-blocked','route':'to_peer','from': from_label, 'to': to_label, 'reason': reason})
             return False
@@ -626,22 +669,18 @@ def main():
             return False
         delivered = 0
         for chat_id in sorted(dynamic_allow):
-            res = tg_api('sendMessage', {
-                'chat_id': chat_id,
-                'text': msg,
-                'disable_web_page_preview': True
-            }, timeout=15)
-            if bool(res.get('ok')):
+            ok_send = _send_with_one_retry(chat_id, {'chat_id': chat_id, 'text': msg, 'disable_web_page_preview': True})
+            if ok_send:
                 delivered += 1
             else:
-                _append_log(outlog, f"[error] to_peer_summary send chat={chat_id} err={res.get('error')}")
-                _append_ledger({'kind':'bridge-outbox-error','route':'to_peer','from':from_label,'to':to_label,'chat':chat_id,'error':str(res.get('error'))})
+                _append_log(outlog, f"[error] to_peer_summary send chat={chat_id} err=failed-after-retry")
+                _append_ledger({'kind':'bridge-outbox-error','route':'to_peer','from':from_label,'to':to_label,'chat':chat_id,'error':'failed-after-retry'})
         if delivered > 0:
             _append_log(outlog, f"[outbound] sent {label} {len(msg)} chars to {delivered} chats")
             _append_ledger({"kind":"bridge-outbound","to":"telegram","route":"to_peer","from":from_label,"to":to_label,"chars":len(msg),"chats":delivered})
             last_sent_ts['peerA' if sender_peer=='peerA' else 'peerB'] = time.time()
-            return True
-        return False
+        # Always commit cursor: even when 0 delivered
+        return True
 
     def _normalize_peer_label(raw: str, *, default: str = 'peerA') -> str:
         v = (raw or '').strip().lower()
@@ -688,7 +727,8 @@ def main():
             _append_ledger({'kind': 'error', 'where': 'telegram.outbox_consumer', 'error': f'import failed: {e}'})
             return
         try:
-            oc = OutboxConsumer(HOME, seen_name='telegram', start_mode=start_mode, replay_last=replay_last)
+            poll_s = float(cfg.get('outbox_poll_seconds') or 2.0)
+            oc = OutboxConsumer(HOME, seen_name='telegram', start_mode=start_mode, replay_last=replay_last, poll_seconds=poll_s)
             _append_ledger({'kind':'bridge-consumer-start','seen':'telegram','start_mode':start_mode,'replay_last':replay_last})
         except Exception as e:
             _append_ledger({'kind': 'error', 'where': 'telegram.outbox_consumer', 'error': str(e)})
