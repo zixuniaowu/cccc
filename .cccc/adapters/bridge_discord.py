@@ -165,6 +165,18 @@ def _summarize(t: str, max_chars: int = 1500, max_lines: int = 12) -> str:
     out='\n'.join(kept).strip()
     return out if len(out)<=max_chars else out[:max_chars-1]+'…'
 
+def _compose_safe(prefix: str, body: str, *, max_chars: int = 1500, max_lines: int = 12, hard_limit: int = 2000, margin: int = 32) -> str:
+    """Compose a Discord-safe message under the 2000-char hard limit.
+    - Summarize body to a safe window (hard_limit - prefix - margin)
+    - Then clamp final message to hard_limit
+    """
+    safe_max = max(0, min(int(max_chars), hard_limit - len(prefix) - margin))
+    body_sum = _summarize(str(body or ''), safe_max, max_lines)
+    msg = f"{prefix}\n{body_sum}" if prefix else body_sum
+    if len(msg) > hard_limit:
+        msg = msg[:hard_limit-1] + '…'
+    return msg
+
 def _sha256_file(fp: Path) -> str:
     h = hashlib.sha256()
     with open(fp, 'rb') as f:
@@ -233,7 +245,7 @@ def main():
     def on_to_user(ev: Dict[str,Any]) -> bool:
         p = str(ev.get('peer') or '').lower()
         label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
-        msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
+        msg = _compose_safe(f"[{label}]", str(ev.get('text') or ''))
         with q_lock:
             with SUBS_LOCK:
                 chs = list(dict.fromkeys((chans_user or []) + (SUBS or [])))
@@ -265,7 +277,7 @@ def main():
             return True
         frm = str(ev.get('from') or '')
         label = 'PeerA→PeerB' if frm in ('PeerA','peera','peera') else 'PeerB→PeerA'
-        msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
+        msg = _compose_safe(f"[{label}]", str(ev.get('text') or ''))
         with q_lock:
             with SUBS_LOCK:
                 chs = list(dict.fromkeys((chans_peer or []) + (SUBS or [])))
