@@ -308,7 +308,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "4) Communicate (message skeleton and file I/O)",
         "- Writing rules (strict)",
         f"  - Update-only: always overwrite {target_list}; do NOT append or create new variants.",
-        "  - After sending, your message file is replaced with a one-line status sentinel 'MAILBOX:SENT v1 …'. Leave it as is; simply overwrite with your next message.",
+        "  - After sending, your message file is replaced with a one-line status sentinel 'MAILBOX:SENT v1 …'. Don't care about it; simply overwrite the whole file with your next message.",
         "  - Encoding: UTF-8 (no BOM).",
         "  - Do not claim done unless acceptance is checked in SUBPOR and you include minimal verifiable evidence (tests/stable logs/commit refs).",
     ]
