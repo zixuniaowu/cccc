@@ -1866,7 +1866,7 @@ def main(home: Path):
             if not body:
                 body = "\n".join(lines0[hdr_used:]).strip()
             if not owner:
-                owner = 'PeerB'  # simple, predictable default
+                owner = 'PeerA'  # default to PeerA when missing
             # ensure wrapper for inbox payload
             if not re.search(r"<\s*TO_PEER\s*>", body, re.I):
                 body = f"<TO_PEER>\n{body}\n</TO_PEER>\n"

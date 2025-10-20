@@ -701,8 +701,8 @@ def main():
                 # Flush any pending to_user messages now that we have a channel
                 _flush_pending()
                 return
-            # Runtime toggle: verbose on|off (alias: showpeers on|off)
-            msp = re.match(r"^\s*/?(?:verbose|showpeers)\s+(on|off)\b", low)
+            # Runtime toggle: verbose on|off
+            msp = re.match(r"^\s*/?verbose\s+(on|off)\b", low)
             if msp:
                 val = (msp.group(1) == 'on')
                 rt_path = HOME/"state"/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)

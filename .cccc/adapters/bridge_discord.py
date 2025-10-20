@@ -415,7 +415,7 @@ def main():
             has_prefix = bool(re.search(r"^\s*(a[:：]|b[:：]|both[:：])", stripped, re.I) or
                                re.search(r"^\s*/(a|b|both)(?:@\S+)?\s+", stripped, re.I))
             if not has_prefix:
-                if low not in ('subscribe','sub','unsubscribe','unsub','showpeers on','showpeers off','verbose on','verbose off') and not message.attachments:
+                if low not in ('subscribe','sub','unsubscribe','unsub','verbose on','verbose off') and not message.attachments:
                     # Drop chatter without explicit prefix; keep logs quiet in normal operation
                     return
             if low in ('subscribe','sub'):
@@ -442,7 +442,7 @@ def main():
                 except Exception:
                     pass
                 return
-            if low in ('showpeers on','showpeers off','verbose on','verbose off'):
+            if low in ('verbose on','verbose off'):
                 val = (low.endswith('on'))
                 rt_path = HOME/"state"/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)
                 try:

@@ -1401,9 +1401,8 @@ def main():
                     "Passthrough (CLI): a! <cmd>/b! <cmd> (DM recommended) or /pa <cmd>/pb <cmd> [/pboth <cmd>] in groups;\n"
                     "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux-cli \"<prompt>\" run configured Aux once; /review trigger Aux reminder;\n"
                     "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
-                    "/showpeers on|off toggle Peer<->Peer summary; /files [in|out] [N] list recent files; /file N view."
+                    "/verbose on|off toggle Peer<->Peer summary and Foreman CC; /files [in|out] [N] list recent files; /file N view."
                 )
-                help_txt = help_txt.replace('/showpeers','/verbose')
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
                 continue
 
