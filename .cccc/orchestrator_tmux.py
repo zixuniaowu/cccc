@@ -1492,11 +1492,22 @@ def main(home: Path):
             if not prompt_path.exists():
                 tpl = (
 "Title: Foreman Task Brief (Project-specific)\n\n"
-"Standing Tasks (edit freely; pick one per run)\n"
-"- Task name:\n  Owner peer (PeerA|PeerB):\n  Do within time-box (non-interactive):\n  Save outputs to (e.g., .cccc/work/foreman/<timestamp>/...):\n  When to message the owner (and CC policy):\n\n"
-"Backlog & Cadence\n- If the owner's inbox has many pending items: remind to process oldest-first, then propose ONE smallest next step aligned to POR/SUBPOR. Put long analysis in files and reference paths.\n\n"
-"Project Preferences\n- Prioritized deliverables / risks / scripts to use:\n\n"
-"Message header & body (required)\n- Write one message to .cccc/mailbox/foreman/to_peer.md with:\n  Owner: PeerA|PeerB\n  CC: PeerB|PeerA|none\n  <TO_PEER>\n  …user-voice short text (6–10 lines; reference repo paths only)…\n  </TO_PEER>\n"
+"Purpose (free text)\n"
+"- Describe what matters to the project right now.\n\n"
+"Current objectives (ranked, short)\n"
+"- 1) \n- 2) \n- 3) \n\n"
+"Standing work (edit freely)\n"
+"- List repeatable, non-interactive jobs you want Foreman to do from time to time. Keep each item one line.\n\n"
+"Useful references\n"
+"- PROJECT.md\n- docs/por/POR.md\n- docs/por/T*/SUBPOR.md\n- docs/evidence/**  and  .cccc/work/**\n\n"
+"How to act each run\n"
+"- Do one useful, non-interactive step within the time box (≤ 30m).\n"
+"- Save outputs to .cccc/work/foreman/<YYYYMMDD-HHMMSS>/ and reference these paths in your message (do not paste long logs).\n"
+"- Write one short message in the user's voice to the right peer.\n\n"
+"Escalation (when blocked)\n"
+"- If a decision is needed, write a short 6–10 line RFD summary (alternatives, impact, default) and ask the peer to proceed.\n\n"
+"Safety\n"
+"- Do not modify orchestrator code/policies; do not claim 'done' without a checkable artifact.\n"
                 )
                 prompt_path.write_text(tpl, encoding='utf-8')
         except Exception:
