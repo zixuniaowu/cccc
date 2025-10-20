@@ -464,6 +464,7 @@ def ensure_rules_docs(home: Path):
         _write_rules_for_peer(home, "peerA", im_enabled=im_enabled, aux_mode=aux_mode)
         _write_rules_for_peer(home, "peerB", im_enabled=im_enabled, aux_mode=aux_mode)
         _write_rules_for_aux(home, aux_mode=aux_mode)
+        _write_rules_for_foreman(home)
         # Append Aux section in POR only when Aux is enabled and the section does not exist yet
         if aux_mode == "on":
             try:
@@ -489,6 +490,7 @@ def rebuild_rules_docs(home: Path):
     _write_rules_for_peer(home, "peerA", im_enabled=im_enabled, aux_mode=aux_mode)
     _write_rules_for_peer(home, "peerB", im_enabled=im_enabled, aux_mode=aux_mode)
     _write_rules_for_aux(home, aux_mode=aux_mode)
+    _write_rules_for_foreman(home)
     if aux_mode == "on":
         try:
             ensure_aux_section(home)
@@ -518,6 +520,48 @@ def weave_minimal_system_prompt(home: Path, peer: str, por: Optional[Dict[str, A
     sources of truth.
     """
     return weave_system_prompt(home, peer, por)
+
+# ---------- Foreman rules (system prompt; generated; not user‑edited) ----------
+def _write_rules_for_foreman(home: Path) -> Path:
+    ts = _format_local_ts()
+    lines = [
+        "# FOREMAN Rules (Generated)",
+        f"Generated on {ts}",
+        "",
+        "Identity",
+        "- You act as the user's proxy. Speak in the user's voice.",
+        "- Each run is non‑interactive and time‑boxed. Do one useful thing or write one short directive.",
+        "",
+        "Timer & Non‑overlap",
+        "- The orchestrator runs you on a fixed interval and never overlaps runs.",
+        "- Keep long work in files; keep messages short.",
+        "",
+        "Write‑to Path (single hand‑off)",
+        "- Write exactly one message per run to: `.cccc/mailbox/foreman/to_peer.md`.",
+        "- Put two header lines at the top for routing:",
+        "  Owner: PeerA|PeerB",
+        "  CC: PeerB|PeerA|none",
+        "- Wrap the body with `<TO_PEER> ... </TO_PEER>`.",
+        "",
+        "Anchors to read (skim then decide)",
+        "- Project brief: PROJECT.md",
+        "- Portfolio board: docs/por/POR.md (Now/Next/Risks)",
+        "- Active tasks: docs/por/T*/SUBPOR.md (Owner/Next/Acceptance)",
+        "- Peer rules: .cccc/rules/PEERA.md, .cccc/rules/PEERB.md",
+        "- Evidence/work roots: docs/evidence/**, .cccc/work/**",
+        "",
+        "Routing defaults & backlog",
+        "- Route architecture/alignment/risks to PeerA; implementation/experiments to PeerB.",
+        "- If many pending inbox items exist for the owner, remind to process oldest‑first, then propose one smallest next step aligned to POR/SUBPOR.",
+        "",
+        "Boundaries",
+        "- Do not paste long logs in messages; reference repo paths only.",
+        "- Do not modify orchestrator code/policies; do not declare 'done'.",
+        "",
+    ]
+    target = _rules_dir(home)/"FOREMAN.md"
+    target.write_text("\n".join(lines), encoding="utf-8")
+    return target
 
 
 def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = None) -> str:

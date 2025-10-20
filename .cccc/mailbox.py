@@ -6,6 +6,7 @@ from typing import Dict, Any, Tuple
 import hashlib, json, time
 
 PEERS = ("peerA", "peerB")
+FOREMAN = "foreman"
 
 # Sentinel marker (single-line) written after a message is queued from mailbox
 SENTINEL_PREFIX = "<!-- MAILBOX:SENT v1"
@@ -52,6 +53,15 @@ def ensure_mailbox(home: Path) -> Dict[str, Path]:
     gi = base/".gitignore"
     if not gi.exists():
         gi.write_text("*\n!/.gitignore\n", encoding="utf-8")
+    # Ensure foreman mailbox (single to_peer.md sink)
+    fdir = base/FOREMAN
+    try:
+        fdir.mkdir(parents=True, exist_ok=True)
+        fp = fdir/"to_peer.md"
+        if not fp.exists():
+            fp.write_text("", encoding="utf-8")
+    except Exception:
+        pass
     return paths
 
 def sha256_text(text: str) -> str:

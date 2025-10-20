@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
 from common.config import load_profiles, ensure_env_vars
-from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox, compose_sentinel, sha256_text
+from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox, compose_sentinel, sha256_text, is_sentinel_text
 from por_manager import ensure_por, por_path, por_status_snapshot, read_por_text
 
 ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # strip ANSI color/control sequences
@@ -1528,6 +1528,32 @@ def main(home: Path):
                 _persist_roles(cli_profiles, pa, pb, ax, aum)
                 print(f"[ROLES] Saved: PeerA={pa} PeerB={pb} Aux={ax or 'none'}")
                 cli_profiles = read_yaml(cli_profiles_path)
+                # Foreman enable & agent choice (simple)
+                try:
+                    fc = _load_foreman_conf()
+                except Exception:
+                    fc = {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+                ans_f = read_console_line("[FOREMAN] Enable Foreman (User Proxy)? y/N: ").strip().lower()
+                if ans_f in ("y","yes"):
+                    # agent choice: reuse_aux or a specific actor (not equal to PeerA/PeerB)
+                    options = ["reuse_aux"] + [a for a in acts if a not in (pa, pb)]
+                    print("[FOREMAN] Choose agent:", ", ".join(options))
+                    sel = read_console_line("> Enter agent id (or reuse_aux): ").strip()
+                    if sel not in options:
+                        sel = "reuse_aux"
+                    fc.update({
+                        'enabled': True,
+                        'agent': sel,
+                        'interval_seconds': int(fc.get('interval_seconds') or 900),
+                        'prompt_path': fc.get('prompt_path') or './FOREMAN_TASK.md',
+                        'cc_user': True,
+                        'max_run_seconds': int(fc.get('max_run_seconds') or 1800),
+                    })
+                    _save_foreman_conf(fc)
+                    _ensure_foreman_task(fc)
+                    print(f"[FOREMAN] Enabled (agent={sel})")
+                else:
+                    fc = _load_foreman_conf(); fc['enabled'] = False; _save_foreman_conf(fc)
     # Rebuild rules once after bindings are finalized (either from wizard or existing config),
     # so that Aux mode and timestamps are accurate for this run.
     try:
@@ -1671,6 +1697,225 @@ def main(home: Path):
             st[receiver_label] = True
             _save_preamble_sent(st)
             log_ledger(home, {"from":"system","kind":"lazy-preamble-sent","peer":receiver_label, "route":"mailbox"})
+        except Exception:
+            pass
+
+    # ---------- Foreman (User Proxy) helpers ----------
+    def _foreman_conf_path() -> Path:
+        return settings/"foreman.yaml"
+
+    def _load_foreman_conf() -> Dict[str, Any]:
+        p = _foreman_conf_path()
+        if not p.exists():
+            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+        try:
+            import yaml  # type: ignore
+            d = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
+            # Fill defaults
+            d.setdefault("enabled", False)
+            d.setdefault("interval_seconds", 900)
+            d.setdefault("agent", "reuse_aux")
+            d.setdefault("prompt_path", "./FOREMAN_TASK.md")
+            d.setdefault("cc_user", True)
+            d.setdefault("max_run_seconds", 1800)
+            return d
+        except Exception:
+            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+
+    def _save_foreman_conf(conf: Dict[str, Any]):
+        try:
+            import yaml  # type: ignore
+            _foreman_conf_path().parent.mkdir(parents=True, exist_ok=True)
+            _foreman_conf_path().write_text(yaml.safe_dump(conf, allow_unicode=True, sort_keys=False), encoding='utf-8')
+        except Exception:
+            _write_json_safe(_foreman_conf_path(), conf)  # fallback JSON
+
+    def _ensure_foreman_task(conf: Dict[str, Any]):
+        try:
+            prompt_path = Path(conf.get('prompt_path') or './FOREMAN_TASK.md')
+            if not prompt_path.exists():
+                tpl = (
+"Title: Foreman Task Brief (Project-specific)\n\n"
+"Standing Tasks (edit freely; pick one per run)\n"
+"- Task name:\n  Owner peer (PeerA|PeerB):\n  Do within time-box (non-interactive):\n  Save outputs to (e.g., .cccc/work/foreman/<timestamp>/...):\n  When to message the owner (and CC policy):\n\n"
+"Backlog & Cadence\n- If the owner's inbox has many pending items: remind to process oldest-first, then propose ONE smallest next step aligned to POR/SUBPOR. Put long analysis in files and reference paths.\n\n"
+"Project Preferences\n- Prioritized deliverables / risks / scripts to use:\n\n"
+"Message header & body (required)\n- Write one message to .cccc/mailbox/foreman/to_peer.md with:\n  Owner: PeerA|PeerB\n  CC: PeerB|PeerA|none\n  <TO_PEER>\n  …user-voice short text (6–10 lines; reference repo paths only)…\n  </TO_PEER>\n"
+                )
+                prompt_path.write_text(tpl, encoding='utf-8')
+        except Exception:
+            pass
+
+    def _foreman_state_path() -> Path:
+        return state/"foreman.json"
+
+    def _foreman_load_state() -> Dict[str, Any]:
+        return _read_json_safe(_foreman_state_path())
+
+    def _foreman_save_state(st: Dict[str, Any]):
+        _write_json_safe(_foreman_state_path(), st)
+
+    def _actor_aux_invoke(actor_id: str) -> str:
+        try:
+            actors_doc = read_yaml(settings/"agents.yaml")
+            acts = actors_doc.get('actors') or {}
+            ad = acts.get(actor_id) or {}
+            aux = ad.get('aux') or {}
+            inv = str(aux.get('invoke_command') or '')
+            return inv
+        except Exception:
+            return ''
+
+    def _compose_foreman_prompt(conf: Dict[str, Any]) -> Tuple[str, str]:
+        """Return (prompt_text, out_dir) where out_dir is a fresh folder for this run."""
+        rules_p = home/"rules"/"FOREMAN.md"
+        rules = rules_p.read_text(encoding='utf-8') if rules_p.exists() else ''
+        # Minimal runtime context (3–5 lines)
+        bindings = []
+        try:
+            resolved_tmp = load_profiles(home)
+            aux_actor = (resolved_tmp.get('aux') or {}).get('actor') or ''
+            bindings.append(f"Bindings: Foreman.agent={conf.get('agent')} Aux={aux_actor or 'none'}")
+        except Exception:
+            bindings.append(f"Bindings: Foreman.agent={conf.get('agent')}")
+        bindings.append(f"Schedule: interval={int(conf.get('interval_seconds',900))}s max_run={int(conf.get('max_run_seconds',1800))}s cc_user={'ON' if conf.get('cc_user',True) else 'OFF'}")
+        bindings.append("Write-to: .cccc/mailbox/foreman/to_peer.md with Owner/CC header and <TO_PEER> wrapper")
+        ctx = "\n".join(bindings)
+        # User-maintained task brief
+        task_path = Path(conf.get('prompt_path') or './FOREMAN_TASK.md')
+        task_txt = task_path.read_text(encoding='utf-8') if task_path.exists() else ''
+        # Prepare output folder for this run
+        out_dir = home/"work"/"foreman"/datetime.now().strftime("%Y%m%d-%H%M%S")
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        prompt = f"{rules}\n\n---\n{ctx}\n---\n{task_txt}".strip()
+        return prompt, out_dir.as_posix()
+
+    def _foreman_write_user_message(owner: str, cc: str, body: str):
+        try:
+            fpath = home/"mailbox"/"foreman"/"to_peer.md"
+            fpath.parent.mkdir(parents=True, exist_ok=True)
+            msg = f"Owner: {owner}\nCC: {cc}\n" + (body.strip() if body else '')
+            fpath.write_text(msg, encoding='utf-8')
+        except Exception:
+            pass
+
+    def _write_peer_inbox(label: str, user_text: str):
+        """Enqueue a FROM_USER inbox file for the given peer label (PeerA|PeerB)."""
+        try:
+            inbox = _inbox_dir(home, label)
+            inbox.mkdir(parents=True, exist_ok=True)
+            # allocate seq via state counter
+            ctr = state/f"inbox-seq-{label}.txt"
+            seq = 1
+            if ctr.exists():
+                try:
+                    seq = int(ctr.read_text().strip() or '0') + 1
+                except Exception:
+                    seq = 1
+            ctr.write_text(str(seq), encoding='utf-8')
+            mid = new_mid("foreman")
+            payload = f"<FROM_USER>\n{user_text.strip()}\n</FROM_USER>\n"
+            payload = wrap_with_mid(payload, mid)
+            (inbox/ f"{seq:06d}.{mid}.txt").write_text(payload, encoding='utf-8')
+            # mirror to inbox.md
+            (home/"mailbox"/("peerA" if label=="PeerA" else "peerB")/"inbox.md").write_text(payload, encoding='utf-8')
+            log_ledger(home, {"from":"User","kind":"foreman-dispatch","to":label,"chars":len(user_text)})
+        except Exception as e:
+            print(f"[FOREMAN] write inbox failed: {e}")
+
+    def _maybe_dispatch_foreman_message():
+        """If foreman/to_peer.md contains a new message, route to Owner/CC inbox and write sentinel."""
+        try:
+            base = home/"mailbox"/"foreman"
+            f = base/"to_peer.md"
+            if not f.exists():
+                return
+            raw = f.read_text(encoding='utf-8').strip()
+            if not raw:
+                return
+            if is_sentinel_text(raw):
+                return
+            # parse headers
+            owner = None; cc = 'none'
+            lines0 = raw.splitlines()
+            hdr_used = 0
+            for i,l in enumerate(lines0[:4]):
+                m = re.match(r"\s*Owner\s*:\s*(PeerA|PeerB)\s*$", l, re.I)
+                if m:
+                    owner = 'PeerA' if m.group(1).lower()=="peera" else 'PeerB'
+                    hdr_used = max(hdr_used, i+1)
+                m2 = re.match(r"\s*CC\s*:\s*(PeerA|PeerB|none)\s*$", l, re.I)
+                if m2:
+                    cc = m2.group(1)
+                    hdr_used = max(hdr_used, i+1)
+            body = parse_section(raw, "TO_PEER")
+            if not body:
+                body = "\n".join(lines0[hdr_used:]).strip()
+            if not owner:
+                log_ledger(home, {"from":"system","kind":"foreman-parse-error","reason":"missing-owner"})
+                return
+            # dispatch
+            _write_peer_inbox(owner, body)
+            if cc and cc.lower() == "peera":
+                if owner != 'PeerA':
+                    _write_peer_inbox('PeerA', body)
+            elif cc and cc.lower() == "peerb":
+                if owner != 'PeerB':
+                    _write_peer_inbox('PeerB', body)
+            # sentinel
+            try:
+                eid = hashlib.sha1(body.encode('utf-8','ignore')).hexdigest()[:12]
+            except Exception:
+                eid = str(int(time.time()))
+            tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+            sha8 = sha256_text(body)[:8]
+            sentinel = compose_sentinel(ts=tsz, eid=eid, sha8=sha8, route=f"Foreman→{owner}{','+cc if cc and cc!='none' else ''}")
+            f.write_text(sentinel, encoding='utf-8')
+            # optional user CC
+            try:
+                fc = _load_foreman_conf(); cc_u = bool(fc.get('cc_user', True))
+                if cc_u:
+                    outbox_write(home, {"type":"to_user","peer":"User","text": body, "eid": eid})
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _run_foreman_once(conf: Dict[str, Any]):
+        prompt, out_dir = _compose_foreman_prompt(conf)
+        agent = str(conf.get('agent') or 'reuse_aux')
+        maxs = int(conf.get('max_run_seconds', 1800) or 1800)
+        # Prefer Aux when reuse_aux
+        if agent == 'reuse_aux':
+            rc, out, err, cmd_line = _run_aux_cli(prompt)
+        else:
+            inv = _actor_aux_invoke(agent)
+            if not inv:
+                log_ledger(home, {"from":"system","kind":"foreman-error","reason":f"actor {agent} has no aux.invoke_command"})
+                return
+            # spawn command with timeout
+            cmd_line = inv.replace('{prompt}', prompt.replace('"','\\"'))
+            rc,out,err = run(cmd_line, timeout=maxs)
+        # persist outputs
+        try:
+            of = Path(out_dir)/"stdout.txt"; ef = Path(out_dir)/"stderr.txt"; mf = Path(out_dir)/"meta.json"
+            of.write_text(out or "", encoding='utf-8')
+            ef.write_text(err or "", encoding='utf-8')
+            _write_json_safe(mf, {"rc": rc, "agent": agent})
+        except Exception:
+            pass
+        # best-effort: if foreman/to_peer.md is empty and stdout looks like a message, write it
+        try:
+            f = home/"mailbox"/"foreman"/"to_peer.md"
+            cur = f.read_text(encoding='utf-8').strip() if f.exists() else ''
+            if (not cur) or is_sentinel_text(cur):
+                # Minimal heuristic: require Owner: and <TO_PEER>
+                if re.search(r"^\s*Owner\s*:\s*(PeerA|PeerB)\s*$", out or "", re.M) and re.search(r"<\s*TO_PEER\s*>", out or "", re.I):
+                    f.parent.mkdir(parents=True, exist_ok=True)
+                    f.write_text(out.strip(), encoding='utf-8')
         except Exception:
             pass
 
@@ -1832,6 +2077,17 @@ def main(home: Path):
                             pass
                     msg = f"Command sent to {' & '.join(labels)}"
                     result = {"ok": True, "message": msg}
+                elif command == "foreman":
+                    sub = str(args.get("action") or "").strip().lower()
+                    fc = _load_foreman_conf()
+                    if sub in ("on","enable","start"):
+                        fc['enabled'] = True; _save_foreman_conf(fc)
+                        result = {"ok": True, "message": "Foreman enabled"}
+                    elif sub in ("off","disable","stop"):
+                        fc['enabled'] = False; _save_foreman_conf(fc)
+                        result = {"ok": True, "message": "Foreman disabled"}
+                    else:
+                        result = {"ok": True, "message": f"Foreman status: {'ON' if fc.get('enabled') else 'OFF'} interval={fc.get('interval_seconds','?')}s agent={fc.get('agent','reuse_aux')} cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}"}
                 else:
                     raise ValueError("unknown command")
             except Exception as exc:
@@ -2944,10 +3200,44 @@ def main(home: Path):
                 # POR.new.md auto-diff removed (per latest design)
                 # Persist index
                 mbox_idx.save()
-                # Refresh status for panel
-                write_status(deliver_paused); write_queue_and_locks()
-                # Check resend timeouts
-                _resend_timeouts()
+        # Refresh status for panel
+        write_status(deliver_paused); write_queue_and_locks()
+        # Foreman: check dispatch mailbox
+        _maybe_dispatch_foreman_message()
+        # Foreman: tick scheduler
+        try:
+            fc = _load_foreman_conf()
+            if bool(fc.get('enabled', False)):
+                st = _foreman_load_state() or {}
+                now_ts = time.time()
+                next_due = float(st.get('next_due_ts') or 0.0)
+                running = bool(st.get('running', False))
+                lock = state/"foreman.lock"
+                # update next_due on first run
+                if next_due <= 0:
+                    st['next_due_ts'] = now_ts  # run immediately
+                    _foreman_save_state(st)
+                    next_due = now_ts
+                if (not running) and (now_ts >= next_due) and (not lock.exists()):
+                    # mark running and set next_due
+                    st['running'] = True
+                    st['next_due_ts'] = now_ts + float(fc.get('interval_seconds',900))
+                    _foreman_save_state(st)
+                    try:
+                        lock.write_text(str(int(now_ts)), encoding='utf-8')
+                    except Exception:
+                        pass
+                    try:
+                        _run_foreman_once(fc)
+                    finally:
+                        try: lock.unlink()
+                        except Exception: pass
+                        st['running'] = False
+                        _foreman_save_state(st)
+        except Exception as _fe:
+            print(f"[FOREMAN] scheduler error: {_fe}")
+        # Check resend timeouts
+        _resend_timeouts()
                 # Try to send next from queue when receiver idle
                 _try_send_from_queue("PeerA")
                 _try_send_from_queue("PeerB")
@@ -2972,6 +3262,7 @@ def main(home: Path):
             print("  /pause | /resume        → pause/resume A↔B handoff")
             print("  /refresh                → re-inject SYSTEM prompt")
             print("  /reset compact|clear    → context maintenance (compact = fold context, clear = fresh restart)")
+            print("  /foreman on|off|status  → enable/disable/check Foreman (User Proxy)")
             print("  /c <prompt> | c: <prompt> → run configured Aux once (one-off helper)")
             print("  /review                 → request Aux review bundle")
             print("  /echo on|off|<empty>    → console echo on/off/show")
