@@ -3237,49 +3237,49 @@ def main(home: Path):
                 # POR.new.md auto-diff removed (per latest design)
                 # Persist index
                 mbox_idx.save()
-        # Refresh status for panel
-        write_status(deliver_paused); write_queue_and_locks()
-        # Foreman: check dispatch mailbox
-        _maybe_dispatch_foreman_message()
-        # Foreman: tick scheduler
-        try:
-            fc = _load_foreman_conf()
-            if bool(fc.get('enabled', False)):
-                st = _foreman_load_state() or {}
-                now_ts = time.time()
-                next_due = float(st.get('next_due_ts') or 0.0)
-                running = bool(st.get('running', False))
-                lock = state/"foreman.lock"
-                # update next_due on first run
-                if next_due <= 0:
-                    try:
-                        iv = float(fc.get('interval_seconds',900) or 900)
-                    except Exception:
-                        iv = 900.0
-                    delay = min(120.0, iv/3.0)
-                    st['next_due_ts'] = now_ts + delay  # defer first run slightly
-                    _foreman_save_state(st)
-                    next_due = now_ts
-                if (not running) and (now_ts >= float(st.get('next_due_ts') or 0.0)) and (not lock.exists()):
-                    # mark running and set next_due
-                    st['running'] = True
-                    st['next_due_ts'] = now_ts + float(fc.get('interval_seconds',900))
-                    _foreman_save_state(st)
-                    try:
-                        lock.write_text(str(int(now_ts)), encoding='utf-8')
-                    except Exception:
-                        pass
-                    try:
-                        _run_foreman_once(fc)
-                    finally:
-                        try: lock.unlink()
-                        except Exception: pass
-                        st['running'] = False
-                        _foreman_save_state(st)
-        except Exception as _fe:
-            print(f"[FOREMAN] scheduler error: {_fe}")
-        # Check resend timeouts
-        _resend_timeouts()
+                # Refresh status for panel
+                write_status(deliver_paused); write_queue_and_locks()
+                # Foreman: check dispatch mailbox
+                _maybe_dispatch_foreman_message()
+                # Foreman: tick scheduler
+                try:
+                    fc = _load_foreman_conf()
+                    if bool(fc.get('enabled', False)):
+                        st = _foreman_load_state() or {}
+                        now_ts = time.time()
+                        next_due = float(st.get('next_due_ts') or 0.0)
+                        running = bool(st.get('running', False))
+                        lock = state/"foreman.lock"
+                        # update next_due on first run
+                        if next_due <= 0:
+                            try:
+                                iv = float(fc.get('interval_seconds',900) or 900)
+                            except Exception:
+                                iv = 900.0
+                            delay = min(120.0, iv/3.0)
+                            st['next_due_ts'] = now_ts + delay  # defer first run slightly
+                            _foreman_save_state(st)
+                            next_due = now_ts
+                        if (not running) and (now_ts >= float(st.get('next_due_ts') or 0.0)) and (not lock.exists()):
+                            # mark running and set next_due
+                            st['running'] = True
+                            st['next_due_ts'] = now_ts + float(fc.get('interval_seconds',900))
+                            _foreman_save_state(st)
+                            try:
+                                lock.write_text(str(int(now_ts)), encoding='utf-8')
+                            except Exception:
+                                pass
+                            try:
+                                _run_foreman_once(fc)
+                            finally:
+                                try: lock.unlink()
+                                except Exception: pass
+                                st['running'] = False
+                                _foreman_save_state(st)
+                except Exception as _fe:
+                    print(f"[FOREMAN] scheduler error: {_fe}")
+                # Check resend timeouts
+                _resend_timeouts()
                 # Try to send next from queue when receiver idle
                 _try_send_from_queue("PeerA")
                 _try_send_from_queue("PeerB")
