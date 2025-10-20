@@ -1442,6 +1442,52 @@ def main(home: Path):
 
     cli_profiles_path = settings/"cli_profiles.yaml"
     cli_profiles = read_yaml(cli_profiles_path)
+
+    # ---------- Foreman (User Proxy) helpers (defined early for wizard use) ----------
+    def _foreman_conf_path() -> Path:
+        return settings/"foreman.yaml"
+
+    def _load_foreman_conf() -> Dict[str, Any]:
+        p = _foreman_conf_path()
+        if not p.exists():
+            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+        try:
+            import yaml  # type: ignore
+            d = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
+            # Fill defaults
+            d.setdefault("enabled", False)
+            d.setdefault("interval_seconds", 900)
+            d.setdefault("agent", "reuse_aux")
+            d.setdefault("prompt_path", "./FOREMAN_TASK.md")
+            d.setdefault("cc_user", True)
+            d.setdefault("max_run_seconds", 1800)
+            return d
+        except Exception:
+            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+
+    def _save_foreman_conf(conf: Dict[str, Any]):
+        try:
+            import yaml  # type: ignore
+            _foreman_conf_path().parent.mkdir(parents=True, exist_ok=True)
+            _foreman_conf_path().write_text(yaml.safe_dump(conf, allow_unicode=True, sort_keys=False), encoding='utf-8')
+        except Exception:
+            _write_json_safe(_foreman_conf_path(), conf)  # fallback JSON
+
+    def _ensure_foreman_task(conf: Dict[str, Any]):
+        try:
+            prompt_path = Path(conf.get('prompt_path') or './FOREMAN_TASK.md')
+            if not prompt_path.exists():
+                tpl = (
+"Title: Foreman Task Brief (Project-specific)\n\n"
+"Standing Tasks (edit freely; pick one per run)\n"
+"- Task name:\n  Owner peer (PeerA|PeerB):\n  Do within time-box (non-interactive):\n  Save outputs to (e.g., .cccc/work/foreman/<timestamp>/...):\n  When to message the owner (and CC policy):\n\n"
+"Backlog & Cadence\n- If the owner's inbox has many pending items: remind to process oldest-first, then propose ONE smallest next step aligned to POR/SUBPOR. Put long analysis in files and reference paths.\n\n"
+"Project Preferences\n- Prioritized deliverables / risks / scripts to use:\n\n"
+"Message header & body (required)\n- Write one message to .cccc/mailbox/foreman/to_peer.md with:\n  Owner: PeerA|PeerB\n  CC: PeerB|PeerA|none\n  <TO_PEER>\n  …user-voice short text (6–10 lines; reference repo paths only)…\n  </TO_PEER>\n"
+                )
+                prompt_path.write_text(tpl, encoding='utf-8')
+        except Exception:
+            pass
     # --- Roles/Actors interactive binding (first thing; before load_profiles) ---
     def _write_yaml(p: Path, obj: Dict[str, Any]):
         try:
@@ -1536,14 +1582,14 @@ def main(home: Path):
                     fc = _load_foreman_conf()
                 except Exception:
                     fc = {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
-                ans_f = read_console_line("[FOREMAN] Enable Foreman (User Proxy)? y/N: ").strip().lower()
-                if ans_f in ("y","yes"):
-                    # agent choice: reuse_aux or a specific actor (not equal to PeerA/PeerB)
-                    options = ["reuse_aux"] + [a for a in acts if a not in (pa, pb)]
-                    print("[FOREMAN] Choose agent:", ", ".join(options))
-                    sel = read_console_line("> Enter agent id (or reuse_aux): ").strip()
-                    if sel not in options:
-                        sel = "reuse_aux"
+                # Unified selection UX (supports index or name): choose Foreman agent (allow 'none')
+                options = ["reuse_aux"] + [a for a in acts if a not in (pa, pb)]
+                sel = _choose('Foreman agent', options, allow_none=True)
+                if not sel:
+                    fc = _load_foreman_conf(); fc['enabled'] = False; _save_foreman_conf(fc)
+                    foreman_allowed = False
+                    print("[FOREMAN] Disabled")
+                else:
                     fc.update({
                         'enabled': True,
                         'agent': sel,
@@ -1556,9 +1602,6 @@ def main(home: Path):
                     _ensure_foreman_task(fc)
                     print(f"[FOREMAN] Enabled (agent={sel})")
                     foreman_allowed = True
-                else:
-                    fc = _load_foreman_conf(); fc['enabled'] = False; _save_foreman_conf(fc)
-                    foreman_allowed = False
     else:
         # Non-interactive: foreman allowed only if enabled in config at start
         try:
