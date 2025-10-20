@@ -104,6 +104,19 @@ def run(cmd: str, *, cwd: Optional[Path]=None, timeout: int=600) -> Tuple[int,st
         p.kill(); return 124, "", "Timeout"
     return p.returncode, out, err
 
+def _escape_for_double_quotes(s: str) -> str:
+    """Escape a string for safe inclusion inside a double-quoted POSIX shell string.
+    Escapes backslash, double-quote, dollar, and backtick which remain special in "...".
+    """
+    try:
+        s = s.replace('\\', r'\\')
+        s = s.replace('"', r'\"')
+        s = s.replace('`', r'\`')
+        s = s.replace('$', r'\$')
+        return s
+    except Exception:
+        return s
+
 def _peer_folder_name(label: str) -> str:
     return "peerA" if label == "PeerA" else "peerB"
 
@@ -1394,15 +1407,15 @@ def main(home: Path):
             return None
 
     def _run_aux_cli(prompt: str, timeout: Optional[int] = None) -> Tuple[int, str, str, str]:
-        safe_prompt = prompt.replace('"', '\\"')
+        safe_prompt = _escape_for_double_quotes(prompt)
         template = aux_command_template  # no hard fallback to a specific actor/CLI
         if not template:
             # Aux not configured — explicit error instead of silently falling back
             return 1, "", "Aux is not configured (no actor bound or invoke_command missing).", ""
-        if "{prompt}" in template:
-            command = template.replace("{prompt}", safe_prompt)
-        else:
-            command = f"{template} {safe_prompt}"
+            if "{prompt}" in template:
+                command = template.replace("{prompt}", safe_prompt)
+            else:
+                command = f"{template} {safe_prompt}"
         try:
             run_cwd = Path(aux_cwd) if aux_cwd else Path.cwd()
             if not run_cwd.is_absolute():
@@ -1943,6 +1956,15 @@ def main(home: Path):
 
     def _run_foreman_once(conf: Dict[str, Any]):
         prompt, out_dir = _compose_foreman_prompt(conf)
+        # Mark start in state and ledger (best-effort)
+        try:
+            st = _foreman_load_state() or {}
+            st['last_start_ts'] = time.time()
+            st['running'] = True
+            _foreman_save_state(st)
+            log_ledger(home, {"from":"system","kind":"foreman-start","agent": str(conf.get('agent') or 'reuse_aux')})
+        except Exception:
+            pass
         agent = str(conf.get('agent') or 'reuse_aux')
         maxs = int(conf.get('max_run_seconds', 1800) or 1800)
         # Prefer Aux when reuse_aux
@@ -1954,7 +1976,7 @@ def main(home: Path):
                 log_ledger(home, {"from":"system","kind":"foreman-error","reason":f"actor {agent} has no aux.invoke_command"})
                 return
             # spawn command with timeout
-            cmd_line = inv.replace('{prompt}', prompt.replace('"','\\"'))
+            cmd_line = inv.replace('{prompt}', _escape_for_double_quotes(prompt))
             rc,out,err = run(cmd_line, timeout=maxs)
         # persist outputs
         try:
@@ -1962,6 +1984,17 @@ def main(home: Path):
             of.write_text(out or "", encoding='utf-8')
             ef.write_text(err or "", encoding='utf-8')
             _write_json_safe(mf, {"rc": rc, "agent": agent})
+        except Exception:
+            pass
+        # Mark end in state and ledger
+        try:
+            st = _foreman_load_state() or {}
+            st['last_end_ts'] = time.time()
+            st['last_rc'] = int(rc)
+            st['last_out_dir'] = out_dir
+            st['running'] = False
+            _foreman_save_state(st)
+            log_ledger(home, {"from":"system","kind":"foreman-end","rc": int(rc), "out_dir": out_dir})
         except Exception:
             pass
         # best-effort: if foreman/to_peer.md is empty and stdout looks like a message, write it
@@ -2891,6 +2924,13 @@ def main(home: Path):
             f_next_hhmm = time.strftime('%H:%M', time.localtime(float(f_next))) if f_next else None
         except Exception:
             f_next_hhmm = None
+        f_running = bool((fstate or {}).get('running', False))
+        f_last_end = (fstate or {}).get('last_end_ts')
+        try:
+            f_last_hhmm = time.strftime('%H:%M', time.localtime(float(f_last_end))) if f_last_end else None
+        except Exception:
+            f_last_hhmm = None
+        f_last_rc = (fstate or {}).get('last_rc')
         payload = {
             "session": session,
             "paused": paused,
@@ -2911,7 +2951,7 @@ def main(home: Path):
                 "next_self_check_in": next_self,
             },
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "foreman": {"enabled": f_enabled, "next_due": f_next_hhmm, "cc_user": f_cc} if f_enabled else {"enabled": False},
+            "foreman": ({"enabled": True, "running": f_running, "next_due": f_next_hhmm, "last": f_last_hhmm, "last_rc": f_last_rc, "cc_user": f_cc} if f_enabled else {"enabled": False}),
         }
         try:
             (state/"status.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

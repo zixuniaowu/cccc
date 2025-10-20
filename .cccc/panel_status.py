@@ -124,7 +124,13 @@ def render(home: Path):
     # Foreman (User Proxy) minimal line
     fman = status.get('foreman') or {}
     if isinstance(fman, dict) and fman.get('enabled'):
-        lines.append(f"Foreman: ON  next @ {fman.get('next_due') or '-'}  cc: {'ON' if fman.get('cc_user') else 'OFF'}")
+        if fman.get('running'):
+            lines.append(f"Foreman: RUNNING  next @ {fman.get('next_due') or '-'}  cc: {'ON' if fman.get('cc_user') else 'OFF'}")
+        else:
+            last = fman.get('last') or '-'
+            rc = fman.get('last_rc')
+            rc_s = f" rc={rc}" if rc is not None else ""
+            lines.append(f"Foreman: ON  last @ {last}{rc_s}  next @ {fman.get('next_due') or '-'}  cc: {'ON' if fman.get('cc_user') else 'OFF'}")
     # Show POR path and updated time even without summary
     lines.append(f"POR path={(por.get('path') if isinstance(por, dict) else '-') or '-'}  updated={(por.get('updated_at') if isinstance(por, dict) else '-') or '-'}")
     summary = (por.get('summary') if isinstance(por, dict) else '') or ''
