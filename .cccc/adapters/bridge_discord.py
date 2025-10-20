@@ -415,7 +415,7 @@ def main():
             has_prefix = bool(re.search(r"^\s*(a[:：]|b[:：]|both[:：])", stripped, re.I) or
                                re.search(r"^\s*/(a|b|both)(?:@\S+)?\s+", stripped, re.I))
             if not has_prefix:
-                if low not in ('subscribe','sub','unsubscribe','unsub','showpeers on','showpeers off') and not message.attachments:
+                if low not in ('subscribe','sub','unsubscribe','unsub','showpeers on','showpeers off','verbose on','verbose off') and not message.attachments:
                     # Drop chatter without explicit prefix; keep logs quiet in normal operation
                     return
             if low in ('subscribe','sub'):
@@ -442,7 +442,7 @@ def main():
                 except Exception:
                     pass
                 return
-            if low in ('showpeers on','showpeers off'):
+            if low in ('showpeers on','showpeers off','verbose on','verbose off'):
                 val = (low.endswith('on'))
                 rt_path = HOME/"state"/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -453,8 +453,24 @@ def main():
                     rt_path.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding='utf-8')
                 except Exception:
                     pass
+                # Mirror verbose to Foreman cc_user in settings
                 try:
-                    await message.channel.send(f"Peer↔Peer summary set to: {'ON' if val else 'OFF'} (global)")
+                    import yaml
+                    fc_p = HOME/"settings"/"foreman.yaml"
+                    if fc_p.exists():
+                        fc = yaml.safe_load(fc_p.read_text(encoding='utf-8')) or {}
+                    else:
+                        fc = {}
+                    fc.setdefault('enabled', False)
+                    fc.setdefault('interval_seconds', 900)
+                    fc.setdefault('agent', 'reuse_aux')
+                    fc.setdefault('prompt_path', './FOREMAN_TASK.md')
+                    fc['cc_user'] = bool(val)
+                    fc_p.write_text(yaml.safe_dump(fc, allow_unicode=True, sort_keys=False), encoding='utf-8')
+                except Exception:
+                    pass
+                try:
+                    await message.channel.send(f"Verbose set to: {'ON' if val else 'OFF'} (peer summaries + Foreman CC)")
                 except Exception:
                     pass
                 return

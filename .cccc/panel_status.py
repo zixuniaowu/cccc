@@ -121,6 +121,10 @@ def render(home: Path):
     if mcounts:
         ca = mcounts.get('peerA') or {}; cb = mcounts.get('peerB') or {}
         lines.append(f"Mailbox: A tu={ca.get('to_user',0)} tp={ca.get('to_peer',0)}  |  B tu={cb.get('to_user',0)} tp={cb.get('to_peer',0)}")
+    # Foreman (User Proxy) minimal line
+    fman = status.get('foreman') or {}
+    if isinstance(fman, dict) and fman.get('enabled'):
+        lines.append(f"Foreman: ON  next @ {fman.get('next_due') or '-'}  cc: {'ON' if fman.get('cc_user') else 'OFF'}")
     # Show POR path and updated time even without summary
     lines.append(f"POR path={(por.get('path') if isinstance(por, dict) else '-') or '-'}  updated={(por.get('updated_at') if isinstance(por, dict) else '-') or '-'}")
     summary = (por.get('summary') if isinstance(por, dict) else '') or ''

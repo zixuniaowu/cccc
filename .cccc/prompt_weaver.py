@@ -457,7 +457,7 @@ def ensure_rules_docs(home: Path):
         old = json.loads(stamp.read_text(encoding="utf-8"))
     except Exception:
         old = {}
-    if not (home/"rules"/"PEERA.md").exists() or not (home/"rules"/"PEERB.md").exists() or not (home/"rules"/"PEERC.md").exists() or old.get("hash") != h:
+    if (not (home/"rules"/"PEERA.md").exists()) or (not (home/"rules"/"PEERB.md").exists()) or (not (home/"rules"/"PEERC.md").exists()) or (not (home/"rules"/"FOREMAN.md").exists()) or (old.get("hash") != h):
         ensure_por(home)  # make sure POR exists for path rendering
         im_enabled = _is_im_enabled(home)
         aux_mode = _aux_mode(home)

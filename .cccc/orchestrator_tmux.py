@@ -1393,7 +1393,7 @@ def main(home: Path):
         except Exception:
             return None
 
-    def _run_aux_cli(prompt: str) -> Tuple[int, str, str, str]:
+    def _run_aux_cli(prompt: str, timeout: Optional[int] = None) -> Tuple[int, str, str, str]:
         safe_prompt = prompt.replace('"', '\\"')
         template = aux_command_template  # no hard fallback to a specific actor/CLI
         if not template:
@@ -1407,7 +1407,10 @@ def main(home: Path):
             run_cwd = Path(aux_cwd) if aux_cwd else Path.cwd()
             if not run_cwd.is_absolute():
                 run_cwd = Path.cwd()/run_cwd
-            proc = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=str(run_cwd))
+            if timeout is not None and timeout > 0:
+                proc = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=str(run_cwd), timeout=timeout)
+            else:
+                proc = subprocess.run(command, shell=True, capture_output=True, text=True, cwd=str(run_cwd))
             return proc.returncode, proc.stdout, proc.stderr, command
         except Exception as exc:
             return 1, "", str(exc), command
@@ -1552,8 +1555,16 @@ def main(home: Path):
                     _save_foreman_conf(fc)
                     _ensure_foreman_task(fc)
                     print(f"[FOREMAN] Enabled (agent={sel})")
+                    foreman_allowed = True
                 else:
                     fc = _load_foreman_conf(); fc['enabled'] = False; _save_foreman_conf(fc)
+                    foreman_allowed = False
+    else:
+        # Non-interactive: foreman allowed only if enabled in config at start
+        try:
+            _fc0 = _load_foreman_conf(); foreman_allowed = bool(_fc0.get('enabled', False))
+        except Exception:
+            foreman_allowed = False
     # Rebuild rules once after bindings are finalized (either from wizard or existing config),
     # so that Aux mode and timestamps are accurate for this run.
     try:
@@ -1855,8 +1866,10 @@ def main(home: Path):
             if not body:
                 body = "\n".join(lines0[hdr_used:]).strip()
             if not owner:
-                log_ledger(home, {"from":"system","kind":"foreman-parse-error","reason":"missing-owner"})
-                return
+                owner = 'PeerB'  # simple, predictable default
+            # ensure wrapper for inbox payload
+            if not re.search(r"<\s*TO_PEER\s*>", body, re.I):
+                body = f"<TO_PEER>\n{body}\n</TO_PEER>\n"
             # dispatch
             _write_peer_inbox(owner, body)
             if cc and cc.lower() == "peera":
@@ -1878,7 +1891,8 @@ def main(home: Path):
             try:
                 fc = _load_foreman_conf(); cc_u = bool(fc.get('cc_user', True))
                 if cc_u:
-                    outbox_write(home, {"type":"to_user","peer":"User","text": body, "eid": eid})
+                    peer_key = 'peerA' if owner=='PeerA' else 'peerB'
+                    outbox_write(home, {"type":"to_user","peer": peer_key, "text": body, "eid": eid})
             except Exception:
                 pass
         except Exception:
@@ -1890,7 +1904,7 @@ def main(home: Path):
         maxs = int(conf.get('max_run_seconds', 1800) or 1800)
         # Prefer Aux when reuse_aux
         if agent == 'reuse_aux':
-            rc, out, err, cmd_line = _run_aux_cli(prompt)
+            rc, out, err, cmd_line = _run_aux_cli(prompt, timeout=maxs)
         else:
             inv = _actor_aux_invoke(agent)
             if not inv:
@@ -2081,8 +2095,15 @@ def main(home: Path):
                     sub = str(args.get("action") or "").strip().lower()
                     fc = _load_foreman_conf()
                     if sub in ("on","enable","start"):
-                        fc['enabled'] = True; _save_foreman_conf(fc)
-                        result = {"ok": True, "message": "Foreman enabled"}
+                        try:
+                            _allowed = bool(globals().get('foreman_allowed', False))
+                        except Exception:
+                            _allowed = False
+                        if not _allowed and not bool(fc.get('enabled', False)):
+                            result = {"ok": False, "message": "Foreman was not enabled at startup; restart to enable or run roles wizard."}
+                        else:
+                            fc['enabled'] = True; _save_foreman_conf(fc)
+                            result = {"ok": True, "message": "Foreman enabled"}
                     elif sub in ("off","disable","stop"):
                         fc['enabled'] = False; _save_foreman_conf(fc)
                         result = {"ok": True, "message": "Foreman disabled"}
@@ -2812,6 +2833,21 @@ def main(home: Path):
                 next_self = (rem if rem > 0 else self_check_every)
             except Exception:
                 pass
+        # Foreman status snapshot (minimal)
+        fconf = {}
+        fstate = {}
+        try:
+            fconf = _load_foreman_conf()
+            fstate = _foreman_load_state()
+        except Exception:
+            pass
+        f_enabled = bool(fconf.get('enabled', False))
+        f_cc = bool(fconf.get('cc_user', True))
+        f_next = fstate.get('next_due_ts')
+        try:
+            f_next_hhmm = time.strftime('%H:%M', time.localtime(float(f_next))) if f_next else None
+        except Exception:
+            f_next_hhmm = None
         payload = {
             "session": session,
             "paused": paused,
@@ -2832,6 +2868,7 @@ def main(home: Path):
                 "next_self_check_in": next_self,
             },
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "foreman": {"enabled": f_enabled, "next_due": f_next_hhmm, "cc_user": f_cc} if f_enabled else {"enabled": False},
         }
         try:
             (state/"status.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -3215,10 +3252,15 @@ def main(home: Path):
                 lock = state/"foreman.lock"
                 # update next_due on first run
                 if next_due <= 0:
-                    st['next_due_ts'] = now_ts  # run immediately
+                    try:
+                        iv = float(fc.get('interval_seconds',900) or 900)
+                    except Exception:
+                        iv = 900.0
+                    delay = min(120.0, iv/3.0)
+                    st['next_due_ts'] = now_ts + delay  # defer first run slightly
                     _foreman_save_state(st)
                     next_due = now_ts
-                if (not running) and (now_ts >= next_due) and (not lock.exists()):
+                if (not running) and (now_ts >= float(st.get('next_due_ts') or 0.0)) and (not lock.exists()):
                     # mark running and set next_due
                     st['running'] = True
                     st['next_due_ts'] = now_ts + float(fc.get('interval_seconds',900))

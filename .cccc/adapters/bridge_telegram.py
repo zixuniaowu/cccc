@@ -1298,6 +1298,37 @@ def main():
                 else:
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Self-subscribe disabled; contact admin.'}, timeout=15)
                 continue
+            # Verbose toggle (alias for legacy showpeers): /verbose on|off
+            if re.match(r"^\s*/?verbose\s+(on|off)\b", text.strip().lower()):
+                val = text.strip().lower().endswith('on')
+                # Update runtime show_peer_messages
+                try:
+                    rt_path = HOME/"state"/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)
+                    cur = {}
+                    if rt_path.exists():
+                        cur = json.loads(rt_path.read_text(encoding='utf-8'))
+                    cur['show_peer_messages'] = bool(val)
+                    rt_path.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding='utf-8')
+                except Exception:
+                    pass
+                # Mirror to foreman cc_user
+                try:
+                    import yaml
+                    fc_p = HOME/"settings"/"foreman.yaml"
+                    if fc_p.exists():
+                        fc = yaml.safe_load(fc_p.read_text(encoding='utf-8')) or {}
+                    else:
+                        fc = {}
+                    fc.setdefault('enabled', False)
+                    fc.setdefault('interval_seconds', 900)
+                    fc.setdefault('agent', 'reuse_aux')
+                    fc.setdefault('prompt_path', './FOREMAN_TASK.md')
+                    fc['cc_user'] = bool(val)
+                    fc_p.write_text(yaml.safe_dump(fc, allow_unicode=True, sort_keys=False), encoding='utf-8')
+                except Exception:
+                    pass
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"Verbose set to: {'ON' if val else 'OFF'} (peer summaries + Foreman CC)"}, timeout=15)
+                continue
             if is_cmd(text, 'status'):
                 st_path = HOME/"state"/"status.json"
                 try:
@@ -1372,6 +1403,7 @@ def main():
                     "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
                     "/showpeers on|off toggle Peer<->Peer summary; /files [in|out] [N] list recent files; /file N view."
                 )
+                help_txt = help_txt.replace('/showpeers','/verbose')
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
                 continue
 

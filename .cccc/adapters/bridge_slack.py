@@ -701,8 +701,8 @@ def main():
                 # Flush any pending to_user messages now that we have a channel
                 _flush_pending()
                 return
-            # Runtime toggle: showpeers on|off
-            msp = re.match(r"^\s*/?showpeers\s+(on|off)\b", low)
+            # Runtime toggle: verbose on|off (alias: showpeers on|off)
+            msp = re.match(r"^\s*/?(?:verbose|showpeers)\s+(on|off)\b", low)
             if msp:
                 val = (msp.group(1) == 'on')
                 rt_path = HOME/"state"/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)
@@ -714,8 +714,24 @@ def main():
                     rt_path.write_text(json.dumps(cur, ensure_ascii=False, indent=2), encoding='utf-8')
                 except Exception:
                     pass
+                # Also reflect Foreman cc_user to keep a single 'verbose' mental model
                 try:
-                    web.chat_postMessage(channel=ch, text=f"Peer↔Peer summary set to: {'ON' if val else 'OFF'} (global)")
+                    import yaml
+                    fc_p = HOME/"settings"/"foreman.yaml"
+                    if fc_p.exists():
+                        fc = yaml.safe_load(fc_p.read_text(encoding='utf-8')) or {}
+                    else:
+                        fc = {}
+                    fc.setdefault('enabled', False)
+                    fc.setdefault('interval_seconds', 900)
+                    fc.setdefault('agent', 'reuse_aux')
+                    fc.setdefault('prompt_path', './FOREMAN_TASK.md')
+                    fc['cc_user'] = bool(val)
+                    fc_p.write_text(yaml.safe_dump(fc, allow_unicode=True, sort_keys=False), encoding='utf-8')
+                except Exception:
+                    pass
+                try:
+                    web.chat_postMessage(channel=ch, text=f"Verbose set to: {'ON' if val else 'OFF'} (peer summaries + Foreman CC)")
                 except Exception:
                     pass
                 return
