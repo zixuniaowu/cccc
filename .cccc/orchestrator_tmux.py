@@ -1412,10 +1412,10 @@ def main(home: Path):
         if not template:
             # Aux not configured — explicit error instead of silently falling back
             return 1, "", "Aux is not configured (no actor bound or invoke_command missing).", ""
-            if "{prompt}" in template:
-                command = template.replace("{prompt}", safe_prompt)
-            else:
-                command = f"{template} {safe_prompt}"
+        if "{prompt}" in template:
+            command = template.replace("{prompt}", safe_prompt)
+        else:
+            command = f"{template} {safe_prompt}"
         try:
             run_cwd = Path(aux_cwd) if aux_cwd else Path.cwd()
             if not run_cwd.is_absolute():
