@@ -5,7 +5,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER>, and runs optional lint/tests before committing.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
-import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random
+import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random, threading
 from datetime import datetime, timedelta
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
@@ -116,6 +116,17 @@ def _escape_for_double_quotes(s: str) -> str:
         return s
     except Exception:
         return s
+
+def _build_exec_args(template: str, prompt: str) -> List[str]:
+    """Build argv for CLI execution without shell quoting issues.
+    Replace {prompt} with a placeholder token, shlex-split the template,
+    then inject the prompt as a single argv element. If {prompt} is not
+    present, append it as the last argument.
+    """
+    PLACE = "__PROMPT_PLACEHOLDER__"
+    s = template.replace("{prompt}", PLACE) if "{prompt}" in template else (template + " " + PLACE)
+    argv = shlex.split(s)
+    return [prompt if a == PLACE else a for a in argv]
 
 def _peer_folder_name(label: str) -> str:
     return "peerA" if label == "PeerA" else "peerB"
@@ -1463,7 +1474,7 @@ def main(home: Path):
     def _load_foreman_conf() -> Dict[str, Any]:
         p = _foreman_conf_path()
         if not p.exists():
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
         try:
             import yaml  # type: ignore
             d = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
@@ -1473,10 +1484,10 @@ def main(home: Path):
             d.setdefault("agent", "reuse_aux")
             d.setdefault("prompt_path", "./FOREMAN_TASK.md")
             d.setdefault("cc_user", True)
-            d.setdefault("max_run_seconds", 1800)
+            d.setdefault("max_run_seconds", 900)
             return d
         except Exception:
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
 
     def _save_foreman_conf(conf: Dict[str, Any]):
         try:
@@ -1605,7 +1616,7 @@ def main(home: Path):
                 try:
                     fc = _load_foreman_conf()
                 except Exception:
-                    fc = {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+                    fc = {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
                 # Unified selection UX (supports index or name): choose Foreman agent (allow 'none')
                 options = ["reuse_aux"] + [a for a in acts if a not in (pa, pb)]
                 sel = _choose('Foreman agent', options, allow_none=True)
@@ -1620,7 +1631,7 @@ def main(home: Path):
                         'interval_seconds': int(fc.get('interval_seconds') or 900),
                         'prompt_path': fc.get('prompt_path') or './FOREMAN_TASK.md',
                         'cc_user': True,
-                        'max_run_seconds': int(fc.get('max_run_seconds') or 1800),
+                        'max_run_seconds': int(fc.get('max_run_seconds') or 900),
                     })
                     _save_foreman_conf(fc)
                     _ensure_foreman_task(fc)
@@ -1785,7 +1796,7 @@ def main(home: Path):
     def _load_foreman_conf() -> Dict[str, Any]:
         p = _foreman_conf_path()
         if not p.exists():
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
         try:
             import yaml  # type: ignore
             d = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
@@ -1795,7 +1806,7 @@ def main(home: Path):
             d.setdefault("agent", "reuse_aux")
             d.setdefault("prompt_path", "./FOREMAN_TASK.md")
             d.setdefault("cc_user", True)
-            d.setdefault("max_run_seconds", 1800)
+            d.setdefault("max_run_seconds", 900)
             return d
         except Exception:
             return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
@@ -1856,7 +1867,7 @@ def main(home: Path):
             bindings.append(f"Bindings: Foreman.agent={conf.get('agent')} Aux={aux_actor or 'none'}")
         except Exception:
             bindings.append(f"Bindings: Foreman.agent={conf.get('agent')}")
-        bindings.append(f"Schedule: interval={int(conf.get('interval_seconds',900))}s max_run={int(conf.get('max_run_seconds',1800))}s cc_user={'ON' if conf.get('cc_user',True) else 'OFF'}")
+        bindings.append(f"Schedule: interval={int(conf.get('interval_seconds',900))}s max_run={int(conf.get('max_run_seconds',900))}s cc_user={'ON' if conf.get('cc_user',True) else 'OFF'}")
         bindings.append("Write-to: .cccc/mailbox/foreman/to_peer.md with Owner/CC header and <TO_PEER> wrapper")
         ctx = "\n".join(bindings)
         # User-maintained task brief
@@ -2019,6 +2030,112 @@ def main(home: Path):
                     f.write_text(out.strip(), encoding='utf-8')
         except Exception:
             pass
+
+    # Foreman worker thread target (non-blocking for main loop)
+    def _foreman_worker(conf: Dict[str, Any]):
+        prompt, out_dir = _compose_foreman_prompt(conf)
+        agent = str(conf.get('agent') or 'reuse_aux')
+        maxs = int(conf.get('max_run_seconds', 900) or 900)
+        hb_interval = 10.0
+        lock = state/"foreman.lock"
+        rc = 1
+        argv: List[str] = []
+        try:
+            # mark start
+            try:
+                st = _foreman_load_state() or {}
+                st.update({'last_start_ts': time.time(), 'running': True, 'last_heartbeat_ts': time.time()})
+                _foreman_save_state(st)
+                log_ledger(home, {"from":"system","kind":"foreman-start","agent": agent})
+            except Exception:
+                pass
+            # Build argv and cwd
+            if agent == 'reuse_aux':
+                template = aux_command_template
+                run_cwd = Path(aux_cwd) if aux_cwd else Path.cwd()
+            else:
+                template = _actor_aux_invoke(agent)
+                run_cwd = Path.cwd()
+            if not template:
+                log_ledger(home, {"from":"system","kind":"foreman-error","reason":f"actor {agent} has no aux.invoke_command"})
+                rc = 1
+                return
+            argv = _build_exec_args(template, prompt)
+            # Prepare output files
+            out_dir_path = Path(out_dir)
+            out_dir_path.mkdir(parents=True, exist_ok=True)
+            of = (out_dir_path/"stdout.txt").open('w', encoding='utf-8')
+            ef = (out_dir_path/"stderr.txt").open('w', encoding='utf-8')
+            try:
+                proc = subprocess.Popen(argv, shell=False, cwd=str(run_cwd), stdout=of, stderr=ef, text=True)
+                t0 = time.time(); next_hb = t0 + hb_interval
+                while True:
+                    rc_local = proc.poll()
+                    now = time.time()
+                    if rc_local is not None:
+                        rc = int(rc_local)
+                        break
+                    if now - t0 >= maxs:
+                        try: proc.terminate()
+                        except Exception: pass
+                        try: proc.wait(5)
+                        except Exception: pass
+                        if proc.poll() is None:
+                            try: proc.kill()
+                            except Exception: pass
+                            try: proc.wait(2)
+                            except Exception: pass
+                        rc = proc.poll() if (proc.poll() is not None) else -9
+                        break
+                    if now >= next_hb:
+                        try:
+                            st = _foreman_load_state() or {}
+                            st['last_heartbeat_ts'] = now
+                            _foreman_save_state(st)
+                        except Exception:
+                            pass
+                        next_hb = now + hb_interval
+                    time.sleep(0.5)
+            finally:
+                try: of.close()
+                except Exception: pass
+                try: ef.close()
+                except Exception: pass
+            # meta.json
+            try:
+                _write_json_safe(out_dir_path/"meta.json", {"rc": rc, "agent": agent, "argv": argv})
+            except Exception:
+                pass
+            # best-effort: stdout -> message
+            try:
+                f = home/"mailbox"/"foreman"/"to_peer.md"
+                cur = f.read_text(encoding='utf-8').strip() if f.exists() else ''
+                if (not cur) or is_sentinel_text(cur):
+                    so = ''
+                    try:
+                        with (out_dir_path/"stdout.txt").open('r', encoding='utf-8', errors='replace') as sf:
+                            so = sf.read(200000)
+                    except Exception:
+                        so = ''
+                    if re.search(r"^\s*Owner\s*:\s*(PeerA|PeerB)\s*$", so or "", re.M) and re.search(r"<\s*TO_PEER\s*>", so or "", re.I):
+                        f.parent.mkdir(parents=True, exist_ok=True)
+                        f.write_text(so.strip(), encoding='utf-8')
+            except Exception:
+                pass
+        finally:
+            # clear running, write end, remove lock
+            try:
+                st = _foreman_load_state() or {}
+                st.update({'last_end_ts': time.time(), 'last_rc': int(rc), 'last_out_dir': out_dir, 'running': False})
+                _foreman_save_state(st)
+                log_ledger(home, {"from":"system","kind":"foreman-end","rc": int(rc), "out_dir": out_dir})
+            except Exception:
+                pass
+            try:
+                if lock.exists():
+                    lock.unlink()
+            except Exception:
+                pass
 
     # Prepare tmux session/panes
     if not tmux_session_exists(session):
@@ -2906,6 +3023,8 @@ def main(home: Path):
     ctx = context_blob(policies, phase)
     # Simplify: do not pause handoff by default; let user /pause when needed
     deliver_paused = False
+    # Foreman thread handle (non-overlapping)
+    foreman_thread: Optional[threading.Thread] = None
 
     # Write initial status snapshot for panel
     def write_status(paused: bool):
@@ -3335,27 +3454,41 @@ def main(home: Path):
                 write_status(deliver_paused); write_queue_and_locks()
                 # Foreman: check dispatch mailbox
                 _maybe_dispatch_foreman_message()
-                # Foreman: tick scheduler
+                # Foreman: tick scheduler (non-blocking thread)
                 try:
                     fc = _load_foreman_conf()
                     if bool(fc.get('enabled', False)):
                         st = _foreman_load_state() or {}
                         now_ts = time.time()
-                        next_due = float(st.get('next_due_ts') or 0.0)
-                        running = bool(st.get('running', False))
                         lock = state/"foreman.lock"
-                        # update next_due on first run
+                        # Stale cleanup: if running but no thread alive and heartbeat stale, clear
+                        try:
+                            running = bool(st.get('running', False))
+                            last_hb = float(st.get('last_heartbeat_ts') or 0.0)
+                            maxs = float(fc.get('max_run_seconds', 900) or 900)
+                            if running and (foreman_thread is not None) and (not foreman_thread.is_alive()) and (now_ts - last_hb > (maxs + 20.0)):
+                                st['running'] = False
+                                _foreman_save_state(st)
+                                try:
+                                    if lock.exists(): lock.unlink()
+                                except Exception:
+                                    pass
+                                log_ledger(home, {"from":"system","kind":"foreman-stale-clean"})
+                        except Exception:
+                            pass
+                        # Schedule next_due on first run
+                        next_due = float(st.get('next_due_ts') or 0.0)
                         if next_due <= 0:
                             try:
                                 iv = float(fc.get('interval_seconds',900) or 900)
                             except Exception:
                                 iv = 900.0
                             delay = min(120.0, iv/3.0)
-                            st['next_due_ts'] = now_ts + delay  # defer first run slightly
+                            st['next_due_ts'] = now_ts + delay
                             _foreman_save_state(st)
-                            next_due = now_ts
-                        if (not running) and (now_ts >= float(st.get('next_due_ts') or 0.0)) and (not lock.exists()):
-                            # mark running and set next_due
+                            next_due = now_ts + delay
+                        # Start worker if due and no running thread
+                        if (now_ts >= float(st.get('next_due_ts') or 0.0)) and (not bool(st.get('running', False))) and ((foreman_thread is None) or (not foreman_thread.is_alive())) and (not lock.exists()):
                             st['running'] = True
                             st['next_due_ts'] = now_ts + float(fc.get('interval_seconds',900))
                             _foreman_save_state(st)
@@ -3363,13 +3496,10 @@ def main(home: Path):
                                 lock.write_text(str(int(now_ts)), encoding='utf-8')
                             except Exception:
                                 pass
-                            try:
-                                _run_foreman_once(fc)
-                            finally:
-                                try: lock.unlink()
-                                except Exception: pass
-                                st['running'] = False
-                                _foreman_save_state(st)
+                            # Snapshot conf for the worker and launch
+                            conf_snapshot = dict(fc)
+                            foreman_thread = threading.Thread(target=_foreman_worker, args=(conf_snapshot,), daemon=True)
+                            foreman_thread.start()
                 except Exception as _fe:
                     print(f"[FOREMAN] scheduler error: {_fe}")
                 # Check resend timeouts
