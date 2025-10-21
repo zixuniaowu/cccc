@@ -418,6 +418,23 @@ def main():
                 _log(f"[cmd] review ch={message.channel.id} req={req_id}")
                 return
 
+            if re.match(r'^/?foreman\b', stripped, re.I):
+                parts = stripped.split()
+                action = parts[1].lower() if len(parts) > 1 else 'status'
+                if action not in ('on','off','enable','disable','start','stop','status'):
+                    await _send_reply('Usage: /foreman on|off|status')
+                    return
+                result, req_id = _enqueue_im_command('foreman', {'action': action}, source='discord', channel=str(message.channel.id))
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'OK'
+                elif result:
+                    reply = result.get('message') or 'Foreman error'
+                else:
+                    reply = f"Foreman request queued (id={req_id})."
+                await _send_reply(reply)
+                _log(f"[cmd] foreman ch={message.channel.id} req={req_id} action={action}")
+                return
+
             # Require routing prefixes to avoid forwarding general chatter (support fullwidth colon & mentions)
             has_prefix = bool(re.search(r"^\s*(a[:：]|b[:：]|both[:：])", stripped, re.I) or
                                re.search(r"^\s*/(a|b|both)(?:@\S+)?\s+", stripped, re.I))

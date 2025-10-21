@@ -1160,6 +1160,19 @@ def main():
                 _append_log(outlog, f"[cmd] review chat={chat_id} req={req_id}")
                 continue
 
+            # Foreman control: /foreman on|off|status
+            if is_cmd(text, 'foreman'):
+                parts = text.split()
+                action = parts[1].lower() if len(parts) > 1 else 'status'
+                if action not in ('on','off','enable','disable','start','stop','status'):
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /foreman on|off|status'}, timeout=15)
+                    continue
+                result, req_id = _enqueue_im_command('foreman', {'action': action}, source='telegram', chat_id=chat_id)
+                reply = (result.get('message') if result else f'Foreman request queued (id={req_id}).')
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                _append_log(outlog, f"[cmd] foreman action={action} chat={chat_id} req={req_id}")
+                continue
+
             # Enforce mention in group if configured
             if (not is_dm) and require_mention:
                 ents = msg.get('entities') or []

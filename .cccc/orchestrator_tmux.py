@@ -3664,7 +3664,29 @@ def main(home: Path):
         up = f"<FROM_USER>\n{line}\n</FROM_USER>\n"
         _send_handoff("User", "PeerA", _maybe_prepend_preamble("PeerA", up))
         _send_handoff("User", "PeerB", _maybe_prepend_preamble("PeerB", up))
-        
+        # Console shortcuts
+        if line.lower().startswith('/foreman'):
+            parts = line.strip().split()
+            action = parts[1].lower() if len(parts) > 1 else 'status'
+            try:
+                fc = _load_foreman_conf()
+                if action in ('on','enable','start'):
+                    allowed = False
+                    try:
+                        allowed = bool(globals().get('foreman_allowed', False)) or bool(fc.get('enabled', False))
+                    except Exception:
+                        allowed = False
+                    if not allowed and not bool(fc.get('enabled', False)):
+                        print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
+                    else:
+                        fc['enabled'] = True; _save_foreman_conf(fc); print("Foreman enabled")
+                elif action in ('off','disable','stop'):
+                    fc['enabled'] = False; _save_foreman_conf(fc); print("Foreman disabled")
+                else:
+                    print(f"Foreman status: {'ON' if fc.get('enabled') else 'OFF'} interval={fc.get('interval_seconds','?')}s agent={fc.get('agent','reuse_aux')} cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}")
+            except Exception as e:
+                print(f"Foreman error: {e}")
+            continue
     print("\n[END] Recent commits:")
     run("git --no-pager log -n 5 --oneline")
     print("Ledger:", (home/"state/ledger.jsonl"))

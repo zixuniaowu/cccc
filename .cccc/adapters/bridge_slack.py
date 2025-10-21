@@ -687,6 +687,23 @@ def main():
                 _append_log(f"[cmd] review ch={ch} req={req_id}")
                 return
 
+            if re.match(r'^/?foreman\b', command_text, re.I):
+                parts = command_text.split()
+                action = parts[1].lower() if len(parts) > 1 else 'status'
+                if action not in ('on','off','enable','disable','start','stop','status'):
+                    _send_reply('Usage: /foreman on|off|status')
+                    return
+                result, req_id = _enqueue_im_command('foreman', {'action': action}, source='slack', channel=ch)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'OK'
+                elif result:
+                    reply = result.get('message') or 'Foreman error'
+                else:
+                    reply = f"Foreman request queued (id={req_id})."
+                _send_reply(reply)
+                _append_log(f"[cmd] foreman ch={ch} req={req_id} action={action}")
+                return
+
             # Routing prefixes only; ignore general chatter without explicit route (support fullwidth colon & /a forms)
             has_prefix = bool(
                 re.search(r"^\s*(a|b|both)[:：]", stripped, re.I) or
