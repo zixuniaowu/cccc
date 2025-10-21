@@ -121,6 +121,18 @@ Cadence
 - Every N handoffs (configurable), the orchestrator triggers a short self‑check to keep both peers aligned.
 - PeerB also receives a "POR update requested …" reminder: review `POR.md` and all active `SUBPOR.md` (Goal/Acceptance/Probe/Kill/Next), align POR Now/Next with each SUBPOR Next, close/rescope stale items, ensure evidence/risks/decisions have recent refs, and check for gaps (create a new SUBPOR after peer ACK if needed).
 
+## Foreman (User Proxy)
+- Purpose: a lightweight “user proxy” that runs on a timer and either does one non‑interactive task or writes one short user‑voice request to the right peer.
+- Enable at startup: in the roles wizard, choose a Foreman agent (or `none` to disable). You can reuse Aux or pick an actor like `opencode`.
+- Task brief: edit `./FOREMAN_TASK.md` (free‑form; describe what matters now and list the standing tasks you want Foreman to perform). The system rules live at `.cccc/rules/FOREMAN.md`.
+- Cadence: runs every 15 minutes by default (first run is slightly delayed after startup); runs never overlap.
+- Visibility:
+  - Panel shows: `Foreman: RUNNING | last @ HH:MM rc=N | next @ HH:MM | cc: ON/OFF`.
+  - IM shows Foreman messages as `[FOREMAN→PeerA] …` or `[FOREMAN→PeerB] …` (short text; long outputs are stored in `.cccc/work/foreman/<timestamp>/`).
+- Controls:
+  - `/verbose on|off` toggles peer summaries and Foreman CC to chat.
+  - `/foreman on|off|status` (only allowed if Foreman was enabled at startup) shows/toggles the scheduler.
+
 ## Folder layout (after `cccc init`)
 ```
 .cccc/
