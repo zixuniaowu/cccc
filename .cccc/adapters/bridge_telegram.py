@@ -652,6 +652,34 @@ def main():
         # Always commit cursor (do not block queue): even when 0 delivered, treat as handled
         return True
 
+    def send_foreman(owner_peer: str, text: str) -> bool:
+        # owner_peer in {'peerA','peerB'}
+        to_label = "PeerA" if owner_peer == 'peerA' else "PeerB"
+        prefix = f"[FOREMAN→{to_label}]"
+        minint = float(str(cfg.get('to_user_min_interval_s') or cfg.get('peer_summary_min_interval_s') or 5))
+        msg = _compose_safe(prefix, text, int(cfg.get('max_msg_chars') or max_chars), int(cfg.get('max_msg_lines') or max_lines))
+        ok, reason = _preflight_msg(owner_peer, msg, minint)
+        if not ok:
+            _append_ledger({'kind':'bridge-outbox-blocked','route':'foreman_to_user','from':'FOREMAN', 'reason': reason})
+            return False
+        dynamic_allow = set(allow_cfg) | set(load_subs())
+        if not dynamic_allow:
+            _append_ledger({'kind':'bridge-outbox-blocked','route':'foreman_to_user','from':'FOREMAN','reason':'no-allowed-chats'})
+            return False
+        delivered = 0
+        for chat_id in sorted(dynamic_allow):
+            ok_send = _send_with_one_retry(chat_id, {'chat_id': chat_id, 'text': msg, 'disable_web_page_preview': True})
+            if ok_send:
+                delivered += 1
+            else:
+                _append_log(outlog, f"[error] foreman send chat={chat_id} err=failed-after-retry")
+                _append_ledger({'kind':'bridge-outbox-error','route':'foreman_to_user','from':'FOREMAN','chat':chat_id,'error':'failed-after-retry'})
+        if delivered > 0:
+            _append_log(outlog, f"[outbound] sent FOREMAN→{to_label} {len(msg)} chars to {delivered} chats")
+            _append_ledger({"kind":"bridge-outbound","to":"telegram","route":"foreman_to_user","from":"FOREMAN","owner":to_label,"chars":len(msg),"chats":delivered})
+            last_sent_ts[owner_peer] = time.time()
+        return True
+
     def send_peer_summary(sender_peer: str, text: str) -> bool:
         label = "PeerA→PeerB" if sender_peer == 'peerA' else "PeerB→PeerA"
         from_label = "PeerA" if sender_peer == 'peerA' else "PeerB"
@@ -699,6 +727,10 @@ def main():
         text = str(ev.get('text') or '')
         if not text:
             return True
+        src = str(ev.get('from') or '').lower()
+        if src == 'foreman':
+            owner = _normalize_peer_label(str(ev.get('owner') or peer_key), default=peer_key)
+            return bool(send_foreman(owner, text))
         return bool(send_summary(peer_key, text))
 
     def on_to_peer_summary(ev: Dict[str, Any]) -> bool:

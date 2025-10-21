@@ -244,8 +244,15 @@ def main():
 
     def on_to_user(ev: Dict[str,Any]) -> bool:
         p = str(ev.get('peer') or '').lower()
-        label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
-        msg = _compose_safe(f"[{label}]", str(ev.get('text') or ''))
+        src = str(ev.get('from') or '').lower()
+        if src == 'foreman':
+            owner = 'peerA' if ('peera' in p or p=='peera' or p=='peera') else 'peerB'
+            label = 'PeerA' if owner=='peerA' else 'PeerB'
+            prefix = f"[FOREMAN→{label}]"
+        else:
+            label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
+            prefix = f"[{label}]"
+        msg = _compose_safe(prefix, str(ev.get('text') or ''))
         with q_lock:
             with SUBS_LOCK:
                 chs = list(dict.fromkeys((chans_user or []) + (SUBS or [])))

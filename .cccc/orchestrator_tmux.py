@@ -1959,7 +1959,7 @@ def main(home: Path):
                 fc = _load_foreman_conf(); cc_u = bool(fc.get('cc_user', True))
                 if cc_u:
                     peer_key = 'peerA' if owner=='PeerA' else 'peerB'
-                    outbox_write(home, {"type":"to_user","peer": peer_key, "text": body, "eid": eid})
+                    outbox_write(home, {"type":"to_user","peer": peer_key, "from":"Foreman", "owner": peer_key, "cc": (cc.lower() if cc else 'none'), "text": body, "eid": eid})
             except Exception:
                 pass
         except Exception:

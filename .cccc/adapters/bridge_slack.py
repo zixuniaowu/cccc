@@ -316,8 +316,15 @@ def main():
 
     def on_to_user(ev: Dict[str,Any]) -> bool:
         p = str(ev.get('peer') or '').lower()
-        label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
-        msg = f"[{label}]\n" + _summarize(str(ev.get('text') or ''))
+        src = str(ev.get('from') or '').lower()
+        if src == 'foreman':
+            owner = 'peerA' if ('peera' in p or p=='peera' or p=='peera') else 'peerB'
+            label = 'PeerA' if owner=='peerA' else 'PeerB'
+            prefix = f"[FOREMAN→{label}]\n"
+        else:
+            label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
+            prefix = f"[{label}]\n"
+        msg = prefix + _summarize(str(ev.get('text') or ''))
         with SUBS_LOCK:
             chs = list(dict.fromkeys((channels_to_user or []) + (SUBS or [])))
         if chs:
