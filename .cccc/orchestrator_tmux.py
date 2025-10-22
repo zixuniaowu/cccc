@@ -1485,9 +1485,11 @@ def main(home: Path):
             d.setdefault("prompt_path", "./FOREMAN_TASK.md")
             d.setdefault("cc_user", True)
             d.setdefault("max_run_seconds", 900)
+            # Persisted gating: allowed means runtime toggles are permitted this run
+            d.setdefault("allowed", d.get("enabled", False))
             return d
         except Exception:
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
+            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900, "allowed": False}
 
     def _save_foreman_conf(conf: Dict[str, Any]):
         try:
@@ -1621,12 +1623,12 @@ def main(home: Path):
                 options = ["reuse_aux"] + [a for a in acts if a not in (pa, pb)]
                 sel = _choose('Foreman agent', options, allow_none=True)
                 if not sel:
-                    fc = _load_foreman_conf(); fc['enabled'] = False; _save_foreman_conf(fc)
-                    foreman_allowed = False
+                    fc = _load_foreman_conf(); fc['enabled'] = False; fc['allowed'] = False; _save_foreman_conf(fc)
                     print("[FOREMAN] Disabled")
                 else:
                     fc.update({
                         'enabled': True,
+                        'allowed': True,
                         'agent': sel,
                         'interval_seconds': int(fc.get('interval_seconds') or 900),
                         'prompt_path': fc.get('prompt_path') or './FOREMAN_TASK.md',
@@ -1636,13 +1638,12 @@ def main(home: Path):
                     _save_foreman_conf(fc)
                     _ensure_foreman_task(fc)
                     print(f"[FOREMAN] Enabled (agent={sel})")
-                    foreman_allowed = True
     else:
-        # Non-interactive: foreman allowed only if enabled in config at start
+        # Non-interactive: foreman allowed only if configured in config at start
         try:
-            _fc0 = _load_foreman_conf(); foreman_allowed = bool(_fc0.get('enabled', False))
+            _fc0 = _load_foreman_conf()
         except Exception:
-            foreman_allowed = False
+            pass
     # Rebuild rules once after bindings are finalized (either from wizard or existing config),
     # so that Aux mode and timestamps are accurate for this run.
     try:
@@ -1807,9 +1808,10 @@ def main(home: Path):
             d.setdefault("prompt_path", "./FOREMAN_TASK.md")
             d.setdefault("cc_user", True)
             d.setdefault("max_run_seconds", 900)
+            d.setdefault("allowed", d.get("enabled", False))
             return d
         except Exception:
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 1800}
+            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900, "allowed": False}
 
     def _save_foreman_conf(conf: Dict[str, Any]):
         try:
@@ -2299,11 +2301,8 @@ def main(home: Path):
                     sub = str(args.get("action") or "").strip().lower()
                     fc = _load_foreman_conf()
                     if sub in ("on","enable","start"):
-                        try:
-                            _allowed = bool(globals().get('foreman_allowed', False))
-                        except Exception:
-                            _allowed = False
-                        if not _allowed and not bool(fc.get('enabled', False)):
+                        _allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                        if not _allowed:
                             result = {"ok": False, "message": "Foreman was not enabled at startup; restart to enable or run roles wizard."}
                         else:
                             fc['enabled'] = True; _save_foreman_conf(fc)
@@ -2312,7 +2311,28 @@ def main(home: Path):
                         fc['enabled'] = False; _save_foreman_conf(fc)
                         result = {"ok": True, "message": "Foreman disabled"}
                     else:
-                        result = {"ok": True, "message": f"Foreman status: {'ON' if fc.get('enabled') else 'OFF'} interval={fc.get('interval_seconds','?')}s agent={fc.get('agent','reuse_aux')} cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}"}
+                        # Compose richer status from config and state
+                        st = _foreman_load_state() or {}
+                        now = time.time()
+                        def _age(ts: float) -> str:
+                            if not ts:
+                                return "-"
+                            sec = max(0, int(now - ts))
+                            return f"{sec}s"
+                        allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                        enabled = bool(fc.get('enabled', False))
+                        running = bool(st.get('running', False))
+                        next_due = st.get('next_due_ts') or 0
+                        next_in = f"{int(max(0, next_due - now))}s" if next_due else "-"
+                        last_rc = st.get('last_rc')
+                        last_out = st.get('last_out_dir') or '-'
+                        msg = (
+                            f"Foreman status: {'ON' if enabled else 'OFF'} allowed={'YES' if allowed else 'NO'} "
+                            f"agent={fc.get('agent','reuse_aux')} interval={fc.get('interval_seconds','?')}s cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}\n"
+                            f"running={'YES' if running else 'NO'} next_in={next_in} last_start={_age(float(st.get('last_start_ts') or 0))} "
+                            f"last_hb={_age(float(st.get('last_heartbeat_ts') or 0))} last_end={_age(float(st.get('last_end_ts') or 0))} last_rc={last_rc if last_rc is not None else '-'} out={last_out}"
+                        )
+                        result = {"ok": True, "message": msg}
                 else:
                     raise ValueError("unknown command")
             except Exception as exc:
@@ -3660,6 +3680,44 @@ def main(home: Path):
             up = f"<FROM_USER>\n{msg}\n</FROM_USER>\n"
             _send_handoff("User", "PeerB", _maybe_prepend_preamble("PeerB", up))
             continue
+        # Console shortcuts (handle before default broadcast)
+        if line.lower().startswith('/foreman'):
+            parts = line.strip().split()
+            action = parts[1].lower() if len(parts) > 1 else 'status'
+            try:
+                fc = _load_foreman_conf()
+                if action in ('on','enable','start'):
+                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                    if not allowed:
+                        print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
+                    else:
+                        fc['enabled'] = True; _save_foreman_conf(fc); print("Foreman enabled")
+                elif action in ('off','disable','stop'):
+                    fc['enabled'] = False; _save_foreman_conf(fc); print("Foreman disabled")
+                else:
+                    st = _foreman_load_state() or {}
+                    now = time.time()
+                    def _age(ts: float) -> str:
+                        if not ts:
+                            return "-"
+                        sec = max(0, int(now - ts))
+                        return f"{sec}s"
+                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                    enabled = bool(fc.get('enabled', False))
+                    running = bool(st.get('running', False))
+                    next_due = st.get('next_due_ts') or 0
+                    next_in = f"{int(max(0, next_due - now))}s" if next_due else "-"
+                    last_rc = st.get('last_rc')
+                    last_out = st.get('last_out_dir') or '-'
+                    print(
+                        f"Foreman status: {'ON' if enabled else 'OFF'} allowed={'YES' if allowed else 'NO'} "
+                        f"agent={fc.get('agent','reuse_aux')} interval={fc.get('interval_seconds','?')}s cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}\n"
+                        f"running={'YES' if running else 'NO'} next_in={next_in} last_start={_age(float(st.get('last_start_ts') or 0))} "
+                        f"last_hb={_age(float(st.get('last_heartbeat_ts') or 0))} last_end={_age(float(st.get('last_end_ts') or 0))} last_rc={last_rc if last_rc is not None else '-'} out={last_out}"
+                    )
+            except Exception as e:
+                print(f"Foreman error: {e}")
+            continue
         # Default broadcast: send to both peers immediately
         up = f"<FROM_USER>\n{line}\n</FROM_USER>\n"
         _send_handoff("User", "PeerA", _maybe_prepend_preamble("PeerA", up))
@@ -3671,19 +3729,34 @@ def main(home: Path):
             try:
                 fc = _load_foreman_conf()
                 if action in ('on','enable','start'):
-                    allowed = False
-                    try:
-                        allowed = bool(globals().get('foreman_allowed', False)) or bool(fc.get('enabled', False))
-                    except Exception:
-                        allowed = False
-                    if not allowed and not bool(fc.get('enabled', False)):
+                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                    if not allowed:
                         print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
                     else:
                         fc['enabled'] = True; _save_foreman_conf(fc); print("Foreman enabled")
                 elif action in ('off','disable','stop'):
                     fc['enabled'] = False; _save_foreman_conf(fc); print("Foreman disabled")
                 else:
-                    print(f"Foreman status: {'ON' if fc.get('enabled') else 'OFF'} interval={fc.get('interval_seconds','?')}s agent={fc.get('agent','reuse_aux')} cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}")
+                    st = _foreman_load_state() or {}
+                    now = time.time()
+                    def _age(ts: float) -> str:
+                        if not ts:
+                            return "-"
+                        sec = max(0, int(now - ts))
+                        return f"{sec}s"
+                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                    enabled = bool(fc.get('enabled', False))
+                    running = bool(st.get('running', False))
+                    next_due = st.get('next_due_ts') or 0
+                    next_in = f"{int(max(0, next_due - now))}s" if next_due else "-"
+                    last_rc = st.get('last_rc')
+                    last_out = st.get('last_out_dir') or '-'
+                    print(
+                        f"Foreman status: {'ON' if enabled else 'OFF'} allowed={'YES' if allowed else 'NO'} "
+                        f"agent={fc.get('agent','reuse_aux')} interval={fc.get('interval_seconds','?')}s cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}\n"
+                        f"running={'YES' if running else 'NO'} next_in={next_in} last_start={_age(float(st.get('last_start_ts') or 0))} "
+                        f"last_hb={_age(float(st.get('last_heartbeat_ts') or 0))} last_end={_age(float(st.get('last_end_ts') or 0))} last_rc={last_rc if last_rc is not None else '-'} out={last_out}"
+                    )
             except Exception as e:
                 print(f"Foreman error: {e}")
             continue

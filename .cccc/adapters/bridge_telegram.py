@@ -1167,7 +1167,45 @@ def main():
                 if action not in ('on','off','enable','disable','start','stop','status'):
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /foreman on|off|status'}, timeout=15)
                     continue
-                result, req_id = _enqueue_im_command('foreman', {'action': action}, source='telegram', chat_id=chat_id)
+                # Fast path for status: read config/state directly for immediate feedback
+                if action == 'status':
+                    try:
+                        fc_p = HOME/"settings"/"foreman.yaml"
+                        st_p = HOME/"state"/"foreman.json"
+                        fc = read_yaml(fc_p) if fc_p.exists() else {}
+                        st = {}
+                        try:
+                            st = json.loads(st_p.read_text(encoding='utf-8')) if st_p.exists() else {}
+                        except Exception:
+                            st = {}
+                        now = time.time()
+                        def age(ts):
+                            try:
+                                tsf = float(ts or 0)
+                                return f"{int(max(0, now - tsf))}s" if tsf else '-'
+                            except Exception:
+                                return '-'
+                        allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                        enabled = bool(fc.get('enabled', False))
+                        running = bool(st.get('running', False))
+                        next_due = st.get('next_due_ts') or 0
+                        next_in = f"{int(max(0, next_due - now))}s" if next_due else '-'
+                        last_rc = st.get('last_rc') if ('last_rc' in st) else '-'
+                        last_out = st.get('last_out_dir') or '-'
+                        reply = (
+                            f"Foreman status: {'ON' if enabled else 'OFF'} allowed={'YES' if allowed else 'NO'} "
+                            f"agent={fc.get('agent','reuse_aux')} interval={fc.get('interval_seconds','?')}s cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}\n"
+                            f"running={'YES' if running else 'NO'} next_in={next_in} last_start={age(st.get('last_start_ts'))} "
+                            f"last_hb={age(st.get('last_heartbeat_ts'))} last_end={age(st.get('last_end_ts'))} last_rc={last_rc} out={last_out}"
+                        )
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                        _append_log(outlog, f"[cmd] foreman status (fast) chat={chat_id}")
+                        continue
+                    except Exception:
+                        # Fallback to queued path
+                        pass
+                # on/off path: enqueue and wait briefly
+                result, req_id = _enqueue_im_command('foreman', {'action': action}, source='telegram', chat_id=chat_id, wait_seconds=2.5)
                 reply = (result.get('message') if result else f'Foreman request queued (id={req_id}).')
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
                 _append_log(outlog, f"[cmd] foreman action={action} chat={chat_id} req={req_id}")
