@@ -1638,10 +1638,43 @@ def main(home: Path):
                     _save_foreman_conf(fc)
                     _ensure_foreman_task(fc)
                     print(f"[FOREMAN] Enabled (agent={sel})")
+                    # Initialize scheduler state to delay first run by a full interval
+                    try:
+                        st = _foreman_load_state() or {}
+                        now_ts = time.time()
+                        try:
+                            iv = float(fc.get('interval_seconds',900) or 900)
+                        except Exception:
+                            iv = 900.0
+                        st.update({'running': False, 'next_due_ts': now_ts + iv, 'last_heartbeat_ts': now_ts})
+                        _foreman_save_state(st)
+                        lk = state/"foreman.lock"
+                        if lk.exists():
+                            try: lk.unlink()
+                            except Exception: pass
+                    except Exception:
+                        pass
     else:
         # Non-interactive: foreman allowed only if configured in config at start
         try:
             _fc0 = _load_foreman_conf()
+            if bool(_fc0.get('enabled', False)):
+                # Ensure first run is scheduled after full interval on process start
+                try:
+                    st = _foreman_load_state() or {}
+                    now_ts = time.time()
+                    try:
+                        iv = float(_fc0.get('interval_seconds',900) or 900)
+                    except Exception:
+                        iv = 900.0
+                    st.update({'running': False, 'next_due_ts': now_ts + iv, 'last_heartbeat_ts': now_ts})
+                    _foreman_save_state(st)
+                    lk = state/"foreman.lock"
+                    if lk.exists():
+                        try: lk.unlink()
+                        except Exception: pass
+                except Exception:
+                    pass
         except Exception:
             pass
     # Rebuild rules once after bindings are finalized (either from wizard or existing config),
@@ -2307,6 +2340,22 @@ def main(home: Path):
                             result = {"ok": False, "message": "Foreman was not enabled at startup; restart to enable or run roles wizard."}
                         else:
                             fc['enabled'] = True; _save_foreman_conf(fc)
+                            # Shift next_due to a full interval from now
+                            try:
+                                st = _foreman_load_state() or {}
+                                now_ts = time.time()
+                                try:
+                                    iv = float(fc.get('interval_seconds',900) or 900)
+                                except Exception:
+                                    iv = 900.0
+                                st.update({'running': False, 'next_due_ts': now_ts + iv, 'last_heartbeat_ts': now_ts})
+                                _foreman_save_state(st)
+                                lk = state/"foreman.lock"
+                                if lk.exists():
+                                    try: lk.unlink()
+                                    except Exception: pass
+                            except Exception:
+                                pass
                             result = {"ok": True, "message": "Foreman enabled"}
                     elif sub in ("now",):
                         # Immediate run once, and shift next_due by one interval
@@ -3719,6 +3768,22 @@ def main(home: Path):
                         print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
                     else:
                         fc['enabled'] = True; _save_foreman_conf(fc); print("Foreman enabled")
+                        # Shift next_due to a full interval from now
+                        try:
+                            st = _foreman_load_state() or {}
+                            now_ts = time.time()
+                            try:
+                                iv = float(fc.get('interval_seconds',900) or 900)
+                            except Exception:
+                                iv = 900.0
+                            st.update({'running': False, 'next_due_ts': now_ts + iv, 'last_heartbeat_ts': now_ts})
+                            _foreman_save_state(st)
+                            lk = state/"foreman.lock"
+                            if lk.exists():
+                                try: lk.unlink()
+                                except Exception: pass
+                        except Exception:
+                            pass
                 elif action in ('now',):
                     allowed = bool(fc.get('allowed', fc.get('enabled', False)))
                     if not allowed:
