@@ -1160,12 +1160,12 @@ def main():
                 _append_log(outlog, f"[cmd] review chat={chat_id} req={req_id}")
                 continue
 
-            # Foreman control: /foreman on|off|status
+            # Foreman control: /foreman on|off|now|status
             if is_cmd(text, 'foreman'):
                 parts = text.split()
                 action = parts[1].lower() if len(parts) > 1 else 'status'
-                if action not in ('on','off','enable','disable','start','stop','status'):
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /foreman on|off|status'}, timeout=15)
+                if action not in ('on','off','enable','disable','start','stop','status','now'):
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /foreman on|off|now|status'}, timeout=15)
                     continue
                 # Fast path for status: read config/state directly for immediate feedback
                 if action == 'status':
@@ -1204,7 +1204,7 @@ def main():
                     except Exception:
                         # Fallback to queued path
                         pass
-                # on/off path: enqueue and wait briefly
+                # on/off/now path: enqueue and wait briefly
                 result, req_id = _enqueue_im_command('foreman', {'action': action}, source='telegram', chat_id=chat_id, wait_seconds=2.5)
                 reply = (result.get('message') if result else f'Foreman request queued (id={req_id}).')
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)

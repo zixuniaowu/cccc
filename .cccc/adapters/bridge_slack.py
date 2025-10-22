@@ -690,8 +690,8 @@ def main():
             if re.match(r'^/?foreman\b', command_text, re.I):
                 parts = command_text.split()
                 action = parts[1].lower() if len(parts) > 1 else 'status'
-                if action not in ('on','off','enable','disable','start','stop','status'):
-                    _send_reply('Usage: /foreman on|off|status')
+                if action not in ('on','off','enable','disable','start','stop','status','now'):
+                    _send_reply('Usage: /foreman on|off|now|status')
                     return
                 if action == 'status':
                     try:

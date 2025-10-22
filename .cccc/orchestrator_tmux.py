@@ -1516,7 +1516,7 @@ def main(home: Path):
 "How to act each run\n"
 "- Do one useful, non-interactive step within the time box (≤ 30m).\n"
 "- Save temporary outputs to .cccc/work/foreman/<YYYYMMDD-HHMMSS>/ . create or update other files based on the project rules.\n"
-"- Write one feedback/nudge message in the user's voice to the right peer and reference file paths in your message (do not paste long logs in message).\n\n"
+"- Write one message to .cccc/mailbox/foreman/to_peer.md with a routing header `To: Both|PeerA|PeerB` (default Both), wrap body in <TO_PEER> ... </TO_PEER>, and reference file paths (do not paste long logs).\n\n"
 "Escalation (when blocked)\n"
 "- If a decision is needed, write a short 6–10 line RFD summary (alternatives, impact, default) and ask the peer to proceed.\n\n"
 "Safety\n"
@@ -1831,7 +1831,7 @@ def main(home: Path):
 "- Task name:\n  Owner peer (PeerA|PeerB):\n  Do within time-box (non-interactive):\n  Save outputs to (e.g., .cccc/work/foreman/<timestamp>/...):\n  When to message the owner (and CC policy):\n\n"
 "Backlog & Cadence\n- If the owner's inbox has many pending items: remind to process oldest-first, then propose ONE smallest next step aligned to POR/SUBPOR. Put long analysis in files and reference paths.\n\n"
 "Project Preferences\n- Prioritized deliverables / risks / scripts to use:\n\n"
-"Message header & body (required)\n- Write one message to .cccc/mailbox/foreman/to_peer.md with:\n  Owner: PeerA|PeerB\n  CC: PeerB|PeerA|none\n  <TO_PEER>\n  …user-voice short text (6–10 lines; reference repo paths only)…\n  </TO_PEER>\n"
+"Message header & body (required)\n- Write one message to .cccc/mailbox/foreman/to_peer.md with:\n  To: Both|PeerA|PeerB\n  <TO_PEER>\n  …user-voice short text (6–10 lines; reference repo paths only)…\n  </TO_PEER>\n"
                 )
                 prompt_path.write_text(tpl, encoding='utf-8')
         except Exception:
@@ -1870,7 +1870,7 @@ def main(home: Path):
         except Exception:
             bindings.append(f"Bindings: Foreman.agent={conf.get('agent')}")
         bindings.append(f"Schedule: interval={int(conf.get('interval_seconds',900))}s max_run={int(conf.get('max_run_seconds',900))}s cc_user={'ON' if conf.get('cc_user',True) else 'OFF'}")
-        bindings.append("Write-to: .cccc/mailbox/foreman/to_peer.md with Owner/CC header and <TO_PEER> wrapper")
+        bindings.append("Write-to: .cccc/mailbox/foreman/to_peer.md with To header (Both|PeerA|PeerB; default Both) and <TO_PEER> wrapper")
         ctx = "\n".join(bindings)
         # User-maintained task brief
         task_path = Path(conf.get('prompt_path') or './FOREMAN_TASK.md')
@@ -1884,11 +1884,14 @@ def main(home: Path):
         prompt = f"{rules}\n\n---\n{ctx}\n---\n{task_txt}".strip()
         return prompt, out_dir.as_posix()
 
-    def _foreman_write_user_message(owner: str, cc: str, body: str):
+    def _foreman_write_user_message(to_label: str, body: str):
         try:
             fpath = home/"mailbox"/"foreman"/"to_peer.md"
             fpath.parent.mkdir(parents=True, exist_ok=True)
-            msg = f"Owner: {owner}\nCC: {cc}\n" + (body.strip() if body else '')
+            # to_label: Both|PeerA|PeerB
+            if to_label not in ("PeerA","PeerB","Both"):
+                to_label = "Both"
+            msg = f"To: {to_label}\n" + (body.strip() if body else '')
             fpath.write_text(msg, encoding='utf-8')
         except Exception:
             pass
@@ -1918,7 +1921,7 @@ def main(home: Path):
             print(f"[FOREMAN] write inbox failed: {e}")
 
     def _maybe_dispatch_foreman_message():
-        """If foreman/to_peer.md contains a new message, route to Owner/CC inbox and write sentinel."""
+        """If foreman/to_peer.md contains a new message, route to Peer inbox(es) per To header and write sentinel."""
         try:
             base = home/"mailbox"/"foreman"
             f = base/"to_peer.md"
@@ -1929,35 +1932,31 @@ def main(home: Path):
                 return
             if is_sentinel_text(raw):
                 return
-            # parse headers
-            owner = None; cc = 'none'
+            # parse routing header: To: Both|PeerA|PeerB (default Both)
+            to_label = 'Both'
             lines0 = raw.splitlines()
             hdr_used = 0
             for i,l in enumerate(lines0[:4]):
-                m = re.match(r"\s*Owner\s*:\s*(PeerA|PeerB)\s*$", l, re.I)
+                m = re.match(r"\s*To\s*:\s*(Both|PeerA|PeerB)\s*$", l, re.I)
                 if m:
-                    owner = 'PeerA' if m.group(1).lower()=="peera" else 'PeerB'
-                    hdr_used = max(hdr_used, i+1)
-                m2 = re.match(r"\s*CC\s*:\s*(PeerA|PeerB|none)\s*$", l, re.I)
-                if m2:
-                    cc = m2.group(1)
+                    val = m.group(1).lower()
+                    to_label = 'PeerA' if val=='peera' else ('PeerB' if val=='peerb' else 'Both')
                     hdr_used = max(hdr_used, i+1)
             body = parse_section(raw, "TO_PEER")
             if not body:
                 body = "\n".join(lines0[hdr_used:]).strip()
-            if not owner:
-                owner = 'PeerA'  # default to PeerA when missing
             # ensure wrapper for inbox payload
             if not re.search(r"<\s*TO_PEER\s*>", body, re.I):
                 body = f"<TO_PEER>\n{body}\n</TO_PEER>\n"
             # dispatch
-            _write_peer_inbox(owner, body)
-            if cc and cc.lower() == "peera":
-                if owner != 'PeerA':
-                    _write_peer_inbox('PeerA', body)
-            elif cc and cc.lower() == "peerb":
-                if owner != 'PeerB':
-                    _write_peer_inbox('PeerB', body)
+            delivered_labels = []
+            if to_label == 'Both':
+                _write_peer_inbox('PeerA', body); delivered_labels.append('PeerA')
+                _write_peer_inbox('PeerB', body); delivered_labels.append('PeerB')
+            elif to_label == 'PeerA':
+                _write_peer_inbox('PeerA', body); delivered_labels.append('PeerA')
+            else:
+                _write_peer_inbox('PeerB', body); delivered_labels.append('PeerB')
             # sentinel
             try:
                 eid = hashlib.sha1(body.encode('utf-8','ignore')).hexdigest()[:12]
@@ -1965,14 +1964,16 @@ def main(home: Path):
                 eid = str(int(time.time()))
             tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
             sha8 = sha256_text(body)[:8]
-            sentinel = compose_sentinel(ts=tsz, eid=eid, sha8=sha8, route=f"Foreman→{owner}{','+cc if cc and cc!='none' else ''}")
+            route_lbl = 'Both' if to_label=='Both' else to_label
+            sentinel = compose_sentinel(ts=tsz, eid=eid, sha8=sha8, route=f"Foreman→{route_lbl}")
             f.write_text(sentinel, encoding='utf-8')
             # optional user CC
             try:
                 fc = _load_foreman_conf(); cc_u = bool(fc.get('cc_user', True))
                 if cc_u:
-                    peer_key = 'peerA' if owner=='PeerA' else 'peerB'
-                    outbox_write(home, {"type":"to_user","peer": peer_key, "from":"Foreman", "owner": peer_key, "cc": (cc.lower() if cc else 'none'), "text": body, "eid": eid})
+                    for lbl in delivered_labels:
+                        peer_key = 'peerA' if lbl=='PeerA' else 'peerB'
+                        outbox_write(home, {"type":"to_user","peer": peer_key, "from":"Foreman", "text": body, "eid": eid})
             except Exception:
                 pass
         except Exception:
@@ -2026,8 +2027,8 @@ def main(home: Path):
             f = home/"mailbox"/"foreman"/"to_peer.md"
             cur = f.read_text(encoding='utf-8').strip() if f.exists() else ''
             if (not cur) or is_sentinel_text(cur):
-                # Minimal heuristic: require Owner: and <TO_PEER>
-                if re.search(r"^\s*Owner\s*:\s*(PeerA|PeerB)\s*$", out or "", re.M) and re.search(r"<\s*TO_PEER\s*>", out or "", re.I):
+                # Minimal heuristic: require To: and <TO_PEER>
+                if re.search(r"^\s*To\s*:\s*(Both|PeerA|PeerB)\s*$", out or "", re.M) and re.search(r"<\s*TO_PEER\s*>", out or "", re.I):
                     f.parent.mkdir(parents=True, exist_ok=True)
                     f.write_text(out.strip(), encoding='utf-8')
         except Exception:
@@ -2119,7 +2120,7 @@ def main(home: Path):
                             so = sf.read(200000)
                     except Exception:
                         so = ''
-                    if re.search(r"^\s*Owner\s*:\s*(PeerA|PeerB)\s*$", so or "", re.M) and re.search(r"<\s*TO_PEER\s*>", so or "", re.I):
+                    if re.search(r"^\s*To\s*:\s*(Both|PeerA|PeerB)\s*$", so or "", re.M) and re.search(r"<\s*TO_PEER\s*>", so or "", re.I):
                         f.parent.mkdir(parents=True, exist_ok=True)
                         f.write_text(so.strip(), encoding='utf-8')
             except Exception:
@@ -2307,6 +2308,33 @@ def main(home: Path):
                         else:
                             fc['enabled'] = True; _save_foreman_conf(fc)
                             result = {"ok": True, "message": "Foreman enabled"}
+                    elif sub in ("now",):
+                        # Immediate run once, and shift next_due by one interval
+                        _allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                        if not _allowed:
+                            result = {"ok": False, "message": "Foreman was not enabled at startup; restart to enable or run roles wizard."}
+                        else:
+                            st = _foreman_load_state() or {}
+                            if bool(st.get('running', False)):
+                                result = {"ok": False, "message": "Foreman already running."}
+                            else:
+                                try:
+                                    iv = float(fc.get('interval_seconds',900) or 900)
+                                except Exception:
+                                    iv = 900.0
+                                now_ts = time.time()
+                                st['running'] = True
+                                st['next_due_ts'] = now_ts + iv
+                                _foreman_save_state(st)
+                                lock = state/"foreman.lock"
+                                try:
+                                    lock.write_text(str(int(now_ts)), encoding='utf-8')
+                                except Exception:
+                                    pass
+                                conf_snapshot = dict(fc)
+                                foreman_thread = threading.Thread(target=_foreman_worker, args=(conf_snapshot,), daemon=True)
+                                foreman_thread.start()
+                                result = {"ok": True, "message": "Foreman started (now)"}
                     elif sub in ("off","disable","stop"):
                         fc['enabled'] = False; _save_foreman_conf(fc)
                         result = {"ok": True, "message": "Foreman disabled"}
@@ -3503,10 +3531,9 @@ def main(home: Path):
                                 iv = float(fc.get('interval_seconds',900) or 900)
                             except Exception:
                                 iv = 900.0
-                            delay = min(120.0, iv/3.0)
-                            st['next_due_ts'] = now_ts + delay
+                            st['next_due_ts'] = now_ts + iv
                             _foreman_save_state(st)
-                            next_due = now_ts + delay
+                            next_due = now_ts + iv
                         # Start worker if due and no running thread
                         if (now_ts >= float(st.get('next_due_ts') or 0.0)) and (not bool(st.get('running', False))) and ((foreman_thread is None) or (not foreman_thread.is_alive())) and (not lock.exists()):
                             st['running'] = True
@@ -3692,6 +3719,32 @@ def main(home: Path):
                         print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
                     else:
                         fc['enabled'] = True; _save_foreman_conf(fc); print("Foreman enabled")
+                elif action in ('now',):
+                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                    if not allowed:
+                        print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
+                    else:
+                        st = _foreman_load_state() or {}
+                        if bool(st.get('running', False)):
+                            print("Foreman already running.")
+                        else:
+                            try:
+                                iv = float(fc.get('interval_seconds',900) or 900)
+                            except Exception:
+                                iv = 900.0
+                            now_ts = time.time()
+                            st['running'] = True
+                            st['next_due_ts'] = now_ts + iv
+                            _foreman_save_state(st)
+                            lock = state/"foreman.lock"
+                            try:
+                                lock.write_text(str(int(now_ts)), encoding='utf-8')
+                            except Exception:
+                                pass
+                            conf_snapshot = dict(fc)
+                            foreman_thread = threading.Thread(target=_foreman_worker, args=(conf_snapshot,), daemon=True)
+                            foreman_thread.start()
+                            print("Foreman started (now)")
                 elif action in ('off','disable','stop'):
                     fc['enabled'] = False; _save_foreman_conf(fc); print("Foreman disabled")
                 else:
