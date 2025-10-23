@@ -53,9 +53,8 @@ roles:
     actor: claude
     cwd: .
     inbound_suffix:
-      from_user: ' Explore first: 2-3 quick options (1-liners), ask 1 decisive Q;
-        then hand baton to PeerB. ultrathink'
-      from_peer: ' Please review my work/opinion with first principles against our
+      from_user: ' ultrathink'
+      from_peer: ' Please review and advance our current work with first principles and higher-order thinking toward our
         global goal; If nothing critical to add other than an pure ACK, stay silent
         and do not reply. ultrathink'
       from_system: ' ultrathink'
@@ -69,17 +68,16 @@ roles:
     actor: codex
     cwd: .
     inbound_suffix:
-      from_user: ' Do not act yet; wait for PeerA’s framing. Ask 1 decisive Q or propose
-        a 2min micro-experiment.'
-      from_peer: ' No pure ACK: add a new angle (risk/hook/smaller next) or steelman+counter
-        in 1 line; propose a Hook. If nothing critical to add other than an pure ACK,
-        stay silent and do not reply.'
-      from_system: ' '
+      from_user: ' ultrathink'
+      from_peer: ' Please review and advance our current work with first principles and higher-order thinking toward our
+        global goal; If nothing critical to add other than an pure ACK,
+        stay silent and do not reply. ultrathink'
+      from_system: ' ultrathink'
     nudge_suffix: ' Send messages by updating message files only. If inbox is empty
       or whenever you are idle: do ONE high-value item with higher-order thinking
       - (A) strategic review (drift/priority/ideas), (B) tactical review or rework
       (REV/Pivot), or (C) any other works which are truly valuable. Send a message
-      only with new evidence, a risk/pivot, or a decisional ask; otherwise stay silent.'
+      only with new evidence, a risk/pivot, or a decisional ask; otherwise stay silent. ultrathink'
   aux:
     actor: gemini
     cwd: .
