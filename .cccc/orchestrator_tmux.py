@@ -3414,6 +3414,7 @@ def main(home: Path):
                                                     _request_por_refresh("self-check", force=False)
                                                 finally:
                                                     in_self_check = False
+                                                break  # one self-check per peer per loop
                                 except Exception:
                                     pass
                     except Exception:
