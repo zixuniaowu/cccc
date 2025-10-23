@@ -653,12 +653,17 @@ def main():
         return True
 
     def send_foreman(owner_peer: str, text: str) -> bool:
-        # owner_peer in {'peerA','peerB'}
-        to_label = "PeerA" if owner_peer == 'peerA' else "PeerB"
+        # owner_peer in {'peerA','peerB','both'}
+        if owner_peer == 'both':
+            to_label = "PeerA,PeerB"
+            bucket = 'peerA'  # use a single throttle bucket for Foreman
+        else:
+            to_label = "PeerA" if owner_peer == 'peerA' else "PeerB"
+            bucket = owner_peer
         prefix = f"[FOREMAN→{to_label}]"
         minint = float(str(cfg.get('to_user_min_interval_s') or cfg.get('peer_summary_min_interval_s') or 5))
         msg = _compose_safe(prefix, text, int(cfg.get('max_msg_chars') or max_chars), int(cfg.get('max_msg_lines') or max_lines))
-        ok, reason = _preflight_msg(owner_peer, msg, minint)
+        ok, reason = _preflight_msg(bucket, msg, minint)
         if not ok:
             _append_ledger({'kind':'bridge-outbox-blocked','route':'foreman_to_user','from':'FOREMAN', 'reason': reason})
             return False
@@ -677,7 +682,7 @@ def main():
         if delivered > 0:
             _append_log(outlog, f"[outbound] sent FOREMAN→{to_label} {len(msg)} chars to {delivered} chats")
             _append_ledger({"kind":"bridge-outbound","to":"telegram","route":"foreman_to_user","from":"FOREMAN","owner":to_label,"chars":len(msg),"chats":delivered})
-            last_sent_ts[owner_peer] = time.time()
+            last_sent_ts[bucket] = time.time()
         return True
 
     def send_peer_summary(sender_peer: str, text: str) -> bool:
@@ -723,14 +728,18 @@ def main():
         return default
 
     def on_to_user(ev: Dict[str, Any]) -> bool:
-        peer_key = _normalize_peer_label(str(ev.get('peer') or ''), default='peerA')
+        peer_key_raw = str(ev.get('peer') or '')
+        peer_key = _normalize_peer_label(peer_key_raw, default='peerA')
         text = str(ev.get('text') or '')
         if not text:
             return True
         src = str(ev.get('from') or '').lower()
         if src == 'foreman':
-            owner = _normalize_peer_label(str(ev.get('owner') or peer_key), default=peer_key)
-            return bool(send_foreman(owner, text))
+            owner_raw = str(ev.get('owner') or peer_key_raw)
+            owner = owner_raw.strip().lower()
+            if owner in ('both','peerab','a,b'):
+                return bool(send_foreman('both', text))
+            return bool(send_foreman(_normalize_peer_label(owner_raw, default=peer_key), text))
         return bool(send_summary(peer_key, text))
 
     def on_to_peer_summary(ev: Dict[str, Any]) -> bool:

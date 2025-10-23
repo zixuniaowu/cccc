@@ -318,9 +318,11 @@ def main():
         p = str(ev.get('peer') or '').lower()
         src = str(ev.get('from') or '').lower()
         if src == 'foreman':
-            owner = 'peerA' if ('peera' in p or p=='peera' or p=='peera') else 'peerB'
-            label = 'PeerA' if owner=='peerA' else 'PeerB'
-            prefix = f"[FOREMAN→{label}]\n"
+            if p in ('both','peerab','a,b'):
+                prefix = "[FOREMAN→PeerA,PeerB]\n"
+            else:
+                label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
+                prefix = f"[FOREMAN→{label}]\n"
         else:
             label = 'PeerA' if 'peera' in p or p=='peera' else 'PeerB'
             prefix = f"[{label}]\n"

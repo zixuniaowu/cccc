@@ -1605,10 +1605,10 @@ def main(home: Path):
                         print("[HINT] Enter one of indices or names shown above.")
                 # PeerA selection
                 pa = _choose('PeerA', acts, allow_none=False)
-                # PeerB selection (must differ)
-                pb = _choose('PeerB', [x for x in acts if x != pa], allow_none=False)
-                # Aux selection: can be none; must differ from A/B when set
-                aux_choice = _choose('Aux', [x for x in acts if (x != pa and x != pb)], allow_none=True)
+                # PeerB selection（允许与 PeerA 相同）
+                pb = _choose('PeerB', acts, allow_none=False)
+                # Aux selection：允许任意 CLI，也可 none
+                aux_choice = _choose('Aux', acts, allow_none=True)
                 ax = aux_choice  # '' means none/off
                 aum = 'on' if ax else 'off'
                 _persist_roles(cli_profiles, pa, pb, ax, aum)
@@ -1620,7 +1620,7 @@ def main(home: Path):
                 except Exception:
                     fc = {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
                 # Unified selection UX (supports index or name): choose Foreman agent (allow 'none')
-                options = ["reuse_aux"] + [a for a in acts if a not in (pa, pb)]
+                options = ["reuse_aux"] + list(acts)
                 sel = _choose('Foreman agent', options, allow_none=True)
                 if not sel:
                     fc = _load_foreman_conf(); fc['enabled'] = False; fc['allowed'] = False; _save_foreman_conf(fc)
@@ -1930,31 +1930,24 @@ def main(home: Path):
             pass
 
     def _write_peer_inbox(label: str, user_text: str):
-        """Enqueue a FROM_USER inbox file for the given peer label (PeerA|PeerB)."""
+        """Deprecated (kept for safety). Use _write_inbox_message with unified counter/lock."""
         try:
-            inbox = _inbox_dir(home, label)
-            inbox.mkdir(parents=True, exist_ok=True)
-            # allocate seq via state counter
-            ctr = state/f"inbox-seq-{label}.txt"
-            seq = 1
-            if ctr.exists():
-                try:
-                    seq = int(ctr.read_text().strip() or '0') + 1
-                except Exception:
-                    seq = 1
-            ctr.write_text(str(seq), encoding='utf-8')
             mid = new_mid("foreman")
             payload = f"<FROM_USER>\n{user_text.strip()}\n</FROM_USER>\n"
             payload = wrap_with_mid(payload, mid)
-            (inbox/ f"{seq:06d}.{mid}.txt").write_text(payload, encoding='utf-8')
-            # mirror to inbox.md
-            (home/"mailbox"/("peerA" if label=="PeerA" else "peerB")/"inbox.md").write_text(payload, encoding='utf-8')
+            _write_inbox_message(home, label, payload, mid)
+            # mirror to inbox.md (best-effort)
+            try:
+                (home/"mailbox"/(_peer_folder_name(label))/"inbox.md").write_text(payload, encoding='utf-8')
+            except Exception:
+                pass
             log_ledger(home, {"from":"User","kind":"foreman-dispatch","to":label,"chars":len(user_text)})
         except Exception as e:
             print(f"[FOREMAN] write inbox failed: {e}")
 
     def _maybe_dispatch_foreman_message():
-        """If foreman/to_peer.md contains a new message, route to Peer inbox(es) per To header and write sentinel."""
+        """If foreman/to_peer.md contains a new message, route to Peer inbox(es) per To header and write sentinel.
+        Also increments self-check counter for meaningful Foreman deliveries (per peer)."""
         try:
             base = home/"mailbox"/"foreman"
             f = base/"to_peer.md"
@@ -1983,13 +1976,20 @@ def main(home: Path):
                 body = f"<TO_PEER>\n{body}\n</TO_PEER>\n"
             # dispatch
             delivered_labels = []
+            header_line = "To: Both" if to_label=='Both' else (f"To: {to_label}")
+            # build unified FROM_USER payload preserving To header
+            def _deliver(lbl: str):
+                mid = new_mid("foreman")
+                user_payload = f"<FROM_USER>\n{header_line}\n{body}\n</FROM_USER>\n"
+                text_with_mid = wrap_with_mid(user_payload, mid)
+                _write_inbox_message(home, lbl, text_with_mid, mid)
+                delivered_labels.append(lbl)
             if to_label == 'Both':
-                _write_peer_inbox('PeerA', body); delivered_labels.append('PeerA')
-                _write_peer_inbox('PeerB', body); delivered_labels.append('PeerB')
+                _deliver('PeerA'); _deliver('PeerB')
             elif to_label == 'PeerA':
-                _write_peer_inbox('PeerA', body); delivered_labels.append('PeerA')
+                _deliver('PeerA')
             else:
-                _write_peer_inbox('PeerB', body); delivered_labels.append('PeerB')
+                _deliver('PeerB')
             # sentinel
             try:
                 eid = hashlib.sha1(body.encode('utf-8','ignore')).hexdigest()[:12]
@@ -2004,9 +2004,26 @@ def main(home: Path):
             try:
                 fc = _load_foreman_conf(); cc_u = bool(fc.get('cc_user', True))
                 if cc_u:
-                    for lbl in delivered_labels:
-                        peer_key = 'peerA' if lbl=='PeerA' else 'peerB'
-                        outbox_write(home, {"type":"to_user","peer": peer_key, "from":"Foreman", "text": body, "eid": eid})
+                    if route_lbl == 'Both':
+                        outbox_write(home, {"type":"to_user","peer": 'both', "from":"Foreman", "owner":"both", "text": body, "eid": eid})
+                    else:
+                        peer_key = 'peerA' if route_lbl=='PeerA' else 'peerB'
+                        outbox_write(home, {"type":"to_user","peer": peer_key, "from":"Foreman", "owner": peer_key, "text": body, "eid": eid})
+            except Exception:
+                pass
+            # increment self-check counter per delivered peer if meaningful
+            try:
+                nonlocal instr_counter, in_self_check
+                if self_check_enabled and (not in_self_check) and self_check_every > 0:
+                    pl = body or ""
+                    is_nudge = pl.strip().startswith("[NUDGE]")
+                    low_signal = False
+                    try:
+                        low_signal = is_low_signal(pl, policies)
+                    except Exception:
+                        pass
+                    if (not is_nudge) and (not low_signal):
+                        instr_counter += max(1, len(delivered_labels))
             except Exception:
                 pass
         except Exception:
