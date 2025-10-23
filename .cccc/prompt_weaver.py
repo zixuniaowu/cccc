@@ -297,7 +297,6 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - Write an Ask(to=peerA, action=relay_to_user, ...) line under the relevant Item. Do not address USER directly.",
         ]
 
-    ascii_rule = "  - Temporary constraint (PeerA only): content in to_user.md and to_peer.md must be ASCII-only (7-bit). Use plain ASCII punctuation." if is_peera else None
     update_targets = [to_peer]
     if is_peera:
         update_targets.insert(0, to_user)
@@ -312,8 +311,6 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - Encoding: UTF-8 (no BOM).",
         "  - Do not claim done unless acceptance is checked in SUBPOR and you include minimal verifiable evidence (tests/stable logs/commit refs).",
     ]
-    if ascii_rule:
-        ch4.append(ascii_rule)
     ch4 += [
         "  - Keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced `insight` block (insight is for explore/reflect/idea only; the system does not parse governance from it).",
         "  - Do not modify orchestrator code/config/policies.",

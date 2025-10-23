@@ -36,7 +36,7 @@ delivery:
   soft_ack_on_mailbox_activity: false
   keepalive_enabled: true
   keepalive_delay_seconds: 60
-  system_refresh_every_self_checks: 3
+  system_refresh_every_self_checks: 2
   inbox_startup_policy: resume
   inbox_startup_prompt: true
   inbox_startup_prompt_timeout_seconds: 30
