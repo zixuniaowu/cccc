@@ -471,7 +471,7 @@ def _compose_nudge_suffix_for(peer_label: str,
     if aux_mode == "on" and str(aux_invoke or '').strip():
         tpl = str(aux_invoke).replace('{prompt}', '{prompt}')
         aux_line = f"Aux is ON — delegate decoupled sub-tasks; just invoke: {tpl}; capture evidence and summarize outcome."
-    combined = " ".join(filter(None, [base, aux_line]))
+    combined = " ".join(filter(None, [aux_line, base]))
     return combined.strip()
 
 def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
