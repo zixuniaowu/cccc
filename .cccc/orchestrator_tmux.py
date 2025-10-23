@@ -5,7 +5,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER>, and runs optional lint/tests before committing.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
-import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random, threading
+import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random, threading, signal
 from datetime import datetime, timedelta
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
@@ -1598,6 +1598,21 @@ def main(home: Path):
         aux_mode = 'on' if ax else 'off'
         return pa, pb, ax, aux_mode
 
+    def _current_foreman_summary() -> str:
+        try:
+            fc = _load_foreman_conf()
+        except Exception:
+            fc = {"enabled": False, "allowed": False}
+        agent = str(fc.get('agent') or 'reuse_aux') if bool(fc.get('allowed', False)) else 'none'
+        enabled = 'ON' if bool(fc.get('enabled', False)) and bool(fc.get('allowed', False)) else 'OFF'
+        if not bool(fc.get('allowed', False)):
+            return "none"
+        try:
+            iv = int(fc.get('interval_seconds') or 900)
+        except Exception:
+            iv = 900
+        return f"agent={agent} ({enabled}), interval={iv}s"
+
     def _persist_roles(cp: Dict[str, Any], peerA_actor: str, peerB_actor: str, aux_actor: str, aux_mode: str):
         cp = dict(cp or {})
         roles = dict(cp.get('roles') or {})
@@ -1629,7 +1644,7 @@ def main(home: Path):
         acts = _actors_available()
         if wiz_enabled and acts:
             print("\n[ROLES] Current bindings:")
-            print(f"  - PeerA: {pa}\n  - PeerB: {pb}\n  - Aux:   {ax if ax else 'none'}")
+            print(f"  - PeerA:  {pa}\n  - PeerB:  {pb}\n  - Aux:    {ax if ax else 'none'}\n  - Foreman:{' ' if _current_foreman_summary() else ''}{_current_foreman_summary()}")
             ans = read_console_line_timeout(f"> Use previous bindings? Enter=yes / r=reconfigure [{int(wiz_timeout)}s]: ", wiz_timeout).strip().lower()
             if ans in ("r","reconf","reconfigure","no","n"):
                 def _choose(label: str, options: list[str], allow_none: bool = False) -> str:
@@ -2200,7 +2215,46 @@ def main(home: Path):
             of = (out_dir_path/"stdout.txt").open('w', encoding='utf-8')
             ef = (out_dir_path/"stderr.txt").open('w', encoding='utf-8')
             try:
-                proc = subprocess.Popen(argv, shell=False, cwd=str(run_cwd), stdout=of, stderr=ef, text=True)
+                # Start CLI in its own process group so we can cleanly terminate on orchestrator exit
+                preexec = None
+                creationflags = 0
+                try:
+                    preexec = os.setsid  # POSIX: new session -> separate process group
+                except Exception:
+                    preexec = None
+                try:
+                    proc = subprocess.Popen(
+                        argv,
+                        shell=False,
+                        cwd=str(run_cwd),
+                        stdout=of,
+                        stderr=ef,
+                        text=True,
+                        preexec_fn=preexec,
+                        creationflags=creationflags,
+                    )
+                except TypeError:
+                    # Fallback for platforms that don't accept text=True with preexec_fn
+                    proc = subprocess.Popen(
+                        argv,
+                        shell=False,
+                        cwd=str(run_cwd),
+                        stdout=of,
+                        stderr=ef,
+                        preexec_fn=preexec,
+                        creationflags=creationflags,
+                    )
+                # Persist PID/PGID for external cleanup
+                try:
+                    st2 = _foreman_load_state() or {}
+                    st2['pid'] = int(proc.pid)
+                    try:
+                        st2['pgid'] = int(os.getpgid(proc.pid))
+                    except Exception:
+                        st2['pgid'] = None
+                    _foreman_save_state(st2)
+                except Exception:
+                    pass
                 t0 = time.time(); next_hb = t0 + hb_interval
                 while True:
                     rc_local = proc.poll()
@@ -2269,6 +2323,76 @@ def main(home: Path):
                     lock.unlink()
             except Exception:
                 pass
+
+    # --- Foreman external cleanup helpers (terminate on orchestrator exit) ---
+    def _foreman_stop_running(grace_seconds: float = 5.0) -> None:
+        """
+        Best-effort: terminate Foreman subprocess group (if any), wait a short grace,
+        then SIGKILL. Also clears state.running and removes lock.
+        """
+        try:
+            st = _foreman_load_state() or {}
+            pid = int(st.get('pid') or 0)
+            pgid = st.get('pgid')
+        except Exception:
+            pid, pgid = 0, None
+        # Signal process group first (POSIX)
+        try:
+            if pgid:
+                try:
+                    os.killpg(int(pgid), signal.SIGTERM)
+                except Exception:
+                    pass
+            elif pid:
+                try:
+                    os.kill(int(pid), signal.SIGTERM)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        t_end = time.time() + max(0.0, float(grace_seconds))
+        while time.time() < t_end:
+            alive = False
+            try:
+                if pgid:
+                    # Check any process in group by sending signal 0 to -pgid
+                    os.killpg(int(pgid), 0)
+                    alive = True
+                elif pid:
+                    os.kill(int(pid), 0)
+                    alive = True
+            except Exception:
+                alive = False
+            if not alive:
+                break
+            time.sleep(0.2)
+        # Force kill if still alive
+        try:
+            if pgid:
+                try:
+                    os.killpg(int(pgid), signal.SIGKILL)
+                except Exception:
+                    pass
+            elif pid:
+                try:
+                    os.kill(int(pid), signal.SIGKILL)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Clear running + lock
+        try:
+            st = _foreman_load_state() or {}
+            st['running'] = False
+            _foreman_save_state(st)
+        except Exception:
+            pass
+        try:
+            lk = state/"foreman.lock"
+            if lk.exists():
+                lk.unlink()
+        except Exception:
+            pass
 
     # Prepare tmux session/panes
     if not tmux_session_exists(session):
@@ -2462,7 +2586,13 @@ def main(home: Path):
                         else:
                             st = _foreman_load_state() or {}
                             if bool(st.get('running', False)):
-                                result = {"ok": False, "message": "Foreman already running."}
+                                # queue a run right after current finishes
+                                try:
+                                    st['queued_after_current'] = True
+                                    _foreman_save_state(st)
+                                    result = {"ok": True, "message": "Foreman already running; queued one run after current finishes."}
+                                except Exception:
+                                    result = {"ok": False, "message": "Foreman already running."}
                             else:
                                 try:
                                     iv = float(fc.get('interval_seconds',900) or 900)
@@ -3188,6 +3318,34 @@ def main(home: Path):
     # Foreman thread handle (non-overlapping)
     foreman_thread: Optional[threading.Thread] = None
 
+    # Register graceful cleanup on exit/signals to avoid orphan Foreman processes
+    _cleanup_called = {"v": False}
+    def _cleanup_on_exit(signum=None, frame=None):
+        if _cleanup_called["v"]:
+            return
+        _cleanup_called["v"] = True
+        try:
+            log_ledger(home, {"from":"system","kind":"shutdown","note":"cleanup foreman"})
+        except Exception:
+            pass
+        try:
+            _foreman_stop_running(grace_seconds=5.0)
+        except Exception:
+            pass
+        try:
+            if foreman_thread is not None and foreman_thread.is_alive():
+                foreman_thread.join(timeout=3.0)
+        except Exception:
+            pass
+
+    import atexit
+    try:
+        atexit.register(_cleanup_on_exit)
+        signal.signal(signal.SIGTERM, _cleanup_on_exit)
+        signal.signal(signal.SIGINT, _cleanup_on_exit)
+    except Exception:
+        pass
+
     # Write initial status snapshot for panel
     def write_status(paused: bool):
         state = home/"state"
@@ -3688,7 +3846,12 @@ def main(home: Path):
                             running = bool(st.get('running', False))
                             last_hb = float(st.get('last_heartbeat_ts') or 0.0)
                             maxs = float(fc.get('max_run_seconds', 900) or 900)
-                            if running and (foreman_thread is not None) and (not foreman_thread.is_alive()) and (now_ts - last_hb > (maxs + 20.0)):
+                            if running and ((foreman_thread is None) or (not foreman_thread.is_alive())) and (now_ts - last_hb > (maxs + 20.0)):
+                                # try to terminate any lingering process group/pid, then clear state/lock
+                                try:
+                                    _foreman_stop_running(grace_seconds=1.0)
+                                except Exception:
+                                    pass
                                 st['running'] = False
                                 _foreman_save_state(st)
                                 try:
@@ -3709,9 +3872,13 @@ def main(home: Path):
                             _foreman_save_state(st)
                             next_due = now_ts + iv
                         # Start worker if due and no running thread
-                        if (now_ts >= float(st.get('next_due_ts') or 0.0)) and (not bool(st.get('running', False))) and ((foreman_thread is None) or (not foreman_thread.is_alive())) and (not lock.exists()):
+                        should_queue = bool(st.get('queued_after_current', False))
+                        due = now_ts >= float(st.get('next_due_ts') or 0.0)
+                        if ((due or should_queue) and (not bool(st.get('running', False))) and ((foreman_thread is None) or (not foreman_thread.is_alive())) and (not lock.exists())):
                             st['running'] = True
                             st['next_due_ts'] = now_ts + float(fc.get('interval_seconds',900))
+                            if should_queue:
+                                st['queued_after_current'] = False
                             _foreman_save_state(st)
                             try:
                                 lock.write_text(str(int(now_ts)), encoding='utf-8')
@@ -3979,6 +4146,32 @@ def main(home: Path):
                         fc['enabled'] = True; _save_foreman_conf(fc); print("Foreman enabled")
                 elif action in ('off','disable','stop'):
                     fc['enabled'] = False; _save_foreman_conf(fc); print("Foreman disabled")
+                elif action in ('now',):
+                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
+                    if not allowed:
+                        print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
+                    else:
+                        st = _foreman_load_state() or {}
+                        if bool(st.get('running', False)):
+                            st['queued_after_current'] = True
+                            _foreman_save_state(st)
+                            print("Foreman already running; queued one run after current finishes.")
+                        else:
+                            try:
+                                iv = float(fc.get('interval_seconds',900) or 900)
+                            except Exception:
+                                iv = 900.0
+                            now_ts = time.time()
+                            st['running'] = True
+                            st['next_due_ts'] = now_ts + iv
+                            _foreman_save_state(st)
+                            lk = state/"foreman.lock"
+                            try: lk.write_text(str(int(now_ts)), encoding='utf-8')
+                            except Exception: pass
+                            conf_snapshot = dict(fc)
+                            foreman_thread = threading.Thread(target=_foreman_worker, args=(conf_snapshot,), daemon=True)
+                            foreman_thread.start()
+                            print("Foreman started (now)")
                 else:
                     st = _foreman_load_state() or {}
                     now = time.time()
