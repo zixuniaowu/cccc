@@ -10,7 +10,7 @@ delivery:
   ack_require_mid: false
   duplicate_window_seconds: 90
   main_loop_tick_seconds: 2.0
-  self_check_every_handoffs: 10
+  self_check_every_handoffs: 6
   self_check_text: '[Strategic Self-check · strict · <=1 line each]
 
     1) Using POR (North-star/Guardrails/Now-Next-Later), are we off-course? Point

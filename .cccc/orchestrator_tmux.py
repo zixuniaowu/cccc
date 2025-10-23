@@ -2013,17 +2013,51 @@ def main(home: Path):
                 pass
             # increment self-check counter per delivered peer if meaningful
             try:
-                nonlocal instr_counter, in_self_check
+                nonlocal instr_counter, in_self_check, handoffs_peer, self_checks_done
                 if self_check_enabled and (not in_self_check) and self_check_every > 0:
-                    pl = body or ""
-                    is_nudge = pl.strip().startswith("[NUDGE]")
+                    pl = (header_line + "\n" + body) if body else header_line
+                    is_nudge = pl.strip().startswith('[NUDGE]')
                     low_signal = False
                     try:
                         low_signal = is_low_signal(pl, policies)
                     except Exception:
-                        pass
+                        low_signal = False
                     if (not is_nudge) and (not low_signal):
-                        instr_counter += max(1, len(delivered_labels))
+                        for lbl in delivered_labels:
+                            handoffs_peer[lbl] = int(handoffs_peer.get(lbl, 0)) + 1
+                        instr_counter = int(handoffs_peer.get('PeerA',0)) + int(handoffs_peer.get('PeerB',0))
+                        for lbl in delivered_labels:
+                            cnt = handoffs_peer[lbl]
+                            if (cnt % self_check_every) == 0:
+                                sc_index = cnt // self_check_every
+                                self_checks_done[lbl] = sc_index
+                                in_self_check = True
+                                try:
+                                    msg_lines = [self_check_text.rstrip()]
+                                    rules_path = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).as_posix()
+                                    msg_lines.append(f"Rules: {rules_path}")
+                                    msg_lines.append("Project: PROJECT.md")
+                                    K = SYSTEM_REFRESH_EVERY
+                                    if K > 0 and (sc_index % K) == 0:
+                                        try:
+                                            proj_path = (Path.cwd()/"PROJECT.md")
+                                            if proj_path.exists():
+                                                proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
+                                                msg_lines.append("\n--- PROJECT.md (full) ---\n" + proj_txt)
+                                        except Exception:
+                                            pass
+                                        try:
+                                            rules_txt = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).read_text(encoding='utf-8')
+                                        except Exception:
+                                            rules_txt = ''
+                                        if rules_txt:
+                                            msg_lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
+                                    final = "\n".join(msg_lines).strip()
+                                    _send_handoff('System', lbl, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
+                                    log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": cnt, "peer": lbl})
+                                    _request_por_refresh("self-check", force=False)
+                                finally:
+                                    in_self_check = False
             except Exception:
                 pass
         except Exception:
@@ -2625,8 +2659,10 @@ def main(home: Path):
     _sc_every = int(delivery_cfg.get("self_check_every_handoffs", 0) or 0)
     self_check_enabled = _sc_every > 0
     self_check_every = max(1, _sc_every) if self_check_enabled else 0
-    instr_counter = 0
+    instr_counter = 0  # global sum for backward status
     in_self_check = False
+    handoffs_peer = {"PeerA": 0, "PeerB": 0}
+    self_checks_done = {"PeerA": 0, "PeerB": 0}
     # self-check text from config (fallback to a sane default)
     _sc_text = str(delivery_cfg.get("self_check_text") or "").strip()
     DEFAULT_SELF_CHECK = (
@@ -2921,86 +2957,52 @@ def main(home: Path):
         log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": mid, "seq": seq, "chars": len(payload)})
         print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
 
-        # Self-check cadence: count meaningful handoffs and trigger periodic check-ins.
+        # Self-check cadence: per-peer counting and trigger
         try:
             if self_check_enabled and (not in_self_check) and self_check_every > 0:
                 pl = payload or ""
                 is_nudge = pl.strip().startswith("[NUDGE]")
                 meaningful_sender = sender_label in ("User", "System", "PeerA", "PeerB")
+                low_signal = False
                 try:
                     low_signal = is_low_signal(pl, policies)
                 except Exception:
                     low_signal = False
                 if meaningful_sender and (not is_nudge) and (not low_signal):
-                    instr_counter += 1
-                    if instr_counter % self_check_every == 0:
+                    # Per-peer increment and global sum for status
+                    handoffs_peer[receiver_label] = int(handoffs_peer.get(receiver_label, 0)) + 1
+                    instr_counter = int(handoffs_peer.get("PeerA",0)) + int(handoffs_peer.get("PeerB",0))
+                    cnt = handoffs_peer[receiver_label]
+                    if (cnt % self_check_every) == 0:
+                        sc_index = cnt // self_check_every
+                        self_checks_done[receiver_label] = sc_index
                         in_self_check = True
                         try:
-                            try:
-                                sc_index = int(instr_counter // self_check_every) if self_check_every > 0 else 0
-                            except Exception:
-                                sc_index = 0
-                            # Base self-check message (no inline timestamp; inbox file now contains [TS: ...])
-                            peerA_msg = self_check_text
-                            peerB_msg = self_check_text
-
-                            # Every K-th self-check, append full SYSTEM rules for each peer
-                            try:
-                                K = SYSTEM_REFRESH_EVERY
-                                rules_dir = home/"rules"
-                                if sc_index > 0 and (sc_index % K) == 0:
-                                    try:
-                                        rulesA = (rules_dir/"PEERA.md").read_text(encoding='utf-8')
-                                    except Exception:
-                                        rulesA = ""
-                                    try:
-                                        rulesB = (rules_dir/"PEERB.md").read_text(encoding='utf-8')
-                                    except Exception:
-                                        rulesB = ""
-                                    # Capture rules text only; actual appending happens in the final assembly
-                            except Exception:
-                                pass
-
-                            # Build final self-check payloads with consistent order:
-                            # 1) self-check text
-                            # 2) minimal anchors (Rules + Project)
-                            # 3) PROJECT.md full snapshot (only on K-th refresh, if exists)
-                            # 4) full SYSTEM rules (only on K-th refresh)
-                            try:
-                                anchorsA = "Rules: .cccc/rules/PEERA.md\nProject: PROJECT.md"
-                                anchorsB = "Rules: .cccc/rules/PEERB.md\nProject: PROJECT.md"
-                                finalA = peerA_msg.rstrip("\n") + "\n" + anchorsA
-                                finalB = peerB_msg.rstrip("\n") + "\n" + anchorsB
-                                # K-th refresh: inject PROJECT.md full text (if present), then full SYSTEM
-                                if sc_index > 0 and (sc_index % K) == 0:
-                                    try:
-                                        proj_path = (Path.cwd()/"PROJECT.md")
-                                        if proj_path.exists():
-                                            proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
-                                            # Use a fenced block to keep snapshot visually distinct
-                                            block = "\nProject snapshot (path: PROJECT.md)\n```project\n" + proj_txt.rstrip("\n") + "\n```\n"
-                                            finalA = finalA + block
-                                            finalB = finalB + block
-                                    except Exception:
-                                        pass
-                                    # Append full SYSTEM rules captured above (rulesA/rulesB)
-                                    try:
-                                        if rulesA:
-                                            finalA = finalA.rstrip("\n") + "\n\n" + rulesA.strip() + "\n"
-                                    except Exception:
-                                        pass
-                                    try:
-                                        if rulesB:
-                                            finalB = finalB.rstrip("\n") + "\n\n" + rulesB.strip() + "\n"
-                                    except Exception:
-                                        pass
-                                _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{finalA}\n</FROM_SYSTEM>\n")
-                                _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{finalB}\n</FROM_SYSTEM>\n")
-                            except Exception:
-                                # Fallback to original messages if anything above fails
-                                _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{peerA_msg}\n</FROM_SYSTEM>\n")
-                                _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{peerB_msg}\n</FROM_SYSTEM>\n")
-                            log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": instr_counter})
+                            # Compose self-check for this peer only
+                            msg_lines = [self_check_text.rstrip()]
+                            rules_path = (home/"rules"/("PEERA.md" if receiver_label=="PeerA" else "PEERB.md")).as_posix()
+                            msg_lines.append(f"Rules: {rules_path}")
+                            msg_lines.append("Project: PROJECT.md")
+                            K = SYSTEM_REFRESH_EVERY
+                            if K > 0 and (sc_index % K) == 0:
+                                # PROJECT full
+                                try:
+                                    proj_path = (Path.cwd()/"PROJECT.md")
+                                    if proj_path.exists():
+                                        proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
+                                        msg_lines.append("\n--- PROJECT.md (full) ---\n" + proj_txt)
+                                except Exception:
+                                    pass
+                                # SYSTEM full
+                                try:
+                                    rules_txt = (home/"rules"/("PEERA.md" if receiver_label=="PeerA" else "PEERB.md")).read_text(encoding='utf-8')
+                                except Exception:
+                                    rules_txt = ""
+                                if rules_txt:
+                                    msg_lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
+                            final = "\n".join(msg_lines).strip()
+                            _send_handoff("System", receiver_label, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
+                            log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": cnt, "peer": receiver_label})
                             _request_por_refresh("self-check", force=False)
                         finally:
                             in_self_check = False
@@ -3145,12 +3147,15 @@ def main(home: Path):
         state = home/"state"
         pol_enabled = bool((policies.get("handoff_filter") or {}).get("enabled", True))
         eff_filter = handoff_filter_override if handoff_filter_override is not None else pol_enabled
-        # Compute remaining rounds to next self-check
-        next_self = None
+        # Compute remaining rounds to next self-check (per peer)
+        next_selfA = None; next_selfB = None
         if self_check_enabled and self_check_every > 0:
             try:
-                rem = (self_check_every - (instr_counter % self_check_every))
-                next_self = (rem if rem > 0 else self_check_every)
+                a = int(handoffs_peer.get('PeerA',0)); b = int(handoffs_peer.get('PeerB',0))
+                remA = self_check_every - (a % self_check_every)
+                remB = self_check_every - (b % self_check_every)
+                next_selfA = (remA if remA > 0 else self_check_every)
+                next_selfB = (remB if remB > 0 else self_check_every)
             except Exception:
                 pass
         # Foreman status snapshot (minimal)
@@ -3192,7 +3197,10 @@ def main(home: Path):
                 "interval_effective": reset_interval_effective if reset_interval_effective > 0 else None,
                 "self_check_every": self_check_every if self_check_enabled else None,
                 "handoffs_total": instr_counter,
-                "next_self_check_in": next_self,
+                "handoffs_peerA": int(handoffs_peer.get('PeerA',0)),
+                "handoffs_peerB": int(handoffs_peer.get('PeerB',0)),
+                "next_self_peerA": next_selfA,
+                "next_self_peerB": next_selfB,
             },
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
             "foreman": ({"enabled": True, "running": f_running, "next_due": f_next_hhmm, "last": f_last_hhmm, "last_rc": f_last_rc, "cc_user": f_cc} if f_enabled else {"enabled": False}),
@@ -3339,13 +3347,12 @@ def main(home: Path):
                     try:
                         added = [fn for fn in cur if fn not in prev]
                         if added:
-                            # Choose the oldest newly added to avoid spamming
-                            fn = sorted(added)[0]
-                            # Skip files created by our own orchestrator handoff (mid starts with 'cccc-')
-                            if ".cccc-" not in fn:
-                                seq = fn[:6]
-                                path = _inbox_dir(home, label)/fn
-                                preview = _safe_headline(path)
+                            # Send one detailed nudge for the oldest newly added
+                            fn0 = sorted(added)[0]
+                            if ".cccc-" not in fn0:
+                                seq = fn0[:6]
+                                path0 = _inbox_dir(home, label)/fn0
+                                preview = _safe_headline(path0)
                                 suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
                                 custom = _compose_detailed_nudge(seq, preview, (_inbox_dir(home, label).as_posix()), suffix=suffix)
                                 pane = left if label == "PeerA" else right
@@ -3353,6 +3360,60 @@ def main(home: Path):
                                 _maybe_send_nudge(home, label, pane, prof, custom_text=custom, force=True)
                                 try:
                                     last_nudge_ts[label] = time.time()
+                                except Exception:
+                                    pass
+                            # Count all newly added files toward this peer's self-check cadence
+                            for fn in sorted(added):
+                                if ".cccc-" in fn:
+                                    continue
+                                pth = _inbox_dir(home, label)/fn
+                                try:
+                                    text = pth.read_text(encoding='utf-8', errors='replace')
+                                except Exception:
+                                    text = ''
+                                # Reuse the same meaningful rules as handoff
+                                try:
+                                    if self_check_enabled and (not in_self_check) and self_check_every > 0:
+                                        is_nudge_msg = (text.strip().startswith('[NUDGE]'))
+                                        low_signal = False
+                                        try:
+                                            low_signal = is_low_signal(text, policies)
+                                        except Exception:
+                                            low_signal = False
+                                        if (not is_nudge_msg) and (not low_signal):
+                                            handoffs_peer[label] = int(handoffs_peer.get(label, 0)) + 1
+                                            instr_counter = int(handoffs_peer.get('PeerA',0)) + int(handoffs_peer.get('PeerB',0))
+                                            cnt = handoffs_peer[label]
+                                            if (cnt % self_check_every) == 0:
+                                                sc_index = cnt // self_check_every
+                                                self_checks_done[label] = sc_index
+                                                in_self_check = True
+                                                try:
+                                                    msg_lines = [self_check_text.rstrip()]
+                                                    rules_path = (home/'rules'/('PEERA.md' if label=='PeerA' else 'PEERB.md')).as_posix()
+                                                    msg_lines.append(f"Rules: {rules_path}")
+                                                    msg_lines.append("Project: PROJECT.md")
+                                                    K = SYSTEM_REFRESH_EVERY
+                                                    if K > 0 and (sc_index % K) == 0:
+                                                        try:
+                                                            proj_path = (Path.cwd()/"PROJECT.md")
+                                                            if proj_path.exists():
+                                                                proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
+                                                                msg_lines.append("\n--- PROJECT.md (full) ---\n" + proj_txt)
+                                                        except Exception:
+                                                            pass
+                                                        try:
+                                                            rules_txt = (home/'rules'/('PEERA.md' if label=='PeerA' else 'PEERB.md')).read_text(encoding='utf-8')
+                                                        except Exception:
+                                                            rules_txt = ''
+                                                        if rules_txt:
+                                                            msg_lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
+                                                    final = "\n".join(msg_lines).strip()
+                                                    _send_handoff('System', label, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
+                                                    log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": cnt, "peer": label})
+                                                    _request_por_refresh("self-check", force=False)
+                                                finally:
+                                                    in_self_check = False
                                 except Exception:
                                     pass
                     except Exception:
