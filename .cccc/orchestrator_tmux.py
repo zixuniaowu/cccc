@@ -170,18 +170,70 @@ def _format_local_ts() -> str:
     main = dt.strftime("%Y-%m-%d %H:%M:%S")
     return f"{main} {tzname} ({offset_str})" if tzname else f"{main} ({offset_str})"
 
-def _compose_detailed_nudge(seq: str, preview: str, inbox_path: str, *, suffix: str = "") -> str:
-    """Compose a one-line, state-anchored NUDGE with TS + trigger + preview.
-    Keeps action instruction stable; optional suffix appended at the end.
+def _compose_nudge(
+    inbox_path: str,
+    *,
+    ts: Optional[str] = None,
+    new_arrival: bool = False,
+    backlog_gt_zero: Optional[bool] = None,
+    seq: Optional[str] = None,
+    preview: Optional[str] = None,
+    suffix: Optional[str] = None,
+) -> str:
+    """Unified NUDGE composer for detailed/periodic/keepalive cases.
+    - new_arrival=True → detailed nudge with trigger (and optional preview)
+    - backlog_gt_zero=True → generic backlog reminder
+    - backlog_gt_zero=False → generic keepalive when no backlog
+    - backlog_gt_zero=None → omit backlog wording (rare)
+    Always includes [NUDGE] [TS: ...] and Inbox path.
     """
-    ts = _format_local_ts()
-    msg = (
-        f"[NUDGE] [TS: {ts}] trigger={seq} preview='{preview}' — "
-        f"Inbox: {inbox_path} — open oldest first, process oldest→newest."
-    )
-    if suffix:
+    from datetime import datetime
+    t = ts or _format_local_ts()
+    # Base left-hand prefix
+    parts: List[str] = [f"[NUDGE] [TS: {t}]"]
+    # Middle intent
+    if new_arrival:
+        middle = "New message received"
+    else:
+        if backlog_gt_zero is True:
+            middle = "Unprocessed message remains"
+        elif backlog_gt_zero is False:
+            middle = None  # keepalive minimal
+        else:
+            middle = None
+    if middle:
+        parts.append(middle)
+    # Trigger/preview for arrivals
+    trailing_bits: List[str] = []
+    if new_arrival:
+        if seq:
+            trailing_bits.append(f"trigger={seq}")
+        if preview:
+            # ensure single quotes inside preview won't break the one-liner
+            pv = preview.replace("'", "\'")
+            trailing_bits.append(f"preview='{pv}'")
+    if trailing_bits:
+        parts.append(" — ".join([" ".join([])]) )
+    # Inbox path and action
+    # Note: we always show Inbox path
+    action = None
+    if new_arrival or backlog_gt_zero is True:
+        action = "open oldest first, process oldest→newest. Move processed files to processed/."
+    else:
+        action = "continue your work; open oldest→newest."
+    # Assemble
+    # [NUDGE] [TS: ...] <middle?> — trigger=... preview='...' — Inbox: <path> — <action>
+    msg_core = " ".join([p for p in parts if p])
+    trig_prev = "" if not trailing_bits else (" ".join(trailing_bits))
+    mid_section = f" — {trig_prev}" if trig_prev else ""
+    msg = f"{msg_core}{mid_section} — Inbox: {inbox_path} — {action}"
+    if suffix and suffix.strip():
         msg = msg + " " + suffix.strip()
     return msg
+
+def _compose_detailed_nudge(seq: str, preview: str, inbox_path: str, *, suffix: str = "") -> str:
+    """Backward-compatible wrapper for detailed (new-arrival) NUDGE."""
+    return _compose_nudge(inbox_path, ts=_format_local_ts(), new_arrival=True, seq=seq, preview=preview or None, suffix=suffix)
 
 def _safe_headline(path: Path, *, max_bytes: int = 4096, max_chars: int = 32) -> str:
     """Extract a short, printable first-line preview from a mailbox file.
@@ -437,18 +489,12 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
     if custom_text and custom_text.strip():
         nmsg = custom_text.strip()
     else:
-        # Default periodic nudge text (no dynamic inbox counts)
+        # Default periodic nudge → generic backlog reminder
         try:
             inbox_path = _inbox_dir(home, receiver_label).as_posix()
         except Exception:
             inbox_path = ".cccc/mailbox/peerX/inbox"
-        nmsg = (
-            f"[NUDGE] Inbox: {inbox_path} — read the oldest message file, then move it to processed/. Repeat until inbox is empty."
-        )
-        if suffix:
-            sfx = suffix.strip()
-            if sfx:
-                nmsg = nmsg + ' ' + sfx
+        nmsg = _compose_nudge(inbox_path, ts=_format_local_ts(), backlog_gt_zero=True, suffix=suffix)
     paste_when_ready(pane, profile, nmsg, timeout=6.0, poke=False)
     st['inflight'] = True
     st['last_sent_ts'] = now
@@ -3114,7 +3160,7 @@ def main(home: Path):
                 inbox_path = _inbox_dir(home, label).as_posix()
             except Exception:
                 inbox_path = ".cccc/mailbox/peerX/inbox"
-            ka_nudge = f"[NUDGE] [TS: {_format_local_ts()}] Inbox: {inbox_path} — continue your work; open oldest→newest." + (f" {ka_suffix}" if ka_suffix else "")
+            ka_nudge = _compose_nudge(inbox_path, ts=_format_local_ts(), backlog_gt_zero=False, suffix=ka_suffix)
             _send_handoff("System", label, txt, nudge_text=ka_nudge)
             pending_keepalive[label] = None
             try:
@@ -3313,7 +3359,7 @@ def main(home: Path):
                         inbox_path = _inbox_dir(home, label).as_posix()
                     except Exception:
                         inbox_path = ".cccc/mailbox/peerX/inbox"
-                    ka_nudge = f"[NUDGE] [TS: {_format_local_ts()}] Inbox: {inbox_path} — continue your work; open oldest→newest." + (f" {ka_suffix}" if ka_suffix else "")
+                    ka_nudge = _compose_nudge(inbox_path, ts=_format_local_ts(), backlog_gt_zero=False, suffix=ka_suffix)
                     _send_handoff("System", label, msg, nudge_text=ka_nudge)
                     try:
                         log_ledger(home, {"from":"system","kind":"keepalive-sent","peer":label})
