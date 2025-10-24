@@ -5,13 +5,22 @@ import time
 from pathlib import Path
 
 try:
-    from importlib.machinery import SourceFileLoader
-    APP_PATH = Path(__file__).with_name("tui").joinpath("app.py")
-    _mod = SourceFileLoader("cccc_tui_app", str(APP_PATH)).load_module()  # type: ignore
-    _AppClass = getattr(_mod, "CCCCApp")
-except Exception:
-    sys.stderr.write("\n[TUI] Textual is required for the CCCC TUI.\n")
-    sys.stderr.write("[TUI] Install:  pip install textual  (inside the same venv running cccc)\n\n")
+    import importlib.util
+    pkg_dir = Path(__file__).with_name("tui")
+    pkg_init = pkg_dir / "__init__.py"
+    spec = importlib.util.spec_from_file_location(
+        "cccc_tui_pkg", str(pkg_init), submodule_search_locations=[str(pkg_dir)]
+    )
+    if not spec or not spec.loader:
+        raise ImportError("cannot build package spec for TUI")
+    pkg = importlib.util.module_from_spec(spec)
+    sys.modules["cccc_tui_pkg"] = pkg
+    spec.loader.exec_module(pkg)  # loads package and its relative imports can resolve
+    run_app = getattr(pkg, "run_app")
+except Exception as e:
+    sys.stderr.write("\n[TUI] Failed to load the CCCC TUI package. Textual must be installed.\n")
+    sys.stderr.write("[TUI] Install:  pip install textual  (inside the same venv running cccc)\n")
+    sys.stderr.write(f"[TUI] Reason: {e}\n\n")
     sys.stderr.flush()
     time.sleep(6)
     sys.exit(1)
@@ -29,8 +38,7 @@ def main() -> None:
         ready.write_text(str(int(time.time())), encoding="utf-8")
     except Exception:
         pass
-    app = _AppClass(home)
-    app.run()
+    run_app(home)
 
 
 if __name__ == "__main__":
