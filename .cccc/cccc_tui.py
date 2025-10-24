@@ -36,6 +36,8 @@ CMD_HELP = [
     ("/log", "Show internal event overlay", "/log"),
     ("/state", "Show health & counters", "/state"),
     ("/help", "Show command list", "/help"),
+    ("/quit", "Quit orchestrator and tmux session", "/quit"),
+    ("/exit", "Alias of /quit", "/exit"),
 ]
 
 class Timeline(Static):
@@ -198,6 +200,21 @@ class Composer(Static):
             elif cmd in ('/log','/state','/help'):
                 # For MVP: inject a brief line; future: open overlay panels
                 self.timeline.items.append(f"[TUI] {cmd[1:]} not implemented as overlay yet")
+            elif cmd in ('/quit','/exit'):
+                # two-step confirm to avoid accidental shutdown
+                if not self.await_reset_confirm:
+                    self.timeline.items.append("[TUI] Confirm quit: type '/quit confirm' (or '/exit confirm') to proceed within 60s")
+                    self.await_reset_confirm = True
+                    return
+                ok = (arg.strip().lower() == 'confirm')
+                if not ok:
+                    self.timeline.items.append("[TUI] Quit aborted (need '/quit confirm')")
+                    self.await_reset_confirm = False
+                    return
+                payload = {"id": cid, "type": "quit", "source":"tui","ts": time.time()}
+                self._append_command(payload)
+                self.timeline.items.append("[TUI] Quit requested…")
+                self.await_reset_confirm = False
             else:
                 self.timeline.items.append(f"[TUI] Unknown command: {cmd}")
         else:
@@ -237,4 +254,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

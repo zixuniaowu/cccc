@@ -2708,6 +2708,7 @@ def main(home: Path):
     commands_path = state/"commands.jsonl"
     commands_path.parent.mkdir(parents=True, exist_ok=True)
     commands_last_pos = 0
+    shutdown_requested = False
     processed_command_ids: set[str] = set()
 
     def _append_command_result(cmd_id: str, ok: bool, message: str, **extra):
@@ -2729,7 +2730,7 @@ def main(home: Path):
             return False, f"inject failed: {e}"
 
     def _consume_tui_commands(max_items: int = 50):
-        nonlocal commands_last_pos, deliver_paused
+        nonlocal commands_last_pos, deliver_paused, shutdown_requested
         if not commands_path.exists():
             return
         try:
@@ -2790,6 +2791,9 @@ def main(home: Path):
                             else:
                                 message = _perform_reset(default_reset_mode, trigger='tui', reason='tui-reset')
                                 ok, msg = True, message
+                        elif ctype in ('quit','exit'):
+                            shutdown_requested = True
+                            ok, msg = True, 'shutdown requested'
                         elif ctype in ('foreman','fm'):
                             sub = str(args.get('action') or obj.get('action') or '').strip().lower() or 'status'
                             # Reuse IM command path by calling the same code branch
@@ -3863,6 +3867,8 @@ def main(home: Path):
             rlist, _, _ = select.select([sys.stdin], [], [], step)
             if rlist:
                 line = read_console_line("> ").strip(); break
+        if shutdown_requested:
+            break
         if not line:
             # Mailbox polling: consume structured outputs (no screen scraping).
             # To avoid echo interfering with typing, mute console printing during scan.
@@ -4385,7 +4391,12 @@ def main(home: Path):
             except Exception as e:
                 print(f"Foreman error: {e}")
             continue
+    # Graceful shutdown of tmux session if requested via /quit
+    try:
+        tmux("kill-session","-t",session)
+        print(f"[END] tmux session '{session}' terminated.")
+    except Exception:
+        pass
     print("\n[END] Recent commits:")
     run("git --no-pager log -n 5 --oneline")
     print("Ledger:", (home/"state/ledger.jsonl"))
-    print(f"[TIP] You can `tmux attach -t {session}` to continue interacting with both AIs.")
