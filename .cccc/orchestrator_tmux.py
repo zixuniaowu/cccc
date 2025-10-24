@@ -901,6 +901,62 @@ def tmux_build_2x2(session: str) -> Dict[str,str]:
     _,outp,_ = tmux("list-panes","-t",target,"-F","#{pane_id}:#{pane_left},#{pane_top},#{pane_right},#{pane_bottom}")
     print(f"[TMUX] panes: {outp.strip()}")
     return positions
+
+def tmux_build_tui_layout(session: str) -> Dict[str,str]:
+    """Build layout: left column full-height (TUI), right column split vertically (PeerA/PeerB).
+    Returns map {'lt': left, 'rt': top-right, 'rb': bottom-right}.
+    """
+    target = _win(session)
+    tmux("select-pane","-t",f"{target}.0")
+    tmux("kill-pane","-a","-t",f"{target}.0")
+    rc,_,err = tmux("split-window","-h","-t",f"{target}.0")
+    if rc != 0:
+        print(f"[TMUX] split horizontal failed: {err.strip()}")
+    tmux("select-layout","-t",target,"tiled")
+    code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
+    panes=[]
+    for ln in out.splitlines():
+        try:
+            pid, left, top = ln.strip().split()
+            panes.append((pid, int(left), int(top)))
+        except Exception:
+            pass
+    if not panes:
+        return {'lt': f"{target}.0", 'rt': f"{target}.0", 'rb': f"{target}.0"}
+    top_y = min(p[2] for p in panes)
+    top_row = sorted([p for p in panes if p[2]==top_y], key=lambda x: x[1])
+    if len(top_row) < 2:
+        code2,out2,_ = tmux("list-panes","-t",target,"-F","#{pane_index} #{pane_id}")
+        idx={}
+        for ln in out2.splitlines():
+            if not ln.strip():
+                continue
+            k,v = ln.split(" ",1); idx[int(k)] = v.strip()
+        lt = idx.get(0) or f"{target}.0"; rt = idx.get(1) or lt
+    else:
+        lt = top_row[0][0]; rt = top_row[-1][0]
+    rc,_,err = tmux("split-window","-v","-t",rt)
+    if rc != 0:
+        print(f"[TMUX] split rt vertical failed: {err.strip()}")
+    tmux("select-layout","-t",target,"tiled")
+    code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
+    panes=[]
+    for ln in out.splitlines():
+        try:
+            pid, left, top = ln.strip().split()
+            panes.append((pid, int(left), int(top)))
+        except Exception:
+            pass
+    min_top = min(p[2] for p in panes)
+    max_top = max(p[2] for p in panes)
+    top_panes = sorted([p for p in panes if p[2]==min_top], key=lambda x: x[1])
+    bot_panes = sorted([p for p in panes if p[2]==max_top], key=lambda x: x[1])
+    positions={'lt': top_panes[0][0] if top_panes else f"{target}.0",
+               'rt': top_panes[-1][0] if top_panes else f"{target}.1",
+               'rb': bot_panes[-1][0] if bot_panes else f"{target}.2"}
+    _,outp,_ = tmux("list-panes","-t",target,"-F","#{pane_id}:#{pane_left},#{pane_top},#{pane_right},#{pane_bottom}")
+    print(f"[TMUX] panes: {outp.strip()}")
+    return positions
 def tmux_ensure_quadrants(session: str, ledger_path: Path):
     code,out,_ = tmux("list-panes","-t",session,"-F","#P")
     panes = out.strip().splitlines()
@@ -915,7 +971,7 @@ def tmux_ensure_quadrants(session: str, ledger_path: Path):
             "a: <text>  → PeerA    |  b: <text>  → PeerB\n"
             "both:/u: <text>       → both peers\n"
             "/pause | /resume      toggle handoff\n"
-            "/refresh              re-inject SYSTEM\n"
+            "/sys-refresh          re-inject full SYSTEM\n"
             "q                      quit orchestrator\n"
         )
         cmd = f"bash -lc 'cat <<\'EOF\'\n{help_text}\nEOF; sleep 100000'"
@@ -1272,7 +1328,7 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
             text_with_mid = wrap_with_mid(body, mid)
             try:
                 seq, _ = _write_inbox_message(home, recv, text_with_mid, mid)
-                _send_nudge(home, recv, seq, mid, left, right, profileA, profileB,
+                _send_nudge(home, recv, seq, mid, paneA, paneB, profileA, profileB,
                             aux_mode)
                 try:
                     last_nudge_ts[recv] = time.time()
@@ -1364,8 +1420,8 @@ def main(home: Path):
         ts = time.strftime('%Y-%m-%d %H:%M')
         if mode_norm == "compact":
             try:
-                _send_raw_to_cli(home, 'PeerA', '/compact', left, right)
-                _send_raw_to_cli(home, 'PeerB', '/compact', left, right)
+                _send_raw_to_cli(home, 'PeerA', '/compact', paneA, paneB)
+                _send_raw_to_cli(home, 'PeerB', '/compact', paneA, paneB)
             except Exception:
                 pass
             try:
@@ -2403,8 +2459,10 @@ def main(home: Path):
             tmux("resize-window","-t",session,"-x",str(tsz.columns),"-y",str(tsz.lines))
         except Exception:
             pass
-        pos = tmux_build_2x2(session)
+        pos = tmux_build_tui_layout(session)
         left,right = pos['lt'], pos['rt']
+        paneA = pos['rt']
+        paneB = pos.get('rb', right)
         (state/"session.json").write_text(json.dumps({"session":session,"left":left,"right":right,**pos}), encoding="utf-8")
     else:
         # Resize to current terminal as well to avoid stale small size from background server
@@ -2413,8 +2471,10 @@ def main(home: Path):
             tmux("resize-window","-t",session,"-x",str(tsz.columns),"-y",str(tsz.lines))
         except Exception:
             pass
-        pos = tmux_build_2x2(session)
+        pos = tmux_build_tui_layout(session)
         left,right = pos['lt'], pos['rt']
+        paneA = pos['rt']
+        paneB = pos.get('rb', right)
         (state/"session.json").write_text(json.dumps({"session":session,"left":left,"right":right,**pos}), encoding="utf-8")
 
     # Improve usability: larger history for all panes; keep mouse on but avoid binding wheel to copy-mode
@@ -2434,20 +2494,19 @@ def main(home: Path):
     # Enable mouse wheel scroll for history while keeping send safety (we cancel copy-mode before sending)
     tmux("bind-key","-n","WheelUpPane","copy-mode","-e")
     tmux("bind-key","-n","WheelDownPane","send-keys","-M")
-    print(f"[INFO] Using tmux session: {session} (left=PeerA / right=PeerB)")
-    print(f"[INFO] pane map: left={left} right={right} lb={pos.get('lb')} rb={pos.get('rb')}")
-    print(f"[TIP] In another terminal: `tmux attach -t {session}` to observe/input")
-    # Ensure 2x2 layout: left/right=A/B; bottom-left=ledger tail; bottom-right=help
-    # Start ledger and help panes at bottom-left/bottom-right
-    lp = shlex.quote(str(state/"ledger.jsonl"))
-    # Execute commands inside panes directly (more robust with respawn-pane)
-    cmd_ledger_sh = f"bash -lc \"printf %s {bash_ansi_c_quote('[CCCC Ledger]\\n')}; tail -F {lp} 2>/dev/null || tail -f {lp}\""
-    tmux_respawn_pane(pos['lb'], cmd_ledger_sh)
-    # Bottom-right status panel: run built-in Python renderer to read ledger/status in real time
+    print(f"[INFO] Using tmux session: {session} (left=TUI / right=PeerA+PeerB)")
+    print(f"[INFO] pane map: left={left} PeerA(top)={paneA} PeerB(bottom)={paneB}")
+    print(f"[TIP] Launching tmux UI… (session={session}). You can re-attach later with: tmux attach -t {session}")
+    # Start CCCC TUI in the left pane
     py = shlex.quote(sys.executable or 'python3')
-    status_py = shlex.quote(str(home/"panel_status.py"))
-    cmd_status = f"bash -lc {shlex.quote(f'{py} {status_py} --home {str(home)} --interval 1.0')}"
-    tmux_respawn_pane(pos['rb'], cmd_status)
+    tui_py = shlex.quote(str(home/"cccc_tui.py"))
+    cmd_tui = f"bash -lc {shlex.quote(f'{py} {tui_py} --home {str(home)}')}"
+    tmux_respawn_pane(left, cmd_tui)
+    # Attach this terminal to the tmux session in the background
+    try:
+        subprocess.Popen(["tmux","attach","-t",session])
+    except Exception:
+        pass
 
     # IM command queue (bridge initiated)
     im_command_dir = state/"im_commands"
@@ -2545,7 +2604,7 @@ def main(home: Path):
                     else:
                         raise ValueError("unknown peer")
                     for label in labels:
-                        _send_raw_to_cli(home, label, text, left, right)
+                        _send_raw_to_cli(home, label, text, paneA, paneB)
                         try:
                             log_ledger(home, {"from": source, "kind": "im-passthrough", "to": label, "chars": len(text)})
                         except Exception:
@@ -2644,6 +2703,124 @@ def main(home: Path):
             result.update({"command": command or "unknown", "request_id": request_id, "source": source, "ts": time.strftime('%Y-%m-%d %H:%M:%S')})
             _record_im_command_result(fp, request_id, result)
 
+
+    # --- TUI command inbox (fast path, polled ~200ms within main loop) ---
+    commands_path = state/"commands.jsonl"
+    commands_path.parent.mkdir(parents=True, exist_ok=True)
+    commands_last_pos = 0
+    processed_command_ids: set[str] = set()
+
+    def _append_command_result(cmd_id: str, ok: bool, message: str, **extra):
+        try:
+            rec = {"id": cmd_id, "result": {"ok": bool(ok), "message": str(message)}}
+            rec["result"].update(extra)
+            with (commands_path).open('a', encoding='utf-8') as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n"); f.flush()
+        except Exception:
+            pass
+
+    def _inject_full_system():
+        try:
+            sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
+            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
+            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
+            return True, "SYSTEM injected to both peers"
+        except Exception as e:
+            return False, f"inject failed: {e}"
+
+    def _consume_tui_commands(max_items: int = 50):
+        nonlocal commands_last_pos, deliver_paused
+        if not commands_path.exists():
+            return
+        try:
+            with commands_path.open('r', encoding='utf-8', errors='replace') as f:
+                try:
+                    f.seek(commands_last_pos)
+                except Exception:
+                    pass
+                cnt = 0
+                while cnt < max_items:
+                    line = f.readline()
+                    if not line:
+                        break
+                    commands_last_pos = f.tell()
+                    cnt += 1
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line)
+                    except Exception:
+                        continue
+                    cmd_id = str(obj.get('id') or obj.get('request_id') or '')
+                    if cmd_id and cmd_id in processed_command_ids:
+                        continue
+                    # Skip result echo lines
+                    if isinstance(obj, dict) and 'result' in obj:
+                        continue
+                    # Normalize command
+                    ctype = str(obj.get('type') or obj.get('command') or '').strip().lower()
+                    target = str(obj.get('target') or obj.get('route') or '').strip().lower()
+                    args = obj.get('args') or {}
+                    ok, msg = False, 'unsupported'
+                    try:
+                        if ctype in ('a','b','both','send'):
+                            text = str(args.get('text') or obj.get('text') or '').strip()
+                            if not text:
+                                ok, msg = False, 'empty text'
+                            else:
+                                if ctype == 'a' or target in ('a','peera','peer_a'):
+                                    _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                elif ctype == 'b' or target in ('b','peerb','peer_b'):
+                                    _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                else:
+                                    _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                    _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                ok, msg = True, 'sent'
+                        elif ctype in ('pause','resume'):
+                            deliver_paused = (ctype == 'pause')
+                            write_status(deliver_paused)
+                            ok, msg = True, f"handoff {'paused' if deliver_paused else 'resumed'}"
+                        elif ctype in ('sys-refresh','sys_refresh','sysrefresh'):
+                            ok, msg = _inject_full_system()
+                        elif ctype == 'reset':
+                            conf = args.get('confirm')
+                            if str(conf).lower() not in ('1','true','yes','y','confirm'):
+                                ok, msg = False, 'confirm required (send again with args.confirm=true)'
+                            else:
+                                message = _perform_reset(default_reset_mode, trigger='tui', reason='tui-reset')
+                                ok, msg = True, message
+                        elif ctype in ('foreman','fm'):
+                            sub = str(args.get('action') or obj.get('action') or '').strip().lower() or 'status'
+                            # Reuse IM command path by calling the same code branch
+                            data = {'request_id': cmd_id or str(int(time.time())), 'command': 'foreman', 'source': 'tui', 'args': {'action': sub}}
+                            tmp = state/"im_commands"/f"tui-{int(time.time()*1000)}.json"
+                            try:
+                                tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+                                _process_im_commands()
+                                ok, msg = True, f"foreman {sub} requested"
+                            except Exception as e:
+                                ok, msg = False, f"foreman {sub} failed: {e}"
+                        elif ctype in ('c','aux_cli','aux'):
+                            prompt_text = str(args.get('prompt') or obj.get('prompt') or '').strip()
+                            if not prompt_text:
+                                ok, msg = False, 'empty prompt'
+                            else:
+                                rc, out, err, cmd_line = _run_aux_cli(prompt_text)
+                                ok = (rc == 0)
+                                summary = [f"[Aux CLI] exit={rc}", f"command: {cmd_line}"]
+                                if out: summary.append("stdout:\n" + out.strip())
+                                if err: summary.append("stderr:\n" + err.strip())
+                                msg = "\n".join(summary)
+                        else:
+                            ok, msg = False, 'unsupported'
+                    except Exception as e:
+                        ok, msg = False, f"error: {e}"
+                    if cmd_id:
+                        processed_command_ids.add(cmd_id)
+                    _append_command_result(cmd_id or '-', ok, msg)
+        except Exception:
+            pass
     # PROJECT.md bootstrap branch: choose before starting the CLIs
     project_md_path = Path.cwd()/"PROJECT.md"
     project_md_exists = project_md_path.exists()
@@ -2681,10 +2858,10 @@ def main(home: Path):
             return cmd
         pa_cwd = (resolved.get('peerA') or {}).get('cwd') or '.'
         pb_cwd = (resolved.get('peerB') or {}).get('cwd') or '.'
-        tmux_start_interactive(left, _wrap_cwd(CLAUDE_I_CMD, pa_cwd))
-        print(f"[LAUNCH] PeerA mode=tmux pane={left} cmd={CLAUDE_I_CMD} cwd={pa_cwd}")
-        tmux_start_interactive(right, _wrap_cwd(CODEX_I_CMD, pb_cwd))
-        print(f"[LAUNCH] PeerB mode=tmux pane={right} cmd={CODEX_I_CMD} cwd={pb_cwd}")
+        tmux_start_interactive(paneA, _wrap_cwd(CLAUDE_I_CMD, pa_cwd))
+        print(f"[LAUNCH] PeerA mode=tmux pane={paneA} cmd={CLAUDE_I_CMD} cwd={pa_cwd}")
+        tmux_start_interactive(paneB, _wrap_cwd(CODEX_I_CMD, pb_cwd))
+        print(f"[LAUNCH] PeerB mode=tmux pane={paneB} cmd={CODEX_I_CMD} cwd={pb_cwd}")
         # Debug: show current commands per pane
         try:
             code,out,err = tmux('list-panes','-F','#{pane_id} #{pane_current_command}')
@@ -2779,12 +2956,12 @@ def main(home: Path):
         sw = float(cli_profiles.get("startup_wait_seconds", 12))
         sn = float(cli_profiles.get("startup_nudge_seconds", 10))
         to = min(sw, sn) if MB_PULL_ENABLED else sw
-        wait_for_ready(left,  profileA, timeout=to)
-        wait_for_ready(right, profileB, timeout=to)
+        wait_for_ready(paneA,  profileA, timeout=to)
+        wait_for_ready(paneB, profileB, timeout=to)
 
     # After initial injection, record capture lengths as the parsing baseline
-    left_snap  = tmux_capture(left,  lines=800)
-    right_snap = tmux_capture(right, lines=800)
+    left_snap  = tmux_capture(paneA,  lines=800)
+    right_snap = tmux_capture(paneB, lines=800)
     last_windows = {"PeerA": len(left_snap), "PeerB": len(right_snap)}
     dedup_user = {}
     dedup_peer = {}
@@ -2872,8 +3049,8 @@ def main(home: Path):
 
     def _receiver_map(name: str) -> Tuple[str, Dict[str,Any]]:
         if name == "PeerA":
-            return left, profileA
-        return right, profileB
+            return paneA, profileA
+        return paneB, profileB
 
     # Pane idle judges for optional soft-ACK
     judges: Dict[str, PaneIdleJudge] = {"PeerA": PaneIdleJudge(profileA), "PeerB": PaneIdleJudge(profileB)}
@@ -3116,11 +3293,11 @@ def main(home: Path):
             seq, _ = _write_inbox_message(home, receiver_label, text_with_mid, mid)
             if nudge_text and nudge_text.strip():
                 if receiver_label == 'PeerA':
-                    _maybe_send_nudge(home, 'PeerA', left, profileA, custom_text=nudge_text, force=True)
+                    _maybe_send_nudge(home, 'PeerA', paneA, profileA, custom_text=nudge_text, force=True)
                 else:
-                    _maybe_send_nudge(home, 'PeerB', right, profileB, custom_text=nudge_text, force=True)
+                    _maybe_send_nudge(home, 'PeerB', paneB, profileB, custom_text=nudge_text, force=True)
             else:
-                _send_nudge(home, receiver_label, seq, mid, left, right, profileA, profileB, aux_mode)
+                _send_nudge(home, receiver_label, seq, mid, paneA, paneB, profileA, profileB, aux_mode)
             try:
                 last_nudge_ts[receiver_label] = time.time()
             except Exception:
@@ -3453,7 +3630,7 @@ def main(home: Path):
     seen_acks: Dict[str,set] = {"PeerA": set(), "PeerB": set()}
 
 
-    print("\n[READY] Common: a:/b:/both:/u: send; /pause|/resume handoff; /refresh SYSTEM; q quit.")
+    print("\n[READY] Common: a:/b:/both:/u: send; /pause|/resume handoff; /sys-refresh SYSTEM; q quit.")
     print("[TIP] Console echo is off by default. Use /echo on|off|<empty> to toggle/view.")
     print("[TIP] Passthrough: a! <cmd> / b! <cmd> sends raw input to the CLI (no wrapper), e.g., a! /model")
     # Show a clear input hint on first entry
@@ -3559,7 +3736,7 @@ def main(home: Path):
                                 preview = _safe_headline(path0)
                                 suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
                                 custom = _compose_detailed_nudge(seq, preview, (_inbox_dir(home, label).as_posix()), suffix=suffix)
-                                pane = left if label == "PeerA" else right
+                                pane = paneA if label == "PeerA" else paneB
                                 prof = profileA if label == "PeerA" else profileB
                                 _maybe_send_nudge(home, label, pane, prof, custom_text=custom, force=True)
                                 try:
@@ -3625,7 +3802,7 @@ def main(home: Path):
                         pass
                     prev_inbox[label] = cur
             else:
-                for label, pane in (("PeerA", left), ("PeerB", right)):
+                for label, pane in (("PeerA", paneA), ("PeerB", paneB)):
                     out = tmux_capture(pane, lines=800)
                     acks, _ = find_acks_from_output(out)
                     if not acks:
@@ -3653,7 +3830,7 @@ def main(home: Path):
         # Periodic NUDGE: when inbox non-empty and enough time has passed since the last reminder
         try:
             nowt = time.time()
-            for label, pane in (("PeerA", left), ("PeerB", right)):
+            for label, pane in (("PeerA", paneA), ("PeerB", paneB)):
                 inbox = _inbox_dir(home, label)
                 files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
                 if not files:
@@ -3671,10 +3848,22 @@ def main(home: Path):
                     last_nudge_ts[label] = nowt
         except Exception:
             pass
-        rlist, _, _ = select.select([sys.stdin], [], [], float(main_loop_tick_seconds))
-        if rlist:
-            line = read_console_line("> ").strip()
-        else:
+        # Fast-command window: poll commands.jsonl every ~200ms until main loop tick elapses,
+        # while still giving priority to console input.
+        deadline = time.time() + float(main_loop_tick_seconds)
+        line = ""
+        while True:
+            # consume TUI commands quickly (non-blocking, small batch)
+            _consume_tui_commands(max_items=20)
+            # check console input with a short timeout
+            remain = max(0.0, deadline - time.time())
+            step = 0.2 if remain > 0.2 else remain
+            if step <= 0:
+                break
+            rlist, _, _ = select.select([sys.stdin], [], [], step)
+            if rlist:
+                line = read_console_line("> ").strip(); break
+        if not line:
             # Mailbox polling: consume structured outputs (no screen scraping).
             # To avoid echo interfering with typing, mute console printing during scan.
             _stdout_saved = sys.stdout
@@ -3900,8 +4089,8 @@ def main(home: Path):
                     sys.stdout = _stdout_saved
             continue
         if not line:
-            flush_outbox_if_idle(home, left,  "peerA", profileA, delivery_conf)
-            flush_outbox_if_idle(home, right, "peerB", profileB, delivery_conf)
+            flush_outbox_if_idle(home, paneA,  "peerA", profileA, delivery_conf)
+            flush_outbox_if_idle(home, paneB, "peerB", profileB, delivery_conf)
             _resend_timeouts()
             _try_send_from_queue("PeerA"); _try_send_from_queue("PeerB")
             continue
@@ -3914,7 +4103,7 @@ def main(home: Path):
             print("  a! <cmd> / b! <cmd>     → passthrough to respective CLI (no wrapper)")
             print("  /focus [hint]           → ask PeerB to refresh POR.md (optional hint)")
             print("  /pause | /resume        → pause/resume A↔B handoff")
-            print("  /refresh                → re-inject SYSTEM prompt")
+            print("  /sys-refresh            → re-inject full SYSTEM prompt")
             print("  /reset compact|clear    → context maintenance (compact = fold context, clear = fresh restart)")
             print("  /foreman on|off|status  → enable/disable/check Foreman (User Proxy)")
             print("  /c <prompt> | c: <prompt> → run configured Aux once (one-off helper)")
@@ -3946,7 +4135,7 @@ def main(home: Path):
                 print(err.rstrip())
             continue
 
-        if line == "/refresh":
+        if line == "/sys-refresh" or line == "/refresh":
             sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
             _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
@@ -4030,12 +4219,12 @@ def main(home: Path):
         if line.startswith("a!"):
             msg = line[2:].strip()
             if msg:
-                _send_raw_to_cli(home, 'PeerA', msg, left, right)
+                _send_raw_to_cli(home, 'PeerA', msg, paneA, paneB)
             continue
         if line.startswith("b!"):
             msg = line[2:].strip()
             if msg:
-                _send_raw_to_cli(home, 'PeerB', msg, left, right)
+                _send_raw_to_cli(home, 'PeerB', msg, paneA, paneB)
             continue
         # Normal wrapped routing
         if line.startswith("a:"):

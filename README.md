@@ -91,7 +91,7 @@ cccc token set  # paste your bot token (stored under .cccc/settings, gitignored)
 ```bash
 cccc run
 ```
-- tmux opens: left/right = PeerA/PeerB, bottom-right = status panel.
+- tmux opens: Left column = CCCC TUI (timeline + composer + status); Right = PeerA (top) / PeerB (bottom).
 - You can attach a bridge later with `cccc bridge ...` or set `autostart` in `.cccc/settings`.
 5) Prepare your CLIs (one‑time)
 - Put your project brief/scope in `PROJECT.md` (repo root). CCCC will weave it into the runtime SYSTEM so both peers align.
