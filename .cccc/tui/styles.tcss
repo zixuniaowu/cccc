@@ -1,0 +1,17 @@
+# Timeline / Composer / Status heights
+# Matches our previous proportions but via Textual CSS.
+
+#timeline {
+    height: 70%;
+    border: round $accent;
+}
+
+#composer {
+    height: 15%;
+}
+
+#status {
+    height: 15%;
+    border: tall $secondary;
+}
+

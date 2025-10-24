@@ -2832,12 +2832,9 @@ def main(home: Path, session_name: Optional[str] = None):
                         elif ctype in ('sys-refresh','sys_refresh','sysrefresh'):
                             ok, msg = _inject_full_system()
                         elif ctype == 'reset':
-                            conf = args.get('confirm')
-                            if str(conf).lower() not in ('1','true','yes','y','confirm'):
-                                ok, msg = False, 'confirm required (send again with args.confirm=true)'
-                            else:
-                                message = _perform_reset(default_reset_mode, trigger='tui', reason='tui-reset')
-                                ok, msg = True, message
+                            # Single-step reset (no confirm) per TUI UX
+                            message = _perform_reset(default_reset_mode, trigger='tui', reason='tui-reset')
+                            ok, msg = True, message
                         elif ctype in ('quit','exit'):
                             try:
                                 tmux("kill-session","-t",session)
