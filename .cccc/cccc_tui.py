@@ -10,7 +10,14 @@ try:
     from textual.reactive import reactive
     from textual import events
 except Exception as e:
-    print("[TUI] textual is required. Install with: pip install textual", file=sys.stderr)
+    # Render a readable message in the pane and pause briefly so users can see it
+    sys.stderr.write("\n[TUI] textual is required for the CCCC TUI.\n")
+    sys.stderr.write("[TUI] Install:  pip install textual  (inside the same venv running cccc)\n\n")
+    sys.stderr.flush()
+    try:
+        import time; time.sleep(6)
+    except Exception:
+        pass
     sys.exit(1)
 
 ASCII_CCCC = (
@@ -51,7 +58,7 @@ class Timeline(Static):
 
     def on_mount(self):
         self.set_interval(1.0, self.refresh_data)
-        self.update(self._render())
+        self.update(self.render())
 
     def refresh_data(self):
         outbox = self.home/"state"/"outbox.jsonl"
@@ -90,9 +97,9 @@ class Timeline(Static):
                 self.eids.add(eid)
             if len(self.items) > self.max_items:
                 self.items = self.items[-self.max_items:]
-        self.update(self._render())
+        self.update(self.render())
 
-    def _render(self) -> str:
+    def render(self) -> str:
         title = ASCII_CCCC + "\n"
         return title + "\n".join(self.items[-self.max_items:])
 
@@ -100,10 +107,12 @@ class StatusCards(Static):
     def __init__(self, home: Path):
         super().__init__(id="status")
         self.home = home
+        self._last_text = ""
 
     def on_mount(self):
         self.set_interval(2.0, self.refresh_data)
-        self.update(self._render({}))
+        self._last_text = self._render_text({})
+        self.update(self._last_text)
 
     def refresh_data(self):
         data = {}
@@ -112,9 +121,10 @@ class StatusCards(Static):
             data = json.loads(s)
         except Exception:
             pass
-        self.update(self._render(data))
+        self._last_text = self._render_text(data)
+        self.update(self._last_text)
 
-    def _render(self, data: Dict[str,Any]) -> str:
+    def _render_text(self, data: Dict[str,Any]) -> str:
         p = data.get('handoffs') or {}
         fore = data.get('foreman') or {}
         lines = [
@@ -124,6 +134,9 @@ class StatusCards(Static):
             f"Foreman enabled={fore.get('enabled',False)} running={fore.get('running',False)} next={fore.get('next_due','-')} last_rc={fore.get('last_rc','-')}",
         ]
         return "\n".join(lines)
+
+    def render(self) -> str:
+        return self._last_text
 
 class Composer(Static):
     def __init__(self, home: Path, timeline: Timeline):
@@ -201,20 +214,9 @@ class Composer(Static):
                 # For MVP: inject a brief line; future: open overlay panels
                 self.timeline.items.append(f"[TUI] {cmd[1:]} not implemented as overlay yet")
             elif cmd in ('/quit','/exit'):
-                # two-step confirm to avoid accidental shutdown
-                if not self.await_reset_confirm:
-                    self.timeline.items.append("[TUI] Confirm quit: type '/quit confirm' (or '/exit confirm') to proceed within 60s")
-                    self.await_reset_confirm = True
-                    return
-                ok = (arg.strip().lower() == 'confirm')
-                if not ok:
-                    self.timeline.items.append("[TUI] Quit aborted (need '/quit confirm')")
-                    self.await_reset_confirm = False
-                    return
                 payload = {"id": cid, "type": "quit", "source":"tui","ts": time.time()}
                 self._append_command(payload)
                 self.timeline.items.append("[TUI] Quit requested…")
-                self.await_reset_confirm = False
             else:
                 self.timeline.items.append(f"[TUI] Unknown command: {cmd}")
         else:
@@ -249,6 +251,13 @@ def main():
     ap.add_argument('--home', required=True)
     args = ap.parse_args()
     home = Path(args.home)
+    # Write a ready marker so the orchestrator can confirm startup
+    try:
+        ready = home/"state"/"tui.ready"
+        ready.parent.mkdir(parents=True, exist_ok=True)
+        ready.write_text(str(int(time.time())), encoding='utf-8')
+    except Exception:
+        pass
     app = CCCCApp(home)
     app.run()
 

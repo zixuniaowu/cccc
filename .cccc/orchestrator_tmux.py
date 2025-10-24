@@ -907,12 +907,14 @@ def tmux_build_tui_layout(session: str) -> Dict[str,str]:
     Returns map {'lt': left, 'rt': top-right, 'rb': bottom-right}.
     """
     target = _win(session)
+    # Clean to single pane
     tmux("select-pane","-t",f"{target}.0")
     tmux("kill-pane","-a","-t",f"{target}.0")
+    # Split left | right
     rc,_,err = tmux("split-window","-h","-t",f"{target}.0")
     if rc != 0:
         print(f"[TMUX] split horizontal failed: {err.strip()}")
-    tmux("select-layout","-t",target,"tiled")
+    # Identify left/right
     code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
     panes=[]
     for ln in out.splitlines():
@@ -935,10 +937,23 @@ def tmux_build_tui_layout(session: str) -> Dict[str,str]:
         lt = idx.get(0) or f"{target}.0"; rt = idx.get(1) or lt
     else:
         lt = top_row[0][0]; rt = top_row[-1][0]
+    # Split right vertically to create stacked Peer panes
     rc,_,err = tmux("split-window","-v","-t",rt)
     if rc != 0:
         print(f"[TMUX] split rt vertical failed: {err.strip()}")
-    tmux("select-layout","-t",target,"tiled")
+    # Apply main-vertical layout (left column with stacked right panes) and force width
+    tmux("select-pane","-t",lt)
+    tmux("select-layout","-t",target,"main-vertical")
+    try:
+        code,w,_ = tmux("display-message","-p","-t",target,"#{window_width}")
+        win_w = int(w.strip()) if code==0 and w.strip().isdigit() else shutil.get_terminal_size(fallback=(160,48)).columns
+    except Exception:
+        win_w = shutil.get_terminal_size(fallback=(160,48)).columns
+    left_w = max(40, int(win_w * 0.45))
+    tmux("set-option","-t",target,"main-pane-width",str(left_w))
+    tmux("resize-pane","-t",lt,"-x",str(left_w))
+    tmux("set-option","-t",target,"destroy-unattached","on")
+    # Map final positions
     code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
     panes=[]
     for ln in out.splitlines():
@@ -1386,9 +1401,16 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
 
 
 # ---------- MAIN ----------
-def main(home: Path):
+def main(home: Path, session_name: Optional[str] = None):
     global CONSOLE_ECHO
     ensure_bin("tmux"); ensure_git_repo()
+    # Hard dependency: textual must be installed; exit immediately otherwise
+    try:
+        import textual  # type: ignore
+    except Exception:
+        print("[ERROR] Textual is required for the CCCC TUI. Install with: pip install textual")
+        print(f"[ERROR] Python: {sys.executable}")
+        return
     # Directories
     settings = home/"settings"; state = home/"state"
     state.mkdir(exist_ok=True)
@@ -1404,7 +1426,7 @@ def main(home: Path):
     policies = read_yaml(settings/"policies.yaml")
     governance_cfg = read_yaml(settings/"governance.yaml") if (settings/"governance.yaml").exists() else {}
 
-    session  = f"cccc-{Path.cwd().name}"
+    session  = session_name or os.environ.get("CCCC_SESSION") or f"cccc-{Path.cwd().name}"
 
     por_markdown = ensure_por(home)
     try:
@@ -1722,9 +1744,9 @@ def main(home: Path):
                         print("[HINT] Enter one of indices or names shown above.")
                 # PeerA selection
                 pa = _choose('PeerA', acts, allow_none=False)
-                # PeerB selection（允许与 PeerA 相同）
+                # PeerB selection (can reuse the same actor as PeerA)
                 pb = _choose('PeerB', acts, allow_none=False)
-                # Aux selection：允许任意 CLI，也可 none
+                # Aux selection (any actor allowed, or none for disabled)
                 aux_choice = _choose('Aux', acts, allow_none=True)
                 ax = aux_choice  # '' means none/off
                 aum = 'on' if ax else 'off'
@@ -2496,15 +2518,40 @@ def main(home: Path):
     tmux("bind-key","-n","WheelDownPane","send-keys","-M")
     print(f"[INFO] Using tmux session: {session} (left=TUI / right=PeerA+PeerB)")
     print(f"[INFO] pane map: left={left} PeerA(top)={paneA} PeerB(bottom)={paneB}")
-    print(f"[TIP] Launching tmux UI… (session={session}). You can re-attach later with: tmux attach -t {session}")
-    # Start CCCC TUI in the left pane
+    print(f"[TIP] tmux UI session ready: {session}. Use /quit or tmux commands to exit.")
+    # Start TUI (no fallback)
     py = shlex.quote(sys.executable or 'python3')
     tui_py = shlex.quote(str(home/"cccc_tui.py"))
-    cmd_tui = f"bash -lc {shlex.quote(f'{py} {tui_py} --home {str(home)}')}"
-    tmux_respawn_pane(left, cmd_tui)
-    # Attach this terminal to the tmux session in the background
+    ready_file = state/"tui.ready"
     try:
-        subprocess.Popen(["tmux","attach","-t",session])
+        if ready_file.exists():
+            ready_file.unlink()
+    except Exception:
+        pass
+    cmd = f"LC_ALL=C.UTF-8 LANG=C.UTF-8 exec {py} {tui_py} --home {str(home)}"
+    cmd_tui = f"bash -lc {shlex.quote(cmd)}"
+    tmux_respawn_pane(left, cmd_tui)
+    # Ensure left pane (TUI) is focused for initial attach
+    try:
+        tmux("select-pane","-t",left)
+    except Exception:
+        pass
+    # Wait for TUI ready: check .cccc/state/tui.ready (up to 12 seconds)
+    try:
+        t0 = time.time(); timeout = 12.0
+        ready_file = state/"tui.ready"
+        while time.time() - t0 < timeout:
+            if ready_file.exists():
+                break
+            time.sleep(0.2)
+        if not ready_file.exists():
+            print("[ERROR] TUI did not become ready within timeout.\n"
+                  "- Make sure textual is installed in the SAME Python environment as cccc.\n"
+                  f"- Python: {sys.executable}")
+            # Terminate tmux session and exit
+            try: tmux("kill-session","-t",session)
+            except Exception: pass
+            return
     except Exception:
         pass
 
@@ -2792,8 +2839,12 @@ def main(home: Path):
                                 message = _perform_reset(default_reset_mode, trigger='tui', reason='tui-reset')
                                 ok, msg = True, message
                         elif ctype in ('quit','exit'):
+                            try:
+                                tmux("kill-session","-t",session)
+                                ok, msg = True, 'session terminated'
+                            except Exception as e:
+                                ok, msg = False, f"kill-session failed: {e}"
                             shutdown_requested = True
-                            ok, msg = True, 'shutdown requested'
                         elif ctype in ('foreman','fm'):
                             sub = str(args.get('action') or obj.get('action') or '').strip().lower() or 'status'
                             # Reuse IM command path by calling the same code branch
@@ -3633,6 +3684,9 @@ def main(home: Path):
     last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
     seen_acks: Dict[str,set] = {"PeerA": set(), "PeerB": set()}
 
+    # If we auto-attached tmux, disable console input reading to avoid TTY contention
+    console_input_enabled = bool(os.environ.get("CCCC_CONSOLE_INPUT"))
+
 
     print("\n[READY] Common: a:/b:/both:/u: send; /pause|/resume handoff; /sys-refresh SYSTEM; q quit.")
     print("[TIP] Console echo is off by default. Use /echo on|off|<empty> to toggle/view.")
@@ -3864,9 +3918,13 @@ def main(home: Path):
             step = 0.2 if remain > 0.2 else remain
             if step <= 0:
                 break
-            rlist, _, _ = select.select([sys.stdin], [], [], step)
-            if rlist:
-                line = read_console_line("> ").strip(); break
+            if console_input_enabled:
+                rlist, _, _ = select.select([sys.stdin], [], [], step)
+                if rlist:
+                    line = read_console_line("> ").strip(); break
+            else:
+                time.sleep(step)
+                continue
         if shutdown_requested:
             break
         if not line:
@@ -4397,6 +4455,23 @@ def main(home: Path):
         print(f"[END] tmux session '{session}' terminated.")
     except Exception:
         pass
+    try:
+        (state/"tui.ready").unlink()
+    except Exception:
+        pass
     print("\n[END] Recent commits:")
     run("git --no-pager log -n 5 --oneline")
     print("Ledger:", (home/"state/ledger.jsonl"))
+
+
+def _parse_args():
+    import argparse
+    parser = argparse.ArgumentParser(description="CCCC orchestrator")
+    parser.add_argument("--home", default=".cccc", help="Path to .cccc directory")
+    parser.add_argument("--session", help="Tmux session name")
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    cli_args = _parse_args()
+    main(Path(cli_args.home).resolve(), session_name=cli_args.session)

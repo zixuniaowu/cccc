@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from pathlib import Path
-import os, sys, shutil, argparse, subprocess, json, atexit, signal, time
+import os, sys, shutil, argparse, subprocess, json, atexit, signal, time, shlex
 
 def _bootstrap(src_root: Path, target: Path, *, force: bool = False, include_guides: bool = False):
     # Preferred: packaged resources (importlib.resources)
@@ -119,8 +119,14 @@ def main():
 
     # Utility: show versions
     sub.add_parser("version", help="Show package and scaffold versions")
-    # Alias run
-    sub.add_parser("run", help="Run orchestrator")
+
+    # Runtime commands
+    p_run = sub.add_parser("run", help="Start orchestrator tmux session and attach")
+    p_run.add_argument("--session", help="Tmux session name (default: cccc-<repo>)")
+    p_run.add_argument("--command", dest="run_command", help="Override command launched inside tmux (debug)")
+
+    p_kill = sub.add_parser("kill", help="Force stop orchestrator tmux session")
+    p_kill.add_argument("--session", help="Tmux session name (default: read from state/session.json)")
 
     args, rest = parser.parse_known_args()
     repo_root = Path(__file__).resolve().parent
@@ -534,8 +540,16 @@ def main():
         print(f"cccc package: {pkg_ver}")
         print(f"scaffold path: {scaffold_path} (exists={exists}, files~{file_count})")
         return
+    if args.cmd == 'kill':
+        _cmd_kill(getattr(args, 'session', None)); return
 
-    # Run orchestrator (original behavior)
+    run_mode = args.cmd in (None, 'run')
+
+    if not run_mode:
+        print(f"[ERROR] Unknown command: {args.cmd}")
+        return
+
+    # Run orchestrator (tmux session)
     if not home.exists():
         print(f"[FATAL] CCCC directory not found: {home}\nRun `cccc init` in your target repository to copy the scaffold, or set CCCC_HOME.")
         raise SystemExit(1)
@@ -708,6 +722,120 @@ def main():
                 signal.signal(sig, _sig_handler)
             except Exception:
                 pass
+
+    def _session_state_path() -> Path:
+        return home/"state"/"session.json"
+
+    def _write_session_state(session: str):
+        try:
+            state_dir = home/"state"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "session": session,
+                "created_at": time.time(),
+                "cwd": str(Path.cwd()),
+            }
+            _session_state_path().write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _read_session_state() -> Optional[str]:
+        p = _session_state_path()
+        if not p.exists():
+            return None
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            value = str(data.get("session") or "").strip()
+            return value or None
+        except Exception:
+            return None
+
+    def _remove_session_state():
+        try:
+            _session_state_path().unlink()
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+    def _default_session_name() -> str:
+        return f"cccc-{Path.cwd().name}"
+
+    def _tmux_has_session(session: str) -> bool:
+        try:
+            result = subprocess.run(["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return result.returncode == 0
+        except FileNotFoundError:
+            return False
+
+    def _tmux_kill_session(session: str) -> bool:
+        try:
+            result = subprocess.run(["tmux", "kill-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return result.returncode == 0
+        except FileNotFoundError:
+            return False
+
+    def _cmd_kill(session_arg: Optional[str] = None):
+        session = session_arg or _read_session_state()
+        if not session:
+            print("[KILL] No tmux session recorded. Use --session to specify explicitly.")
+            return
+        if not _tmux_has_session(session):
+            print(f"[KILL] Session '{session}' not found.")
+            _remove_session_state()
+            for leftover in (home/"state"/"tui.ready", home/"state"/"tui.log"):
+                try:
+                    leftover.unlink()
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    pass
+            return
+        if _tmux_kill_session(session):
+            print(f"[KILL] Session '{session}' terminated.")
+        else:
+            print(f"[KILL] Failed to terminate session '{session}'.")
+        _remove_session_state()
+        for leftover in (home/"state"/"tui.ready", home/"state"/"tui.log"):
+            try:
+                leftover.unlink()
+            except FileNotFoundError:
+                pass
+            except Exception:
+                pass
+
+    def _cmd_run(session_arg: Optional[str] = None, override_cmd: Optional[str] = None):
+        if not _which("tmux"):
+            print("[ERROR] tmux is required. Install tmux and try again.")
+            return
+        session = session_arg or _default_session_name()
+        command_str = override_cmd
+        if not command_str:
+            parts = [sys.executable, "-u", str(home/"orchestrator_tmux.py"), "--home", str(home), "--session", session]
+            command_str = " ".join(shlex.quote(p) for p in parts)
+        if _tmux_has_session(session):
+            print(f"[RUN] Reusing existing tmux session '{session}'.")
+            _write_session_state(session)
+        else:
+            tmux_args = [
+                "tmux", "new-session", "-d",
+                "-s", session,
+                "-n", "cccc",
+                "-c", str(Path.cwd()),
+                command_str,
+            ]
+            result = subprocess.run(tmux_args)
+            if result.returncode != 0:
+                print(f"[ERROR] tmux new-session failed (exit {result.returncode}).")
+                return
+            _write_session_state(session)
+            print(f"[RUN] Started tmux session '{session}'.")
+        print(f"[RUN] Attaching to session '{session}'.")
+        try:
+            os.execvp("tmux", ["tmux", "attach", "-t", session])
+        except Exception as e:
+            print(f"[ERROR] tmux attach failed: {e}")
+            raise SystemExit(1)
 
     # Wizard logic: only in interactive TTY and when CCCC_NO_WIZARD is not set
     if _isatty() and not os.environ.get('CCCC_NO_WIZARD'):
@@ -983,12 +1111,8 @@ def main():
     except Exception:
         pass
 
-    try:
-        from orchestrator_tmux import main as run
-    except Exception as e:
-        print(f"[FATAL] Failed to import orchestrator: {e}")
-        raise
-    run(home)
+    _cmd_run(getattr(args, 'session', None), getattr(args, 'run_command', None))
+    return
 
 if __name__ == "__main__":
     main()
