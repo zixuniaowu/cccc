@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from pathlib import Path
 import os, sys, shutil, argparse, subprocess, json, atexit, signal, time, shlex
+from typing import Optional
 
 def _bootstrap(src_root: Path, target: Path, *, force: bool = False, include_guides: bool = False):
     # Preferred: packaged resources (importlib.resources)
