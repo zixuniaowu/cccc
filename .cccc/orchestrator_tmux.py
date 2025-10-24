@@ -2873,28 +2873,11 @@ def main(home: Path, session_name: Optional[str] = None):
                     _append_command_result(cmd_id or '-', ok, msg)
         except Exception:
             pass
-    # PROJECT.md bootstrap branch: choose before starting the CLIs
+    # PROJECT.md bootstrap: avoid blocking TTY prompts in tmux/TUI runs
     project_md_path = Path.cwd()/"PROJECT.md"
     project_md_exists = project_md_path.exists()
-    start_mode = "has_doc" if project_md_exists else "ask"  # has_doc | ai_bootstrap | ask
-    if not project_md_exists:
-        print("\n[PROJECT] No PROJECT.md found. Choose:")
-        print("  1) I will create PROJECT.md, then continue")
-        print("  2) Start CLI and let AIs co-create PROJECT.md (only modify PROJECT.md)")
-        while True:
-            ans = read_console_line("> Enter 1 or 2 and press Enter: ").strip().lower()
-            if ans in ("1", "a", "user", "u"):
-                print("[PROJECT] Waiting for PROJECT.md at repo root …")
-                while not project_md_path.exists():
-                    nxt = read_console_line("- After creation press Enter to continue; or enter 2 to switch to AI bootstrap: ").strip().lower()
-                    if nxt in ("2", "b", "ai"):
-                        start_mode = "ai_bootstrap"; break
-                if project_md_path.exists():
-                    start_mode = "has_doc"; project_md_exists = True
-                break
-            if ans in ("2", "b", "ai"):
-                start_mode = "ai_bootstrap"; break
-            print("[HINT] Enter 1 or 2.")
+    # Non-interactive default: do not prompt; continue with current files
+    start_mode = "has_doc" if project_md_exists else "has_doc"
 
     # Start interactive CLIs (fallback to built-in Mock when not configured)
     # Build peer launch commands from actor templates (env can still override)

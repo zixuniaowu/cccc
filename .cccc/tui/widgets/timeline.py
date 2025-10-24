@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from textual.reactive import reactive
-from textual.widgets import Static
+from textual.widgets import TextLog
 
 
 ASCII_CCCC = (
@@ -19,20 +19,27 @@ ASCII_CCCC = (
 )
 
 
-class Timeline(Static):
+class Timeline(TextLog):
     verbose = reactive(True)
 
     def __init__(self, home: Path):
-        super().__init__(id="timeline")
+        super().__init__(id="timeline", highlight=False, markup=False, wrap=True, auto_scroll=True)
         self.home = home
         self.eids: set[str] = set()
-        self.max_items = 200
-        self.items: List[str] = []
+        self._header_written = False
+        self.max_lines = 1200
 
     def on_mount(self) -> None:  # noqa: D401
-        # Poll outbox at a modest cadence to keep CPU low
+        # Write header once and start polling outbox
+        self._ensure_header()
         self.set_interval(2.0, self.refresh_data)
-        self.update(self.render())
+
+    def _ensure_header(self) -> None:
+        if self._header_written:
+            return
+        for ln in ASCII_CCCC.rstrip("\n").splitlines():
+            self.write(ln)
+        self._header_written = True
 
     def refresh_data(self) -> None:
         outbox = self.home / "state" / "outbox.jsonl"
@@ -61,14 +68,15 @@ class Timeline(Static):
             text = str(ev.get("text") or "")
             head = f"[{frm}→{to}] "
             body = text.strip().splitlines()[0][:160]
-            self.items.append(head + body)
+            self.write(head + body)
             if eid:
                 self.eids.add(eid)
-            if len(self.items) > self.max_items:
-                self.items = self.items[-self.max_items :]
-        self.update(self.render())
-
-    def render(self) -> str:  # textual converts to Rich renderable
-        title = ASCII_CCCC + "\n"
-        return title + "\n".join(self.items[-self.max_items :])
-
+        # Trim backlog if needed
+        try:
+            if self.document and len(self.document.lines) > self.max_lines:
+                excess = len(self.document.lines) - self.max_lines
+                self.clear()
+                self._header_written = False
+                self._ensure_header()
+        except Exception:
+            pass
