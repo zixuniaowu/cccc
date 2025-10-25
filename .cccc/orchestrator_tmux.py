@@ -949,7 +949,8 @@ def tmux_build_tui_layout(session: str) -> Dict[str,str]:
         win_w = int(w.strip()) if code==0 and w.strip().isdigit() else shutil.get_terminal_size(fallback=(160,48)).columns
     except Exception:
         win_w = shutil.get_terminal_size(fallback=(160,48)).columns
-    left_w = max(40, int(win_w * 0.45))
+    # 50/50 split per spec; keep a sensible minimum for narrow terminals
+    left_w = max(40, int(win_w * 0.50))
     tmux("set-option","-t",target,"main-pane-width",str(left_w))
     tmux("resize-pane","-t",lt,"-x",str(left_w))
     tmux("set-option","-t",target,"destroy-unattached","on")
@@ -2831,10 +2832,9 @@ def main(home: Path, session_name: Optional[str] = None):
                             ok, msg = True, f"handoff {'paused' if deliver_paused else 'resumed'}"
                         elif ctype in ('sys-refresh','sys_refresh','sysrefresh'):
                             ok, msg = _inject_full_system()
-                        elif ctype == 'reset':
-                            # Single-step reset (no confirm) per TUI UX
-                            message = _perform_reset(default_reset_mode, trigger='tui', reason='tui-reset')
-                            ok, msg = True, message
+                        elif ctype in ('clear','reset'):
+                            # /clear is reserved; noop for now (ack only). Keep 'reset' as alias.
+                            ok, msg = True, 'clear acknowledged (noop)'
                         elif ctype in ('quit','exit'):
                             try:
                                 tmux("kill-session","-t",session)
@@ -2864,6 +2864,41 @@ def main(home: Path, session_name: Optional[str] = None):
                                 if out: summary.append("stdout:\n" + out.strip())
                                 if err: summary.append("stderr:\n" + err.strip())
                                 msg = "\n".join(summary)
+                        elif ctype in ('focus',):
+                            try:
+                                hint = str((args.get('hint') or obj.get('hint') or '')).strip()
+                                _request_por_refresh('focus-tui', hint=hint or None, force=True)
+                                ok, msg = True, 'focus requested'
+                            except Exception as e:
+                                ok, msg = False, f'focus failed: {e}'
+                        elif ctype in ('review',):
+                            try:
+                                _send_aux_reminder('manual-review')
+                                ok, msg = True, 'review requested'
+                            except Exception as e:
+                                ok, msg = False, f'review failed: {e}'
+                        elif ctype in ('echo',):
+                            try:
+                                val = str(args.get('value') or obj.get('value') or '').lower()
+                                if val == 'on':
+                                    globals().update(CONSOLE_ECHO=True)
+                                elif val == 'off':
+                                    globals().update(CONSOLE_ECHO=False)
+                                # empty → show state in msg
+                                ok, msg = True, f"echo={'on' if globals().get('CONSOLE_ECHO', False) else 'off'}"
+                            except Exception as e:
+                                ok, msg = False, f'echo failed: {e}'
+                        elif ctype in ('passthru','pass','raw'):
+                            try:
+                                peer = str(args.get('peer') or obj.get('peer') or '').upper()
+                                cmdline = str(args.get('cmd') or obj.get('cmd') or '').strip()
+                                if not cmdline:
+                                    ok, msg = False, 'empty passthru'
+                                else:
+                                    _send_raw_to_cli(home, 'PeerA' if peer=='A' else 'PeerB', cmdline, paneA, paneB)
+                                    ok, msg = True, 'sent'
+                            except Exception as e:
+                                ok, msg = False, f'passthru failed: {e}'
                         else:
                             ok, msg = False, 'unsupported'
                     except Exception as e:
@@ -4148,7 +4183,7 @@ def main(home: Path, session_name: Optional[str] = None):
             print("  /focus [hint]           → ask PeerB to refresh POR.md (optional hint)")
             print("  /pause | /resume        → pause/resume A↔B handoff")
             print("  /sys-refresh            → re-inject full SYSTEM prompt")
-            print("  /reset compact|clear    → context maintenance (compact = fold context, clear = fresh restart)")
+            print("  /clear                  → reserved (no-op)")
             print("  /foreman on|off|status  → enable/disable/check Foreman (User Proxy)")
             print("  /c <prompt> | c: <prompt> → run configured Aux once (one-off helper)")
             print("  /review                 → request Aux review bundle")
@@ -4190,14 +4225,8 @@ def main(home: Path, session_name: Optional[str] = None):
             _request_por_refresh("focus-cli", hint=hint or None, force=True)
             print("[FOCUS] Requested POR refresh from PeerB.")
             continue
-        if line.startswith("/reset"):
-            parts = line.split()
-            mode = parts[1].lower() if len(parts) > 1 else default_reset_mode
-            try:
-                message = _perform_reset(mode, trigger="manual", reason=f"manual-{mode}")
-                print(f"[RESET] {message}")
-            except ValueError as exc:
-                print(f"[RESET] {exc}")
+        if line.startswith("/clear"):
+            print("[CLEAR] acknowledged (noop)")
             continue
         if line == "/review":
             _send_aux_reminder("manual-review")

@@ -17,7 +17,11 @@ CMD_HELP: List[Tuple[str, str, str]] = [
     ("/foreman now", "Run Foreman once now", "/foreman now"),
     ("/foreman on|off|status", "Control Foreman", "/foreman status"),
     ("/sys-refresh", "Re-inject full SYSTEM prompt", "/sys-refresh"),
-    ("/reset", "Hard reset (no confirm)", "/reset"),
+    ("/clear", "Clear (reserved; no-op for now)", "/clear"),
+    ("/pause | /resume", "Pause/resume A↔B handoff", "/pause"),
+    ("/focus [hint]", "Ask PeerB to refresh POR.md", "/focus"),
+    ("/review", "Request Aux review bundle", "/review"),
+    ("/echo on|off|<empty>", "Console echo on/off/show", "/echo"),
     ("/c \"<prompt>\"", "One-shot Aux", "/c \"summarize repo\""),
     ("/verbose on|off", "Toggle timeline verbosity", "/verbose on"),
     ("/log", "Show internal event overlay", "/log"),
@@ -72,6 +76,9 @@ class Composer(Static):
                 payload = {"id": cid, "type": route, "args": {"text": arg}, "source": "tui", "ts": time.time()}
                 self._append_command(payload)
                 self.timeline.items.append(f"[You→{route.upper()}] {arg}")
+            elif cmd in ("/pause", "/resume"):
+                payload = {"id": cid, "type": cmd[1:], "source": "tui", "ts": time.time()}
+                self._append_command(payload)
             elif cmd == "/foreman":
                 action = (arg or "status").strip()
                 payload = {"id": cid, "type": "foreman", "args": {"action": action}, "source": "tui", "ts": time.time()}
@@ -79,9 +86,26 @@ class Composer(Static):
             elif cmd == "/sys-refresh":
                 payload = {"id": cid, "type": "sys-refresh", "source": "tui", "ts": time.time()}
                 self._append_command(payload)
-            elif cmd == "/reset":
-                payload = {"id": cid, "type": "reset", "args": {"confirm": True}, "source": "tui", "ts": time.time()}
+            elif cmd == "/clear":
+                payload = {"id": cid, "type": "clear", "source": "tui", "ts": time.time()}
                 self._append_command(payload)
+            elif cmd == "/focus":
+                payload = {"id": cid, "type": "focus", "args": {"hint": arg}, "source": "tui", "ts": time.time()}
+                self._append_command(payload)
+            elif cmd == "/review":
+                payload = {"id": cid, "type": "review", "source": "tui", "ts": time.time()}
+                self._append_command(payload)
+            elif cmd == "/echo":
+                v = arg.strip().lower()
+                if v not in ("on", "off", ""):
+                    v = ""
+                payload = {"id": cid, "type": "echo", "args": {"value": v}, "source": "tui", "ts": time.time()}
+                self._append_command(payload)
+            elif cmd == "/help":
+                # Open the command list instead of injecting timeline noise
+                self.list.visible = True
+                await self.input.focus()
+                return
             elif cmd == "/c":
                 payload = {"id": cid, "type": "c", "args": {"prompt": arg}, "source": "tui", "ts": time.time()}
                 self._append_command(payload)
@@ -96,9 +120,29 @@ class Composer(Static):
             else:
                 self.timeline.items.append(f"[TUI] Unknown command: {cmd}")
         else:
+            # Prefix forms: a:/b:/both:/u:/a!/b!
             cid = uuid.uuid4().hex[:12]
-            payload = {"id": cid, "type": "both", "args": {"text": text}, "source": "tui", "ts": time.time()}
-            self._append_command(payload)
-            self.timeline.items.append(f"[You→BOTH] {text}")
+            lower = text.lower()
+            if lower.startswith("a! "):
+                payload = {"id": cid, "type": "passthru", "args": {"peer": "A", "cmd": text[2:].strip()}, "source": "tui", "ts": time.time()}
+                self._append_command(payload)
+            elif lower.startswith("b! "):
+                payload = {"id": cid, "type": "passthru", "args": {"peer": "B", "cmd": text[2:].strip()}, "source": "tui", "ts": time.time()}
+                self._append_command(payload)
+            elif lower.startswith("a:"):
+                payload = {"id": cid, "type": "a", "args": {"text": text.split(":", 1)[1].strip()}, "source": "tui", "ts": time.time()}
+                self._append_command(payload)
+                self.timeline.items.append(f"[You→A] {text.split(':',1)[1].strip()}")
+            elif lower.startswith("b:"):
+                payload = {"id": cid, "type": "b", "args": {"text": text.split(":", 1)[1].strip()}, "source": "tui", "ts": time.time()}
+                self._append_command(payload)
+                self.timeline.items.append(f"[You→B] {text.split(':',1)[1].strip()}")
+            elif lower.startswith("both:") or lower.startswith("u:"):
+                payload = {"id": cid, "type": "both", "args": {"text": text.split(":", 1)[1].strip()}, "source": "tui", "ts": time.time()}
+                self._append_command(payload)
+                self.timeline.items.append(f"[You→BOTH] {text.split(':',1)[1].strip()}")
+            else:
+                payload = {"id": cid, "type": "both", "args": {"text": text}, "source": "tui", "ts": time.time()}
+                self._append_command(payload)
+                self.timeline.items.append(f"[You→BOTH] {text}")
         self.input.value = ""
-
