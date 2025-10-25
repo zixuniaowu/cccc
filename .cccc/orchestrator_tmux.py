@@ -2882,6 +2882,47 @@ def main(home: Path, session_name: Optional[str] = None):
                                 ok, msg = True, 'focus requested'
                             except Exception as e:
                                 ok, msg = False, f'focus failed: {e}'
+                        elif ctype in ('roles-set-actor','roles_set_actor'):
+                            try:
+                                role = str(args.get('role') or obj.get('role') or '').strip()
+                                actor = str(args.get('actor') or obj.get('actor') or '').strip()
+                                cp = read_yaml(cli_profiles_path)
+                                roles = dict(cp.get('roles') or {})
+                                roles.setdefault('peerA', {})
+                                roles.setdefault('peerB', {})
+                                roles.setdefault('aux', {})
+                                if role in roles:
+                                    roles[role]['actor'] = actor
+                                    cp['roles'] = roles
+                                    _write_yaml(cli_profiles_path, cp)
+                                    # Refresh resolved settings to apply on next run; for now, status will reflect next write
+                                    ok, msg = True, f"role {role} set to {actor}"
+                                else:
+                                    ok, msg = False, f"unknown role: {role}"
+                            except Exception as e:
+                                ok, msg = False, f'roles-set-actor failed: {e}'
+                        elif ctype in ('token',):
+                            try:
+                                action = str(args.get('action') or obj.get('action') or '').strip().lower()
+                                cfgp = settings/"telegram.yaml"
+                                cfg = read_yaml(cfgp)
+                                if action == 'set':
+                                    val = str(args.get('value') or obj.get('value') or '').strip()
+                                    if not val:
+                                        ok, msg = False, 'token value required'
+                                    else:
+                                        cfg['token'] = val
+                                        _write_yaml(cfgp, cfg)
+                                        ok, msg = True, 'token set'
+                                elif action == 'unset':
+                                    if 'token' in cfg:
+                                        cfg.pop('token', None)
+                                        _write_yaml(cfgp, cfg)
+                                    ok, msg = True, 'token unset'
+                                else:
+                                    ok, msg = False, 'unsupported token action'
+                            except Exception as e:
+                                ok, msg = False, f'token failed: {e}'
                         elif ctype in ('review',):
                             try:
                                 _send_aux_reminder('manual-review')
@@ -3673,6 +3714,51 @@ def main(home: Path, session_name: Optional[str] = None):
         except Exception:
             f_last_hhmm = None
         f_last_rc = (fstate or {}).get('last_rc')
+        # Setup snapshot (roles/cli/telegram)
+        def _pid_alive(pid: int) -> bool:
+            try:
+                if pid <= 0:
+                    return False
+                os.kill(pid, 0)
+                return True
+            except Exception:
+                return False
+        setup = {}
+        try:
+            roles_block = { 'peerA': (resolved.get('peerA') or {}).get('actor') or '',
+                            'peerB': (resolved.get('peerB') or {}).get('actor') or '',
+                            'aux':   (resolved.get('aux')   or {}).get('actor') or '' }
+        except Exception:
+            roles_block = { 'peerA':'', 'peerB':'', 'aux':'' }
+        try:
+            pa_cmd = (resolved.get('peerA') or {}).get('command') or ''
+            pb_cmd = (resolved.get('peerB') or {}).get('command') or ''
+            cli_block = {
+                'peerA': { 'command': pa_cmd, 'available': _bin_available(pa_cmd) },
+                'peerB': { 'command': pb_cmd, 'available': _bin_available(pb_cmd) },
+            }
+        except Exception:
+            cli_block = {'peerA': {'command':'','available': False}, 'peerB': {'command':'','available': False}}
+        try:
+            tcfg = read_yaml(settings/"telegram.yaml")
+            token_env = str((tcfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
+            configured = bool((tcfg or {}).get('token')) or bool(os.environ.get(token_env))
+            autostart = True if not tcfg else bool((tcfg or {}).get('autostart', True))
+            pidf = state/"telegram-bridge.pid"
+            pid = 0
+            if pidf.exists():
+                try: pid = int(pidf.read_text(encoding='utf-8').strip() or '0')
+                except Exception: pid = 0
+            running = _pid_alive(pid)
+            telegram_block = { 'configured': configured, 'autostart': autostart, 'running': running }
+        except Exception:
+            telegram_block = { 'configured': False, 'autostart': True, 'running': False }
+        try:
+            actors_list = _actors_available()
+        except Exception:
+            actors_list = []
+        setup = { 'roles': roles_block, 'cli': cli_block, 'telegram': telegram_block, 'actors_available': actors_list }
+
         payload = {
             "session": session,
             "paused": paused,
@@ -3697,6 +3783,7 @@ def main(home: Path, session_name: Optional[str] = None):
             },
             "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
             "foreman": ({"enabled": True, "running": f_running, "next_due": f_next_hhmm, "last": f_last_hhmm, "last_rc": f_last_rc, "cc_user": f_cc} if f_enabled else {"enabled": False}),
+            "setup": setup,
         }
         try:
             (state/"status.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")

@@ -33,10 +33,11 @@ CMD_HELP: List[Tuple[str, str, str]] = [
 
 
 class Composer(Static):
-    def __init__(self, home: Path, timeline) -> None:  # noqa: ANN001
+    def __init__(self, home: Path, timeline, on_toggle_setup=None) -> None:  # noqa: ANN001
         super().__init__(id="composer")
         self.home = home
         self.timeline = timeline
+        self.on_toggle_setup = on_toggle_setup
         self.input = Input(placeholder="Type / for commands…")
         self.list = ListView(*[ListItem(Label(f"{cmd:20} — {desc}")) for cmd, desc, _ in CMD_HELP])
         self.list.visible = False
@@ -86,9 +87,26 @@ class Composer(Static):
             elif cmd == "/sys-refresh":
                 payload = {"id": cid, "type": "sys-refresh", "source": "tui", "ts": time.time()}
                 self._append_command(payload)
+            elif cmd == "/setup":
+                if callable(self.on_toggle_setup):
+                    self.on_toggle_setup()
+                return
             elif cmd == "/clear":
                 payload = {"id": cid, "type": "clear", "source": "tui", "ts": time.time()}
                 self._append_command(payload)
+            elif cmd == "/token":
+                # /token set <value> | /token unset
+                a = (arg or '').split()
+                sub = a[0].lower() if a else ''
+                if sub == 'set' and len(a) >= 2:
+                    val = ' '.join(a[1:])
+                    payload = {"id": cid, "type": "token", "args": {"action": "set", "value": val}, "source": "tui", "ts": time.time()}
+                    self._append_command(payload)
+                elif sub == 'unset':
+                    payload = {"id": cid, "type": "token", "args": {"action": "unset"}, "source": "tui", "ts": time.time()}
+                    self._append_command(payload)
+                else:
+                    self.timeline.items.append("[TUI] Usage: /token set <value> | /token unset")
             elif cmd == "/focus":
                 payload = {"id": cid, "type": "focus", "args": {"hint": arg}, "source": "tui", "ts": time.time()}
                 self._append_command(payload)

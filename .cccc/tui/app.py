@@ -7,6 +7,7 @@ from textual.app import App, ComposeResult
 from .widgets.timeline import Timeline
 from .widgets.status import StatusCards
 from .widgets.composer import Composer
+from .widgets.setup import SetupPanel
 
 
 class CCCCApp(App):
@@ -17,10 +18,13 @@ class CCCCApp(App):
         self.home = home
         self.timeline = Timeline(home)
         self.status = StatusCards(home)
-        self.composer = Composer(home, self.timeline)
+        self.setup = SetupPanel(home)
+        self.setup.visible = False
+        self.composer = Composer(home, self.timeline, on_toggle_setup=self._toggle_setup)
 
     def compose(self) -> ComposeResult:
         yield self.timeline
+        yield self.setup
         yield self.composer
         yield self.status
 
@@ -36,5 +40,11 @@ class CCCCApp(App):
             ready = self.home/"state"/"tui.ready"
             ready.parent.mkdir(parents=True, exist_ok=True)
             ready.write_text(str(int(time.time())), encoding='utf-8')
+        except Exception:
+            pass
+
+    def _toggle_setup(self) -> None:
+        try:
+            self.setup.visible = not self.setup.visible
         except Exception:
             pass
