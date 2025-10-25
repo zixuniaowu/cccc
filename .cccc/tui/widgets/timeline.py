@@ -5,7 +5,10 @@ from pathlib import Path
 from typing import Any, Dict
 
 from textual.reactive import reactive
-from textual.widgets import TextLog
+try:
+    from textual.widgets import TextLog as _BaseLog
+except Exception:
+    from textual.widgets import Log as _BaseLog  # type: ignore
 
 
 ASCII_CCCC = (
@@ -19,15 +22,48 @@ ASCII_CCCC = (
 )
 
 
-class Timeline(TextLog):
+class Timeline(_BaseLog):
     verbose = reactive(True)
 
     def __init__(self, home: Path):
-        super().__init__(id="timeline", highlight=False, markup=False, wrap=True, auto_scroll=True)
+        
+        try:
+            super().__init__(id="timeline", highlight=False, markup=False, wrap=True, auto_scroll=True)  # type: ignore
+        except Exception:
+            try:
+                super().__init__(id="timeline")  # type: ignore
+            except Exception:
+                super().__init__()  # type: ignore
         self.home = home
         self.eids: set[str] = set()
         self._header_written = False
         self.max_lines = 1200
+        self._line_count = 0
+
+    def _log_write(self, text: str) -> None:
+        if hasattr(self, "write"):
+            try:
+                getattr(self, "write")(text)
+            except Exception:
+                if hasattr(self, "write_line"):
+                    getattr(self, "write_line")(text)
+        elif hasattr(self, "write_line"):
+            getattr(self, "write_line")(text)
+        else:
+            try:
+                from rich.text import Text  # type: ignore
+                self.update(Text(str(text)))
+            except Exception:
+                pass
+        self._line_count += 1
+        if self._line_count > self.max_lines:
+            try:
+                self.clear()
+            except Exception:
+                pass
+            self._line_count = 0
+            self._header_written = False
+            self._ensure_header()
 
     def on_mount(self) -> None:  # noqa: D401
         # Write header once and start polling outbox
@@ -38,7 +74,7 @@ class Timeline(TextLog):
         if self._header_written:
             return
         for ln in ASCII_CCCC.rstrip("\n").splitlines():
-            self.write(ln)
+            self._log_write(ln)
         self._header_written = True
 
     def refresh_data(self) -> None:
@@ -68,15 +104,6 @@ class Timeline(TextLog):
             text = str(ev.get("text") or "")
             head = f"[{frm}→{to}] "
             body = text.strip().splitlines()[0][:160]
-            self.write(head + body)
+            self._log_write(head + body)
             if eid:
                 self.eids.add(eid)
-        # Trim backlog if needed
-        try:
-            if self.document and len(self.document.lines) > self.max_lines:
-                excess = len(self.document.lines) - self.max_lines
-                self.clear()
-                self._header_written = False
-                self._ensure_header()
-        except Exception:
-            pass
