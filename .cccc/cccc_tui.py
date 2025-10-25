@@ -31,13 +31,6 @@ def main() -> None:
     ap.add_argument("--home", required=True)
     args = ap.parse_args()
     home = Path(args.home)
-    # Ready marker (orchestrator waits for this)
-    ready = home / "state" / "tui.ready"
-    try:
-        ready.parent.mkdir(parents=True, exist_ok=True)
-        ready.write_text(str(int(time.time())), encoding="utf-8")
-    except Exception:
-        pass
     run_app(home)
 
 

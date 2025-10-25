@@ -2529,7 +2529,9 @@ def main(home: Path, session_name: Optional[str] = None):
             ready_file.unlink()
     except Exception:
         pass
-    cmd = f"LC_ALL=C.UTF-8 LANG=C.UTF-8 exec {py} {tui_py} --home {str(home)}"
+    # Redirect stderr to a diagnosable file to capture Textual/TUI errors
+    err_path = shlex.quote(str(state/"tui.err"))
+    cmd = f"LC_ALL=C.UTF-8 LANG=C.UTF-8 exec {py} {tui_py} --home {str(home)} 2> {err_path}"
     cmd_tui = f"bash -lc {shlex.quote(cmd)}"
     tmux_respawn_pane(left, cmd_tui)
     # Ensure left pane (TUI) is focused for initial attach
@@ -2546,9 +2548,18 @@ def main(home: Path, session_name: Optional[str] = None):
                 break
             time.sleep(0.2)
         if not ready_file.exists():
-            print("[ERROR] TUI did not become ready within timeout.\n"
-                  "- Make sure textual is installed in the SAME Python environment as cccc.\n"
-                  f"- Python: {sys.executable}")
+            print("[ERROR] TUI did not become ready within timeout.")
+            print("- Make sure textual is installed in the SAME Python environment as cccc.")
+            print(f"- Python: {sys.executable}")
+            # Print last lines from tui.err for quick diagnosis
+            try:
+                errf = state/"tui.err"
+                if errf.exists():
+                    lines = errf.read_text(encoding='utf-8', errors='replace').splitlines()
+                    tail = "\n".join(lines[-80:])
+                    print("\n[TUI stderr tail]\n" + tail)
+            except Exception:
+                pass
             # Terminate tmux session and exit
             try: tmux("kill-session","-t",session)
             except Exception: pass
@@ -2914,12 +2925,25 @@ def main(home: Path, session_name: Optional[str] = None):
     # Non-interactive default: do not prompt; continue with current files
     start_mode = "has_doc" if project_md_exists else "has_doc"
 
-    # Start interactive CLIs (fallback to built-in Mock when not configured)
+    # Start interactive CLIs (do not fallback; if CLI missing, do not start and log a concise note)
     # Build peer launch commands from actor templates (env can still override)
+    def _first_bin(cmd: str) -> str:
+        try:
+            import shlex
+            return shlex.split(cmd or '')[0] if cmd else ''
+        except Exception:
+            return (cmd or '').split(' ')[0]
+    def _bin_available(cmd: str) -> bool:
+        prog = _first_bin(cmd)
+        if not prog:
+            return False
+        import shutil
+        return shutil.which(prog) is not None
+
     pa_cmd = (resolved.get('peerA') or {}).get('command') or ''
     pb_cmd = (resolved.get('peerB') or {}).get('command') or ''
-    CLAUDE_I_CMD = os.environ.get("CLAUDE_I_CMD") or pa_cmd or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerA"
-    CODEX_I_CMD  = os.environ.get("CODEX_I_CMD")  or pb_cmd or f"python {shlex.quote(str(home/'mock_agent.py'))} --role peerB"
+    pa_eff = os.environ.get("CLAUDE_I_CMD") or pa_cmd
+    pb_eff = os.environ.get("CODEX_I_CMD")  or pb_cmd
     if start_mode in ("has_doc", "ai_bootstrap"):
         # Wrap with role cwd when provided; tmux_start_interactive will add bash -lc
         def _wrap_cwd(cmd: str, cwd: str | None) -> str:
@@ -2928,10 +2952,28 @@ def main(home: Path, session_name: Optional[str] = None):
             return cmd
         pa_cwd = (resolved.get('peerA') or {}).get('cwd') or '.'
         pb_cwd = (resolved.get('peerB') or {}).get('cwd') or '.'
-        tmux_start_interactive(paneA, _wrap_cwd(CLAUDE_I_CMD, pa_cwd))
-        print(f"[LAUNCH] PeerA mode=tmux pane={paneA} cmd={CLAUDE_I_CMD} cwd={pa_cwd}")
-        tmux_start_interactive(paneB, _wrap_cwd(CODEX_I_CMD, pb_cwd))
-        print(f"[LAUNCH] PeerB mode=tmux pane={paneB} cmd={CODEX_I_CMD} cwd={pb_cwd}")
+        # PeerA
+        if pa_eff and _bin_available(pa_eff):
+            tmux_start_interactive(paneA, _wrap_cwd(pa_eff, pa_cwd))
+            print(f"[LAUNCH] PeerA mode=tmux pane={paneA} cmd={pa_eff} cwd={pa_cwd}")
+        else:
+            print(f"[LAUNCH] PeerA not started (CLI unavailable): {pa_eff or '(empty)'}")
+            try:
+                msg = "PeerA not started: CLI command unavailable in PATH."
+                outbox_write(home, {"type":"to_user","peer":"System","text":msg})
+            except Exception:
+                pass
+        # PeerB
+        if pb_eff and _bin_available(pb_eff):
+            tmux_start_interactive(paneB, _wrap_cwd(pb_eff, pb_cwd))
+            print(f"[LAUNCH] PeerB mode=tmux pane={paneB} cmd={pb_eff} cwd={pb_cwd}")
+        else:
+            print(f"[LAUNCH] PeerB not started (CLI unavailable): {pb_eff or '(empty)'}")
+            try:
+                msg = "PeerB not started: CLI command unavailable in PATH."
+                outbox_write(home, {"type":"to_user","peer":"System","text":msg})
+            except Exception:
+                pass
         # Debug: show current commands per pane
         try:
             code,out,err = tmux('list-panes','-F','#{pane_id} #{pane_current_command}')

@@ -541,10 +541,10 @@ def main():
         print(f"cccc package: {pkg_ver}")
         print(f"scaffold path: {scaffold_path} (exists={exists}, files~{file_count})")
         return
-    if args.cmd == 'kill':
-        _cmd_kill(getattr(args, 'session', None)); return
+    # Defer 'kill' until functions are defined to avoid NameError/UnboundLocalError
+    pending_kill_session = getattr(args, 'session', None) if args.cmd == 'kill' else None
 
-    run_mode = args.cmd in (None, 'run')
+    run_mode = args.cmd in (None, 'run', 'kill')
 
     if not run_mode:
         print(f"[ERROR] Unknown command: {args.cmd}")
@@ -831,12 +831,37 @@ def main():
                 return
             _write_session_state(session)
             print(f"[RUN] Started tmux session '{session}'.")
-        print(f"[RUN] Attaching to session '{session}'.")
+        print(f"[RUN] Attaching to session '{session}' (supervised; will cleanup on exit).")
         try:
-            os.execvp("tmux", ["tmux", "attach", "-t", session])
-        except Exception as e:
-            print(f"[ERROR] tmux attach failed: {e}")
-            raise SystemExit(1)
+            # Run tmux client as a child process so our atexit/supervision can run after it exits
+            subprocess.run(["tmux", "attach", "-t", session], check=False)
+        finally:
+            # Best-effort cleanup bridges on detach/exit
+            try:
+                _cleanup_bridge()
+            except Exception:
+                pass
+            try:
+                # Also stop other bridges we might have started
+                for nm in ('slack','discord'):
+                    try:
+                        _cmd_bridge(nm, 'stop')
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            # Remove session state markers
+            try:
+                _remove_session_state()
+            except Exception:
+                pass
+            print("[RUN] tmux client exited; performed cleanup.")
+            return
+
+    # Execute deferred kill after function definitions
+    if pending_kill_session is not None and args.cmd == 'kill':
+        _cmd_kill(pending_kill_session)
+        return
 
     # Wizard logic: only in interactive TTY and when CCCC_NO_WIZARD is not set
     if _isatty() and not os.environ.get('CCCC_NO_WIZARD'):

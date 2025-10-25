@@ -24,10 +24,17 @@ class CCCCApp(App):
         yield self.composer
         yield self.status
 
-    def on_mount(self) -> None:  # load CSS from package directory
+    def on_mount(self) -> None:  # load CSS from package directory and signal ready
         css = Path(__file__).with_name("styles.tcss")
         try:
             if css.exists():
                 self.load_css(css)
+        except Exception:
+            pass
+        # Signal to orchestrator that TUI is actually mounted
+        try:
+            ready = self.home/"state"/"tui.ready"
+            ready.parent.mkdir(parents=True, exist_ok=True)
+            ready.write_text(str(int(time.time())), encoding='utf-8')
         except Exception:
             pass
