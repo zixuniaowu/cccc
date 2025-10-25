@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import time
 from textual.app import App, ComposeResult
 
 from .widgets.timeline import Timeline

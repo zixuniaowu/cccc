@@ -863,8 +863,9 @@ def main():
         _cmd_kill(pending_kill_session)
         return
 
-    # Wizard logic: only in interactive TTY and when CCCC_NO_WIZARD is not set
-    if _isatty() and not os.environ.get('CCCC_NO_WIZARD'):
+    # Startup wizard (interactive) — disabled for `run` to ensure tmux+TUI launch immediately.
+    # Users can configure inside the TUI (/setup, /token) or via `cccc doctor/roles`.
+    if (args.cmd not in ('run',) ) and _isatty() and not os.environ.get('CCCC_NO_WIZARD'):
         try:
             print("\n[SETUP] Choose run mode:\n  1) Local CLI only (default)\n  2) Local + connect Telegram\n  3) Local + connect Slack (Socket Mode + Web API)\n  4) Local + connect Discord")
             choice = input("> Enter 1-4 (Enter=1): ").strip() or "1"

@@ -1707,93 +1707,14 @@ def main(home: Path, session_name: Optional[str] = None):
         cp['roles'] = roles
         _write_yaml(cli_profiles_path, cp)
 
+    # Roles wizard is disabled during `run` to avoid any pre-TUI blocking prompts.
+    # Configuration can be adjusted inside the TUI (/setup) and is persisted to cli_profiles.yaml.
     try:
         interactive = sys.stdin.isatty()
     except Exception:
         interactive = False
-    if interactive:
-        # Wizard config
-        wiz = cli_profiles.get('roles_wizard') if isinstance(cli_profiles.get('roles_wizard'), dict) else {}
-        wiz_enabled = bool(wiz.get('enabled', True))
-        try:
-            wiz_timeout = float(wiz.get('timeout_seconds', 10))
-        except Exception:
-            wiz_timeout = 10.0
-        pa, pb, ax, aum = _current_roles(cli_profiles)
-        acts = _actors_available()
-        if wiz_enabled and acts:
-            print("\n[ROLES] Current bindings:")
-            print(f"  - PeerA:  {pa}\n  - PeerB:  {pb}\n  - Aux:    {ax if ax else 'none'}\n  - Foreman:{' ' if _current_foreman_summary() else ''}{_current_foreman_summary()}")
-            ans = read_console_line_timeout(f"> Use previous bindings? Enter=yes / r=reconfigure [{int(wiz_timeout)}s]: ", wiz_timeout).strip().lower()
-            if ans in ("r","reconf","reconfigure","no","n"):
-                def _choose(label: str, options: list[str], allow_none: bool = False) -> str:
-                    opts = list(options)
-                    disp = [f"{i+1}) {name}" for i, name in enumerate(opts + (["none"] if allow_none else []))]
-                    print(f"[ROLES] Options for {label}: ", ", ".join(disp))
-                    while True:
-                        sel = read_console_line(f"> Choose {label}: ").strip().lower()
-                        if sel.isdigit():
-                            idx = int(sel) - 1
-                            if 0 <= idx < len(opts):
-                                return opts[idx]
-                            if allow_none and idx == len(opts):
-                                return ''
-                        if allow_none and sel in ("none","off"):
-                            return ''
-                        if sel in opts:
-                            return sel
-                        print("[HINT] Enter one of indices or names shown above.")
-                # PeerA selection
-                pa = _choose('PeerA', acts, allow_none=False)
-                # PeerB selection (can reuse the same actor as PeerA)
-                pb = _choose('PeerB', acts, allow_none=False)
-                # Aux selection (any actor allowed, or none for disabled)
-                aux_choice = _choose('Aux', acts, allow_none=True)
-                ax = aux_choice  # '' means none/off
-                aum = 'on' if ax else 'off'
-                _persist_roles(cli_profiles, pa, pb, ax, aum)
-                print(f"[ROLES] Saved: PeerA={pa} PeerB={pb} Aux={ax or 'none'}")
-                cli_profiles = read_yaml(cli_profiles_path)
-                # Foreman enable & agent choice (simple)
-                try:
-                    fc = _load_foreman_conf()
-                except Exception:
-                    fc = {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
-                # Unified selection UX (supports index or name): choose Foreman agent (allow 'none')
-                options = ["reuse_aux"] + list(acts)
-                sel = _choose('Foreman agent', options, allow_none=True)
-                if not sel:
-                    fc = _load_foreman_conf(); fc['enabled'] = False; fc['allowed'] = False; _save_foreman_conf(fc)
-                    print("[FOREMAN] Disabled")
-                else:
-                    fc.update({
-                        'enabled': True,
-                        'allowed': True,
-                        'agent': sel,
-                        'interval_seconds': int(fc.get('interval_seconds') or 900),
-                        'prompt_path': fc.get('prompt_path') or './FOREMAN_TASK.md',
-                        'cc_user': True,
-                        'max_run_seconds': int(fc.get('max_run_seconds') or 900),
-                    })
-                    _save_foreman_conf(fc)
-                    _ensure_foreman_task(fc)
-                    print(f"[FOREMAN] Enabled (agent={sel})")
-                    # Initialize scheduler state to delay first run by a full interval
-                    try:
-                        st = _foreman_load_state() or {}
-                        now_ts = time.time()
-                        try:
-                            iv = float(fc.get('interval_seconds',900) or 900)
-                        except Exception:
-                            iv = 900.0
-                        st.update({'running': False, 'next_due_ts': now_ts + iv, 'last_heartbeat_ts': now_ts})
-                        _foreman_save_state(st)
-                        lk = state/"foreman.lock"
-                        if lk.exists():
-                            try: lk.unlink()
-                            except Exception: pass
-                    except Exception:
-                        pass
+    if False and interactive:
+        pass
     else:
         # Non-interactive: foreman allowed only if configured in config at start
         try:

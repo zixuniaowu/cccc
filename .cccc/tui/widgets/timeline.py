@@ -39,6 +39,16 @@ class Timeline(_BaseLog):
         self._header_written = False
         self.max_lines = 1200
         self._line_count = 0
+        # Provide a minimal list-like proxy so callers can do timeline.items.append("text")
+        class _ItemsProxy:
+            def __init__(self, owner: 'Timeline') -> None:
+                self._owner = owner
+            def append(self, text: str) -> None:
+                try:
+                    self._owner._log_write(str(text))
+                except Exception:
+                    pass
+        self.items = _ItemsProxy(self)  # type: ignore[attr-defined]
 
     def _log_write(self, text: str) -> None:
         if hasattr(self, "write"):
