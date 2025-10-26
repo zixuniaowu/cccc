@@ -5,7 +5,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER>, and runs optional lint/tests before committing.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
-import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random, threading, signal
+import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random, threading, signal, atexit
 from datetime import datetime, timedelta
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
@@ -33,6 +33,83 @@ AUX_WORK_ROOT_NAME = "aux_sessions"
 
 # ---------- REV state helpers (lightweight) ----------
 INSIGHT_BLOCK_RE = re.compile(r"```\s*insight\s*([\s\S]*?)```", re.I)
+
+class _TeeStream(io.TextIOBase):
+    """Mirror writes to the original stream and a shadow file (line-buffered)."""
+    def __init__(self, primary: io.TextIOBase, shadow: io.TextIOBase):
+        super().__init__()
+        self.primary = primary
+        self.shadow = shadow
+
+    @property
+    def encoding(self):
+        return getattr(self.primary, "encoding", "utf-8")
+
+    @property
+    def errors(self):
+        return getattr(self.primary, "errors", "replace")
+
+    def readable(self):
+        return False
+
+    def writable(self):
+        return True
+
+    def write(self, data: str):
+        if not data:
+            return 0
+        written = self.primary.write(data)
+        self.primary.flush()
+        try:
+            self.shadow.write(data)
+            self.shadow.flush()
+        except Exception:
+            pass
+        return written
+
+    def flush(self):
+        try:
+            self.primary.flush()
+        except Exception:
+            pass
+        try:
+            self.shadow.flush()
+        except Exception:
+            pass
+
+    def isatty(self):
+        try:
+            return self.primary.isatty()
+        except Exception:
+            return False
+
+    def fileno(self):
+        try:
+            return self.primary.fileno()
+        except Exception:
+            raise io.UnsupportedOperation("fileno unsupported for TeeStream")
+
+def _attach_orchestrator_logger(state_dir: Path) -> Optional[Path]:
+    """Create/attach orchestrator.log under state/ and tee stdout/stderr into it."""
+    log_path = state_dir/"orchestrator.log"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = log_path.open("w", encoding="utf-8")
+    except Exception:
+        return None
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    sys.stdout = _TeeStream(original_stdout, log_file)
+    sys.stderr = _TeeStream(original_stderr, log_file)
+    def _cleanup():
+        try:
+            log_file.flush()
+            log_file.close()
+        except Exception:
+            pass
+    atexit.register(_cleanup)
+    print(f"[INFO] orchestrator log at {log_path}")
+    return log_path
 
 # --- inbox/nudge settings (read at startup from cli_profiles.delivery) ---
 MB_PULL_ENABLED = True
@@ -902,11 +979,12 @@ def tmux_build_2x2(session: str) -> Dict[str,str]:
     print(f"[TMUX] panes: {outp.strip()}")
     return positions
 
-def tmux_build_tui_layout(session: str) -> Dict[str,str]:
-    """Build layout: left column full-height (TUI), right column split vertically (PeerA/PeerB).
-    Returns map {'lt': left, 'rt': top-right, 'rb': bottom-right}.
+def tmux_build_tui_layout(session: str, win_index: str = '0') -> Dict[str,str]:
+    """Build layout on the given window index: left column split vertically (top/bottom),
+    right column split vertically (PeerA/PeerB).
+    Returns map {'lt': left-top, 'lb': left-bottom, 'rt': top-right, 'rb': bottom-right}.
     """
-    target = _win(session)
+    target = f"{session}:{win_index}"
     # Clean to single pane
     tmux("select-pane","-t",f"{target}.0")
     tmux("kill-pane","-a","-t",f"{target}.0")
@@ -953,6 +1031,10 @@ def tmux_build_tui_layout(session: str) -> Dict[str,str]:
     left_w = max(40, int(win_w * 0.50))
     tmux("set-option","-t",target,"main-pane-width",str(left_w))
     tmux("resize-pane","-t",lt,"-x",str(left_w))
+    # Split left vertically to create left-bottom
+    rc,_,err = tmux("split-window","-v","-t",lt)
+    if rc != 0:
+        print(f"[TMUX] split lt vertical failed: {err.strip()}")
     tmux("set-option","-t",target,"destroy-unattached","on")
     # Map final positions
     code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
@@ -963,13 +1045,28 @@ def tmux_build_tui_layout(session: str) -> Dict[str,str]:
             panes.append((pid, int(left), int(top)))
         except Exception:
             pass
-    min_top = min(p[2] for p in panes)
-    max_top = max(p[2] for p in panes)
-    top_panes = sorted([p for p in panes if p[2]==min_top], key=lambda x: x[1])
-    bot_panes = sorted([p for p in panes if p[2]==max_top], key=lambda x: x[1])
-    positions={'lt': top_panes[0][0] if top_panes else f"{target}.0",
-               'rt': top_panes[-1][0] if top_panes else f"{target}.1",
-               'rb': bot_panes[-1][0] if bot_panes else f"{target}.2"}
+    try:
+        coords = sorted({p[1] for p in panes})
+        left_x = coords[0]
+        right_x = coords[1] if len(coords) > 1 else coords[0]
+    except Exception:
+        left_x = min(p[1] for p in panes)
+        right_x = max(p[1] for p in panes)
+    left_column = sorted([p for p in panes if p[1] == left_x], key=lambda x: x[2])
+    if len(left_column) < 2:
+        # fallback: pick two panes with smallest left coordinate
+        left_column = sorted(panes, key=lambda x: (x[1], x[2]))[:2]
+    lt_id = left_column[0][0]
+    lb_id = left_column[-1][0] if len(left_column) > 1 else left_column[0][0]
+    right_column = sorted([p for p in panes if p[0] not in (lt_id, lb_id)], key=lambda x: x[2])
+    if len(right_column) < 2:
+        right_column = sorted([p for p in panes if p[1] == right_x], key=lambda x: x[2])
+    rt_id = right_column[0][0] if right_column else lt_id
+    rb_id = right_column[-1][0] if len(right_column) > 1 else rt_id
+    positions={'lt': lt_id,
+               'lb': lb_id,
+               'rt': rt_id,
+               'rb': rb_id}
     _,outp,_ = tmux("list-panes","-t",target,"-F","#{pane_id}:#{pane_left},#{pane_top},#{pane_right},#{pane_bottom}")
     print(f"[TMUX] panes: {outp.strip()}")
     return positions
@@ -1405,16 +1502,36 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
 def main(home: Path, session_name: Optional[str] = None):
     global CONSOLE_ECHO
     ensure_bin("tmux"); ensure_git_repo()
-    # Hard dependency: textual must be installed; exit immediately otherwise
+    # Soft dependency: prompt_toolkit is recommended for the left-pane TUI, but orchestrator core should still run.
     try:
-        import textual  # type: ignore
+        import prompt_toolkit  # type: ignore
     except Exception:
-        print("[ERROR] Textual is required for the CCCC TUI. Install with: pip install textual")
-        print(f"[ERROR] Python: {sys.executable}")
-        return
+        print("[WARN] prompt_toolkit not importable in this Python. Left-pane full TUI may not start, but orchestrator will continue.")
+        print(f"[WARN] Python: {sys.executable}")
     # Directories
     settings = home/"settings"; state = home/"state"
     state.mkdir(exist_ok=True)
+    _attach_orchestrator_logger(state)
+    settings_confirmed_path = state/"settings.confirmed"
+    settings_confirm_ready_after = time.time()
+    # 强制每次运行都重新确认设置：移除旧标记并要求新的 mtime
+    try:
+        if settings_confirmed_path.exists():
+            settings_confirmed_path.unlink()
+            print("[SETUP] Cleared previous settings.confirmed; waiting for fresh confirmation.")
+    except Exception as e:
+        print(f"[WARN] Unable to clear settings.confirmed: {e}")
+    settings_confirm_ready_after = time.time()
+    def _settings_confirmed_ready() -> bool:
+        try:
+            return settings_confirmed_path.stat().st_mtime >= settings_confirm_ready_after
+        except FileNotFoundError:
+            return False
+    # Mark orchestrator startup for troubleshooting
+    try:
+        (state/"orchestrator.ready").write_text(str(int(time.time())), encoding='utf-8')
+    except Exception:
+        pass
     # Note: rules are rebuilt after the roles wizard (post-binding) to reflect
     # the current Aux/IM state and avoid stale "Aux disabled" banners.
     # Reset preamble sent flags on each orchestrator start to ensure the first
@@ -1746,14 +1863,17 @@ def main(home: Path, session_name: Optional[str] = None):
     except Exception:
         pass
     # Load roles + actors; ensure required env vars in memory (never persist)
+    config_deferred = False
     try:
         resolved = load_profiles(home)
         missing_env = ensure_env_vars(resolved.get('env_require') or [], prompt=True)
         if missing_env:
             log_ledger(home, {"kind":"missing-env", "keys": missing_env})
     except Exception as exc:
-        print(f"[FATAL] config load failed: {exc}")
-        raise SystemExit(1)
+        # 不再致命退出：等待 TUI 写入 roles 后再启动
+        print(f"[WARN] config load failed; waiting for roles via TUI: {exc}")
+        resolved = { 'peerA': {}, 'peerB': {}, 'aux': {}, 'bindings': {}, 'actors': {}, 'env_require': [] }
+        config_deferred = True
     try:
         from prompt_weaver import ensure_rules_docs  # type: ignore
         ensure_rules_docs(home)
@@ -2123,6 +2243,26 @@ def main(home: Path, session_name: Optional[str] = None):
                 pass
         except Exception:
             pass
+    def _maybe_prepend_preamble(receiver_label: str, user_payload: str) -> str:
+        """If this is the first FROM_USER payload for a peer, prepend its preamble."""
+        if not LAZY_ENABLED:
+            return user_payload
+        st = _load_preamble_sent()
+        if bool(st.get(receiver_label)):
+            return user_payload
+        try:
+            peer_key = "peerA" if receiver_label == "PeerA" else "peerB"
+            pre = weave_preamble_text(home, peer_key)
+            # Merge preamble into the first user message as one instruction block
+            m = re.search(r"<\s*FROM_USER\s*>\s*([\s\S]*?)<\s*/FROM_USER\s*>", user_payload, re.I)
+            inner = m.group(1) if m else user_payload
+            combined = f"<FROM_USER>\n{pre}\n\n{inner.strip()}\n</FROM_USER>\n"
+            st[receiver_label] = True
+            _save_preamble_sent(st)
+            log_ledger(home, {"from":"system","kind":"lazy-preamble-sent","peer":receiver_label})
+            return combined
+        except Exception:
+            return user_payload
 
     def _run_foreman_once(conf: Dict[str, Any]):
         prompt, out_dir = _compose_foreman_prompt(conf)
@@ -2403,11 +2543,28 @@ def main(home: Path, session_name: Optional[str] = None):
             tmux("resize-window","-t",session,"-x",str(tsz.columns),"-y",str(tsz.lines))
         except Exception:
             pass
-        pos = tmux_build_tui_layout(session)
-        left,right = pos['lt'], pos['rt']
+        # Create a dedicated UI window (index 1) and build layout there
+        tmux("new-window","-t",session,"-n","ui")
+        # Select UI window
+        tmux("select-window","-t",f"{session}:1")
+        pos = tmux_build_tui_layout(session, '1')
+        # Fallback guard: ensure we actually have 3 panes (left + two on right)
+        try:
+            code,_out,_ = tmux("list-panes","-t",session,"-F","#P")
+            panes = (_out.strip().splitlines() if code==0 else [])
+            if len(panes) < 3:
+                # Create bottom-right pane explicitly then re-map
+                tmux("split-window","-v","-t",pos.get('rt', f"{session}:1.1"))
+                pos = tmux_build_tui_layout(session, '1')
+                print("[TMUX] ensured 3 panes (right split)")
+        except Exception:
+            pass
+        left_top = pos['lt']
+        left_bot = pos.get('lb', pos['lt'])
+        right = pos['rt']
         paneA = pos['rt']
         paneB = pos.get('rb', right)
-        (state/"session.json").write_text(json.dumps({"session":session,"left":left,"right":right,**pos}), encoding="utf-8")
+        (state/"session.json").write_text(json.dumps({"session":session,"ui_window":"1","left":left_top,"left_bottom":left_bot,"right":right,**pos}), encoding="utf-8")
     else:
         # Resize to current terminal as well to avoid stale small size from background server
         try:
@@ -2415,11 +2572,36 @@ def main(home: Path, session_name: Optional[str] = None):
             tmux("resize-window","-t",session,"-x",str(tsz.columns),"-y",str(tsz.lines))
         except Exception:
             pass
-        pos = tmux_build_tui_layout(session)
-        left,right = pos['lt'], pos['rt']
+        # Ensure UI window exists; if not, create it
+        code_w, out_w, _ = tmux("list-windows","-t",session,"-F","#{window_index} #{window_name}")
+        have_ui = False
+        if code_w == 0:
+            for ln in out_w.strip().splitlines():
+                try:
+                    idx, name = ln.split(" ",1)
+                    if name.strip() == 'ui': have_ui = True
+                except Exception:
+                    pass
+        if not have_ui:
+            tmux("new-window","-t",session,"-n","ui")
+        tmux("select-window","-t",f"{session}:1")
+        pos = tmux_build_tui_layout(session, '1')
+        # Fallback guard on existing session too
+        try:
+            code,_out,_ = tmux("list-panes","-t",session,"-F","#P")
+            panes = (_out.strip().splitlines() if code==0 else [])
+            if len(panes) < 3:
+                tmux("split-window","-v","-t",pos.get('rt', f"{session}:1.1"))
+                pos = tmux_build_tui_layout(session, '1')
+                print("[TMUX] ensured 3 panes (right split, existing)")
+        except Exception:
+            pass
+        left_top = pos['lt']
+        left_bot = pos.get('lb', pos['lt'])
+        right = pos['rt']
         paneA = pos['rt']
         paneB = pos.get('rb', right)
-        (state/"session.json").write_text(json.dumps({"session":session,"left":left,"right":right,**pos}), encoding="utf-8")
+        (state/"session.json").write_text(json.dumps({"session":session,"ui_window":"1","left":left_top,"left_bottom":left_bot,"right":right,**pos}), encoding="utf-8")
 
     # Improve usability: larger history for all panes; keep mouse on but avoid binding wheel to copy-mode
     tmux("set-option","-g","mouse","on")
@@ -2438,8 +2620,12 @@ def main(home: Path, session_name: Optional[str] = None):
     # Enable mouse wheel scroll for history while keeping send safety (we cancel copy-mode before sending)
     tmux("bind-key","-n","WheelUpPane","copy-mode","-e")
     tmux("bind-key","-n","WheelDownPane","send-keys","-M")
-    print(f"[INFO] Using tmux session: {session} (left=TUI / right=PeerA+PeerB)")
-    print(f"[INFO] pane map: left={left} PeerA(top)={paneA} PeerB(bottom)={paneB}")
+    print(f"[INFO] Using tmux session: {session} (left-top=TUI / left-bottom=orchestrator log / right=PeerA+PeerB)")
+    print(f"[INFO] pane map: left_top={left_top} left_bot={left_bot} PeerA(top)={paneA} PeerB(bottom)={paneB}")
+    try:
+        (state/"panes.json").write_text(json.dumps({"left": left_top, "left_bottom": left_bot, "peerA": paneA, "peerB": paneB}, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception:
+        pass
     print(f"[TIP] tmux UI session ready: {session}. Use /quit or tmux commands to exit.")
     # Start TUI (no fallback)
     py = shlex.quote(sys.executable or 'python3')
@@ -2450,17 +2636,22 @@ def main(home: Path, session_name: Optional[str] = None):
             ready_file.unlink()
     except Exception:
         pass
-    # Redirect stderr to a diagnosable file to capture Textual/TUI errors
-    err_path = shlex.quote(str(state/"tui.err"))
-    cmd = f"LC_ALL=C.UTF-8 LANG=C.UTF-8 exec {py} {tui_py} --home {str(home)} 2> {err_path}"
-    cmd_tui = f"bash -lc {shlex.quote(cmd)}"
-    tmux_respawn_pane(left, cmd_tui)
-    # Ensure left pane (TUI) is focused for initial attach
+    # Launch TUI (minimal, robust quoting) using the same interpreter; env inherits from tmux
+    cmd_tui = f"{py} -u {tui_py} --home {shlex.quote(str(home))}"
+    tmux_respawn_pane(left_top, cmd_tui)
+    # Launch orchestrator log tail in left-bottom pane
     try:
-        tmux("select-pane","-t",left)
+        logp = shlex.quote(str(state/"orchestrator.log"))
+        cmd_log = f"bash -lc 'printf \"[Orchestrator Log]\\n\"; tail -F {logp} 2>/dev/null || tail -f {logp}'"
+        tmux_respawn_pane(left_bot, cmd_log)
     except Exception:
         pass
-    # Wait for TUI ready: check .cccc/state/tui.ready (up to 12 seconds)
+    # Ensure left pane (TUI) is focused for initial attach
+    try:
+        tmux("select-pane","-t",left_top)
+    except Exception:
+        pass
+    # Wait for TUI ready: check .cccc/state/tui.ready (up to 12 seconds). If not ready, continue (do NOT kill).
     try:
         t0 = time.time(); timeout = 12.0
         ready_file = state/"tui.ready"
@@ -2469,22 +2660,8 @@ def main(home: Path, session_name: Optional[str] = None):
                 break
             time.sleep(0.2)
         if not ready_file.exists():
-            print("[ERROR] TUI did not become ready within timeout.")
-            print("- Make sure textual is installed in the SAME Python environment as cccc.")
-            print(f"- Python: {sys.executable}")
-            # Print last lines from tui.err for quick diagnosis
-            try:
-                errf = state/"tui.err"
-                if errf.exists():
-                    lines = errf.read_text(encoding='utf-8', errors='replace').splitlines()
-                    tail = "\n".join(lines[-80:])
-                    print("\n[TUI stderr tail]\n" + tail)
-            except Exception:
-                pass
-            # Terminate tmux session and exit
-            try: tmux("kill-session","-t",session)
-            except Exception: pass
-            return
+            print("[WARN] TUI did not create tui.ready within timeout; proceeding anyway (orchestrator continues).")
+            print(f"[WARN] To improve UX, have TUI create: {ready_file}")
     except Exception:
         pass
 
@@ -2687,7 +2864,36 @@ def main(home: Path, session_name: Optional[str] = None):
     # --- TUI command inbox (fast path, polled ~200ms within main loop) ---
     commands_path = state/"commands.jsonl"
     commands_path.parent.mkdir(parents=True, exist_ok=True)
-    commands_last_pos = 0
+    commands_scan_path = state/"commands.scan.json"
+    # Support primary path and a common typo path seen in some TUIs (note the space after the dot)
+    commands_paths = [state/"commands.jsonl", state/"commands. jsonl"]
+    commands_last_pos_map: Dict[str, int] = {}
+    def _init_command_offsets():
+        loaded = False
+        try:
+            snap = json.loads(commands_scan_path.read_text(encoding='utf-8'))
+            last_map = snap.get("last_pos_map") or {}
+            for p in commands_paths:
+                key = str(p)
+                if key in last_map:
+                    commands_last_pos_map[key] = max(0, int(last_map.get(key) or 0))
+                    loaded = True
+        except Exception:
+            pass
+        if not loaded:
+            for p in commands_paths:
+                key = str(p)
+                try:
+                    commands_last_pos_map[key] = max(0, p.stat().st_size)
+                except FileNotFoundError:
+                    commands_last_pos_map[key] = 0
+            if any(commands_last_pos_map.values()):
+                print("[COMMANDS] Initialized offsets at EOF (skipping historical commands).")
+        else:
+            for p in commands_paths:
+                commands_last_pos_map.setdefault(str(p), 0)
+            print("[COMMANDS] Restored command offsets from previous session.")
+    _init_command_offsets()
     shutdown_requested = False
     processed_command_ids: set[str] = set()
 
@@ -2710,175 +2916,356 @@ def main(home: Path, session_name: Optional[str] = None):
             return False, f"inject failed: {e}"
 
     def _consume_tui_commands(max_items: int = 50):
-        nonlocal commands_last_pos, deliver_paused, shutdown_requested
-        if not commands_path.exists():
-            return
-        try:
-            with commands_path.open('r', encoding='utf-8', errors='replace') as f:
+        nonlocal deliver_paused, shutdown_requested, resolved, commands_last_pos_map
+        cnt = 0
+        scan = {"paths": []}
+        for cpath in commands_paths:
+            if cnt >= max_items:
+                break
+            if not cpath.exists():
                 try:
-                    f.seek(commands_last_pos)
+                    scan["paths"].append({"path": str(cpath), "exists": False})
                 except Exception:
                     pass
-                cnt = 0
-                while cnt < max_items:
-                    line = f.readline()
-                    if not line:
-                        break
-                    commands_last_pos = f.tell()
-                    cnt += 1
-                    line = line.strip()
-                    if not line:
-                        continue
+                continue
+            key = str(cpath)
+            last = commands_last_pos_map.get(key, 0)
+            try:
+                with cpath.open('r', encoding='utf-8', errors='replace') as f:
                     try:
-                        obj = json.loads(line)
+                        f.seek(0, 2)
+                        endpos = f.tell()
                     except Exception:
-                        continue
-                    cmd_id = str(obj.get('id') or obj.get('request_id') or '')
-                    if cmd_id and cmd_id in processed_command_ids:
-                        continue
-                    # Skip result echo lines
-                    if isinstance(obj, dict) and 'result' in obj:
-                        continue
-                    # Normalize command
-                    ctype = str(obj.get('type') or obj.get('command') or '').strip().lower()
-                    target = str(obj.get('target') or obj.get('route') or '').strip().lower()
-                    args = obj.get('args') or {}
-                    ok, msg = False, 'unsupported'
+                        endpos = None
+                    if endpos is not None and last > endpos:
+                        last = endpos
+                        commands_last_pos_map[key] = last
                     try:
-                        if ctype in ('a','b','both','send'):
-                            text = str(args.get('text') or obj.get('text') or '').strip()
-                            if not text:
-                                ok, msg = False, 'empty text'
-                            else:
-                                if ctype == 'a' or target in ('a','peera','peer_a'):
-                                    _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                elif ctype == 'b' or target in ('b','peerb','peer_b'):
-                                    _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                        f.seek(last)
+                    except Exception:
+                        f.seek(0)
+                        last = 0
+                        commands_last_pos_map[key] = last
+                    try:
+                        scan["paths"].append({"path": key, "exists": True, "last_pos": last, "end_pos": endpos})
+                    except Exception:
+                        pass
+                    while cnt < max_items:
+                        line = f.readline()
+                        if not line:
+                            break
+                        commands_last_pos_map[key] = f.tell()
+                        cnt += 1
+                        raw_line = line.strip()
+                        if not raw_line:
+                            continue
+                        try:
+                            obj = json.loads(raw_line)
+                        except Exception:
+                            # 记录无法解析的原始行，便于诊断
+                            try:
+                                (state/"last_command.json").write_text(json.dumps({"raw": raw_line}, ensure_ascii=False, indent=2), encoding='utf-8')
+                            except Exception:
+                                pass
+                            continue
+                        # 快照最近一条命令
+                        try:
+                            (state/"last_command.json").write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
+                        except Exception:
+                            pass
+                        cmd_id = str(obj.get('id') or obj.get('request_id') or '')
+                        if cmd_id and cmd_id in processed_command_ids:
+                            continue
+                        # Skip result echo lines
+                        if isinstance(obj, dict) and 'result' in obj:
+                            continue
+                        # Normalize command
+                        ctype = str(obj.get('type') or obj.get('command') or '').strip().lower()
+                        target = str(obj.get('target') or obj.get('route') or '').strip().lower()
+                        args = obj.get('args') or {}
+                        ok, msg = False, 'unsupported'
+                        try:
+                            if ctype in ('a','b','both','send'):
+                                text = str(args.get('text') or obj.get('text') or '').strip()
+                                if not text:
+                                    ok, msg = False, 'empty text'
                                 else:
-                                    _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                    _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                ok, msg = True, 'sent'
-                        elif ctype in ('pause','resume'):
-                            deliver_paused = (ctype == 'pause')
-                            write_status(deliver_paused)
-                            ok, msg = True, f"handoff {'paused' if deliver_paused else 'resumed'}"
-                        elif ctype in ('sys-refresh','sys_refresh','sysrefresh'):
-                            ok, msg = _inject_full_system()
-                        elif ctype in ('clear','reset'):
-                            # /clear is reserved; noop for now (ack only). Keep 'reset' as alias.
-                            ok, msg = True, 'clear acknowledged (noop)'
-                        elif ctype in ('quit','exit'):
-                            try:
-                                tmux("kill-session","-t",session)
-                                ok, msg = True, 'session terminated'
-                            except Exception as e:
-                                ok, msg = False, f"kill-session failed: {e}"
-                            shutdown_requested = True
-                        elif ctype in ('foreman','fm'):
-                            sub = str(args.get('action') or obj.get('action') or '').strip().lower() or 'status'
-                            # Reuse IM command path by calling the same code branch
-                            data = {'request_id': cmd_id or str(int(time.time())), 'command': 'foreman', 'source': 'tui', 'args': {'action': sub}}
-                            tmp = state/"im_commands"/f"tui-{int(time.time()*1000)}.json"
-                            try:
-                                tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
-                                _process_im_commands()
-                                ok, msg = True, f"foreman {sub} requested"
-                            except Exception as e:
-                                ok, msg = False, f"foreman {sub} failed: {e}"
-                        elif ctype in ('c','aux_cli','aux'):
-                            prompt_text = str(args.get('prompt') or obj.get('prompt') or '').strip()
-                            if not prompt_text:
-                                ok, msg = False, 'empty prompt'
-                            else:
-                                rc, out, err, cmd_line = _run_aux_cli(prompt_text)
-                                ok = (rc == 0)
-                                summary = [f"[Aux CLI] exit={rc}", f"command: {cmd_line}"]
-                                if out: summary.append("stdout:\n" + out.strip())
-                                if err: summary.append("stderr:\n" + err.strip())
-                                msg = "\n".join(summary)
-                        elif ctype in ('focus',):
-                            try:
-                                hint = str((args.get('hint') or obj.get('hint') or '')).strip()
-                                _request_por_refresh('focus-tui', hint=hint or None, force=True)
-                                ok, msg = True, 'focus requested'
-                            except Exception as e:
-                                ok, msg = False, f'focus failed: {e}'
-                        elif ctype in ('roles-set-actor','roles_set_actor'):
-                            try:
-                                role = str(args.get('role') or obj.get('role') or '').strip()
-                                actor = str(args.get('actor') or obj.get('actor') or '').strip()
-                                cp = read_yaml(cli_profiles_path)
-                                roles = dict(cp.get('roles') or {})
-                                roles.setdefault('peerA', {})
-                                roles.setdefault('peerB', {})
-                                roles.setdefault('aux', {})
-                                if role in roles:
-                                    roles[role]['actor'] = actor
-                                    cp['roles'] = roles
-                                    _write_yaml(cli_profiles_path, cp)
-                                    # Refresh resolved settings to apply on next run; for now, status will reflect next write
-                                    ok, msg = True, f"role {role} set to {actor}"
-                                else:
-                                    ok, msg = False, f"unknown role: {role}"
-                            except Exception as e:
-                                ok, msg = False, f'roles-set-actor failed: {e}'
-                        elif ctype in ('token',):
-                            try:
-                                action = str(args.get('action') or obj.get('action') or '').strip().lower()
-                                cfgp = settings/"telegram.yaml"
-                                cfg = read_yaml(cfgp)
-                                if action == 'set':
-                                    val = str(args.get('value') or obj.get('value') or '').strip()
-                                    if not val:
-                                        ok, msg = False, 'token value required'
+                                    if ctype == 'a' or target in ('a','peera','peer_a'):
+                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                    elif ctype == 'b' or target in ('b','peerb','peer_b'):
+                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
                                     else:
-                                        cfg['token'] = val
-                                        _write_yaml(cfgp, cfg)
-                                        ok, msg = True, 'token set'
-                                elif action == 'unset':
-                                    if 'token' in cfg:
-                                        cfg.pop('token', None)
-                                        _write_yaml(cfgp, cfg)
-                                    ok, msg = True, 'token unset'
-                                else:
-                                    ok, msg = False, 'unsupported token action'
-                            except Exception as e:
-                                ok, msg = False, f'token failed: {e}'
-                        elif ctype in ('review',):
-                            try:
-                                _send_aux_reminder('manual-review')
-                                ok, msg = True, 'review requested'
-                            except Exception as e:
-                                ok, msg = False, f'review failed: {e}'
-                        elif ctype in ('echo',):
-                            try:
-                                val = str(args.get('value') or obj.get('value') or '').lower()
-                                if val == 'on':
-                                    globals().update(CONSOLE_ECHO=True)
-                                elif val == 'off':
-                                    globals().update(CONSOLE_ECHO=False)
-                                # empty → show state in msg
-                                ok, msg = True, f"echo={'on' if globals().get('CONSOLE_ECHO', False) else 'off'}"
-                            except Exception as e:
-                                ok, msg = False, f'echo failed: {e}'
-                        elif ctype in ('passthru','pass','raw'):
-                            try:
-                                peer = str(args.get('peer') or obj.get('peer') or '').upper()
-                                cmdline = str(args.get('cmd') or obj.get('cmd') or '').strip()
-                                if not cmdline:
-                                    ok, msg = False, 'empty passthru'
-                                else:
-                                    _send_raw_to_cli(home, 'PeerA' if peer=='A' else 'PeerB', cmdline, paneA, paneB)
+                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
                                     ok, msg = True, 'sent'
-                            except Exception as e:
-                                ok, msg = False, f'passthru failed: {e}'
-                        else:
-                            ok, msg = False, 'unsupported'
-                    except Exception as e:
-                        ok, msg = False, f"error: {e}"
+                            elif ctype in ('pause','resume'):
+                                deliver_paused = (ctype == 'pause')
+                                write_status(deliver_paused)
+                                ok, msg = True, f"handoff {'paused' if deliver_paused else 'resumed'}"
+                            elif ctype in ('sys-refresh','sys_refresh','sysrefresh'):
+                                ok, msg = _inject_full_system()
+                            elif ctype in ('clear','reset'):
+                                # /clear is reserved; noop for now (ack only). Keep 'reset' as alias.
+                                ok, msg = True, 'clear acknowledged (noop)'
+                            elif ctype in ('inbox','inbox_policy','startup_inbox_policy'):
+                                try:
+                                    policy = str((args.get('policy') or obj.get('policy') or 'resume')).strip().lower()
+                                    def _apply_policy(label: str) -> int:
+                                        try:
+                                            inbox = _inbox_dir(home, label)
+                                            proc = _processed_dir(home, label)
+                                            files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
+                                        except Exception:
+                                            files = []
+                                        if not files:
+                                            return 0
+                                        if policy in ('archive','discard'):
+                                            moved = 0
+                                            for f in files:
+                                                try:
+                                                    proc.mkdir(parents=True, exist_ok=True)
+                                                    f.rename(proc/f.name); moved += 1
+                                                except Exception:
+                                                    pass
+                                            try:
+                                                allp = sorted(proc.iterdir(), key=lambda p: p.name)
+                                                if len(allp) > PROCESSED_RETENTION:
+                                                    for ff in allp[:len(allp)-PROCESSED_RETENTION]:
+                                                        try:
+                                                            ff.unlink()
+                                                        except Exception:
+                                                            pass
+                                            except Exception:
+                                                pass
+                                            log_ledger(home, {"from":"system","kind":"startup-inbox-discard" if policy=='discard' else 'startup-inbox-archive',"peer":label,"moved":moved})
+                                            return moved
+                                        # resume → no-op (keep files)
+                                        log_ledger(home, {"from":"system","kind":"startup-inbox-resume","peer":label})
+                                        return len(files)
+                                    a = _apply_policy('PeerA'); b = _apply_policy('PeerB')
+                                    ok, msg = True, f"inbox policy {policy}: PeerA={a} PeerB={b}"
+                                except Exception as e:
+                                    ok, msg = False, f"inbox_policy failed: {e}"
+                            elif ctype in ('launch','launch_peers'):
+                                try:
+                                    who = str((args.get('who') or 'both')).lower()
+                                    # Reload latest profiles so newly set roles take effect immediately
+                                    try:
+                                        resolved = load_profiles(home)
+                                    except Exception:
+                                        pass
+                                    # compute effective commands from current resolved bindings
+                                    def _first_bin(cmd: str) -> str:
+                                        try:
+                                            import shlex
+                                            return shlex.split(cmd or '')[0] if cmd else ''
+                                        except Exception:
+                                            return (cmd or '').split(' ')[0]
+                                    def _bin_available(cmd: str) -> bool:
+                                        prog = _first_bin(cmd)
+                                        if not prog:
+                                            return False
+                                        import shutil
+                                        return shutil.which(prog) is not None
+                                    pa_cmd2 = (resolved.get('peerA') or {}).get('command') or ''
+                                    pb_cmd2 = (resolved.get('peerB') or {}).get('command') or ''
+                                    pa_eff2 = os.environ.get('CLAUDE_I_CMD') or pa_cmd2
+                                    pb_eff2 = os.environ.get('CODEX_I_CMD') or pb_cmd2
+                                    # Normalize first token to absolute path to avoid PATH mismatch inside tmux bash
+                                    def _normalize_absbin(cmd: str) -> str:
+                                        try:
+                                            prog = _first_bin(cmd)
+                                            if not prog:
+                                                return cmd
+                                            import shutil, shlex
+                                            ab = shutil.which(prog)
+                                            if not ab:
+                                                return cmd
+                                            parts = shlex.split(cmd)
+                                            parts[0] = ab
+                                            return " ".join(shlex.quote(x) for x in parts)
+                                        except Exception:
+                                            return cmd
+                                    pa_eff2 = _normalize_absbin(pa_eff2)
+                                    pb_eff2 = _normalize_absbin(pb_eff2)
+                                    # Hard-fail: if unavailable, report and do not launch
+                                    a_ok = _bin_available(pa_eff2) if who in ('a','both') else True
+                                    b_ok = _bin_available(pb_eff2) if who in ('b','both') else True
+                                    # 记录一次诊断快照
+                                    try:
+                                        (state/"last_launch.json").write_text(json.dumps({
+                                            "who": who,
+                                            "peerA": {"cmd": pa_cmd2, "eff": pa_eff2, "ok": a_ok},
+                                            "peerB": {"cmd": pb_cmd2, "eff": pb_eff2, "ok": b_ok},
+                                            "paneA": paneA, "paneB": paneB,
+                                        }, ensure_ascii=False, indent=2), encoding='utf-8')
+                                    except Exception:
+                                        pass
+                                    if (who in ('a','both')) and (not a_ok):
+                                        ok = False
+                                        msg = f"PeerA CLI unavailable: {_first_bin(pa_eff2) or '(empty)'}"
+                                        try:
+                                            outbox_write(home, {"type":"to_user","peer":"System","text":msg})
+                                        except Exception:
+                                            pass
+                                    if (who in ('b','both')) and (not b_ok):
+                                        ok = False
+                                        msg = f"PeerB CLI unavailable: {_first_bin(pb_eff2) or '(empty)'}"
+                                        try:
+                                            outbox_write(home, {"type":"to_user","peer":"System","text":msg})
+                                        except Exception:
+                                            pass
+                                    pa_cwd2 = (resolved.get('peerA') or {}).get('cwd') or '.'
+                                    pb_cwd2 = (resolved.get('peerB') or {}).get('cwd') or '.'
+                                    def _wrap_cwd2(cmd: str, cwd: str | None) -> str:
+                                        if cwd and cwd not in ('.',''):
+                                            return f"cd {cwd} && {cmd}"
+                                        return cmd
+                                    launched = []
+                                    if who in ('a','both') and pa_eff2 and _bin_available(pa_eff2):
+                                        print(f"[LAUNCH] PeerA → {pa_eff2} (cwd={pa_cwd2}) pane={paneA}")
+                                        tmux_start_interactive(paneA, _wrap_cwd2(pa_eff2, pa_cwd2))
+                                        launched.append('PeerA')
+                                    elif who in ('a','both'):
+                                        print(f"[LAUNCH] PeerA not started (CLI unavailable): {_first_bin(pa_eff2) or '(empty)'}")
+                                    if who in ('b','both') and pb_eff2 and _bin_available(pb_eff2):
+                                        print(f"[LAUNCH] PeerB → {pb_eff2} (cwd={pb_cwd2}) pane={paneB}")
+                                        tmux_start_interactive(paneB, _wrap_cwd2(pb_eff2, pb_cwd2))
+                                        launched.append('PeerB')
+                                    elif who in ('b','both'):
+                                        print(f"[LAUNCH] PeerB not started (CLI unavailable): {_first_bin(pb_eff2) or '(empty)'}")
+                                    ok = True
+                                    msg = f"launched {' & '.join(launched) if launched else 'none'}"
+                                    if not launched:
+                                        try:
+                                            outbox_write(home, {"type":"to_user","peer":"System","text":"Launch requested but no CLI available for selected actors (check agents.yaml or PATH)."})
+                                        except Exception:
+                                            pass
+                                except Exception as e:
+                                    ok, msg = False, f"launch failed: {e}"
+                            elif ctype in ('quit','exit'):
+                                try:
+                                    tmux("kill-session","-t",session)
+                                    ok, msg = True, 'session terminated'
+                                except Exception as e:
+                                    ok, msg = False, f"kill-session failed: {e}"
+                                shutdown_requested = True
+                            elif ctype in ('foreman','fm'):
+                                sub = str(args.get('action') or obj.get('action') or '').strip().lower() or 'status'
+                                # Reuse IM command path by calling the same code branch
+                                data = {'request_id': cmd_id or str(int(time.time())), 'command': 'foreman', 'source': 'tui', 'args': {'action': sub}}
+                                tmp = state/"im_commands"/f"tui-{int(time.time()*1000)}.json"
+                                try:
+                                    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+                                    _process_im_commands()
+                                    ok, msg = True, f"foreman {sub} requested"
+                                except Exception as e:
+                                    ok, msg = False, f"foreman {sub} failed: {e}"
+                            elif ctype in ('c','aux_cli','aux'):
+                                prompt_text = str(args.get('prompt') or obj.get('prompt') or '').strip()
+                                if not prompt_text:
+                                    ok, msg = False, 'empty prompt'
+                                else:
+                                    rc, out, err, cmd_line = _run_aux_cli(prompt_text)
+                                    ok = (rc == 0)
+                                    summary = [f"[Aux CLI] exit={rc}", f"command: {cmd_line}"]
+                                    if out: summary.append("stdout:\n" + out.strip())
+                                    if err: summary.append("stderr:\n" + err.strip())
+                                    msg = "\n".join(summary)
+                            elif ctype in ('focus',):
+                                try:
+                                    hint = str((args.get('hint') or obj.get('hint') or '')).strip()
+                                    _request_por_refresh('focus-tui', hint=hint or None, force=True)
+                                    ok, msg = True, 'focus requested'
+                                except Exception as e:
+                                    ok, msg = False, f'focus failed: {e}'
+                            elif ctype in ('roles-set-actor','roles_set_actor'):
+                                try:
+                                    role = str(args.get('role') or obj.get('role') or '').strip()
+                                    actor = str(args.get('actor') or obj.get('actor') or '').strip()
+                                    cp = read_yaml(cli_profiles_path)
+                                    roles = dict(cp.get('roles') or {})
+                                    roles.setdefault('peerA', {})
+                                    roles.setdefault('peerB', {})
+                                    roles.setdefault('aux', {})
+                                    if role in roles:
+                                        roles[role]['actor'] = actor
+                                        cp['roles'] = roles
+                                        _write_yaml(cli_profiles_path, cp)
+                                        # Refresh resolved settings to apply on next run; for now, status will reflect next write
+                                        try:
+                                            resolved = load_profiles(home)
+                                        except Exception:
+                                            pass
+                                        write_status(deliver_paused)
+                                        ok, msg = True, f"role {role} set to {actor}"
+                                    else:
+                                        ok, msg = False, f"unknown role: {role}"
+                                except Exception as e:
+                                    ok, msg = False, f'roles-set-actor failed: {e}'
+                            elif ctype in ('token',):
+                                try:
+                                    action = str(args.get('action') or obj.get('action') or '').strip().lower()
+                                    cfgp = settings/"telegram.yaml"
+                                    cfg = read_yaml(cfgp)
+                                    if action == 'set':
+                                        val = str(args.get('value') or obj.get('value') or '').strip()
+                                        if not val:
+                                            ok, msg = False, 'token value required'
+                                        else:
+                                            cfg['token'] = val
+                                            _write_yaml(cfgp, cfg)
+                                            ok, msg = True, 'token set'
+                                    elif action == 'unset':
+                                        if 'token' in cfg:
+                                            cfg.pop('token', None)
+                                            _write_yaml(cfgp, cfg)
+                                        ok, msg = True, 'token unset'
+                                    else:
+                                        ok, msg = False, 'unsupported token action'
+                                except Exception as e:
+                                    ok, msg = False, f'token failed: {e}'
+                            elif ctype in ('review',):
+                                try:
+                                    _send_aux_reminder('manual-review')
+                                    ok, msg = True, 'review requested'
+                                except Exception as e:
+                                    ok, msg = False, f'review failed: {e}'
+                            elif ctype in ('echo',):
+                                try:
+                                    val = str(args.get('value') or obj.get('value') or '').lower()
+                                    if val == 'on':
+                                        globals().update(CONSOLE_ECHO=True)
+                                    elif val == 'off':
+                                        globals().update(CONSOLE_ECHO=False)
+                                    # empty → show state in msg
+                                    ok, msg = True, f"echo={'on' if globals().get('CONSOLE_ECHO', False) else 'off'}"
+                                except Exception as e:
+                                    ok, msg = False, f'echo failed: {e}'
+                            elif ctype in ('passthru','pass','raw'):
+                                try:
+                                    peer = str(args.get('peer') or obj.get('peer') or '').upper()
+                                    cmdline = str(args.get('cmd') or obj.get('cmd') or '').strip()
+                                    if not cmdline:
+                                        ok, msg = False, 'empty passthru'
+                                    else:
+                                        _send_raw_to_cli(home, 'PeerA' if peer=='A' else 'PeerB', cmdline, paneA, paneB)
+                                        ok, msg = True, 'sent'
+                                except Exception as e:
+                                    ok, msg = False, f'passthru failed: {e}'
+                            else:
+                                ok, msg = False, 'unsupported'
+                        except Exception as e:
+                            ok, msg = False, f"error: {e}"
                     if cmd_id:
                         processed_command_ids.add(cmd_id)
                     _append_command_result(cmd_id or '-', ok, msg)
+            except Exception:
+                pass
+        # snapshot scan result and last positions for troubleshooting
+        try:
+            scan["last_pos_map"] = commands_last_pos_map
+            (state/"commands.scan.json").write_text(json.dumps(scan, ensure_ascii=False, indent=2), encoding='utf-8')
         except Exception:
             pass
     # PROJECT.md bootstrap: avoid blocking TTY prompts in tmux/TUI runs
@@ -2907,6 +3294,9 @@ def main(home: Path, session_name: Optional[str] = None):
     pa_eff = os.environ.get("CLAUDE_I_CMD") or pa_cmd
     pb_eff = os.environ.get("CODEX_I_CMD")  or pb_cmd
     if start_mode in ("has_doc", "ai_bootstrap"):
+        defer_launch = not _settings_confirmed_ready()
+        # Track pending auto-launch so we can trigger once settings.confirmed appears later
+        auto_launch_pending = defer_launch
         # Wrap with role cwd when provided; tmux_start_interactive will add bash -lc
         def _wrap_cwd(cmd: str, cwd: str | None) -> str:
             if cwd and cwd not in (".", ""):
@@ -2914,28 +3304,48 @@ def main(home: Path, session_name: Optional[str] = None):
             return cmd
         pa_cwd = (resolved.get('peerA') or {}).get('cwd') or '.'
         pb_cwd = (resolved.get('peerB') or {}).get('cwd') or '.'
-        # PeerA
-        if pa_eff and _bin_available(pa_eff):
-            tmux_start_interactive(paneA, _wrap_cwd(pa_eff, pa_cwd))
-            print(f"[LAUNCH] PeerA mode=tmux pane={paneA} cmd={pa_eff} cwd={pa_cwd}")
+        if defer_launch or config_deferred:
+            print("[LAUNCH] Deferred until settings.confirmed is present.")
         else:
-            print(f"[LAUNCH] PeerA not started (CLI unavailable): {pa_eff or '(empty)'}")
-            try:
-                msg = "PeerA not started: CLI command unavailable in PATH."
-                outbox_write(home, {"type":"to_user","peer":"System","text":msg})
-            except Exception:
-                pass
-        # PeerB
-        if pb_eff and _bin_available(pb_eff):
-            tmux_start_interactive(paneB, _wrap_cwd(pb_eff, pb_cwd))
-            print(f"[LAUNCH] PeerB mode=tmux pane={paneB} cmd={pb_eff} cwd={pb_cwd}")
-        else:
-            print(f"[LAUNCH] PeerB not started (CLI unavailable): {pb_eff or '(empty)'}")
-            try:
-                msg = "PeerB not started: CLI command unavailable in PATH."
-                outbox_write(home, {"type":"to_user","peer":"System","text":msg})
-            except Exception:
-                pass
+            # PeerA
+            # Normalize absolute path
+            def _normalize_absbin(cmd: str) -> str:
+                try:
+                    prog = _first_bin(cmd)
+                    if not prog:
+                        return cmd
+                    import shutil, shlex
+                    ab = shutil.which(prog)
+                    if not ab:
+                        return cmd
+                    parts = shlex.split(cmd)
+                    parts[0] = ab
+                    return " ".join(shlex.quote(x) for x in parts)
+                except Exception:
+                    return cmd
+            pa_eff = _normalize_absbin(pa_eff)
+            pb_eff = _normalize_absbin(pb_eff)
+            if pa_eff and _bin_available(pa_eff):
+                tmux_start_interactive(paneA, _wrap_cwd(pa_eff, pa_cwd))
+                print(f"[LAUNCH] PeerA mode=tmux pane={paneA} cmd={pa_eff} cwd={pa_cwd}")
+            else:
+                print(f"[LAUNCH] PeerA not started (CLI unavailable): {pa_eff or '(empty)'}")
+                try:
+                    msg = "PeerA not started: CLI command unavailable in PATH."
+                    outbox_write(home, {"type":"to_user","peer":"System","text":msg})
+                except Exception:
+                    pass
+            # PeerB
+            if pb_eff and _bin_available(pb_eff):
+                tmux_start_interactive(paneB, _wrap_cwd(pb_eff, pb_cwd))
+                print(f"[LAUNCH] PeerB mode=tmux pane={paneB} cmd={pb_eff} cwd={pb_cwd}")
+            else:
+                print(f"[LAUNCH] PeerB not started (CLI unavailable): {pb_eff or '(empty)'}")
+                try:
+                    msg = "PeerB not started: CLI command unavailable in PATH."
+                    outbox_write(home, {"type":"to_user","peer":"System","text":msg})
+                except Exception:
+                    pass
         # Debug: show current commands per pane
         try:
             code,out,err = tmux('list-panes','-F','#{pane_id} #{pane_current_command}')
@@ -3774,6 +4184,36 @@ def main(home: Path, session_name: Optional[str] = None):
         print("[PROJECT] Found PROJECT.md.")
 
     while True:
+        # 如果启动时因为未确认或未绑定角色而延迟，一旦就绪自动触发一次 launch+resume
+        try:
+            if 'auto_launch_pending' in locals() and auto_launch_pending:
+                ready_cfg = _settings_confirmed_ready()
+                ready_roles = True
+                if config_deferred:
+                    try:
+                        # 重新加载一次，若 roles 已写入则不再延迟
+                        resolved = load_profiles(home)
+                        ready_roles = True
+                    except Exception:
+                        ready_roles = False
+                if ready_cfg and ready_roles:
+                    try:
+                        # enqueue a launch command for the TUI-command fast path to handle uniformly
+                        nowid = str(int(time.time()*1000))
+                        cmds = [
+                            {"id": nowid, "type": "launch", "args": {"who": "both"}, "source": "system", "ts": time.time()},
+                            {"id": str(int(time.time()*1000)+1), "type": "resume", "source": "system", "ts": time.time()},
+                        ]
+                        with (state/"commands.jsonl").open('a', encoding='utf-8') as f:
+                            for c in cmds:
+                                f.write(json.dumps(c, ensure_ascii=False) + "\n")
+                            f.flush()
+                        print("[LAUNCH] Auto-launch triggered after settings.confirmed appeared.")
+                    except Exception as e:
+                        print(f"[LAUNCH] Auto-launch enqueue failed: {e}")
+                    auto_launch_pending = False
+        except Exception:
+            pass
         # Keep it simple: no phase locks; send clear instructions at start; remove runtime SYSTEM hot-reload
 
         # Non-blocking loop: prioritize console input; otherwise scan A/B mailbox outputs
@@ -3969,6 +4409,11 @@ def main(home: Path, session_name: Optional[str] = None):
                                               suffix=_compose_nudge_suffix_for('PeerB', profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command))
                 if sent:
                     last_nudge_ts[label] = nowt
+        except Exception:
+            pass
+        # Heartbeat: write a lightweight alive marker
+        try:
+            (state/"loop.alive").write_text(str(int(time.time())), encoding='utf-8')
         except Exception:
             pass
         # Fast-command window: poll commands.jsonl every ~200ms until main loop tick elapses,
@@ -4311,27 +4756,6 @@ def main(home: Path, session_name: Optional[str] = None):
             eff = handoff_filter_override if handoff_filter_override is not None else pol_enabled
             src = "override" if handoff_filter_override is not None else "policy"
             print(f"[ANTI] Low-signal filter: {eff} (source={src})"); continue
-        # Lazy preamble: helpers defined earlier in this function
-        def _maybe_prepend_preamble(receiver_label: str, user_payload: str) -> str:
-            if not LAZY_ENABLED:
-                return user_payload
-            st = _load_preamble_sent()
-            if bool(st.get(receiver_label)):
-                return user_payload
-            try:
-                peer_key = "peerA" if receiver_label == "PeerA" else "peerB"
-                pre = weave_preamble_text(home, peer_key)
-                # Merge preamble into the first user message as one instruction block
-                m = re.search(r"<\s*FROM_USER\s*>\s*([\s\S]*?)<\s*/FROM_USER\s*>", user_payload, re.I)
-                inner = m.group(1) if m else user_payload
-                combined = f"<FROM_USER>\n{pre}\n\n{inner.strip()}\n</FROM_USER>\n"
-                st[receiver_label] = True
-                _save_preamble_sent(st)
-                log_ledger(home, {"from":"system","kind":"lazy-preamble-sent","peer":receiver_label})
-                return combined
-            except Exception:
-                return user_payload
-
         if line.startswith("u:") or line.startswith("both:"):
             msg=line.split(":",1)[1].strip()
             up = f"<FROM_USER>\n{msg}\n</FROM_USER>\n"

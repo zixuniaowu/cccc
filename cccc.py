@@ -858,14 +858,15 @@ def main():
             print("[RUN] tmux client exited; performed cleanup.")
             return
 
-    # Execute deferred kill after function definitions
-    if pending_kill_session is not None and args.cmd == 'kill':
-        _cmd_kill(pending_kill_session)
+    # Ensure `cccc kill` never triggers the interactive wizard.
+    # Always execute kill (even when --session is not provided, _cmd_kill will resolve from state).
+    if args.cmd == 'kill':
+        _cmd_kill(getattr(args, 'session', None))
         return
 
     # Startup wizard (interactive) — disabled for `run` to ensure tmux+TUI launch immediately.
     # Users can configure inside the TUI (/setup, /token) or via `cccc doctor/roles`.
-    if (args.cmd not in ('run',) ) and _isatty() and not os.environ.get('CCCC_NO_WIZARD'):
+    if (args.cmd not in ('run', 'kill') ) and _isatty() and not os.environ.get('CCCC_NO_WIZARD'):
         try:
             print("\n[SETUP] Choose run mode:\n  1) Local CLI only (default)\n  2) Local + connect Telegram\n  3) Local + connect Slack (Socket Mode + Web API)\n  4) Local + connect Discord")
             choice = input("> Enter 1-4 (Enter=1): ").strip() or "1"

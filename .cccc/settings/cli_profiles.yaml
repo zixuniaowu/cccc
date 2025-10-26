@@ -47,7 +47,7 @@ startup_wait_seconds: 12
 startup_nudge_seconds: 10
 console_echo: true
 tmux:
-  alternate_screen_off: true
+  alternate_screen_off: false
 roles:
   peerA:
     actor: claude
