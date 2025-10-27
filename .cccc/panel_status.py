@@ -113,7 +113,7 @@ def render(home: Path):
 
     lines: List[str] = []
     # Header (fixed height; avoid runaway growth)
-    lines.append("CCCC Panel  |  type h or /help in terminal   |   " + time.strftime('%H:%M:%S'))
+    lines.append("CCCC Panel  |  type h or /help in terminal")
     lines.append("============================================================")
     # Compact status
     lines.append(f"Session: {session.get('session','-')}  Phase: {phase}  Leader: {leader}  Paused: {paused}")
@@ -165,7 +165,7 @@ def render(home: Path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--home", default=".cccc")
-    ap.add_argument("--interval", type=float, default=1.0)
+    ap.add_argument("--interval", type=float, default=2.0)
     args = ap.parse_args()
     home = Path(args.home).resolve()
     # Simple loop

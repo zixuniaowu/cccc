@@ -1,0 +1,406 @@
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+import os, json, time, shlex
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from .command_queue import init_command_offsets, append_command_result
+
+def make(ctx: Dict[str, Any]):
+    home: Path = ctx['home']
+    state: Path = ctx['state']
+    session: str = ctx['session']
+
+    # Aliases used by original body
+    paneA = ctx['paneA']; paneB = ctx['paneB']
+    profileA = ctx['profileA']; profileB = ctx['profileB']
+    settings = ctx['settings']
+    cli_profiles_path: Path = ctx['cli_profiles_path']
+    PROCESSED_RETENTION: int = int(ctx.get('PROCESSED_RETENTION', 200))
+
+    # External helpers/functions
+    write_status = ctx['write_status']
+    weave_system = ctx['weave_system']
+    _send_handoff = ctx['send_handoff']
+    _maybe_prepend_preamble = ctx['maybe_prepend_preamble']
+    _process_im_commands = ctx['process_im_commands']
+    _run_aux_cli = ctx['run_aux_cli']
+    read_yaml = ctx['read_yaml']
+    _write_yaml = ctx['write_yaml']
+    load_profiles = ctx['load_profiles']
+    tmux = ctx['tmux']
+    tmux_start_interactive = ctx['tmux_start_interactive']
+    _inbox_dir = ctx['inbox_dir']
+    _processed_dir = ctx['processed_dir']
+    outbox_write = ctx['outbox_write']
+
+    commands_path: Path = ctx['commands_path']
+    commands_paths = ctx['commands_paths']
+    commands_last_pos_map: Dict[str,int] = ctx['commands_last_pos_map']
+    processed_command_ids = ctx['processed_command_ids']
+    resolved = ctx['resolved']
+
+    def _inject_full_system():
+        try:
+            sysA = ctx['weave_system'](home, "peerA"); sysB = ctx['weave_system'](home, "peerB")
+            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
+            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
+            return True, "SYSTEM injected to both peers"
+        except Exception as e:
+            return False, f"inject failed: {e}"
+
+    def consume(max_items: int = 50):
+        nonlocal resolved, commands_last_pos_map
+        # deliver_paused/shutdown_requested bridged via boxes in ctx
+        deliver_paused = bool(ctx['deliver_paused_box']['v'])
+        shutdown_requested = bool(ctx['shutdown_requested_box']['v'])
+        cnt = 0
+        scan = {"paths": []}
+        for cpath in commands_paths:
+            if cnt >= max_items:
+                break
+            if not cpath.exists():
+                try:
+                    scan["paths"].append({"path": str(cpath), "exists": False})
+                except Exception:
+                    pass
+                continue
+            key = str(cpath)
+            last = commands_last_pos_map.get(key, 0)
+            try:
+                with cpath.open('r', encoding='utf-8', errors='replace') as f:
+                    try:
+                        f.seek(0, 2)
+                        endpos = f.tell()
+                    except Exception:
+                        endpos = None
+                    if endpos is not None and last > endpos:
+                        last = endpos
+                        commands_last_pos_map[key] = last
+                    try:
+                        f.seek(last)
+                    except Exception:
+                        f.seek(0)
+                        last = 0
+                        commands_last_pos_map[key] = last
+                    try:
+                        scan["paths"].append({"path": key, "exists": True, "last_pos": last, "end_pos": endpos})
+                    except Exception:
+                        pass
+                    while cnt < max_items:
+                        line = f.readline()
+                        if not line:
+                            break
+                        commands_last_pos_map[key] = f.tell()
+                        cnt += 1
+                        raw_line = line.strip()
+                        if not raw_line:
+                            continue
+                        try:
+                            obj = json.loads(raw_line)
+                        except Exception:
+                            try:
+                                (state/"last_command.json").write_text(json.dumps({"raw": raw_line}, ensure_ascii=False, indent=2), encoding='utf-8')
+                            except Exception:
+                                pass
+                            continue
+                        try:
+                            (state/"last_command.json").write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
+                        except Exception:
+                            pass
+                        cmd_id = str(obj.get('id') or obj.get('request_id') or '')
+                        if cmd_id and cmd_id in processed_command_ids:
+                            continue
+                        if isinstance(obj, dict) and 'result' in obj:
+                            continue
+                        ctype = str(obj.get('type') or obj.get('command') or '').strip().lower()
+                        target = str(obj.get('target') or obj.get('route') or '').strip().lower()
+                        args = obj.get('args') or {}
+                        ok, msg = False, 'unsupported'
+                        try:
+                            if ctype in ('a','b','both','send'):
+                                text = str(args.get('text') or obj.get('text') or '').strip()
+                                if not text:
+                                    ok, msg = False, 'empty text'
+                                else:
+                                    if ctype == 'a' or target in ('a','peera','peer_a'):
+                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                    elif ctype == 'b' or target in ('b','peerb','peer_b'):
+                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                    else:
+                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                    ok, msg = True, 'sent'
+                            elif ctype in ('pause','resume'):
+                                deliver_paused = (ctype == 'pause')
+                                write_status(deliver_paused)
+                                ok, msg = True, f"handoff {'paused' if deliver_paused else 'resumed'}"
+                            elif ctype in ('sys-refresh','sys_refresh','sysrefresh'):
+                                ok, msg = _inject_full_system()
+                            elif ctype in ('clear','reset'):
+                                ok, msg = True, 'clear acknowledged (noop)'
+                            elif ctype in ('inbox','inbox_policy','startup_inbox_policy'):
+                                try:
+                                    policy = str((args.get('policy') or obj.get('policy') or 'resume')).strip().lower()
+                                    def _apply_policy(label: str) -> int:
+                                        try:
+                                            inbox = _inbox_dir(home, label)
+                                            proc = _processed_dir(home, label)
+                                            files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
+                                        except Exception:
+                                            files = []
+                                        if not files:
+                                            return 0
+                                        if policy in ('archive','discard'):
+                                            moved = 0
+                                            for f in files:
+                                                try:
+                                                    proc.mkdir(parents=True, exist_ok=True)
+                                                    f.rename(proc/f.name); moved += 1
+                                                except Exception:
+                                                    pass
+                                            try:
+                                                allp = sorted(proc.iterdir(), key=lambda p: p.name)
+                                                if len(allp) > PROCESSED_RETENTION:
+                                                    for ff in allp[:len(allp)-PROCESSED_RETENTION]:
+                                                        try:
+                                                            ff.unlink()
+                                                        except Exception:
+                                                            pass
+                                            except Exception:
+                                                pass
+                                            log_ledger(home, {"from":"system","kind":"startup-inbox-discard" if policy=='discard' else 'startup-inbox-archive',"peer":label,"moved":moved})
+                                            return moved
+                                        log_ledger(home, {"from":"system","kind":"startup-inbox-resume","peer":label})
+                                        return len(files)
+                                    a = _apply_policy('PeerA'); b = _apply_policy('PeerB')
+                                    ok, msg = True, f"inbox policy {policy}: PeerA={a} PeerB={b}"
+                                except Exception as e:
+                                    ok, msg = False, f"inbox_policy failed: {e}"
+                            elif ctype in ('launch','launch_peers'):
+                                try:
+                                    who = str((args.get('who') or 'both')).lower()
+                                    try:
+                                        resolved = load_profiles(home)
+                                    except Exception:
+                                        pass
+                                    def _first_bin(cmd: str) -> str:
+                                        try:
+                                            import shlex
+                                            return shlex.split(cmd or '')[0] if cmd else ''
+                                        except Exception:
+                                            return (cmd or '').split(' ')[0]
+                                    def _bin_available(cmd: str) -> bool:
+                                        prog = _first_bin(cmd)
+                                        if not prog:
+                                            return False
+                                        import shutil
+                                        return shutil.which(prog) is not None
+                                    pa_cmd2 = (resolved.get('peerA') or {}).get('command') or ''
+                                    pb_cmd2 = (resolved.get('peerB') or {}).get('command') or ''
+                                    pa_eff2 = os.environ.get('CLAUDE_I_CMD') or pa_cmd2
+                                    pb_eff2 = os.environ.get('CODEX_I_CMD') or pb_cmd2
+                                    def _normalize_absbin(cmd: str) -> str:
+                                        try:
+                                            prog = _first_bin(cmd)
+                                            if not prog:
+                                                return cmd
+                                            import shutil, shlex
+                                            ab = shutil.which(prog)
+                                            if not ab:
+                                                return cmd
+                                            parts = shlex.split(cmd)
+                                            parts[0] = ab
+                                            return " ".join(shlex.quote(x) for x in parts)
+                                        except Exception:
+                                            return cmd
+                                    pa_eff2 = _normalize_absbin(pa_eff2)
+                                    pb_eff2 = _normalize_absbin(pb_eff2)
+                                    a_ok = _bin_available(pa_eff2) if who in ('a','both') else True
+                                    b_ok = _bin_available(pb_eff2) if who in ('b','both') else True
+                                    try:
+                                        (state/"last_launch.json").write_text(json.dumps({
+                                            "who": who,
+                                            "peerA": {"cmd": pa_cmd2, "eff": pa_eff2, "ok": a_ok},
+                                            "peerB": {"cmd": pb_cmd2, "eff": pb_eff2, "ok": b_ok},
+                                            "paneA": paneA, "paneB": paneB,
+                                        }, ensure_ascii=False, indent=2), encoding='utf-8')
+                                    except Exception:
+                                        pass
+                                    if (who in ('a','both')) and (not a_ok):
+                                        ok = False
+                                        msg = f"PeerA CLI unavailable: {_first_bin(pa_eff2) or '(empty)'}"
+                                        try:
+                                            outbox_write(home, {"type":"to_user","peer":"System","text":msg})
+                                        except Exception:
+                                            pass
+                                    if (who in ('b','both')) and (not b_ok):
+                                        ok = False
+                                        msg = f"PeerB CLI unavailable: {_first_bin(pb_eff2) or '(empty)'}"
+                                        try:
+                                            outbox_write(home, {"type":"to_user","peer":"System","text":msg})
+                                        except Exception:
+                                            pass
+                                    pa_cwd2 = (resolved.get('peerA') or {}).get('cwd') or '.'
+                                    pb_cwd2 = (resolved.get('peerB') or {}).get('cwd') or '.'
+                                    def _wrap_cwd2(cmd: str, cwd: str | None) -> str:
+                                        if cwd and cwd not in ('.',''):
+                                            return f"cd {cwd} && {cmd}"
+                                        return cmd
+                                    launched = []
+                                    if who in ('a','both') and pa_eff2 and _bin_available(pa_eff2):
+                                        print(f"[LAUNCH] PeerA → {pa_eff2} (cwd={pa_cwd2}) pane={paneA}")
+                                        tmux_start_interactive(paneA, _wrap_cwd2(pa_eff2, pa_cwd2))
+                                        launched.append('PeerA')
+                                    elif who in ('a','both'):
+                                        print(f"[LAUNCH] PeerA not started (CLI unavailable): {_first_bin(pa_eff2) or '(empty)'}")
+                                    if who in ('b','both') and pb_eff2 and _bin_available(pb_eff2):
+                                        print(f"[LAUNCH] PeerB → {pb_eff2} (cwd={pb_cwd2}) pane={paneB}")
+                                        tmux_start_interactive(paneB, _wrap_cwd2(pb_eff2, pb_cwd2))
+                                        launched.append('PeerB')
+                                    elif who in ('b','both'):
+                                        print(f"[LAUNCH] PeerB not started (CLI unavailable): {_first_bin(pb_eff2) or '(empty)'}")
+                                    ok = True
+                                    msg = f"launched {' & '.join(launched) if launched else 'none'}"
+                                    if not launched:
+                                        try:
+                                            outbox_write(home, {"type":"to_user","peer":"System","text":"Launch requested but no CLI available for selected actors (check agents.yaml or PATH)."})
+                                        except Exception:
+                                            pass
+                                except Exception as e:
+                                    ok, msg = False, f"launch failed: {e}"
+                            elif ctype in ('quit','exit'):
+                                try:
+                                    tmux("kill-session","-t",session)
+                                    ok, msg = True, 'session terminated'
+                                except Exception as e:
+                                    ok, msg = False, f"kill-session failed: {e}"
+                                shutdown_requested = True
+                            elif ctype in ('foreman','fm'):
+                                sub = str(args.get('action') or obj.get('action') or '').strip().lower() or 'status'
+                                data = {'request_id': cmd_id or str(int(time.time())), 'command': 'foreman', 'source': 'tui', 'args': {'action': sub}}
+                                tmp = state/"im_commands"/f"tui-{int(time.time()*1000)}.json"
+                                try:
+                                    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+                                    _process_im_commands()
+                                    ok, msg = True, f"foreman {sub} requested"
+                                except Exception as e:
+                                    ok, msg = False, f"foreman {sub} failed: {e}"
+                            elif ctype in ('c','aux_cli','aux'):
+                                prompt_text = str(args.get('prompt') or obj.get('prompt') or '').strip()
+                                if not prompt_text:
+                                    ok, msg = False, 'empty prompt'
+                                else:
+                                    rc, out, err, cmd_line = _run_aux_cli(prompt_text)
+                                    ok = (rc == 0)
+                                    summary = [f"[Aux CLI] exit={rc}", f"command: {cmd_line}"]
+                                    if out: summary.append("stdout:\n" + out.strip())
+                                    if err: summary.append("stderr:\n" + err.strip())
+                                    msg = "\n".join(summary)
+                            elif ctype in ('focus',):
+                                try:
+                                    hint = str((args.get('hint') or obj.get('hint') or '')).strip()
+                                    ctx['request_por_refresh']('focus-tui', hint=hint or None, force=True)
+                                    ok, msg = True, 'focus requested'
+                                except Exception as e:
+                                    ok, msg = False, f'focus failed: {e}'
+                            elif ctype in ('roles-set-actor','roles_set_actor'):
+                                try:
+                                    role = str(args.get('role') or obj.get('role') or '').strip()
+                                    actor = str(args.get('actor') or obj.get('actor') or '').strip()
+                                    cp = read_yaml(cli_profiles_path)
+                                    roles = dict(cp.get('roles') or {})
+                                    roles.setdefault('peerA', {})
+                                    roles.setdefault('peerB', {})
+                                    roles.setdefault('aux', {})
+                                    if role in roles:
+                                        roles[role]['actor'] = actor
+                                        cp['roles'] = roles
+                                        _write_yaml(cli_profiles_path, cp)
+                                        try:
+                                            resolved = load_profiles(home)
+                                        except Exception:
+                                            pass
+                                        write_status(deliver_paused)
+                                        ok, msg = True, f"role {role} set to {actor}"
+                                    else:
+                                        ok, msg = False, f"unknown role: {role}"
+                                except Exception as e:
+                                    ok, msg = False, f'roles-set-actor failed: {e}'
+                            elif ctype in ('token',):
+                                try:
+                                    action = str(args.get('action') or obj.get('action') or '').strip().lower()
+                                    cfgp = settings/"telegram.yaml"
+                                    cfg = read_yaml(cfgp)
+                                    if action == 'set':
+                                        val = str(args.get('value') or obj.get('value') or '').strip()
+                                        if not val:
+                                            ok, msg = False, 'token value required'
+                                        else:
+                                            cfg['token'] = val
+                                            _write_yaml(cfgp, cfg)
+                                            ok, msg = True, 'token set'
+                                    elif action == 'unset':
+                                        if 'token' in cfg:
+                                            cfg.pop('token', None)
+                                            _write_yaml(cfgp, cfg)
+                                        ok, msg = True, 'token unset'
+                                    else:
+                                        ok, msg = False, 'unsupported token action'
+                                except Exception as e:
+                                    ok, msg = False, f'token failed: {e}'
+                            elif ctype in ('review',):
+                                try:
+                                    ctx['send_aux_reminder']('manual-review')
+                                    ok, msg = True, 'review requested'
+                                except Exception as e:
+                                    ok, msg = False, f'review failed: {e}'
+                            elif ctype in ('echo',):
+                                try:
+                                    val = str(args.get('value') or obj.get('value') or '').lower()
+                                    if val == 'on':
+                                        globals().update(CONSOLE_ECHO=True)
+                                    elif val == 'off':
+                                        globals().update(CONSOLE_ECHO=False)
+                                    ok, msg = True, f"echo={'on' if globals().get('CONSOLE_ECHO', False) else 'off'}"
+                                except Exception as e:
+                                    ok, msg = False, f'echo failed: {e}'
+                            elif ctype in ('passthru','pass','raw'):
+                                try:
+                                    peer = str(args.get('peer') or obj.get('peer') or '').upper()
+                                    cmdline = str(args.get('cmd') or obj.get('cmd') or '').strip()
+                                    if not cmdline:
+                                        ok, msg = False, 'empty passthru'
+                                    else:
+                                        ctx['_send_raw_to_cli'](home, 'PeerA' if peer=='A' else 'PeerB', cmdline, paneA, paneB)
+                                        ok, msg = True, 'sent'
+                                except Exception as e:
+                                    ok, msg = False, f'passthru failed: {e}'
+                            else:
+                                ok, msg = False, 'unsupported'
+                        except Exception as e:
+                            ok, msg = False, f"error: {e}"
+                        if cmd_id:
+                            processed_command_ids.add(cmd_id)
+                        append_command_result(commands_path, cmd_id or '-', ok, msg)
+            except Exception:
+                pass
+        try:
+            scan["last_pos_map"] = commands_last_pos_map
+            (state/"commands.scan.json").write_text(json.dumps(scan, ensure_ascii=False, indent=2), encoding='utf-8')
+        except Exception:
+            pass
+        # propagate updated values back to ctx
+        ctx['deliver_paused_box']['v'] = deliver_paused
+        ctx['shutdown_requested_box']['v'] = shutdown_requested
+        ctx['resolved'] = resolved
+        ctx['commands_last_pos_map'] = commands_last_pos_map
+        return {
+            'deliver_paused': deliver_paused,
+            'shutdown_requested': shutdown_requested,
+            'resolved': resolved,
+            'commands_last_pos_map': commands_last_pos_map,
+        }
+
+    return type('CQAPI', (), {'consume': consume})
+

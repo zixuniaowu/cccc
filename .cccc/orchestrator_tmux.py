@@ -5,7 +5,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER>, and runs optional lint/tests before committing.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
-import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, random, threading, signal, atexit
+import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, threading, signal, atexit
 from datetime import datetime, timedelta
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
@@ -16,11 +16,88 @@ from glob import glob
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
 from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
+try:  # package import (python -m .cccc.orchestrator_tmux)
+    from .orchestrator.tmux_layout import (
+        tmux, tmux_session_exists, tmux_new_session, tmux_respawn_pane,
+        tmux_build_tui_layout, tmux_paste, tmux_type, tmux_capture,
+        tmux_start_interactive, wait_for_ready,
+    )
+    from .orchestrator.logging_util import log_ledger, outbox_write
+    from .orchestrator.console_util import sanitize_console, read_console_line, read_console_line_timeout
+    from .orchestrator.handoff_helpers import (
+        _plain_text_without_tags_and_mid,
+        _peer_folder_name,
+        _inbox_dir,
+        _processed_dir,
+        _format_local_ts,
+        _compose_nudge,
+        _compose_detailed_nudge,
+        _safe_headline,
+        _write_inbox_message,
+        _append_suffix_inside,
+    )
+    from .orchestrator import handoff_helpers as HH
+    from .orchestrator import json_util as JU
+    from .orchestrator.nudge import make as make_nudge
+    from .orchestrator.console_commands import make as make_console_commands
+    from .orchestrator.mailbox_pipeline import make as make_mailbox_pipeline
+    from .orchestrator.foreman_scheduler import make as make_foreman_scheduler
+    from .orchestrator.foreman import make as make_foreman
+    from .orchestrator.launcher import make as make_launcher
+    from .orchestrator.keepalive import make as make_keepalive
+except ImportError:  # script import (python .cccc/orchestrator_tmux.py)
+    from orchestrator.tmux_layout import (
+        tmux, tmux_session_exists, tmux_new_session, tmux_respawn_pane,
+        tmux_build_tui_layout, tmux_paste, tmux_type, tmux_capture,
+        tmux_start_interactive, wait_for_ready,
+    )
+    from orchestrator.logging_util import log_ledger, outbox_write
+    from orchestrator.console_util import sanitize_console, read_console_line, read_console_line_timeout
+    from orchestrator.handoff_helpers import (
+        _plain_text_without_tags_and_mid,
+        _peer_folder_name,
+        _inbox_dir,
+        _processed_dir,
+        _format_local_ts,
+        _compose_nudge,
+        _compose_detailed_nudge,
+        _safe_headline,
+        _write_inbox_message,
+        _append_suffix_inside,
+    )
+    import orchestrator.handoff_helpers as HH
+    import orchestrator.json_util as JU
+    from orchestrator.nudge import make as make_nudge
+    from orchestrator.console_commands import make as make_console_commands
+    from orchestrator.mailbox_pipeline import make as make_mailbox_pipeline
+    from orchestrator.foreman_scheduler import make as make_foreman_scheduler
+    from orchestrator.foreman import make as make_foreman
+    from orchestrator.launcher import make as make_launcher
+    from orchestrator.keepalive import make as make_keepalive
 from common.config import load_profiles, ensure_env_vars
 from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox, compose_sentinel, sha256_text, is_sentinel_text
 from por_manager import ensure_por, por_path, por_status_snapshot, read_por_text
 
+
+# Rebind to external helpers to prefer module implementations
+_plain_text_without_tags_and_mid = HH._plain_text_without_tags_and_mid
+_peer_folder_name = HH._peer_folder_name
+_inbox_dir = HH._inbox_dir
+_processed_dir = HH._processed_dir
+_format_local_ts = HH._format_local_ts
+_compose_nudge = HH._compose_nudge
+_compose_detailed_nudge = HH._compose_detailed_nudge
+_safe_headline = HH._safe_headline
+_write_inbox_message = HH._write_inbox_message
+
+_read_json_safe = JU._read_json_safe
+_write_json_safe = JU._write_json_safe
+
 ANSI_RE = re.compile(r"\x1b\[.*?m|\x1b\[?[\d;]*[A-Za-z]")  # strip ANSI color/control sequences
+try:
+    from .orchestrator.policy_filter import is_high_signal as _pf_is_high_signal, is_low_signal as _pf_is_low_signal, should_forward as _pf_should_forward
+except ImportError:
+    from orchestrator.policy_filter import is_high_signal as _pf_is_high_signal, is_low_signal as _pf_is_low_signal, should_forward as _pf_should_forward
 # Console echo of AI output blocks. Default OFF to avoid disrupting typing.
 CONSOLE_ECHO = False
 # legacy patch/diff handling removed
@@ -30,6 +107,7 @@ INPUT_END_MARK = "[CCCC_INPUT_END]"
 # Aux helper state
 # Aux on/off is derived from presence of roles.aux.actor; no explicit mode set
 AUX_WORK_ROOT_NAME = "aux_sessions"
+AUX_BINDING_BOX = {"template": "", "cwd": "."}
 
 # ---------- REV state helpers (lightweight) ----------
 INSIGHT_BLOCK_RE = re.compile(r"```\s*insight\s*([\s\S]*?)```", re.I)
@@ -115,52 +193,22 @@ def _attach_orchestrator_logger(state_dir: Path) -> Optional[Path]:
 MB_PULL_ENABLED = True
 INBOX_DIRNAME = "inbox"
 PROCESSED_RETENTION = 200
-NUDGE_RESEND_SECONDS = 90
-NUDGE_JITTER_PCT = 0.0
 SOFT_ACK_ON_MAILBOX_ACTIVITY = False
 INBOX_STARTUP_POLICY = "resume"  # resume | discard | archive
 INBOX_STARTUP_PROMPT = False
-# Progress-aware NUDGE coalescing (single-flight)
-NUDGE_DEBOUNCE_MS = 1500.0
-NUDGE_PROGRESS_TIMEOUT_S = 45.0
-NUDGE_KEEPALIVE = True
-NUDGE_BACKOFF_BASE_MS = 1000.0
-NUDGE_BACKOFF_MAX_MS = 60000.0
-NUDGE_MAX_RETRIES = 1.0  # allow at most one resend (0 = never resend)
+AUX_BINDING_BOX = {"template": "", "cwd": "."}
+
+
+def _inbox_dir(home: Path, receiver_label: str) -> Path:
+    return home/"mailbox"/_peer_folder_name(receiver_label)/INBOX_DIRNAME
+
+
+def _processed_dir(home: Path, receiver_label: str) -> Path:
+    return home/"mailbox"/_peer_folder_name(receiver_label)/"processed"
 # Debug: reduce ledger noise for outbox enqueue diagnostics
 OUTBOX_DEBUG = False
 # Debug: keepalive skip reasons are high-frequency; gate behind this flag
 KEEPALIVE_DEBUG = False
-
-def _append_suffix_inside(payload: str, suffix: str) -> str:
-    """Append a short suffix to the end of the main body inside the outermost tag, if present.
-    If no XML-like wrapper is present, append to the end.
-    """
-    if not suffix or not payload:
-        return payload
-    try:
-        idx = payload.rfind("</")
-        if idx >= 0:
-            head = payload[:idx].rstrip()
-            tail = payload[idx:]
-            sep = "" if head.endswith(suffix) else (" " if not head.endswith(" ") else "")
-            return head + sep + suffix + "\n" + tail
-        # no wrapper; append at end
-        sep = "" if payload.rstrip().endswith(suffix) else (" " if not payload.rstrip().endswith(" ") else "")
-        return payload.rstrip() + sep + suffix
-    except Exception:
-        return payload
-
-def _plain_text_without_tags_and_mid(s: str) -> str:
-    try:
-        # Remove MID markers and XML-like tags so we can judge real content
-        s2 = re.sub(r"\[\s*MID\s*:[^\]]+\]", " ", s, flags=re.I)
-        s2 = re.sub(r"<[^>]+>", " ", s2)
-        # Collapse whitespace
-        s2 = re.sub(r"\s+", " ", s2)
-        return s2.strip()
-    except Exception:
-        return s
 
 def _send_raw_to_cli(home: Path, receiver_label: str, text: str,
                      left_pane: str, right_pane: str):
@@ -205,472 +253,6 @@ def _build_exec_args(template: str, prompt: str) -> List[str]:
     argv = shlex.split(s)
     return [prompt if a == PLACE else a for a in argv]
 
-def _peer_folder_name(label: str) -> str:
-    return "peerA" if label == "PeerA" else "peerB"
-
-def _inbox_dir(home: Path, receiver_label: str) -> Path:
-    return home/"mailbox"/_peer_folder_name(receiver_label)/INBOX_DIRNAME
-
-def _processed_dir(home: Path, receiver_label: str) -> Path:
-    return home/"mailbox"/_peer_folder_name(receiver_label)/"processed"
-
-def _short_sha(text: str) -> str:
-    try:
-        return hashlib.sha1(text.encode('utf-8', errors='ignore')).hexdigest()[:8]
-    except Exception:
-        return f"{int(time.time())}"
-
-def _next_seq_for_inbox(inbox: Path, processed: Path) -> str:
-    def _max_seq_in(d: Path) -> int:
-        mx = 0
-        try:
-            for f in d.iterdir():
-                name = f.name
-                if len(name) >= 6 and name[:6].isdigit():
-                    mx = max(mx, int(name[:6]))
-        except Exception:
-            pass
-        return mx
-    current = max(_max_seq_in(inbox), _max_seq_in(processed))
-    return f"{current+1:06d}"
-
-def _format_local_ts() -> str:
-    dt = datetime.now().astimezone()
-    tzname = dt.tzname() or ""
-    off = dt.utcoffset() or timedelta(0)
-    total = int(off.total_seconds())
-    sign = '+' if total >= 0 else '-'
-    total = abs(total)
-    hh = total // 3600
-    mm = (total % 3600) // 60
-    offset_str = f"UTC{sign}{hh:02d}:{mm:02d}"
-    main = dt.strftime("%Y-%m-%d %H:%M:%S")
-    return f"{main} {tzname} ({offset_str})" if tzname else f"{main} ({offset_str})"
-
-def _compose_nudge(
-    inbox_path: str,
-    *,
-    ts: Optional[str] = None,
-    new_arrival: bool = False,
-    backlog_gt_zero: Optional[bool] = None,
-    seq: Optional[str] = None,
-    preview: Optional[str] = None,
-    suffix: Optional[str] = None,
-) -> str:
-    """Unified NUDGE composer for detailed/periodic/keepalive cases.
-    - new_arrival=True → detailed nudge with trigger (and optional preview)
-    - backlog_gt_zero=True → generic backlog reminder
-    - backlog_gt_zero=False → generic keepalive when no backlog
-    - backlog_gt_zero=None → omit backlog wording (rare)
-    Always includes [NUDGE] [TS: ...] and Inbox path.
-    """
-    from datetime import datetime
-    t = ts or _format_local_ts()
-    # Base left-hand prefix
-    parts: List[str] = [f"[NUDGE] [TS: {t}]"]
-    # Middle intent
-    if new_arrival:
-        middle = "New message received"
-    else:
-        if backlog_gt_zero is True:
-            middle = "Unprocessed message remains"
-        elif backlog_gt_zero is False:
-            middle = None  # keepalive minimal
-        else:
-            middle = None
-    if middle:
-        parts.append(middle)
-    # Trigger/preview for arrivals
-    trailing_bits: List[str] = []
-    if new_arrival:
-        if seq:
-            trailing_bits.append(f"trigger={seq}")
-        if preview:
-            # ensure single quotes inside preview won't break the one-liner
-            pv = preview.replace("'", "\'")
-            trailing_bits.append(f"preview='{pv}'")
-    if trailing_bits:
-        parts.append(" — ".join([" ".join([])]) )
-    # Inbox path and action
-    # Note: we always show Inbox path
-    action = None
-    if new_arrival or backlog_gt_zero is True:
-        action = "open oldest first, process oldest→newest. Move processed files to processed/."
-    else:
-        action = "continue your work; open oldest→newest."
-    # Assemble
-    # [NUDGE] [TS: ...] <middle?> — trigger=... preview='...' — Inbox: <path> — <action>
-    msg_core = " ".join([p for p in parts if p])
-    trig_prev = "" if not trailing_bits else (" ".join(trailing_bits))
-    mid_section = f" — {trig_prev}" if trig_prev else ""
-    msg = f"{msg_core}{mid_section} — Inbox: {inbox_path} — {action}"
-    if suffix and suffix.strip():
-        msg = msg + " " + suffix.strip()
-    return msg
-
-def _compose_detailed_nudge(seq: str, preview: str, inbox_path: str, *, suffix: str = "") -> str:
-    """Backward-compatible wrapper for detailed (new-arrival) NUDGE."""
-    return _compose_nudge(inbox_path, ts=_format_local_ts(), new_arrival=True, seq=seq, preview=preview or None, suffix=suffix)
-
-def _safe_headline(path: Path, *, max_bytes: int = 4096, max_chars: int = 32) -> str:
-    """Extract a short, printable first-line preview from a mailbox file.
-    - Reads up to max_bytes, decodes as UTF-8 with replacement.
-    - Skips wrapper/fence lines (e.g., <TO_*> or ```... ).
-    - Strips control characters and collapses whitespace.
-    - Returns at most max_chars; appends an ellipsis when truncated.
-    """
-    try:
-        with open(path, "rb") as f:
-            raw = f.read(max(512, int(max_bytes)))
-        text = raw.decode("utf-8", errors="replace")
-        lines = [ln.strip() for ln in text.splitlines()]
-        # helper: skip wrappers/fences/empty
-        def is_wrapped(ln: str) -> bool:
-            if not ln:
-                return True
-            if ln.startswith("<") and ln.endswith(">"):
-                return True
-            if ln.startswith("```"):
-                return True
-            # Skip runtime markers injected at file head
-            if ln.startswith("[MID:") or ln.startswith("[TS:"):
-                return True
-            return False
-        head = ""
-        for ln in lines:
-            if is_wrapped(ln):
-                continue
-            head = ln
-            if head:
-                break
-        if not head:
-            return "[unreadable-or-binary]"
-        # remove C0 controls except tab/space
-        head = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", head)
-        # zero-width characters
-        head = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", head)
-        # collapse whitespace
-        head = re.sub(r"\s+", " ", head).strip()
-        if len(head) > max_chars:
-            return head[:max_chars].rstrip() + " …"
-        return head
-    except Exception:
-        return "[unreadable-or-binary]"
-
-def _inject_ts_after_mid(payload: str) -> str:
-    try:
-        if "[TS:" in payload:
-            return payload
-        lines = payload.splitlines()
-        for i, ln in enumerate(lines):
-            if ln.strip().startswith("[MID:"):
-                ts_line = f"[TS: {_format_local_ts()}]"
-                lines.insert(i+1, ts_line)
-                return "\n".join(lines)
-        return f"[TS: {_format_local_ts()}]\n" + payload
-    except Exception:
-        return payload
-
-def _write_inbox_message(home: Path, receiver_label: str, payload: str, mid: str) -> Tuple[str, Path]:
-    inbox = _inbox_dir(home, receiver_label)
-    processed = _processed_dir(home, receiver_label)
-    state = home/"state"
-    state.mkdir(parents=True, exist_ok=True)
-    inbox.mkdir(parents=True, exist_ok=True); processed.mkdir(parents=True, exist_ok=True)
-
-    # Per-peer lock + counter file to avoid duplicate sequence numbers under concurrency
-    peer = _peer_folder_name(receiver_label)
-    lock_path = state/f"inbox-seq-{peer}.lock"
-    counter_path = state/f"inbox-seq-{peer}.txt"
-
-    def _compute_next_seq() -> int:
-        # If a counter exists, trust it; else derive from current max of inbox+processed
-        try:
-            val = int(counter_path.read_text(encoding="utf-8").strip())
-            return val + 1
-        except Exception:
-            pass
-        # Fallback to directory scan
-        def _max_seq_in(d: Path) -> int:
-            mx = 0
-            try:
-                for f in d.iterdir():
-                    name = f.name
-                    if len(name) >= 6 and name[:6].isdigit():
-                        mx = max(mx, int(name[:6]))
-            except Exception:
-                pass
-            return mx
-        current = max(_max_seq_in(inbox), _max_seq_in(processed))
-        return current + 1
-
-    # Acquire exclusive lock if available
-    if fcntl is not None:
-        with open(lock_path, "w") as lf:  # lock file handle lifetime holds the lock
-            try:
-                fcntl.flock(lf, fcntl.LOCK_EX)
-            except Exception:
-                pass
-            seq_int = _compute_next_seq()
-            seq = f"{seq_int:06d}"
-            fpath = inbox/f"{seq}.{mid}.txt"
-            try:
-                fpath.write_text(_inject_ts_after_mid(payload), encoding='utf-8')
-            except Exception as e:
-                raise RuntimeError(f"write inbox failed: {e}")
-            # Persist the last-used sequence for the next writer
-            try:
-                with open(counter_path, "w", encoding="utf-8") as cf:
-                    cf.write(str(seq_int))
-                    try:
-                        cf.flush(); os.fsync(cf.fileno())
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            try:
-                fcntl.flock(lf, fcntl.LOCK_UN)
-            except Exception:
-                pass
-    else:
-        # Fallback (non-POSIX): best-effort using a temp marker directory as a mutex
-        lock_dir = state/f"inbox-seq-{peer}.lckdir"
-        acquired = False
-        for _ in range(50):
-            try:
-                lock_dir.mkdir(exist_ok=False)
-                acquired = True
-                break
-            except Exception:
-                time.sleep(0.01)
-        try:
-            seq_int = _compute_next_seq()
-            seq = f"{seq_int:06d}"
-            fpath = inbox/f"{seq}.{mid}.txt"
-            try:
-                fpath.write_text(_inject_ts_after_mid(payload), encoding='utf-8')
-            except Exception as e:
-                raise RuntimeError(f"write inbox failed: {e}")
-            try:
-                counter_path.write_text(str(seq_int), encoding='utf-8')
-            except Exception:
-                pass
-        finally:
-            if acquired:
-                try:
-                    lock_dir.rmdir()
-                except Exception:
-                    pass
-    return seq, fpath
-
-# ---------- POR auto‑diff helper ----------
-# POR.new.md auto-diff has been removed by design. Keep no-op placeholders if needed in the future.
-    return seq, fpath
-
-def _nudge_state_path(home: Path, receiver_label: str) -> Path:
-    peer = _peer_folder_name(receiver_label)
-    return home/"state"/f"nudge.{peer}.json"
-
-def _load_nudge_state(home: Path, receiver_label: str) -> Dict[str, Any]:
-    p = _nudge_state_path(home, receiver_label)
-    try:
-        st = json.loads(p.read_text(encoding='utf-8'))
-        return st if isinstance(st, dict) else {}
-    except Exception:
-        return {}
-
-def _save_nudge_state(home: Path, receiver_label: str, st: Dict[str, Any]):
-    p = _nudge_state_path(home, receiver_label); p.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        p.write_text(json.dumps(st, ensure_ascii=False, indent=2), encoding='utf-8')
-    except Exception:
-        pass
-
-def _nudge_mark_progress(home: Path, receiver_label: str, *, seq: Optional[str] = None):
-    st = _load_nudge_state(home, receiver_label)
-    st['inflight'] = False
-    st['retries'] = 0
-    st['last_progress_ts'] = time.time()
-    if seq:
-        st['last_ack_seq'] = str(seq)
-    _save_nudge_state(home, receiver_label, st)
-
-def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
-                     profile: Dict[str,Any], *, force: bool = False, suffix: str = "",
-                     custom_text: Optional[str] = None) -> bool:
-    """Progress-aware, single-flight NUDGE sender. Returns True if a NUDGE was sent.
-    No-miss guarantee: if no progress, keepalive resends with capped backoff.
-    """
-    st = _load_nudge_state(home, receiver_label)
-    now = time.time()
-    inflight = bool(st.get('inflight', False))
-    last_sent = float(st.get('last_sent_ts') or 0.0)
-    last_prog = float(st.get('last_progress_ts') or 0.0)
-    retries = int(st.get('retries') or 0)
-    # Current inbox count for this receiver (used to reset retry window when backlog grows)
-    try:
-        inbox_files_now = [f for f in _inbox_dir(home, receiver_label).iterdir() if f.is_file()]
-        inbox_count_now = len(inbox_files_now)
-    except Exception:
-        inbox_files_now = []
-        inbox_count_now = 0
-    last_inbox_count = int(st.get('last_inbox_count') or 0)
-
-    # Hard cap on number of resends (do not spam tmux)
-    # If cap exceeded but backlog has grown since the last send, reset the window to allow one more nudge.
-    # Additionally, if backlog is stuck (no growth) yet no progress has been observed for a while,
-    # allow a stale resend after a minimum interval to avoid deadlock.
-    try:
-        if (not force) and inflight and (retries >= int(NUDGE_MAX_RETRIES)):
-            if inbox_count_now > last_inbox_count:
-                # Backlog increased → give another chance: reset inflight/retries
-                inflight = False
-                st['inflight'] = False
-                st['retries'] = 0
-            else:
-                # Skip quietly; avoid high-frequency disk writes on no-op
-                return False
-    except Exception:
-        pass
-
-    # Debounce shortly after progress (drop nudges within this window)
-    if (not force) and (now - last_prog) * 1000.0 < max(0.0, float(NUDGE_DEBOUNCE_MS)):
-        # Debounce window: skip without persisting to reduce disk churn
-        return False
-
-    if inflight and not force:
-        # If inflight but no progress for too long, allow a resend with backoff
-        if (now - last_prog) >= max(1.0, float(NUDGE_PROGRESS_TIMEOUT_S)):
-            # Exponential backoff; never more frequent than the legacy resend interval
-            interval = min(float(NUDGE_BACKOFF_MAX_MS), float(NUDGE_BACKOFF_BASE_MS) * (2 ** max(0, retries))) / 1000.0
-            min_legacy = max(1.0, float(NUDGE_RESEND_SECONDS))
-            interval = max(interval, min_legacy)
-            # Apply optional jitter to avoid synchronized reminders
-            try:
-                jpct = float(NUDGE_JITTER_PCT)
-                if jpct and jpct > 0.0:
-                    jig = 1.0 + random.uniform(-jpct, jpct)
-                    interval = max(1.0, interval * jig)
-            except Exception:
-                pass
-            if (now - last_sent) < interval:
-                # Backoff window not yet elapsed: skip quietly
-                return False
-            # send keepalive
-            st['retries'] = retries + 1
-        else:
-            # inflight and still within timeout → skip quietly
-            return False
-
-    # Build message (allow override text for immediate, stateful nudges)
-    if custom_text and custom_text.strip():
-        nmsg = custom_text.strip()
-    else:
-        # Default periodic nudge → generic backlog reminder
-        try:
-            inbox_path = _inbox_dir(home, receiver_label).as_posix()
-        except Exception:
-            inbox_path = ".cccc/mailbox/peerX/inbox"
-        nmsg = _compose_nudge(inbox_path, ts=_format_local_ts(), backlog_gt_zero=True, suffix=suffix)
-    paste_when_ready(pane, profile, nmsg, timeout=6.0, poke=False)
-    st['inflight'] = True
-    st['last_sent_ts'] = now
-    st['last_inbox_count'] = inbox_count_now
-    _save_nudge_state(home, receiver_label, st)
-    return True
-
-def _compose_nudge_suffix_for(peer_label: str,
-                              *, profileA: Dict[str,Any], profileB: Dict[str,Any], aux_mode: str,
-                              aux_invoke: str = "") -> str:
-    """Compose the trailing NUDGE suffix shown to the agent.
-    - Always include the role's configured nudge suffix (base).
-    - When Aux is ON and an invoke template is available, add exactly one
-      concise Aux line that embeds the raw invoke template (agent-facing):
-        "Aux is ON — delegate decoupled sub-tasks; just invoke: <template>; capture evidence and summarize outcome."
-      Note: {prompt} must remain literal in the template.
-    """
-    base = ((profileA.get('nudge_suffix') if peer_label == 'PeerA' else profileB.get('nudge_suffix')) or '').strip()
-    aux_line = ""
-    if aux_mode == "on" and str(aux_invoke or '').strip():
-        tpl = str(aux_invoke).replace('{prompt}', '{prompt}')
-        aux_line = f"Aux is ON — delegate decoupled sub-tasks; just invoke: {tpl}; capture evidence and summarize outcome."
-    combined = " ".join(filter(None, [aux_line, base]))
-    return combined.strip()
-
-def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
-                left_pane: str, right_pane: str,
-                profileA: Dict[str,Any], profileB: Dict[str,Any],
-                aux_mode: str = "off"):
-    # Resolve Aux invoke template on demand to avoid relying on outer scope variables
-    aux_invoke_tpl = ""
-    try:
-        from common.config import load_profiles as _lp  # late import; cheap read
-        aux_inv = ((_lp(home).get('aux') or {}).get('invoke_command') or '').strip()
-        aux_invoke_tpl = aux_inv
-    except Exception:
-        aux_invoke_tpl = ""
-    combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_invoke_tpl)
-    # Compose state-anchored one‑liner with trigger + preview
-    try:
-        inbox = _inbox_dir(home, receiver_label)
-        # Find the path of the triggering file by seq
-        trigger_file = None
-        for f in sorted(inbox.iterdir(), key=lambda p: p.name):
-            if f.name.startswith(str(seq)):
-                trigger_file = f; break
-        preview = _safe_headline(trigger_file) if trigger_file else "[unreadable-or-binary]"
-    except Exception:
-        preview = "[unreadable-or-binary]"
-    custom = _compose_detailed_nudge(seq, preview, inbox.as_posix() if 'inbox' in locals() else ".cccc/mailbox/peerX/inbox", suffix=combined_suffix)
-    # Always send via tmux injection (delivery_mode 'bridge' removed)
-    if receiver_label == 'PeerA':
-        _maybe_send_nudge(home, 'PeerA', left_pane, profileA, custom_text=custom, force=True)
-    else:
-        _maybe_send_nudge(home, 'PeerB', right_pane, profileB, custom_text=custom, force=True)
-
-def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
-    # token may be seq (000123) or mid; prefer seq match first
-    inbox = _inbox_dir(home, receiver_label)
-    proc = _processed_dir(home, receiver_label)
-    target: Optional[Path] = None
-    # Try matching by 6-digit seq; if token is digits use it, else search within token
-    seq_pat = None
-    if token.isdigit():
-        seq_pat = token
-    else:
-        import re as _re
-        m = _re.search(r"(\d{6,})", token)
-        if m:
-            seq_pat = m.group(1)[:6]
-    if seq_pat:
-        for f in sorted(inbox.iterdir()):
-            if f.name.startswith(seq_pat):
-                target = f
-                break
-    if target is None:
-        # try by mid
-        for f in sorted(inbox.iterdir()):
-            if f".{token}." in f.name:
-                target = f; break
-    if target is None:
-        return False
-    try:
-        proc.mkdir(parents=True, exist_ok=True)
-        target.rename(proc/target.name)
-    except Exception:
-        return False
-    # enforce retention
-    try:
-        files = sorted(proc.iterdir(), key=lambda p: p.name)
-        if len(files) > PROCESSED_RETENTION:
-            remove_n = len(files) - PROCESSED_RETENTION
-            for f in files[:remove_n]:
-                try: f.unlink()
-                except Exception: pass
-    except Exception:
-        pass
-    return True
-
 def ensure_bin(name: str):
     code,_,_ = run(f"command -v {shlex.quote(name)}")
     if code != 0:
@@ -710,479 +292,21 @@ def parse_section(text: str, tag: str) -> str:
 ## Legacy diff/patch helpers removed (extract_patches/normalize/inline detection)
 
 # ---------- handoff anti-loop ----------
-def _read_json_safe(p: Path) -> Dict[str,Any]:
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
-
-def _write_json_safe(p: Path, obj: Dict[str,Any]):
-    try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
-        pass
-
-def _normalize_signal_text(s: str) -> str:
-    s = s.lower()
-    s = re.sub(r"[\s]+", " ", s)
-    s = re.sub(r"[\[\]\(\)\{\}\-_=+~`'\".,;:!?|/\\]", "", s)
-    return s.strip()
-
-def _tokenize_for_similarity(s: str) -> List[str]:
-    """Lightweight tokenizer for redundancy detection: words >= 3 chars."""
-    s = s.lower()
-    # remove mid markers and xml tags
-    s = re.sub(r"\[mid:[^\]]+\]", " ", s, flags=re.I)
-    s = re.sub(r"<[^>]+>", " ", s)
-    # collapse spaces
-    s = re.sub(r"\s+", " ", s)
-    toks = re.findall(r"[a-z0-9_\-/]{3,}", s)
-    return toks[:5000]
-
-def _jaccard(a: List[str], b: List[str]) -> float:
-    if not a or not b:
-        return 0.0
-    sa, sb = set(a), set(b)
-    inter = len(sa & sb)
-    union = len(sa | sb) or 1
-    return inter / union
-
-def _word_count(s: str) -> int:
-    return len([w for w in re.split(r"\s+", s.strip()) if w])
-
-def is_high_signal(text: str, policies: Dict[str,Any]) -> bool:
-    cfg = (policies.get("handoff_filter") or {}) if isinstance(policies.get("handoff_filter"), dict) else {}
-    t = text.strip()
-    if not t:
-        return False
-    # obvious high-signal: explicit sections, substantial content, questions
-    boosts_k = [k.lower() for k in (cfg.get("boost_keywords_any") or [])]
-    boosts_r = cfg.get("boost_regexes") or []
-    tl = t.lower()
-    if any(k in tl for k in boosts_k):
-        return True
-    if any(re.search(rx, t, re.I) for rx in boosts_r):
-        return True
-    # questions or long content can be high-signal
-    if '?' in t:
-        return True
-    if len(t) >= max(120, int(cfg.get("min_chars", 40)) * 3):
-        return True
-    if _word_count(t) >= max(25, int(cfg.get("min_words", 6)) * 3):
-        return True
-    return False
-
-def is_low_signal(text: str, policies: Dict[str,Any]) -> bool:
-    cfg = (policies.get("handoff_filter") or {}) if isinstance(policies.get("handoff_filter"), dict) else {}
-    if not cfg.get("enabled", True):
-        return False
-    t = text.strip()
-    if not t:
-        return True
-    # If high-signal, definitely not low-signal
-    if is_high_signal(t, policies):
-        return False
-    min_chars = int(cfg.get("min_chars", 40))
-    min_words = int(cfg.get("min_words", 6))
-    is_short = len(t) < min_chars and _word_count(t) < min_words
-    if not is_short:
-        # not high-signal but also not short → don't flag as low-signal
-        return False
-    # If short, drop only when matches drop_regex and lacks any of the require_keywords
-    drops = cfg.get("drop_regexes") or []
-    drop_hit = any(re.search(rx, t, re.I) for rx in drops)
-    if not drop_hit:
-        return False
-    req_k = [k.lower() for k in (cfg.get("require_keywords_any") or [])]
-    if req_k:
-        tl = t.lower()
-        if any(k in tl for k in req_k):
-            return False
-    # short + drop pattern + no required keywords → low-signal
-    return True
-
-def should_forward(payload: str, sender: str, receiver: str, policies: Dict[str,Any], state_dir: Path, override_enabled: Optional[bool]=None) -> bool:
-    cfg = (policies.get("handoff_filter") or {}) if isinstance(policies.get("handoff_filter"), dict) else {}
-    enabled = bool(cfg.get("enabled", True)) if override_enabled is None else bool(override_enabled)
-    if not enabled:
-        return True
-    # low signal filter
-    if is_low_signal(payload, policies):
-        return False
-    # cooldown
-    key = f"{sender}->{receiver}"
-    guard_path = state_dir/"handoff_guard.json"
-    guard = _read_json_safe(guard_path)
-    now = time.time()
-    last = (guard.get(key) or {}).get("last_ts", 0)
-    cooldown = float(cfg.get("cooldown_seconds", 15))
-    bypass_cool = bool(cfg.get("bypass_cooldown_when_high_signal", True))
-    if now - last < cooldown:
-        if bypass_cool and is_high_signal(payload, policies):
-            pass
-        else:
-            return False
-    # dedup short, low-signal repeats within a short window
-    dups_path = state_dir/"handoff_dups.json"
-    dups = _read_json_safe(dups_path)
-    dedup_window = float(cfg.get("dedup_short_seconds", 30.0))
-    dedup_keep = int(cfg.get("dedup_max_keep", 10))
-    norm = _normalize_signal_text(payload)
-    h = hashlib.sha1(norm.encode("utf-8", errors="ignore")).hexdigest()
-    items = (dups.get(key) or [])
-    items = [it for it in items if now - float(it.get("ts", 0)) <= dedup_window]
-    min_chars = int(cfg.get("min_chars", 40)); min_words = int(cfg.get("min_words", 6))
-    is_short = len(payload.strip()) < min_chars and _word_count(payload) < min_words
-    if is_short and any(it.get("hash") == h for it in items):
-        # duplicate short message → drop
-        dups[key] = items
-        _write_json_safe(dups_path, dups)
-        return False
-    # record current hash
-    items.append({"hash": h, "ts": now})
-    dups[key] = items[-dedup_keep:]
-    _write_json_safe(dups_path, dups)
-
-    # long-text redundancy suppression
-    red_window = float(cfg.get("redundant_window_seconds", 120.0))
-    red_thresh = float(cfg.get("redundant_similarity_threshold", 0.9))
-    # load/keep a separate similarity log per direction
-    sim_path = state_dir/"handoff_sim.json"
-    sim = _read_json_safe(sim_path)
-    sim_items = [it for it in (sim.get(key) or []) if now - float(it.get("ts",0)) <= red_window]
-    toks_cur = _tokenize_for_similarity(payload)
-    # high-signal bypass
-    if not is_high_signal(payload, policies):
-        for it in sim_items[-5:]:  # compare against last few
-            simval = _jaccard(toks_cur, it.get("toks", []))
-            if simval >= red_thresh:
-                # drop redundant long content without new high-signal
-                sim[key] = sim_items
-                _write_json_safe(sim_path, sim)
-                return False
-    sim_items.append({"ts": now, "toks": toks_cur[:4000]})
-    sim[key] = sim_items[-dedup_keep:]
-    _write_json_safe(sim_path, sim)
-
-    # update cooldown timestamp
-    guard[key] = {"last_ts": now}
-    _write_json_safe(guard_path, guard)
-    return True
+is_high_signal = _pf_is_high_signal
+is_low_signal = _pf_is_low_signal
+should_forward = _pf_should_forward
 
 ## Legacy diff helpers removed (count_changed_lines/extract_paths_from_patch)
 
 # ---------- tmux ----------
-def tmux(*args: str) -> Tuple[int,str,str]:
-    return run("tmux " + " ".join(shlex.quote(a) for a in args))
-
-def tmux_session_exists(name: str) -> bool:
-    code,_,_ = tmux("has-session","-t",name); return code==0
-
-def tmux_new_session(name: str) -> Tuple[str,str]:
-    code,out,err = tmux("new-session","-d","-s",name,"-P","-F","#S:#I.#P")
-    if code!=0: raise RuntimeError(f"tmux new-session failed: {err}")
-    # Start with a single pane; rebuild layout as defined below
-    code3,out3,_ = tmux("list-panes","-t",name,"-F","#P")
-    panes = out3.strip().splitlines()
-    return panes[0], panes[0]
-
-def tmux_respawn_pane(pane: str, cmd: str):
-    """Replace the running program in pane with given command (robust execution)."""
-    tmux("respawn-pane", "-k", "-t", pane, cmd)
-
-def _win(session: str) -> str:
-    return f"{session}:0"
-
-def _first_pane(session: str) -> str:
-    target = _win(session)
-    code,out,err = tmux("list-panes","-t",target,"-F","#{pane_id}")
-    panes = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    return panes[0] if panes else f"{target}.0"
-
-def tmux_ensure_ledger_tail(session: str, ledger_path: Path):
-    target = _win(session)
-    code,out,_ = tmux("list-panes","-t",target,"-F","#P")
-    panes = out.strip().splitlines()
-    if len(panes) >= 3:
-        return
-    lp = shlex.quote(str(ledger_path))
-    cmd = f"bash -lc 'printf \"[CCCC Ledger]\\n\"; tail -F {lp} 2>/dev/null || tail -f {lp}'"
-    tp = _first_pane(session)
-    tmux("split-window","-v","-t",tp, cmd)
-
-def tmux_build_2x2(session: str) -> Dict[str,str]:
-    """Build a stable 2x2 layout and map panes by coordinates {'lt','rt','lb','rb'}."""
-    target = _win(session)
-    # Clean start: keep only pane 0
-    tmux("select-pane","-t",f"{target}.0")
-    tmux("kill-pane","-a","-t",f"{target}.0")
-    # Horizontal split to create two top panes
-    rc,_,err = tmux("split-window","-h","-t",f"{target}.0")
-    if rc != 0:
-        print(f"[TMUX] split horizontal failed: {err.strip()}")
-    tmux("select-layout","-t",target,"tiled")
-    # Read coordinates and identify left/right top panes
-    code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
-    panes=[]
-    for ln in out.splitlines():
-        try:
-            pid, left, top = ln.strip().split()
-            panes.append((pid, int(left), int(top)))
-        except Exception:
-            pass
-    top_y = min(p[2] for p in panes)
-    top_row = [p for p in panes if p[2] == top_y]
-    top_row_sorted = sorted(top_row, key=lambda x: x[1])
-    if len(top_row_sorted) < 2:
-        # Fallback: use pane index mapping
-        code2,out2,_ = tmux("list-panes","-t",target,"-F","#{pane_index} #{pane_id}")
-        idx_to_id={}
-        for ln in out2.splitlines():
-            if not ln.strip():
-                continue
-            k,v=ln.split(" ",1); idx_to_id[int(k)]=v.strip()
-        lt = idx_to_id.get(0); rt = idx_to_id.get(1)
-    else:
-        lt = top_row_sorted[0][0]
-        rt = top_row_sorted[-1][0]
-    # Vertical split on left/right to create bottom-left/bottom-right
-    rc,_,err = tmux("split-window","-v","-t",lt)
-    if rc != 0:
-        print(f"[TMUX] split lt vertical failed: {err.strip()}")
-    rc,_,err = tmux("split-window","-v","-t",rt)
-    if rc != 0:
-        print(f"[TMUX] split rt vertical failed: {err.strip()}")
-    tmux("select-layout","-t",target,"tiled")
-    # Finally list 4 panes and map by coordinates
-    code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
-    panes=[]
-    for ln in out.splitlines():
-        try:
-            pid, left, top = ln.strip().split()
-            panes.append((pid, int(left), int(top)))
-        except Exception:
-            pass
-    # Identify top/bottom rows
-    min_top = min(p[2] for p in panes)
-    max_top = max(p[2] for p in panes)
-    top_panes = sorted([p for p in panes if p[2]==min_top], key=lambda x: x[1])
-    bot_panes = sorted([p for p in panes if p[2]==max_top], key=lambda x: x[1])
-    positions={
-        'lt': top_panes[0][0] if len(top_panes)>0 else f"{target}.0",
-        'rt': top_panes[-1][0] if len(top_panes)>0 else f"{target}.1",
-        'lb': bot_panes[0][0] if len(bot_panes)>0 else f"{target}.2",
-        'rb': bot_panes[-1][0] if len(bot_panes)>0 else f"{target}.3",
-    }
-    # Print pane list and coordinates for troubleshooting
-    _,outp,_ = tmux("list-panes","-t",target,"-F","#{pane_id}:#{pane_left},#{pane_top},#{pane_right},#{pane_bottom}")
-    print(f"[TMUX] panes: {outp.strip()}")
-    return positions
-
-def tmux_build_tui_layout(session: str, win_index: str = '0') -> Dict[str,str]:
-    """Build layout on the given window index: left column split vertically (top/bottom),
-    right column split vertically (PeerA/PeerB).
-    Returns map {'lt': left-top, 'lb': left-bottom, 'rt': top-right, 'rb': bottom-right}.
-    """
-    target = f"{session}:{win_index}"
-    # Clean to single pane
-    tmux("select-pane","-t",f"{target}.0")
-    tmux("kill-pane","-a","-t",f"{target}.0")
-    # Split left | right
-    rc,_,err = tmux("split-window","-h","-t",f"{target}.0")
-    if rc != 0:
-        print(f"[TMUX] split horizontal failed: {err.strip()}")
-    # Identify left/right
-    code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
-    panes=[]
-    for ln in out.splitlines():
-        try:
-            pid, left, top = ln.strip().split()
-            panes.append((pid, int(left), int(top)))
-        except Exception:
-            pass
-    if not panes:
-        return {'lt': f"{target}.0", 'rt': f"{target}.0", 'rb': f"{target}.0"}
-    top_y = min(p[2] for p in panes)
-    top_row = sorted([p for p in panes if p[2]==top_y], key=lambda x: x[1])
-    if len(top_row) < 2:
-        code2,out2,_ = tmux("list-panes","-t",target,"-F","#{pane_index} #{pane_id}")
-        idx={}
-        for ln in out2.splitlines():
-            if not ln.strip():
-                continue
-            k,v = ln.split(" ",1); idx[int(k)] = v.strip()
-        lt = idx.get(0) or f"{target}.0"; rt = idx.get(1) or lt
-    else:
-        lt = top_row[0][0]; rt = top_row[-1][0]
-    # Split right vertically to create stacked Peer panes
-    rc,_,err = tmux("split-window","-v","-t",rt)
-    if rc != 0:
-        print(f"[TMUX] split rt vertical failed: {err.strip()}")
-    # Apply main-vertical layout (left column with stacked right panes) and force width
-    tmux("select-pane","-t",lt)
-    tmux("select-layout","-t",target,"main-vertical")
-    try:
-        code,w,_ = tmux("display-message","-p","-t",target,"#{window_width}")
-        win_w = int(w.strip()) if code==0 and w.strip().isdigit() else shutil.get_terminal_size(fallback=(160,48)).columns
-    except Exception:
-        win_w = shutil.get_terminal_size(fallback=(160,48)).columns
-    # 50/50 split per spec; keep a sensible minimum for narrow terminals
-    left_w = max(40, int(win_w * 0.50))
-    tmux("set-option","-t",target,"main-pane-width",str(left_w))
-    tmux("resize-pane","-t",lt,"-x",str(left_w))
-    # Split left vertically to create left-bottom
-    rc,_,err = tmux("split-window","-v","-t",lt)
-    if rc != 0:
-        print(f"[TMUX] split lt vertical failed: {err.strip()}")
-    tmux("set-option","-t",target,"destroy-unattached","on")
-    # Map final positions
-    code,out,_ = tmux("list-panes","-t",target,"-F","#{pane_id} #{pane_left} #{pane_top}")
-    panes=[]
-    for ln in out.splitlines():
-        try:
-            pid, left, top = ln.strip().split()
-            panes.append((pid, int(left), int(top)))
-        except Exception:
-            pass
-    try:
-        coords = sorted({p[1] for p in panes})
-        left_x = coords[0]
-        right_x = coords[1] if len(coords) > 1 else coords[0]
-    except Exception:
-        left_x = min(p[1] for p in panes)
-        right_x = max(p[1] for p in panes)
-    left_column = sorted([p for p in panes if p[1] == left_x], key=lambda x: x[2])
-    if len(left_column) < 2:
-        # fallback: pick two panes with smallest left coordinate
-        left_column = sorted(panes, key=lambda x: (x[1], x[2]))[:2]
-    lt_id = left_column[0][0]
-    lb_id = left_column[-1][0] if len(left_column) > 1 else left_column[0][0]
-    right_column = sorted([p for p in panes if p[0] not in (lt_id, lb_id)], key=lambda x: x[2])
-    if len(right_column) < 2:
-        right_column = sorted([p for p in panes if p[1] == right_x], key=lambda x: x[2])
-    rt_id = right_column[0][0] if right_column else lt_id
-    rb_id = right_column[-1][0] if len(right_column) > 1 else rt_id
-    positions={'lt': lt_id,
-               'lb': lb_id,
-               'rt': rt_id,
-               'rb': rb_id}
-    _,outp,_ = tmux("list-panes","-t",target,"-F","#{pane_id}:#{pane_left},#{pane_top},#{pane_right},#{pane_bottom}")
-    print(f"[TMUX] panes: {outp.strip()}")
-    return positions
-def tmux_ensure_quadrants(session: str, ledger_path: Path):
-    code,out,_ = tmux("list-panes","-t",session,"-F","#P")
-    panes = out.strip().splitlines()
-    if len(panes) < 3:
-        tmux_ensure_ledger_tail(session, ledger_path)
-        code,out,_ = tmux("list-panes","-t",session,"-F","#P")
-        panes = out.strip().splitlines()
-    if len(panes) == 3:
-        bottom = panes[-1]
-        help_text = (
-            "[CCCC Controls]\n"
-            "a: <text>  → PeerA    |  b: <text>  → PeerB\n"
-            "both:/u: <text>       → both peers\n"
-            "/pause | /resume      toggle handoff\n"
-            "/sys-refresh          re-inject full SYSTEM\n"
-            "q                      quit orchestrator\n"
-        )
-        cmd = f"bash -lc 'cat <<\'EOF\'\n{help_text}\nEOF; sleep 100000'"
-        tmux("split-window","-h","-t",f"{session}.{bottom}","-p","50",cmd)
-
-def sanitize_console(s: str) -> str:
-    try:
-        return s.encode("utf-8", "replace").decode("utf-8", "replace")
-    except Exception:
-        return s
-
-def read_console_line(prompt: str) -> str:
-    # Read console input robustly; guard against special sequences
-    try:
-        s = input(prompt)
-    except Exception:
-        s = sys.stdin.readline()
-    return sanitize_console(s)
-
-def read_console_line_timeout(prompt: str, timeout_sec: float) -> str:
-    """Read a console line with timeout. Returns empty string on timeout.
-    Avoids blocking CI/non-interactive runs. Uses select on POSIX stdin.
-    """
-    try:
-        import select, sys
-        sys.stdout.write(prompt)
-        sys.stdout.flush()
-        r, _, _ = select.select([sys.stdin], [], [], max(0.0, float(timeout_sec)))
-        if r:
-            line = sys.stdin.readline()
-            return sanitize_console(line)
-        return ""
-    except Exception:
-        # Fallback: no timeout-capable read; do a best-effort non-blocking attempt
-        try:
-            return input(prompt)
-        except Exception:
-            return ""
-
-
-def tmux_paste(pane: str, text: str):
-    # Write as binary; tolerate surrogate/escape sequences in input
-    data = text.encode("utf-8", errors="replace")
-    with tempfile.NamedTemporaryFile("wb", delete=False) as f:
-        f.write(data); fname=f.name
-    buf = f"buf-{int(time.time()*1000)}"
-    tmux("load-buffer","-b",buf,fname)
-    tmux("paste-buffer","-t",pane,"-b",buf)
-    time.sleep(0.12)
-    # Send a single Enter to avoid duplicate submissions
-    tmux("send-keys","-t",pane,"Enter")
-    tmux("delete-buffer","-b",buf)
-    try: os.unlink(fname)
-    except Exception: pass
-
-def tmux_type(pane: str, text: str):
-    # Keep for startup/emergency; normal sends go through delivery.send_text
-    for line in text.splitlines():
-        tmux("send-keys","-t",pane,"-l",line)
-        tmux("send-keys","-t",pane,"Enter")
-
-def tmux_capture(pane: str, lines: int=800) -> str:
-    code,out,err = tmux("capture-pane","-t",pane,"-p","-S",f"-{lines}")
-    return strip_ansi(out if code==0 else "")
-
-def bash_ansi_c_quote(s: str) -> str:
-    """Return a Bash ANSI-C quoted string: $'...'."""
-    return "$'" + s.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n") + "'"
-
-def tmux_start_interactive(pane: str, cmd: str):
-    # Robust: run command inside pane via bash -lc; enforce UTF-8 locale to avoid mojibake
-    env_prefix = "LC_ALL=C.UTF-8 LANG=C.UTF-8"
-    wrapped = f"bash -lc {shlex.quote(env_prefix + ' ' + cmd)}"
-    tmux_respawn_pane(pane, wrapped)
-
-def wait_for_ready(pane: str, profile: Dict[str,Any], *, timeout: float = 12.0, poke: bool = True) -> bool:
-    """Wait until the pane appears idle (prompt+quiet or quiet-only).
-    If poke is True, sends a single Enter after ~1.5s to coax a prompt; else never sends pre-Enter.
-    """
-    judge = PaneIdleJudge(profile)
-    t0 = time.time(); poked = False
-    while time.time() - t0 < timeout:
-        idle, reason = judge.refresh(pane)
-        if idle:
-            return True
-        # After 1.5s without prompt, send a newline to coax prompt (optional)
-        if poke and (not poked) and (time.time() - t0 > 1.5):
-            tmux("send-keys","-t",pane,"Enter")
-            poked = True
-        time.sleep(0.25)
-    return False
-
 def paste_when_ready(pane: str, profile: Dict[str,Any], text: str, *, timeout: float = 10.0, poke: bool = True):
     ok = wait_for_ready(pane, profile, timeout=timeout, poke=poke)
     if not ok:
         print(f"[WARN] Target pane not ready; pasting anyway (best-effort).")
     # Use delivery.send_text with per-CLI config (submit/newline keys)
     send_text(pane, text, profile)
+
+nudge_api = make_nudge({'paste_when_ready': paste_when_ready})
 
 # ---------- YAML & prompts ----------
 def read_yaml(p: Path) -> Dict[str,Any]:
@@ -1206,38 +330,7 @@ def read_yaml(p: Path) -> Dict[str,Any]:
 # Removed legacy file reader helper; config is loaded via read_yaml at startup.
 
 # ---------- ledger & policies ----------
-def log_ledger(home: Path, entry: Dict[str,Any]):
-    state = home/"state"; state.mkdir(exist_ok=True)
-    entry={"ts":time.strftime("%Y-%m-%d %H:%M:%S"), **entry}
-    with (state/"ledger.jsonl").open("a",encoding="utf-8") as f:
-        f.write(json.dumps(entry,ensure_ascii=False)+"\n")
-
-
-def outbox_write(home: Path, event: Dict[str,Any]) -> Dict[str,Any]:
-    """Append a structured outbound event for bridges to consume.
-    Returns the full event with id/ts populated.
-    """
-    state = home/"state"; state.mkdir(exist_ok=True)
-    ev = dict(event)
-    try:
-        # Populate id/ts if missing
-        if 'ts' not in ev:
-            ev['ts'] = time.strftime('%Y-%m-%d %H:%M:%S')
-        base = (ev.get('type') or '') + '|' + (ev.get('peer') or ev.get('from') or '') + '|' + (ev.get('text') or '')
-        hid = hashlib.sha1(base.encode('utf-8','ignore')).hexdigest()[:12]
-        ev.setdefault('id', hid)
-    except Exception:
-        ev.setdefault('id', str(int(time.time())))
-        ev.setdefault('ts', time.strftime('%Y-%m-%d %H:%M:%S'))
-    with (state/"outbox.jsonl").open('a', encoding='utf-8') as f:
-        f.write(json.dumps(ev, ensure_ascii=False) + "\n")
-    # Diagnostic: record enqueue (debug only)
-    if OUTBOX_DEBUG:
-        try:
-            log_ledger(home, {"kind":"bridge-outbox-enqueued","type": ev.get('type'), "id": ev.get('id'), "chars": len(str(ev.get('text') or ''))})
-        except Exception:
-            pass
-    return ev
+## moved to .orchestrator.logging_util
 
 ## Legacy policy helper removed (allowed_by_policies)
 
@@ -1441,7 +534,7 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
             text_with_mid = wrap_with_mid(body, mid)
             try:
                 seq, _ = _write_inbox_message(home, recv, text_with_mid, mid)
-                _send_nudge(home, recv, seq, mid, paneA, paneB, profileA, profileB,
+                nudge_api.send_nudge(home, recv, seq, mid, paneA, paneB, profileA, profileB,
                             aux_mode)
                 try:
                     last_nudge_ts[recv] = time.time()
@@ -1709,65 +802,27 @@ def main(home: Path, session_name: Optional[str] = None):
     cli_profiles_path = settings/"cli_profiles.yaml"
     cli_profiles = read_yaml(cli_profiles_path)
 
-    # ---------- Foreman (User Proxy) helpers (defined early for wizard use) ----------
-    def _foreman_conf_path() -> Path:
-        return settings/"foreman.yaml"
-
-    def _load_foreman_conf() -> Dict[str, Any]:
-        p = _foreman_conf_path()
-        if not p.exists():
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
-        try:
-            import yaml  # type: ignore
-            d = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
-            # Fill defaults
-            d.setdefault("enabled", False)
-            d.setdefault("interval_seconds", 900)
-            d.setdefault("agent", "reuse_aux")
-            d.setdefault("prompt_path", "./FOREMAN_TASK.md")
-            d.setdefault("cc_user", True)
-            d.setdefault("max_run_seconds", 900)
-            # Persisted gating: allowed means runtime toggles are permitted this run
-            d.setdefault("allowed", d.get("enabled", False))
-            return d
-        except Exception:
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900, "allowed": False}
-
-    def _save_foreman_conf(conf: Dict[str, Any]):
-        try:
-            import yaml  # type: ignore
-            _foreman_conf_path().parent.mkdir(parents=True, exist_ok=True)
-            _foreman_conf_path().write_text(yaml.safe_dump(conf, allow_unicode=True, sort_keys=False), encoding='utf-8')
-        except Exception:
-            _write_json_safe(_foreman_conf_path(), conf)  # fallback JSON
-
-    def _ensure_foreman_task(conf: Dict[str, Any]):
-        try:
-            prompt_path = Path(conf.get('prompt_path') or './FOREMAN_TASK.md')
-            if not prompt_path.exists():
-                tpl = (
-"Title: Foreman Task Brief (Project-specific)\n\n"
-"Purpose (free text)\n"
-"- Describe what matters to the project right now.\n\n"
-"Current objectives (ranked, short)\n"
-"- 1) \n- 2) \n- 3) \n\n"
-"Standing work (edit freely)\n"
-"- List repeatable, non-interactive jobs you want Foreman to do from time to time. Keep each item one line.\n\n"
-"Useful references\n"
-"- PROJECT.md\n- docs/por/POR.md\n- docs/por/T*/SUBPOR.md\n- docs/evidence/**  and  .cccc/work/**\n\n"
-"How to act each run\n"
-"- Do one useful, non-interactive step within the time box (≤ 30m).\n"
-"- Save temporary outputs to .cccc/work/foreman/<YYYYMMDD-HHMMSS>/ . create or update other files based on the project rules.\n"
-"- Write one message to .cccc/mailbox/foreman/to_peer.md with a routing header `To: Both|PeerA|PeerB` (default Both), wrap body in <TO_PEER> ... </TO_PEER>, and reference file paths (do not paste long logs).\n\n"
-"Escalation (when blocked)\n"
-"- If a decision is needed, write a short 6–10 line RFD summary (alternatives, impact, default) and ask the peer to proceed.\n\n"
-"Safety\n"
-"- Do not modify orchestrator code/policies; do not claim 'done' without a checkable artifact.\n"
-                )
-                prompt_path.write_text(tpl, encoding='utf-8')
-        except Exception:
-            pass
-    # --- Roles/Actors interactive binding (first thing; before load_profiles) ---
+    # Foreman helper context (module-based)
+    aux_binding_box = AUX_BINDING_BOX
+    foreman_ctx = {
+        'home': home,
+        'settings': settings,
+        'state': state,
+        'compose_sentinel': compose_sentinel,
+        'is_sentinel_text': is_sentinel_text,
+        'new_mid': new_mid,
+        'read_yaml': read_yaml,
+        'write_yaml': None,
+        'build_exec_args': _build_exec_args,
+        'load_profiles': load_profiles,
+        'aux_binding_box': aux_binding_box,
+        'wrap_with_mid': wrap_with_mid,
+        'write_inbox_message': _write_inbox_message,
+        'sha256_text': sha256_text,
+        'outbox_write': outbox_write,
+        'log_ledger': log_ledger,
+    }
+    # provide write_yaml if available
     def _write_yaml(p: Path, obj: Dict[str, Any]):
         try:
             import yaml  # type: ignore
@@ -1776,6 +831,18 @@ def main(home: Path, session_name: Optional[str] = None):
         except Exception:
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
+    foreman_ctx['write_yaml'] = _write_yaml
+    foreman_api = make_foreman(foreman_ctx)
+    _load_foreman_conf = foreman_api.load_conf
+    _save_foreman_conf = foreman_api.save_conf
+    _foreman_state_path = foreman_api.state_path
+    _foreman_load_state = foreman_api.load_state
+    _foreman_save_state = foreman_api.save_state
+    _ensure_foreman_task = foreman_api.ensure_task
+    _compose_foreman_prompt = foreman_api.compose_prompt
+    _foreman_write_user_message = foreman_api.write_user_message
+    _foreman_run_once = foreman_api.run_once
+    _foreman_stop_running = foreman_api.stop_running
 
     def _actors_available() -> List[str]:
         try:
@@ -1900,6 +967,8 @@ def main(home: Path, session_name: Optional[str] = None):
     aux_command_template = str(aux_resolved.get('invoke_command') or '').strip()
     aux_command = aux_command_template
     aux_cwd = str(aux_resolved.get('cwd') or '.')
+    aux_binding_box['template'] = aux_command_template
+    aux_binding_box['cwd'] = aux_cwd
     rate_limit_per_minute = int(aux_resolved.get("rate_limit_per_minute") or 2)
     if rate_limit_per_minute <= 0:
         rate_limit_per_minute = 1
@@ -1925,26 +994,24 @@ def main(home: Path, session_name: Optional[str] = None):
 
     # Read inbox+NUDGE parameters (effective at startup)
     try:
-        global MB_PULL_ENABLED, INBOX_DIRNAME, PROCESSED_RETENTION, NUDGE_RESEND_SECONDS, NUDGE_JITTER_PCT, SOFT_ACK_ON_MAILBOX_ACTIVITY
+        global MB_PULL_ENABLED, INBOX_DIRNAME, PROCESSED_RETENTION, SOFT_ACK_ON_MAILBOX_ACTIVITY
         MB_PULL_ENABLED = bool(delivery_conf.get("mailbox_pull_enabled", True))
         INBOX_DIRNAME = str(delivery_conf.get("inbox_dirname", "inbox"))
         PROCESSED_RETENTION = int(delivery_conf.get("processed_retention", 200))
-        NUDGE_RESEND_SECONDS = float(delivery_conf.get("nudge_resend_seconds", 90))
-        NUDGE_JITTER_PCT = float(delivery_conf.get("nudge_jitter_pct", 0.0) or 0.0)
         SOFT_ACK_ON_MAILBOX_ACTIVITY = bool(delivery_conf.get("soft_ack_on_mailbox_activity", False))
         INBOX_STARTUP_POLICY = str(delivery_conf.get("inbox_startup_policy", "resume") or "resume").strip().lower()
         INBOX_STARTUP_PROMPT = bool(delivery_conf.get("inbox_startup_prompt", False))
-        # Progress-aware NUDGE parameters
-        global NUDGE_DEBOUNCE_MS, NUDGE_PROGRESS_TIMEOUT_S, NUDGE_KEEPALIVE, NUDGE_BACKOFF_BASE_MS, NUDGE_BACKOFF_MAX_MS, NUDGE_MAX_RETRIES
-        NUDGE_DEBOUNCE_MS = float(delivery_conf.get("nudge_debounce_ms", NUDGE_DEBOUNCE_MS))
-        NUDGE_PROGRESS_TIMEOUT_S = float(delivery_conf.get("nudge_progress_timeout_s", NUDGE_PROGRESS_TIMEOUT_S))
-        NUDGE_KEEPALIVE = bool(delivery_conf.get("nudge_keepalive", NUDGE_KEEPALIVE))
-        NUDGE_BACKOFF_BASE_MS = float(delivery_conf.get("nudge_backoff_base_ms", NUDGE_BACKOFF_BASE_MS))
-        NUDGE_BACKOFF_MAX_MS = float(delivery_conf.get("nudge_backoff_max_ms", NUDGE_BACKOFF_MAX_MS))
-        try:
-            NUDGE_MAX_RETRIES = float(delivery_conf.get("nudge_max_retries", NUDGE_MAX_RETRIES))
-        except Exception:
-            pass
+        nudge_api.configure({
+            'NUDGE_RESEND_SECONDS': float(delivery_conf.get("nudge_resend_seconds", 90)),
+            'NUDGE_JITTER_PCT': float(delivery_conf.get("nudge_jitter_pct", 0.0) or 0.0),
+            'NUDGE_DEBOUNCE_MS': float(delivery_conf.get("nudge_debounce_ms", 1500.0)),
+            'NUDGE_PROGRESS_TIMEOUT_S': float(delivery_conf.get("nudge_progress_timeout_s", 45.0)),
+            'NUDGE_KEEPALIVE': bool(delivery_conf.get("nudge_keepalive", True)),
+            'NUDGE_BACKOFF_BASE_MS': float(delivery_conf.get("nudge_backoff_base_ms", 1000.0)),
+            'NUDGE_BACKOFF_MAX_MS': float(delivery_conf.get("nudge_backoff_max_ms", 60000.0)),
+            'NUDGE_MAX_RETRIES': float(delivery_conf.get("nudge_max_retries", 1.0)),
+            'PROCESSED_RETENTION': PROCESSED_RETENTION,
+        })
     except Exception:
         pass
 
@@ -2001,112 +1068,6 @@ def main(home: Path, session_name: Optional[str] = None):
             st[receiver_label] = True
             _save_preamble_sent(st)
             log_ledger(home, {"from":"system","kind":"lazy-preamble-sent","peer":receiver_label, "route":"mailbox"})
-        except Exception:
-            pass
-
-    # ---------- Foreman (User Proxy) helpers ----------
-    def _foreman_conf_path() -> Path:
-        return settings/"foreman.yaml"
-
-    def _load_foreman_conf() -> Dict[str, Any]:
-        p = _foreman_conf_path()
-        if not p.exists():
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900}
-        try:
-            import yaml  # type: ignore
-            d = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
-            # Fill defaults
-            d.setdefault("enabled", False)
-            d.setdefault("interval_seconds", 900)
-            d.setdefault("agent", "reuse_aux")
-            d.setdefault("prompt_path", "./FOREMAN_TASK.md")
-            d.setdefault("cc_user", True)
-            d.setdefault("max_run_seconds", 900)
-            d.setdefault("allowed", d.get("enabled", False))
-            return d
-        except Exception:
-            return {"enabled": False, "interval_seconds": 900, "agent": "reuse_aux", "prompt_path": "./FOREMAN_TASK.md", "cc_user": True, "max_run_seconds": 900, "allowed": False}
-
-    def _save_foreman_conf(conf: Dict[str, Any]):
-        try:
-            import yaml  # type: ignore
-            _foreman_conf_path().parent.mkdir(parents=True, exist_ok=True)
-            _foreman_conf_path().write_text(yaml.safe_dump(conf, allow_unicode=True, sort_keys=False), encoding='utf-8')
-        except Exception:
-            _write_json_safe(_foreman_conf_path(), conf)  # fallback JSON
-
-    def _ensure_foreman_task(conf: Dict[str, Any]):
-        try:
-            prompt_path = Path(conf.get('prompt_path') or './FOREMAN_TASK.md')
-            if not prompt_path.exists():
-                tpl = (
-"Title: Foreman Task Brief (Project-specific)\n\n"
-"Standing Tasks (edit freely; pick one per run)\n"
-"- Task name:\n  Owner peer (PeerA|PeerB):\n  Do within time-box (non-interactive):\n  Save outputs to (e.g., .cccc/work/foreman/<timestamp>/...):\n  When to message the owner (and CC policy):\n\n"
-"Backlog & Cadence\n- If the owner's inbox has many pending items: remind to process oldest-first, then propose ONE smallest next step aligned to POR/SUBPOR. Put long analysis in files and reference paths.\n\n"
-"Project Preferences\n- Prioritized deliverables / risks / scripts to use:\n\n"
-"Message header & body (required)\n- Write one message to .cccc/mailbox/foreman/to_peer.md with:\n  To: Both|PeerA|PeerB\n  <TO_PEER>\n  …user-voice short text (6–10 lines; reference repo paths only)…\n  </TO_PEER>\n"
-                )
-                prompt_path.write_text(tpl, encoding='utf-8')
-        except Exception:
-            pass
-
-    def _foreman_state_path() -> Path:
-        return state/"foreman.json"
-
-    def _foreman_load_state() -> Dict[str, Any]:
-        return _read_json_safe(_foreman_state_path())
-
-    def _foreman_save_state(st: Dict[str, Any]):
-        _write_json_safe(_foreman_state_path(), st)
-
-    def _actor_aux_invoke(actor_id: str) -> str:
-        try:
-            actors_doc = read_yaml(settings/"agents.yaml")
-            acts = actors_doc.get('actors') or {}
-            ad = acts.get(actor_id) or {}
-            aux = ad.get('aux') or {}
-            inv = str(aux.get('invoke_command') or '')
-            return inv
-        except Exception:
-            return ''
-
-    def _compose_foreman_prompt(conf: Dict[str, Any]) -> Tuple[str, str]:
-        """Return (prompt_text, out_dir) where out_dir is a fresh folder for this run."""
-        rules_p = home/"rules"/"FOREMAN.md"
-        rules = rules_p.read_text(encoding='utf-8') if rules_p.exists() else ''
-        # Minimal runtime context (3–5 lines)
-        bindings = []
-        try:
-            resolved_tmp = load_profiles(home)
-            aux_actor = (resolved_tmp.get('aux') or {}).get('actor') or ''
-            bindings.append(f"Bindings: Foreman.agent={conf.get('agent')} Aux={aux_actor or 'none'}")
-        except Exception:
-            bindings.append(f"Bindings: Foreman.agent={conf.get('agent')}")
-        bindings.append(f"Schedule: interval={int(conf.get('interval_seconds',900))}s max_run={int(conf.get('max_run_seconds',900))}s cc_user={'ON' if conf.get('cc_user',True) else 'OFF'}")
-        bindings.append("Write-to: .cccc/mailbox/foreman/to_peer.md with To header (Both|PeerA|PeerB; default Both) and <TO_PEER> wrapper")
-        ctx = "\n".join(bindings)
-        # User-maintained task brief
-        task_path = Path(conf.get('prompt_path') or './FOREMAN_TASK.md')
-        task_txt = task_path.read_text(encoding='utf-8') if task_path.exists() else ''
-        # Prepare output folder for this run
-        out_dir = home/"work"/"foreman"/datetime.now().strftime("%Y%m%d-%H%M%S")
-        try:
-            out_dir.mkdir(parents=True, exist_ok=True)
-        except Exception:
-            pass
-        prompt = f"{rules}\n\n---\n{ctx}\n---\n{task_txt}".strip()
-        return prompt, out_dir.as_posix()
-
-    def _foreman_write_user_message(to_label: str, body: str):
-        try:
-            fpath = home/"mailbox"/"foreman"/"to_peer.md"
-            fpath.parent.mkdir(parents=True, exist_ok=True)
-            # to_label: Both|PeerA|PeerB
-            if to_label not in ("PeerA","PeerB","Both"):
-                to_label = "Both"
-            msg = f"To: {to_label}\n" + (body.strip() if body else '')
-            fpath.write_text(msg, encoding='utf-8')
         except Exception:
             pass
 
@@ -2263,206 +1224,6 @@ def main(home: Path, session_name: Optional[str] = None):
             return combined
         except Exception:
             return user_payload
-
-    def _run_foreman_once(conf: Dict[str, Any]):
-        prompt, out_dir = _compose_foreman_prompt(conf)
-        # Mark start in state and ledger (best-effort)
-        try:
-            st = _foreman_load_state() or {}
-            st['last_start_ts'] = time.time()
-            st['running'] = True
-            _foreman_save_state(st)
-            log_ledger(home, {"from":"system","kind":"foreman-start","agent": str(conf.get('agent') or 'reuse_aux')})
-        except Exception:
-            pass
-        agent = str(conf.get('agent') or 'reuse_aux')
-        maxs = int(conf.get('max_run_seconds', 1800) or 1800)
-        # Prefer Aux when reuse_aux
-        if agent == 'reuse_aux':
-            rc, out, err, cmd_line = _run_aux_cli(prompt, timeout=maxs)
-        else:
-            inv = _actor_aux_invoke(agent)
-            if not inv:
-                log_ledger(home, {"from":"system","kind":"foreman-error","reason":f"actor {agent} has no aux.invoke_command"})
-                return
-            # spawn command with timeout
-            cmd_line = inv.replace('{prompt}', _escape_for_double_quotes(prompt))
-            rc,out,err = run(cmd_line, timeout=maxs)
-        # persist outputs
-        try:
-            of = Path(out_dir)/"stdout.txt"; ef = Path(out_dir)/"stderr.txt"; mf = Path(out_dir)/"meta.json"
-            of.write_text(out or "", encoding='utf-8')
-            ef.write_text(err or "", encoding='utf-8')
-            _write_json_safe(mf, {"rc": rc, "agent": agent})
-        except Exception:
-            pass
-        # Mark end in state and ledger
-        try:
-            st = _foreman_load_state() or {}
-            st['last_end_ts'] = time.time()
-            st['last_rc'] = int(rc)
-            st['last_out_dir'] = out_dir
-            st['running'] = False
-            _foreman_save_state(st)
-            log_ledger(home, {"from":"system","kind":"foreman-end","rc": int(rc), "out_dir": out_dir})
-        except Exception:
-            pass
-        # best-effort: if foreman/to_peer.md is empty and stdout looks like a message, write it
-        try:
-            f = home/"mailbox"/"foreman"/"to_peer.md"
-            cur = f.read_text(encoding='utf-8').strip() if f.exists() else ''
-            if (not cur) or is_sentinel_text(cur):
-                # Minimal heuristic: require To: and <TO_PEER>
-                if re.search(r"^\s*To\s*:\s*(Both|PeerA|PeerB)\s*$", out or "", re.M) and re.search(r"<\s*TO_PEER\s*>", out or "", re.I):
-                    f.parent.mkdir(parents=True, exist_ok=True)
-                    f.write_text(out.strip(), encoding='utf-8')
-        except Exception:
-            pass
-
-    # Foreman worker thread target (non-blocking for main loop)
-    def _foreman_worker(conf: Dict[str, Any]):
-        prompt, out_dir = _compose_foreman_prompt(conf)
-        agent = str(conf.get('agent') or 'reuse_aux')
-        maxs = int(conf.get('max_run_seconds', 900) or 900)
-        hb_interval = 10.0
-        lock = state/"foreman.lock"
-        rc = 1
-        argv: List[str] = []
-        try:
-            # mark start
-            try:
-                st = _foreman_load_state() or {}
-                st.update({'last_start_ts': time.time(), 'running': True, 'last_heartbeat_ts': time.time()})
-                _foreman_save_state(st)
-                log_ledger(home, {"from":"system","kind":"foreman-start","agent": agent})
-            except Exception:
-                pass
-            # Build argv and cwd
-            if agent == 'reuse_aux':
-                template = aux_command_template
-                run_cwd = Path(aux_cwd) if aux_cwd else Path.cwd()
-            else:
-                template = _actor_aux_invoke(agent)
-                run_cwd = Path.cwd()
-            if not template:
-                log_ledger(home, {"from":"system","kind":"foreman-error","reason":f"actor {agent} has no aux.invoke_command"})
-                rc = 1
-                return
-            argv = _build_exec_args(template, prompt)
-            # Prepare output files
-            out_dir_path = Path(out_dir)
-            out_dir_path.mkdir(parents=True, exist_ok=True)
-            of = (out_dir_path/"stdout.txt").open('w', encoding='utf-8')
-            ef = (out_dir_path/"stderr.txt").open('w', encoding='utf-8')
-            try:
-                # Start CLI in its own process group so we can cleanly terminate on orchestrator exit
-                preexec = None
-                creationflags = 0
-                try:
-                    preexec = os.setsid  # POSIX: new session -> separate process group
-                except Exception:
-                    preexec = None
-                try:
-                    proc = subprocess.Popen(
-                        argv,
-                        shell=False,
-                        cwd=str(run_cwd),
-                        stdout=of,
-                        stderr=ef,
-                        text=True,
-                        preexec_fn=preexec,
-                        creationflags=creationflags,
-                    )
-                except TypeError:
-                    # Fallback for platforms that don't accept text=True with preexec_fn
-                    proc = subprocess.Popen(
-                        argv,
-                        shell=False,
-                        cwd=str(run_cwd),
-                        stdout=of,
-                        stderr=ef,
-                        preexec_fn=preexec,
-                        creationflags=creationflags,
-                    )
-                # Persist PID/PGID for external cleanup
-                try:
-                    st2 = _foreman_load_state() or {}
-                    st2['pid'] = int(proc.pid)
-                    try:
-                        st2['pgid'] = int(os.getpgid(proc.pid))
-                    except Exception:
-                        st2['pgid'] = None
-                    _foreman_save_state(st2)
-                except Exception:
-                    pass
-                t0 = time.time(); next_hb = t0 + hb_interval
-                while True:
-                    rc_local = proc.poll()
-                    now = time.time()
-                    if rc_local is not None:
-                        rc = int(rc_local)
-                        break
-                    if now - t0 >= maxs:
-                        try: proc.terminate()
-                        except Exception: pass
-                        try: proc.wait(5)
-                        except Exception: pass
-                        if proc.poll() is None:
-                            try: proc.kill()
-                            except Exception: pass
-                            try: proc.wait(2)
-                            except Exception: pass
-                        rc = proc.poll() if (proc.poll() is not None) else -9
-                        break
-                    if now >= next_hb:
-                        try:
-                            st = _foreman_load_state() or {}
-                            st['last_heartbeat_ts'] = now
-                            _foreman_save_state(st)
-                        except Exception:
-                            pass
-                        next_hb = now + hb_interval
-                    time.sleep(0.5)
-            finally:
-                try: of.close()
-                except Exception: pass
-                try: ef.close()
-                except Exception: pass
-            # meta.json
-            try:
-                _write_json_safe(out_dir_path/"meta.json", {"rc": rc, "agent": agent, "argv": argv})
-            except Exception:
-                pass
-            # best-effort: stdout -> message
-            try:
-                f = home/"mailbox"/"foreman"/"to_peer.md"
-                cur = f.read_text(encoding='utf-8').strip() if f.exists() else ''
-                if (not cur) or is_sentinel_text(cur):
-                    so = ''
-                    try:
-                        with (out_dir_path/"stdout.txt").open('r', encoding='utf-8', errors='replace') as sf:
-                            so = sf.read(200000)
-                    except Exception:
-                        so = ''
-                    if re.search(r"^\s*To\s*:\s*(Both|PeerA|PeerB)\s*$", so or "", re.M) and re.search(r"<\s*TO_PEER\s*>", so or "", re.I):
-                        f.parent.mkdir(parents=True, exist_ok=True)
-                        f.write_text(so.strip(), encoding='utf-8')
-            except Exception:
-                pass
-        finally:
-            # clear running, write end, remove lock
-            try:
-                st = _foreman_load_state() or {}
-                st.update({'last_end_ts': time.time(), 'last_rc': int(rc), 'last_out_dir': out_dir, 'running': False})
-                _foreman_save_state(st)
-                log_ledger(home, {"from":"system","kind":"foreman-end","rc": int(rc), "out_dir": out_dir})
-            except Exception:
-                pass
-            try:
-                if lock.exists():
-                    lock.unlink()
-            except Exception:
-                pass
 
     # --- Foreman external cleanup helpers (terminate on orchestrator exit) ---
     def _foreman_stop_running(grace_seconds: float = 5.0) -> None:
@@ -2651,19 +1412,26 @@ def main(home: Path, session_name: Optional[str] = None):
         tmux("select-pane","-t",left_top)
     except Exception:
         pass
-    # Wait for TUI ready: check .cccc/state/tui.ready (up to 12 seconds). If not ready, continue (do NOT kill).
+    # Wait for TUI ready: block indefinitely until .cccc/state/tui.ready appears.
     try:
-        t0 = time.time(); timeout = 12.0
         ready_file = state/"tui.ready"
-        while time.time() - t0 < timeout:
+        t0 = time.time()
+        next_notice = 30.0
+        while True:
             if ready_file.exists():
                 break
-            time.sleep(0.2)
-        if not ready_file.exists():
-            print("[WARN] TUI did not create tui.ready within timeout; proceeding anyway (orchestrator continues).")
-            print(f"[WARN] To improve UX, have TUI create: {ready_file}")
-    except Exception:
-        pass
+            elapsed = time.time() - t0
+            if elapsed >= next_notice:
+                print(f"[INFO] Waiting for TUI readiness... {int(elapsed)}s elapsed.")
+                next_notice += 30.0
+            time.sleep(0.5)
+    except Exception as exc:
+        print(f"[ERROR] Failed while waiting for TUI readiness: {exc}")
+        try:
+            tmux("kill-session", "-t", session)
+        except Exception:
+            pass
+        raise SystemExit(1)
 
     # IM command queue (bridge initiated)
     im_command_dir = state/"im_commands"
@@ -2770,89 +1538,10 @@ def main(home: Path, session_name: Optional[str] = None):
                     result = {"ok": True, "message": msg}
                 elif command == "foreman":
                     sub = str(args.get("action") or "").strip().lower()
-                    fc = _load_foreman_conf()
-                    if sub in ("on","enable","start"):
-                        _allowed = bool(fc.get('allowed', fc.get('enabled', False)))
-                        if not _allowed:
-                            result = {"ok": False, "message": "Foreman was not enabled at startup; restart to enable or run roles wizard."}
-                        else:
-                            fc['enabled'] = True; _save_foreman_conf(fc)
-                            # Shift next_due to a full interval from now
-                            try:
-                                st = _foreman_load_state() or {}
-                                now_ts = time.time()
-                                try:
-                                    iv = float(fc.get('interval_seconds',900) or 900)
-                                except Exception:
-                                    iv = 900.0
-                                st.update({'running': False, 'next_due_ts': now_ts + iv, 'last_heartbeat_ts': now_ts})
-                                _foreman_save_state(st)
-                                lk = state/"foreman.lock"
-                                if lk.exists():
-                                    try: lk.unlink()
-                                    except Exception: pass
-                            except Exception:
-                                pass
-                            result = {"ok": True, "message": "Foreman enabled"}
-                    elif sub in ("now",):
-                        # Immediate run once, and shift next_due by one interval
-                        _allowed = bool(fc.get('allowed', fc.get('enabled', False)))
-                        if not _allowed:
-                            result = {"ok": False, "message": "Foreman was not enabled at startup; restart to enable or run roles wizard."}
-                        else:
-                            st = _foreman_load_state() or {}
-                            if bool(st.get('running', False)):
-                                # queue a run right after current finishes
-                                try:
-                                    st['queued_after_current'] = True
-                                    _foreman_save_state(st)
-                                    result = {"ok": True, "message": "Foreman already running; queued one run after current finishes."}
-                                except Exception:
-                                    result = {"ok": False, "message": "Foreman already running."}
-                            else:
-                                try:
-                                    iv = float(fc.get('interval_seconds',900) or 900)
-                                except Exception:
-                                    iv = 900.0
-                                now_ts = time.time()
-                                st['running'] = True
-                                st['next_due_ts'] = now_ts + iv
-                                _foreman_save_state(st)
-                                lock = state/"foreman.lock"
-                                try:
-                                    lock.write_text(str(int(now_ts)), encoding='utf-8')
-                                except Exception:
-                                    pass
-                                conf_snapshot = dict(fc)
-                                foreman_thread = threading.Thread(target=_foreman_worker, args=(conf_snapshot,), daemon=True)
-                                foreman_thread.start()
-                                result = {"ok": True, "message": "Foreman started (now)"}
-                    elif sub in ("off","disable","stop"):
-                        fc['enabled'] = False; _save_foreman_conf(fc)
-                        result = {"ok": True, "message": "Foreman disabled"}
-                    else:
-                        # Compose richer status from config and state
-                        st = _foreman_load_state() or {}
-                        now = time.time()
-                        def _age(ts: float) -> str:
-                            if not ts:
-                                return "-"
-                            sec = max(0, int(now - ts))
-                            return f"{sec}s"
-                        allowed = bool(fc.get('allowed', fc.get('enabled', False)))
-                        enabled = bool(fc.get('enabled', False))
-                        running = bool(st.get('running', False))
-                        next_due = st.get('next_due_ts') or 0
-                        next_in = f"{int(max(0, next_due - now))}s" if next_due else "-"
-                        last_rc = st.get('last_rc')
-                        last_out = st.get('last_out_dir') or '-'
-                        msg = (
-                            f"Foreman status: {'ON' if enabled else 'OFF'} allowed={'YES' if allowed else 'NO'} "
-                            f"agent={fc.get('agent','reuse_aux')} interval={fc.get('interval_seconds','?')}s cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}\n"
-                            f"running={'YES' if running else 'NO'} next_in={next_in} last_start={_age(float(st.get('last_start_ts') or 0))} "
-                            f"last_hb={_age(float(st.get('last_heartbeat_ts') or 0))} last_end={_age(float(st.get('last_end_ts') or 0))} last_rc={last_rc if last_rc is not None else '-'} out={last_out}"
-                        )
-                        result = {"ok": True, "message": msg}
+                    outcome = foreman_scheduler.command(sub, origin=source)
+                    if not isinstance(outcome, dict):
+                        raise ValueError("foreman command returned invalid result")
+                    result = dict(outcome)
                 else:
                     raise ValueError("unknown command")
             except Exception as exc:
@@ -2862,49 +1551,19 @@ def main(home: Path, session_name: Optional[str] = None):
 
 
     # --- TUI command inbox (fast path, polled ~200ms within main loop) ---
+    try:
+        from .orchestrator.command_queue import init_command_offsets, append_command_result
+    except ImportError:
+        from orchestrator.command_queue import init_command_offsets, append_command_result
     commands_path = state/"commands.jsonl"
     commands_path.parent.mkdir(parents=True, exist_ok=True)
     commands_scan_path = state/"commands.scan.json"
-    # Support primary path and a common typo path seen in some TUIs (note the space after the dot)
     commands_paths = [state/"commands.jsonl", state/"commands. jsonl"]
-    commands_last_pos_map: Dict[str, int] = {}
-    def _init_command_offsets():
-        loaded = False
-        try:
-            snap = json.loads(commands_scan_path.read_text(encoding='utf-8'))
-            last_map = snap.get("last_pos_map") or {}
-            for p in commands_paths:
-                key = str(p)
-                if key in last_map:
-                    commands_last_pos_map[key] = max(0, int(last_map.get(key) or 0))
-                    loaded = True
-        except Exception:
-            pass
-        if not loaded:
-            for p in commands_paths:
-                key = str(p)
-                try:
-                    commands_last_pos_map[key] = max(0, p.stat().st_size)
-                except FileNotFoundError:
-                    commands_last_pos_map[key] = 0
-            if any(commands_last_pos_map.values()):
-                print("[COMMANDS] Initialized offsets at EOF (skipping historical commands).")
-        else:
-            for p in commands_paths:
-                commands_last_pos_map.setdefault(str(p), 0)
-            print("[COMMANDS] Restored command offsets from previous session.")
-    _init_command_offsets()
+    commands_last_pos_map: Dict[str, int] = init_command_offsets(commands_paths, commands_scan_path)
+    if any(commands_last_pos_map.values()):
+        print("[COMMANDS] Initialized command offsets.")
     shutdown_requested = False
     processed_command_ids: set[str] = set()
-
-    def _append_command_result(cmd_id: str, ok: bool, message: str, **extra):
-        try:
-            rec = {"id": cmd_id, "result": {"ok": bool(ok), "message": str(message)}}
-            rec["result"].update(extra)
-            with (commands_path).open('a', encoding='utf-8') as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n"); f.flush()
-        except Exception:
-            pass
 
     def _inject_full_system():
         try:
@@ -2915,373 +1574,20 @@ def main(home: Path, session_name: Optional[str] = None):
         except Exception as e:
             return False, f"inject failed: {e}"
 
-    def _consume_tui_commands(max_items: int = 50):
-        nonlocal deliver_paused, shutdown_requested, resolved, commands_last_pos_map
-        cnt = 0
-        scan = {"paths": []}
-        for cpath in commands_paths:
-            if cnt >= max_items:
-                break
-            if not cpath.exists():
-                try:
-                    scan["paths"].append({"path": str(cpath), "exists": False})
-                except Exception:
-                    pass
-                continue
-            key = str(cpath)
-            last = commands_last_pos_map.get(key, 0)
-            try:
-                with cpath.open('r', encoding='utf-8', errors='replace') as f:
-                    try:
-                        f.seek(0, 2)
-                        endpos = f.tell()
-                    except Exception:
-                        endpos = None
-                    if endpos is not None and last > endpos:
-                        last = endpos
-                        commands_last_pos_map[key] = last
-                    try:
-                        f.seek(last)
-                    except Exception:
-                        f.seek(0)
-                        last = 0
-                        commands_last_pos_map[key] = last
-                    try:
-                        scan["paths"].append({"path": key, "exists": True, "last_pos": last, "end_pos": endpos})
-                    except Exception:
-                        pass
-                    while cnt < max_items:
-                        line = f.readline()
-                        if not line:
-                            break
-                        commands_last_pos_map[key] = f.tell()
-                        cnt += 1
-                        raw_line = line.strip()
-                        if not raw_line:
-                            continue
-                        try:
-                            obj = json.loads(raw_line)
-                        except Exception:
-                            # 记录无法解析的原始行，便于诊断
-                            try:
-                                (state/"last_command.json").write_text(json.dumps({"raw": raw_line}, ensure_ascii=False, indent=2), encoding='utf-8')
-                            except Exception:
-                                pass
-                            continue
-                        # 快照最近一条命令
-                        try:
-                            (state/"last_command.json").write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
-                        except Exception:
-                            pass
-                        cmd_id = str(obj.get('id') or obj.get('request_id') or '')
-                        if cmd_id and cmd_id in processed_command_ids:
-                            continue
-                        # Skip result echo lines
-                        if isinstance(obj, dict) and 'result' in obj:
-                            continue
-                        # Normalize command
-                        ctype = str(obj.get('type') or obj.get('command') or '').strip().lower()
-                        target = str(obj.get('target') or obj.get('route') or '').strip().lower()
-                        args = obj.get('args') or {}
-                        ok, msg = False, 'unsupported'
-                        try:
-                            if ctype in ('a','b','both','send'):
-                                text = str(args.get('text') or obj.get('text') or '').strip()
-                                if not text:
-                                    ok, msg = False, 'empty text'
-                                else:
-                                    if ctype == 'a' or target in ('a','peera','peer_a'):
-                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                    elif ctype == 'b' or target in ('b','peerb','peer_b'):
-                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                    else:
-                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                    ok, msg = True, 'sent'
-                            elif ctype in ('pause','resume'):
-                                deliver_paused = (ctype == 'pause')
-                                write_status(deliver_paused)
-                                ok, msg = True, f"handoff {'paused' if deliver_paused else 'resumed'}"
-                            elif ctype in ('sys-refresh','sys_refresh','sysrefresh'):
-                                ok, msg = _inject_full_system()
-                            elif ctype in ('clear','reset'):
-                                # /clear is reserved; noop for now (ack only). Keep 'reset' as alias.
-                                ok, msg = True, 'clear acknowledged (noop)'
-                            elif ctype in ('inbox','inbox_policy','startup_inbox_policy'):
-                                try:
-                                    policy = str((args.get('policy') or obj.get('policy') or 'resume')).strip().lower()
-                                    def _apply_policy(label: str) -> int:
-                                        try:
-                                            inbox = _inbox_dir(home, label)
-                                            proc = _processed_dir(home, label)
-                                            files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
-                                        except Exception:
-                                            files = []
-                                        if not files:
-                                            return 0
-                                        if policy in ('archive','discard'):
-                                            moved = 0
-                                            for f in files:
-                                                try:
-                                                    proc.mkdir(parents=True, exist_ok=True)
-                                                    f.rename(proc/f.name); moved += 1
-                                                except Exception:
-                                                    pass
-                                            try:
-                                                allp = sorted(proc.iterdir(), key=lambda p: p.name)
-                                                if len(allp) > PROCESSED_RETENTION:
-                                                    for ff in allp[:len(allp)-PROCESSED_RETENTION]:
-                                                        try:
-                                                            ff.unlink()
-                                                        except Exception:
-                                                            pass
-                                            except Exception:
-                                                pass
-                                            log_ledger(home, {"from":"system","kind":"startup-inbox-discard" if policy=='discard' else 'startup-inbox-archive',"peer":label,"moved":moved})
-                                            return moved
-                                        # resume → no-op (keep files)
-                                        log_ledger(home, {"from":"system","kind":"startup-inbox-resume","peer":label})
-                                        return len(files)
-                                    a = _apply_policy('PeerA'); b = _apply_policy('PeerB')
-                                    ok, msg = True, f"inbox policy {policy}: PeerA={a} PeerB={b}"
-                                except Exception as e:
-                                    ok, msg = False, f"inbox_policy failed: {e}"
-                            elif ctype in ('launch','launch_peers'):
-                                try:
-                                    who = str((args.get('who') or 'both')).lower()
-                                    # Reload latest profiles so newly set roles take effect immediately
-                                    try:
-                                        resolved = load_profiles(home)
-                                    except Exception:
-                                        pass
-                                    # compute effective commands from current resolved bindings
-                                    def _first_bin(cmd: str) -> str:
-                                        try:
-                                            import shlex
-                                            return shlex.split(cmd or '')[0] if cmd else ''
-                                        except Exception:
-                                            return (cmd or '').split(' ')[0]
-                                    def _bin_available(cmd: str) -> bool:
-                                        prog = _first_bin(cmd)
-                                        if not prog:
-                                            return False
-                                        import shutil
-                                        return shutil.which(prog) is not None
-                                    pa_cmd2 = (resolved.get('peerA') or {}).get('command') or ''
-                                    pb_cmd2 = (resolved.get('peerB') or {}).get('command') or ''
-                                    pa_eff2 = os.environ.get('CLAUDE_I_CMD') or pa_cmd2
-                                    pb_eff2 = os.environ.get('CODEX_I_CMD') or pb_cmd2
-                                    # Normalize first token to absolute path to avoid PATH mismatch inside tmux bash
-                                    def _normalize_absbin(cmd: str) -> str:
-                                        try:
-                                            prog = _first_bin(cmd)
-                                            if not prog:
-                                                return cmd
-                                            import shutil, shlex
-                                            ab = shutil.which(prog)
-                                            if not ab:
-                                                return cmd
-                                            parts = shlex.split(cmd)
-                                            parts[0] = ab
-                                            return " ".join(shlex.quote(x) for x in parts)
-                                        except Exception:
-                                            return cmd
-                                    pa_eff2 = _normalize_absbin(pa_eff2)
-                                    pb_eff2 = _normalize_absbin(pb_eff2)
-                                    # Hard-fail: if unavailable, report and do not launch
-                                    a_ok = _bin_available(pa_eff2) if who in ('a','both') else True
-                                    b_ok = _bin_available(pb_eff2) if who in ('b','both') else True
-                                    # 记录一次诊断快照
-                                    try:
-                                        (state/"last_launch.json").write_text(json.dumps({
-                                            "who": who,
-                                            "peerA": {"cmd": pa_cmd2, "eff": pa_eff2, "ok": a_ok},
-                                            "peerB": {"cmd": pb_cmd2, "eff": pb_eff2, "ok": b_ok},
-                                            "paneA": paneA, "paneB": paneB,
-                                        }, ensure_ascii=False, indent=2), encoding='utf-8')
-                                    except Exception:
-                                        pass
-                                    if (who in ('a','both')) and (not a_ok):
-                                        ok = False
-                                        msg = f"PeerA CLI unavailable: {_first_bin(pa_eff2) or '(empty)'}"
-                                        try:
-                                            outbox_write(home, {"type":"to_user","peer":"System","text":msg})
-                                        except Exception:
-                                            pass
-                                    if (who in ('b','both')) and (not b_ok):
-                                        ok = False
-                                        msg = f"PeerB CLI unavailable: {_first_bin(pb_eff2) or '(empty)'}"
-                                        try:
-                                            outbox_write(home, {"type":"to_user","peer":"System","text":msg})
-                                        except Exception:
-                                            pass
-                                    pa_cwd2 = (resolved.get('peerA') or {}).get('cwd') or '.'
-                                    pb_cwd2 = (resolved.get('peerB') or {}).get('cwd') or '.'
-                                    def _wrap_cwd2(cmd: str, cwd: str | None) -> str:
-                                        if cwd and cwd not in ('.',''):
-                                            return f"cd {cwd} && {cmd}"
-                                        return cmd
-                                    launched = []
-                                    if who in ('a','both') and pa_eff2 and _bin_available(pa_eff2):
-                                        print(f"[LAUNCH] PeerA → {pa_eff2} (cwd={pa_cwd2}) pane={paneA}")
-                                        tmux_start_interactive(paneA, _wrap_cwd2(pa_eff2, pa_cwd2))
-                                        launched.append('PeerA')
-                                    elif who in ('a','both'):
-                                        print(f"[LAUNCH] PeerA not started (CLI unavailable): {_first_bin(pa_eff2) or '(empty)'}")
-                                    if who in ('b','both') and pb_eff2 and _bin_available(pb_eff2):
-                                        print(f"[LAUNCH] PeerB → {pb_eff2} (cwd={pb_cwd2}) pane={paneB}")
-                                        tmux_start_interactive(paneB, _wrap_cwd2(pb_eff2, pb_cwd2))
-                                        launched.append('PeerB')
-                                    elif who in ('b','both'):
-                                        print(f"[LAUNCH] PeerB not started (CLI unavailable): {_first_bin(pb_eff2) or '(empty)'}")
-                                    ok = True
-                                    msg = f"launched {' & '.join(launched) if launched else 'none'}"
-                                    if not launched:
-                                        try:
-                                            outbox_write(home, {"type":"to_user","peer":"System","text":"Launch requested but no CLI available for selected actors (check agents.yaml or PATH)."})
-                                        except Exception:
-                                            pass
-                                except Exception as e:
-                                    ok, msg = False, f"launch failed: {e}"
-                            elif ctype in ('quit','exit'):
-                                try:
-                                    tmux("kill-session","-t",session)
-                                    ok, msg = True, 'session terminated'
-                                except Exception as e:
-                                    ok, msg = False, f"kill-session failed: {e}"
-                                shutdown_requested = True
-                            elif ctype in ('foreman','fm'):
-                                sub = str(args.get('action') or obj.get('action') or '').strip().lower() or 'status'
-                                # Reuse IM command path by calling the same code branch
-                                data = {'request_id': cmd_id or str(int(time.time())), 'command': 'foreman', 'source': 'tui', 'args': {'action': sub}}
-                                tmp = state/"im_commands"/f"tui-{int(time.time()*1000)}.json"
-                                try:
-                                    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
-                                    _process_im_commands()
-                                    ok, msg = True, f"foreman {sub} requested"
-                                except Exception as e:
-                                    ok, msg = False, f"foreman {sub} failed: {e}"
-                            elif ctype in ('c','aux_cli','aux'):
-                                prompt_text = str(args.get('prompt') or obj.get('prompt') or '').strip()
-                                if not prompt_text:
-                                    ok, msg = False, 'empty prompt'
-                                else:
-                                    rc, out, err, cmd_line = _run_aux_cli(prompt_text)
-                                    ok = (rc == 0)
-                                    summary = [f"[Aux CLI] exit={rc}", f"command: {cmd_line}"]
-                                    if out: summary.append("stdout:\n" + out.strip())
-                                    if err: summary.append("stderr:\n" + err.strip())
-                                    msg = "\n".join(summary)
-                            elif ctype in ('focus',):
-                                try:
-                                    hint = str((args.get('hint') or obj.get('hint') or '')).strip()
-                                    _request_por_refresh('focus-tui', hint=hint or None, force=True)
-                                    ok, msg = True, 'focus requested'
-                                except Exception as e:
-                                    ok, msg = False, f'focus failed: {e}'
-                            elif ctype in ('roles-set-actor','roles_set_actor'):
-                                try:
-                                    role = str(args.get('role') or obj.get('role') or '').strip()
-                                    actor = str(args.get('actor') or obj.get('actor') or '').strip()
-                                    cp = read_yaml(cli_profiles_path)
-                                    roles = dict(cp.get('roles') or {})
-                                    roles.setdefault('peerA', {})
-                                    roles.setdefault('peerB', {})
-                                    roles.setdefault('aux', {})
-                                    if role in roles:
-                                        roles[role]['actor'] = actor
-                                        cp['roles'] = roles
-                                        _write_yaml(cli_profiles_path, cp)
-                                        # Refresh resolved settings to apply on next run; for now, status will reflect next write
-                                        try:
-                                            resolved = load_profiles(home)
-                                        except Exception:
-                                            pass
-                                        write_status(deliver_paused)
-                                        ok, msg = True, f"role {role} set to {actor}"
-                                    else:
-                                        ok, msg = False, f"unknown role: {role}"
-                                except Exception as e:
-                                    ok, msg = False, f'roles-set-actor failed: {e}'
-                            elif ctype in ('token',):
-                                try:
-                                    action = str(args.get('action') or obj.get('action') or '').strip().lower()
-                                    cfgp = settings/"telegram.yaml"
-                                    cfg = read_yaml(cfgp)
-                                    if action == 'set':
-                                        val = str(args.get('value') or obj.get('value') or '').strip()
-                                        if not val:
-                                            ok, msg = False, 'token value required'
-                                        else:
-                                            cfg['token'] = val
-                                            _write_yaml(cfgp, cfg)
-                                            ok, msg = True, 'token set'
-                                    elif action == 'unset':
-                                        if 'token' in cfg:
-                                            cfg.pop('token', None)
-                                            _write_yaml(cfgp, cfg)
-                                        ok, msg = True, 'token unset'
-                                    else:
-                                        ok, msg = False, 'unsupported token action'
-                                except Exception as e:
-                                    ok, msg = False, f'token failed: {e}'
-                            elif ctype in ('review',):
-                                try:
-                                    _send_aux_reminder('manual-review')
-                                    ok, msg = True, 'review requested'
-                                except Exception as e:
-                                    ok, msg = False, f'review failed: {e}'
-                            elif ctype in ('echo',):
-                                try:
-                                    val = str(args.get('value') or obj.get('value') or '').lower()
-                                    if val == 'on':
-                                        globals().update(CONSOLE_ECHO=True)
-                                    elif val == 'off':
-                                        globals().update(CONSOLE_ECHO=False)
-                                    # empty → show state in msg
-                                    ok, msg = True, f"echo={'on' if globals().get('CONSOLE_ECHO', False) else 'off'}"
-                                except Exception as e:
-                                    ok, msg = False, f'echo failed: {e}'
-                            elif ctype in ('passthru','pass','raw'):
-                                try:
-                                    peer = str(args.get('peer') or obj.get('peer') or '').upper()
-                                    cmdline = str(args.get('cmd') or obj.get('cmd') or '').strip()
-                                    if not cmdline:
-                                        ok, msg = False, 'empty passthru'
-                                    else:
-                                        _send_raw_to_cli(home, 'PeerA' if peer=='A' else 'PeerB', cmdline, paneA, paneB)
-                                        ok, msg = True, 'sent'
-                                except Exception as e:
-                                    ok, msg = False, f'passthru failed: {e}'
-                            else:
-                                ok, msg = False, 'unsupported'
-                        except Exception as e:
-                            ok, msg = False, f"error: {e}"
-                    if cmd_id:
-                        processed_command_ids.add(cmd_id)
-                    _append_command_result(cmd_id or '-', ok, msg)
-            except Exception:
-                pass
-        # snapshot scan result and last positions for troubleshooting
-        try:
-            scan["last_pos_map"] = commands_last_pos_map
-            (state/"commands.scan.json").write_text(json.dumps(scan, ensure_ascii=False, indent=2), encoding='utf-8')
-        except Exception:
-            pass
+    # moved into .orchestrator.command_queue_runtime
     # PROJECT.md bootstrap: avoid blocking TTY prompts in tmux/TUI runs
     project_md_path = Path.cwd()/"PROJECT.md"
     project_md_exists = project_md_path.exists()
     # Non-interactive default: do not prompt; continue with current files
     start_mode = "has_doc" if project_md_exists else "has_doc"
 
-    # Start interactive CLIs (do not fallback; if CLI missing, do not start and log a concise note)
-    # Build peer launch commands from actor templates (env can still override)
     def _first_bin(cmd: str) -> str:
         try:
             import shlex
             return shlex.split(cmd or '')[0] if cmd else ''
         except Exception:
             return (cmd or '').split(' ')[0]
+
     def _bin_available(cmd: str) -> bool:
         prog = _first_bin(cmd)
         if not prog:
@@ -3289,159 +1595,31 @@ def main(home: Path, session_name: Optional[str] = None):
         import shutil
         return shutil.which(prog) is not None
 
-    pa_cmd = (resolved.get('peerA') or {}).get('command') or ''
-    pb_cmd = (resolved.get('peerB') or {}).get('command') or ''
-    pa_eff = os.environ.get("CLAUDE_I_CMD") or pa_cmd
-    pb_eff = os.environ.get("CODEX_I_CMD")  or pb_cmd
-    if start_mode in ("has_doc", "ai_bootstrap"):
-        defer_launch = not _settings_confirmed_ready()
-        # Track pending auto-launch so we can trigger once settings.confirmed appears later
-        auto_launch_pending = defer_launch
-        # Wrap with role cwd when provided; tmux_start_interactive will add bash -lc
-        def _wrap_cwd(cmd: str, cwd: str | None) -> str:
-            if cwd and cwd not in (".", ""):
-                return f"cd {cwd} && {cmd}"
-            return cmd
-        pa_cwd = (resolved.get('peerA') or {}).get('cwd') or '.'
-        pb_cwd = (resolved.get('peerB') or {}).get('cwd') or '.'
-        if defer_launch or config_deferred:
-            print("[LAUNCH] Deferred until settings.confirmed is present.")
-        else:
-            # PeerA
-            # Normalize absolute path
-            def _normalize_absbin(cmd: str) -> str:
-                try:
-                    prog = _first_bin(cmd)
-                    if not prog:
-                        return cmd
-                    import shutil, shlex
-                    ab = shutil.which(prog)
-                    if not ab:
-                        return cmd
-                    parts = shlex.split(cmd)
-                    parts[0] = ab
-                    return " ".join(shlex.quote(x) for x in parts)
-                except Exception:
-                    return cmd
-            pa_eff = _normalize_absbin(pa_eff)
-            pb_eff = _normalize_absbin(pb_eff)
-            if pa_eff and _bin_available(pa_eff):
-                tmux_start_interactive(paneA, _wrap_cwd(pa_eff, pa_cwd))
-                print(f"[LAUNCH] PeerA mode=tmux pane={paneA} cmd={pa_eff} cwd={pa_cwd}")
-            else:
-                print(f"[LAUNCH] PeerA not started (CLI unavailable): {pa_eff or '(empty)'}")
-                try:
-                    msg = "PeerA not started: CLI command unavailable in PATH."
-                    outbox_write(home, {"type":"to_user","peer":"System","text":msg})
-                except Exception:
-                    pass
-            # PeerB
-            if pb_eff and _bin_available(pb_eff):
-                tmux_start_interactive(paneB, _wrap_cwd(pb_eff, pb_cwd))
-                print(f"[LAUNCH] PeerB mode=tmux pane={paneB} cmd={pb_eff} cwd={pb_cwd}")
-            else:
-                print(f"[LAUNCH] PeerB not started (CLI unavailable): {pb_eff or '(empty)'}")
-                try:
-                    msg = "PeerB not started: CLI command unavailable in PATH."
-                    outbox_write(home, {"type":"to_user","peer":"System","text":msg})
-                except Exception:
-                    pass
-        # Debug: show current commands per pane
-        try:
-            code,out,err = tmux('list-panes','-F','#{pane_id} #{pane_current_command}')
-            if code == 0 and out.strip():
-                print('[DEBUG] pane commands:\n' + out.strip())
-        except Exception:
-            pass
-        # Define startup policy handling early to avoid late binding
-        def _startup_handle_inbox(label: str, policy_override: Optional[str] = None):
-            try:
-                ensure_mailbox(home)
-            except Exception:
-                pass
-            inbox = _inbox_dir(home, label)
-            proc = _processed_dir(home, label)
-            try:
-                files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
-            except FileNotFoundError:
-                files = []
-            if not files:
-                return 0
-            policy = (policy_override or INBOX_STARTUP_POLICY or "resume").strip().lower()
-            if policy in ("discard", "archive"):
-                moved = 0
-                for f in files:
-                    try:
-                        proc.mkdir(parents=True, exist_ok=True)
-                        f.rename(proc/f.name); moved += 1
-                    except Exception:
-                        pass
-                try:
-                    allp = sorted(proc.iterdir(), key=lambda p: p.name)
-                    if len(allp) > PROCESSED_RETENTION:
-                        for ff in allp[:len(allp)-PROCESSED_RETENTION]:
-                            try: ff.unlink()
-                            except Exception: pass
-                except Exception:
-                    pass
-                log_ledger(home, {"from":"system","kind":"startup-inbox-discard","peer":label,"moved":moved})
-                return moved
-            log_ledger(home, {"from":"system","kind":"startup-inbox-resume","peer":label,"pending":len(files)})
-            return len(files)
-        # Startup policy: handle leftover inbox (always prompt; default applies after 30s of inactivity)
-        try:
-            ensure_mailbox(home)
-            def _count_inbox(label: str) -> int:
-                try:
-                    ib = _inbox_dir(home, label)
-                    return len([f for f in ib.iterdir() if f.is_file()])
-                except Exception:
-                    return 0
-            cntA = _count_inbox("PeerA"); cntB = _count_inbox("PeerB")
-            if (cntA > 0 or cntB > 0):
-                chosen_policy = (INBOX_STARTUP_POLICY or "resume").strip().lower()
-                # Interactive vs non-interactive: shorter timeout in non-interactive runs (avoid hanging CI)
-                try:
-                    is_interactive = sys.stdin.isatty()
-                except Exception:
-                    is_interactive = False
-                t_conf = (cli_profiles.get("delivery", {}) or {})
-                timeout_s = float(t_conf.get("inbox_startup_prompt_timeout_seconds", 30))
-                timeout_nonint = float(t_conf.get("inbox_startup_prompt_noninteractive_timeout_seconds", 0))
-                eff_timeout = timeout_s if is_interactive else timeout_nonint
-                print("\n[INBOX] Residual inbox detected:")
-                print(f"  - PeerA: {cntA} @ {str(_inbox_dir(home,'PeerA'))}")
-                print(f"  - PeerB: {cntB} @ {str(_inbox_dir(home,'PeerB'))}")
-                print(f"  Policy for this session: [r] resume  [a] archive  [d] discard; default: {chosen_policy}")
-                if eff_timeout > 0:
-                    print(f"  Will apply default policy {chosen_policy} after {int(eff_timeout)}s of inactivity.")
-                ans = read_console_line_timeout("> Choose r/a/d and Enter (or Enter to use default): ", eff_timeout).strip().lower()
-                if ans in ("r","resume"):
-                    chosen_policy = "resume"
-                elif ans in ("a","archive"):
-                    chosen_policy = "archive"
-                elif ans in ("d","discard"):
-                    chosen_policy = "discard"
-                else:
-                    # Enter/timeout/invalid input → use default policy
-                    pass
-                print(f"[INBOX] Using policy: {chosen_policy}")
-                _startup_handle_inbox("PeerA", chosen_policy)
-                _startup_handle_inbox("PeerB", chosen_policy)
-        except Exception as e:
-            # Log only; do not block startup
-            try:
-                log_ledger(home, {"from":"system","kind":"startup-inbox-check-error","error":str(e)[:200]})
-            except Exception:
-                pass
-
-        # Wait until both CLIs are ready (prompt + brief quiet period);
-        # In pull+NUDGE mode, use a lower wait cap to avoid delaying the first NUDGE for too long
-        sw = float(cli_profiles.get("startup_wait_seconds", 12))
-        sn = float(cli_profiles.get("startup_nudge_seconds", 10))
-        to = min(sw, sn) if MB_PULL_ENABLED else sw
-        wait_for_ready(paneA,  profileA, timeout=to)
-        wait_for_ready(paneB, profileB, timeout=to)
+    launcher_api = make_launcher({
+        'home': home,
+        'state': state,
+        'paneA': paneA,
+        'paneB': paneB,
+        'tmux': tmux,
+        'tmux_start_interactive': tmux_start_interactive,
+        'profileA': profileA,
+        'profileB': profileB,
+        'outbox_write': outbox_write,
+        'inbox_dir': _inbox_dir,
+        'processed_dir': _processed_dir,
+        'ensure_mailbox': ensure_mailbox,
+        'log_ledger': log_ledger,
+        'processed_retention': PROCESSED_RETENTION,
+        'inbox_policy': INBOX_STARTUP_POLICY,
+        'read_console_line_timeout': read_console_line_timeout,
+        'cli_profiles': cli_profiles,
+        'mb_pull_enabled': MB_PULL_ENABLED,
+        'wait_for_ready': wait_for_ready,
+        'commands_path': commands_path,
+        'settings_confirmed_ready': _settings_confirmed_ready,
+        'load_profiles': load_profiles,
+    })
+    auto_launch_pending, resolved = launcher_api.initial_setup(resolved, config_deferred, start_mode)
 
     # After initial injection, record capture lengths as the parsing baseline
     left_snap  = tmux_capture(paneA,  lines=800)
@@ -3548,199 +1726,33 @@ def main(home: Path, session_name: Optional[str] = None):
             return []
     prev_inbox: Dict[str, List[str]] = {"PeerA": _list_inbox_files("PeerA"), "PeerB": _list_inbox_files("PeerB")}
 
+    keepalive_api = make_keepalive({
+        'home': home,
+        'pending': pending_keepalive,
+        'enabled': keepalive_enabled,
+        'delay_s': keepalive_delay_s,
+        'inflight': inflight,
+        'queued': queued,
+        'list_inbox_files': _list_inbox_files,
+        'inbox_dir': _inbox_dir,
+        'compose_nudge': _compose_nudge,
+        'format_ts': _format_local_ts,
+        'profileA': profileA,
+        'profileB': profileB,
+        'aux_mode': aux_mode,
+        'aux_command': aux_command,
+        'nudge_api': nudge_api,
+        'log_ledger': log_ledger,
+        'keepalive_debug': KEEPALIVE_DEBUG,
+    })
+
     def _mailbox_peer_name(peer_label: str) -> str:
         return "peerA" if peer_label == "PeerA" else "peerB"
 
     # (Defined earlier before startup)
 
-    # Minimal teaching-intercept: require a trailing fenced ```insight block in mailbox to_peer payloads.
-    # Rationale: single structural invariant; high ROI; no timers/windows; intercept every time until satisfied.
-    INSIGHT_FENCE = "```insight"
-
-    def _has_trailing_insight_block(text: str) -> bool:
-        if not text:
-            return False
-        try:
-            s = str(text).rstrip()
-            # Fast checks to avoid heavy regex: must end with closing fence and contain an opening insight fence
-            if not s.endswith("```"):
-                return False
-            open_pos = s.rfind(INSIGHT_FENCE)
-            if open_pos < 0:
-                return False
-            # Ensure the last closing fence occurs after the opening insight fence
-            close_pos = s.rfind("```")
-            return close_pos > open_pos
-        except Exception:
-            return False
-
-    def _teach_intercept_missing_insight(home: Path, peer_label: str, payload: str) -> bool:
-        """Warn (do not block) when the trailing insight block is missing.
-
-        Returns False so that callers never suppress forwarding. We still send a
-        short system reminder to reinforce the invariant.
-        """
-        if _has_trailing_insight_block(payload):
-            return False
-        peer_name = "peerA" if peer_label == "PeerA" else "peerB"
-        tip = (
-            "Missing trailing ```insight fenced block; please end each to_peer message with exactly one insight block (include a Next or a ≤10‑min micro‑experiment).\n"
-            f"Overwrite .cccc/mailbox/{peer_name}/to_peer.md and resend (do NOT append).\n"
-            "If exploring, use kind: note with a one‑line Next to indicate direction."
-        )
-        _send_handoff("System", peer_label, f"<FROM_SYSTEM>\n{tip}\n</FROM_SYSTEM>\n")
-        try:
-            log_ledger(home, {"from": "system", "kind": "teach-warn", "peer": peer_label, "reason": "missing-insight"})
-        except Exception:
-            pass
-        return False
-
-    # --- progress keepalive helpers (lightweight) ---
-    # Body event-line detection (Progress/Next) — do not rely on insight.kind anymore
-    EVENT_PROGRESS_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?Progress\s*(?:\(|:)\s*")
-    EVENT_NEXT_RE     = re.compile(r"(?mi)^\s*(?:[-*]\s*)?Next\s*(?:\(|:)\s*(.+)$")
-
-    def _has_progress_event(payload: str) -> bool:
-        try:
-            m = re.search(r"<\s*TO_PEER\s*>([\s\S]*?)<\s*/TO_PEER\s*>", payload or "", re.I)
-            body = m.group(1) if m else (payload or "")
-            return bool(EVENT_PROGRESS_RE.search(body))
-        except Exception:
-            return False
-
-    def _extract_next_from_body(payload: str) -> str:
-        try:
-            m = re.search(r"<\s*TO_PEER\s*>([\s\S]*?)<\s*/TO_PEER\s*>", payload or "", re.I)
-            body = m.group(1) if m else (payload or "")
-            mm = EVENT_NEXT_RE.findall(body)
-            return (mm[0].strip() if mm else "")
-        except Exception:
-            return ""
-
-    def _schedule_keepalive(sender_label: str, payload: str):
-        """Schedule a delayed system keepalive back to the sender on progress messages.
-        Trigger: presence of a Progress: line in the body; suppressed at dispatch time.
-        """
-        if not keepalive_enabled:
-            return
-        # Only consider <TO_PEER> messages
-        if "<TO_PEER>" not in (payload or ""):
-            return
-        if not _has_progress_event(payload):
-            return
-        nx = _extract_next_from_body(payload)
-        due = time.time() + float(keepalive_delay_s)
-        pending_keepalive[sender_label] = {"due": due, "next": nx}
-        try:
-            log_ledger(home, {"from":"system","kind":"keepalive-scheduled","peer": sender_label, "delay_s": keepalive_delay_s})
-        except Exception:
-            pass
-
-    # --- Passive event parser: Item + event lines → ledger (no reminders, no gates) ---
-    ITEM_HEAD_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?Item\s*\(\s*([^\)]+?)\s*\)\s*:\s*(.+)$")
-    # Canonical keys (English only)
-    KEY_ALIASES = {
-        'progress': { 'progress' },
-        'evidence': { 'evidence' },
-        'ask':      { 'ask' },
-        'counter':  { 'counter' },
-        'risk':     { 'risk' },
-        'next':     { 'next' },
-    }
-    CANON_KEYS = {a: k for k, vv in KEY_ALIASES.items() for a in vv}
-    EVENT_LINE_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?([A-Za-z]+)\s*(?:\(([^)]*)\))?\s*:\s*(.*)$")
-
-    def _parse_params(s: str) -> Dict[str,str]:
-        out: Dict[str,str] = {}
-        if not s:
-            return out
-        try:
-            # split by comma not inside brackets
-            parts = re.split(r",(?=(?:[^\[]*\[[^\]]*\])*[^\]]*$)", s)
-            for p in parts:
-                if '=' in p:
-                    k,v = p.split('=',1)
-                    out[k.strip().lower()] = v.strip().strip()
-        except Exception:
-            pass
-        return out
-
-    def _extract_body(payload: str) -> str:
-        m = re.search(r"<\s*TO_PEER\s*>([\s\S]*?)<\s*/TO_PEER\s*>", payload or "", re.I)
-        return m.group(1) if m else (payload or "")
-
-    def _parse_events_from_body(body: str) -> List[Dict[str,Any]]:
-        events: List[Dict[str,Any]] = []
-        cur_label = 'misc'
-        for raw in (body or '').splitlines():
-            m = ITEM_HEAD_RE.match(raw)
-            if m:
-                cur_label = m.group(1).strip() or 'misc'
-                continue
-            mm = EVENT_LINE_RE.match(raw)
-            if not mm:
-                continue
-            key_raw, param_s, text = mm.group(1).strip(), (mm.group(2) or '').strip(), (mm.group(3) or '').strip()
-            key = CANON_KEYS.get(key_raw.lower())
-            if key not in KEY_ALIASES:
-                continue
-            params = _parse_params(param_s)
-            tag = (params.get('tag') or cur_label or 'misc').strip()
-            ent: Dict[str,Any] = {'type': key, 'tag': tag, 'text': text}
-            # optional fields
-            if 'to' in params:
-                ent['to'] = params.get('to')
-            if 'strength' in params:
-                ent['strength'] = params.get('strength')
-            if 'sev' in params:
-                ent['sev'] = params.get('sev')
-            # refs=[...] minimal parse
-            refs = params.get('refs') or ''
-            if refs.startswith('[') and refs.endswith(']'):
-                inside = refs[1:-1]
-                ent['refs'] = [r.strip() for r in inside.split(',') if r.strip()]
-            events.append(ent)
-        return events
-
-    def _ledger_events_from_payload(home: Path, sender_label: str, payload: str):
-        try:
-            body = _extract_body(payload)
-            evs = _parse_events_from_body(body)
-            for ev in evs:
-                rec = {
-                    'from': sender_label,
-                    'kind': f"event-{ev.get('type')}",
-                    'tag': ev.get('tag'),
-                    'text': ev.get('text'),
-                }
-                for k in ('to','strength','sev','refs'):
-                    if ev.get(k) is not None:
-                        rec[k] = ev.get(k)
-                log_ledger(home, rec)
-        except Exception:
-            pass
-
     def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None, *, nudge_text: Optional[str]=None):
-        nonlocal instr_counter, in_self_check
-        # Backpressure: if receiver has in-flight, enqueue
-        if inflight[receiver_label] is not None:
-            queued[receiver_label].append({"sender": sender_label, "payload": payload})
-            log_ledger(home, {"from": sender_label, "kind": "handoff-queued", "to": receiver_label, "chars": len(payload)})
-            return
-        # Drop empty-body peer handoffs early (avoid forwarding suffix-only messages)
-        try:
-            plain = _plain_text_without_tags_and_mid(payload)
-            if not plain:
-                log_ledger(home, {"from": sender_label, "kind": "handoff-drop", "to": receiver_label, "reason": "empty-body", "chars": len(payload)})
-                return
-        except Exception:
-            pass
-        # Progress keepalive: schedule when a peer sends a to_peer message with Progress lines
-        try:
-            if sender_label in ("PeerA","PeerB"):
-                _schedule_keepalive(sender_label, payload)
-        except Exception:
-            pass
+        return handoff_api.send_handoff(sender_label, receiver_label, payload, require_mid, nudge_text=nudge_text)
         # Append inbound suffix (per source: from_user/from_peer/from_system); keep backward-compatible string config
         def _suffix_for(receiver: str, sender: str) -> str:
             key = 'from_peer'
@@ -3777,11 +1789,11 @@ def main(home: Path, session_name: Optional[str] = None):
             seq, _ = _write_inbox_message(home, receiver_label, text_with_mid, mid)
             if nudge_text and nudge_text.strip():
                 if receiver_label == 'PeerA':
-                    _maybe_send_nudge(home, 'PeerA', paneA, profileA, custom_text=nudge_text, force=True)
+                    nudge_api.maybe_send_nudge(home, 'PeerA', paneA, profileA, custom_text=nudge_text, force=True)
                 else:
-                    _maybe_send_nudge(home, 'PeerB', paneB, profileB, custom_text=nudge_text, force=True)
+                    nudge_api.maybe_send_nudge(home, 'PeerB', paneB, profileB, custom_text=nudge_text, force=True)
             else:
-                _send_nudge(home, receiver_label, seq, mid, paneA, paneB, profileA, profileB, aux_mode)
+                nudge_api.send_nudge(home, receiver_label, seq, mid, paneA, paneB, profileA, profileB, aux_mode)
             try:
                 last_nudge_ts[receiver_label] = time.time()
             except Exception:
@@ -3916,48 +1928,7 @@ def main(home: Path, session_name: Optional[str] = None):
                     print(f"[TIMEOUT] handoff to {label} mid={infl.get('mid')} — {kind}")
                     inflight[label] = None
         # Also check delayed keepalives (coalesced per sender)
-        _maybe_dispatch_keepalive()
-
-    def _maybe_dispatch_keepalive():
-        """Send pending keepalive if due and not suppressed by inbox/inflight/queued."""
-        if not keepalive_enabled:
-            return
-        now = time.time()
-        for label in ("PeerA","PeerB"):
-            ent = pending_keepalive.get(label)
-            if not ent:
-                continue
-            if float(ent.get('due') or 0.0) > now:
-                continue
-            # Suppress when inbox has pending files
-            try:
-                ib = _inbox_dir(home, label)
-                has_inbox = any(ib.iterdir())
-            except Exception:
-                has_inbox = False
-            if has_inbox:
-                pending_keepalive[label] = None
-                continue
-            # Suppress when there are in-flight/queued handoffs targeting this label
-            if inflight.get(label) is not None or (queued.get(label) or []):
-                pending_keepalive[label] = None
-                continue
-            nxt = str(ent.get('next') or '').strip()
-            hint = f"Continue: {nxt}" if nxt else "Continue with your next step."
-            txt = f"<FROM_SYSTEM>\n[keepalive] {hint}\n</FROM_SYSTEM>\n"
-            # Keepalive NUDGE: neutral, no preview/trigger
-            ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
-            try:
-                inbox_path = _inbox_dir(home, label).as_posix()
-            except Exception:
-                inbox_path = ".cccc/mailbox/peerX/inbox"
-            ka_nudge = _compose_nudge(inbox_path, ts=_format_local_ts(), backlog_gt_zero=False, suffix=ka_suffix)
-            _send_handoff("System", label, txt, nudge_text=ka_nudge)
-            pending_keepalive[label] = None
-            try:
-                log_ledger(home, {"from":"system","kind":"keepalive-sent","peer": label})
-            except Exception:
-                pass
+        keepalive_api.tick()
 
     def _try_send_from_queue(label: str):
         if inflight.get(label) is not None:
@@ -3976,6 +1947,7 @@ def main(home: Path, session_name: Optional[str] = None):
     ctx = context_blob(policies, phase)
     # Simplify: do not pause handoff by default; let user /pause when needed
     deliver_paused = False
+    deliver_paused_box = {'v': deliver_paused}
     # Foreman thread handle (non-overlapping)
     foreman_thread: Optional[threading.Thread] = None
 
@@ -4008,152 +1980,40 @@ def main(home: Path, session_name: Optional[str] = None):
         pass
 
     # Write initial status snapshot for panel
-    def write_status(paused: bool):
-        state = home/"state"
-        pol_enabled = bool((policies.get("handoff_filter") or {}).get("enabled", True))
-        eff_filter = handoff_filter_override if handoff_filter_override is not None else pol_enabled
-        # Compute remaining rounds to next self-check (per peer)
-        next_selfA = None; next_selfB = None
-        if self_check_enabled and self_check_every > 0:
-            try:
-                a = int(handoffs_peer.get('PeerA',0)); b = int(handoffs_peer.get('PeerB',0))
-                remA = self_check_every - (a % self_check_every)
-                remB = self_check_every - (b % self_check_every)
-                next_selfA = (remA if remA > 0 else self_check_every)
-                next_selfB = (remB if remB > 0 else self_check_every)
-            except Exception:
-                pass
-        # Foreman status snapshot (minimal)
-        fconf = {}
-        fstate = {}
-        try:
-            fconf = _load_foreman_conf()
-            fstate = _foreman_load_state()
-        except Exception:
-            pass
-        f_enabled = bool(fconf.get('enabled', False))
-        f_cc = bool(fconf.get('cc_user', True))
-        f_next = fstate.get('next_due_ts')
-        try:
-            f_next_hhmm = time.strftime('%H:%M', time.localtime(float(f_next))) if f_next else None
-        except Exception:
-            f_next_hhmm = None
-        f_running = bool((fstate or {}).get('running', False))
-        f_last_end = (fstate or {}).get('last_end_ts')
-        try:
-            f_last_hhmm = time.strftime('%H:%M', time.localtime(float(f_last_end))) if f_last_end else None
-        except Exception:
-            f_last_hhmm = None
-        f_last_rc = (fstate or {}).get('last_rc')
-        # Setup snapshot (roles/cli/telegram)
-        def _pid_alive(pid: int) -> bool:
-            try:
-                if pid <= 0:
-                    return False
-                os.kill(pid, 0)
-                return True
-            except Exception:
-                return False
-        setup = {}
-        try:
-            roles_block = { 'peerA': (resolved.get('peerA') or {}).get('actor') or '',
-                            'peerB': (resolved.get('peerB') or {}).get('actor') or '',
-                            'aux':   (resolved.get('aux')   or {}).get('actor') or '' }
-        except Exception:
-            roles_block = { 'peerA':'', 'peerB':'', 'aux':'' }
-        try:
-            pa_cmd = (resolved.get('peerA') or {}).get('command') or ''
-            pb_cmd = (resolved.get('peerB') or {}).get('command') or ''
-            cli_block = {
-                'peerA': { 'command': pa_cmd, 'available': _bin_available(pa_cmd) },
-                'peerB': { 'command': pb_cmd, 'available': _bin_available(pb_cmd) },
-            }
-        except Exception:
-            cli_block = {'peerA': {'command':'','available': False}, 'peerB': {'command':'','available': False}}
-        try:
-            tcfg = read_yaml(settings/"telegram.yaml")
-            token_env = str((tcfg or {}).get('token_env') or 'TELEGRAM_BOT_TOKEN')
-            configured = bool((tcfg or {}).get('token')) or bool(os.environ.get(token_env))
-            autostart = True if not tcfg else bool((tcfg or {}).get('autostart', True))
-            pidf = state/"telegram-bridge.pid"
-            pid = 0
-            if pidf.exists():
-                try: pid = int(pidf.read_text(encoding='utf-8').strip() or '0')
-                except Exception: pid = 0
-            running = _pid_alive(pid)
-            telegram_block = { 'configured': configured, 'autostart': autostart, 'running': running }
-        except Exception:
-            telegram_block = { 'configured': False, 'autostart': True, 'running': False }
-        try:
-            actors_list = _actors_available()
-        except Exception:
-            actors_list = []
-        setup = { 'roles': roles_block, 'cli': cli_block, 'telegram': telegram_block, 'actors_available': actors_list }
-
-        payload = {
-            "session": session,
-            "paused": paused,
-            "phase": phase,
-            "require_ack": bool(delivery_conf.get("require_ack", False)),
-            "mailbox_counts": mbox_counts,
-            "mailbox_last": mbox_last,
-            "handoff_filter_enabled": eff_filter,
-            "por": por_status_snapshot(home),
-            "aux": _aux_snapshot(),
-            "reset": {
-                "policy": conversation_reset_policy,
-                "default_mode": default_reset_mode,
-                "interval_handoffs": auto_reset_interval_cfg if auto_reset_interval_cfg > 0 else None,
-                "interval_effective": reset_interval_effective if reset_interval_effective > 0 else None,
-                "self_check_every": self_check_every if self_check_enabled else None,
-                "handoffs_total": instr_counter,
-                "handoffs_peerA": int(handoffs_peer.get('PeerA',0)),
-                "handoffs_peerB": int(handoffs_peer.get('PeerB',0)),
-                "next_self_peerA": next_selfA,
-                "next_self_peerB": next_selfB,
-            },
-            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "foreman": ({"enabled": True, "running": f_running, "next_due": f_next_hhmm, "last": f_last_hhmm, "last_rc": f_last_rc, "cc_user": f_cc} if f_enabled else {"enabled": False}),
-            "setup": setup,
-        }
-        try:
-            (state/"status.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
-    
-    def write_queue_and_locks():
-        state = home/"state"
-        # Queue snapshot
-        try:
-            q_payload = {
-                'peerA': len(queued.get('PeerA') or []),
-                'peerB': len(queued.get('PeerB') or []),
-                'inflight': {
-                    'peerA': bool(inflight.get('PeerA')),
-                    'peerB': bool(inflight.get('PeerB')),
-                }
-            }
-            (state/"queue.json").write_text(json.dumps(q_payload, ensure_ascii=False), encoding='utf-8')
-        except Exception:
-            pass
-        # Locks snapshot (proxy: inbox seq locks present + inflight)
-        try:
-            locks = []
-            for nm in ('inbox-seq-peerA.lock','inbox-seq-peerB.lock'):
-                if (state/nm).exists():
-                    locks.append(nm)
-            l_payload = {
-                'inbox_seq_locks': locks,
-                'inflight': {
-                    'peerA': bool(inflight.get('PeerA')),
-                    'peerB': bool(inflight.get('PeerB')),
-                }
-            }
-            (state/"locks.json").write_text(json.dumps(l_payload, ensure_ascii=False), encoding='utf-8')
-        except Exception:
-            pass
-    write_status(deliver_paused)
-    write_queue_and_locks()
+    # status writer/queue snapshot moved to .orchestrator.status
+    try:
+        from .orchestrator.status import make as make_status
+    except ImportError:
+        from orchestrator.status import make as make_status
+    stapi = make_status({
+        'home': home, 'state': state, 'session': session, 'policies': policies,
+        'conversation_reset_policy': conversation_reset_policy,
+        'default_reset_mode': default_reset_mode,
+        'auto_reset_interval_cfg': auto_reset_interval_cfg,
+        'reset_interval_effective': reset_interval_effective,
+        'self_check_enabled': self_check_enabled,
+        'self_check_every': self_check_every,
+        'instr_counter_box': {'v': instr_counter},
+        'handoffs_peer': handoffs_peer,
+        'por_status_snapshot': por_status_snapshot,
+        '_aux_snapshot': _aux_snapshot,
+        'cli_profiles': cli_profiles,
+        'settings': settings,
+        'resolved_box': {'v': resolved},
+        '_bin_available': _bin_available,
+        '_actors_available': _actors_available,
+        '_inbox_dir': _inbox_dir,
+        '_processed_dir': _processed_dir,
+        '_load_foreman_conf': _load_foreman_conf,
+        '_foreman_load_state': _foreman_load_state,
+        'mbox_counts': mbox_counts, 'mbox_last': mbox_last,
+        'phase': phase,
+        'read_yaml': read_yaml,
+        'queued': queued, 'inflight': inflight,
+    })
+    write_status = stapi.write_status
+    write_queue_and_locks = stapi.write_queue_and_locks
+    write_status(deliver_paused); write_queue_and_locks()
 
     # Initialize NUDGE de-dup and ACK de-dup state before first injection
     last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
@@ -4162,111 +2022,313 @@ def main(home: Path, session_name: Optional[str] = None):
     # If we auto-attached tmux, disable console input reading to avoid TTY contention
     console_input_enabled = bool(os.environ.get("CCCC_CONSOLE_INPUT"))
 
+    ready_banner_printed = False
 
-    print("\n[READY] Common: a:/b:/both:/u: send; /pause|/resume handoff; /sys-refresh SYSTEM; q quit.")
-    print("[TIP] Console echo is off by default. Use /echo on|off|<empty> to toggle/view.")
-    print("[TIP] Passthrough: a! <cmd> / b! <cmd> sends raw input to the CLI (no wrapper), e.g., a! /model")
-    # Show a clear input hint on first entry
-    try:
-        sys.stdout.write("[READY] Type h or /help for command hints.\n> ")
-        sys.stdout.flush()
-    except Exception:
-        pass
+    def _announce_ready() -> None:
+        nonlocal ready_banner_printed
+        if ready_banner_printed:
+            return
+        print("\n[READY] Common: a:/b:/both:/u: send; /pause|/resume handoff; /sys-refresh SYSTEM; q quit.")
+        print("[TIP] Console echo is off by default. Use /echo on|off|<empty> to toggle/view.")
+        print("[TIP] Passthrough: a! <cmd> / b! <cmd> sends raw input to the CLI (no wrapper), e.g., a! /model")
+        try:
+            sys.stdout.write("[READY] Type h or /help for command hints.\n> ")
+            sys.stdout.flush()
+        except Exception:
+            pass
+        if start_mode == "ai_bootstrap":
+            print("[PROJECT] Selected AI bootstrap for PROJECT.md.")
+        if start_mode == "has_doc":
+            print("[PROJECT] Found PROJECT.md.")
+        ready_banner_printed = True
+
+    initial_settings_done = _settings_confirmed_ready()
+    if not initial_settings_done:
+        print("[SETUP] Awaiting initial settings confirmation from TUI...")
+    else:
+        print("[SETUP] Initial settings already confirmed prior to orchestrator start.")
+        _announce_ready()
 
     # last_windows/dedup_* initialized after handshake
 
-    # Already injected; no need to re-send
-    if start_mode == "ai_bootstrap":
-        print("[PROJECT] Selected AI bootstrap for PROJECT.md.")
+    # Bind external handoff API now that dependencies are ready
+    try:
+        from .orchestrator.handoff import make as make_handoff
+        from .orchestrator.events import make as make_events
+    except ImportError:
+        from orchestrator.handoff import make as make_handoff
+        from orchestrator.events import make as make_events
+    handoff_ctx = {
+        'home': home,
+        'paneA': paneA, 'paneB': paneB,
+        'profileA': profileA, 'profileB': profileB,
+        'policies': policies,
+        'inflight': inflight, 'queued': queued,
+        'recent_sends': recent_sends, 'duplicate_window': duplicate_window,
+        'aux_mode': aux_mode, 'last_nudge_ts': last_nudge_ts,
+        'schedule_keepalive': keepalive_api.schedule_from_payload,
+        'is_low_signal': is_low_signal,
+        'request_por_refresh': _request_por_refresh,
+        'new_mid': new_mid, 'wrap_with_mid': wrap_with_mid,
+        'maybe_send_nudge': nudge_api.maybe_send_nudge, 'send_nudge': nudge_api.send_nudge,
+        'self_check_enabled': self_check_enabled,
+        'self_check_every': self_check_every,
+        'self_check_text': self_check_text,
+        'in_self_check': {'v': in_self_check},
+        'handoffs_peer': handoffs_peer,
+        'self_checks_done': self_checks_done,
+        'send_handoff': None,
+    }
+    handoff_api = make_handoff(handoff_ctx)
+    handoff_ctx['send_handoff'] = handoff_api.send_handoff
+    _send_handoff = handoff_api.send_handoff
+    keepalive_api.bind_send(_send_handoff)
+    events_api = make_events({'home': home, 'send_handoff': _send_handoff})
 
-    # If PROJECT.md exists: hint to read and standby (do not force pause for A↔B)
-    if start_mode == "has_doc":
-        print("[PROJECT] Found PROJECT.md.")
+    console_state = {
+        'deliver_paused': deliver_paused,
+        'handoff_filter_override': handoff_filter_override,
+        'CONSOLE_ECHO': CONSOLE_ECHO,
+        'foreman_thread': foreman_thread,
+    }
+    foreman_scheduler = make_foreman_scheduler({
+        'home': home,
+        'state': state,
+        'log_ledger': log_ledger,
+        'load_conf': _load_foreman_conf,
+        'load_state': _foreman_load_state,
+        'save_state': _foreman_save_state,
+        'stop_running': _foreman_stop_running,
+        'run_once': _foreman_run_once,
+        'console_state': console_state,
+    })
+    console_api = make_console_commands({
+        'home': home,
+        'state': state,
+        'paneA': paneA,
+        'paneB': paneB,
+        'profileA': profileA,
+        'profileB': profileB,
+        'delivery_conf': delivery_conf,
+        'send_handoff': _send_handoff,
+        'maybe_prepend': _maybe_prepend_preamble,
+        'send_raw_to_cli': _send_raw_to_cli,
+        'run_aux_cli': _run_aux_cli,
+        'send_aux_reminder': _send_aux_reminder,
+        'request_por_refresh': _request_por_refresh,
+        'weave_system': weave_system,
+        'foreman_scheduler': foreman_scheduler,
+        'write_status': write_status,
+        'write_queue_and_locks': write_queue_and_locks,
+        'policies': policies,
+        'state_box': console_state,
+    })
+
+    mailbox_api = make_mailbox_pipeline({
+        'home': home,
+        'scan_mailboxes': scan_mailboxes,
+        'mbox_idx': mbox_idx,
+        'print_block': print_block,
+        'log_ledger': log_ledger,
+        'outbox_write': outbox_write,
+        'compose_sentinel': compose_sentinel,
+        'sha256_text': sha256_text,
+        'events_api': events_api,
+        'ack_receiver': _ack_receiver,
+        'should_forward': should_forward,
+        'send_handoff': _send_handoff,
+        'policies': policies,
+        'state': state,
+        'mbox_counts': mbox_counts,
+        'mbox_last': mbox_last,
+        'last_event_ts': last_event_ts,
+        'write_status': write_status,
+        'write_queue_and_locks': write_queue_and_locks,
+        'deliver_paused_box': deliver_paused_box,
+    })
 
     while True:
         # 如果启动时因为未确认或未绑定角色而延迟，一旦就绪自动触发一次 launch+resume
         try:
-            if 'auto_launch_pending' in locals() and auto_launch_pending:
-                ready_cfg = _settings_confirmed_ready()
-                ready_roles = True
-                if config_deferred:
-                    try:
-                        # 重新加载一次，若 roles 已写入则不再延迟
-                        resolved = load_profiles(home)
-                        ready_roles = True
-                    except Exception:
-                        ready_roles = False
-                if ready_cfg and ready_roles:
-                    try:
-                        # enqueue a launch command for the TUI-command fast path to handle uniformly
-                        nowid = str(int(time.time()*1000))
-                        cmds = [
-                            {"id": nowid, "type": "launch", "args": {"who": "both"}, "source": "system", "ts": time.time()},
-                            {"id": str(int(time.time()*1000)+1), "type": "resume", "source": "system", "ts": time.time()},
-                        ]
-                        with (state/"commands.jsonl").open('a', encoding='utf-8') as f:
-                            for c in cmds:
-                                f.write(json.dumps(c, ensure_ascii=False) + "\n")
-                            f.flush()
-                        print("[LAUNCH] Auto-launch triggered after settings.confirmed appeared.")
-                    except Exception as e:
-                        print(f"[LAUNCH] Auto-launch enqueue failed: {e}")
-                    auto_launch_pending = False
+            auto_launch_pending, resolved = launcher_api.tick(resolved, config_deferred)
         except Exception:
             pass
         # Keep it simple: no phase locks; send clear instructions at start; remove runtime SYSTEM hot-reload
 
         # Non-blocking loop: prioritize console input; otherwise scan A/B mailbox outputs
         _process_im_commands()
-        # Progress keepalive: fire when due and still needed (inbox empty, no inflight/queue)
+        # TUI command queue consumption via external runtime (returns updated flags)
         try:
-            if keepalive_enabled:
-                nowk = time.time()
-                for label in ("PeerA","PeerB"):
-                    pend = pending_keepalive.get(label)
-                    if not pend:
-                        continue
-                    if nowk < float(pend.get("due", 0)):
-                        continue
-                    # Check conditions to avoid noise: skip when inbox has messages or handoff already in flight/queued
-                    inbox_files = _list_inbox_files(label)
-                    reason = None
-                    if inbox_files:
-                        reason = "inbox-not-empty"
-                    elif inflight.get(label):
-                        reason = "inflight"
-                    elif queued.get(label):
-                        reason = "queued"
-                    if reason:
-                        if KEEPALIVE_DEBUG:
-                            try:
-                                log_ledger(home, {"from":"system","kind":"keepalive-skipped","peer":label, "reason": reason})
-                            except Exception:
-                                pass
-                        pending_keepalive[label] = None
-                        continue
-                    # Safe to send a minimal FROM_SYSTEM nudge back to the sender
-                    nxt = (pend.get("next") or "").strip()
-                    if nxt:
-                        msg = f"<FROM_SYSTEM>\nOK. Continue: {nxt}\n</FROM_SYSTEM>\n"
-                    else:
-                        msg = "<FROM_SYSTEM>\nOK. Continue.\n</FROM_SYSTEM>\n"
-                    # Keepalive NUDGE: neutral, no preview/trigger
-                    ka_suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
-                    try:
-                        inbox_path = _inbox_dir(home, label).as_posix()
-                    except Exception:
-                        inbox_path = ".cccc/mailbox/peerX/inbox"
-                    ka_nudge = _compose_nudge(inbox_path, ts=_format_local_ts(), backlog_gt_zero=False, suffix=ka_suffix)
-                    _send_handoff("System", label, msg, nudge_text=ka_nudge)
-                    try:
-                        log_ledger(home, {"from":"system","kind":"keepalive-sent","peer":label})
-                    except Exception:
-                        pass
-                    pending_keepalive[label] = None
+            from .orchestrator.command_queue_runtime import make as make_cq
+        except ImportError:
+            from orchestrator.command_queue_runtime import make as make_cq
+        cq_ctx = {
+            'home': home, 'state': state, 'session': session,
+            'paneA': paneA, 'paneB': paneB,
+            'profileA': profileA, 'profileB': profileB,
+            'settings': settings,
+            'cli_profiles_path': cli_profiles_path,
+            'PROCESSED_RETENTION': PROCESSED_RETENTION,
+            'write_status': write_status,
+            'weave_system': weave_system,
+            'send_handoff': _send_handoff,
+            'maybe_prepend_preamble': _maybe_prepend_preamble,
+            'process_im_commands': _process_im_commands,
+            'run_aux_cli': _run_aux_cli,
+            'read_yaml': read_yaml,
+            'write_yaml': _write_yaml,
+            'load_profiles': load_profiles,
+            'tmux': tmux,
+            'tmux_start_interactive': tmux_start_interactive,
+            'inbox_dir': _inbox_dir,
+            'processed_dir': _processed_dir,
+            'outbox_write': outbox_write,
+            'commands_path': commands_path,
+            'commands_paths': commands_paths,
+            'commands_last_pos_map': commands_last_pos_map,
+            'processed_command_ids': processed_command_ids,
+            'resolved': resolved,
+            # boxes for by-ref flags
+            'deliver_paused_box': deliver_paused_box,
+            'shutdown_requested_box': {'v': shutdown_requested},
+            # needed for passthru
+            '_send_raw_to_cli': _send_raw_to_cli,
+        }
+        cq = make_cq(cq_ctx)
+        upd = cq.consume(max_items=20)
+        deliver_paused = upd.get('deliver_paused', deliver_paused)
+        console_state['deliver_paused'] = deliver_paused
+        deliver_paused_box['v'] = deliver_paused
+        shutdown_requested = upd.get('shutdown_requested', shutdown_requested)
+        resolved = upd.get('resolved', resolved)
+        commands_last_pos_map = upd.get('commands_last_pos_map', commands_last_pos_map)
+
+        if not initial_settings_done:
+            if _settings_confirmed_ready():
+                initial_settings_done = True
+                _announce_ready()
+                continue
+            time.sleep(0.2)
+            continue
+
+        try:
+            keepalive_api.tick()
         except Exception:
             pass
         line = None
+        # Handle ACK first: by mode (file_move watches moves; ack_text parses echoes)
+        try:
+            if ack_mode == 'file_move':
+                for label in ("PeerA","PeerB"):
+                    cur = _list_inbox_files(label)
+                    prev = prev_inbox.get(label, [])
+                    disappeared = [fn for fn in prev if fn not in cur]
+                    if disappeared:
+                        proc = _processed_dir(home, label)
+                        for fn in disappeared:
+                            ok = (proc/(fn)).exists()
+                            seq = fn[:6]
+                            try:
+                                print(f"[ACK-FILE] {label} seq={seq} file={fn} ok={bool(ok)}")
+                                log_ledger(home, {"from":label,"kind":"ack-file","seq":seq,"file":fn,"ok":bool(ok)})
+                                nudge_api.nudge_mark_progress(home, label, seq=seq)
+                            except Exception:
+                                pass
+                    try:
+                        added = [fn for fn in cur if fn not in prev]
+                        if added:
+                            fn0 = sorted(added)[0]
+                            if ".cccc-" not in fn0:
+                                seq = fn0[:6]
+                                path0 = _inbox_dir(home, label)/fn0
+                                preview = _safe_headline(path0)
+                                suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
+                                custom = _compose_detailed_nudge(seq, preview, (_inbox_dir(home, label).as_posix()), suffix=suffix)
+                                pane = paneA if label == "PeerA" else paneB
+                                prof = profileA if label == "PeerA" else profileB
+                                nudge_api.maybe_send_nudge(home, label, pane, prof, custom_text=custom, force=True)
+                                try:
+                                    last_nudge_ts[label] = time.time()
+                                except Exception:
+                                    pass
+                            for fn in sorted(added):
+                                if ".cccc-" in fn:
+                                    continue
+                                pth = _inbox_dir(home, label)/fn
+                                try:
+                                    text = pth.read_text(encoding='utf-8', errors='replace')
+                                except Exception:
+                                    text = ''
+                                try:
+                                    if self_check_enabled and (not in_self_check) and self_check_every > 0:
+                                        is_nudge_msg = (text.strip().startswith('[NUDGE]'))
+                                        low_signal = False
+                                        try:
+                                            low_signal = is_low_signal(text, policies)
+                                        except Exception:
+                                            low_signal = False
+                                        if (not is_nudge_msg) and (not low_signal):
+                                            handoffs_peer[label] = int(handoffs_peer.get(label, 0)) + 1
+                                            instr_counter = int(handoffs_peer.get('PeerA',0)) + int(handoffs_peer.get('PeerB',0))
+                                            cnt = handoffs_peer[label]
+                                            if (cnt % self_check_every) == 0:
+                                                sc_index = cnt // self_check_every
+                                                self_checks_done[label] = sc_index
+                                                in_self_check = True
+                                                try:
+                                                    msg_lines = [self_check_text.rstrip()]
+                                                    rules_path = (home/'rules'/('PEERA.md' if label=='PeerA' else 'PEERB.md')).as_posix()
+                                                    msg_lines.append(f"Rules: {rules_path}")
+                                                    msg_lines.append("Project: PROJECT.md")
+                                                    if SYSTEM_REFRESH_EVERY > 0 and (sc_index % SYSTEM_REFRESH_EVERY) == 0:
+                                                        try:
+                                                            proj_path = (Path.cwd()/"PROJECT.md")
+                                                            if proj_path.exists():
+                                                                proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
+                                                                msg_lines.append("\n--- PROJECT.md (full) ---\n" + proj_txt)
+                                                        except Exception:
+                                                            pass
+                                                        try:
+                                                            rules_txt = (home/'rules'/('PEERA.md' if label=='PeerA' else 'PEERB.md')).read_text(encoding='utf-8')
+                                                        except Exception:
+                                                            rules_txt = ''
+                                                        if rules_txt:
+                                                            msg_lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
+                                                    final = "\n".join(msg_lines).strip()
+                                                    _send_handoff('System', label, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
+                                                    log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": cnt, "peer": label})
+                                                    _request_por_refresh("self-check", force=False)
+                                                finally:
+                                                    in_self_check = False
+                                                break
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+                    prev_inbox[label] = cur
+            else:
+                for label, pane in (("PeerA", paneA), ("PeerB", paneB)):
+                    out = tmux_capture(pane, lines=800)
+                    acks, _ = find_acks_from_output(out)
+                    if not acks:
+                        continue
+                    inbox = _inbox_dir(home, label)
+                    files = [f for f in inbox.iterdir() if f.is_file()]
+                    for tok in acks:
+                        if tok in seen_acks[label]:
+                            continue
+                        seen_acks[label].add(tok)
+                        target = None
+                        for f in files:
+                            if tok in f.name:
+                                target = f; break
+                        if target:
+                            try:
+                                target.unlink()
+                            except Exception:
+                                pass
+        except Exception:
+            pass
         # Handle ACK first: by mode (file_move watches moves; ack_text parses echoes)
         try:
             if ack_mode == 'file_move':
@@ -4284,7 +2346,7 @@ def main(home: Path, session_name: Optional[str] = None):
                                 print(f"[ACK-FILE] {label} seq={seq} file={fn} ok={bool(ok)}")
                                 log_ledger(home, {"from":label,"kind":"ack-file","seq":seq,"file":fn,"ok":bool(ok)})
                                 # Treat file movement as progress for NUDGE single-flight
-                                _nudge_mark_progress(home, label, seq=seq)
+                                nudge_api.nudge_mark_progress(home, label, seq=seq)
                             except Exception:
                                 pass
                     # Detect newly arrived inbox files (external sources), send an immediate detailed NUDGE once per loop
@@ -4297,11 +2359,11 @@ def main(home: Path, session_name: Optional[str] = None):
                                 seq = fn0[:6]
                                 path0 = _inbox_dir(home, label)/fn0
                                 preview = _safe_headline(path0)
-                                suffix = _compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
+                                suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
                                 custom = _compose_detailed_nudge(seq, preview, (_inbox_dir(home, label).as_posix()), suffix=suffix)
                                 pane = paneA if label == "PeerA" else paneB
                                 prof = profileA if label == "PeerA" else profileB
-                                _maybe_send_nudge(home, label, pane, prof, custom_text=custom, force=True)
+                                nudge_api.maybe_send_nudge(home, label, pane, prof, custom_text=custom, force=True)
                                 try:
                                     last_nudge_ts[label] = time.time()
                                 except Exception:
@@ -4375,7 +2437,7 @@ def main(home: Path, session_name: Optional[str] = None):
                     for tok in acks:
                         if tok in seen_acks[label]:
                             continue
-                        ok = _archive_inbox_entry(home, label, tok)
+                        ok = nudge_api.archive_inbox_entry(home, label, tok)
                         # Treat 'inbox-empty' or no files as benign ACKs to avoid loops
                         if (not ok) and (tok.strip().lower() in ("inbox-empty","empty","none") or len(files)==0):
                             ok = True
@@ -4384,7 +2446,7 @@ def main(home: Path, session_name: Optional[str] = None):
                             print(f"[ACK] {label} token={tok} ok={bool(ok)}")
                             log_ledger(home, {"from":label,"kind":"ack","token":tok,"ok":bool(ok)})
                             # Any ACK token implies progress; clear inflight
-                            _nudge_mark_progress(home, label)
+                            nudge_api.nudge_mark_progress(home, label)
                         except Exception:
                             pass
         except Exception:
@@ -4402,11 +2464,11 @@ def main(home: Path, session_name: Optional[str] = None):
                 _maybe_prepend_preamble_inbox(label)
                 # Coalesced NUDGE: send only when needed; backoff otherwise
                 if label == "PeerA":
-                    sent = _maybe_send_nudge(home, label, pane, profileA,
-                                              suffix=_compose_nudge_suffix_for('PeerA', profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command))
+                    sent = nudge_api.maybe_send_nudge(home, label, pane, profileA,
+                                              suffix=nudge_api.compose_nudge_suffix_for('PeerA', profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command))
                 else:
-                    sent = _maybe_send_nudge(home, label, pane, profileB,
-                                              suffix=_compose_nudge_suffix_for('PeerB', profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command))
+                    sent = nudge_api.maybe_send_nudge(home, label, pane, profileB,
+                                              suffix=nudge_api.compose_nudge_suffix_for('PeerB', profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command))
                 if sent:
                     last_nudge_ts[label] = nowt
         except Exception:
@@ -4416,14 +2478,10 @@ def main(home: Path, session_name: Optional[str] = None):
             (state/"loop.alive").write_text(str(int(time.time())), encoding='utf-8')
         except Exception:
             pass
-        # Fast-command window: poll commands.jsonl every ~200ms until main loop tick elapses,
-        # while still giving priority to console input.
+        # Fast-command window: poll console input until the main-loop tick, using short sleeps to yield CPU
         deadline = time.time() + float(main_loop_tick_seconds)
         line = ""
         while True:
-            # consume TUI commands quickly (non-blocking, small batch)
-            _consume_tui_commands(max_items=20)
-            # check console input with a short timeout
             remain = max(0.0, deadline - time.time())
             step = 0.2 if remain > 0.2 else remain
             if step <= 0:
@@ -4431,506 +2489,36 @@ def main(home: Path, session_name: Optional[str] = None):
             if console_input_enabled:
                 rlist, _, _ = select.select([sys.stdin], [], [], step)
                 if rlist:
-                    line = read_console_line("> ").strip(); break
+                    line = read_console_line("> ").strip()
+                    break
             else:
                 time.sleep(step)
-                continue
         if shutdown_requested:
             break
         if not line:
-            # Mailbox polling: consume structured outputs (no screen scraping).
-            # To avoid echo interfering with typing, mute console printing during scan.
             _stdout_saved = sys.stdout
             if not CONSOLE_ECHO:
                 sys.stdout = io.StringIO()
             try:
-                events = scan_mailboxes(home, mbox_idx)
-                payload = ""  # guard variable for conditional forwarding
-                # PeerA events
-                if events["peerA"].get("to_user"):
-                    # Removed soft REV reminder in favor of hard gate on to_peer
-                    txt = events["peerA"]["to_user"].strip()
-                    print_block("PeerA → USER", txt)
-                    try:
-                        eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
-                    except Exception:
-                        eid = str(int(time.time()))
-                    # Mark a single concise event in ledger for human audit
-                    try:
-                        log_ledger(home, {"from":"PeerA","kind":"to_user","eid": eid, "chars": len(txt)})
-                    except Exception:
-                        pass
-                    outbox_write(home, {"type":"to_user","peer":"PeerA","text":txt,"eid":eid})
-                    _ack_receiver("PeerA", events["peerA"]["to_user"])  # Consider as ACK (responded after peer handoff)
-                    mbox_counts["peerA"]["to_user"] += 1
-                    mbox_last["peerA"]["to_user"] = time.strftime("%H:%M:%S")
-                    last_event_ts["PeerA"] = time.time()
-                    # Clear mailbox file after logging to ledger (core is authoritative outbox)
-                    try:
-                        tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-                        sha8 = sha256_text(txt)[:8]
-                        sentinel = compose_sentinel(ts=tsz, eid=eid, sha8=sha8, route="PeerA→User")
-                        (home/"mailbox"/"peerA"/"to_user.md").write_text(sentinel, encoding="utf-8")
-                    except Exception:
-                        pass
-                if events["peerA"].get("to_peer"):
-                    payload = events["peerA"]["to_peer"].strip()
-                    try:
-                        log_ledger(home, {"from":"PeerA","kind":"to_peer-seen","route":"mailbox","chars":len(payload)})
-                    except Exception:
-                        pass
-                    # Passive: parse Item/event lines and write to ledger (no reminders)
-                    _ledger_events_from_payload(home, "PeerA", payload)
-                    # (revise soft reminder/state removed)
-                    # Any mailbox activity can count as ACK
-                    _ack_receiver("PeerA", payload)
-                    mbox_counts["peerA"]["to_peer"] += 1
-                    mbox_last["peerA"]["to_peer"] = time.strftime("%H:%M:%S")
-                    last_event_ts["PeerA"] = time.time()
-                    # Minimal teaching-intercept: require trailing insight fence; intercept every time until satisfied
-                    try:
-                        if _teach_intercept_missing_insight(home, "PeerA", payload):
-                            payload = ""
-                    except Exception:
-                        pass
-                    # inline patch/diff handling removed
-                eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
-                if payload:
-                    # auto Aux trigger removed; /review remains as the simple reminder
-                    
-                    if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
-                        wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
-                        _send_handoff("PeerA", "PeerB", wrapped)
-                        try:
-                            log_ledger(home, {"from":"PeerA","to":"PeerB","kind":"to_peer-forward","route":"mailbox","chars":len(payload)})
-                        except Exception:
-                            pass
-                        try:
-                            eid2 = hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]
-                            outbox_write(home, {"type":"to_peer_summary","from":"PeerA","to":"PeerB","text": payload, "eid": eid2})
-                        except Exception:
-                            eid2 = str(int(time.time()))
-                        # Clear to_peer.md after successful forward to avoid accidental resends
-                        try:
-                            tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-                            sha8 = sha256_text(payload)[:8]
-                            sentinel = compose_sentinel(ts=tsz, eid=eid2, sha8=sha8, route="PeerA→PeerB")
-                            (home/"mailbox"/"peerA"/"to_peer.md").write_text(sentinel, encoding="utf-8")
-                        except Exception:
-                            pass
-                    else:
-                        log_ledger(home, {"from":"PeerA","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
-                # patch/diff mailbox path removed
-                # POR.new.md auto-diff removed (per latest design)
-                # PeerB events
-                if events["peerB"].get("to_user"):
-                    # Removed soft REV reminder in favor of hard gate on to_peer
-                    txt = events["peerB"].get("to_user"," ").strip()
-                    try:
-                        eid = hashlib.sha1(txt.encode('utf-8', errors='ignore')).hexdigest()[:12]
-                    except Exception:
-                        eid = str(int(time.time()))
-                    # Still record for diagnostics if PeerB emits to_user
-                    try:
-                        log_ledger(home, {"from":"PeerB","kind":"to_user","eid": eid, "chars": len(txt)})
-                    except Exception:
-                        pass
-                    outbox_write(home, {"type":"to_user","peer":"PeerB","text":txt,"eid":eid})
-                    try:
-                        tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-                        sha8 = sha256_text(txt)[:8]
-                        sentinel = compose_sentinel(ts=tsz, eid=eid, sha8=sha8, route="PeerB→User")
-                        (home/"mailbox"/"peerB"/"to_user.md").write_text(sentinel, encoding="utf-8")
-                    except Exception:
-                        pass
-                if events["peerB"].get("to_peer"):
-                    payload = events["peerB"]["to_peer"].strip()
-                    try:
-                        log_ledger(home, {"from":"PeerB","kind":"to_peer-seen","route":"mailbox","chars":len(payload)})
-                    except Exception:
-                        pass
-                    # Passive: parse Item/event lines and write to ledger (no reminders)
-                    _ledger_events_from_payload(home, "PeerB", payload)
-                    
-                    _ack_receiver("PeerB", payload)
-                    mbox_counts["peerB"]["to_peer"] += 1
-                    mbox_last["peerB"]["to_peer"] = time.strftime("%H:%M:%S")
-                    last_event_ts["PeerB"] = time.time()
-                    # Minimal teaching-intercept
-                    try:
-                        if _teach_intercept_missing_insight(home, "PeerB", payload):
-                            payload = ""
-                    except Exception:
-                        pass
-                    # inline patch/diff handling removed
-                    eff_enabled = handoff_filter_override if handoff_filter_override is not None else None
-                    if payload:
-                        # auto Aux trigger removed; /review remains as the simple reminder
-                        
-                        if should_forward(payload, "PeerB", "PeerA", policies, state, override_enabled=False):
-                            wrapped = f"<FROM_PeerB>\n{payload}\n</FROM_PeerB>\n"
-                            _send_handoff("PeerB", "PeerA", wrapped)
-                            try:
-                                log_ledger(home, {"from":"PeerB","to":"PeerA","kind":"to_peer-forward","route":"mailbox","chars":len(payload)})
-                            except Exception:
-                                pass
-                            try:
-                                eid2 = hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]
-                                outbox_write(home, {"type":"to_peer_summary","from":"PeerB","to":"PeerA","text": payload, "eid": eid2})
-                            except Exception:
-                                eid2 = str(int(time.time()))
-                            # Clear to_peer.md after successful forward
-                            try:
-                                tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
-                                sha8 = sha256_text(payload)[:8]
-                                sentinel = compose_sentinel(ts=tsz, eid=eid2, sha8=sha8, route="PeerB→PeerA")
-                                (home/"mailbox"/"peerB"/"to_peer.md").write_text(sentinel, encoding="utf-8")
-                            except Exception:
-                                pass
-                        else:
-                            log_ledger(home, {"from":"PeerB","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
-                # patch/diff mailbox path removed
-                # POR.new.md auto-diff removed (per latest design)
-                # Persist index
-                mbox_idx.save()
-                # Refresh status for panel
-                write_status(deliver_paused); write_queue_and_locks()
-                # Foreman: check dispatch mailbox
+                mailbox_api.process()
                 _maybe_dispatch_foreman_message()
-                # Foreman: tick scheduler (non-blocking thread)
-                try:
-                    fc = _load_foreman_conf()
-                    if bool(fc.get('enabled', False)):
-                        st = _foreman_load_state() or {}
-                        now_ts = time.time()
-                        lock = state/"foreman.lock"
-                        # Stale cleanup: if running but no thread alive and heartbeat stale, clear
-                        try:
-                            running = bool(st.get('running', False))
-                            last_hb = float(st.get('last_heartbeat_ts') or 0.0)
-                            maxs = float(fc.get('max_run_seconds', 900) or 900)
-                            if running and ((foreman_thread is None) or (not foreman_thread.is_alive())) and (now_ts - last_hb > (maxs + 20.0)):
-                                # try to terminate any lingering process group/pid, then clear state/lock
-                                try:
-                                    _foreman_stop_running(grace_seconds=1.0)
-                                except Exception:
-                                    pass
-                                st['running'] = False
-                                _foreman_save_state(st)
-                                try:
-                                    if lock.exists(): lock.unlink()
-                                except Exception:
-                                    pass
-                                log_ledger(home, {"from":"system","kind":"foreman-stale-clean"})
-                        except Exception:
-                            pass
-                        # Schedule next_due on first run
-                        next_due = float(st.get('next_due_ts') or 0.0)
-                        if next_due <= 0:
-                            try:
-                                iv = float(fc.get('interval_seconds',900) or 900)
-                            except Exception:
-                                iv = 900.0
-                            st['next_due_ts'] = now_ts + iv
-                            _foreman_save_state(st)
-                            next_due = now_ts + iv
-                        # Start worker if due and no running thread
-                        should_queue = bool(st.get('queued_after_current', False))
-                        due = now_ts >= float(st.get('next_due_ts') or 0.0)
-                        if ((due or should_queue) and (not bool(st.get('running', False))) and ((foreman_thread is None) or (not foreman_thread.is_alive())) and (not lock.exists())):
-                            st['running'] = True
-                            st['next_due_ts'] = now_ts + float(fc.get('interval_seconds',900))
-                            if should_queue:
-                                st['queued_after_current'] = False
-                            _foreman_save_state(st)
-                            try:
-                                lock.write_text(str(int(now_ts)), encoding='utf-8')
-                            except Exception:
-                                pass
-                            # Snapshot conf for the worker and launch
-                            conf_snapshot = dict(fc)
-                            foreman_thread = threading.Thread(target=_foreman_worker, args=(conf_snapshot,), daemon=True)
-                            foreman_thread.start()
-                except Exception as _fe:
-                    print(f"[FOREMAN] scheduler error: {_fe}")
-                # Check resend timeouts
+                foreman_scheduler.tick()
                 _resend_timeouts()
-                # Try to send next from queue when receiver idle
                 _try_send_from_queue("PeerA")
                 _try_send_from_queue("PeerB")
             finally:
                 if not CONSOLE_ECHO:
                     sys.stdout = _stdout_saved
             continue
-        if not line:
-            flush_outbox_if_idle(home, paneA,  "peerA", profileA, delivery_conf)
-            flush_outbox_if_idle(home, paneB, "peerB", profileB, delivery_conf)
-            _resend_timeouts()
-            _try_send_from_queue("PeerA"); _try_send_from_queue("PeerB")
-            continue
-        if line.lower() == "q":
+        action = console_api.handle(line)
+        deliver_paused = console_state['deliver_paused']
+        deliver_paused_box['v'] = deliver_paused
+        handoff_filter_override = console_state['handoff_filter_override']
+        CONSOLE_ECHO = console_state['CONSOLE_ECHO']
+        foreman_thread = console_state['foreman_thread']
+        if action == "break":
             break
-        if line.lower() in ("h", "/help"):
-            print("[HELP]")
-            print("  a: <text>    → PeerA    |  b: <text> → PeerB")
-            print("  both:/u: <text>         → send to both A/B")
-            print("  a! <cmd> / b! <cmd>     → passthrough to respective CLI (no wrapper)")
-            print("  /focus [hint]           → ask PeerB to refresh POR.md (optional hint)")
-            print("  /pause | /resume        → pause/resume A↔B handoff")
-            print("  /sys-refresh            → re-inject full SYSTEM prompt")
-            print("  /clear                  → reserved (no-op)")
-            print("  /foreman on|off|status  → enable/disable/check Foreman (User Proxy)")
-            print("  /c <prompt> | c: <prompt> → run configured Aux once (one-off helper)")
-            print("  /review                 → request Aux review bundle")
-            print("  /echo on|off|<empty>    → console echo on/off/show")
-            print("  q                       → quit orchestrator")
-            # Reprint prompt
-        try:
-            sys.stdout.write("> "); sys.stdout.flush()
-        except Exception:
-            pass
-        continue
-
-        if line.lower().startswith("c:") or line.lower().startswith("/c"):
-            if line.lower().startswith("c:"):
-                prompt_text = line[2:].strip()
-            else:
-                prompt_text = line[2:].lstrip(" :").strip()
-            if not prompt_text:
-                print("[AUX] Usage: c: <prompt>  or  /c <prompt>")
-                continue
-            rc, out, err, cmd_line = _run_aux_cli(prompt_text)
-            print(f"[AUX] command: {cmd_line}")
-            print(f"[AUX] exit={rc}")
-            if out:
-                print(out.rstrip())
-            if err:
-                print("[AUX][stderr]")
-                print(err.rstrip())
-            continue
-
-        if line == "/sys-refresh" or line == "/refresh":
-            sysA = weave_system(home, "peerA"); sysB = weave_system(home, "peerB")
-            _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
-            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
-            print("[SYSTEM] Refreshed (mailbox delivery)."); continue
-        if line.startswith("/focus"):
-            tokens = line.split(maxsplit=1)
-            hint = tokens[1].strip() if len(tokens) > 1 else ""
-            _request_por_refresh("focus-cli", hint=hint or None, force=True)
-            print("[FOCUS] Requested POR refresh from PeerB.")
-            continue
-        if line.startswith("/clear"):
-            print("[CLEAR] acknowledged (noop)")
-            continue
-        if line == "/review":
-            _send_aux_reminder("manual-review")
-            continue
-        # /aux toggles/status removed. Use /c or /review instead.
-        if line == "/pause":
-            deliver_paused = True
-            print("[PAUSE] Paused A↔B handoff (still collect <TO_USER>)"); write_status(True); continue
-        if line == "/resume":
-            deliver_paused = False
-            write_status(False)
-            print("[PAUSE] Resumed A↔B handoff"); continue
-        if line == "/echo on":
-            CONSOLE_ECHO = True
-            print("[ECHO] Console echo ON (may interfere with input)"); continue
-        if line == "/echo off":
-            CONSOLE_ECHO = False
-            print("[ECHO] Console echo OFF (recommended)"); continue
-        if line == "/echo":
-            print(f"[ECHO] Status: {'on' if CONSOLE_ECHO else 'off'}"); continue
-        # /compose removed: line input relies on readline; background stays quiet to avoid interference
-        if line == "/anti-on":
-            handoff_filter_override = True
-            write_status(deliver_paused); write_queue_and_locks()
-            print("[ANTI] Low-signal filter override=on"); continue
-        if line == "/anti-off":
-            handoff_filter_override = False
-            write_status(deliver_paused)
-            print("[ANTI] Low-signal filter override=off"); continue
-        if line == "/anti-status":
-            pol_enabled = bool((policies.get("handoff_filter") or {}).get("enabled", True))
-            eff = handoff_filter_override if handoff_filter_override is not None else pol_enabled
-            src = "override" if handoff_filter_override is not None else "policy"
-            print(f"[ANTI] Low-signal filter: {eff} (source={src})"); continue
-        if line.startswith("u:") or line.startswith("both:"):
-            msg=line.split(":",1)[1].strip()
-            up = f"<FROM_USER>\n{msg}\n</FROM_USER>\n"
-            _send_handoff("User", "PeerA", _maybe_prepend_preamble("PeerA", up))
-            _send_handoff("User", "PeerB", _maybe_prepend_preamble("PeerB", up))
-            continue
-        # Passthrough: a! / b! writes raw command to target CLI (no wrapper/MID)
-        if line.startswith("a!"):
-            msg = line[2:].strip()
-            if msg:
-                _send_raw_to_cli(home, 'PeerA', msg, paneA, paneB)
-            continue
-        if line.startswith("b!"):
-            msg = line[2:].strip()
-            if msg:
-                _send_raw_to_cli(home, 'PeerB', msg, paneA, paneB)
-            continue
-        # Normal wrapped routing
-        if line.startswith("a:"):
-            msg=line.split(":",1)[1].strip()
-            up = f"<FROM_USER>\n{msg}\n</FROM_USER>\n"
-            _send_handoff("User", "PeerA", _maybe_prepend_preamble("PeerA", up))
-            continue
-        if line.startswith("b:"):
-            msg=line.split(":",1)[1].strip()
-            up = f"<FROM_USER>\n{msg}\n</FROM_USER>\n"
-            _send_handoff("User", "PeerB", _maybe_prepend_preamble("PeerB", up))
-            continue
-        # Console shortcuts (handle before default broadcast)
-        if line.lower().startswith('/foreman'):
-            parts = line.strip().split()
-            action = parts[1].lower() if len(parts) > 1 else 'status'
-            try:
-                fc = _load_foreman_conf()
-                if action in ('on','enable','start'):
-                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
-                    if not allowed:
-                        print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
-                    else:
-                        fc['enabled'] = True; _save_foreman_conf(fc); print("Foreman enabled")
-                        # Shift next_due to a full interval from now
-                        try:
-                            st = _foreman_load_state() or {}
-                            now_ts = time.time()
-                            try:
-                                iv = float(fc.get('interval_seconds',900) or 900)
-                            except Exception:
-                                iv = 900.0
-                            st.update({'running': False, 'next_due_ts': now_ts + iv, 'last_heartbeat_ts': now_ts})
-                            _foreman_save_state(st)
-                            lk = state/"foreman.lock"
-                            if lk.exists():
-                                try: lk.unlink()
-                                except Exception: pass
-                        except Exception:
-                            pass
-                elif action in ('now',):
-                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
-                    if not allowed:
-                        print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
-                    else:
-                        st = _foreman_load_state() or {}
-                        if bool(st.get('running', False)):
-                            print("Foreman already running.")
-                        else:
-                            try:
-                                iv = float(fc.get('interval_seconds',900) or 900)
-                            except Exception:
-                                iv = 900.0
-                            now_ts = time.time()
-                            st['running'] = True
-                            st['next_due_ts'] = now_ts + iv
-                            _foreman_save_state(st)
-                            lock = state/"foreman.lock"
-                            try:
-                                lock.write_text(str(int(now_ts)), encoding='utf-8')
-                            except Exception:
-                                pass
-                            conf_snapshot = dict(fc)
-                            foreman_thread = threading.Thread(target=_foreman_worker, args=(conf_snapshot,), daemon=True)
-                            foreman_thread.start()
-                            print("Foreman started (now)")
-                elif action in ('off','disable','stop'):
-                    fc['enabled'] = False; _save_foreman_conf(fc); print("Foreman disabled")
-                else:
-                    st = _foreman_load_state() or {}
-                    now = time.time()
-                    def _age(ts: float) -> str:
-                        if not ts:
-                            return "-"
-                        sec = max(0, int(now - ts))
-                        return f"{sec}s"
-                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
-                    enabled = bool(fc.get('enabled', False))
-                    running = bool(st.get('running', False))
-                    next_due = st.get('next_due_ts') or 0
-                    next_in = f"{int(max(0, next_due - now))}s" if next_due else "-"
-                    last_rc = st.get('last_rc')
-                    last_out = st.get('last_out_dir') or '-'
-                    print(
-                        f"Foreman status: {'ON' if enabled else 'OFF'} allowed={'YES' if allowed else 'NO'} "
-                        f"agent={fc.get('agent','reuse_aux')} interval={fc.get('interval_seconds','?')}s cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}\n"
-                        f"running={'YES' if running else 'NO'} next_in={next_in} last_start={_age(float(st.get('last_start_ts') or 0))} "
-                        f"last_hb={_age(float(st.get('last_heartbeat_ts') or 0))} last_end={_age(float(st.get('last_end_ts') or 0))} last_rc={last_rc if last_rc is not None else '-'} out={last_out}"
-                    )
-            except Exception as e:
-                print(f"Foreman error: {e}")
-            continue
-        # Default broadcast: send to both peers immediately
-        up = f"<FROM_USER>\n{line}\n</FROM_USER>\n"
-        _send_handoff("User", "PeerA", _maybe_prepend_preamble("PeerA", up))
-        _send_handoff("User", "PeerB", _maybe_prepend_preamble("PeerB", up))
-        # Console shortcuts
-        if line.lower().startswith('/foreman'):
-            parts = line.strip().split()
-            action = parts[1].lower() if len(parts) > 1 else 'status'
-            try:
-                fc = _load_foreman_conf()
-                if action in ('on','enable','start'):
-                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
-                    if not allowed:
-                        print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
-                    else:
-                        fc['enabled'] = True; _save_foreman_conf(fc); print("Foreman enabled")
-                elif action in ('off','disable','stop'):
-                    fc['enabled'] = False; _save_foreman_conf(fc); print("Foreman disabled")
-                elif action in ('now',):
-                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
-                    if not allowed:
-                        print("Foreman was not enabled at startup; restart to enable or run roles wizard.")
-                    else:
-                        st = _foreman_load_state() or {}
-                        if bool(st.get('running', False)):
-                            st['queued_after_current'] = True
-                            _foreman_save_state(st)
-                            print("Foreman already running; queued one run after current finishes.")
-                        else:
-                            try:
-                                iv = float(fc.get('interval_seconds',900) or 900)
-                            except Exception:
-                                iv = 900.0
-                            now_ts = time.time()
-                            st['running'] = True
-                            st['next_due_ts'] = now_ts + iv
-                            _foreman_save_state(st)
-                            lk = state/"foreman.lock"
-                            try: lk.write_text(str(int(now_ts)), encoding='utf-8')
-                            except Exception: pass
-                            conf_snapshot = dict(fc)
-                            foreman_thread = threading.Thread(target=_foreman_worker, args=(conf_snapshot,), daemon=True)
-                            foreman_thread.start()
-                            print("Foreman started (now)")
-                else:
-                    st = _foreman_load_state() or {}
-                    now = time.time()
-                    def _age(ts: float) -> str:
-                        if not ts:
-                            return "-"
-                        sec = max(0, int(now - ts))
-                        return f"{sec}s"
-                    allowed = bool(fc.get('allowed', fc.get('enabled', False)))
-                    enabled = bool(fc.get('enabled', False))
-                    running = bool(st.get('running', False))
-                    next_due = st.get('next_due_ts') or 0
-                    next_in = f"{int(max(0, next_due - now))}s" if next_due else "-"
-                    last_rc = st.get('last_rc')
-                    last_out = st.get('last_out_dir') or '-'
-                    print(
-                        f"Foreman status: {'ON' if enabled else 'OFF'} allowed={'YES' if allowed else 'NO'} "
-                        f"agent={fc.get('agent','reuse_aux')} interval={fc.get('interval_seconds','?')}s cc_user={'ON' if fc.get('cc_user',True) else 'OFF'}\n"
-                        f"running={'YES' if running else 'NO'} next_in={next_in} last_start={_age(float(st.get('last_start_ts') or 0))} "
-                        f"last_hb={_age(float(st.get('last_heartbeat_ts') or 0))} last_end={_age(float(st.get('last_end_ts') or 0))} last_rc={last_rc if last_rc is not None else '-'} out={last_out}"
-                    )
-            except Exception as e:
-                print(f"Foreman error: {e}")
+        if action == "continue":
             continue
     # Graceful shutdown of tmux session if requested via /quit
     try:
