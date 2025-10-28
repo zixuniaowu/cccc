@@ -1947,31 +1947,166 @@ def main(home: Path, session_name: Optional[str] = None):
     # Foreman thread handle (non-overlapping)
     foreman_thread: Optional[threading.Thread] = None
 
-    # Register graceful cleanup on exit/signals to avoid orphan Foreman processes
+    # Register graceful cleanup on exit/signals to avoid orphan Foreman and Bridge processes
     _cleanup_called = {"v": False}
+    
+    def _cleanup_bridges():
+        """Terminate all bridge processes (telegram, slack, discord) on orchestrator exit."""
+        cleanup_log = home / "state" / "cleanup.log"
+        def _log(msg):
+            # Don't print() - stdout may be closed when tmux session is destroyed
+            try:
+                with cleanup_log.open('a', encoding='utf-8') as f:
+                    import datetime
+                    ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    f.write(f"[{ts}] {msg}\n")
+            except Exception:
+                pass
+        
+        _log("[CLEANUP] _cleanup_bridges() called")
+        state = home / "state"
+        for adapter in ['telegram', 'slack', 'discord']:
+            pidf_name = f"bridge-{adapter}.pid" if adapter != 'telegram' else "telegram-bridge.pid"
+            pidf = state / pidf_name
+            _log(f"[CLEANUP] Checking {adapter}: {pidf}")
+            if not pidf.exists():
+                _log(f"[CLEANUP] {adapter} PID file not found")
+                continue
+            try:
+                pid = int(pidf.read_text(encoding='utf-8').strip() or '0')
+                _log(f"[CLEANUP] {adapter} PID: {pid}")
+                if pid <= 0:
+                    _log(f"[CLEANUP] {adapter} invalid PID")
+                    continue
+                # Check if process is alive
+                try:
+                    os.kill(pid, 0)
+                    _log(f"[CLEANUP] {adapter} process {pid} is alive")
+                except (ProcessLookupError, OSError):
+                    # Process already dead
+                    _log(f"[CLEANUP] {adapter} process {pid} already dead")
+                    try:
+                        pidf.unlink()
+                    except Exception:
+                        pass
+                    continue
+                # Graceful termination: SIGTERM
+                try:
+                    _log(f"[CLEANUP] Sending SIGTERM to {adapter} process {pid}")
+                    os.kill(pid, signal.SIGTERM)
+                    log_ledger(home, {"from":"system","kind":"bridge-stop","adapter":adapter,"pid":pid,"signal":"SIGTERM"})
+                except Exception as e:
+                    _log(f"[CLEANUP] Failed to send SIGTERM to {adapter}: {e}")
+                    pass
+                # Wait briefly for graceful shutdown
+                import time
+                for i in range(30):  # 3 seconds total
+                    time.sleep(0.1)
+                    try:
+                        os.kill(pid, 0)
+                    except (ProcessLookupError, OSError):
+                        # Process terminated
+                        _log(f"[CLEANUP] {adapter} process {pid} terminated after {i*0.1:.1f}s")
+                        break
+                else:
+                    # Still alive, force kill
+                    _log(f"[CLEANUP] {adapter} process {pid} still alive, sending SIGKILL")
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                        log_ledger(home, {"from":"system","kind":"bridge-stop","adapter":adapter,"pid":pid,"signal":"SIGKILL"})
+                        _log(f"[CLEANUP] SIGKILL sent to {adapter} process {pid}")
+                    except Exception as e:
+                        _log(f"[CLEANUP] Failed to send SIGKILL to {adapter}: {e}")
+                        pass
+                # Clean up PID file
+                try:
+                    pidf.unlink()
+                except Exception:
+                    pass
+            except Exception as e:
+                try:
+                    log_ledger(home, {"from":"system","kind":"bridge-cleanup-error","adapter":adapter,"error":str(e)[:200]})
+                except Exception:
+                    pass
+    
     def _cleanup_on_exit(signum=None, frame=None):
+        # Log to file immediately to debug signal handling
+        debug_log = home / "state" / "cleanup_debug.log"
+        def _debug(msg):
+            try:
+                with debug_log.open('a', encoding='utf-8') as f:
+                    import datetime
+                    ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    f.write(f"[{ts}] {msg}\n")
+            except Exception:
+                pass
+        
+        _debug(f"_cleanup_on_exit called, signal={signum}")
+        
         if _cleanup_called["v"]:
+            _debug("Already called, returning")
             return
         _cleanup_called["v"] = True
+        _debug("Set cleanup_called flag")
+        
         try:
-            log_ledger(home, {"from":"system","kind":"shutdown","note":"cleanup foreman"})
-        except Exception:
-            pass
+            _debug("Logging to ledger...")
+            log_ledger(home, {"from":"system","kind":"shutdown","note":"cleanup foreman and bridges"})
+            _debug("Ledger logged")
+        except Exception as e:
+            _debug(f"Ledger failed: {e}")
+            
         try:
+            _debug("Stopping foreman...")
             _foreman_stop_running(grace_seconds=5.0)
-        except Exception:
-            pass
+            _debug("Foreman stopped")
+        except Exception as e:
+            _debug(f"Foreman stop failed: {e}")
+            
         try:
+            _debug("Calling _cleanup_bridges()...")
+            _cleanup_bridges()
+            _debug("_cleanup_bridges() completed")
+        except Exception as e:
+            _debug(f"_cleanup_bridges() failed: {e}")
+            import traceback
+            _debug(f"Traceback: {traceback.format_exc()}")
+            
+        try:
+            _debug("Joining foreman thread...")
             if foreman_thread is not None and foreman_thread.is_alive():
                 foreman_thread.join(timeout=3.0)
-        except Exception:
-            pass
+            _debug("Foreman thread joined")
+        except Exception as e:
+            _debug(f"Foreman thread join failed: {e}")
+        
+        # Critical: Exit the process after cleanup to prevent main loop from restarting bridges
+        _debug("Cleanup complete, exiting process...")
+        import sys
+        sys.exit(0)
+
+    # Tmux session health check
+    def _check_tmux_alive() -> bool:
+        """Check if the tmux session we're in still exists"""
+        tmux_env = os.environ.get('TMUX')
+        if not tmux_env:
+            return True  # Not in tmux, always alive
+        
+        # TMUX format: /tmp/tmux-1000/default,12345,0
+        parts = tmux_env.split(',')
+        if len(parts) < 1:
+            return True
+        
+        socket_path = parts[0]
+        # Check if socket still exists - if not, tmux server is gone
+        return os.path.exists(socket_path)
 
     import atexit
     try:
         atexit.register(_cleanup_on_exit)
         signal.signal(signal.SIGTERM, _cleanup_on_exit)
         signal.signal(signal.SIGINT, _cleanup_on_exit)
+        signal.signal(signal.SIGHUP, _cleanup_on_exit)  # Critical: tmux sends SIGHUP on destroy-unattached
     except Exception:
         pass
 
@@ -2156,7 +2291,37 @@ def main(home: Path, session_name: Optional[str] = None):
         'deliver_paused_box': deliver_paused_box,
     })
 
+    # Tmux alive check: only check every N loops to minimize overhead
+    _tmux_check_counter = 0
+    _tmux_check_interval = 10  # Check every 10 loops (e.g., every 20 seconds if loop is 2s)
+
     while True:
+        # Check if tmux session still exists (for destroy-unattached cleanup)
+        # Only check every N loops to reduce overhead
+        if _tmux_check_counter % _tmux_check_interval == 0:
+            if not _check_tmux_alive():
+                try:
+                    log_ledger(home, {"from":"system","kind":"tmux_gone","note":"tmux session destroyed, cleaning up"})
+                except Exception as e:
+                    print(f"[ERROR] Failed to log tmux_gone: {e}")
+                print("[TMUX] Session destroyed, initiating cleanup...")
+                try:
+                    _cleanup_on_exit()
+                except Exception as e:
+                    print(f"[ERROR] _cleanup_on_exit() failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                # Force cleanup bridges even if _cleanup_on_exit failed
+                try:
+                    print("[TMUX] Force calling _cleanup_bridges()...")
+                    _cleanup_bridges()
+                except Exception as e:
+                    print(f"[ERROR] _cleanup_bridges() failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                break
+        _tmux_check_counter += 1
+        
         # 如果启动时因为未确认或未绑定角色而延迟，一旦就绪自动触发一次 launch+resume
         try:
             auto_launch_pending, resolved = launcher_api.tick(resolved, config_deferred)
@@ -2208,6 +2373,8 @@ def main(home: Path, session_name: Optional[str] = None):
             'shutdown_requested_box': {'v': shutdown_requested},
             # needed for passthru
             '_send_raw_to_cli': _send_raw_to_cli,
+            # cleanup function for /quit command to use before tmux kill-session
+            'cleanup_bridges': _cleanup_bridges,
         }
         cq = make_cq(cq_ctx)
         upd = cq.consume(max_items=20)

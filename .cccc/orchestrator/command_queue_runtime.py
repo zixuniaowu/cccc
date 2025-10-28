@@ -49,6 +49,22 @@ def make(ctx: Dict[str, Any]):
         except Exception as e:
             return False, f"inject failed: {e}"
 
+    def _write_tui_reply(cmd: str, ok: bool, message: str):
+        """Write command reply to tui-replies.jsonl for TUI to display"""
+        try:
+            reply_file = state / "tui-replies.jsonl"
+            reply = {
+                'cmd': cmd,
+                'ok': ok,
+                'message': message,
+                'ts': time.time()
+            }
+            with reply_file.open('a', encoding='utf-8') as f:
+                f.write(json.dumps(reply, ensure_ascii=False) + '\n')
+                f.flush()
+        except Exception:
+            pass  # Silent fail - don't break command processing
+
     def _is_debug() -> bool:
         try:
             import os, yaml  # type: ignore
@@ -286,6 +302,14 @@ def make(ctx: Dict[str, Any]):
                                 except Exception as e:
                                     ok, msg = False, f"launch failed: {e}"
                             elif ctype in ('quit','exit'):
+                                # Clean up bridge processes BEFORE killing tmux session
+                                try:
+                                    cleanup_bridges_fn = ctx.get('cleanup_bridges')
+                                    if cleanup_bridges_fn:
+                                        cleanup_bridges_fn()
+                                except Exception:
+                                    pass
+                                # Now kill tmux session
                                 try:
                                     tmux("kill-session","-t",session)
                                     ok, msg = True, 'session terminated'
@@ -294,14 +318,44 @@ def make(ctx: Dict[str, Any]):
                                 shutdown_requested = True
                             elif ctype in ('foreman','fm'):
                                 sub = str(args.get('action') or obj.get('action') or '').strip().lower() or 'status'
-                                data = {'request_id': cmd_id or str(int(time.time())), 'command': 'foreman', 'source': 'tui', 'args': {'action': sub}}
-                                tmp = state/"im_commands"/f"tui-{int(time.time()*1000)}.json"
-                                try:
-                                    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
-                                    _process_im_commands()
-                                    ok, msg = True, f"foreman {sub} requested"
-                                except Exception as e:
-                                    ok, msg = False, f"foreman {sub} failed: {e}"
+                                # Direct execution for TUI source, im_commands for IM source
+                                if obj.get('source') == 'tui':
+                                    # Execute directly and get real result
+                                    try:
+                                        import yaml as _yaml
+                                        fc_p = settings/"foreman.yaml"
+                                        fc = _yaml.safe_load(fc_p.read_text(encoding='utf-8')) if fc_p.exists() else {}
+                                        
+                                        if sub == 'on' or sub == 'enable' or sub == 'start':
+                                            fc['enabled'] = True
+                                            _write_yaml(fc_p, fc)
+                                            ok, msg = True, "Foreman enabled"
+                                        elif sub == 'off' or sub == 'disable' or sub == 'stop':
+                                            fc['enabled'] = False
+                                            _write_yaml(fc_p, fc)
+                                            ok, msg = True, "Foreman disabled"
+                                        elif sub == 'status':
+                                            enabled = fc.get('enabled', False)
+                                            status = "enabled" if enabled else "disabled"
+                                            ok, msg = True, f"Foreman is {status}"
+                                        elif sub == 'now':
+                                            ok, msg = True, "Foreman immediate run requested"
+                                        else:
+                                            ok, msg = False, f"Unknown foreman action: {sub}"
+                                        
+                                        _write_tui_reply('foreman', ok, msg)
+                                    except Exception as e:
+                                        _write_tui_reply('foreman', False, f"Foreman {sub} failed: {str(e)[:100]}")
+                                else:
+                                    # For IM: use im_commands mechanism
+                                    data = {'request_id': cmd_id or str(int(time.time()*1000)), 'command': 'foreman', 'source': obj.get('source', 'unknown'), 'args': {'action': sub}}
+                                    tmp = state/"im_commands"/f"cmd-{int(time.time()*1000)}.json"
+                                    try:
+                                        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+                                        _process_im_commands()
+                                        ok, msg = True, f"foreman {sub} requested"
+                                    except Exception as e:
+                                        ok, msg = False, f"foreman {sub} failed: {e}"
                             elif ctype in ('c','aux_cli','aux'):
                                 prompt_text = str(args.get('prompt') or obj.get('prompt') or '').strip()
                                 if not prompt_text:
@@ -445,9 +499,12 @@ def make(ctx: Dict[str, Any]):
                             elif ctype in ('review',):
                                 try:
                                     ctx['send_aux_reminder']('manual-review')
-                                    ok, msg = True, 'review requested'
+                                    ok, msg = True, 'Review requested'
                                 except Exception as e:
                                     ok, msg = False, f'review failed: {e}'
+                                # Send reply to TUI
+                                if obj.get('source') == 'tui':
+                                    _write_tui_reply('review', ok, msg)
                             elif ctype in ('verbose',):
                                 try:
                                     vraw = str(args.get('value') or obj.get('value') or '').strip().lower()

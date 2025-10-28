@@ -301,14 +301,14 @@ def create_header() -> Window:
     text = [
         ('class:title', '\n'),
         ('class:title', '   ╔═══════════════════════════════════════════════════════════════╗\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '██████╗  ██████╗  ██████╗  ██████╗'), ('class:title', '                         ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '██╔════╝ ██╔════╝ ██╔════╝ ██╔════╝'), ('class:title', '                        ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '██║      ██║      ██║      ██║     '), ('class:title', '                        ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '██║      ██║      ██║      ██║     '), ('class:title', '                        ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', '╚██████╗ ╚██████╗ ╚██████╗ ╚██████╗'), ('class:title', '                        ║\n'),
-        ('class:title', '   ║  '), ('class:title.bold', ' ╚═════╝  ╚═════╝  ╚═════╝  ╚═════╝'), ('class:title', '                        ║\n'),
+        ('class:title', '   ║  '), ('class:title.bold', '           ██████╗  ██████╗  ██████╗  ██████╗'), ('class:title', '                ║\n'),
+        ('class:title', '   ║  '), ('class:title.bold', '           ██╔════╝ ██╔════╝ ██╔════╝ ██╔════╝'), ('class:title', '               ║\n'),
+        ('class:title', '   ║  '), ('class:title.bold', '           ██║      ██║      ██║      ██║     '), ('class:title', '               ║\n'),
+        ('class:title', '   ║  '), ('class:title.bold', '           ██║      ██║      ██║      ██║     '), ('class:title', '               ║\n'),
+        ('class:title', '   ║  '), ('class:title.bold', '           ╚██████╗ ╚██████╗ ╚██████╗ ╚██████╗'), ('class:title', '               ║\n'),
+        ('class:title', '   ║  '), ('class:title.bold', '            ╚═════╝  ╚═════╝  ╚═════╝  ╚═════╝'), ('class:title', '               ║\n'),
         ('class:title', '   ║                                                               ║\n'),
-        ('class:title', '   ║  '), ('class:success.bold', 'CLI x CLI Co-Creation'), ('class:title', ' · Multi-Agent Orchestrator  ║\n'),
+        ('class:title', '   ║  '), ('class:success.bold', '     CLI x CLI Co-Creation'), ('class:title', ' · Multi-Agent Orchestrator        ║\n'),
         ('class:title', '   ╚═══════════════════════════════════════════════════════════════╝\n'),
         ('', '\n'),
         ('class:info', '   Version: '), ('class:value', f'{version}'),
@@ -332,7 +332,7 @@ def create_runtime_header(status_dot: str = '●', status_color: str = 'class:st
         ('class:title', '❯ CCCC Orchestrator  '),
         (status_color, status_dot),
         ('', '\n'),
-        ('class:hint', '  /help for commands  ·  Ctrl+b d to exit'),
+        ('class:hint', '  /help for commands  ·  /quit or Ctrl+b d to exit'),
     ]
     return Window(
         content=FormattedTextControl(text),
@@ -1066,6 +1066,21 @@ class CCCCSetupApp:
                 wrap_lines=False,
                 style='class:input-field'
             )
+            
+            # Add mouse handler to enable clicking to focus
+            original_handler = self.token_field.window.content.mouse_handler
+            def mouse_handler(mouse_event):
+                from prompt_toolkit.mouse_events import MouseEventType
+                if mouse_event.event_type == MouseEventType.MOUSE_UP:
+                    try:
+                        self.app.layout.focus(self.token_field)
+                    except Exception:
+                        pass
+                # Pass through to original handler for text selection
+                if original_handler:
+                    return original_handler(mouse_event)
+            self.token_field.window.content.mouse_handler = mouse_handler
+            
         return self.token_field
 
     def _create_channel_field(self):
@@ -1087,6 +1102,21 @@ class CCCCSetupApp:
                 wrap_lines=False,
                 style='class:input-field'
             )
+            
+            # Add mouse handler to enable clicking to focus
+            original_handler = self.channel_field.window.content.mouse_handler
+            def mouse_handler(mouse_event):
+                from prompt_toolkit.mouse_events import MouseEventType
+                if mouse_event.event_type == MouseEventType.MOUSE_UP:
+                    try:
+                        self.app.layout.focus(self.channel_field)
+                    except Exception:
+                        pass
+                # Pass through to original handler for text selection
+                if original_handler:
+                    return original_handler(mouse_event)
+            self.channel_field.window.content.mouse_handler = mouse_handler
+            
         return self.channel_field
 
     def _create_channel_label(self):
@@ -1555,6 +1585,9 @@ class CCCCSetupApp:
             self._refresh_ui()
             return
 
+        # Save config FIRST - this writes foreman.yaml that footer needs
+        self._save_config()
+        
         # Transition to runtime UI
         self.setup_visible = False
         self._build_runtime_ui()
@@ -1573,8 +1606,7 @@ class CCCCSetupApp:
 
     def _continue_launch(self) -> None:
         """Continue with orchestrator launch after inbox check is complete"""
-        # Save config and write commands
-        self._save_config()
+        # Config already saved in _confirm_and_launch
 
         self._write_timeline("Launching orchestrator...", 'system')
         self._write_timeline("Type /help for commands", 'info')
@@ -1931,7 +1963,22 @@ class CCCCSetupApp:
         # Foreman status
         foreman_agent = self.config.foreman or 'none'
         foreman_data = status_data.get('foreman', {})
-        foreman_enabled = foreman_data.get('enabled', False) if isinstance(foreman_data, dict) else False
+        
+        # If status.json doesn't have foreman data, fallback to reading foreman.yaml directly
+        if not foreman_data or not isinstance(foreman_data, dict):
+            try:
+                import yaml
+                fc_path = self.home / "settings" / "foreman.yaml"
+                if fc_path.exists():
+                    fc = yaml.safe_load(fc_path.read_text(encoding='utf-8')) or {}
+                    foreman_enabled = bool(fc.get('enabled', False))
+                else:
+                    foreman_enabled = False
+            except Exception:
+                foreman_enabled = False
+        else:
+            foreman_enabled = foreman_data.get('enabled', False)
+        
         foreman_status = 'ON' if foreman_enabled else 'OFF'
         foreman_display = f"{foreman_agent} ({foreman_status})" if foreman_agent != 'none' else 'none'
 
@@ -2620,6 +2667,9 @@ class CCCCSetupApp:
         while True:
             try:
                 if not self.setup_visible:
+                    # Check for command replies
+                    self._check_tui_replies()
+                    
                     # Refresh timeline from outbox.jsonl
                     try:
                         outbox = self.home / "state" / "outbox.jsonl"
@@ -2765,6 +2815,53 @@ class CCCCSetupApp:
         if self.modal_open:
             self._write_timeline("Dialog blocked: modal already open", 'debug')
             return
+
+    def _check_tui_replies(self) -> None:
+        """Monitor tui-replies.jsonl for command responses"""
+        reply_file = self.home / "state" / "tui-replies.jsonl"
+        if not reply_file.exists():
+            return
+
+        # Track last read position to avoid re-reading
+        if not hasattr(self, '_reply_file_pos'):
+            # Start from END of file to skip old replies from previous sessions
+            try:
+                with reply_file.open('r', encoding='utf-8') as f:
+                    f.seek(0, 2)  # Seek to end (2 = SEEK_END)
+                    self._reply_file_pos = f.tell()
+            except Exception:
+                self._reply_file_pos = 0
+            return  # Skip reading on first call (just set position)
+
+        try:
+            with reply_file.open('r', encoding='utf-8') as f:
+                # Seek to last position
+                f.seek(self._reply_file_pos)
+                
+                # Read new lines
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    try:
+                        reply = json.loads(line)
+                        ok = reply.get('ok', True)
+                        message = reply.get('message', 'Done')
+                        
+                        # Display reply in timeline
+                        style = 'success' if ok else 'error'
+                        self._write_timeline(f"← {message}", style)
+                        
+                    except json.JSONDecodeError:
+                        pass  # Skip malformed lines
+                
+                # Update position
+                self._reply_file_pos = f.tell()
+        except Exception:
+            pass  # Silent fail - don't break TUI
+
+    def _show_inbox_cleanup_dialog_OLD(self, cntA: int, cntB: int, flag_path: Path) -> None:
 
         total = cntA + cntB
         msg_lines = [
