@@ -313,11 +313,9 @@ def create_header() -> Window:
         ('', '\n'),
         ('class:info', '   Version: '), ('class:value', f'{version}'),
         ('', '\n'),
-        ('class:hint', '   Evidence-first collaboration · Single-branch workflow · Verifiable changes\n'),
-        ('', '\n'),
-        ('class:section', '   ─' * 60 + '\n'),
+        ('class:section', '   ─' * 17 + '\n'),
         ('class:hint', '   ⌨  Tab/↑↓: navigate  ·  Enter: select/confirm  ·  Esc: cancel\n'),
-        ('class:section', '   ─' * 60 + '\n'),
+        ('class:section', '   ─' * 17 + '\n'),
     ]
     return Window(
         content=FormattedTextControl(text),
@@ -918,7 +916,6 @@ class CCCCSetupApp:
         # Clean, minimal layout with dual interaction system
         items = [
             self.error_label,
-            Window(height=1),
 
             # Dual interaction system header and instructions
             create_section_header('Configuration Setup • Dual Interaction System'),
@@ -927,7 +924,6 @@ class CCCCSetupApp:
 
             # Core agents
             create_section_header('Core Agents'),
-            Window(height=1),
             VSplit([
                 Window(width=10, content=self._create_focused_label('PeerA', 0)),
                 btn_peerA,
@@ -944,7 +940,6 @@ class CCCCSetupApp:
 
             # Optional agents
             create_section_header('Optional'),
-            Window(height=1),
             VSplit([
                 Window(width=10, content=self._create_focused_label('Aux', 2)),
                 btn_aux,
@@ -961,7 +956,6 @@ class CCCCSetupApp:
 
             # Interaction mode
             create_section_header('Mode'),
-            Window(height=1),
             VSplit([
                 Window(width=10, content=self._create_focused_label('Connect', 4)),
                 btn_mode,
@@ -975,7 +969,6 @@ class CCCCSetupApp:
             items.extend([
                 Window(height=1),
                 create_section_header('IM Configuration'),
-                Window(height=1),
 
                 # Bot Token input
                 VSplit([
@@ -984,7 +977,6 @@ class CCCCSetupApp:
                     Window(width=2),
                     Label(text='Required for bot authentication', style='class:hint'),
                 ], padding=1),
-                Window(height=1),
 
                 # Channel/Chat ID input
                 VSplit([
@@ -996,8 +988,6 @@ class CCCCSetupApp:
             ])
 
         items.extend([
-            Window(height=1),
-            Label(text='To exit CCCC: Ctrl+b then d (detach tmux) or use Quit button', style='class:hint'),
             Window(height=1),
             Label(text='─' * 40, style='class:section'),  # Flexible separator
             Window(height=1),
