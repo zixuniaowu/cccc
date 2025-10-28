@@ -15,7 +15,7 @@ def make(ctx: Dict[str, Any]):
     inbox_dir = ctx['inbox_dir']; processed_dir = ctx['processed_dir']
     ensure_mailbox = ctx['ensure_mailbox']; log_ledger = ctx['log_ledger']
     processed_retention = ctx['processed_retention']; inbox_policy_default = ctx['inbox_policy']
-    read_console_line_timeout = ctx['read_console_line_timeout']
+    read_console_line_timeout = ctx.get('read_console_line_timeout')
     cli_profiles = ctx['cli_profiles']; mb_pull_enabled = ctx['mb_pull_enabled']
     wait_for_ready = ctx['wait_for_ready']
     commands_path: Path = ctx['commands_path']
@@ -126,7 +126,12 @@ def make(ctx: Dict[str, Any]):
                 print(f"  Policy for this session: [r] resume  [a] archive  [d] discard; default: {chosen_policy}")
                 if eff_timeout > 0:
                     print(f"  Will apply default policy {chosen_policy} after {int(eff_timeout)}s of inactivity.")
-                ans = read_console_line_timeout("> Choose r/a/d and Enter (or Enter to use default): ", eff_timeout).strip().lower()
+                if read_console_line_timeout and eff_timeout > 0:
+                    ans = read_console_line_timeout(
+                        "> Choose r/a/d and Enter (or Enter to use default): ", eff_timeout
+                    ).strip().lower()
+                else:
+                    ans = ""
                 if ans in ("r","resume"):
                     chosen_policy = "resume"
                 elif ans in ("a","archive"):

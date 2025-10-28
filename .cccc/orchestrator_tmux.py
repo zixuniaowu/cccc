@@ -23,7 +23,6 @@ try:  # package import (python -m .cccc.orchestrator_tmux)
         tmux_start_interactive, wait_for_ready,
     )
     from .orchestrator.logging_util import log_ledger, outbox_write
-    from .orchestrator.console_util import sanitize_console, read_console_line, read_console_line_timeout
     from .orchestrator.handoff_helpers import (
         _plain_text_without_tags_and_mid,
         _peer_folder_name,
@@ -39,7 +38,6 @@ try:  # package import (python -m .cccc.orchestrator_tmux)
     from .orchestrator import handoff_helpers as HH
     from .orchestrator import json_util as JU
     from .orchestrator.nudge import make as make_nudge
-    from .orchestrator.console_commands import make as make_console_commands
     from .orchestrator.mailbox_pipeline import make as make_mailbox_pipeline
     from .orchestrator.foreman_scheduler import make as make_foreman_scheduler
     from .orchestrator.foreman import make as make_foreman
@@ -52,7 +50,6 @@ except ImportError:  # script import (python .cccc/orchestrator_tmux.py)
         tmux_start_interactive, wait_for_ready,
     )
     from orchestrator.logging_util import log_ledger, outbox_write
-    from orchestrator.console_util import sanitize_console, read_console_line, read_console_line_timeout
     from orchestrator.handoff_helpers import (
         _plain_text_without_tags_and_mid,
         _peer_folder_name,
@@ -68,7 +65,6 @@ except ImportError:  # script import (python .cccc/orchestrator_tmux.py)
     import orchestrator.handoff_helpers as HH
     import orchestrator.json_util as JU
     from orchestrator.nudge import make as make_nudge
-    from orchestrator.console_commands import make as make_console_commands
     from orchestrator.mailbox_pipeline import make as make_mailbox_pipeline
     from orchestrator.foreman_scheduler import make as make_foreman_scheduler
     from orchestrator.foreman import make as make_foreman
@@ -98,7 +94,7 @@ try:
     from .orchestrator.policy_filter import is_high_signal as _pf_is_high_signal, is_low_signal as _pf_is_low_signal, should_forward as _pf_should_forward
 except ImportError:
     from orchestrator.policy_filter import is_high_signal as _pf_is_high_signal, is_low_signal as _pf_is_low_signal, should_forward as _pf_should_forward
-# Console echo of AI output blocks. Default OFF to avoid disrupting typing.
+# Console echo removed (no stdin console).
 CONSOLE_ECHO = False
 # legacy patch/diff handling removed
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
@@ -458,15 +454,8 @@ def context_blob(policies: Dict[str,Any], phase: str) -> str:
 
 # ---------- EXCHANGE ----------
 def print_block(title: str, body: str):
-    """Optional console echo. Default is quiet to avoid interrupting typing.
-    Content still goes to mailbox/ledger/panel; nothing is lost.
-    """
-    if not body.strip():
-        return
-    global CONSOLE_ECHO
-    if not CONSOLE_ECHO:
-        return
-    print(f"\n======== {title} ========\n{body.strip()}\n")
+    """Console-less mode: do not echo blocks to stdout."""
+    return
 
 def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str,
                   context: str, who: str, policies: Dict[str,Any], phase: str,
@@ -983,14 +972,7 @@ def main(home: Path, session_name: Optional[str] = None):
     if imodes.get("peerB"):
         profileB["input_mode"] = imodes.get("peerB")
 
-    # Read debug echo switch (effective at startup)
-    try:
-        ce = cli_profiles.get("console_echo")
-        if isinstance(ce, bool):
-            global CONSOLE_ECHO
-            CONSOLE_ECHO = ce
-    except Exception:
-        pass
+    # Console echo configuration removed (no stdin console).
 
     # Read inbox+NUDGE parameters (effective at startup)
     try:
@@ -1611,7 +1593,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'log_ledger': log_ledger,
         'processed_retention': PROCESSED_RETENTION,
         'inbox_policy': INBOX_STARTUP_POLICY,
-        'read_console_line_timeout': read_console_line_timeout,
+        # Console input disabled; do not pass read_console_line_timeout
         'cli_profiles': cli_profiles,
         'mb_pull_enabled': MB_PULL_ENABLED,
         'wait_for_ready': wait_for_ready,
@@ -1639,7 +1621,7 @@ def main(home: Path, session_name: Optional[str] = None):
                  "peerB": {"to_user": "-", "to_peer": "-"}}
     # Track last mailbox activity per peer (used for timeout-based soft ACK)
     last_event_ts = {"PeerA": 0.0, "PeerB": 0.0}
-    handoff_filter_override: Optional[bool] = None
+    # No runtime handoff filter override (policy-only)
     # Minimalism: no session serialization; broadcast immediately; order governed by prompts
 
     # Handoff backpressure: maintain in-flight and waiting queues per receiver
@@ -2020,8 +2002,8 @@ def main(home: Path, session_name: Optional[str] = None):
     last_nudge_ts: Dict[str,float] = {"PeerA": 0.0, "PeerB": 0.0}
     seen_acks: Dict[str,set] = {"PeerA": set(), "PeerB": set()}
 
-    # If we auto-attached tmux, disable console input reading to avoid TTY contention
-    console_input_enabled = bool(os.environ.get("CCCC_CONSOLE_INPUT"))
+    # Console input disabled; orchestrator is driven by IM/TUI queues only.
+    console_input_enabled = False
 
     ready_banner_printed = False
 
@@ -2029,9 +2011,8 @@ def main(home: Path, session_name: Optional[str] = None):
         nonlocal ready_banner_printed
         if ready_banner_printed:
             return
-        print("\n[READY] Common: a:/b:/both:/u: send; /pause|/resume handoff; /sys-refresh SYSTEM; q quit.")
-        print("[TIP] Console echo is off by default. Use /echo on|off|<empty> to toggle/view.")
-        print("[TIP] Passthrough: a! <cmd> / b! <cmd> sends raw input to the CLI (no wrapper), e.g., a! /model")
+        print("\n[READY] Common: /a|/b|/both send; /pause|/resume handoff; /sys-refresh inject SYSTEM.")
+        print("[TIP] Use IM for CLI passthrough (/pa,/pb). TUI has adjacent panes for direct typing.")
         try:
             sys.stdout.write("[READY] Type h or /help for command hints.\n> ")
             sys.stdout.flush()
@@ -2120,8 +2101,6 @@ def main(home: Path, session_name: Optional[str] = None):
 
     console_state = {
         'deliver_paused': deliver_paused,
-        'handoff_filter_override': handoff_filter_override,
-        'CONSOLE_ECHO': CONSOLE_ECHO,
         'foreman_thread': foreman_thread,
     }
     foreman_scheduler = make_foreman_scheduler({
@@ -2135,27 +2114,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'run_once': _foreman_run_once,
         'console_state': console_state,
     })
-    console_api = make_console_commands({
-        'home': home,
-        'state': state,
-        'paneA': paneA,
-        'paneB': paneB,
-        'profileA': profileA,
-        'profileB': profileB,
-        'delivery_conf': delivery_conf,
-        'send_handoff': _send_handoff,
-        'maybe_prepend': _maybe_prepend_preamble,
-        'send_raw_to_cli': _send_raw_to_cli,
-        'run_aux_cli': _run_aux_cli,
-        'send_aux_reminder': _send_aux_reminder,
-        'request_por_refresh': _request_por_refresh,
-        'weave_system': weave_system,
-        'foreman_scheduler': foreman_scheduler,
-        'write_status': write_status,
-        'write_queue_and_locks': write_queue_and_locks,
-        'policies': policies,
-        'state_box': console_state,
-    })
+    # Console command API removed; all commands come via TUI/IM queues.
 
     mailbox_api = make_mailbox_pipeline({
         'home': home,
@@ -2250,7 +2209,6 @@ def main(home: Path, session_name: Optional[str] = None):
             keepalive_api.tick()
         except Exception:
             pass
-        line = None
         # Handle ACK first: by mode (file_move watches moves; ack_text parses echoes)
         try:
             if ack_mode == 'file_move':
@@ -2513,48 +2471,21 @@ def main(home: Path, session_name: Optional[str] = None):
             (state/"loop.alive").write_text(str(int(time.time())), encoding='utf-8')
         except Exception:
             pass
-        # Fast-command window: poll console input until the main-loop tick, using short sleeps to yield CPU
-        deadline = time.time() + float(main_loop_tick_seconds)
-        line = ""
-        while True:
-            remain = max(0.0, deadline - time.time())
-            step = 0.2 if remain > 0.2 else remain
-            if step <= 0:
-                break
-            if console_input_enabled:
-                rlist, _, _ = select.select([sys.stdin], [], [], step)
-                if rlist:
-                    line = read_console_line("> ").strip()
-                    break
-            else:
-                time.sleep(step)
+        # Sleep to maintain main loop tick cadence, then process subsystems
+        time.sleep(float(main_loop_tick_seconds))
         if shutdown_requested:
             break
-        if not line:
-            _stdout_saved = sys.stdout
-            if not CONSOLE_ECHO:
-                sys.stdout = io.StringIO()
-            try:
-                mailbox_api.process()
-                _maybe_dispatch_foreman_message()
-                foreman_scheduler.tick()
-                _resend_timeouts()
-                _try_send_from_queue("PeerA")
-                _try_send_from_queue("PeerB")
-            finally:
-                if not CONSOLE_ECHO:
-                    sys.stdout = _stdout_saved
-            continue
-        action = console_api.handle(line)
-        deliver_paused = console_state['deliver_paused']
-        deliver_paused_box['v'] = deliver_paused
-        handoff_filter_override = console_state['handoff_filter_override']
-        CONSOLE_ECHO = console_state['CONSOLE_ECHO']
-        foreman_thread = console_state['foreman_thread']
-        if action == "break":
-            break
-        if action == "continue":
-            continue
+        _stdout_saved = sys.stdout
+        try:
+            sys.stdout = io.StringIO()
+            mailbox_api.process()
+            _maybe_dispatch_foreman_message()
+            foreman_scheduler.tick()
+            _resend_timeouts()
+            _try_send_from_queue("PeerA")
+            _try_send_from_queue("PeerB")
+        finally:
+            sys.stdout = _stdout_saved
     # Graceful shutdown of tmux session if requested via /quit
     try:
         tmux("kill-session","-t",session)

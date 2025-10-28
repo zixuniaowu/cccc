@@ -8,7 +8,7 @@ Meets 2025 CLI standards for usability, aesthetics, and functionality.
 Core Features:
   • Setup: Elegant actor configuration with visual hierarchy
   • Runtime: Real-time collaborative CLI with Timeline, Input, Status
-  • Commands: /a, /b, /both, /help, /status, /queue, /locks
+  • Commands: /a, /b, /both, /help, /pause, /resume, /refresh, /quit, /foreman, /c, /review, /focus, /verbose on|off
 
 UI/UX Excellence:
   • Modern 256-color scheme with semantic colors (success/warning/error/info)
@@ -78,13 +78,14 @@ class CommandCompleter(Completer):
 
     def __init__(self):
         super().__init__()
-        # Define available commands with descriptions (from orchestrator/console_commands.py)
+        # Define available commands with descriptions (console removed; TUI/IM are primary)
         self.commands = [
             # Basic control
             ('/help', 'Show help'),
             ('/pause', 'Pause handoff'),
             ('/resume', 'Resume handoff'),
             ('/refresh', 'Refresh system prompt'),
+            ('/quit', 'Quit CCCC'),
             # Foreman
             ('/foreman', 'Foreman control (on|off|status|now)'),
             # Aux
@@ -92,11 +93,7 @@ class CommandCompleter(Completer):
             ('/review', 'Request Aux review'),
             # Focus and filter
             ('/focus', 'Focus PeerB'),
-            ('/anti-on', 'Enable filter'),
-            ('/anti-off', 'Disable filter'),
-            ('/anti-status', 'Show filter status'),
-            # Echo control
-            ('/echo', 'Echo control (on|off)'),
+            ('/verbose', 'Verbose on|off'),
         ]
 
     def get_completions(self, document: Document, complete_event):
@@ -2003,6 +2000,7 @@ class CCCCSetupApp:
             self._write_timeline("  /pause              Pause handoff", 'info')
             self._write_timeline("  /resume             Resume handoff", 'info')
             self._write_timeline("  /refresh            Refresh system prompt", 'info')
+            self._write_timeline("  /quit               Quit CCCC (exit all processes)", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Foreman:", 'info')
             self._write_timeline("  /foreman on         Enable Foreman", 'info')
@@ -2014,14 +2012,9 @@ class CCCCSetupApp:
             self._write_timeline("  /c <prompt>         Run Aux helper", 'info')
             self._write_timeline("  /review             Request Aux review", 'info')
             self._write_timeline("", 'info')
-            self._write_timeline("Filter:", 'info')
-            self._write_timeline("  /anti-on            Enable filter", 'info')
-            self._write_timeline("  /anti-off           Disable filter", 'info')
-            self._write_timeline("  /anti-status        Show filter status", 'info')
-            self._write_timeline("", 'info')
             self._write_timeline("Other:", 'info')
             self._write_timeline("  /focus [hint]       Focus PeerB", 'info')
-            self._write_timeline("  /echo on|off        Echo control", 'info')
+            self._write_timeline("  /verbose on|off     Toggle peer summaries + Foreman CC", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Keyboard:", 'info')
             self._write_timeline("  Ctrl+A/E            Start/end of line", 'info')
@@ -2042,16 +2035,11 @@ class CCCCSetupApp:
             self._write_cmd_to_queue("resume", {}, "Resume command sent")
         elif text in ('/refresh', '/sys-refresh'):
             self._write_cmd_to_queue("sys-refresh", {}, "Refresh command sent")
+        elif text == '/quit' or text == 'q':
+            self._write_timeline("Shutting down CCCC...", 'system')
+            self._quit_app()
         elif text == '/review':
             self._write_cmd_to_queue("aux", {"action": "review"}, "Review request sent")
-
-        # Filter commands
-        elif text == '/anti-on':
-            self._write_cmd_to_queue("anti", {"action": "on"}, "Filter enabled")
-        elif text == '/anti-off':
-            self._write_cmd_to_queue("anti", {"action": "off"}, "Filter disabled")
-        elif text == '/anti-status':
-            self._write_cmd_to_queue("anti", {"action": "status"}, "Filter status requested")
 
         # Foreman commands
         elif text.startswith('/foreman '):
@@ -2061,15 +2049,13 @@ class CCCCSetupApp:
             else:
                 self._write_timeline("Usage: /foreman on|off|status|now", 'error')
 
-        # Echo commands
-        elif text.startswith('/echo '):
-            arg = text[6:].strip()
-            if arg in ('on', 'off'):
-                self._write_cmd_to_queue("echo", {"action": arg}, f"Echo {arg} command sent")
-            elif not arg:
-                self._write_cmd_to_queue("echo", {}, "Echo status requested")
+        # Verbose toggle
+        elif text.startswith('/verbose '):
+            arg = text[9:].strip().lower()
+            if arg in ('on','off'):
+                self._write_cmd_to_queue("verbose", {"value": arg}, f"Verbose {arg} sent")
             else:
-                self._write_timeline("Usage: /echo on|off", 'error')
+                self._write_timeline("Usage: /verbose on|off", 'error')
 
         # Focus with optional hint
         elif text.startswith('/focus'):
@@ -2665,8 +2651,18 @@ class CCCCSetupApp:
     def _check_residual_inbox(self) -> None:
         """Check for residual inbox messages before orchestrator launch.
         If messages found, shows dialog. Otherwise continues with launch.
+
+        This check only runs ONCE after initial setup. Subsequent launches skip it
+        because inbox messages are part of normal workflow, not residuals.
         """
         try:
+            # Check if inbox has already been checked (flag file exists)
+            inbox_checked_flag = self.home / "state" / "inbox_checked.flag"
+            if inbox_checked_flag.exists():
+                # Already checked before, skip and continue launch
+                self._continue_launch()
+                return
+
             # Import mailbox functions
             import sys
             sys.path.insert(0, str(self.home))
@@ -2687,6 +2683,11 @@ class CCCCSetupApp:
             ibB = self.home / "mailbox" / "peerB" / "inbox"
             if ibB.exists():
                 cntB = len([f for f in ibB.iterdir() if f.is_file()])
+
+            # Set flag to indicate inbox check completed
+            # Do this BEFORE showing dialog to prevent repeated checks
+            inbox_checked_flag.parent.mkdir(parents=True, exist_ok=True)
+            inbox_checked_flag.write_text(f"Inbox checked at {time.time()}\n", encoding='utf-8')
 
             # If no residual messages, continue with launch
             if cntA == 0 and cntB == 0:

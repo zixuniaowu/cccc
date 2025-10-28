@@ -355,16 +355,47 @@ def make(ctx: Dict[str, Any]):
                                     ok, msg = True, 'review requested'
                                 except Exception as e:
                                     ok, msg = False, f'review failed: {e}'
-                            elif ctype in ('echo',):
+                            elif ctype in ('verbose',):
                                 try:
-                                    val = str(args.get('value') or obj.get('value') or '').lower()
-                                    if val == 'on':
-                                        globals().update(CONSOLE_ECHO=True)
-                                    elif val == 'off':
-                                        globals().update(CONSOLE_ECHO=False)
-                                    ok, msg = True, f"echo={'on' if globals().get('CONSOLE_ECHO', False) else 'off'}"
+                                    vraw = str(args.get('value') or obj.get('value') or '').strip().lower()
+                                    if vraw not in ('on','off',''):
+                                        ok, msg = False, 'unsupported verbose value'
+                                    else:
+                                        desired = {'on': True, 'off': False}.get(vraw)
+                                        import json as _json
+                                        rt_path = state/"bridge-runtime.json"; rt_path.parent.mkdir(parents=True, exist_ok=True)
+                                        cur = {}
+                                        try:
+                                            if rt_path.exists():
+                                                cur = _json.loads(rt_path.read_text(encoding='utf-8'))
+                                        except Exception:
+                                            cur = {}
+                                        if desired is None:
+                                            desired = (not bool(cur.get('show_peer_messages', True)))
+                                        cur['show_peer_messages'] = bool(desired)
+                                        try:
+                                            rt_path.write_text(_json.dumps(cur, ensure_ascii=False, indent=2), encoding='utf-8')
+                                        except Exception:
+                                            pass
+                                        # Mirror to foreman cc_user for a single mental model
+                                        try:
+                                            import yaml as _yaml
+                                            fc_p = home/"settings"/"foreman.yaml"
+                                            if fc_p.exists():
+                                                fc = _yaml.safe_load(fc_p.read_text(encoding='utf-8')) or {}
+                                            else:
+                                                fc = {}
+                                            fc.setdefault('enabled', False)
+                                            fc.setdefault('interval_seconds', 900)
+                                            fc.setdefault('agent', 'reuse_aux')
+                                            fc.setdefault('prompt_path', './FOREMAN_TASK.md')
+                                            fc['cc_user'] = bool(desired)
+                                            fc_p.write_text(_yaml.safe_dump(fc, allow_unicode=True, sort_keys=False), encoding='utf-8')
+                                        except Exception:
+                                            pass
+                                        ok, msg = True, f"verbose={'on' if desired else 'off'}"
                                 except Exception as e:
-                                    ok, msg = False, f'echo failed: {e}'
+                                    ok, msg = False, f'verbose failed: {e}'
                             elif ctype in ('passthru','pass','raw'):
                                 try:
                                     peer = str(args.get('peer') or obj.get('peer') or '').upper()
@@ -403,4 +434,3 @@ def make(ctx: Dict[str, Any]):
         }
 
     return type('CQAPI', (), {'consume': consume})
-

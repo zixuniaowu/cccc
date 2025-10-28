@@ -34,7 +34,8 @@ def make(ctx: Dict[str, Any]):
 
     def write_status(paused: bool):
         pol_enabled = bool((policies.get("handoff_filter") or {}).get("enabled", True))
-        eff_filter = ctx.get('handoff_filter_override') if ctx.get('handoff_filter_override') is not None else pol_enabled
+        # Effective filter strictly follows policy; no runtime console override.
+        eff_filter = pol_enabled
         next_selfA = None; next_selfB = None
         if self_check_enabled and self_check_every > 0:
             try:
@@ -170,4 +171,3 @@ def make(ctx: Dict[str, Any]):
             pass
 
     return type('STAPI', (), {'write_status': write_status, 'write_queue_and_locks': write_queue_and_locks})
-
