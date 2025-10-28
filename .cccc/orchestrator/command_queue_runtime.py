@@ -49,6 +49,23 @@ def make(ctx: Dict[str, Any]):
         except Exception as e:
             return False, f"inject failed: {e}"
 
+    def _is_debug() -> bool:
+        try:
+            import os, yaml  # type: ignore
+            if str(os.environ.get('CCCC_LOG_LEVEL','')).lower() == 'debug':
+                return True
+            # Fallback: cli_profiles delivery.logging_level
+            try:
+                if cli_profiles_path and cli_profiles_path.exists():
+                    data = yaml.safe_load(cli_profiles_path.read_text(encoding='utf-8')) or {}
+                    lvl = str(((data.get('delivery') or {}) or {}).get('logging_level') or '').lower()
+                    return lvl == 'debug'
+            except Exception:
+                pass
+        except Exception:
+            pass
+        return False
+
     def consume(max_items: int = 50):
         nonlocal resolved, commands_last_pos_map
         # deliver_paused/shutdown_requested bridged via boxes in ctx
@@ -56,6 +73,7 @@ def make(ctx: Dict[str, Any]):
         shutdown_requested = bool(ctx['shutdown_requested_box']['v'])
         cnt = 0
         scan = {"paths": []}
+        any_error = False
         for cpath in commands_paths:
             if cnt >= max_items:
                 break
@@ -99,15 +117,13 @@ def make(ctx: Dict[str, Any]):
                         try:
                             obj = json.loads(raw_line)
                         except Exception:
+                            any_error = True
+                            # Record only parse errors (raw)
                             try:
                                 (state/"last_command.json").write_text(json.dumps({"raw": raw_line}, ensure_ascii=False, indent=2), encoding='utf-8')
                             except Exception:
                                 pass
                             continue
-                        try:
-                            (state/"last_command.json").write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding='utf-8')
-                        except Exception:
-                            pass
                         cmd_id = str(obj.get('id') or obj.get('request_id') or '')
                         if cmd_id and cmd_id in processed_command_ids:
                             continue
@@ -327,26 +343,103 @@ def make(ctx: Dict[str, Any]):
                                         ok, msg = False, f"unknown role: {role}"
                                 except Exception as e:
                                     ok, msg = False, f'roles-set-actor failed: {e}'
+                            elif ctype in ('im-config',):
+                                try:
+                                    provider = str(args.get('provider') or obj.get('provider') or '').strip().lower()
+                                    if provider not in ('telegram', 'slack', 'discord'):
+                                        ok, msg = False, f'unsupported IM provider: {provider}'
+                                    else:
+                                        cfgp = settings / f"{provider}.yaml"
+                                        cfg = read_yaml(cfgp) or {}
+                                        
+                                        if provider == 'telegram':
+                                            # Token field
+                                            token = str(args.get('token') or obj.get('token') or '').strip()
+                                            if token:
+                                                cfg['token'] = token
+                                                if 'token_env' not in cfg:
+                                                    cfg['token_env'] = 'TELEGRAM_BOT_TOKEN'
+                                                if 'autostart' not in cfg:
+                                                    cfg['autostart'] = True
+                                            # Chat ID field (allow_chats)
+                                            chat_id = args.get('chat_id') or obj.get('chat_id') or ''
+                                            if chat_id:
+                                                try:
+                                                    cfg['allow_chats'] = [int(chat_id)]
+                                                except (ValueError, TypeError):
+                                                    cfg['allow_chats'] = [str(chat_id)]
+                                        
+                                        elif provider == 'slack':
+                                            # Bot token field
+                                            bot_token = str(args.get('bot_token') or obj.get('bot_token') or '').strip()
+                                            if bot_token:
+                                                cfg['bot_token'] = bot_token
+                                                if 'bot_token_env' not in cfg:
+                                                    cfg['bot_token_env'] = 'SLACK_BOT_TOKEN'
+                                                if 'autostart' not in cfg:
+                                                    cfg['autostart'] = True
+                                            # Channel ID field
+                                            channel_id = str(args.get('channel_id') or obj.get('channel_id') or '').strip()
+                                            if channel_id:
+                                                if 'channels' not in cfg:
+                                                    cfg['channels'] = {}
+                                                cfg['channels']['to_user'] = [channel_id]
+                                                cfg['channels']['to_peer_summary'] = [channel_id]
+                                        
+                                        elif provider == 'discord':
+                                            # Bot token field
+                                            bot_token = str(args.get('bot_token') or obj.get('bot_token') or '').strip()
+                                            if bot_token:
+                                                cfg['bot_token'] = bot_token
+                                                if 'bot_token_env' not in cfg:
+                                                    cfg['bot_token_env'] = 'DISCORD_BOT_TOKEN'
+                                                if 'autostart' not in cfg:
+                                                    cfg['autostart'] = True
+                                            # Channel ID field
+                                            channel_id = str(args.get('channel_id') or obj.get('channel_id') or '').strip()
+                                            if channel_id:
+                                                try:
+                                                    ch_id = int(channel_id)
+                                                except (ValueError, TypeError):
+                                                    ch_id = channel_id
+                                                if 'channels' not in cfg:
+                                                    cfg['channels'] = {}
+                                                cfg['channels']['to_user'] = [ch_id]
+                                                cfg['channels']['to_peer_summary'] = [ch_id]
+                                        
+                                        _write_yaml(cfgp, cfg)
+                                        ok, msg = True, f'{provider} IM configured'
+                                except Exception as e:
+                                    ok, msg = False, f'im-config failed: {e}'
                             elif ctype in ('token',):
+                                # Legacy token command - deprecated, kept for backward compatibility
                                 try:
                                     action = str(args.get('action') or obj.get('action') or '').strip().lower()
-                                    cfgp = settings/"telegram.yaml"
-                                    cfg = read_yaml(cfgp)
-                                    if action == 'set':
-                                        val = str(args.get('value') or obj.get('value') or '').strip()
-                                        if not val:
-                                            ok, msg = False, 'token value required'
-                                        else:
-                                            cfg['token'] = val
-                                            _write_yaml(cfgp, cfg)
-                                            ok, msg = True, 'token set'
-                                    elif action == 'unset':
-                                        if 'token' in cfg:
-                                            cfg.pop('token', None)
-                                            _write_yaml(cfgp, cfg)
-                                        ok, msg = True, 'token unset'
+                                    provider = str(args.get('provider') or obj.get('provider') or 'telegram').strip().lower()
+                                    if provider not in ('telegram', 'slack', 'discord'):
+                                        ok, msg = False, f'unsupported provider: {provider}'
                                     else:
-                                        ok, msg = False, 'unsupported token action'
+                                        cfgp = settings / f"{provider}.yaml"
+                                        cfg = read_yaml(cfgp) or {}
+                                        if action == 'set':
+                                            val = str(args.get('value') or obj.get('value') or '').strip()
+                                            if not val:
+                                                ok, msg = False, 'token value required'
+                                            else:
+                                                if provider == 'telegram':
+                                                    cfg['token'] = val
+                                                else:
+                                                    cfg['bot_token'] = val
+                                                _write_yaml(cfgp, cfg)
+                                                ok, msg = True, f'{provider} token set'
+                                        elif action == 'unset':
+                                            token_key = 'token' if provider == 'telegram' else 'bot_token'
+                                            if token_key in cfg:
+                                                cfg.pop(token_key, None)
+                                                _write_yaml(cfgp, cfg)
+                                            ok, msg = True, f'{provider} token unset'
+                                        else:
+                                            ok, msg = False, 'unsupported token action'
                                 except Exception as e:
                                     ok, msg = False, f'token failed: {e}'
                             elif ctype in ('review',):
@@ -411,16 +504,25 @@ def make(ctx: Dict[str, Any]):
                                 ok, msg = False, 'unsupported'
                         except Exception as e:
                             ok, msg = False, f"error: {e}"
+                        # Persist last_command.json only when not ok (error/unsupported)
+                        if not ok:
+                            any_error = True
+                            try:
+                                (state/"last_command.json").write_text(json.dumps({"obj": obj, "result": {"ok": ok, "message": msg}}, ensure_ascii=False, indent=2), encoding='utf-8')
+                            except Exception:
+                                pass
                         if cmd_id:
                             processed_command_ids.add(cmd_id)
                         append_command_result(commands_path, cmd_id or '-', ok, msg)
             except Exception:
                 pass
-        try:
-            scan["last_pos_map"] = commands_last_pos_map
-            (state/"commands.scan.json").write_text(json.dumps(scan, ensure_ascii=False, indent=2), encoding='utf-8')
-        except Exception:
-            pass
+        # Only write scan snapshot when DEBUG or this pass had errors
+        if any_error or _is_debug():
+            try:
+                scan["last_pos_map"] = commands_last_pos_map
+                (state/"commands.scan.json").write_text(json.dumps(scan, ensure_ascii=False, indent=2), encoding='utf-8')
+            except Exception:
+                pass
         # propagate updated values back to ctx
         ctx['deliver_paused_box']['v'] = deliver_paused
         ctx['shutdown_requested_box']['v'] = shutdown_requested

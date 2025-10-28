@@ -55,10 +55,17 @@ def make(ctx: Dict[str, Any]):
             return f"cd {cwd} && {cmd}"
         return cmd
 
+    def _is_debug() -> bool:
+        try:
+            import os
+            return str(os.environ.get('CCCC_LOG_LEVEL','')).lower() == 'debug'
+        except Exception:
+            return False
+
     def _dump_panes():
         try:
             code, out, _err = tmux('list-panes', '-F', '#{pane_id} #{pane_current_command}')
-            if code == 0 and out.strip():
+            if code == 0 and out.strip() and _is_debug():
                 print('[DEBUG] pane commands:\n' + out.strip())
         except Exception:
             pass

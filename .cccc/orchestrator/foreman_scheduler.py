@@ -10,6 +10,7 @@ def make(ctx: Dict[str, Any]):
     log_ledger = ctx['log_ledger']
     load_conf = ctx['load_conf']
     load_state = ctx['load_state']
+    save_conf = ctx.get('save_conf')
     save_state = ctx['save_state']
     stop_running = ctx['stop_running']
     run_once = ctx['run_once']
@@ -99,7 +100,8 @@ def make(ctx: Dict[str, Any]):
                 return {"ok": False, "message": "Foreman was not enabled at startup; restart to enable or run roles wizard."}
             fc['enabled'] = True
             try:
-                save_conf(fc)
+                if save_conf:
+                    save_conf(fc)
             except Exception as err:
                 return {"ok": False, "message": f"Foreman enable failed: {err}"}
             try:
@@ -147,7 +149,8 @@ def make(ctx: Dict[str, Any]):
         if label in ("off", "disable", "stop"):
             fc['enabled'] = False
             try:
-                save_conf(fc)
+                if save_conf:
+                    save_conf(fc)
             except Exception as err:
                 return {"ok": False, "message": f"Foreman disable failed: {err}"}
             st['queued_after_current'] = False

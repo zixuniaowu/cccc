@@ -91,7 +91,12 @@ def make(ctx: Dict[str, Any]):
             status = f"failed:{e}"; seq = "000000"
         ctx['inflight'][receiver_label] = None
         log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": mid, "seq": seq, "chars": len(payload)})
-        print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
+        try:
+            import os
+            if str(os.environ.get('CCCC_LOG_LEVEL','')).lower() == 'debug':
+                print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
+        except Exception:
+            pass
 
         # Self-check cadence（复制原逻辑的关键路径，依赖 is_low_signal 与计数器）
         try:

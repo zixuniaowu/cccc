@@ -94,8 +94,20 @@ try:
     from .orchestrator.policy_filter import is_high_signal as _pf_is_high_signal, is_low_signal as _pf_is_low_signal, should_forward as _pf_should_forward
 except ImportError:
     from orchestrator.policy_filter import is_high_signal as _pf_is_high_signal, is_low_signal as _pf_is_low_signal, should_forward as _pf_should_forward
-# Console echo removed (no stdin console).
 CONSOLE_ECHO = False
+
+def _is_debug() -> bool:
+    try:
+        return str(os.environ.get('CCCC_LOG_LEVEL','')).lower() == 'debug'
+    except Exception:
+        return False
+
+def _dbg(msg: str) -> None:
+    if _is_debug():
+        try:
+            print(msg)
+        except Exception:
+            pass
 # legacy patch/diff handling removed
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
@@ -534,7 +546,7 @@ def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str
                 status = f"failed:{e}"
                 seq = "000000"
             log_ledger(home, {"from": who, "kind": "handoff", "status": status, "mid": mid, "seq": seq, "chars": len(to_peer)})
-            print(f"[HANDOFF] {who} → {recv} ({len(to_peer)} chars, status={status}, seq={seq})")
+            _dbg(f"[HANDOFF] {who} → {recv} ({len(to_peer)} chars, status={status}, seq={seq})")
 
 def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: str,
                                  policies: Dict[str,Any], phase: str,
@@ -577,7 +589,7 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
             else:
                 status, mid = deliver_or_queue(home, other_pane, "peerA", to_peer, profileA, delivery_conf)
             log_ledger(home, {"from": who, "kind": "handoff", "status": status, "mid": mid, "chars": len(to_peer)})
-            print(f"[HANDOFF] {who} → {'PeerB' if who=='PeerA' else 'PeerA'} ({len(to_peer)} chars, status={status})")
+            _dbg(f"[HANDOFF] {who} → {'PeerB' if who=='PeerA' else 'PeerA'} ({len(to_peer)} chars, status={status})")
 
 
 # ---------- MAIN ----------
@@ -1540,7 +1552,8 @@ def main(home: Path, session_name: Optional[str] = None):
     commands_path = state/"commands.jsonl"
     commands_path.parent.mkdir(parents=True, exist_ok=True)
     commands_scan_path = state/"commands.scan.json"
-    commands_paths = [state/"commands.jsonl", state/"commands. jsonl"]
+    # Only track the canonical commands.jsonl; remove legacy typo with space
+    commands_paths = [state/"commands.jsonl"]
     commands_last_pos_map: Dict[str, int] = init_command_offsets(commands_paths, commands_scan_path)
     if any(commands_last_pos_map.values()):
         print("[COMMANDS] Initialized command offsets.")
@@ -1787,7 +1800,7 @@ def main(home: Path, session_name: Optional[str] = None):
             seq = "000000"
         inflight[receiver_label] = None  # Stop tracking live ACK; rely on inbox+ACK
         log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": mid, "seq": seq, "chars": len(payload)})
-        print(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
+        _dbg(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
 
         # Self-check cadence: per-peer counting and trigger
         try:
@@ -2037,9 +2050,11 @@ def main(home: Path, session_name: Optional[str] = None):
     try:
         from .orchestrator.handoff import make as make_handoff
         from .orchestrator.events import make as make_events
+        from .orchestrator.bridge_runtime import make as make_bridge_runtime
     except ImportError:
         from orchestrator.handoff import make as make_handoff
         from orchestrator.events import make as make_events
+        from orchestrator.bridge_runtime import make as make_bridge_runtime
     handoff_ctx = {
         'home': home,
         'paneA': paneA, 'paneB': paneB,
@@ -2066,6 +2081,7 @@ def main(home: Path, session_name: Optional[str] = None):
     _send_handoff = handoff_api.send_handoff
     keepalive_api.bind_send(_send_handoff)
     events_api = make_events({'home': home, 'send_handoff': _send_handoff})
+    bridge_rt = make_bridge_runtime({'home': home, 'log_ledger': log_ledger, 'read_yaml': read_yaml})
 
     def _refresh_role_profiles(new_resolved: Dict[str, Any]):
         nonlocal resolved, profileA, profileB, aux_resolved, aux_command_template, aux_command, aux_cwd, aux_mode, rate_limit_per_minute, aux_min_interval
@@ -2108,6 +2124,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'state': state,
         'log_ledger': log_ledger,
         'load_conf': _load_foreman_conf,
+        'save_conf': _save_foreman_conf,
         'load_state': _foreman_load_state,
         'save_state': _foreman_save_state,
         'stop_running': _foreman_stop_running,
@@ -2147,7 +2164,13 @@ def main(home: Path, session_name: Optional[str] = None):
             pass
         # Keep it simple: no phase locks; send clear instructions at start; remove runtime SYSTEM hot-reload
 
-        # Non-blocking loop: prioritize console input; otherwise scan A/B mailbox outputs
+        # Non-blocking loop: process any IM bridges & scan A/B mailbox outputs
+        try:
+            bridge_rt.ensure_telegram_running()
+            bridge_rt.ensure_slack_running()
+            bridge_rt.ensure_discord_running()
+        except Exception:
+            pass
         _process_im_commands()
         # TUI command queue consumption via external runtime (returns updated flags)
         try:
@@ -2222,7 +2245,7 @@ def main(home: Path, session_name: Optional[str] = None):
                             ok = (proc/(fn)).exists()
                             seq = fn[:6]
                             try:
-                                print(f"[ACK-FILE] {label} seq={seq} file={fn} ok={bool(ok)}")
+                                _dbg(f"[ACK-FILE] {label} seq={seq} file={fn} ok={bool(ok)}")
                                 log_ledger(home, {"from":label,"kind":"ack-file","seq":seq,"file":fn,"ok":bool(ok)})
                                 nudge_api.nudge_mark_progress(home, label, seq=seq)
                             except Exception:
@@ -2336,7 +2359,7 @@ def main(home: Path, session_name: Optional[str] = None):
                             ok = (proc/(fn)).exists()
                             seq = fn[:6]
                             try:
-                                print(f"[ACK-FILE] {label} seq={seq} file={fn} ok={bool(ok)}")
+                                _dbg(f"[ACK-FILE] {label} seq={seq} file={fn} ok={bool(ok)}")
                                 log_ledger(home, {"from":label,"kind":"ack-file","seq":seq,"file":fn,"ok":bool(ok)})
                                 # Treat file movement as progress for NUDGE single-flight
                                 nudge_api.nudge_mark_progress(home, label, seq=seq)
@@ -2436,7 +2459,7 @@ def main(home: Path, session_name: Optional[str] = None):
                             ok = True
                         seen_acks[label].add(tok)
                         try:
-                            print(f"[ACK] {label} token={tok} ok={bool(ok)}")
+                            _dbg(f"[ACK] {label} token={tok} ok={bool(ok)}")
                             log_ledger(home, {"from":label,"kind":"ack","token":tok,"ok":bool(ok)})
                             # Any ACK token implies progress; clear inflight
                             nudge_api.nudge_mark_progress(home, label)

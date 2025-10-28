@@ -65,7 +65,7 @@ from prompt_toolkit.layout import (
     FormattedTextControl, Dimension
 )
 from prompt_toolkit.widgets import (
-    TextArea, Button, Dialog, RadioList, Label
+    TextArea, Button, Dialog, RadioList, Label, Frame
 )
 from prompt_toolkit.styles import Style
 from prompt_toolkit.mouse_events import MouseEventType
@@ -424,7 +424,8 @@ class CCCCSetupApp:
             text=initial_msg,
             scrollbar=True,
             read_only=True,
-            focusable=False
+            focusable=True,  # Enable focus for mouse scrolling
+            wrap_lines=False
         )
         # Create completer with threading for better responsiveness
         self.command_completer = CommandCompleter()
@@ -436,12 +437,10 @@ class CCCCSetupApp:
             completer=ThreadedCompleter(self.command_completer),
             complete_while_typing=True,
         )
-
-        self.status = TextArea(
-            height=Dimension(min=3, max=8, preferred=5),
-            read_only=True,
-            focusable=False
-        )
+        # Status panel removed - all info now in bottom footer
+        # Track last message timestamp for grouping
+        self.last_message_time: float = 0
+        self.last_message_sender: str = ''
         self.message_count: int = 0
 
         # Create the application
@@ -573,11 +572,9 @@ class CCCCSetupApp:
         return f"{prefix}{option_name}"
 
     def _create_focused_label(self, text: str, config_index: int) -> Any:
-        """Create a label that shows focus status"""
-        if config_index == self.focused_option_index:
-            return FormattedTextControl([('class:focused', f"▶ {text}")])
-        else:
-            return FormattedTextControl([('class:label', f"  {text}")])
+        """Create a label without focus indicator (focus shown by button highlight)"""
+        # No triangle prefix - focus is indicated by button color
+        return FormattedTextControl([('class:label', text)])
 
     def _setup_value_cycling_deferred(self) -> None:
         """Initialize value cycling methods after UI is built"""
@@ -849,37 +846,51 @@ class CCCCSetupApp:
         btn_peerA = Button(
             text=self._format_button_text(self.config.peerA, required=True),
             handler=lambda: self._show_actor_dialog('peerA'),
-            width=24
+            width=24,
+            left_symbol='',
+            right_symbol=''
         )
         btn_peerB = Button(
             text=self._format_button_text(self.config.peerB, required=True),
             handler=lambda: self._show_actor_dialog('peerB'),
-            width=24
+            width=24,
+            left_symbol='',
+            right_symbol=''
         )
         btn_aux = Button(
             text=self._format_button_text(self.config.aux, none_ok=True),
             handler=lambda: self._show_actor_dialog('aux'),
-            width=24
+            width=24,
+            left_symbol='',
+            right_symbol=''
         )
         btn_foreman = Button(
             text=self._format_button_text(self.config.foreman, none_ok=True),
             handler=self._show_foreman_dialog,
-            width=24
+            width=24,
+            left_symbol='',
+            right_symbol=''
         )
         btn_mode = Button(
             text=f'[●] {self.config.mode}',
             handler=self._show_mode_dialog,
-            width=24
+            width=24,
+            left_symbol='',
+            right_symbol=''
         )
         btn_confirm = Button(
             text='🚀 Launch CCCC',
             handler=self._confirm_and_launch,
-            width=20
+            width=20,
+            left_symbol='',
+            right_symbol=''
         )
         btn_quit = Button(
             text='Quit',
             handler=self._quit_app,
-            width=12
+            width=12,
+            left_symbol='',
+            right_symbol=''
         )
 
         # Store button references
@@ -921,13 +932,13 @@ class CCCCSetupApp:
                 Window(width=10, content=self._create_focused_label('PeerA', 0)),
                 btn_peerA,
                 Window(width=2),
-                Label(text='Planning & review', style='class:hint'),
+                Label(text='Strategic peer (equal, can think & execute)', style='class:hint'),
             ], padding=1),
             VSplit([
                 Window(width=10, content=self._create_focused_label('PeerB', 1)),
                 btn_peerB,
                 Window(width=2),
-                Label(text='Implementation & testing', style='class:hint'),
+                Label(text='Validation peer (equal, debate & evidence)', style='class:hint'),
             ], padding=1),
             Window(height=1),
 
@@ -938,13 +949,13 @@ class CCCCSetupApp:
                 Window(width=10, content=self._create_focused_label('Aux', 2)),
                 btn_aux,
                 Window(width=2),
-                Label(text='Burst tasks', style='class:hint'),
+                Label(text='Optional burst capacity (heavy reviews/tests/transforms)', style='class:hint'),
             ], padding=1),
             VSplit([
                 Window(width=10, content=self._create_focused_label('Foreman', 3)),
                 btn_foreman,
                 Window(width=2),
-                Label(text='Scheduled tasks', style='class:hint'),
+                Label(text='Background scheduler (self-check/maintenance/compact)', style='class:hint'),
             ], padding=1),
             Window(height=1),
 
@@ -955,7 +966,7 @@ class CCCCSetupApp:
                 Window(width=10, content=self._create_focused_label('Connect', 4)),
                 btn_mode,
                 Window(width=2),
-                Label(text='tmux / telegram / slack / discord', style='class:hint'),
+                Label(text='Interaction mode (tmux local / telegram remote / team chat)', style='class:hint'),
             ], padding=1),
         ]
 
@@ -1586,31 +1597,25 @@ class CCCCSetupApp:
             self.app.exit()
 
     def _build_runtime_ui(self) -> None:
-        """Build flexible runtime UI (Timeline + Input + Status + Footer)"""
-        # Update status
-        self._update_status()
-
-        # Rebuild root with flexible layout
+        """Build modern runtime UI (Full-width Timeline + Input + Footer)"""
+        # Wrap input field with clear Frame border and title
+        input_with_frame = Frame(
+            body=self.input_field,
+            title='Message (Enter to send, Esc to focus timeline)',
+            style='class:input-frame'
+        )
+        
+        # Rebuild root with clean, full-width layout
         self.root.content = HSplit([
             create_runtime_header(),
             Window(height=1),
-            VSplit([
-                # Timeline takes remaining space
-                HSplit([
-                    Label(text='Timeline:', style='class:section'),
-                    self.timeline,
-                ], padding=0),
-                # Separator
-                Window(width=1),
-                # Status panel with flexible width (min 20, max 30)
-                HSplit([
-                    Label(text='Status:', style='class:section'),
-                    self.status,
-                ], padding=0, width=Dimension(min=20, max=30, preferred=25)),
-            ]),
+            # Timeline takes full width
+            HSplit([
+                Label(text='💬 Conversation:', style='class:section'),
+                self.timeline,
+            ], padding=0),
             Window(height=1),
-            Label(text='Input (type /help):', style='class:section'),
-            self.input_field,
+            input_with_frame,
             Window(
                 content=FormattedTextControl(self._get_footer_text),
                 height=Dimension(min=5, max=5),
@@ -1618,8 +1623,9 @@ class CCCCSetupApp:
             ),
         ])
 
+        # Focus timeline by default (for natural mouse scrolling)
         try:
-            self.app.layout.focus(self.input_field)
+            self.app.layout.focus(self.timeline)
         except Exception:
             pass
 
@@ -1628,10 +1634,11 @@ class CCCCSetupApp:
         cmds = self.home / "state" / "commands.jsonl"
         cmds.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write debug timeline entry
-        self._write_timeline(f"Writing commands to {cmds}", 'debug')
+        # No noisy debug line on timeline for file path
 
-        with cmds.open('a', encoding='utf-8') as f:
+        # IMPORTANT: Use 'w' mode to overwrite, not 'a' to append
+        # Each setup completion should start fresh, not mix with previous sessions
+        with cmds.open('w', encoding='utf-8') as f:
             ts = time.time()
 
             # Roles
@@ -1645,23 +1652,56 @@ class CCCCSetupApp:
                         "ts": ts
                     }
                     f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
-                    self._write_timeline(f"Set {role} → {actor}", 'debug')
+                    # quiet: roles are reflected in status panel; avoid timeline noise
 
-            # IM token
+            # IM configuration via im-config command
             if self.config.mode == 'telegram' and self.config.tg_token:
                 cmd = {
-                    "type": "token",
-                    "args": {"action": "set", "value": self.config.tg_token},
+                    "type": "im-config",
+                    "args": {
+                        "provider": "telegram",
+                        "token": self.config.tg_token
+                    },
                     "source": "tui",
                     "ts": ts
                 }
+                if self.config.tg_chat:
+                    cmd["args"]["chat_id"] = self.config.tg_chat
                 f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
-                self._write_timeline(f"Set Telegram token", 'debug')
+                # quiet: IM config persisted; avoid timeline noise
+            elif self.config.mode == 'slack' and self.config.sl_token:
+                cmd = {
+                    "type": "im-config",
+                    "args": {
+                        "provider": "slack",
+                        "bot_token": self.config.sl_token
+                    },
+                    "source": "tui",
+                    "ts": ts
+                }
+                if self.config.sl_chan:
+                    cmd["args"]["channel_id"] = self.config.sl_chan
+                f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
+                # quiet: IM config persisted; avoid timeline noise
+            elif self.config.mode == 'discord' and self.config.dc_token:
+                cmd = {
+                    "type": "im-config",
+                    "args": {
+                        "provider": "discord",
+                        "bot_token": self.config.dc_token
+                    },
+                    "source": "tui",
+                    "ts": ts
+                }
+                if self.config.dc_chan:
+                    cmd["args"]["channel_id"] = self.config.dc_chan
+                f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
+                # quiet: IM config persisted; avoid timeline noise
 
             # Launch command (triggers orchestrator to start peers)
             cmd = {"type": "launch", "args": {"who": "both"}, "source": "tui", "ts": ts}
             f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
-            self._write_timeline(f"Launch command written: {cmd}", 'debug')
+            # quiet: launch command queued; avoid timeline noise
 
         # Foreman yaml
         if self.config.foreman and self.config.foreman != 'none':
@@ -1670,15 +1710,9 @@ class CCCCSetupApp:
                 'enabled': True
             })
 
-        # IM provider yamls
-        if self.config.mode == 'telegram' and self.config.tg_token:
-            cfg = {'token': self.config.tg_token, 'token_env': 'TELEGRAM_BOT_TOKEN', 'autostart': True}
-            if self.config.tg_chat:
-                try:
-                    cfg['allow_chats'] = [int(self.config.tg_chat)]
-                except ValueError:
-                    cfg['allow_chats'] = [self.config.tg_chat]
-            _write_yaml(self.home, 'settings/telegram.yaml', cfg)
+        # IM provider configuration via commands.jsonl only
+        # Orchestrator will handle yaml updates through im-config command
+        # No direct yaml writes here to preserve complete configuration
 
         # Confirmation flag
         (self.home / "state" / "settings.confirmed").write_text(str(int(ts)))
@@ -1698,37 +1732,83 @@ class CCCCSetupApp:
 
     def _write_timeline(self, text: str, msg_type: str = 'info', silent: bool = False) -> None:
         """
-        Append message to timeline with consistent formatting.
+        Append message with clean compact formatting (no ANSI codes, pure text).
+        
+        Format: HH:MM 🤖 SENDER │ Message content
+                               │ Continuation lines
 
         Args:
-            text: Message content
-            msg_type: Message type for styling and icon
-            silent: If True, don't increment message count (for navigation hints)
+            text: Message content  
+            msg_type: system/peerA/peerB/user/error/info/success/warning/debug
+            silent: If True, don't increment message count
         """
-        timestamp = time.strftime('%H:%M:%S')
+        current_time = time.time()
+        timestamp = time.strftime('%H:%M')
 
-        # Type indicators - exactly 3 ASCII chars for perfect alignment
-        # Using ASCII-safe characters to avoid terminal width issues
-        type_map = {
-            'system': 'SYS',
-            'peerA': 'A>U',  # ASCII-safe instead of →
-            'peerB': 'B>U',
-            'user': 'YOU',
-            'error': 'ERR',
-            'debug': 'DBG',
-            'info': '...',
-            'success': ' OK',  # Space + OK for success
-            'warning': 'WRN',
+        # Sender config: (icon, label) - no colors, pure text
+        sender_config = {
+            'system': ('🔧', 'SYS'),
+            'peerA': ('🤖', self.config.peerA.upper() if hasattr(self.config, 'peerA') else 'PEERA'),
+            'peerB': ('⚙️', self.config.peerB.upper() if hasattr(self.config, 'peerB') else 'PEERB'),
+            'user': ('👤', 'YOU'),
+            'error': ('❌', 'ERR'),
+            'info': ('ℹ️', 'INF'),
+            'success': ('✅', 'OK'),
+            'warning': ('⚠️', 'WRN'),
+            'debug': ('🔍', 'DBG'),
         }
 
-        indicator = type_map.get(msg_type, '...')
+        icon, label = sender_config.get(msg_type, ('•', msg_type.upper()[:3]))
 
-        # Consistent format: [HH:MM:SS] TAG message
-        formatted = f'[{timestamp}] {indicator} {text}'
+        # Check if same sender within 30s (compact mode)
+        compact = (
+            self.last_message_sender == msg_type and
+            current_time - self.last_message_time < 30
+        )
+
+        lines = []
+
+        # Wrap text at 100 chars for readability
+        max_width = 100
+        text_lines = []
+        for line in text.split('\n'):
+            if not line:
+                text_lines.append('')
+                continue
+            while len(line) > max_width:
+                split_point = line.rfind(' ', 0, max_width)
+                if split_point == -1:
+                    split_point = max_width
+                text_lines.append(line[:split_point])
+                line = line[split_point:].lstrip()
+            text_lines.append(line)
+
+        # Format message (compact or full)
+        if compact:
+            # Same sender continuation: omit timestamp
+            for i, text_line in enumerate(text_lines):
+                if i == 0:
+                    lines.append(f'      {icon} │ {text_line}')
+                else:
+                    lines.append(f'        │ {text_line}')
+        else:
+            # New sender or time gap: show full header
+            if self.timeline.text:
+                lines.append('')  # Blank line between groups
+            for i, text_line in enumerate(text_lines):
+                if i == 0:
+                    lines.append(f'{timestamp} {icon} {label:6s} │ {text_line}')
+                else:
+                    lines.append(f'               │ {text_line}')
+
+        # Update tracking
+        self.last_message_sender = msg_type
+        self.last_message_time = current_time
 
         # Append to timeline
+        formatted = '\n'.join(lines) + '\n'
         current = self.timeline.text
-        self.timeline.text = current + formatted + '\n'
+        self.timeline.text = current + formatted
 
         # Update message count (unless silent)
         if not silent:
@@ -1790,60 +1870,17 @@ class CCCCSetupApp:
         self.search_index = 0
 
     def _update_status(self) -> None:
-        """Update enhanced status panel with connection state"""
+        """Update connection state (status panel removed, info now in footer)"""
         try:
             status_path = self.home / "state" / "status.json"
-
             if status_path.exists():
-                data = json.loads(status_path.read_text(encoding='utf-8'))
-                h = data.get('handoffs') or {}
-
-                # Check if orchestrator is active
+                # Just update connection state
                 self.orchestrator_connected = True
                 self.last_update_time = time.time()
-
-                # Connection status
-                status_indicator = '● Connected'
-
-                # Build status display
-                lines = [
-                    f"Status: {status_indicator}",
-                    f"Messages: {self.message_count}",
-                    "",
-                    f"❯ PeerA ({self.config.peerA})",
-                    f"  Handoffs: {h.get('handoffs_peerA', 0)}",
-                    "",
-                    f"❯ PeerB ({self.config.peerB})",
-                    f"  Handoffs: {h.get('handoffs_peerB', 0)}",
-                ]
-
-                # Add last update time
-                if self.last_update_time > 0:
-                    elapsed = time.time() - self.last_update_time
-                    if elapsed < 60:
-                        time_str = f"{int(elapsed)}s ago"
-                    else:
-                        time_str = f"{int(elapsed/60)}m ago"
-                    lines.append("")
-                    lines.append(f"Updated: {time_str}")
-
-                self.status.text = '\n'.join(lines)
             else:
-                # No status file yet
                 self.orchestrator_connected = False
-                lines = [
-                    "Status: ○ Starting",
-                    f"Messages: {self.message_count}",
-                    "",
-                    f"❯ PeerA ({self.config.peerA})",
-                    f"❯ PeerB ({self.config.peerB})",
-                    "",
-                    "Waiting for orchestrator",
-                    "to initialize...",
-                ]
-                self.status.text = '\n'.join(lines)
-        except Exception as e:
-            self.status.text = f"Status error:\n{str(e)[:50]}"
+        except Exception:
+            pass
 
     def _get_footer_text(self) -> list:
         """
@@ -2017,6 +2054,8 @@ class CCCCSetupApp:
             self._write_timeline("  /verbose on|off     Toggle peer summaries + Foreman CC", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Keyboard:", 'info')
+            self._write_timeline("  Ctrl+T              Focus timeline (enable mouse scroll)", 'info')
+            self._write_timeline("  Esc                 Return to input from timeline", 'info')
             self._write_timeline("  Ctrl+A/E            Start/end of line", 'info')
             self._write_timeline("  Ctrl+W/U/K          Delete word/start/end", 'info')
             self._write_timeline("  Up/Down             History", 'info')
@@ -2379,8 +2418,28 @@ class CCCCSetupApp:
             # Clear timeline with minimal message
             self.timeline.text = ''
             self.message_count = 0
+            self.last_message_time = 0
+            self.last_message_sender = ''
             self._write_timeline("Screen cleared", 'system')
             self._write_timeline("Type /help for commands", 'info')
+
+        # Timeline focus toggle (Ctrl+T to focus timeline for mouse scrolling)
+        @kb.add('c-t', filter=~Condition(lambda: self.setup_visible or self.modal_open))
+        def focus_timeline(event) -> None:
+            """Focus timeline to enable mouse scrolling"""
+            try:
+                self.app.layout.focus(self.timeline)
+            except Exception:
+                pass
+
+        # Return to input from timeline (Esc)
+        @kb.add('escape', filter=has_focus(self.timeline))
+        def return_to_input(event) -> None:
+            """Return focus to input field from timeline"""
+            try:
+                self.app.layout.focus(self.input_field)
+            except Exception:
+                pass
 
         # Timeline navigation
         @kb.add('pageup', filter=~Condition(lambda: self.setup_visible or self.modal_open))
@@ -2524,6 +2583,23 @@ class CCCCSetupApp:
             self.input_field.text = ''
             if text:
                 self._process_command(text)
+            # Return focus to timeline for natural scrolling
+            try:
+                self.app.layout.focus(self.timeline)
+            except Exception:
+                pass
+
+        # Smart focus: any printable key when timeline focused -> auto-switch to input
+        from prompt_toolkit.keys import Keys
+        @kb.add(Keys.Any, filter=~Condition(lambda: self.setup_visible or self.modal_open) & has_focus(self.timeline))
+        def auto_focus_input(event) -> None:
+            """Auto-focus input when user starts typing (2025 TUI UX)"""
+            if event.data and len(event.data) == 1 and event.data.isprintable():
+                try:
+                    self.app.layout.focus(self.input_field)
+                    self.input_field.buffer.insert_text(event.data)
+                except Exception:
+                    pass
 
         # Help toggle (F1)
         @kb.add('f1')
@@ -2540,8 +2616,6 @@ class CCCCSetupApp:
     async def refresh_loop(self) -> None:
         """Background refresh with connection monitoring"""
         seen_messages = set()
-        last_mailbox_check = 0
-        last_pending_counts = {'peerA': 0, 'peerB': 0}
 
         while True:
             try:
@@ -2595,12 +2669,6 @@ class CCCCSetupApp:
                         else:
                             self.orchestrator_connected = False
 
-                        # Check mailbox for pending messages every 10 seconds
-                        current_time = time.time()
-                        if current_time - last_mailbox_check >= 10.0:
-                            await self._check_mailbox_alerts(last_pending_counts)
-                            last_mailbox_check = current_time
-
                     except Exception:
                         self.orchestrator_connected = False
 
@@ -2615,38 +2683,6 @@ class CCCCSetupApp:
             except Exception:
                 # Log error but continue loop
                 await asyncio.sleep(2.0)
-
-    async def _check_mailbox_alerts(self, last_counts: Dict[str, int]) -> None:
-        """Check mailbox for pending messages and show alerts if needed"""
-        try:
-            status_path = self.home / "state" / "status.json"
-            if not status_path.exists():
-                return
-
-            data = json.loads(status_path.read_text(encoding='utf-8'))
-            mailbox_counts = data.get('mailbox_counts', {})
-
-            peerA_counts = mailbox_counts.get('peerA', {}) if isinstance(mailbox_counts.get('peerA'), dict) else {}
-            peerB_counts = mailbox_counts.get('peerB', {}) if isinstance(mailbox_counts.get('peerB'), dict) else {}
-
-            # Calculate total pending messages for each peer
-            peerA_pending = peerA_counts.get('to_peer', 0) + peerA_counts.get('to_user', 0)
-            peerB_pending = peerB_counts.get('to_peer', 0) + peerB_counts.get('to_user', 0)
-
-            # Check if there's an increase in pending messages
-            if (peerA_pending > 0 and peerA_pending > last_counts.get('peerA', 0)) or \
-               (peerB_pending > 0 and peerB_pending > last_counts.get('peerB', 0)):
-
-                # Update last counts
-                last_counts['peerA'] = peerA_pending
-                last_counts['peerB'] = peerB_pending
-
-                # Show alert dialog
-                await self._show_mailbox_alert_dialog(peerA_pending, peerB_pending)
-
-        except Exception as e:
-            # Silently fail to avoid breaking the refresh loop
-            pass
 
     def _check_residual_inbox(self) -> None:
         """Check for residual inbox messages before orchestrator launch.
@@ -2684,18 +2720,16 @@ class CCCCSetupApp:
             if ibB.exists():
                 cntB = len([f for f in ibB.iterdir() if f.is_file()])
 
-            # Set flag to indicate inbox check completed
-            # Do this BEFORE showing dialog to prevent repeated checks
-            inbox_checked_flag.parent.mkdir(parents=True, exist_ok=True)
-            inbox_checked_flag.write_text(f"Inbox checked at {time.time()}\n", encoding='utf-8')
-
-            # If no residual messages, continue with launch
+            # If no residual messages, set flag and continue
             if cntA == 0 and cntB == 0:
+                inbox_checked_flag.parent.mkdir(parents=True, exist_ok=True)
+                inbox_checked_flag.write_text(f"Inbox checked at {time.time()}\n", encoding='utf-8')
                 self._continue_launch()
                 return
 
-            # Show dialog (dialog handlers will call _continue_launch)
-            self._show_inbox_cleanup_dialog(cntA, cntB)
+            # Show dialog (dialog handlers will set flag after user choice)
+            # Pass flag path to dialog so handlers can set it
+            self._show_inbox_cleanup_dialog(cntA, cntB, inbox_checked_flag)
 
         except Exception as e:
             # Log error but don't block launch
@@ -2717,95 +2751,88 @@ class CCCCSetupApp:
             # Proceed despite error
             self._continue_launch()
 
-    def _show_mailbox_alert_dialog(self, peerA_pending: int, peerB_pending: int) -> None:
-        """Show mailbox alert dialog"""
-        if self.modal_open:
-            return
-
-        # Build alert message
-        alert_lines = []
-        if peerA_pending > 0:
-            alert_lines.append(f"PeerA has {peerA_pending} pending message(s)")
-        if peerB_pending > 0:
-            alert_lines.append(f"PeerB has {peerB_pending} pending message(s)")
-
-        if not alert_lines:
-            return
-
-        alert_text = "\n".join(alert_lines) + "\n\nCheck mailbox for new messages."
-
-        def on_ok() -> None:
-            self._close_dialog()
-
-        def on_view() -> None:
-            # Navigate to status command
-            self._process_command("/status")
-            self._close_dialog()
-
-        # Create alert dialog
-        dialog = Dialog(
-            title="📬 Mailbox Alert",
-            body=Label(text=alert_text, style='class:warning'),
-            buttons=[
-                Button('View Status (Enter)', handler=on_view),
-                Button('Dismiss (Esc)', handler=on_ok)
-            ],
-            width=Dimension(min=50, max=70, preferred=60),
-            modal=True
-        )
-
-        self._open_dialog(dialog, on_ok)
-
-
-    def _show_inbox_cleanup_dialog(self, cntA: int, cntB: int) -> None:
-        """Show simplified inbox cleanup dialog with only 2 options.
-        This is shown AFTER setup but BEFORE orchestrator launch.
+    def _show_inbox_cleanup_dialog(self, cntA: int, cntB: int, flag_path: Path) -> None:
+        """Show clear inbox cleanup dialog with user-friendly messaging
+        
+        Args:
+            cntA: Count of messages in PeerA inbox
+            cntB: Count of messages in PeerB inbox
+            flag_path: Path to inbox_checked.flag file (set after user choice)
         """
+        # Debug: Log that we're trying to show the inbox cleanup dialog
+        self._write_timeline(f"Showing inbox cleanup dialog: {cntA} + {cntB} messages", 'debug')
+        
         if self.modal_open:
+            self._write_timeline("Dialog blocked: modal already open", 'debug')
             return
 
-        # Build message
         total = cntA + cntB
-        msg_lines = [f"Found {total} residual message(s) in inbox:"]
+        msg_lines = [
+            f"📬 Found {total} unprocessed message(s) from previous session",
+            ""
+        ]
         if cntA > 0:
-            msg_lines.append(f"  • PeerA: {cntA} message(s)")
+            msg_lines.append(f"  • PeerA inbox: {cntA} message(s)")
         if cntB > 0:
-            msg_lines.append(f"  • PeerB: {cntB} message(s)")
-        msg_lines.append("")
-        msg_lines.append("What would you like to do?")
+            msg_lines.append(f"  • PeerB inbox: {cntB} message(s)")
+        msg_lines.extend([
+            "",
+            "These messages were not delivered to agents before CCCC stopped.",
+            "",
+            "📌 What should we do with them?",
+            "",
+            "  ✓ Process Now:",
+            "    Agents will receive and respond to these messages",
+            "    (Messages stay in inbox and will be delivered)",
+            "",
+            "  ✗ Discard:",
+            "    Archive these messages to processed/ folder",
+            "    (Agents won't see them, workflow starts fresh)",
+        ])
 
         alert_text = "\n".join(msg_lines)
 
-        def on_discard() -> None:
-            """Discard - move messages to processed directory"""
-            self._cleanup_inbox_messages(discard=True)
-            self._close_dialog()
-            self._continue_launch()
-
-        def on_keep() -> None:
-            """Keep - leave messages in inbox for processing"""
+        def on_process() -> None:
+            """Process - keep messages in inbox for delivery"""
             self._cleanup_inbox_messages(discard=False)
+            # Set flag AFTER user makes choice
+            try:
+                flag_path.parent.mkdir(parents=True, exist_ok=True)
+                flag_path.write_text(f"Inbox checked at {time.time()}\n", encoding='utf-8')
+            except Exception:
+                pass
             self._close_dialog()
+            self._write_timeline(f"Processing {total} pending message(s)", 'info')
             self._continue_launch()
 
-        # Create simple 2-option dialog
+        def on_discard() -> None:
+            """Discard - move messages to processed/ directory"""
+            self._cleanup_inbox_messages(discard=True)
+            # Set flag AFTER user makes choice
+            try:
+                flag_path.parent.mkdir(parents=True, exist_ok=True)
+                flag_path.write_text(f"Inbox checked at {time.time()}\n", encoding='utf-8')
+            except Exception:
+                pass
+            self._close_dialog()
+            self._write_timeline(f"Discarded {total} message(s) - starting fresh", 'info')
+            self._continue_launch()
+
+        # Create clear 2-option dialog
         dialog = Dialog(
-            title="📬 Inbox Cleanup",
+            title="📬 Unprocessed Messages Found",
             body=HSplit([
-                Label(text=alert_text, style='class:warning'),
-                Window(height=1),
-                Label(text="Discard: Move to processed/ (won't be processed)", style='class:hint'),
-                Label(text="Keep: Leave in inbox/ (will be processed)", style='class:hint'),
+                Label(text=alert_text, style='class:info'),
             ]),
             buttons=[
-                Button('Discard Messages', handler=on_discard, width=20),
-                Button('Keep Messages', handler=on_keep, width=20),
+                Button('✓ Process Now', handler=on_process, width=18),
+                Button('✗ Discard', handler=on_discard, width=18),
             ],
             width=Dimension(min=70, max=90, preferred=80),
             modal=True
         )
 
-        self._open_dialog(dialog, on_keep)
+        self._open_dialog(dialog, on_process)  # Default is Process
 
     def _cleanup_inbox_messages(self, discard: bool) -> None:
         """Clean up inbox messages based on user choice.
