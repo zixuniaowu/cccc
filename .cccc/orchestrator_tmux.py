@@ -951,8 +951,8 @@ def main(home: Path, session_name: Optional[str] = None):
 
     
     # Role profiles merged with actor IO settings
-    profileA = (resolved.get('peerA') or {}).get('profile', {})
-    profileB = (resolved.get('peerB') or {}).get('profile', {})
+    profileA = dict((resolved.get('peerA') or {}).get('profile', {}) or {})
+    profileB = dict((resolved.get('peerB') or {}).get('profile', {}) or {})
     delivery_conf = cli_profiles.get("delivery", {})
     try:
         SYSTEM_REFRESH_EVERY = int(delivery_conf.get("system_refresh_every_self_checks") or 3)
@@ -1726,7 +1726,7 @@ def main(home: Path, session_name: Optional[str] = None):
             return []
     prev_inbox: Dict[str, List[str]] = {"PeerA": _list_inbox_files("PeerA"), "PeerB": _list_inbox_files("PeerB")}
 
-    keepalive_api = make_keepalive({
+    keepalive_ctx = {
         'home': home,
         'pending': pending_keepalive,
         'enabled': keepalive_enabled,
@@ -1744,7 +1744,8 @@ def main(home: Path, session_name: Optional[str] = None):
         'nudge_api': nudge_api,
         'log_ledger': log_ledger,
         'keepalive_debug': KEEPALIVE_DEBUG,
-    })
+    }
+    keepalive_api = make_keepalive(keepalive_ctx)
 
     def _mailbox_peer_name(peer_label: str) -> str:
         return "peerA" if peer_label == "PeerA" else "peerB"
@@ -2085,6 +2086,38 @@ def main(home: Path, session_name: Optional[str] = None):
     keepalive_api.bind_send(_send_handoff)
     events_api = make_events({'home': home, 'send_handoff': _send_handoff})
 
+    def _refresh_role_profiles(new_resolved: Dict[str, Any]):
+        nonlocal resolved, profileA, profileB, aux_resolved, aux_command_template, aux_command, aux_cwd, aux_mode, rate_limit_per_minute, aux_min_interval
+        resolved = new_resolved
+        new_profileA = dict((resolved.get('peerA') or {}).get('profile', {}) or {})
+        new_profileB = dict((resolved.get('peerB') or {}).get('profile', {}) or {})
+        profileA.clear(); profileA.update(new_profileA)
+        profileB.clear(); profileB.update(new_profileB)
+        if imodes.get("peerA"):
+            profileA["input_mode"] = imodes.get("peerA")
+        if imodes.get("peerB"):
+            profileB["input_mode"] = imodes.get("peerB")
+        aux_resolved = resolved.get('aux') or {}
+        aux_command_template = str(aux_resolved.get('invoke_command') or '').strip()
+        aux_command = aux_command_template
+        aux_cwd = str(aux_resolved.get('cwd') or '.')
+        aux_binding_box['template'] = aux_command_template
+        aux_binding_box['cwd'] = aux_cwd
+        rate_limit_per_minute = int(aux_resolved.get("rate_limit_per_minute") or 2)
+        if rate_limit_per_minute <= 0:
+            rate_limit_per_minute = 1
+        aux_min_interval = 60.0 / rate_limit_per_minute
+        aux_mode = "on" if str((aux_resolved.get('actor') or '')).strip() else "off"
+        judges['PeerA'] = PaneIdleJudge(profileA)
+        judges['PeerB'] = PaneIdleJudge(profileB)
+        keepalive_ctx['profileA'] = profileA
+        keepalive_ctx['profileB'] = profileB
+        keepalive_ctx['aux_mode'] = aux_mode
+        keepalive_ctx['aux_command'] = aux_command
+        handoff_ctx['profileA'] = profileA
+        handoff_ctx['profileB'] = profileB
+        handoff_ctx['aux_mode'] = aux_mode
+
     console_state = {
         'deliver_paused': deliver_paused,
         'handoff_filter_override': handoff_filter_override,
@@ -2200,7 +2233,9 @@ def main(home: Path, session_name: Optional[str] = None):
         console_state['deliver_paused'] = deliver_paused
         deliver_paused_box['v'] = deliver_paused
         shutdown_requested = upd.get('shutdown_requested', shutdown_requested)
-        resolved = upd.get('resolved', resolved)
+        new_resolved = upd.get('resolved')
+        if new_resolved is not None:
+            _refresh_role_profiles(new_resolved)
         commands_last_pos_map = upd.get('commands_last_pos_map', commands_last_pos_map)
 
         if not initial_settings_done:

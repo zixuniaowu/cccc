@@ -56,7 +56,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from prompt_toolkit import Application
 from prompt_toolkit.application import get_app
-from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.completion import Completer, Completion, ThreadedCompleter
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.key_binding import KeyBindings
@@ -77,45 +77,48 @@ class CommandCompleter(Completer):
     """Auto-completion for CCCC commands"""
 
     def __init__(self):
-        # (command, description, example)
+        super().__init__()
+        # Define available commands with descriptions (from orchestrator/console_commands.py)
         self.commands = [
-            ('/a', 'Send message to PeerA only', '/a <message>'),
-            ('/b', 'Send message to PeerB only', '/b <message>'),
-            ('/both', 'Send message to both peers', '/both <message>'),
-            ('/status', 'Show orchestrator status', '/status'),
-            ('/queue', 'Show commit queue', '/queue'),
-            ('/locks', 'Show path locks', '/locks'),
-            ('/help', 'Show available commands', '/help'),
+            # Basic control
+            ('/help', 'Show help'),
+            ('/pause', 'Pause handoff'),
+            ('/resume', 'Resume handoff'),
+            ('/refresh', 'Refresh system prompt'),
+            # Foreman
+            ('/foreman', 'Foreman control (on|off|status|now)'),
+            # Aux
+            ('/c', 'Run Aux helper'),
+            ('/review', 'Request Aux review'),
+            # Focus and filter
+            ('/focus', 'Focus PeerB'),
+            ('/anti-on', 'Enable filter'),
+            ('/anti-off', 'Disable filter'),
+            ('/anti-status', 'Show filter status'),
+            # Echo control
+            ('/echo', 'Echo control (on|off)'),
         ]
 
     def get_completions(self, document: Document, complete_event):
-        """Generate completions based on current input"""
+        """Generate completions for commands starting with /"""
+        # Get text before cursor
         text = document.text_before_cursor
 
-        # Only complete if starting with /
-        if not text or not text.startswith('/'):
+        # Only show completions when text starts with /
+        if not text.startswith('/'):
             return
 
-        # Get the command part (before any space)
-        parts = text.split(' ', 1)
-        cmd_prefix = parts[0].lower()
-
-        # If already typed space, no more command completion
-        if len(parts) > 1:
+        # Don't complete if there's already a space (command already entered)
+        if ' ' in text:
             return
 
-        # Find matching commands
-        for cmd, desc, example in self.commands:
-            if cmd.startswith(cmd_prefix):
-                # Calculate how many chars to replace
-                start_pos = -len(cmd_prefix)
-                # Format: "/cmd     Description (usage)"
-                display_text = f'{cmd:<8} {desc}'
+        # Match and yield completions
+        for cmd, desc in self.commands:
+            if cmd.startswith(text.lower()) or cmd.startswith(text):
                 yield Completion(
-                    text=cmd + ' ',  # Add space after completion
-                    start_position=start_pos,
-                    display=display_text,
-                    style='class:completion'
+                    cmd,
+                    start_position=-len(text),
+                    display=f'{cmd:<12} {desc}'
                 )
 
 
@@ -426,13 +429,17 @@ class CCCCSetupApp:
             read_only=True,
             focusable=False
         )
+        # Create completer with threading for better responsiveness
+        self.command_completer = CommandCompleter()
+
         self.input_field = TextArea(
             height=1,
             prompt=self._get_dynamic_prompt,
             multiline=False,
-            completer=CommandCompleter(),
-            complete_while_typing=True
+            completer=ThreadedCompleter(self.command_completer),
+            complete_while_typing=True,
         )
+
         self.status = TextArea(
             height=Dimension(min=3, max=8, preferred=5),
             read_only=True,
@@ -982,6 +989,8 @@ class CCCCSetupApp:
 
         items.extend([
             Window(height=1),
+            Label(text='To exit CCCC: Ctrl+b then d (detach tmux) or use Quit button', style='class:hint'),
+            Window(height=1),
             Label(text='─' * 40, style='class:section'),  # Flexible separator
             Window(height=1),
             VSplit([
@@ -1019,6 +1028,12 @@ class CCCCSetupApp:
                 {'type': 'input', 'name': 'token', 'widget': self._create_token_field()},
                 {'type': 'input', 'name': 'channel', 'widget': self._create_channel_field()},
             ])
+
+        # Always add Launch and Quit buttons at the end
+        self.navigation_items.extend([
+            {'type': 'button', 'name': 'confirm', 'widget': self.btn_confirm},
+            {'type': 'button', 'name': 'quit', 'widget': self.btn_quit},
+        ])
 
         # Ensure focused index is valid
         if self.focused_option_index >= len(self.navigation_items):
@@ -1502,7 +1517,7 @@ class CCCCSetupApp:
                 pass
 
     def _confirm_and_launch(self) -> None:
-        """Validate and launch orchestrator"""
+        """Validate configuration and check inbox before launching orchestrator"""
         # Clear error
         self.error_msg = ''
         self._refresh_ui()
@@ -1532,17 +1547,24 @@ class CCCCSetupApp:
             self._refresh_ui()
             return
 
-        # Transition to runtime UI first
+        # Transition to runtime UI
         self.setup_visible = False
         self._build_runtime_ui()
 
-        # Write initial timeline message with availability confirmation
+        # Write initial timeline message
         self._write_timeline("Configuration validated", 'system')
         self._write_timeline(f"PeerA: {self.config.peerA}", 'success')
         self._write_timeline(f"PeerB: {self.config.peerB}", 'success')
         if self.config.aux and self.config.aux != 'none':
             self._write_timeline(f"Aux: {self.config.aux}", 'success')
 
+        # Check for residual inbox messages BEFORE launching
+        # If there are messages, this will show a dialog and return
+        # The dialog handlers will call _continue_launch() to proceed
+        self._check_residual_inbox()
+
+    def _continue_launch(self) -> None:
+        """Continue with orchestrator launch after inbox check is complete"""
         # Save config and write commands
         self._save_config()
 
@@ -1550,8 +1572,21 @@ class CCCCSetupApp:
         self._write_timeline("Type /help for commands", 'info')
 
     def _quit_app(self) -> None:
-        """Quit the application"""
-        self.app.exit()
+        """Quit CCCC by detaching from tmux (if in tmux) or exiting app"""
+        import subprocess
+        import os
+
+        # Check if we're in a tmux session
+        if os.environ.get('TMUX'):
+            try:
+                # Detach from tmux session (this will kill all processes in the session)
+                subprocess.run(['tmux', 'detach-client'], check=False)
+            except Exception:
+                # If tmux detach fails, just exit the app
+                self.app.exit()
+        else:
+            # Not in tmux, just exit the app
+            self.app.exit()
 
     def _build_runtime_ui(self) -> None:
         """Build flexible runtime UI (Timeline + Input + Status + Footer)"""
@@ -1893,18 +1928,22 @@ class CCCCSetupApp:
         row2 = f"Files: PROJECT.md{project_md_icon}{foreman_task_md_icon} │ Mode: {mode_str}"
 
         # === Row 3: Mailbox Stats + Activity ===
-        # Mailbox counts from status.json
-        mailbox_counts = status_data.get('mailbox_counts', {})
-        peerA_counts = mailbox_counts.get('peerA', {}) if isinstance(mailbox_counts.get('peerA'), dict) else {}
-        peerB_counts = mailbox_counts.get('peerB', {}) if isinstance(mailbox_counts.get('peerB'), dict) else {}
+        # Direct count of inbox and processed files
+        def count_files(peer: str, subdir: str) -> int:
+            """Count files in mailbox subdirectory"""
+            path = self.home / "mailbox" / peer / subdir
+            try:
+                return len([f for f in path.iterdir() if f.is_file()]) if path.exists() else 0
+            except Exception:
+                return 0
 
-        # Format: A(pending→/total) B(pending→/total)
-        a_pending = peerA_counts.get('to_peer', 0)
-        a_total = a_pending + peerA_counts.get('to_user', 0)
-        b_pending = peerB_counts.get('to_peer', 0)
-        b_total = b_pending + peerB_counts.get('to_user', 0)
+        a_inbox = count_files('peerA', 'inbox')
+        a_processed = count_files('peerA', 'processed')
+        b_inbox = count_files('peerB', 'inbox')
+        b_processed = count_files('peerB', 'processed')
 
-        mailbox_str = f"A({a_pending}→/{a_total}) B({b_pending}→/{b_total})"
+        # Format: A(inbox/processed) B(inbox/processed)
+        mailbox_str = f"A({a_inbox}/{a_processed}) B({b_inbox}/{b_processed})"
 
         # Count active handoffs from ledger (handoffs with status=queued or delivered in last 10 items)
         active_handoffs = 0
@@ -1940,7 +1979,7 @@ class CCCCSetupApp:
         return text
 
     def _process_command(self, text: str) -> None:
-        """Process user command"""
+        """Process user command - routes to orchestrator via commands.jsonl"""
         text = text.strip()
         if not text:
             return
@@ -1950,60 +1989,102 @@ class CCCCSetupApp:
         ts = time.time()
 
         # Parse command
-        if text == '/help':
-            # Concise, well-organized help
+        if text == '/help' or text == 'h':
+            # Show real orchestrator commands
             self._write_timeline("", 'info')
             self._write_timeline("=== CCCC Commands ===", 'info')
             self._write_timeline("", 'info')
-
-            # Core commands
             self._write_timeline("Messages:", 'info')
-            self._write_timeline("  /a <msg>       Send to PeerA", 'info')
-            self._write_timeline("  /b <msg>       Send to PeerB", 'info')
-            self._write_timeline("  /both <msg>    Send to both", 'info')
+            self._write_timeline("  /a <text>           Send message to PeerA", 'info')
+            self._write_timeline("  /b <text>           Send message to PeerB", 'info')
+            self._write_timeline("  /both <text>        Send message to both peers", 'info')
             self._write_timeline("", 'info')
-
-            self._write_timeline("Status:", 'info')
-            self._write_timeline("  /status        Show status", 'info')
-            self._write_timeline("  /queue         Show queue", 'info')
-            self._write_timeline("  /locks         Show locks", 'info')
+            self._write_timeline("Control:", 'info')
+            self._write_timeline("  /pause              Pause handoff", 'info')
+            self._write_timeline("  /resume             Resume handoff", 'info')
+            self._write_timeline("  /refresh            Refresh system prompt", 'info')
             self._write_timeline("", 'info')
-
-            # Keyboard shortcuts
-            self._write_timeline("Editing:", 'info')
-            self._write_timeline("  Ctrl+A/E       Start/end of line", 'info')
-            self._write_timeline("  Ctrl+W/U/K     Delete word/start/end", 'info')
+            self._write_timeline("Foreman:", 'info')
+            self._write_timeline("  /foreman on         Enable Foreman", 'info')
+            self._write_timeline("  /foreman off        Disable Foreman", 'info')
+            self._write_timeline("  /foreman status     Show Foreman status", 'info')
+            self._write_timeline("  /foreman now        Run Foreman immediately", 'info')
             self._write_timeline("", 'info')
-
-            self._write_timeline("Navigation:", 'info')
-            self._write_timeline("  Up/Down        History", 'info')
-            self._write_timeline("  Ctrl+R         Search history", 'info')
-            self._write_timeline("  PageUp/Down    Scroll", 'info')
-            self._write_timeline("  gg / Shift+G   Top/bottom", 'info')
-            self._write_timeline("  Ctrl+L         Clear", 'info')
+            self._write_timeline("Aux:", 'info')
+            self._write_timeline("  /c <prompt>         Run Aux helper", 'info')
+            self._write_timeline("  /review             Request Aux review", 'info')
             self._write_timeline("", 'info')
-
+            self._write_timeline("Filter:", 'info')
+            self._write_timeline("  /anti-on            Enable filter", 'info')
+            self._write_timeline("  /anti-off           Disable filter", 'info')
+            self._write_timeline("  /anti-status        Show filter status", 'info')
+            self._write_timeline("", 'info')
+            self._write_timeline("Other:", 'info')
+            self._write_timeline("  /focus [hint]       Focus PeerB", 'info')
+            self._write_timeline("  /echo on|off        Echo control", 'info')
+            self._write_timeline("", 'info')
+            self._write_timeline("Keyboard:", 'info')
+            self._write_timeline("  Ctrl+A/E            Start/end of line", 'info')
+            self._write_timeline("  Ctrl+W/U/K          Delete word/start/end", 'info')
+            self._write_timeline("  Up/Down             History", 'info')
+            self._write_timeline("  PageUp/Down         Scroll timeline", 'info')
+            self._write_timeline("  Ctrl+L              Clear timeline", 'info')
+            self._write_timeline("", 'info')
             self._write_timeline("Exit:", 'info')
-            self._write_timeline("  Ctrl+b d       Detach tmux (exits CCCC)", 'info')
+            self._write_timeline("  Ctrl+b d            Detach tmux (exits CCCC)", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("==================", 'info')
 
-        elif text == '/status':
-            self._update_status()
-            self._write_timeline("Status updated.", 'system')
+        # Simple control commands (no arguments)
+        elif text == '/pause':
+            self._write_cmd_to_queue("pause", {}, "Pause command sent")
+        elif text == '/resume':
+            self._write_cmd_to_queue("resume", {}, "Resume command sent")
+        elif text in ('/refresh', '/sys-refresh'):
+            self._write_cmd_to_queue("sys-refresh", {}, "Refresh command sent")
+        elif text == '/review':
+            self._write_cmd_to_queue("aux", {"action": "review"}, "Review request sent")
 
-        elif text == '/queue':
-            self._write_timeline("/queue command sent to orchestrator.", 'system')
-            with cmds.open('a', encoding='utf-8') as f:
-                cmd = {"type": "queue", "args": {}, "source": "tui", "ts": ts}
-                f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
+        # Filter commands
+        elif text == '/anti-on':
+            self._write_cmd_to_queue("anti", {"action": "on"}, "Filter enabled")
+        elif text == '/anti-off':
+            self._write_cmd_to_queue("anti", {"action": "off"}, "Filter disabled")
+        elif text == '/anti-status':
+            self._write_cmd_to_queue("anti", {"action": "status"}, "Filter status requested")
 
-        elif text == '/locks':
-            self._write_timeline("/locks command sent to orchestrator.", 'system')
-            with cmds.open('a', encoding='utf-8') as f:
-                cmd = {"type": "locks", "args": {}, "source": "tui", "ts": ts}
-                f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
+        # Foreman commands
+        elif text.startswith('/foreman '):
+            arg = text[9:].strip()
+            if arg in ('on', 'off', 'status', 'now'):
+                self._write_cmd_to_queue("foreman", {"action": arg}, f"Foreman {arg} command sent")
+            else:
+                self._write_timeline("Usage: /foreman on|off|status|now", 'error')
 
+        # Echo commands
+        elif text.startswith('/echo '):
+            arg = text[6:].strip()
+            if arg in ('on', 'off'):
+                self._write_cmd_to_queue("echo", {"action": arg}, f"Echo {arg} command sent")
+            elif not arg:
+                self._write_cmd_to_queue("echo", {}, "Echo status requested")
+            else:
+                self._write_timeline("Usage: /echo on|off", 'error')
+
+        # Focus with optional hint
+        elif text.startswith('/focus'):
+            hint = text[6:].strip() if len(text) > 6 else ""
+            self._write_cmd_to_queue("focus", {"hint": hint}, "Focus command sent")
+
+        # Aux command with prompt
+        elif text.startswith('/c '):
+            prompt = text[3:].strip()
+            if prompt:
+                self._write_cmd_to_queue("aux", {"prompt": prompt}, "Aux command sent")
+            else:
+                self._write_timeline("Usage: /c <prompt>", 'error')
+
+        # Message sending commands (keep existing logic)
         elif text.startswith('/a '):
             msg = text[3:].strip()
             if msg:
@@ -2017,7 +2098,7 @@ class CCCCSetupApp:
                 except Exception as e:
                     self._write_timeline(f"Failed to send: {str(e)[:50]}", 'error')
             else:
-                self._write_timeline("Message required. Usage: /a <message>", 'error')
+                self._write_timeline("Usage: /a <message>", 'error')
 
         elif text.startswith('/b '):
             msg = text[3:].strip()
@@ -2032,7 +2113,7 @@ class CCCCSetupApp:
                 except Exception as e:
                     self._write_timeline(f"Failed to send: {str(e)[:50]}", 'error')
             else:
-                self._write_timeline("Message required. Usage: /b <message>", 'error')
+                self._write_timeline("Usage: /b <message>", 'error')
 
         elif text.startswith('/both '):
             msg = text[6:].strip()
@@ -2047,10 +2128,22 @@ class CCCCSetupApp:
                 except Exception as e:
                     self._write_timeline(f"Failed to send: {str(e)[:50]}", 'error')
             else:
-                self._write_timeline("Message required. Usage: /both <message>", 'error')
+                self._write_timeline("Usage: /both <message>", 'error')
 
         else:
             self._write_timeline(f"Unknown command: {text}. Type /help for help.", 'error')
+
+    def _write_cmd_to_queue(self, cmd_type: str, args: dict, success_msg: str) -> None:
+        """Write command to commands.jsonl queue"""
+        try:
+            cmds = self.home / "state" / "commands.jsonl"
+            with cmds.open('a', encoding='utf-8') as f:
+                cmd = {"type": cmd_type, "args": args, "source": "tui", "ts": time.time()}
+                f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
+                f.flush()
+            self._write_timeline(success_msg, 'success')
+        except Exception as e:
+            self._write_timeline(f"Failed to send command: {str(e)[:50]}", 'error')
 
     def _open_dialog(self, dialog: Dialog, ok_handler: Optional[callable] = None) -> None:
         """Open dialog"""
@@ -2416,6 +2509,18 @@ class CCCCSetupApp:
             self._exit_reverse_search(accept=False)
 
         # Enter to submit command (runtime phase, non-modal, not in search)
+        # Tab key for completion in runtime mode
+        @kb.add('tab', filter=~Condition(lambda: self.setup_visible or self.modal_open) & has_focus(self.input_field))
+        def complete_command(event) -> None:
+            """Trigger command completion with Tab"""
+            buff = event.current_buffer
+            if buff.complete_state:
+                # Already showing completions, move to next
+                buff.complete_next()
+            else:
+                # Start completion
+                buff.start_completion(select_first=False)
+
         @kb.add('enter', filter=~Condition(lambda: self.setup_visible or self.modal_open or self.reverse_search_mode) & has_focus(self.input_field))
         def submit_command(event) -> None:
             text = self.input_field.text.strip()
@@ -2449,65 +2554,324 @@ class CCCCSetupApp:
     async def refresh_loop(self) -> None:
         """Background refresh with connection monitoring"""
         seen_messages = set()
+        last_mailbox_check = 0
+        last_pending_counts = {'peerA': 0, 'peerB': 0}
 
         while True:
-            if not self.setup_visible:
-                # Refresh timeline from outbox.jsonl
-                try:
-                    outbox = self.home / "state" / "outbox.jsonl"
-                    if outbox.exists():
-                        self.orchestrator_connected = True
-                        lines = outbox.read_text(encoding='utf-8', errors='replace').splitlines()[-100:]
+            try:
+                if not self.setup_visible:
+                    # Refresh timeline from outbox.jsonl
+                    try:
+                        outbox = self.home / "state" / "outbox.jsonl"
+                        if outbox.exists():
+                            self.orchestrator_connected = True
+                            lines = outbox.read_text(encoding='utf-8', errors='replace').splitlines()[-100:]
 
-                        # Process new messages
-                        for ln in lines:
-                            if not ln.strip():
-                                continue
-                            try:
-                                ev = json.loads(ln)
-                                # Create unique message ID
-                                msg_id = f"{ev.get('from')}:{ev.get('text', '')[:50]}"
-
-                                if msg_id in seen_messages:
+                            # Process new messages
+                            for ln in lines:
+                                if not ln.strip():
                                     continue
+                                try:
+                                    ev = json.loads(ln)
+                                    # Create unique message ID
+                                    msg_id = f"{ev.get('from')}:{ev.get('text', '')[:50]}"
 
-                                if ev.get('type') in ('to_user', 'to_peer_summary'):
-                                    frm = ev.get('from', ev.get('peer', '?')).lower()
-                                    text = ev.get('text', '')
+                                    if msg_id in seen_messages:
+                                        continue
 
-                                    # Determine message type based on source
-                                    if frm == 'peera' or frm == 'a':
-                                        msg_type = 'peerA'
-                                        display_name = 'PeerA'
-                                    elif frm == 'peerb' or frm == 'b':
-                                        msg_type = 'peerB'
-                                        display_name = 'PeerB'
-                                    elif frm == 'system':
-                                        msg_type = 'system'
-                                        display_name = 'System'
-                                    else:
-                                        msg_type = 'info'
-                                        display_name = frm.upper()
+                                    if ev.get('type') in ('to_user', 'to_peer_summary'):
+                                        frm = ev.get('from', ev.get('peer', '?')).lower()
+                                        text = ev.get('text', '')
 
-                                    # Add message
-                                    self._write_timeline(f"{display_name}: {text}", msg_type)
-                                    seen_messages.add(msg_id)
+                                        # Determine message type based on source
+                                        if frm == 'peera' or frm == 'a':
+                                            msg_type = 'peerA'
+                                            display_name = 'PeerA'
+                                        elif frm == 'peerb' or frm == 'b':
+                                            msg_type = 'peerB'
+                                            display_name = 'PeerB'
+                                        elif frm == 'system':
+                                            msg_type = 'system'
+                                            display_name = 'System'
+                                        else:
+                                            msg_type = 'info'
+                                            display_name = frm.upper()
 
-                                    # Keep set size manageable
-                                    if len(seen_messages) > 200:
-                                        seen_messages = set(list(seen_messages)[-100:])
+                                        # Add message
+                                        self._write_timeline(f"{display_name}: {text}", msg_type)
+                                        seen_messages.add(msg_id)
 
-                            except Exception:
-                                pass
-                    else:
+                                        # Keep set size manageable
+                                        if len(seen_messages) > 200:
+                                            seen_messages = set(list(seen_messages)[-100:])
+                                except Exception:
+                                    pass
+                        else:
+                            self.orchestrator_connected = False
+
+                        # Check mailbox for pending messages every 10 seconds
+                        current_time = time.time()
+                        if current_time - last_mailbox_check >= 10.0:
+                            await self._check_mailbox_alerts(last_pending_counts)
+                            last_mailbox_check = current_time
+
+                    except Exception:
                         self.orchestrator_connected = False
-                except Exception:
-                    self.orchestrator_connected = False
 
-                # Update status panel
-                self._update_status()
+                        # Update status panel
+                        self._update_status()
 
-            await asyncio.sleep(2.0)
+                await asyncio.sleep(2.0)
+
+            except asyncio.CancelledError:
+                # Properly handle cancellation
+                break
+            except Exception:
+                # Log error but continue loop
+                await asyncio.sleep(2.0)
+
+    async def _check_mailbox_alerts(self, last_counts: Dict[str, int]) -> None:
+        """Check mailbox for pending messages and show alerts if needed"""
+        try:
+            status_path = self.home / "state" / "status.json"
+            if not status_path.exists():
+                return
+
+            data = json.loads(status_path.read_text(encoding='utf-8'))
+            mailbox_counts = data.get('mailbox_counts', {})
+
+            peerA_counts = mailbox_counts.get('peerA', {}) if isinstance(mailbox_counts.get('peerA'), dict) else {}
+            peerB_counts = mailbox_counts.get('peerB', {}) if isinstance(mailbox_counts.get('peerB'), dict) else {}
+
+            # Calculate total pending messages for each peer
+            peerA_pending = peerA_counts.get('to_peer', 0) + peerA_counts.get('to_user', 0)
+            peerB_pending = peerB_counts.get('to_peer', 0) + peerB_counts.get('to_user', 0)
+
+            # Check if there's an increase in pending messages
+            if (peerA_pending > 0 and peerA_pending > last_counts.get('peerA', 0)) or \
+               (peerB_pending > 0 and peerB_pending > last_counts.get('peerB', 0)):
+
+                # Update last counts
+                last_counts['peerA'] = peerA_pending
+                last_counts['peerB'] = peerB_pending
+
+                # Show alert dialog
+                await self._show_mailbox_alert_dialog(peerA_pending, peerB_pending)
+
+        except Exception as e:
+            # Silently fail to avoid breaking the refresh loop
+            pass
+
+    def _check_residual_inbox(self) -> None:
+        """Check for residual inbox messages before orchestrator launch.
+        If messages found, shows dialog. Otherwise continues with launch.
+        """
+        try:
+            # Import mailbox functions
+            import sys
+            sys.path.insert(0, str(self.home))
+            from mailbox import ensure_mailbox
+
+            ensure_mailbox(self.home)
+
+            # Count inbox files
+            cntA = 0
+            cntB = 0
+
+            # Check PeerA inbox
+            ibA = self.home / "mailbox" / "peerA" / "inbox"
+            if ibA.exists():
+                cntA = len([f for f in ibA.iterdir() if f.is_file()])
+
+            # Check PeerB inbox
+            ibB = self.home / "mailbox" / "peerB" / "inbox"
+            if ibB.exists():
+                cntB = len([f for f in ibB.iterdir() if f.is_file()])
+
+            # If no residual messages, continue with launch
+            if cntA == 0 and cntB == 0:
+                self._continue_launch()
+                return
+
+            # Show dialog (dialog handlers will call _continue_launch)
+            self._show_inbox_cleanup_dialog(cntA, cntB)
+
+        except Exception as e:
+            # Log error but don't block launch
+            try:
+                import json
+                import time
+                ledger_path = self.home / "state" / "ledger.jsonl"
+                ledger_path.parent.mkdir(parents=True, exist_ok=True)
+                with ledger_path.open('a', encoding='utf-8') as f:
+                    error_entry = {
+                        "from": "system",
+                        "kind": "startup-inbox-check-error",
+                        "error": str(e)[:200],
+                        "ts": time.time()
+                    }
+                    f.write(json.dumps(error_entry, ensure_ascii=False) + '\n')
+            except Exception:
+                pass
+            # Proceed despite error
+            self._continue_launch()
+
+    def _show_mailbox_alert_dialog(self, peerA_pending: int, peerB_pending: int) -> None:
+        """Show mailbox alert dialog"""
+        if self.modal_open:
+            return
+
+        # Build alert message
+        alert_lines = []
+        if peerA_pending > 0:
+            alert_lines.append(f"PeerA has {peerA_pending} pending message(s)")
+        if peerB_pending > 0:
+            alert_lines.append(f"PeerB has {peerB_pending} pending message(s)")
+
+        if not alert_lines:
+            return
+
+        alert_text = "\n".join(alert_lines) + "\n\nCheck mailbox for new messages."
+
+        def on_ok() -> None:
+            self._close_dialog()
+
+        def on_view() -> None:
+            # Navigate to status command
+            self._process_command("/status")
+            self._close_dialog()
+
+        # Create alert dialog
+        dialog = Dialog(
+            title="📬 Mailbox Alert",
+            body=Label(text=alert_text, style='class:warning'),
+            buttons=[
+                Button('View Status (Enter)', handler=on_view),
+                Button('Dismiss (Esc)', handler=on_ok)
+            ],
+            width=Dimension(min=50, max=70, preferred=60),
+            modal=True
+        )
+
+        self._open_dialog(dialog, on_ok)
+
+
+    def _show_inbox_cleanup_dialog(self, cntA: int, cntB: int) -> None:
+        """Show simplified inbox cleanup dialog with only 2 options.
+        This is shown AFTER setup but BEFORE orchestrator launch.
+        """
+        if self.modal_open:
+            return
+
+        # Build message
+        total = cntA + cntB
+        msg_lines = [f"Found {total} residual message(s) in inbox:"]
+        if cntA > 0:
+            msg_lines.append(f"  • PeerA: {cntA} message(s)")
+        if cntB > 0:
+            msg_lines.append(f"  • PeerB: {cntB} message(s)")
+        msg_lines.append("")
+        msg_lines.append("What would you like to do?")
+
+        alert_text = "\n".join(msg_lines)
+
+        def on_discard() -> None:
+            """Discard - move messages to processed directory"""
+            self._cleanup_inbox_messages(discard=True)
+            self._close_dialog()
+            self._continue_launch()
+
+        def on_keep() -> None:
+            """Keep - leave messages in inbox for processing"""
+            self._cleanup_inbox_messages(discard=False)
+            self._close_dialog()
+            self._continue_launch()
+
+        # Create simple 2-option dialog
+        dialog = Dialog(
+            title="📬 Inbox Cleanup",
+            body=HSplit([
+                Label(text=alert_text, style='class:warning'),
+                Window(height=1),
+                Label(text="Discard: Move to processed/ (won't be processed)", style='class:hint'),
+                Label(text="Keep: Leave in inbox/ (will be processed)", style='class:hint'),
+            ]),
+            buttons=[
+                Button('Discard Messages', handler=on_discard, width=20),
+                Button('Keep Messages', handler=on_keep, width=20),
+            ],
+            width=Dimension(min=70, max=90, preferred=80),
+            modal=True
+        )
+
+        self._open_dialog(dialog, on_keep)
+
+    def _cleanup_inbox_messages(self, discard: bool) -> None:
+        """Clean up inbox messages based on user choice.
+
+        Args:
+            discard: If True, move to processed/; if False, keep in inbox/
+        """
+        if not discard:
+            # User chose to keep messages - do nothing
+            return
+
+        try:
+            # Move messages to processed directory
+            moved_count = 0
+
+            for peer in ["peerA", "peerB"]:
+                inbox_dir = self.home / "mailbox" / peer / "inbox"
+                processed_dir = self.home / "mailbox" / peer / "processed"
+
+                if not inbox_dir.exists():
+                    continue
+
+                processed_dir.mkdir(parents=True, exist_ok=True)
+
+                for msg_file in inbox_dir.iterdir():
+                    if msg_file.is_file():
+                        try:
+                            msg_file.rename(processed_dir / msg_file.name)
+                            moved_count += 1
+                        except Exception:
+                            pass
+
+            # Log the cleanup action
+            self._log_inbox_cleanup(moved_count, "discarded")
+
+        except Exception as e:
+            # Log error but don't break
+            try:
+                import json, time
+                ledger_path = self.home / "state" / "ledger.jsonl"
+                ledger_path.parent.mkdir(parents=True, exist_ok=True)
+                with ledger_path.open('a', encoding='utf-8') as f:
+                    f.write(json.dumps({
+                        "from": "system",
+                        "kind": "inbox-cleanup-error",
+                        "error": str(e)[:200],
+                        "ts": time.time()
+                    }, ensure_ascii=False) + '\n')
+            except Exception:
+                pass
+
+    def _log_inbox_cleanup(self, count: int, action: str) -> None:
+        """Log inbox cleanup action"""
+        try:
+            import json, time
+            ledger_path = self.home / "state" / "ledger.jsonl"
+            ledger_path.parent.mkdir(parents=True, exist_ok=True)
+            with ledger_path.open('a', encoding='utf-8') as f:
+                f.write(json.dumps({
+                    "from": "system",
+                    "kind": "inbox-cleanup",
+                    "action": action,
+                    "count": count,
+                    "ts": time.time()
+                }, ensure_ascii=False) + '\n')
+        except Exception:
+            pass
 
 
 def run(home: Path) -> None:
@@ -2524,9 +2888,28 @@ def run(home: Path) -> None:
         except Exception:
             pass
 
-        # Simple startup without refresh loop for now
-        print("Launching application...")
-        app.app.run()
+        # Launch with refresh loop for live updates - simplified approach
+        print("Launching application with refresh loop...")
+
+        # Use prompt_toolkit's built-in async support
+        # Start the refresh loop as a background task and run the app
+        async def main():
+            # Start refresh loop in background
+            refresh_task = asyncio.create_task(app.refresh_loop())
+
+            try:
+                # Run the main application
+                await app.app.run_async()
+            finally:
+                # Clean up when app exits
+                refresh_task.cancel()
+                try:
+                    await refresh_task
+                except asyncio.CancelledError:
+                    pass
+
+        # Run the main async function
+        asyncio.run(main())
 
     except Exception as e:
         print(f"Error starting TUI: {e}")

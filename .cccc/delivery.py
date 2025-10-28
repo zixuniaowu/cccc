@@ -39,7 +39,7 @@ def paste_to_pane(pane: str, text: str, profile: Dict[str,Any]):
     # Small pause so the paste buffer is not swallowed; stabilizes TUI input boxes
     time.sleep(0.15)
     # After paste, send a configurable sequence of submit keys
-    keys = profile.get("post_paste_keys") or ["Enter", "Enter", "C-m"]
+    keys = list(profile.get("post_paste_keys") or ["Enter", "Enter", "C-m"])
     for k in keys:
         _tmux("send-keys","-t",pane,k)
     _tmux("delete-buffer","-b",buf)
@@ -70,10 +70,8 @@ def type_to_pane(pane: str, text: str, profile: Dict[str,Any]):
             _tmux("send-keys","-t",pane,newline_key)
         else:
             if send_at_end:
-                # Submit once at the end
                 _tmux("send-keys","-t",pane,final_send_key)
             else:
-                # Submit each line
                 _tmux("send-keys","-t",pane,line_send_key)
 
         # Chunked throttling to avoid overloading the TUI
