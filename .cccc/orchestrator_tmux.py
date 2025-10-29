@@ -2030,58 +2030,37 @@ def main(home: Path, session_name: Optional[str] = None):
                     pass
     
     def _cleanup_on_exit(signum=None, frame=None):
-        # Log to file immediately to debug signal handling
-        debug_log = home / "state" / "cleanup_debug.log"
-        def _debug(msg):
-            try:
-                with debug_log.open('a', encoding='utf-8') as f:
-                    import datetime
-                    ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    f.write(f"[{ts}] {msg}\n")
-            except Exception:
-                pass
-        
-        _debug(f"_cleanup_on_exit called, signal={signum}")
-        
+        # Exit cleanup handler: stop foreman and bridges, record shutdown, then exit.
         if _cleanup_called["v"]:
-            _debug("Already called, returning")
             return
         _cleanup_called["v"] = True
-        _debug("Set cleanup_called flag")
-        
+
+        # Best-effort ledger entry (do not raise)
         try:
-            _debug("Logging to ledger...")
-            log_ledger(home, {"from":"system","kind":"shutdown","note":"cleanup foreman and bridges"})
-            _debug("Ledger logged")
-        except Exception as e:
-            _debug(f"Ledger failed: {e}")
-            
+            log_ledger(home, {"from": "system", "kind": "shutdown", "note": "cleanup foreman and bridges"})
+        except Exception:
+            pass
+
+        # Stop foreman gracefully
         try:
-            _debug("Stopping foreman...")
             _foreman_stop_running(grace_seconds=5.0)
-            _debug("Foreman stopped")
-        except Exception as e:
-            _debug(f"Foreman stop failed: {e}")
-            
+        except Exception:
+            pass
+
+        # Stop IM bridges and remove stale PID files
         try:
-            _debug("Calling _cleanup_bridges()...")
             _cleanup_bridges()
-            _debug("_cleanup_bridges() completed")
-        except Exception as e:
-            _debug(f"_cleanup_bridges() failed: {e}")
-            import traceback
-            _debug(f"Traceback: {traceback.format_exc()}")
-            
+        except Exception:
+            pass
+
+        # Join foreman thread if still alive
         try:
-            _debug("Joining foreman thread...")
             if foreman_thread is not None and foreman_thread.is_alive():
                 foreman_thread.join(timeout=3.0)
-            _debug("Foreman thread joined")
-        except Exception as e:
-            _debug(f"Foreman thread join failed: {e}")
-        
-        # Critical: Exit the process after cleanup to prevent main loop from restarting bridges
-        _debug("Cleanup complete, exiting process...")
+        except Exception:
+            pass
+
+        # Exit the process after cleanup to prevent restarts in main loop
         import sys
         sys.exit(0)
 
