@@ -2193,14 +2193,32 @@ class CCCCSetupApp:
             foreman_task_md_icon = f" FOREMAN_TASK.md{('✓' if foreman_task_exists else '✗')}"
 
         # Connection mode (tmux is always on; check telegram/slack/discord from status or config)
-        # For now, check if telegram is configured
+        # Check each IM provider
         telegram_enabled = self.config.mode == 'telegram' and bool(self.config.tg_token)
         telegram_icon = '●' if telegram_enabled else '○'
 
+        slack_enabled = self.config.mode == 'slack' and bool(self.config.sl_bot_token)
+        slack_icon = '●' if slack_enabled else '○'
+
+        discord_enabled = self.config.mode == 'discord' and bool(self.config.dc_token)
+        discord_icon = '●' if discord_enabled else '○'
+
         # Build connection mode string
         mode_parts = ['tmux●']  # tmux is always active
-        mode_parts.append(f'telegram{telegram_icon}')
-        mode_str = '+'.join([p for p in mode_parts if '●' in p]) if any('●' in p for p in mode_parts) else 'tmux'
+
+        # Add configured IM providers
+        if telegram_enabled:
+            mode_parts.append('telegram●')
+        if slack_enabled:
+            mode_parts.append('slack●')
+        if discord_enabled:
+            mode_parts.append('discord●')
+
+        # Show all configured modes, or just tmux if no IM modes are active
+        if len(mode_parts) > 1:
+            mode_str = '+'.join(mode_parts)
+        else:
+            mode_str = 'tmux'
 
         row2 = f"Files: PROJECT.md{project_md_icon}{foreman_task_md_icon} │ Mode: {mode_str}"
 
@@ -2993,10 +3011,8 @@ class CCCCSetupApp:
             self._show_inbox_cleanup_dialog(cntA, cntB, inbox_checked_flag)
 
         except Exception as e:
-            # Log error but don't block launch
+            # Log error but don't block launch (use module-level imports to avoid UnboundLocalError)
             try:
-                import json
-                import time
                 ledger_path = self.home / "state" / "ledger.jsonl"
                 ledger_path.parent.mkdir(parents=True, exist_ok=True)
                 with ledger_path.open('a', encoding='utf-8') as f:

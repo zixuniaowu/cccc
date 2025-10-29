@@ -22,7 +22,7 @@ def make(ctx: Dict[str, Any]):
     settings_confirmed_ready = ctx['settings_confirmed_ready']
     load_profiles = ctx['load_profiles']
 
-    auto_launch_box = {'v': False}
+    # Auto-launch removed: orchestrator relies on a single launch command written by TUI
 
     def _first_bin(cmd: str) -> str:
         try:
@@ -155,16 +155,13 @@ def make(ctx: Dict[str, Any]):
                 pass
 
     def initial_setup(resolved: Dict[str, Any], config_deferred: bool, start_mode: str) -> Tuple[bool, Dict[str, Any]]:
-        # Do not auto-enqueue launch/resume. TUI is responsible for writing
-        # a single launch command after settings.confirmed.
-        auto_launch_box['v'] = False
+        # Orchestrator does not auto-enqueue launch/resume; TUI writes the single launch command.
         if start_mode in ("has_doc", "ai_bootstrap"):
             print("[LAUNCH] Waiting for launch command from TUI (after settings.confirmed).")
         return False, resolved
 
     def tick(resolved: Dict[str, Any], config_deferred: bool) -> Tuple[bool, Dict[str, Any]]:
         # No-op: orchestrator does not auto-launch; rely on queue commands.
-        # Keep API surface for compatibility.
         return False, resolved
 
     return type('LauncherAPI', (), {
