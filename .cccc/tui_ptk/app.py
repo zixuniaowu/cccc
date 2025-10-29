@@ -359,7 +359,7 @@ def create_runtime_header(status_dot: str = '●', status_color: str = 'class:st
         ('class:title', '❯ CCCC Orchestrator  '),
         (status_color, status_dot),
         ('', '\n'),
-        ('class:hint', '  /help for commands  ·  /quit or Ctrl+b d to exit'),
+        ('class:hint', '  /help for commands  ·  PgUp PgDn for scrolling  ·  /quit or Ctrl+b d to exit'),
     ]
     return Window(
         content=FormattedTextControl(text),
@@ -451,9 +451,14 @@ class CCCCSetupApp:
             text=initial_msg,
             scrollbar=True,
             read_only=True,
-            focusable=True,  # Enable focus for mouse scrolling
+            focusable=True,
+            focus_on_click=True,  # Enable click-to-focus for mouse events
             wrap_lines=False
         )
+        
+        # Add custom mouse wheel handler for scrolling
+        self._setup_timeline_mouse_scroll()
+        
         # Create completer with threading for better responsiveness
         self.command_completer = CommandCompleter()
 
@@ -1776,6 +1781,32 @@ class CCCCSetupApp:
             # Not in tmux, just exit the app
             self.app.exit()
 
+    def _setup_timeline_mouse_scroll(self) -> None:
+        """Setup mouse wheel scrolling for timeline"""
+        from prompt_toolkit.mouse_events import MouseEventType
+        
+        # Get the original mouse handler
+        original_handler = self.timeline.window.content.mouse_handler
+        
+        def custom_mouse_handler(mouse_event):
+            # Handle scroll events
+            if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+                # Scroll down by moving cursor down
+                for _ in range(3):  # Scroll 3 lines at a time
+                    self.timeline.buffer.cursor_down()
+                return None
+            elif mouse_event.event_type == MouseEventType.SCROLL_UP:
+                # Scroll up by moving cursor up
+                for _ in range(3):  # Scroll 3 lines at a time
+                    self.timeline.buffer.cursor_up()
+                return None
+            else:
+                # For other events, use original handler
+                return original_handler(mouse_event)
+        
+        # Replace the mouse handler
+        self.timeline.window.content.mouse_handler = custom_mouse_handler
+
     def _build_runtime_ui(self) -> None:
         """Build modern runtime UI (Full-width Timeline + Input + Footer)"""
         # Wrap input field with clear Frame border and title
@@ -1789,11 +1820,14 @@ class CCCCSetupApp:
         self.root.content = HSplit([
             create_runtime_header(),
             Window(height=1),
-            # Timeline takes full width
-            HSplit([
-                Label(text='💬 Conversation:', style='class:section'),
-                self.timeline,
-            ], padding=0),
+            # Timeline label
+            Window(
+                content=FormattedTextControl([('class:section', '💬 Conversation:')]),
+                height=1,
+                dont_extend_height=True
+            ),
+            # Timeline - simple and direct
+            self.timeline,
             Window(height=1),
             input_with_frame,
             Window(
