@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 Stateful handoff API (Context factory)
-- Copied逻辑与 orchestrator_tmux.py 的 _send_handoff/_schedule_keepalive 等价，
-  通过显式 ctx 注入外层依赖，保持行为不变。
+- Equivalent to legacy inline logic in orchestrator_tmux.py for send_handoff/keepalive,
+  now modularized via explicit ctx wiring to keep behavior consistent.
 """
 from __future__ import annotations
 import re, time, hashlib
@@ -20,6 +20,66 @@ from .logging_util import log_ledger
 
 def make(ctx: Dict[str, Any]):
     home: Path = ctx['home']
+    sys_refresh_every: int = int(ctx.get('system_refresh_every') or 3)
+
+    def _maybe_selfcheck_multi(receiver_labels, pl_text: str, meaningful: bool = True) -> bool:
+        try:
+            if not ctx['self_check_enabled'] or ctx['in_self_check']['v'] or ctx['self_check_every'] <= 0:
+                return False
+            pl = pl_text or ""
+            is_nudge = pl.strip().startswith("[NUDGE]")
+            low_signal = False
+            try:
+                low_signal = ctx['is_low_signal'](pl, ctx['policies'])
+            except Exception:
+                low_signal = False
+            if (not meaningful) or is_nudge or low_signal:
+                return False
+            # Increment per-peer counters
+            did_inject = False
+            for lbl in receiver_labels:
+                ctx['handoffs_peer'][lbl] = int(ctx['handoffs_peer'].get(lbl, 0)) + 1
+            for lbl in receiver_labels:
+                cnt = ctx['handoffs_peer'][lbl]
+                if (cnt % ctx['self_check_every']) == 0:
+                    sc_index = cnt // ctx['self_check_every']
+                    ctx['self_checks_done'][lbl] = sc_index
+                    ctx['in_self_check']['v'] = True
+                    try:
+                        msg = ctx['self_check_text'].rstrip()
+                        # Full system/project injection every K self-checks
+                        lines = [msg]
+                        try:
+                            rules_path = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).as_posix()
+                            lines.append(f"Rules: {rules_path}")
+                            lines.append("Project: PROJECT.md")
+                        except Exception:
+                            pass
+                        if sys_refresh_every > 0 and (sc_index % sys_refresh_every) == 0:
+                            # Append PROJECT.md and SYSTEM full content when available
+                            try:
+                                proj_path = (Path.cwd()/"PROJECT.md")
+                                if proj_path.exists():
+                                    proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
+                                    lines.append("\n--- PROJECT.md (full) ---\n" + proj_txt)
+                            except Exception:
+                                pass
+                            try:
+                                rules_txt = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).read_text(encoding='utf-8')
+                            except Exception:
+                                rules_txt = ''
+                            if rules_txt:
+                                lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
+                        final = "\n".join(lines).strip()
+                        ctx['send_handoff']('System', lbl, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
+                        log_ledger(home, {"from": "system", "kind": "self-check", "every": ctx['self_check_every'], "count": cnt, "peer": lbl})
+                        ctx['request_por_refresh']("self-check", force=False)
+                        did_inject = True
+                    finally:
+                        ctx['in_self_check']['v'] = False
+            return did_inject
+        except Exception:
+            return False
 
     def send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None, *, nudge_text: Optional[str]=None):
         # Backpressure: enqueue
@@ -98,31 +158,11 @@ def make(ctx: Dict[str, Any]):
         except Exception:
             pass
 
-        # Self-check cadence（复制原逻辑的关键路径，依赖 is_low_signal 与计数器）
+        # Self-check cadence + optional full system injection via shared helper
         try:
-            if ctx['self_check_enabled'] and (not ctx['in_self_check']['v']) and ctx['self_check_every'] > 0:
-                pl = payload or ""; is_nudge = pl.strip().startswith("[NUDGE]")
-                meaningful_sender = sender_label in ("User", "System", "PeerA", "PeerB")
-                low_signal = False
-                try:
-                    low_signal = ctx['is_low_signal'](pl, ctx['policies'])
-                except Exception:
-                    low_signal = False
-                if (not is_nudge) and meaningful_sender and (not low_signal):
-                    ctx['handoffs_peer'][receiver_label] = int(ctx['handoffs_peer'].get(receiver_label,0)) + 1
-                    cnt = ctx['handoffs_peer'][receiver_label]
-                    if (cnt % ctx['self_check_every']) == 0:
-                        sc_index = cnt // ctx['self_check_every']
-                        ctx['self_checks_done'][receiver_label] = sc_index
-                        ctx['in_self_check']['v'] = True
-                        try:
-                            msg = ctx['self_check_text'].rstrip()
-                            ctx['send_handoff']('System', receiver_label, f"<FROM_SYSTEM>\n{msg}\n</FROM_SYSTEM>\n")
-                            log_ledger(home, {"from": "system", "kind": "self-check", "every": ctx['self_check_every'], "count": cnt, "peer": receiver_label})
-                            ctx['request_por_refresh']("self-check", force=False)
-                        finally:
-                            ctx['in_self_check']['v'] = False
+            meaningful = sender_label in ("User", "System", "PeerA", "PeerB")
+            _maybe_selfcheck_multi([receiver_label], payload or "", meaningful)
         except Exception:
             pass
 
-    return SimpleNamespace(send_handoff=send_handoff)
+    return SimpleNamespace(send_handoff=send_handoff, maybe_selfcheck=_maybe_selfcheck_multi)

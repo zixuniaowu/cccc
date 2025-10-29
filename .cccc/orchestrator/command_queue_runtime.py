@@ -108,8 +108,9 @@ def make(ctx: Dict[str, Any]):
                         endpos = f.tell()
                     except Exception:
                         endpos = None
+                    # Handle truncation/rotation: if file shrank, restart from 0
                     if endpos is not None and last > endpos:
-                        last = endpos
+                        last = 0
                         commands_last_pos_map[key] = last
                     try:
                         f.seek(last)
@@ -374,128 +375,9 @@ def make(ctx: Dict[str, Any]):
                                     ok, msg = True, 'focus requested'
                                 except Exception as e:
                                     ok, msg = False, f'focus failed: {e}'
-                            elif ctype in ('roles-set-actor','roles_set_actor'):
-                                try:
-                                    role = str(args.get('role') or obj.get('role') or '').strip()
-                                    actor = str(args.get('actor') or obj.get('actor') or '').strip()
-                                    cp = read_yaml(cli_profiles_path)
-                                    roles = dict(cp.get('roles') or {})
-                                    roles.setdefault('peerA', {})
-                                    roles.setdefault('peerB', {})
-                                    roles.setdefault('aux', {})
-                                    if role in roles:
-                                        roles[role]['actor'] = actor
-                                        cp['roles'] = roles
-                                        _write_yaml(cli_profiles_path, cp)
-                                        try:
-                                            resolved = load_profiles(home)
-                                        except Exception:
-                                            pass
-                                        write_status(deliver_paused)
-                                        ok, msg = True, f"role {role} set to {actor}"
-                                    else:
-                                        ok, msg = False, f"unknown role: {role}"
-                                except Exception as e:
-                                    ok, msg = False, f'roles-set-actor failed: {e}'
-                            elif ctype in ('im-config',):
-                                try:
-                                    provider = str(args.get('provider') or obj.get('provider') or '').strip().lower()
-                                    if provider not in ('telegram', 'slack', 'discord'):
-                                        ok, msg = False, f'unsupported IM provider: {provider}'
-                                    else:
-                                        cfgp = settings / f"{provider}.yaml"
-                                        cfg = read_yaml(cfgp) or {}
-                                        
-                                        if provider == 'telegram':
-                                            # Token field
-                                            token = str(args.get('token') or obj.get('token') or '').strip()
-                                            if token:
-                                                cfg['token'] = token
-                                                if 'token_env' not in cfg:
-                                                    cfg['token_env'] = 'TELEGRAM_BOT_TOKEN'
-                                                if 'autostart' not in cfg:
-                                                    cfg['autostart'] = True
-                                            # Chat ID field (allow_chats)
-                                            chat_id = args.get('chat_id') or obj.get('chat_id') or ''
-                                            if chat_id:
-                                                try:
-                                                    cfg['allow_chats'] = [int(chat_id)]
-                                                except (ValueError, TypeError):
-                                                    cfg['allow_chats'] = [str(chat_id)]
-                                        
-                                        elif provider == 'slack':
-                                            # Bot token field
-                                            bot_token = str(args.get('bot_token') or obj.get('bot_token') or '').strip()
-                                            if bot_token:
-                                                cfg['bot_token'] = bot_token
-                                                if 'bot_token_env' not in cfg:
-                                                    cfg['bot_token_env'] = 'SLACK_BOT_TOKEN'
-                                                if 'autostart' not in cfg:
-                                                    cfg['autostart'] = True
-                                            # Channel ID field
-                                            channel_id = str(args.get('channel_id') or obj.get('channel_id') or '').strip()
-                                            if channel_id:
-                                                if 'channels' not in cfg:
-                                                    cfg['channels'] = {}
-                                                cfg['channels']['to_user'] = [channel_id]
-                                                cfg['channels']['to_peer_summary'] = [channel_id]
-                                        
-                                        elif provider == 'discord':
-                                            # Bot token field
-                                            bot_token = str(args.get('bot_token') or obj.get('bot_token') or '').strip()
-                                            if bot_token:
-                                                cfg['bot_token'] = bot_token
-                                                if 'bot_token_env' not in cfg:
-                                                    cfg['bot_token_env'] = 'DISCORD_BOT_TOKEN'
-                                                if 'autostart' not in cfg:
-                                                    cfg['autostart'] = True
-                                            # Channel ID field
-                                            channel_id = str(args.get('channel_id') or obj.get('channel_id') or '').strip()
-                                            if channel_id:
-                                                try:
-                                                    ch_id = int(channel_id)
-                                                except (ValueError, TypeError):
-                                                    ch_id = channel_id
-                                                if 'channels' not in cfg:
-                                                    cfg['channels'] = {}
-                                                cfg['channels']['to_user'] = [ch_id]
-                                                cfg['channels']['to_peer_summary'] = [ch_id]
-                                        
-                                        _write_yaml(cfgp, cfg)
-                                        ok, msg = True, f'{provider} IM configured'
-                                except Exception as e:
-                                    ok, msg = False, f'im-config failed: {e}'
-                            elif ctype in ('token',):
-                                # Legacy token command - deprecated, kept for backward compatibility
-                                try:
-                                    action = str(args.get('action') or obj.get('action') or '').strip().lower()
-                                    provider = str(args.get('provider') or obj.get('provider') or 'telegram').strip().lower()
-                                    if provider not in ('telegram', 'slack', 'discord'):
-                                        ok, msg = False, f'unsupported provider: {provider}'
-                                    else:
-                                        cfgp = settings / f"{provider}.yaml"
-                                        cfg = read_yaml(cfgp) or {}
-                                        if action == 'set':
-                                            val = str(args.get('value') or obj.get('value') or '').strip()
-                                            if not val:
-                                                ok, msg = False, 'token value required'
-                                            else:
-                                                if provider == 'telegram':
-                                                    cfg['token'] = val
-                                                else:
-                                                    cfg['bot_token'] = val
-                                                _write_yaml(cfgp, cfg)
-                                                ok, msg = True, f'{provider} token set'
-                                        elif action == 'unset':
-                                            token_key = 'token' if provider == 'telegram' else 'bot_token'
-                                            if token_key in cfg:
-                                                cfg.pop(token_key, None)
-                                                _write_yaml(cfgp, cfg)
-                                            ok, msg = True, f'{provider} token unset'
-                                        else:
-                                            ok, msg = False, 'unsupported token action'
-                                except Exception as e:
-                                    ok, msg = False, f'token failed: {e}'
+                            # NOTE: roles-set-actor, im-config, and token commands removed
+                            # TUI now writes all configuration directly to yaml files
+                            # Orchestrator only reads configurations at startup
                             elif ctype in ('review',):
                                 try:
                                     ctx['send_aux_reminder']('manual-review')

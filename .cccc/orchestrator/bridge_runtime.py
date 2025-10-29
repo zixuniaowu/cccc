@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
-import os, sys, subprocess, time
+import os, sys, subprocess, time, json
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -22,6 +22,58 @@ def make(ctx: Dict[str, Any]):
     def _ensure_dir(p: Path):
         try:
             p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+
+    # Persisted warnings for TUI/logs to consume without spamming every tick
+    WARNINGS_PATH = None  # set in make() body once 'home' is known
+    def _load_warnings() -> Dict[str, Any]:
+        try:
+            if WARNINGS_PATH and WARNINGS_PATH.exists():
+                return json.loads(WARNINGS_PATH.read_text(encoding='utf-8')) or {}
+        except Exception:
+            pass
+        return {}
+    def _save_warnings(data: Dict[str, Any]):
+        try:
+            if WARNINGS_PATH:
+                WARNINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+                tmp = WARNINGS_PATH.with_suffix('.tmp')
+                tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+                tmp.replace(WARNINGS_PATH)
+        except Exception:
+            pass
+    def _warn_once(adapter: str, code: str, message: str, cooldown_s: float = 120.0):
+        """Record a warning and print/log it with basic cooldown to avoid spam."""
+        now = time.time()
+        data = _load_warnings()
+        ent = data.get(adapter) or {}
+        next_at = float(ent.get('next_at') or 0)
+        if now >= next_at or ent.get('code') != code or ent.get('message') != message:
+            # print to orchestrator stdout (tailed by log pane)
+            print(f"[BRIDGE] {adapter}: {message}")
+            try:
+                log_ledger(home, {"from": "system", "kind": "bridge-warning", "adapter": adapter, "code": code, "message": message[:300]})
+            except Exception:
+                pass
+            ent = {
+                'code': code,
+                'message': message,
+                'last_ts': now,
+                'next_at': now + float(max(30.0, cooldown_s)),
+            }
+            data[adapter] = ent
+            _save_warnings(data)
+    def _clear_warning(adapter: str, code_prefix: str = ""):
+        data = _load_warnings()
+        ent = data.get(adapter)
+        if not ent:
+            return
+        if code_prefix and not str(ent.get('code','')).startswith(code_prefix):
+            return
+        try:
+            del data[adapter]
+            _save_warnings(data)
         except Exception:
             pass
 
@@ -120,6 +172,12 @@ def make(ctx: Dict[str, Any]):
 
     def ensure_slack_running() -> Optional[int]:
         state = home/"state"; _ensure_dir(state)
+        # Clear stale missing_dep warning first, regardless of PID state
+        try:
+            import slack_sdk  # type: ignore
+            _clear_warning('slack', 'missing_dep:')
+        except Exception:
+            pass
         pidf = state/"bridge-slack.pid"
         try:
             if pidf.exists():
@@ -142,6 +200,14 @@ def make(ctx: Dict[str, Any]):
             pass
         else:
             return None
+        # Dependency check (only when configured to run)
+        try:
+            import slack_sdk  # type: ignore
+            _clear_warning('slack', 'missing_dep:')
+        except Exception as e:
+            _warn_once('slack', 'missing_dep:slack_sdk',
+                       f"slack_sdk import error: {e}. Fix with: {sys.executable} -m pip install -U slack_sdk")
+            return None
         if cfg.get('app_token'):
             env[at_env] = str(cfg.get('app_token'))
         # Spawn
@@ -149,6 +215,12 @@ def make(ctx: Dict[str, Any]):
 
     def ensure_discord_running() -> Optional[int]:
         state = home/"state"; _ensure_dir(state)
+        # Clear stale missing_dep warning first
+        try:
+            import discord  # type: ignore
+            _clear_warning('discord', 'missing_dep:')
+        except Exception:
+            pass
         pidf = state/"bridge-discord.pid"
         try:
             if pidf.exists():
@@ -169,7 +241,18 @@ def make(ctx: Dict[str, Any]):
             pass
         else:
             return None
+        # Dependency check (only when configured to run)
+        try:
+            import discord  # type: ignore
+            _clear_warning('discord', 'missing_dep:')
+        except Exception as e:
+            _warn_once('discord', 'missing_dep:discord.py',
+                       f"discord.py import error: {e}. Fix with: {sys.executable} -m pip install -U discord.py (if legacy 'discord' exists: pip uninstall -y discord)")
+            return None
         return _spawn_generic('discord', env)
+
+    # set warnings path now that 'home' is known
+    WARNINGS_PATH = home/"state"/"bridge-warnings.json"
 
     return type('BridgeRuntime', (), {
         'ensure_telegram_running': ensure_telegram_running,

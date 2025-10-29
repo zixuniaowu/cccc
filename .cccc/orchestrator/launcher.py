@@ -154,48 +154,18 @@ def make(ctx: Dict[str, Any]):
             except Exception:
                 pass
 
-    def _enqueue_launch_resume():
-        nowid = str(int(time.time()*1000))
-        cmds = [
-            {"id": nowid, "type": "launch", "args": {"who": "both"}, "source": "system", "ts": time.time()},
-            {"id": str(int(time.time()*1000)+1), "type": "resume", "source": "system", "ts": time.time()},
-        ]
-        commands_path.parent.mkdir(parents=True, exist_ok=True)
-        with commands_path.open('a', encoding='utf-8') as f:
-            for c in cmds:
-                f.write(json.dumps(c, ensure_ascii=False) + "\n")
-            f.flush()
-        print("[LAUNCH] Auto-launch triggered after settings.confirmed appeared.")
-
     def initial_setup(resolved: Dict[str, Any], config_deferred: bool, start_mode: str) -> Tuple[bool, Dict[str, Any]]:
-        import sys
-        if start_mode not in ("has_doc", "ai_bootstrap"):
-            auto_launch_box['v'] = False
-            return auto_launch_box['v'], resolved
-        auto_launch_box['v'] = True
-        if config_deferred:
-            print("[LAUNCH] Roles not fully resolved yet; waiting for initial settings confirmation.")
-        else:
-            print("[LAUNCH] Waiting for initial settings confirmation before launching peers.")
-        return auto_launch_box['v'], resolved
+        # Do not auto-enqueue launch/resume. TUI is responsible for writing
+        # a single launch command after settings.confirmed.
+        auto_launch_box['v'] = False
+        if start_mode in ("has_doc", "ai_bootstrap"):
+            print("[LAUNCH] Waiting for launch command from TUI (after settings.confirmed).")
+        return False, resolved
 
     def tick(resolved: Dict[str, Any], config_deferred: bool) -> Tuple[bool, Dict[str, Any]]:
-        if not auto_launch_box['v']:
-            return auto_launch_box['v'], resolved
-        ready_cfg = settings_confirmed_ready()
-        ready_roles = True
-        if config_deferred:
-            try:
-                resolved = load_profiles(home)
-            except Exception:
-                ready_roles = False
-        if ready_cfg and ready_roles:
-            try:
-                _enqueue_launch_resume()
-            except Exception as e:
-                print(f"[LAUNCH] Auto-launch enqueue failed: {e}")
-            auto_launch_box['v'] = False
-        return auto_launch_box['v'], resolved
+        # No-op: orchestrator does not auto-launch; rely on queue commands.
+        # Keep API surface for compatibility.
+        return False, resolved
 
     return type('LauncherAPI', (), {
         'initial_setup': initial_setup,

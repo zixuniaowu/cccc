@@ -5,7 +5,7 @@ CCCC Orchestrator (tmux + long‑lived CLI sessions)
 - Uses tmux to paste messages and capture output, parses <TO_USER>/<TO_PEER>, and runs optional lint/tests before committing.
 - Injects a minimal SYSTEM prompt at startup (from prompt_weaver); runtime hot‑reload is removed for simplicity and control.
 """
-import os, re, sys, json, time, shlex, tempfile, fnmatch, subprocess, select, hashlib, io, shutil, threading, signal, atexit
+import os, re, sys, json, time, shlex, fnmatch, subprocess, hashlib, io, shutil, threading, signal, atexit
 from datetime import datetime, timedelta
 # POSIX file locking for cross-process sequencing; gracefully degrade if unavailable
 try:
@@ -594,7 +594,6 @@ def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: st
 
 # ---------- MAIN ----------
 def main(home: Path, session_name: Optional[str] = None):
-    global CONSOLE_ECHO
     ensure_bin("tmux"); ensure_git_repo()
     # Soft dependency: prompt_toolkit is recommended for the left-pane TUI, but orchestrator core should still run.
     try:
@@ -608,7 +607,7 @@ def main(home: Path, session_name: Optional[str] = None):
     _attach_orchestrator_logger(state)
     settings_confirmed_path = state/"settings.confirmed"
     settings_confirm_ready_after = time.time()
-    # 强制每次运行都重新确认设置：移除旧标记并要求新的 mtime
+    # Always require fresh setup confirmation each run: remove previous marker and wait for a fresh mtime
     try:
         if settings_confirmed_path.exists():
             settings_confirmed_path.unlink()
@@ -893,36 +892,29 @@ def main(home: Path, session_name: Optional[str] = None):
         _write_yaml(cli_profiles_path, cp)
 
     # Roles wizard is disabled during `run` to avoid any pre-TUI blocking prompts.
-    # Configuration can be adjusted inside the TUI (/setup) and is persisted to cli_profiles.yaml.
+    # Configuration can be adjusted inside the TUI and is persisted to cli_profiles.yaml.
+    # Non-interactive: foreman allowed only if configured in config at start
     try:
-        interactive = sys.stdin.isatty()
-    except Exception:
-        interactive = False
-    if False and interactive:
-        pass
-    else:
-        # Non-interactive: foreman allowed only if configured in config at start
-        try:
-            _fc0 = _load_foreman_conf()
-            if bool(_fc0.get('enabled', False)):
-                # Ensure first run is scheduled after full interval on process start
+        _fc0 = _load_foreman_conf()
+        if bool(_fc0.get('enabled', False)):
+            # Ensure first run is scheduled after full interval on process start
+            try:
+                st = _foreman_load_state() or {}
+                now_ts = time.time()
                 try:
-                    st = _foreman_load_state() or {}
-                    now_ts = time.time()
-                    try:
-                        iv = float(_fc0.get('interval_seconds',900) or 900)
-                    except Exception:
-                        iv = 900.0
-                    st.update({'running': False, 'next_due_ts': now_ts + iv, 'last_heartbeat_ts': now_ts})
-                    _foreman_save_state(st)
-                    lk = state/"foreman.lock"
-                    if lk.exists():
-                        try: lk.unlink()
-                        except Exception: pass
+                    iv = float(_fc0.get('interval_seconds',900) or 900)
                 except Exception:
-                    pass
-        except Exception:
-            pass
+                    iv = 900.0
+                st.update({'running': False, 'next_due_ts': now_ts + iv, 'last_heartbeat_ts': now_ts})
+                _foreman_save_state(st)
+                lk = state/"foreman.lock"
+                if lk.exists():
+                    try: lk.unlink()
+                    except Exception: pass
+            except Exception:
+                pass
+    except Exception:
+        pass
     # Rebuild rules once after bindings are finalized (either from wizard or existing config),
     # so that Aux mode and timestamps are accurate for this run.
     try:
@@ -938,7 +930,7 @@ def main(home: Path, session_name: Optional[str] = None):
         if missing_env:
             log_ledger(home, {"kind":"missing-env", "keys": missing_env})
     except Exception as exc:
-        # 不再致命退出：等待 TUI 写入 roles 后再启动
+        # Do not hard-fail: wait for TUI to provide roles before starting
         print(f"[WARN] config load failed; waiting for roles via TUI: {exc}")
         resolved = { 'peerA': {}, 'peerB': {}, 'aux': {}, 'bindings': {}, 'actors': {}, 'env_require': [] }
         config_deferred = True
@@ -1065,22 +1057,6 @@ def main(home: Path, session_name: Optional[str] = None):
         except Exception:
             pass
 
-    def _write_peer_inbox(label: str, user_text: str):
-        """Deprecated (kept for safety). Use _write_inbox_message with unified counter/lock."""
-        try:
-            mid = new_mid("foreman")
-            payload = f"<FROM_USER>\n{user_text.strip()}\n</FROM_USER>\n"
-            payload = wrap_with_mid(payload, mid)
-            _write_inbox_message(home, label, payload, mid)
-            # mirror to inbox.md (best-effort)
-            try:
-                (home/"mailbox"/(_peer_folder_name(label))/"inbox.md").write_text(payload, encoding='utf-8')
-            except Exception:
-                pass
-            log_ledger(home, {"from":"User","kind":"foreman-dispatch","to":label,"chars":len(user_text)})
-        except Exception as e:
-            print(f"[FOREMAN] write inbox failed: {e}")
-
     def _maybe_dispatch_foreman_message():
         """If foreman/to_peer.md contains a new message, route to Peer inbox(es) per To header and write sentinel.
         Also increments self-check counter for meaningful Foreman deliveries (per peer)."""
@@ -1147,53 +1123,10 @@ def main(home: Path, session_name: Optional[str] = None):
                         outbox_write(home, {"type":"to_user","peer": peer_key, "from":"Foreman", "owner": peer_key, "text": body, "eid": eid})
             except Exception:
                 pass
-            # increment self-check counter per delivered peer if meaningful
+            # Increment cadence and maybe inject full system via unified helper
             try:
-                nonlocal instr_counter, in_self_check, handoffs_peer, self_checks_done
-                if self_check_enabled and (not in_self_check) and self_check_every > 0:
-                    pl = (header_line + "\n" + body) if body else header_line
-                    is_nudge = pl.strip().startswith('[NUDGE]')
-                    low_signal = False
-                    try:
-                        low_signal = is_low_signal(pl, policies)
-                    except Exception:
-                        low_signal = False
-                    if (not is_nudge) and (not low_signal):
-                        for lbl in delivered_labels:
-                            handoffs_peer[lbl] = int(handoffs_peer.get(lbl, 0)) + 1
-                        instr_counter = int(handoffs_peer.get('PeerA',0)) + int(handoffs_peer.get('PeerB',0))
-                        for lbl in delivered_labels:
-                            cnt = handoffs_peer[lbl]
-                            if (cnt % self_check_every) == 0:
-                                sc_index = cnt // self_check_every
-                                self_checks_done[lbl] = sc_index
-                                in_self_check = True
-                                try:
-                                    msg_lines = [self_check_text.rstrip()]
-                                    rules_path = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).as_posix()
-                                    msg_lines.append(f"Rules: {rules_path}")
-                                    msg_lines.append("Project: PROJECT.md")
-                                    K = SYSTEM_REFRESH_EVERY
-                                    if K > 0 and (sc_index % K) == 0:
-                                        try:
-                                            proj_path = (Path.cwd()/"PROJECT.md")
-                                            if proj_path.exists():
-                                                proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
-                                                msg_lines.append("\n--- PROJECT.md (full) ---\n" + proj_txt)
-                                        except Exception:
-                                            pass
-                                        try:
-                                            rules_txt = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).read_text(encoding='utf-8')
-                                        except Exception:
-                                            rules_txt = ''
-                                        if rules_txt:
-                                            msg_lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
-                                    final = "\n".join(msg_lines).strip()
-                                    _send_handoff('System', lbl, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
-                                    log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": cnt, "peer": lbl})
-                                    _request_por_refresh("self-check", force=False)
-                                finally:
-                                    in_self_check = False
+                pl = (header_line + "\n" + body) if body else header_line
+                handoff_api.maybe_selfcheck(delivered_labels, pl, True)
             except Exception:
                 pass
         except Exception:
@@ -1749,110 +1682,6 @@ def main(home: Path, session_name: Optional[str] = None):
 
     def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None, *, nudge_text: Optional[str]=None):
         return handoff_api.send_handoff(sender_label, receiver_label, payload, require_mid, nudge_text=nudge_text)
-        # Append inbound suffix (per source: from_user/from_peer/from_system); keep backward-compatible string config
-        def _suffix_for(receiver: str, sender: str) -> str:
-            key = 'from_peer'
-            if sender == 'User':
-                key = 'from_user'
-            elif sender == 'System':
-                key = 'from_system'
-            prof = profileA if receiver == 'PeerA' else profileB
-            cfg = (prof or {}).get('inbound_suffix', '')
-            if isinstance(cfg, dict):
-                return (cfg.get(key) or '').strip()
-            # Backward compatibility: string value
-            if receiver == 'PeerA':
-                return str(cfg).strip()
-            if receiver == 'PeerB' and sender == 'User':
-                return str(cfg).strip()
-            return ''
-        suf = _suffix_for(receiver_label, sender_label)
-        if suf:
-            payload = _append_suffix_inside(payload, suf)
-        # Resend de-bounce: drop identical payloads within a short window
-        h = hashlib.sha1(payload.encode('utf-8', errors='replace')).hexdigest()
-        now = time.time()
-        rs = [it for it in recent_sends[receiver_label] if now - float(it.get('ts',0)) <= duplicate_window]
-        if any(it.get('hash') == h for it in rs):
-            log_ledger(home, {"from": sender_label, "kind": "handoff-duplicate-drop", "to": receiver_label, "chars": len(payload)})
-            return
-        rs.append({"hash": h, "ts": now})
-        recent_sends[receiver_label] = rs[-20:]
-        # New: inbox + NUDGE mode
-        mid = new_mid()
-        text_with_mid = wrap_with_mid(payload, mid)
-        try:
-            seq, _ = _write_inbox_message(home, receiver_label, text_with_mid, mid)
-            if nudge_text and nudge_text.strip():
-                if receiver_label == 'PeerA':
-                    nudge_api.maybe_send_nudge(home, 'PeerA', paneA, profileA, custom_text=nudge_text, force=True)
-                else:
-                    nudge_api.maybe_send_nudge(home, 'PeerB', paneB, profileB, custom_text=nudge_text, force=True)
-            else:
-                nudge_api.send_nudge(home, receiver_label, seq, mid, paneA, paneB, profileA, profileB, aux_mode)
-            try:
-                last_nudge_ts[receiver_label] = time.time()
-            except Exception:
-                pass
-            status = "nudged"
-        except Exception as e:
-            status = f"failed:{e}"
-            seq = "000000"
-        inflight[receiver_label] = None  # Stop tracking live ACK; rely on inbox+ACK
-        log_ledger(home, {"from": sender_label, "kind": "handoff", "to": receiver_label, "status": status, "mid": mid, "seq": seq, "chars": len(payload)})
-        _dbg(f"[HANDOFF] {sender_label} → {receiver_label} ({len(payload)} chars, status={status}, seq={seq})")
-
-        # Self-check cadence: per-peer counting and trigger
-        try:
-            if self_check_enabled and (not in_self_check) and self_check_every > 0:
-                pl = payload or ""
-                is_nudge = pl.strip().startswith("[NUDGE]")
-                meaningful_sender = sender_label in ("User", "System", "PeerA", "PeerB")
-                low_signal = False
-                try:
-                    low_signal = is_low_signal(pl, policies)
-                except Exception:
-                    low_signal = False
-                if meaningful_sender and (not is_nudge) and (not low_signal):
-                    # Per-peer increment and global sum for status
-                    handoffs_peer[receiver_label] = int(handoffs_peer.get(receiver_label, 0)) + 1
-                    instr_counter = int(handoffs_peer.get("PeerA",0)) + int(handoffs_peer.get("PeerB",0))
-                    cnt = handoffs_peer[receiver_label]
-                    if (cnt % self_check_every) == 0:
-                        sc_index = cnt // self_check_every
-                        self_checks_done[receiver_label] = sc_index
-                        in_self_check = True
-                        try:
-                            # Compose self-check for this peer only
-                            msg_lines = [self_check_text.rstrip()]
-                            rules_path = (home/"rules"/("PEERA.md" if receiver_label=="PeerA" else "PEERB.md")).as_posix()
-                            msg_lines.append(f"Rules: {rules_path}")
-                            msg_lines.append("Project: PROJECT.md")
-                            K = SYSTEM_REFRESH_EVERY
-                            if K > 0 and (sc_index % K) == 0:
-                                # PROJECT full
-                                try:
-                                    proj_path = (Path.cwd()/"PROJECT.md")
-                                    if proj_path.exists():
-                                        proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
-                                        msg_lines.append("\n--- PROJECT.md (full) ---\n" + proj_txt)
-                                except Exception:
-                                    pass
-                                # SYSTEM full
-                                try:
-                                    rules_txt = (home/"rules"/("PEERA.md" if receiver_label=="PeerA" else "PEERB.md")).read_text(encoding='utf-8')
-                                except Exception:
-                                    rules_txt = ""
-                                if rules_txt:
-                                    msg_lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
-                            final = "\n".join(msg_lines).strip()
-                            _send_handoff("System", receiver_label, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
-                            log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": cnt, "peer": receiver_label})
-                            _request_por_refresh("self-check", force=False)
-                        finally:
-                            in_self_check = False
-        except Exception:
-            pass
 
     def _request_por_refresh(trigger: str, hint: Optional[str] = None, *, force: bool = False):
         nonlocal por_update_last_request
@@ -1965,62 +1794,109 @@ def main(home: Path, session_name: Optional[str] = None):
         
         _log("[CLEANUP] _cleanup_bridges() called")
         state = home / "state"
+        def _find_pids_for(adapter_name: str) -> list[int]:
+            pids: list[int] = []
+            try:
+                script_path = (home/"adapters"/f"bridge_{adapter_name}.py").resolve()
+                sp = str(script_path)
+                proc = Path('/proc')
+                if not proc.exists():
+                    return pids
+                for d in proc.iterdir():
+                    if not d.is_dir() or not d.name.isdigit():
+                        continue
+                    pid = int(d.name)
+                    try:
+                        cmdline = (d/"cmdline").read_bytes().decode('utf-8','ignore')
+                        if sp in cmdline:
+                            pids.append(pid)
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            return pids
         for adapter in ['telegram', 'slack', 'discord']:
             pidf_name = f"bridge-{adapter}.pid" if adapter != 'telegram' else "telegram-bridge.pid"
             pidf = state / pidf_name
             _log(f"[CLEANUP] Checking {adapter}: {pidf}")
-            if not pidf.exists():
-                _log(f"[CLEANUP] {adapter} PID file not found")
-                continue
+            # Resolve PID targets: pid from file + /proc matches
+            targets: list[int] = []
             try:
-                pid = int(pidf.read_text(encoding='utf-8').strip() or '0')
-                _log(f"[CLEANUP] {adapter} PID: {pid}")
-                if pid <= 0:
-                    _log(f"[CLEANUP] {adapter} invalid PID")
-                    continue
-                # Check if process is alive
-                try:
-                    os.kill(pid, 0)
-                    _log(f"[CLEANUP] {adapter} process {pid} is alive")
-                except (ProcessLookupError, OSError):
-                    # Process already dead
-                    _log(f"[CLEANUP] {adapter} process {pid} already dead")
+                if pidf.exists():
                     try:
-                        pidf.unlink()
+                        pid_file_pid = int(pidf.read_text(encoding='utf-8').strip() or '0')
+                        if pid_file_pid > 0:
+                            targets.append(pid_file_pid)
                     except Exception:
                         pass
+                else:
+                    _log(f"[CLEANUP] {adapter} PID file not found (will scan /proc)")
+                for p in _find_pids_for(adapter):
+                    if p not in targets:
+                        targets.append(p)
+                if not targets:
+                    _log(f"[CLEANUP] {adapter} no targets found")
+                    # remove stale pid/lock if present
+                    try: pidf.unlink()
+                    except Exception: pass
+                    try: (state/f"{adapter}-bridge.lock").unlink()
+                    except Exception: pass
                     continue
-                # Graceful termination: SIGTERM
-                try:
-                    _log(f"[CLEANUP] Sending SIGTERM to {adapter} process {pid}")
-                    os.kill(pid, signal.SIGTERM)
-                    log_ledger(home, {"from":"system","kind":"bridge-stop","adapter":adapter,"pid":pid,"signal":"SIGTERM"})
-                except Exception as e:
-                    _log(f"[CLEANUP] Failed to send SIGTERM to {adapter}: {e}")
-                    pass
-                # Wait briefly for graceful shutdown
-                import time
-                for i in range(30):  # 3 seconds total
-                    time.sleep(0.1)
+                _log(f"[CLEANUP] {adapter} targets: {targets}")
+                for pid in targets:
+                    if pid <= 0:
+                        _log(f"[CLEANUP] {adapter} invalid PID {pid}")
+                        continue
+                    # Check alive
+                    alive = True
                     try:
                         os.kill(pid, 0)
                     except (ProcessLookupError, OSError):
-                        # Process terminated
-                        _log(f"[CLEANUP] {adapter} process {pid} terminated after {i*0.1:.1f}s")
-                        break
-                else:
-                    # Still alive, force kill
-                    _log(f"[CLEANUP] {adapter} process {pid} still alive, sending SIGKILL")
+                        alive = False
+                    if not alive:
+                        _log(f"[CLEANUP] {adapter} process {pid} already dead")
+                        continue
+                    # Send SIGTERM to process group when possible
                     try:
-                        os.kill(pid, signal.SIGKILL)
-                        log_ledger(home, {"from":"system","kind":"bridge-stop","adapter":adapter,"pid":pid,"signal":"SIGKILL"})
-                        _log(f"[CLEANUP] SIGKILL sent to {adapter} process {pid}")
+                        _log(f"[CLEANUP] Sending SIGTERM to {adapter} process/group {pid}")
+                        try:
+                            pgid = os.getpgid(pid)
+                            os.killpg(pgid, signal.SIGTERM)
+                        except Exception:
+                            os.kill(pid, signal.SIGTERM)
+                        log_ledger(home, {"from":"system","kind":"bridge-stop","adapter":adapter,"pid":pid,"signal":"SIGTERM"})
                     except Exception as e:
-                        _log(f"[CLEANUP] Failed to send SIGKILL to {adapter}: {e}")
-                        pass
-                # Clean up PID file
+                        _log(f"[CLEANUP] Failed to send SIGTERM to {adapter}: {e}")
+                    # Wait briefly for graceful shutdown
+                    import time
+                    terminated = False
+                    for i in range(30):
+                        time.sleep(0.1)
+                        try:
+                            os.kill(pid, 0)
+                        except (ProcessLookupError, OSError):
+                            _log(f"[CLEANUP] {adapter} process {pid} terminated after {i*0.1:.1f}s")
+                            terminated = True
+                            break
+                    if not terminated:
+                        try:
+                            _log(f"[CLEANUP] {adapter} process {pid} still alive, sending SIGKILL")
+                            try:
+                                pgid = os.getpgid(pid)
+                                os.killpg(pgid, signal.SIGKILL)
+                            except Exception:
+                                os.kill(pid, signal.SIGKILL)
+                            log_ledger(home, {"from":"system","kind":"bridge-stop","adapter":adapter,"pid":pid,"signal":"SIGKILL"})
+                            _log(f"[CLEANUP] SIGKILL sent to {adapter} process {pid}")
+                        except Exception as e:
+                            _log(f"[CLEANUP] Failed to send SIGKILL to {adapter}: {e}")
+                # After attempts, clean up files
                 try:
                     pidf.unlink()
+                except Exception:
+                    pass
+                try:
+                    (state/f"{adapter}-bridge.lock").unlink()
                 except Exception:
                     pass
             except Exception as e:
@@ -2189,6 +2065,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'handoffs_peer': handoffs_peer,
         'self_checks_done': self_checks_done,
         'send_handoff': None,
+        'system_refresh_every': SYSTEM_REFRESH_EVERY,
     }
     handoff_api = make_handoff(handoff_ctx)
     handoff_ctx['send_handoff'] = handoff_api.send_handoff
@@ -2301,7 +2178,7 @@ def main(home: Path, session_name: Optional[str] = None):
                 break
         _tmux_check_counter += 1
         
-        # 如果启动时因为未确认或未绑定角色而延迟，一旦就绪自动触发一次 launch+resume
+        # If startup was deferred due to unconfirmed settings or missing roles, trigger launch+resume when ready
         try:
             auto_launch_pending, resolved = launcher_api.tick(resolved, config_deferred)
         except Exception:
@@ -2422,47 +2299,8 @@ def main(home: Path, session_name: Optional[str] = None):
                                 except Exception:
                                     text = ''
                                 try:
-                                    if self_check_enabled and (not in_self_check) and self_check_every > 0:
-                                        is_nudge_msg = (text.strip().startswith('[NUDGE]'))
-                                        low_signal = False
-                                        try:
-                                            low_signal = is_low_signal(text, policies)
-                                        except Exception:
-                                            low_signal = False
-                                        if (not is_nudge_msg) and (not low_signal):
-                                            handoffs_peer[label] = int(handoffs_peer.get(label, 0)) + 1
-                                            instr_counter = int(handoffs_peer.get('PeerA',0)) + int(handoffs_peer.get('PeerB',0))
-                                            cnt = handoffs_peer[label]
-                                            if (cnt % self_check_every) == 0:
-                                                sc_index = cnt // self_check_every
-                                                self_checks_done[label] = sc_index
-                                                in_self_check = True
-                                                try:
-                                                    msg_lines = [self_check_text.rstrip()]
-                                                    rules_path = (home/'rules'/('PEERA.md' if label=='PeerA' else 'PEERB.md')).as_posix()
-                                                    msg_lines.append(f"Rules: {rules_path}")
-                                                    msg_lines.append("Project: PROJECT.md")
-                                                    if SYSTEM_REFRESH_EVERY > 0 and (sc_index % SYSTEM_REFRESH_EVERY) == 0:
-                                                        try:
-                                                            proj_path = (Path.cwd()/"PROJECT.md")
-                                                            if proj_path.exists():
-                                                                proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
-                                                                msg_lines.append("\n--- PROJECT.md (full) ---\n" + proj_txt)
-                                                        except Exception:
-                                                            pass
-                                                        try:
-                                                            rules_txt = (home/'rules'/('PEERA.md' if label=='PeerA' else 'PEERB.md')).read_text(encoding='utf-8')
-                                                        except Exception:
-                                                            rules_txt = ''
-                                                        if rules_txt:
-                                                            msg_lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
-                                                    final = "\n".join(msg_lines).strip()
-                                                    _send_handoff('System', label, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
-                                                    log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": cnt, "peer": label})
-                                                    _request_por_refresh("self-check", force=False)
-                                                finally:
-                                                    in_self_check = False
-                                                break
+                                    if handoff_api.maybe_selfcheck([label], text, True):
+                                        break
                                 except Exception:
                                     pass
                     except Exception:
@@ -2541,48 +2379,8 @@ def main(home: Path, session_name: Optional[str] = None):
                                     text = ''
                                 # Reuse the same meaningful rules as handoff
                                 try:
-                                    if self_check_enabled and (not in_self_check) and self_check_every > 0:
-                                        is_nudge_msg = (text.strip().startswith('[NUDGE]'))
-                                        low_signal = False
-                                        try:
-                                            low_signal = is_low_signal(text, policies)
-                                        except Exception:
-                                            low_signal = False
-                                        if (not is_nudge_msg) and (not low_signal):
-                                            handoffs_peer[label] = int(handoffs_peer.get(label, 0)) + 1
-                                            instr_counter = int(handoffs_peer.get('PeerA',0)) + int(handoffs_peer.get('PeerB',0))
-                                            cnt = handoffs_peer[label]
-                                            if (cnt % self_check_every) == 0:
-                                                sc_index = cnt // self_check_every
-                                                self_checks_done[label] = sc_index
-                                                in_self_check = True
-                                                try:
-                                                    msg_lines = [self_check_text.rstrip()]
-                                                    rules_path = (home/'rules'/('PEERA.md' if label=='PeerA' else 'PEERB.md')).as_posix()
-                                                    msg_lines.append(f"Rules: {rules_path}")
-                                                    msg_lines.append("Project: PROJECT.md")
-                                                    K = SYSTEM_REFRESH_EVERY
-                                                    if K > 0 and (sc_index % K) == 0:
-                                                        try:
-                                                            proj_path = (Path.cwd()/"PROJECT.md")
-                                                            if proj_path.exists():
-                                                                proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
-                                                                msg_lines.append("\n--- PROJECT.md (full) ---\n" + proj_txt)
-                                                        except Exception:
-                                                            pass
-                                                        try:
-                                                            rules_txt = (home/'rules'/('PEERA.md' if label=='PeerA' else 'PEERB.md')).read_text(encoding='utf-8')
-                                                        except Exception:
-                                                            rules_txt = ''
-                                                        if rules_txt:
-                                                            msg_lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
-                                                    final = "\n".join(msg_lines).strip()
-                                                    _send_handoff('System', label, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
-                                                    log_ledger(home, {"from": "system", "kind": "self-check", "every": self_check_every, "count": cnt, "peer": label})
-                                                    _request_por_refresh("self-check", force=False)
-                                                finally:
-                                                    in_self_check = False
-                                                break  # one self-check per peer per loop
+                                    if handoff_api.maybe_selfcheck([label], text, True):
+                                        break  # one self-check per peer per loop
                                 except Exception:
                                     pass
                     except Exception:

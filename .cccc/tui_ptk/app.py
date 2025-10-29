@@ -160,10 +160,23 @@ class SetupConfig:
     mode: str = 'tmux'
     tg_token: str = ''
     tg_chat: str = ''
-    sl_token: str = ''
+    # Slack: split into bot_token and app_token for clarity
+    sl_bot_token: str = ''  # Bot token (xoxb-) - required for outbound
+    sl_app_token: str = ''  # App token (xapp-) - required for inbound communication
     sl_chan: str = ''
     dc_token: str = ''
     dc_chan: str = ''
+
+    # Backward compatibility property
+    @property
+    def sl_token(self) -> str:
+        """Backward compatibility - return bot token"""
+        return self.sl_bot_token
+
+    @sl_token.setter
+    def sl_token(self, value: str):
+        """Backward compatibility - set bot token"""
+        self.sl_bot_token = value
 
     def is_valid(self, actors: List[str], home: Path) -> tuple[bool, str]:
         """Validate configuration"""
@@ -185,8 +198,11 @@ class SetupConfig:
 
         if self.mode == 'telegram' and not self.tg_token:
             return False, "Telegram token required"
-        if self.mode == 'slack' and not self.sl_token:
-            return False, "Slack token required"
+        if self.mode == 'slack':
+            if not self.sl_bot_token:
+                return False, "Slack bot token (xoxb-) required"
+            if not self.sl_app_token:
+                return False, "Slack app token (xapp-) required for inbound communication"
         if self.mode == 'discord' and not self.dc_token:
             return False, "Discord token required"
 
@@ -287,6 +303,19 @@ def _write_yaml(home: Path, rel_path: str, data: Dict[str, Any]) -> None:
         p = home / rel_path
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
+
+
+def _load_yaml(home: Path, rel_path: str) -> Dict[str, Any]:
+    """Load YAML file, return empty dict if not found or on error"""
+    try:
+        import yaml
+        p = home / rel_path
+        if p.exists():
+            content = yaml.safe_load(p.read_text(encoding='utf-8'))
+            return content if isinstance(content, dict) else {}
+        return {}
+    except Exception:
+        return {}
 
 
 def create_header() -> Window:
@@ -414,8 +443,8 @@ class CCCCSetupApp:
 
         # Initialize Runtime UI after setup UI is built
         ts = time.strftime('%H:%M:%S')
-        initial_msg = f"""[{ts}] SYS CCCC Orchestrator v0.3.x
-[{ts}] ... Dual-agent collaboration system
+        initial_msg = f"""[{ts}] SYS CCCC Orchestrator
+[{ts}] ... Multi-Agent collaboration system
 [{ts}] ... Type /help for commands and shortcuts
 """
         self.timeline = TextArea(
@@ -658,7 +687,7 @@ class CCCCSetupApp:
         self.cycle_config_value = cycle_config_value
 
     def _update_setup_button_text(self):
-        """更新配置按钮文本"""
+        """Update setup button text"""
         button_texts = {
             'actor': f"Agent [b]A[/b]: {self.current_actor} ({'✓' if self.actor_availability[self.current_actor]['configured'] else '✗'}{' ' + self.actor_availability[self.current_actor]['version'] if self.actor_availability[self.current_actor]['version'] else ''})",
             'foreman': f"Foreman [b]B[/b]: {self.current_foreman} ({'✓' if self.foreman_availability[self.current_foreman]['configured'] else '✗'}{' ' + self.foreman_availability[self.current_foreman]['version'] if self.foreman_availability[self.current_foreman]['version'] else ''})",
@@ -669,7 +698,7 @@ class CCCCSetupApp:
         self.config_buttons['foreman'].text = button_texts['foreman']
         self.config_buttons['mode'].text = button_texts['mode']
 
-        # 根据配置状态更新按钮样式
+        # Update button style based on configuration status
         actor_configured = self.actor_availability[self.current_actor]['configured']
         foreman_configured = self.foreman_availability[self.current_foreman]['configured']
 
@@ -677,7 +706,7 @@ class CCCCSetupApp:
         self.config_buttons['foreman'].style = "bold green" if foreman_configured else "bold red"
 
     def _create_ui(self):
-        """创建UI组件"""
+        """Create UI components"""
         self._create_styles()
         self._create_layout()
         self.key_bindings = self._create_key_bindings()
@@ -707,27 +736,27 @@ class CCCCSetupApp:
         pass
 
     def _create_styles(self):
-        """创建样式"""
+        """Create styles"""
         self.style = Style.from_dict({
-            # 基础样式
-            'title': '#5fd7ff bold',                # 青色标题
-            'subtitle': '#87afff',                 # 淡蓝色副标题
-            'heading': '#ffaf00 bold',             # 橙色标题
-            'separator': '#6c6c6c',                # 灰色分隔符
-            'version': '#767676',                  # 深灰色版本号
-            'ascii-art': '#5f87af',                # 淡蓝色ASCII艺术
+            # Base styles
+            'title': '#5fd7ff bold',                # Cyan title
+            'subtitle': '#87afff',                 # Light blue subtitle
+            'heading': '#ffaf00 bold',             # Orange heading
+            'separator': '#6c6c6c',                # Gray separator
+            'version': '#767676',                  # Dark gray version
+            'ascii-art': '#5f87af',                # Light blue ASCII art
 
-            # 配置按钮样式
-            'config-button': '#d0d0d0',            # 默认按钮
-            'config-button.focused': '#5fff7f bold',  # 聚焦时亮绿色
-            'config-button.configured': '#5fff5f bold',   # 已配置绿色
-            'config-button.unconfigured': '#ff5f5f bold', # 未配置红色
+            # Config button styles
+            'config-button': '#d0d0d0',            # Default button
+            'config-button.focused': '#5fff7f bold',  # Bright green when focused
+            'config-button.configured': '#5fff5f bold',   # Green for configured
+            'config-button.unconfigured': '#ff5f5f bold', # Red for unconfigured
 
-            # 状态指示器
-            'status-indicator': '#5fff5f',         # 状态指示器
-            'status-text': '#d0d0d0',              # 状态文本
+            # Status indicators
+            'status-indicator': '#5fff5f',         # Status indicator
+            'status-text': '#d0d0d0',              # Status text
 
-            # 用户消息样式
+            # User message styles
             'msg.user': '#ffd787',             # Yellow for user
             'msg.error': '#ff5f5f bold',       # Red for errors
             'msg.debug': '#6c6c6c',            # Gray for debug
@@ -756,38 +785,37 @@ class CCCCSetupApp:
 
             # Input fields
             'input-field': '#ffffff bg:#303030',  # White text on dark background
+
+            # Footer warnings (dependencies, etc.)
+            'warning': '#ffaf00 bold',
+            'error': '#ff5f5f bold',
         })
 
     def _load_existing_config(self) -> None:
-        """Load configuration"""
+        """Load configuration from yaml files"""
         # Load actors
-        try:
-            import yaml
-            p = self.home / "settings" / "agents.yaml"
-            if p.exists():
-                data = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
-                acts = data.get('actors') or {}
-                self.actors_available = list(acts.keys()) if isinstance(acts, dict) else []
-        except Exception:
-            pass
+        agents_data = _load_yaml(self.home, 'settings/agents.yaml')
+        acts = agents_data.get('actors') or {}
+        self.actors_available = list(acts.keys()) if isinstance(acts, dict) else []
 
         if not self.actors_available:
             self.actors_available = ['claude', 'codex', 'gemini', 'droid', 'opencode']
 
-        # Load roles
-        try:
-            import yaml
-            p = self.home / "settings" / "cli_profiles.yaml"
-            if p.exists():
-                data = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
-                roles = data.get('roles') or {}
-                self.config.peerA = str((roles.get('peerA') or {}).get('actor') or '')
-                self.config.peerB = str((roles.get('peerB') or {}).get('actor') or '')
-                self.config.aux = str((roles.get('aux') or {}).get('actor') or 'none')
-        except Exception:
-            pass
+        # Load roles and mode from cli_profiles.yaml
+        cli_profiles = _load_yaml(self.home, 'settings/cli_profiles.yaml')
+        roles = cli_profiles.get('roles') or {}
+        self.config.peerA = str((roles.get('peerA') or {}).get('actor') or '')
+        self.config.peerB = str((roles.get('peerB') or {}).get('actor') or '')
+        self.config.aux = str((roles.get('aux') or {}).get('actor') or 'none')
 
-        # Smart defaults
+        # Load mode selection (im_mode field)
+        saved_mode = cli_profiles.get('im_mode', 'tmux')
+        if saved_mode in ['tmux', 'telegram', 'slack', 'discord']:
+            self.config.mode = saved_mode
+        else:
+            self.config.mode = 'tmux'
+
+        # Smart defaults for roles
         if not self.config.peerA and len(self.actors_available) > 0:
             self.config.peerA = self.actors_available[0]
         if not self.config.peerB and len(self.actors_available) > 1:
@@ -796,29 +824,31 @@ class CCCCSetupApp:
             self.config.peerB = self.actors_available[0]
 
         # Load foreman
-        try:
-            import yaml
-            p = self.home / "settings" / "foreman.yaml"
-            if p.exists():
-                data = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
-                self.config.foreman = str(data.get('agent') or 'none')
-        except Exception:
-            pass
+        foreman_data = _load_yaml(self.home, 'settings/foreman.yaml')
+        self.config.foreman = str(foreman_data.get('agent') or 'none')
 
-        # Load telegram
-        try:
-            import yaml
-            p = self.home / "settings" / "telegram.yaml"
-            if p.exists():
-                data = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
-                self.config.tg_token = str(data.get('token') or '')
-                chats = data.get('allow_chats') or []
-                if isinstance(chats, list) and chats:
-                    self.config.tg_chat = str(chats[0])
-                if data.get('autostart') and self.config.tg_token:
-                    self.config.mode = 'telegram'
-        except Exception:
-            pass
+        # Load IM configurations
+        # Telegram
+        telegram_data = _load_yaml(self.home, 'settings/telegram.yaml')
+        self.config.tg_token = str(telegram_data.get('token') or '')
+        chats = telegram_data.get('allow_chats') or []
+        if isinstance(chats, list) and chats:
+            self.config.tg_chat = str(chats[0])
+
+        # Slack
+        slack_data = _load_yaml(self.home, 'settings/slack.yaml')
+        self.config.sl_bot_token = str(slack_data.get('bot_token') or '')
+        self.config.sl_app_token = str(slack_data.get('app_token') or '')
+        channels = (slack_data.get('channels') or {}).get('to_user') or []
+        if isinstance(channels, list) and channels:
+            self.config.sl_chan = str(channels[0])
+
+        # Discord
+        discord_data = _load_yaml(self.home, 'settings/discord.yaml')
+        self.config.dc_token = str(discord_data.get('bot_token') or '')
+        channels = (discord_data.get('channels') or {}).get('to_user') or []
+        if isinstance(channels, list) and channels:
+            self.config.dc_chan = str(channels[0])
 
     def _check_actor_availability(self) -> None:
         """Check availability of all known actors"""
@@ -844,47 +874,47 @@ class CCCCSetupApp:
         btn_peerA = Button(
             text=self._format_button_text(self.config.peerA, required=True),
             handler=lambda: self._show_actor_dialog('peerA'),
-            width=24,
+            width=20,
             left_symbol='',
             right_symbol=''
         )
         btn_peerB = Button(
             text=self._format_button_text(self.config.peerB, required=True),
             handler=lambda: self._show_actor_dialog('peerB'),
-            width=24,
+            width=20,
             left_symbol='',
             right_symbol=''
         )
         btn_aux = Button(
             text=self._format_button_text(self.config.aux, none_ok=True),
             handler=lambda: self._show_actor_dialog('aux'),
-            width=24,
+            width=20,
             left_symbol='',
             right_symbol=''
         )
         btn_foreman = Button(
             text=self._format_button_text(self.config.foreman, none_ok=True),
             handler=self._show_foreman_dialog,
-            width=24,
+            width=20,
             left_symbol='',
             right_symbol=''
         )
         btn_mode = Button(
             text=f'[●] {self.config.mode}',
             handler=self._show_mode_dialog,
-            width=24,
-            left_symbol='',
-            right_symbol=''
-        )
-        btn_confirm = Button(
-            text='🚀 Launch CCCC',
-            handler=self._confirm_and_launch,
             width=20,
             left_symbol='',
             right_symbol=''
         )
+        btn_confirm = Button(
+            text='🚀 Launch',
+            handler=self._confirm_and_launch,
+            width=12,
+            left_symbol='',
+            right_symbol=''
+        )
         btn_quit = Button(
-            text='Quit',
+            text='❌ Quit',
             handler=self._quit_app,
             width=12,
             left_symbol='',
@@ -928,13 +958,13 @@ class CCCCSetupApp:
                 Window(width=10, content=self._create_focused_label('PeerA', 0)),
                 btn_peerA,
                 Window(width=2),
-                Label(text='Strategic peer (equal, can think & execute)', style='class:hint'),
+                Label(text='Strategic peer (equal)', style='class:hint'),
             ], padding=1),
             VSplit([
                 Window(width=10, content=self._create_focused_label('PeerB', 1)),
                 btn_peerB,
                 Window(width=2),
-                Label(text='Validation peer (equal, debate & evidence)', style='class:hint'),
+                Label(text='Validation peer (equal)', style='class:hint'),
             ], padding=1),
             Window(height=1),
 
@@ -960,7 +990,7 @@ class CCCCSetupApp:
                 Window(width=10, content=self._create_focused_label('Connect', 4)),
                 btn_mode,
                 Window(width=2),
-                Label(text='Interaction mode (tmux local / telegram remote / team chat)', style='class:hint'),
+                Label(text='Interaction mode (tmux only / Telegram / Slack / Discord)', style='class:hint'),
             ], padding=1),
         ]
 
@@ -969,23 +999,58 @@ class CCCCSetupApp:
             items.extend([
                 Window(height=1),
                 create_section_header('IM Configuration'),
-
-                # Bot Token input
-                VSplit([
-                    Window(width=10, content=FormattedTextControl('Bot Token:')),
-                    self._create_token_field(),
-                    Window(width=2),
-                    Label(text='Required for bot authentication', style='class:hint'),
-                ], padding=1),
-
-                # Channel/Chat ID input
-                VSplit([
-                    Window(width=10, content=self._create_channel_label()),
-                    self._create_channel_field(),
-                    Window(width=2),
-                    Label(text=self._get_channel_hint(), style='class:hint'),
-                ], padding=1),
             ])
+
+            if self.config.mode == 'slack':
+                # Slack needs both bot and app tokens
+                items.extend([
+                    # Bot Token input
+                    VSplit([
+                        Window(width=20, content=FormattedTextControl('Bot Token (xoxb-):')),
+                        self._create_token_field(),
+                        Window(width=2),
+                        Label(text='Outbound messages', style='class:hint'),
+                    ], padding=1),
+
+                    # App Token input
+                    VSplit([
+                        Window(width=20, content=FormattedTextControl('App Token (xapp-):')),
+                        self._create_app_token_field(),
+                        Window(width=2),
+                        Label(text='Inbound messages', style='class:hint'),
+                    ], padding=1),
+
+                    # Channel ID input
+                    VSplit([
+                        Window(width=12, content=self._create_channel_label()),
+                        self._create_channel_field(),
+                        Window(width=2),
+                        Label(text=self._get_channel_hint(), style='class:hint'),
+                    ], padding=1),
+
+                    # Help text
+                    Window(height=1),
+                    Label(text='Both tokens required for bidirectional communication', style='class:hint'),
+                ])
+            else:
+                # Telegram and Discord only need bot token
+                items.extend([
+                    # Bot Token input
+                    VSplit([
+                        Window(width=10, content=FormattedTextControl('Bot Token:')),
+                        self._create_token_field(),
+                        Window(width=2),
+                        Label(text='Required for bot authentication', style='class:hint'),
+                    ], padding=1),
+
+                    # Channel/Chat ID input
+                    VSplit([
+                        Window(width=10, content=self._create_channel_label()),
+                        self._create_channel_field(),
+                        Window(width=2),
+                        Label(text=self._get_channel_hint(), style='class:hint'),
+                    ], padding=1),
+                ])
 
         items.extend([
             Window(height=1),
@@ -1022,10 +1087,19 @@ class CCCCSetupApp:
 
         # Add IM input fields if IM mode is selected
         if self.config.mode in ('telegram', 'slack', 'discord'):
-            self.navigation_items.extend([
-                {'type': 'input', 'name': 'token', 'widget': self._create_token_field()},
-                {'type': 'input', 'name': 'channel', 'widget': self._create_channel_field()},
-            ])
+            if self.config.mode == 'slack':
+                # Slack needs both bot and app tokens in correct order
+                self.navigation_items.extend([
+                    {'type': 'input', 'name': 'token', 'widget': self._create_token_field()},
+                    {'type': 'input', 'name': 'app_token', 'widget': self._create_app_token_field()},
+                    {'type': 'input', 'name': 'channel', 'widget': self._create_channel_field()},
+                ])
+            else:
+                # Telegram and Discord only need bot token
+                self.navigation_items.extend([
+                    {'type': 'input', 'name': 'token', 'widget': self._create_token_field()},
+                    {'type': 'input', 'name': 'channel', 'widget': self._create_channel_field()},
+                ])
 
         # Always add Launch and Quit buttons at the end
         self.navigation_items.extend([
@@ -1045,7 +1119,7 @@ class CCCCSetupApp:
             if mode == 'telegram':
                 initial_text = self.config.tg_token or ''
             elif mode == 'slack':
-                initial_text = self.config.sl_token or ''
+                initial_text = self.config.sl_bot_token or ''
             elif mode == 'discord':
                 initial_text = self.config.dc_token or ''
 
@@ -1070,8 +1144,42 @@ class CCCCSetupApp:
                 if original_handler:
                     return original_handler(mouse_event)
             self.token_field.window.content.mouse_handler = mouse_handler
-            
+
         return self.token_field
+
+    def _create_app_token_field(self):
+        """Create app token input field for Slack"""
+        if not hasattr(self, 'app_token_field'):
+            mode = self.config.mode
+            initial_text = ''
+            if mode == 'slack':
+                initial_text = self.config.sl_app_token or ''
+
+            self.app_token_field = TextArea(
+                height=1,
+                multiline=False,
+                text=initial_text,
+                wrap_lines=False,
+                style='class:input-field'
+            )
+
+            # Add mouse handler to enable clicking to focus
+            original_handler = self.app_token_field.window.content.mouse_handler
+            def mouse_handler(mouse_event):
+                from prompt_toolkit.mouse_events import MouseEventType
+                if mouse_event.event_type == MouseEventType.MOUSE_UP:
+                    try:
+                        self.app.layout.focus(self.app_token_field)
+                    except Exception:
+                        pass
+                # Pass through to original handler for text selection
+                if original_handler:
+                    return original_handler(mouse_event)
+                return None
+
+            self.app_token_field.window.content.mouse_handler = mouse_handler
+
+        return self.app_token_field
 
     def _create_channel_field(self):
         """Create channel/chat ID input field"""
@@ -1141,8 +1249,11 @@ class CCCCSetupApp:
                 self.config.tg_token = self.token_field.text.strip()
                 self.config.tg_chat = self.channel_field.text.strip()
             elif mode == 'slack':
-                self.config.sl_token = self.token_field.text.strip()
+                self.config.sl_bot_token = self.token_field.text.strip()
                 self.config.sl_chan = self.channel_field.text.strip()
+                # Also save app token if it exists
+                if hasattr(self, 'app_token_field'):
+                    self.config.sl_app_token = self.app_token_field.text.strip()
             elif mode == 'discord':
                 self.config.dc_token = self.token_field.text.strip()
                 self.config.dc_chan = self.channel_field.text.strip()
@@ -1164,8 +1275,14 @@ class CCCCSetupApp:
             tok = '●' if self.config.tg_token else '○'
             return f'[{tok}] token set' if self.config.tg_token else '[○] not configured'
         elif mode == 'slack':
-            tok = '●' if self.config.sl_token else '○'
-            return f'[{tok}] token set' if self.config.sl_token else '[○] not configured'
+            bot_tok = '●' if self.config.sl_bot_token else '○'
+            app_tok = '●' if self.config.sl_app_token else '○'
+            if self.config.sl_bot_token and self.config.sl_app_token:
+                return f'[{bot_tok}] both tokens ready'
+            elif self.config.sl_bot_token:
+                return f'[{bot_tok}] bot token only'
+            else:
+                return '[○] not configured'
         elif mode == 'discord':
             tok = '●' if self.config.dc_token else '○'
             return f'[{tok}] token set' if self.config.dc_token else '[○] not configured'
@@ -1465,11 +1582,41 @@ class CCCCSetupApp:
                 pass
 
         elif mode == 'slack':
-            token_field = TextArea(height=1, multiline=False, text=self.config.sl_token)
-            channel_field = TextArea(height=1, multiline=False, text=self.config.sl_chan)
+            # Create separate fields for bot and app tokens
+            bot_token_field = TextArea(
+                height=1,
+                multiline=False,
+                text=self.config.sl_bot_token,
+                style='class:input-field'
+            )
+            app_token_field = TextArea(
+                height=1,
+                multiline=False,
+                text=self.config.sl_app_token,
+                style='class:input-field'
+            )
+            channel_field = TextArea(
+                height=1,
+                multiline=False,
+                text=self.config.sl_chan,
+                style='class:input-field'
+            )
 
             def on_ok() -> None:
-                self.config.sl_token = token_field.text.strip()
+                # Validate token formats
+                bot_token = bot_token_field.text.strip()
+                app_token = app_token_field.text.strip()
+
+                # Bot token validation (xoxb- format)
+                if bot_token and not bot_token.startswith('xoxb-'):
+                    self._write_timeline("Warning: Bot token should start with 'xoxb-'", 'warning')
+
+                # App token validation (xapp- format)
+                if app_token and not app_token.startswith('xapp-'):
+                    self._write_timeline("Warning: App token should start with 'xapp-'", 'warning')
+
+                self.config.sl_bot_token = bot_token
+                self.config.sl_app_token = app_token
                 self.config.sl_chan = channel_field.text.strip()
                 self._close_dialog()
                 self._refresh_ui()
@@ -1484,23 +1631,34 @@ class CCCCSetupApp:
             dialog = Dialog(
                 title='Slack Configuration',
                 body=HSplit([
-                    Label(text='Bot Token:'),
-                    token_field,
+                    # Bot token section
+                    Label(text='Bot Token (xoxb-):'),
+                    bot_token_field,
                     Window(height=1),
+                    # App token section
+                    Label(text='App Token (xapp-):'),
+                    app_token_field,
+                    Window(height=1),
+                    # Channel ID section
                     Label(text='Channel ID:'),
                     channel_field,
+                    Window(height=1),
+                    # Help text
+                    Label(text='Bot token: Required for sending messages (outbound)'),
+                    Label(text='App token: Optional, enables receiving messages (inbound)'),
+                    Label(text='Format: xoxb- for bot token, xapp- for app token'),
                 ], key_bindings=kb_body),
                 buttons=[
                     Button('Save (Enter)', handler=on_ok),
                     Button('Cancel (Esc)', handler=self._close_dialog)
                 ],
-                width=Dimension(min=60, max=90, preferred=75),
+                width=Dimension(min=70, max=100, preferred=85),
                 modal=True
             )
 
             self._open_dialog(dialog, on_ok)
             try:
-                self.app.layout.focus(token_field)
+                self.app.layout.focus(bot_token_field)
             except Exception:
                 pass
 
@@ -1652,89 +1810,95 @@ class CCCCSetupApp:
             pass
 
     def _save_config(self) -> None:
-        """Save configuration and trigger orchestrator launch"""
-        cmds = self.home / "state" / "commands.jsonl"
-        cmds.parent.mkdir(parents=True, exist_ok=True)
+        """Save configuration directly to yaml files and trigger orchestrator launch"""
+        ts = time.time()
 
-        # No noisy debug line on timeline for file path
+        # 1. Save roles and mode to cli_profiles.yaml
+        # Load existing config to preserve delivery, tmux, and other settings
+        cli_profiles = _load_yaml(self.home, 'settings/cli_profiles.yaml')
 
-        # IMPORTANT: Use 'w' mode to overwrite, not 'a' to append
-        # Each setup completion should start fresh, not mix with previous sessions
-        with cmds.open('w', encoding='utf-8') as f:
-            ts = time.time()
+        # Update roles - preserve existing configuration, only update actor and cwd
+        roles = cli_profiles.get('roles') or {}
 
-            # Roles
-            for role in ['peerA', 'peerB', 'aux']:
-                actor = getattr(self.config, role, '')
-                if actor and actor != 'none':
-                    cmd = {
-                        "type": "roles-set-actor",
-                        "args": {"role": role, "actor": actor},
-                        "source": "tui",
-                        "ts": ts
-                    }
-                    f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
-                    # quiet: roles are reflected in status panel; avoid timeline noise
+        # Preserve existing role configurations, only update what we need to
+        for role_name, actor_name in [('peerA', self.config.peerA), ('peerB', self.config.peerB), ('aux', self.config.aux)]:
+            if actor_name and actor_name != 'none':
+                if role_name not in roles:
+                    roles[role_name] = {}
+                # Only update actor and cwd, preserve everything else (inbound_suffix, nudge_suffix, etc.)
+                roles[role_name]['actor'] = actor_name
+                roles[role_name]['cwd'] = '.'
 
-            # IM configuration via im-config command
-            if self.config.mode == 'telegram' and self.config.tg_token:
-                cmd = {
-                    "type": "im-config",
-                    "args": {
-                        "provider": "telegram",
-                        "token": self.config.tg_token
-                    },
-                    "source": "tui",
-                    "ts": ts
-                }
-                if self.config.tg_chat:
-                    cmd["args"]["chat_id"] = self.config.tg_chat
-                f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
-                # quiet: IM config persisted; avoid timeline noise
-            elif self.config.mode == 'slack' and self.config.sl_token:
-                cmd = {
-                    "type": "im-config",
-                    "args": {
-                        "provider": "slack",
-                        "bot_token": self.config.sl_token
-                    },
-                    "source": "tui",
-                    "ts": ts
-                }
-                if self.config.sl_chan:
-                    cmd["args"]["channel_id"] = self.config.sl_chan
-                f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
-                # quiet: IM config persisted; avoid timeline noise
-            elif self.config.mode == 'discord' and self.config.dc_token:
-                cmd = {
-                    "type": "im-config",
-                    "args": {
-                        "provider": "discord",
-                        "bot_token": self.config.dc_token
-                    },
-                    "source": "tui",
-                    "ts": ts
-                }
-                if self.config.dc_chan:
-                    cmd["args"]["channel_id"] = self.config.dc_chan
-                f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
-                # quiet: IM config persisted; avoid timeline noise
+        cli_profiles['roles'] = roles
 
-            # Launch command (triggers orchestrator to start peers)
-            cmd = {"type": "launch", "args": {"who": "both"}, "source": "tui", "ts": ts}
-            f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
-            # quiet: launch command queued; avoid timeline noise
+        # Update mode selection
+        cli_profiles['im_mode'] = self.config.mode
 
-        # Foreman yaml
+        # Write back, preserving all other fields (delivery, tmux, etc.)
+        _write_yaml(self.home, 'settings/cli_profiles.yaml', cli_profiles)
+
+        # 2. Save foreman config
         if self.config.foreman and self.config.foreman != 'none':
             _write_yaml(self.home, 'settings/foreman.yaml', {
                 'agent': self.config.foreman,
                 'enabled': True
             })
 
-        # IM provider configuration via commands.jsonl only
-        # Orchestrator will handle yaml updates through im-config command
-        # No direct yaml writes here to preserve complete configuration
+        # 3. Save IM provider configuration directly to yaml files
+        # Load existing configs to preserve advanced settings (routing, files, outbound, etc.)
+
+        if self.config.mode == 'telegram' and self.config.tg_token:
+            telegram_config = _load_yaml(self.home, 'settings/telegram.yaml')
+            telegram_config['token'] = self.config.tg_token
+            telegram_config['token_env'] = 'TELEGRAM_BOT_TOKEN'
+            telegram_config['autostart'] = True
+            if self.config.tg_chat:
+                telegram_config['allow_chats'] = [self.config.tg_chat]
+            _write_yaml(self.home, 'settings/telegram.yaml', telegram_config)
+
+        elif self.config.mode == 'slack' and self.config.sl_bot_token:
+            slack_config = _load_yaml(self.home, 'settings/slack.yaml')
+            # Save bot token
+            slack_config['bot_token'] = self.config.sl_bot_token
+            slack_config['bot_token_env'] = 'SLACK_BOT_TOKEN'
+            # Save app token if provided
+            if self.config.sl_app_token:
+                slack_config['app_token'] = self.config.sl_app_token
+                slack_config['app_token_env'] = 'SLACK_APP_TOKEN'
+            # Set autostart
+            slack_config['autostart'] = True
+            # Save channel configuration
+            if self.config.sl_chan:
+                channels = slack_config.get('channels') or {}
+                channels['to_user'] = [self.config.sl_chan]
+                channels['to_peer_summary'] = [self.config.sl_chan]
+                slack_config['channels'] = channels
+            _write_yaml(self.home, 'settings/slack.yaml', slack_config)
+
+        elif self.config.mode == 'discord' and self.config.dc_token:
+            discord_config = _load_yaml(self.home, 'settings/discord.yaml')
+            discord_config['bot_token'] = self.config.dc_token
+            discord_config['bot_token_env'] = 'DISCORD_BOT_TOKEN'
+            discord_config['autostart'] = True
+            if self.config.dc_chan:
+                try:
+                    ch_id = int(self.config.dc_chan)
+                except (ValueError, TypeError):
+                    ch_id = self.config.dc_chan
+                channels = discord_config.get('channels') or {}
+                channels['to_user'] = [ch_id]
+                channels['to_peer_summary'] = [ch_id]
+                discord_config['channels'] = channels
+            _write_yaml(self.home, 'settings/discord.yaml', discord_config)
+
+        # 4. Write launch command to trigger orchestrator startup
+        # IMPORTANT: Use 'w' mode to overwrite, not 'a' to append
+        # Each setup completion should start fresh, not mix with previous sessions
+        cmds = self.home / "state" / "commands.jsonl"
+        cmds.parent.mkdir(parents=True, exist_ok=True)
+        with cmds.open('w', encoding='utf-8') as f:
+            cmd = {"type": "launch", "args": {"who": "both"}, "source": "tui", "ts": ts}
+            f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
 
         # Confirmation flag
         (self.home / "state" / "settings.confirmed").write_text(str(int(ts)))
@@ -1922,6 +2086,48 @@ class CCCCSetupApp:
         except Exception:
             pass
 
+        # Read bridge warnings for missing optional dependencies (slack/discord)
+        warnings = []
+        try:
+            warn_path = self.home / "state" / "bridge-warnings.json"
+            if warn_path.exists():
+                w = json.loads(warn_path.read_text(encoding='utf-8')) or {}
+                # Show warnings only when corresponding provider is configured to run
+                # (avoid stale warnings from older sessions)
+                # Telegram rarely has dependency issues, but keep structure uniform.
+                # Slack: require autostart and bot_token in settings/slack.yaml
+                # Discord: require autostart and bot_token in settings/discord.yaml
+                def _provider_enabled(name: str) -> bool:
+                    try:
+                        import yaml  # local import
+                        cfgp = self.home / "settings" / f"{name}.yaml"
+                        if not cfgp.exists():
+                            return False
+                        cfg = yaml.safe_load(cfgp.read_text(encoding='utf-8')) or {}
+                        if not bool(cfg.get('autostart', name == 'telegram')):
+                            return False
+                        if name == 'telegram':
+                            return bool(cfg.get('token'))
+                        if name == 'slack':
+                            return bool(cfg.get('bot_token'))
+                        if name == 'discord':
+                            return bool(cfg.get('bot_token'))
+                    except Exception:
+                        return False
+                    return False
+                for adapter in ("telegram", "slack", "discord"):
+                    ent = w.get(adapter)
+                    if not ent:
+                        continue
+                    if not _provider_enabled(adapter):
+                        continue
+                    msg = str(ent.get("message") or "")
+                    if msg:
+                        short = msg if len(msg) <= 120 else (msg[:117] + "…")
+                        warnings.append(f"{adapter}: {short}")
+        except Exception:
+            pass
+
         # Read ledger.jsonl for activity stats (last 100 entries)
         ledger_items = []
         try:
@@ -2039,13 +2245,22 @@ class CCCCSetupApp:
         row3 = f"Mailbox: {mailbox_str} │ Active: {active_handoffs} handoffs │ Last: {last_activity_str}"
 
         # === Build formatted text with proper styling ===
-        text = [
+        text = []
+        # Optional row 0: warnings banner when present
+        if warnings:
+            warn_line = '  • '.join(warnings)
+            text.extend([
+                ('class:warning', '⚠ Dependencies: '),
+                ('class:warning', warn_line),
+                ('', '\n')
+            ])
+        text.extend([
             ('class:section', '─' * 80 + '\n'),
             ('class:info', row1), ('', '\n'),
             ('class:info', row2), ('', '\n'),
             ('class:info', row3), ('', '\n'),
             ('class:section', '─' * 80),
-        ]
+        ])
 
         return text
 
@@ -2714,6 +2929,12 @@ class CCCCSetupApp:
 
                         # Update status panel
                         self._update_status()
+
+                # Request a redraw so footer warnings/status reflect latest files
+                try:
+                    self.app.invalidate()
+                except Exception:
+                    pass
 
                 await asyncio.sleep(2.0)
 
