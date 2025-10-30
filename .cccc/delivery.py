@@ -38,8 +38,9 @@ def paste_to_pane(pane: str, text: str, profile: Dict[str,Any]):
     _tmux("paste-buffer","-p","-t",pane,"-b",buf)
     # Small pause so the paste buffer is not swallowed; stabilizes TUI input boxes
     time.sleep(0.15)
-    # After paste, send a configurable sequence of submit keys
-    keys = list(profile.get("post_paste_keys") or ["Enter", "Enter", "C-m"])
+    # After paste, send a configurable sequence of submit keys.
+    # Default to a single Enter for safety if not specified in the actor profile.
+    keys = list(profile.get("post_paste_keys") or ["Enter"])
     for k in keys:
         _tmux("send-keys","-t",pane,k)
     _tmux("delete-buffer","-b",buf)

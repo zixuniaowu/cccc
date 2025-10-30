@@ -2359,10 +2359,21 @@ def main(home: Path, session_name: Optional[str] = None):
                                 seq = fn0[:6]
                                 path0 = _inbox_dir(home, label)/fn0
                                 preview = _safe_headline(path0)
-                                suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
+                                # Refresh live profiles/aux for nudge suffix to avoid stale aux/keys
+                                try:
+                                    live = load_profiles(home)
+                                    profA_live = (live.get('peerA') or {}).get('profile') or {}
+                                    profB_live = (live.get('peerB') or {}).get('profile') or {}
+                                    aux_live = live.get('aux') or {}
+                                    aux_mode_live = 'on' if str((aux_live.get('actor') or '')).strip() else 'off'
+                                    aux_inv_live = str(aux_live.get('invoke_command') or '')
+                                except Exception:
+                                    profA_live, profB_live = profileA, profileB
+                                    aux_mode_live, aux_inv_live = aux_mode, aux_command
+                                suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profA_live, profileB=profB_live, aux_mode=aux_mode_live, aux_invoke=aux_inv_live)
                                 custom = _compose_detailed_nudge(seq, preview, (_inbox_dir(home, label).as_posix()), suffix=suffix)
                                 pane = paneA if label == "PeerA" else paneB
-                                prof = profileA if label == "PeerA" else profileB
+                                prof = profA_live if label == "PeerA" else profB_live
                                 nudge_api.maybe_send_nudge(home, label, pane, prof, custom_text=custom, force=True)
                                 try:
                                     last_nudge_ts[label] = time.time()
@@ -2415,6 +2426,17 @@ def main(home: Path, session_name: Optional[str] = None):
         # Periodic NUDGE: when inbox non-empty and enough time has passed since the last reminder
         try:
             nowt = time.time()
+            # Refresh live profiles and aux bindings once per loop to ensure correct mode/keys for keepalive
+            try:
+                live = load_profiles(home)
+                profA_live = (live.get('peerA') or {}).get('profile') or {}
+                profB_live = (live.get('peerB') or {}).get('profile') or {}
+                aux_live = live.get('aux') or {}
+                aux_mode_live = 'on' if str((aux_live.get('actor') or '')).strip() else 'off'
+                aux_inv_live = str(aux_live.get('invoke_command') or '')
+            except Exception:
+                profA_live, profB_live = profileA, profileB
+                aux_mode_live, aux_inv_live = aux_mode, aux_command
             for label, pane in (("PeerA", paneA), ("PeerB", paneB)):
                 inbox = _inbox_dir(home, label)
                 files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
@@ -2424,11 +2446,15 @@ def main(home: Path, session_name: Optional[str] = None):
                 _maybe_prepend_preamble_inbox(label)
                 # Coalesced NUDGE: send only when needed; backoff otherwise
                 if label == "PeerA":
-                    sent = nudge_api.maybe_send_nudge(home, label, pane, profileA,
-                                              suffix=nudge_api.compose_nudge_suffix_for('PeerA', profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command))
+                    sent = nudge_api.maybe_send_nudge(
+                        home, label, pane, profA_live,
+                        suffix=nudge_api.compose_nudge_suffix_for('PeerA', profileA=profA_live, profileB=profB_live, aux_mode=aux_mode_live, aux_invoke=aux_inv_live)
+                    )
                 else:
-                    sent = nudge_api.maybe_send_nudge(home, label, pane, profileB,
-                                              suffix=nudge_api.compose_nudge_suffix_for('PeerB', profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command))
+                    sent = nudge_api.maybe_send_nudge(
+                        home, label, pane, profB_live,
+                        suffix=nudge_api.compose_nudge_suffix_for('PeerB', profileA=profA_live, profileB=profB_live, aux_mode=aux_mode_live, aux_invoke=aux_inv_live)
+                    )
                 if sent:
                     last_nudge_ts[label] = nowt
         except Exception:
