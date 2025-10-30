@@ -244,6 +244,7 @@ def check_actor_available(actor_name: str, home: Path) -> Tuple[bool, str]:
         return True, "Disabled"
 
     # Try to load custom command from agents.yaml
+    command_from_config = None
     try:
         import yaml
         agents_file = home / "settings" / "agents.yaml"
@@ -259,6 +260,7 @@ def check_actor_available(actor_name: str, home: Path) -> Tuple[bool, str]:
                     command = peer_config.get('command', '')
 
                     if command:
+                        command_from_config = command
                         # Expand environment variables (e.g., $CLAUDE_I_CMD)
                         command = os.path.expandvars(command)
                         # Extract first token (command name/path)
@@ -272,12 +274,18 @@ def check_actor_available(actor_name: str, home: Path) -> Tuple[bool, str]:
                             # Check in PATH
                             if shutil.which(cmd_name):
                                 return True, "Installed"
+                        # Command configured but not found - don't fallback
+                        # Return false immediately with installation hint
+                        hint = install_hints.get(actor_name, f'{cmd_name} not found in PATH')
+                        return False, hint
     except Exception:
         pass  # Silently fail and try fallback
 
-    # Fallback: check default command name in PATH
-    if shutil.which(actor_name):
-        return True, "Installed"
+    # Fallback: ONLY if no command was configured in agents.yaml
+    # This prevents false positives (e.g., 'cursor' editor vs 'cursor-agent' CLI)
+    if command_from_config is None:
+        if shutil.which(actor_name):
+            return True, "Installed"
 
     # Not found - provide accurate installation hints
     install_hints = {
@@ -286,6 +294,10 @@ def check_actor_available(actor_name: str, home: Path) -> Tuple[bool, str]:
         'gemini': 'npm install -g @google/gemini-cli',
         'droid': 'curl -fsSL https://app.factory.ai/cli | sh',
         'opencode': 'npm i -g opencode-ai',
+        'kilocode': 'npm install -g @kilocode/cli',
+        'copilot': 'npm install -g @github/copilot',
+        'auggie': 'npm install -g @augmentcode/auggie',
+        'cursor': 'curl https://cursor.com/install -fsS | bash',
     }
 
     hint = install_hints.get(actor_name, 'Not found in PATH')
@@ -554,12 +566,12 @@ class CCCCSetupApp:
             # Update all navigation items based on focus
             for i, item in enumerate(self.navigation_items):
                 if i == self.focused_option_index:
-                    # Focused item - highlight with bright color
+                    # Focused item - highlight with GitHub green
                     if item['type'] == 'button':
-                        item['widget'].style = "#5fff7f bold"
+                        item['widget'].style = "#3fb950 bold"  # GitHub green
                     elif item['type'] == 'input':
                         # Input fields get border style to show focus
-                        item['widget'].style = "#ffffff bg:#303030"
+                        item['widget'].style = "#c9d1d9 bg:#0d1117"  # High contrast
                 else:
                     # Unfocused items - normal styling
                     if item['type'] == 'button':
@@ -567,26 +579,26 @@ class CCCCSetupApp:
                         if config_name in ['peerA', 'peerB']:
                             current_value = getattr(self.config, config_name, None)
                             if current_value and self.actor_availability.get(current_value, (False, ""))[0]:
-                                item['widget'].style = "bold green"
+                                item['widget'].style = "#58a6ff"  # Blue - configured
                             else:
-                                item['widget'].style = "bold red"
+                                item['widget'].style = "#f85149"  # Red - missing
                         elif config_name == 'aux':
                             current_value = getattr(self.config, 'aux', None)
                             if current_value and current_value != 'none':
-                                item['widget'].style = "bold green"
+                                item['widget'].style = "#58a6ff"  # Blue - configured
                             else:
-                                item['widget'].style = "bold yellow"
+                                item['widget'].style = "#8b949e"  # Gray - optional
                         elif config_name == 'foreman':
                             current_value = getattr(self.config, 'foreman', None)
                             if current_value and current_value != 'none':
-                                item['widget'].style = "bold green"
+                                item['widget'].style = "#58a6ff"  # Blue - configured
                             else:
-                                item['widget'].style = "bold yellow"
+                                item['widget'].style = "#8b949e"  # Gray - optional
                         elif config_name == 'mode':
-                            item['widget'].style = "bold cyan"
+                            item['widget'].style = "#58a6ff"  # Blue - mode indicator
                     elif item['type'] == 'input':
                         # Unfocused input fields
-                        item['widget'].style = "#d0d0d0 bg:#303030"
+                        item['widget'].style = "#8b949e bg:#161b22"  # Muted background
 
             # Invalidate UI to refresh
             if hasattr(self, 'app'):
@@ -707,8 +719,8 @@ class CCCCSetupApp:
         actor_configured = self.actor_availability[self.current_actor]['configured']
         foreman_configured = self.foreman_availability[self.current_foreman]['configured']
 
-        self.config_buttons['actor'].style = "bold green" if actor_configured else "bold red"
-        self.config_buttons['foreman'].style = "bold green" if foreman_configured else "bold red"
+        self.config_buttons['actor'].style = "#3fb950" if actor_configured else "#f85149"  # GitHub colors
+        self.config_buttons['foreman'].style = "#3fb950" if foreman_configured else "#f85149"
 
     def _create_ui(self):
         """Create UI components"""
@@ -743,57 +755,92 @@ class CCCCSetupApp:
     def _create_styles(self):
         """Create styles"""
         self.style = Style.from_dict({
-            # Base styles
-            'title': '#5fd7ff bold',                # Cyan title
-            'subtitle': '#87afff',                 # Light blue subtitle
-            'heading': '#ffaf00 bold',             # Orange heading
-            'separator': '#6c6c6c',                # Gray separator
-            'version': '#767676',                  # Dark gray version
-            'ascii-art': '#5f87af',                # Light blue ASCII art
-
-            # Config button styles
-            'config-button': '#d0d0d0',            # Default button
-            'config-button.focused': '#5fff7f bold',  # Bright green when focused
-            'config-button.configured': '#5fff5f bold',   # Green for configured
-            'config-button.unconfigured': '#ff5f5f bold', # Red for unconfigured
-
-            # Status indicators
-            'status-indicator': '#5fff5f',         # Status indicator
-            'status-text': '#d0d0d0',              # Status text
-
-            # User message styles
-            'msg.user': '#ffd787',             # Yellow for user
-            'msg.error': '#ff5f5f bold',       # Red for errors
-            'msg.debug': '#6c6c6c',            # Gray for debug
-
-            # Status indicators
-            'status.connected': '#5fff5f',     # Green dot for connected
-            'status.disconnected': '#ff5f5f',  # Red dot for disconnected
-            'status.idle': '#6c6c6c',          # Gray dot for idle
-
-            # UI components
-            'dialog': 'bg:#1c1c1c',
-            'dialog.body': 'bg:#262626',
-            'button': 'bg:#3a3a3a #d0d0d0',
-            'button.focused': 'bg:#5f87af #ffffff bold',
-
-            # Completion menu
-            'completion-menu': 'bg:#262626 #d0d0d0',
-            'completion-menu.completion': 'bg:#262626 #d0d0d0',
-            'completion-menu.completion.current': 'bg:#5f87af #ffffff bold',
-            'completion-menu.meta': 'bg:#262626 #87afaf',
-            'completion-menu.meta.current': 'bg:#5f87af #d0d0d0',
-
-            # Prompt
-            'prompt': '#5fd7ff bold',          # Cyan prompt symbol
-            'prompt.search': '#ffaf00 bold',   # Orange for search mode
-
-            # Input fields
-            'input-field': '#ffffff bg:#303030',  # White text on dark background
-
-            # Footer warnings (dependencies, etc.)
-            'warning': '#ffaf00 bold',
-            'error': '#ff5f5f bold',
+            # === 2025 Modern Professional TUI Color Scheme ===
+            # Inspired by: GitHub Dark, VS Code Dark+, JetBrains New UI
+            
+            # Base text colors - High contrast, easy to read
+            'title': '#58a6ff bold',                    # GitHub blue - Professional headers
+            'title.bold': '#58a6ff bold underline',     # Extra emphasis for titles
+            'subtitle': '#8b949e',                      # Muted gray - Secondary text
+            'heading': '#f0883e bold',                  # Warm orange - Section headers
+            'separator': '#30363d',                     # Subtle gray - Visual breaks
+            'version': '#6e7681',                       # Quiet gray - Version info
+            'ascii-art': '#58a6ff',                     # Match title blue
+            
+            # Section markers - Clear hierarchy
+            'section': '#58a6ff',                       # Blue for sections
+            'section.bold': '#58a6ff bold',             # Bold sections
+            
+            # Config button styles - Traffic light system
+            'config-button': '#c9d1d9',                 # Default: Bright white-gray
+            'config-button.focused': '#3fb950 bold',    # Focused: GitHub green
+            'config-button.configured': '#58a6ff',      # Configured: Blue indicator
+            'config-button.unconfigured': '#f85149',    # Unconfigured: Red warning
+            
+            # Status indicators - Semantic colors
+            'status-indicator': '#3fb950',              # Green for active
+            'status-text': '#c9d1d9',                   # High contrast text
+            'success': '#3fb950 bold',                  # Success messages
+            'success.bold': '#3fb950 bold',             # Success emphasis
+            
+            # Message type styles - Clear differentiation
+            'msg.user': '#ffa657',                      # Warm amber - User input
+            'msg.system': '#58a6ff',                    # Blue - System messages
+            'msg.error': '#f85149 bold',                # Red - Errors
+            'msg.warning': '#d29922',                   # Orange - Warnings
+            'msg.info': '#79c0ff',                      # Light blue - Info
+            'msg.debug': '#6e7681',                     # Muted gray - Debug
+            
+            # Status dots - Traffic light semantic
+            'status.connected': '#3fb950',              # Green - Connected
+            'status.disconnected': '#f85149',           # Red - Disconnected  
+            'status.idle': '#6e7681',                   # Gray - Idle
+            'status.warning': '#d29922',                # Orange - Warning
+            
+            # Dialog/Modal components - Better contrast
+            'dialog': 'bg:#161b22',                     # Darker background for depth
+            'dialog.body': 'bg:#0d1117',                # Even darker for content area
+            'dialog.border': '#30363d',                 # Subtle border
+            'dialog.frame.label': '#c9d1d9',            # Frame labels - high contrast
+            
+            # Buttons - Modern flat design with clear states
+            'button': 'bg:#21262d #c9d1d9',             # Default: Elevated gray
+            'button.focused': 'bg:#238636 #ffffff bold', # Focused: GitHub green
+            'button.arrow': '#8b949e',                  # Arrow indicators
+            
+            # Radio list - Clear selection and proper visibility
+            'radio-list': '#c9d1d9',                    # Container - high contrast
+            'radio': '#c9d1d9',                         # Default text - high contrast
+            'radio-selected': '#3fb950 bold',           # Selected: Green
+            'radio-checked': '#58a6ff bold',            # Checked: Blue
+            'radio-number': '#8b949e',                  # Numbers - muted
+            'radio.focused': '#58a6ff bold',            # Focused: Blue
+            'radio.disabled': '#6e7681',                # Disabled: Dark gray
+            
+            # Completion menu - Polished dropdown
+            'completion-menu': 'bg:#161b22 #c9d1d9',              # Menu background
+            'completion-menu.completion': 'bg:#161b22 #c9d1d9',   # Item default
+            'completion-menu.completion.current': 'bg:#1f6feb #ffffff bold', # Selected item
+            'completion-menu.meta': 'bg:#161b22 #8b949e',         # Meta info
+            'completion-menu.meta.current': 'bg:#1f6feb #c9d1d9', # Selected meta
+            
+            # Prompt - Clear command indicator
+            'prompt': '#58a6ff bold',                   # Blue - Command prompt
+            'prompt.search': '#d29922 bold',            # Orange - Search mode
+            
+            # Input fields - Clear editing area
+            'input-field': '#c9d1d9 bg:#0d1117',        # High contrast input
+            'input-frame': '#c9d1d9',                   # Frame border
+            
+            # Info/Help text - Subtle but readable
+            'hint': '#8b949e',                          # Muted gray - Help text (increased contrast)
+            'info': '#79c0ff',                          # Light blue - Information
+            'value': '#a5d6ff',                         # Bright blue - Values
+            
+            # Warnings and errors - Clear semantic meaning
+            'warning': '#d29922 bold',                  # Orange - Warnings
+            'error': '#f85149 bold',                    # Red - Errors
+            'critical': '#da3633 bold',                 # Dark red - Critical
         })
 
     def _load_existing_config(self) -> None:
@@ -1341,17 +1388,19 @@ class CCCCSetupApp:
         max_name_len = max(len(a) for a in self.actors_available)
         max_name_len = max(max_name_len, 4)  # At least 4 for 'none'
 
-        # Build choices with availability status
+        # Build choices - ONLY include available actors
         choices = []
+        unavailable_actors = []  # Track unavailable for info message
+        
         for actor in self.actors_available:
             available, hint = self.actor_availability.get(actor, (True, "Unknown"))
             if available:
-                # Installed: show checkmark
+                # Installed: show checkmark and add to choices
                 display_text = f'  {actor.ljust(max_name_len)}  ✓  {hint}'
+                choices.append((actor, display_text))
             else:
-                # Not installed: show cross and hint
-                display_text = f'  {actor.ljust(max_name_len)}  ✗  {hint}'
-            choices.append((actor, display_text))
+                # Not installed: track but don't add to choices
+                unavailable_actors.append(f'{actor}: {hint}')
 
         # Add 'none' option for optional roles
         if role == 'aux':
@@ -1369,9 +1418,9 @@ class CCCCSetupApp:
         current = getattr(self.config, role, '')
 
         # Use the reliable manual dialog implementation
-        self._show_actor_dialog_fallback(role, choices, title, current)
+        self._show_actor_dialog_fallback(role, choices, title, current, unavailable_actors)
 
-    def _show_actor_dialog_fallback(self, role: str, choices, title: str, current: str) -> None:
+    def _show_actor_dialog_fallback(self, role: str, choices, title: str, current: str, unavailable_actors: list) -> None:
         """Simple but effective: Standard dialog with clear UI flow"""
 
         def on_ok() -> None:
@@ -1395,14 +1444,27 @@ class CCCCSetupApp:
         def _escape(event):
             on_cancel()
 
+        # Build dialog body with info about unavailable actors
+        body_widgets = [
+            Label(text='✓ = Installed and ready to use', style='class:hint'),
+        ]
+        
+        if unavailable_actors:
+            body_widgets.append(Label(text='', style=''))  # Spacing
+            body_widgets.append(Label(text='⚠ Unavailable actors (not shown in list):', style='class:warning'))
+            for unavail in unavailable_actors[:3]:  # Show max 3
+                body_widgets.append(Label(text=f'  ✗ {unavail}', style='class:hint'))
+            if len(unavailable_actors) > 3:
+                body_widgets.append(Label(text=f'  ... and {len(unavailable_actors) - 3} more', style='class:hint'))
+        
+        body_widgets.append(Label(text='', style=''))  # Spacing
+        body_widgets.append(Label(text='↑↓: Navigate  |  Space: select  |  Tab: to buttons  |  Enter: confirm', style='class:hint'))
+        body_widgets.append(Window(height=1))
+        body_widgets.append(radio)
+
         dialog = Dialog(
             title=title,
-            body=HSplit([
-                Label(text='✓ = Installed    ✗ = Not installed', style='class:hint'),
-                Label(text='↑↓: Navigate  |  Space: select  |  Tab: to buttons  |  Enter: confirm', style='class:hint'),
-                Window(height=1),
-                radio,
-            ], key_bindings=kb_body),
+            body=HSplit(body_widgets, key_bindings=kb_body),
             buttons=[
                 Button('OK', handler=on_ok),
                 Button('Cancel', handler=on_cancel)
@@ -1422,8 +1484,28 @@ class CCCCSetupApp:
         if self.modal_open:
             return
 
-        choices = [('none', 'none'), ('reuse_aux', "reuse aux's agent")]
-        choices.extend([(a, a) for a in self.actors_available])
+        # Find longest actor name for proper alignment (same as aux dialog)
+        max_name_len = max(len(a) for a in self.actors_available)
+        max_name_len = max(max_name_len, 10)  # At least 10 for 'reuse_aux'
+
+        # Build choices - ONLY include available actors
+        choices = [
+            ('none', f'  {"none".ljust(max_name_len)}  -  Disabled'),
+            ('reuse_aux', f'  {"reuse_aux".ljust(max_name_len)}  →  Use same as Aux agent'),
+        ]
+        
+        unavailable_actors = []  # Track unavailable for info message
+        
+        # Add actors with availability check
+        for actor in self.actors_available:
+            available, hint = self.actor_availability.get(actor, (True, "Unknown"))
+            if available:
+                # Installed: show checkmark and add to choices
+                display_text = f'  {actor.ljust(max_name_len)}  ✓  {hint}'
+                choices.append((actor, display_text))
+            else:
+                # Not installed: track but don't add to choices
+                unavailable_actors.append(f'{actor}: {hint}')
 
         def on_ok() -> None:
             """Called when user clicks OK"""
@@ -1446,19 +1528,33 @@ class CCCCSetupApp:
         def _escape(event):
             on_cancel()
 
+        # Build dialog body with info
+        body_widgets = [
+            Label(text='Select foreman agent for scheduled tasks', style='class:info'),
+            Label(text='✓ = Installed    → = Special option', style='class:hint'),
+        ]
+        
+        if unavailable_actors:
+            body_widgets.append(Label(text='', style=''))  # Spacing
+            body_widgets.append(Label(text='⚠ Unavailable actors (not shown in list):', style='class:warning'))
+            for unavail in unavailable_actors[:3]:  # Show max 3
+                body_widgets.append(Label(text=f'  ✗ {unavail}', style='class:hint'))
+            if len(unavailable_actors) > 3:
+                body_widgets.append(Label(text=f'  ... and {len(unavailable_actors) - 3} more', style='class:hint'))
+        
+        body_widgets.append(Label(text='', style=''))  # Spacing
+        body_widgets.append(Label(text='↑↓: Navigate  |  Space: select  |  Tab: to buttons  |  Enter: confirm', style='class:hint'))
+        body_widgets.append(Window(height=1))
+        body_widgets.append(radio)
+
         dialog = Dialog(
             title='Foreman Agent',
-            body=HSplit([
-                Label(text='Select foreman agent for scheduled tasks'),
-                Label(text='↑↓: Navigate  |  Space: select  |  Tab: to buttons  |  Enter: confirm', style='class:hint'),
-                Window(height=1),
-                radio,
-            ], key_bindings=kb_body),
+            body=HSplit(body_widgets, key_bindings=kb_body),
             buttons=[
                 Button('OK', handler=on_ok),
                 Button('Cancel', handler=on_cancel)
             ],
-            width=Dimension(min=60, max=80, preferred=70),
+            width=Dimension(min=70, max=90, preferred=80),
             modal=True
         )
 
@@ -1520,7 +1616,7 @@ class CCCCSetupApp:
         dialog = Dialog(
             title='Interaction Mode',
             body=HSplit([
-                Label(text='How to interact with CCCC?'),
+                Label(text='How to interact with CCCC?', style='class:hint'),
                 Label(text='↑↓: Navigate  |  Space: select  |  Tab: to buttons  |  Enter: confirm', style='class:hint'),
                 Window(height=1),
                 radio,

@@ -87,4 +87,68 @@ actors:
     capabilities: "Solid coding CLI; steady long sessions; no special env required"
     env_require: []
 
+  kilocode:
+    # Can be bound to Peer and Aux roles
+    peer:
+      command: "kilocode"
+      input_mode: "paste"
+      post_paste_keys: ["Enter"]
+      send_sequence: "Enter"
+      idle_quiet_seconds: 1.0
+      prompt_regex: ''
+      busy_regexes: []
+    aux:
+      invoke_command: 'kilocode --auto "{prompt}"'
+      rate_limit_per_minute: 2
+    capabilities: "AI-powered coding assistant with autonomous capabilities"
+    env_require: []
+
+  copilot:
+    # Can be bound to Peer and Aux roles (GitHub Copilot CLI)
+    peer:
+      command: "copilot"
+      input_mode: "paste"
+      post_paste_keys: ["Enter"]
+      send_sequence: "Enter"
+      idle_quiet_seconds: 1.0
+      prompt_regex: ''
+      busy_regexes: []
+    aux:
+      invoke_command: 'copilot -p "{prompt}" --allow-all-tools'
+      rate_limit_per_minute: 2
+    capabilities: "GitHub Copilot CLI with tool access; strong coding; integrated with GitHub"
+    env_require: []
+
+  auggie:
+    # Can be bound to Peer and Aux roles (Auggie CLI)
+    peer:
+      command: "auggie"
+      input_mode: "paste"
+      post_paste_keys: ["Enter"]
+      send_sequence: "Enter"
+      idle_quiet_seconds: 1.0
+      prompt_regex: ''
+      busy_regexes: []
+    aux:
+      invoke_command: 'auggie --print "{prompt}"'
+      rate_limit_per_minute: 2
+    capabilities: "Augment Code AI assistant; solid coding support; lightweight"
+    env_require: []
+
+  cursor:
+    # Can be bound to Peer and Aux roles (Cursor CLI)
+    peer:
+      command: "cursor-agent"
+      input_mode: "paste"
+      post_paste_keys: ["Enter"]
+      send_sequence: "Enter"
+      idle_quiet_seconds: 1.0
+      prompt_regex: ''
+      busy_regexes: []
+    aux:
+      invoke_command: 'cursor-agent -p "{prompt}"'
+      rate_limit_per_minute: 2
+    capabilities: "Cursor AI agent; strong coding; editor-integrated experience"
+    env_require: []
+
 # Note: Bindings (which actor each role uses) live in cli_profiles.yaml under roles.*.actor
