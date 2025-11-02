@@ -2,7 +2,7 @@ actors:
   claude:
     peer:
       command: "claude --dangerously-skip-permissions"
-      input_mode: "type"
+      input_mode: "paste"
       post_paste_keys: ["Enter", "Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
