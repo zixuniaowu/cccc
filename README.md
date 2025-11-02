@@ -1,4 +1,4 @@
-# CCCC Pair — Modern Multi-Agent Orchestrator (2025)
+# CCCC Pair — Modern Multi-Agent Orchestrator
 
 Two always-on AI peers co-drive your repository as equals. They plan, build, critique, and converge through evidence — not just talk. You stay in control via an interactive TUI or your team chat.
 
@@ -6,7 +6,7 @@ Two always-on AI peers co-drive your repository as equals. They plan, build, cri
 
 ---
 
-## 🖼️ Interactive TUI at a Glance
+## 🖼️ CCCC at a Glance
 
 ![CCCC TUI Screenshot](./screenshots/tui-main.png)
 
@@ -84,22 +84,22 @@ CCCC features a modern, keyboard-driven TUI with two main modes:
 ```
 ┌─ CCCC Setup ─────────────────────────────────────────────────────────┐
 │ ⬆️⬇️ Navigate  │ Enter Apply  │ Esc Cancel  │ /setup Toggle         │
-├───────────────────────────────────────────────────────────────────────┤
+├──────────────────────────────────────────────────────────────────────┤
 │ Roles (select actors for each peer):                                 │
-│   peerA: claude          peerB: codex                                 │
-│   [✓] set peerA→claude  [✓] set peerB→codex                         │
+│   peerA: claude          peerB: codex                                │
+│   [✓] set peerA→claude  [✓] set peerB→codex                        │
 │   [ ] set peerA→gemini  [ ] set peerB→droid                          │
-│   aux: none                                                           │
-│   [✓] set aux→none      [ ] set aux→gemini                           │
-│                                                                       │
-│ CLI Availability:                                                     │
-│   ✓ PeerA (claude): Available                                        │
-│   ✓ PeerB (codex): Available                                         │
-│                                                                       │
-│ Telegram/Slack/Discord:                                               │
+│   aux: none                                                          │
+│   [✓] set aux→none      [ ] set aux→gemini                          │
+│                                                                      │
+│ CLI Availability:                                                    │
+│   ✓ PeerA (claude): Available                                       │
+│   ✓ PeerB (codex): Available                                        │
+│                                                                      │
+│ Telegram/Slack/Discord:                                              │
 │   configured: YES   running: YES   autostart: YES                    │
 │   [ ] Set token...  [ ] Token unset                                  │
-└───────────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Runtime Interface (Real-Time Collaboration View)
@@ -111,7 +111,7 @@ CCCC features a modern, keyboard-driven TUI with two main modes:
 │ [12:34:56] SYS Orchestrator ready    │ Connection: ● Connected       │
 │ [12:35:01] PeerA: Analyzing auth...  │ PeerA: 12 handoffs (next: 18) │
 │ [12:35:15] PeerB: Running tests...   │ PeerB: 11 handoffs (next: 19) │
-│ [12:35:30] System: Tests passed ✓    │ Updated: 2s ago               │
+│ [12:35:30] System: Tests passed ✓    │ Updated: 2s ago              │
 │ [12:35:45] You > PeerA: Review PR    │ Foreman: next @ 15:00         │
 │ [12:36:00] PeerA: LGTM, approved     │                               │
 │                                      │                               │
@@ -119,8 +119,8 @@ CCCC features a modern, keyboard-driven TUI with two main modes:
 ├─ Input ──────────────────────────────┴───────────────────────────────┤
 │ ❯ /help                              [Tab: complete | Up/Down: hist] │
 ├─ Shortcuts ──────────────────────────────────────────────────────────┤
-│ Ctrl+A/E: line │ Ctrl+W: del word │ PageUp/Down: scroll │ /quit    │
-└───────────────────────────────────────────────────────────────────────┘
+│ Ctrl+A/E: line │ Ctrl+W: del word │ PageUp/Down: scroll │ /quit      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 **Key Features:**
@@ -642,33 +642,5 @@ CCCC follows "convention over configuration" principles. Sensible defaults work 
 ### Where can I see real-world examples?
 
 Open an issue or start a discussion in the repo. We love shipping with teams who care about clarity, evidence, and taste.
-
----
-
-## Roadmap & Contributions
-
-CCCC is under active development. Current focus:
-
-- **v0.3.x** (stable): TUI refinements, bridge stability, Foreman enhancements
-- **v0.4.x** (planned): SQLite ledger, evidence cards, dashboard UI
-- **v0.5.x** (planned): Plugin system, third-party roles, advanced routing
-
-**Contributions welcome!** See `CONTRIBUTING.md` for guidelines.
-
----
-
-## License
-
-[Your License Here — e.g., MIT, Apache 2.0]
-
----
-
-## Credits
-
-Built with ❤️ by developers who believe in:
-- Evidence over talk
-- Collaboration over isolation
-- Clarity over ceremony
-- Taste over hype
 
 **CCCC Pair** — Modern orchestration for modern teams. 🚀
