@@ -4,6 +4,8 @@ Two always-on AI peers co-drive your repository as equals. They plan, build, cri
 
 **🎯 Production-grade orchestrator** • **🖥️ Zero-config TUI** • **📊 Real-time monitoring** • **🧪 Evidence-driven workflow**
 
+[![Telegram Community](https://img.shields.io/badge/Telegram-Join_Community-2CA5E0?style=flat&logo=telegram&logoColor=white)](https://t.me/ccccpair)
+
 ---
 
 ## 🖼️ CCCC at a Glance
@@ -642,5 +644,13 @@ CCCC follows "convention over configuration" principles. Sensible defaults work 
 ### Where can I see real-world examples?
 
 Open an issue or start a discussion in the repo. We love shipping with teams who care about clarity, evidence, and taste.
+
+### How do I connect with the CCCC community?
+
+**📱 Join our Telegram group**: [t.me/ccccpair](https://t.me/ccccpair)
+
+Share workflows, troubleshoot issues, discuss features, and connect with other users building with CCCC. All questions and experience levels welcome!
+
+---
 
 **CCCC Pair** — Modern orchestration for modern teams. 🚀
