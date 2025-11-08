@@ -1228,7 +1228,8 @@ def main():
                     _maybe_hint(chat_id, int((msg.get('from') or {}).get('id', 0) or 0))
                     continue
             # Enforce explicit routing for groups
-            has_explicit = bool(re.match(r"^(?:/(?:a|b|both)(?:@\S+)?|(?:a[:：]|b[:：]|both[:：]))", (route_source or '').strip(), re.I))
+            # FIX: Add word boundary \b to prevent /boht matching /b
+            has_explicit = bool(re.match(r"^(?:/(?:a|b|both)\b(?:@\S+)?|(?:a[:：]|b[:：]|both[:：]))", (route_source or '').strip(), re.I))
             dr = dm_route_default if is_dm else default_route
             if (not is_dm) and require_explicit and not has_explicit and not (msg.get('document') or msg.get('photo')):
                 _maybe_hint(chat_id, int((msg.get('from') or {}).get('id', 0) or 0))

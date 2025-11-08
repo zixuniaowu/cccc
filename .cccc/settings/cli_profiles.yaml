@@ -58,12 +58,11 @@ roles:
         global goal; If nothing critical to add other than an pure ACK, stay silent
         and do not reply. ultrathink'
       from_system: ' ultrathink'
-    nudge_suffix: ' Send messages by updating message files only (ASCII). If inbox
-      is empty or whenever you are idle: do ONE high-value item with higher-order
-      thinking - (A) strategic review (drift/priority/ideas), (B) tactical review
-      or rework (REV/Pivot), or (C) any other works which are truly valuable. Send
-      a message only with new evidence, a risk/pivot, or a decisional ask; otherwise
-      stay silent. ultrathink'
+    nudge_suffix: ' To send: OVERWRITE (not append) .cccc/mailbox/peerA/to_peer.md
+      or to_user.md (NOT peerB/). If inbox empty or idle: do ONE high-value item
+      - (A) strategic review (drift/priority/ideas), (B) tactical review or rework
+      (REV/Pivot), or (C) truly valuable work. Send only with new evidence, risk/pivot,
+      or decisional ask; otherwise stay silent. ultrathink'
   peerB:
     actor: codex
     cwd: .
@@ -73,11 +72,11 @@ roles:
         global goal; If nothing critical to add other than an pure ACK,
         stay silent and do not reply. ultrathink'
       from_system: ' ultrathink'
-    nudge_suffix: ' Send messages by updating message files only. If inbox is empty
-      or whenever you are idle: do ONE high-value item with higher-order thinking
+    nudge_suffix: ' To send: OVERWRITE (not append) .cccc/mailbox/peerB/to_peer.md
+      or to_user.md (NOT peerA/). If inbox empty or idle: do ONE high-value item
       - (A) strategic review (drift/priority/ideas), (B) tactical review or rework
-      (REV/Pivot), or (C) any other works which are truly valuable. Send a message
-      only with new evidence, a risk/pivot, or a decisional ask; otherwise stay silent. ultrathink'
+      (REV/Pivot), or (C) truly valuable work. Send only with new evidence, risk/pivot,
+      or decisional ask; otherwise stay silent. ultrathink'
   aux:
     actor: gemini
     cwd: .
