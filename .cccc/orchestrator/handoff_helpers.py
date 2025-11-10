@@ -78,7 +78,9 @@ def _compose_nudge(inbox_path: str, *, ts: str, new_arrival: bool = False,
         trailing_bits.append(f"preview='{preview}'")
     action = None
     if new_arrival or backlog_gt_zero is True:
-        action = "open oldest first, process oldest→newest. Move processed files to processed/."
+        # Construct absolute processed path (sibling to inbox, NOT inbox/processed/)
+        processed_path = inbox_path.replace("/inbox", "/processed")
+        action = f"open oldest first, process oldest→newest. Move processed files to {processed_path}."
     else:
         action = "continue your work; open oldest→newest."
     msg_core = " ".join([p for p in parts if p])
