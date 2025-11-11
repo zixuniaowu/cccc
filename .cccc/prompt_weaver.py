@@ -574,6 +574,18 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
         rules_file = (home/"rules"/("PEERA.md" if (peer.lower()=="peera" or peer=="peerA") else "PEERB.md"))
         if rules_file.exists():
             txt = rules_file.read_text(encoding="utf-8")
+
+            # Inject PROJECT.md at startup (same format as Kth self-check refresh)
+            # This ensures peers have full context (vision/constraints/non-goals) from the start
+            try:
+                proj_path = Path.cwd() / "PROJECT.md"
+                if proj_path.exists():
+                    proj_txt = proj_path.read_text(encoding='utf-8', errors='replace')
+                    # Prepend PROJECT.md before SYSTEM rules (matching self-check format)
+                    txt = f"--- PROJECT.md (full) ---\n{proj_txt}\n\n--- SYSTEM (full) ---\n{txt}"
+            except Exception:
+                pass  # Silent fallback: continue with rules only if PROJECT.md unavailable
+
             # Append runtime bindings one-liner for this session
             try:
                 txt = txt.rstrip() + "\n\n" + _runtime_bindings_one_liner(home) + "\n"
