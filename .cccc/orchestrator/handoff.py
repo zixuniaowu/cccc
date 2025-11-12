@@ -70,9 +70,10 @@ def make(ctx: Dict[str, Any]):
                                 rules_txt = ''
                             if rules_txt:
                                 lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
-                            # Request POR refresh only after SYSTEM injection (not every self-check)
-                            # Aligns POR update with context refresh for consistency
-                            ctx['request_por_refresh']("self-check", force=False)
+                            # Request POR refresh only for PeerB's SYSTEM injection
+                            # (POR is owned by PeerB, so only PeerB's context refresh should trigger update)
+                            if lbl == 'PeerB':
+                                ctx['request_por_refresh']("self-check", force=False)
                         final = "\n".join(lines).strip()
                         ctx['send_handoff']('System', lbl, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
                         log_ledger(home, {"from": "system", "kind": "self-check", "every": ctx['self_check_every'], "count": cnt, "peer": lbl})

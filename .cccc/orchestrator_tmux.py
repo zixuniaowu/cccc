@@ -308,10 +308,9 @@ should_forward = _pf_should_forward
 
 # ---------- tmux ----------
 def paste_when_ready(pane: str, profile: Dict[str,Any], text: str, *, timeout: float = 10.0, poke: bool = True):
-    ok = wait_for_ready(pane, profile, timeout=timeout, poke=poke)
-    if not ok:
-        print(f"[WARN] Target pane not ready; pasting anyway (best-effort).")
-    # Use delivery.send_text with per-CLI config (submit/newline keys)
+    # Removed obsolete wait_for_ready check (legacy heuristic that almost always timed out)
+    # send_text handles delivery reliably using bracketed paste or char-by-char typing
+    # timeout and poke parameters kept for compatibility but unused
     send_text(pane, text, profile)
 
 nudge_api = make_nudge({'paste_when_ready': paste_when_ready})
