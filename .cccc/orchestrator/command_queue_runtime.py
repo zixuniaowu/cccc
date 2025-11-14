@@ -184,7 +184,7 @@ def make(ctx: Dict[str, Any]):
                                             files = []
                                         if not files:
                                             return 0
-                                        if policy in ('archive','discard'):
+                                        if policy == 'discard':
                                             moved = 0
                                             for f in files:
                                                 try:
@@ -192,17 +192,7 @@ def make(ctx: Dict[str, Any]):
                                                     f.rename(proc/f.name); moved += 1
                                                 except Exception:
                                                     pass
-                                            try:
-                                                allp = sorted(proc.iterdir(), key=lambda p: p.name)
-                                                if len(allp) > PROCESSED_RETENTION:
-                                                    for ff in allp[:len(allp)-PROCESSED_RETENTION]:
-                                                        try:
-                                                            ff.unlink()
-                                                        except Exception:
-                                                            pass
-                                            except Exception:
-                                                pass
-                                            log_ledger(home, {"from":"system","kind":"startup-inbox-discard" if policy=='discard' else 'startup-inbox-archive',"peer":label,"moved":moved})
+                                            log_ledger(home, {"from":"system","kind":"startup-inbox-discard","peer":label,"moved":moved})
                                             return moved
                                         log_ledger(home, {"from":"system","kind":"startup-inbox-resume","peer":label})
                                         return len(files)

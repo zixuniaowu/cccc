@@ -202,7 +202,7 @@ MB_PULL_ENABLED = True
 INBOX_DIRNAME = "inbox"
 PROCESSED_RETENTION = 200
 SOFT_ACK_ON_MAILBOX_ACTIVITY = False
-INBOX_STARTUP_POLICY = "resume"  # resume | discard | archive
+INBOX_STARTUP_POLICY = "resume"  # resume | discard
 INBOX_STARTUP_PROMPT = False
 AUX_BINDING_BOX = {"template": "", "cwd": "."}
 

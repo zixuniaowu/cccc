@@ -29,7 +29,7 @@ delivery:
     bullets.'
   mailbox_pull_enabled: true
   inbox_dirname: inbox
-  processed_retention: 200
+  processed_retention: 100
   nudge_resend_seconds: 300
   nudge_jitter_pct: 0.05
   nudge_progress_timeout_s: 300

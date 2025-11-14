@@ -84,7 +84,7 @@ def make(ctx: Dict[str, Any]):
         if not files:
             return 0
         policy = (policy_override or inbox_policy_default or "resume").strip().lower()
-        if policy in ("discard", "archive"):
+        if policy == "discard":
             moved = 0
             for f in files:
                 try:
@@ -92,17 +92,7 @@ def make(ctx: Dict[str, Any]):
                     f.rename(proc/f.name); moved += 1
                 except Exception:
                     pass
-            try:
-                allp = sorted(proc.iterdir(), key=lambda p: p.name)
-                if len(allp) > processed_retention:
-                    for ff in allp[:len(allp)-processed_retention]:
-                        try:
-                            ff.unlink()
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            log_ledger(home, {"from":"system","kind":"startup-inbox-discard" if policy=='discard' else 'startup-inbox-archive','peer':label,'moved':moved})
+            log_ledger(home, {"from":"system","kind":"startup-inbox-discard","peer":label,"moved":moved})
             return moved
         log_ledger(home, {"from":"system","kind":"startup-inbox-resume","peer":label,"pending":len(files)})
         return len(files)
@@ -130,19 +120,17 @@ def make(ctx: Dict[str, Any]):
                 print("\n[INBOX] Residual inbox detected:")
                 print(f"  - PeerA: {cntA} @ {str(inbox_dir(home,'PeerA'))}")
                 print(f"  - PeerB: {cntB} @ {str(inbox_dir(home,'PeerB'))}")
-                print(f"  Policy for this session: [r] resume  [a] archive  [d] discard; default: {chosen_policy}")
+                print(f"  Policy for this session: [r] resume  [d] discard; default: {chosen_policy}")
                 if eff_timeout > 0:
                     print(f"  Will apply default policy {chosen_policy} after {int(eff_timeout)}s of inactivity.")
                 if read_console_line_timeout and eff_timeout > 0:
                     ans = read_console_line_timeout(
-                        "> Choose r/a/d and Enter (or Enter to use default): ", eff_timeout
+                        "> Choose r/d and Enter (or Enter to use default): ", eff_timeout
                     ).strip().lower()
                 else:
                     ans = ""
                 if ans in ("r","resume"):
                     chosen_policy = "resume"
-                elif ans in ("a","archive"):
-                    chosen_policy = "archive"
                 elif ans in ("d","discard"):
                     chosen_policy = "discard"
                 print(f"[INBOX] Using policy: {chosen_policy}")

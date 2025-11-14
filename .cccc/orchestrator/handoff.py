@@ -22,6 +22,25 @@ def make(ctx: Dict[str, Any]):
     home: Path = ctx['home']
     sys_refresh_every: int = int(ctx.get('system_refresh_every') or 3)
 
+    def _cleanup_processed(peer_label: str):
+        """Cleanup old processed files beyond retention limit"""
+        try:
+            proc_dir = ctx['processed_dir'](home, peer_label)
+            retention = ctx['processed_retention']
+            all_files = sorted(proc_dir.iterdir(), key=lambda p: p.name)
+            if len(all_files) > retention:
+                removed = 0
+                for f in all_files[:len(all_files) - retention]:
+                    try:
+                        f.unlink()
+                        removed += 1
+                    except Exception:
+                        pass
+                if removed > 0:
+                    log_ledger(home, {"from": "system", "kind": "processed-cleanup", "peer": peer_label, "removed": removed, "retained": retention})
+        except Exception:
+            pass
+
     def _maybe_selfcheck_multi(receiver_labels, pl_text: str, meaningful: bool = True) -> bool:
         try:
             if not ctx['self_check_enabled'] or ctx['in_self_check']['v'] or ctx['self_check_every'] <= 0:
@@ -74,6 +93,13 @@ def make(ctx: Dict[str, Any]):
                             # (POR is owned by PeerB, so only PeerB's context refresh should trigger update)
                             if lbl == 'PeerB':
                                 ctx['request_por_refresh']("self-check", force=False)
+                            # Runtime cleanup: remove old processed files beyond retention limit
+                            # Cleanup all peers during SYSTEM injection (low-priority maintenance)
+                            try:
+                                _cleanup_processed('PeerA')
+                                _cleanup_processed('PeerB')
+                            except Exception:
+                                pass
                         final = "\n".join(lines).strip()
                         ctx['send_handoff']('System', lbl, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
                         log_ledger(home, {"from": "system", "kind": "self-check", "every": ctx['self_check_every'], "count": cnt, "peer": lbl})
