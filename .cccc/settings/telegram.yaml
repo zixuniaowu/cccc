@@ -13,11 +13,11 @@ default_route: both          # a|b|both
 debounce_seconds: 30
 to_user_min_interval_s: 5
 max_msg_chars: 4096
-max_msg_lines: 32
+max_msg_lines: 64
 peer_debounce_seconds: 30
 peer_summary_min_interval_s: 5
 peer_message_max_chars: 4096
-peer_message_max_lines: 32
+peer_message_max_lines: 64
 
 routing:
   require_explicit: true     # require a:/b:/both: (groups)
