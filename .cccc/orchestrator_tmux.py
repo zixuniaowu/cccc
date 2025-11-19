@@ -2587,12 +2587,10 @@ def main(home: Path, session_name: Optional[str] = None):
             _try_send_from_queue("PeerB")
         finally:
             sys.stdout = _stdout_saved
-    # Graceful shutdown of tmux session if requested via /quit
-    try:
-        tmux("kill-session","-t",session)
-        print(f"[END] tmux session '{session}' terminated.")
-    except Exception:
-        pass
+    # Graceful orchestrator shutdown
+    # DO NOT kill tmux session - let TUI detect orchestrator exit and cleanup itself
+    # This ensures prompt_toolkit can restore terminal state properly
+    print(f"[END] Orchestrator exiting. TUI will detect shutdown and cleanup gracefully.")
     try:
         (state/"tui.ready").unlink()
     except Exception:

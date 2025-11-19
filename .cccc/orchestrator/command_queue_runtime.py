@@ -293,20 +293,17 @@ def make(ctx: Dict[str, Any]):
                                 except Exception as e:
                                     ok, msg = False, f"launch failed: {e}"
                             elif ctype in ('quit','exit'):
-                                # Clean up bridge processes BEFORE killing tmux session
+                                # Graceful shutdown: let orchestrator exit cleanly
+                                # DO NOT kill tmux session - let TUI detect exit and cleanup gracefully
+                                # This allows prompt_toolkit to restore terminal state properly
                                 try:
                                     cleanup_bridges_fn = ctx.get('cleanup_bridges')
                                     if cleanup_bridges_fn:
                                         cleanup_bridges_fn()
                                 except Exception:
                                     pass
-                                # Now kill tmux session
-                                try:
-                                    tmux("kill-session","-t",session)
-                                    ok, msg = True, 'session terminated'
-                                except Exception as e:
-                                    ok, msg = False, f"kill-session failed: {e}"
                                 shutdown_requested = True
+                                ok, msg = True, 'orchestrator shutting down gracefully'
                             elif ctype in ('foreman','fm'):
                                 sub = str(args.get('action') or obj.get('action') or '').strip().lower() or 'status'
                                 # Direct execution for TUI source, im_commands for IM source
