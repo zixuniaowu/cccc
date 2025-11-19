@@ -197,6 +197,68 @@ def _attach_orchestrator_logger(state_dir: Path) -> Optional[Path]:
     print(f"[INFO] orchestrator log at {log_path}")
     return log_path
 
+# --- PID file management (Unix standard for process liveness detection) ---
+def _write_pid_file(state_dir: Path) -> None:
+    """
+    Write orchestrator PID to state/orchestrator.pid for liveness detection.
+
+    This is the standard Unix approach for daemon/service management:
+    - Write PID once at startup (minimal disk I/O)
+    - TUI/monitors check process liveness via os.kill(pid, 0) (zero disk I/O)
+    - Remove PID file on clean exit
+
+    Handles stale PID files from crashes:
+    - If PID file exists, check if process is still alive
+    - If dead, remove stale PID and continue
+    - If alive, abort (orchestrator already running)
+    """
+    pid_file = state_dir / "orchestrator.pid"
+    current_pid = os.getpid()
+
+    # Check for existing PID file (potential stale from crash)
+    if pid_file.exists():
+        try:
+            old_pid_text = pid_file.read_text(encoding='utf-8', errors='replace').strip()
+            old_pid = int(old_pid_text)
+
+            # Try to send signal 0 to check if process exists
+            # Signal 0 doesn't actually send a signal, just checks process existence
+            try:
+                os.kill(old_pid, 0)
+                # Process still alive - orchestrator already running!
+                print(f"[ERROR] Orchestrator already running with PID {old_pid}")
+                print(f"[ERROR] PID file: {pid_file}")
+                print(f"[ERROR] If this is incorrect, remove the PID file manually")
+                sys.exit(1)
+            except ProcessLookupError:
+                # Process doesn't exist - stale PID file from crash
+                print(f"[INFO] Removing stale PID file (old PID {old_pid} no longer exists)")
+                pid_file.unlink()
+        except (ValueError, PermissionError) as e:
+            # Invalid PID file or permission issue - log and remove
+            print(f"[WARN] Invalid PID file, removing: {e}")
+            try:
+                pid_file.unlink()
+            except Exception:
+                pass
+
+    # Write current PID
+    try:
+        pid_file.write_text(str(current_pid), encoding='utf-8')
+        print(f"[INFO] Orchestrator PID {current_pid} written to {pid_file}")
+    except Exception as e:
+        print(f"[WARN] Failed to write PID file: {e}")
+
+def _remove_pid_file(state_dir: Path) -> None:
+    """Remove orchestrator PID file on clean exit"""
+    pid_file = state_dir / "orchestrator.pid"
+    try:
+        if pid_file.exists():
+            pid_file.unlink()
+            print(f"[INFO] Removed PID file {pid_file}")
+    except Exception as e:
+        print(f"[WARN] Failed to remove PID file: {e}")
+
 # --- inbox/nudge settings (read at startup from cli_profiles.delivery) ---
 MB_PULL_ENABLED = True
 INBOX_DIRNAME = "inbox"
@@ -220,13 +282,13 @@ KEEPALIVE_DEBUG = False
 
 def _send_raw_to_cli(home: Path, receiver_label: str, text: str,
                      left_pane: str, right_pane: str):
-    """Direct passthrough: send raw text to CLI without any wrappers/MID (tmux paste)."""
+    """Direct passthrough: send raw text to CLI without any wrappers/MID (tmux send-keys + Enter)."""
     ts = time.strftime('%Y-%m-%d %H:%M:%S')
-    # tmux direct paste
-    if receiver_label == 'PeerA':
-        tmux_paste(left_pane, text)
-    else:
-        tmux_paste(right_pane, text)
+    # Determine pane and send command with Enter
+    pane = left_pane if receiver_label == 'PeerA' else right_pane
+    # Send text using tmux send-keys with -l (literal) flag, then send Enter
+    tmux("send-keys", "-t", pane, "-l", text)
+    tmux("send-keys", "-t", pane, "Enter")
     print(f"[RAW] → {receiver_label} @ {ts}: {text[:80]}")
 
 def run(cmd: str, *, cwd: Optional[Path]=None, timeout: int=600) -> Tuple[int,str,str]:
@@ -604,6 +666,10 @@ def main(home: Path, session_name: Optional[str] = None):
     settings = home/"settings"; state = home/"state"
     state.mkdir(exist_ok=True)
     _attach_orchestrator_logger(state)
+
+    # Write PID file for liveness detection (Unix standard approach)
+    _write_pid_file(state)
+
     settings_confirmed_path = state/"settings.confirmed"
     settings_confirm_ready_after = time.time()
     # Always require fresh setup confirmation each run: remove previous marker and wait for a fresh mtime
@@ -634,7 +700,13 @@ def main(home: Path, session_name: Optional[str] = None):
         pass
 
     policies = read_yaml(settings/"policies.yaml")
-    governance_cfg = read_yaml(settings/"governance.yaml") if (settings/"governance.yaml").exists() else {}
+
+    # Load actors configuration for auto-compact
+    try:
+        actors_doc = read_yaml(settings/"agents.yaml")
+        actors = actors_doc.get('actors') if isinstance(actors_doc.get('actors'), dict) else {}
+    except Exception:
+        actors = {}
 
     session  = session_name or os.environ.get("CCCC_SESSION") or f"cccc-{Path.cwd().name}"
 
@@ -676,18 +748,6 @@ def main(home: Path, session_name: Optional[str] = None):
         write_status(deliver_paused)
         _request_por_refresh(f"reset-{mode_norm}", force=True)
         return "Manual clear notice issued"
-
-    conversation_cfg = governance_cfg.get("conversation") if isinstance(governance_cfg.get("conversation"), dict) else {}
-    reset_cfg = conversation_cfg.get("reset") if isinstance(conversation_cfg.get("reset"), dict) else {}
-    conversation_reset_policy = str(reset_cfg.get("policy") or "compact").strip().lower()
-    if conversation_reset_policy not in ("compact", "clear"):
-        conversation_reset_policy = "compact"
-    try:
-        conversation_reset_interval = int(reset_cfg.get("interval_handoffs") or 0)
-    except Exception:
-        conversation_reset_interval = 0
-
-    default_reset_mode = conversation_reset_policy if conversation_reset_policy in ("compact", "clear") else "compact"
 
     aux_mode = "off"
 
@@ -952,6 +1012,18 @@ def main(home: Path, session_name: Optional[str] = None):
             SYSTEM_REFRESH_EVERY = 3
     except Exception:
         SYSTEM_REFRESH_EVERY = 3
+
+    # Conversation reset configuration
+    reset_cfg = delivery_conf.get("conversation_reset") if isinstance(delivery_conf.get("conversation_reset"), dict) else {}
+    conversation_reset_policy = str(reset_cfg.get("policy") or "compact").strip().lower()
+    if conversation_reset_policy not in ("compact", "clear"):
+        conversation_reset_policy = "compact"
+    try:
+        conversation_reset_interval = int(reset_cfg.get("interval_handoffs") or 0)
+    except Exception:
+        conversation_reset_interval = 0
+    default_reset_mode = conversation_reset_policy if conversation_reset_policy in ("compact", "clear") else "compact"
+
     # Delivery mode (tmux only). Legacy 'bridge' mode removed.
     # Delivery mode fixed to tmux (legacy bridge removed)
     # Source AUX template from bound actor (agents.yaml); role may override rate
@@ -1935,6 +2007,12 @@ def main(home: Path, session_name: Optional[str] = None):
         except Exception:
             pass
 
+        # Remove orchestrator PID file
+        try:
+            _remove_pid_file(state)
+        except Exception:
+            pass
+
         # Exit the process after cleanup to prevent restarts in main loop
         import sys
         sys.exit(0)
@@ -2040,10 +2118,12 @@ def main(home: Path, session_name: Optional[str] = None):
         from .orchestrator.handoff import make as make_handoff
         from .orchestrator.events import make as make_events
         from .orchestrator.bridge_runtime import make as make_bridge_runtime
+        from .orchestrator.auto_compact import make as make_auto_compact
     except ImportError:
         from orchestrator.handoff import make as make_handoff
         from orchestrator.events import make as make_events
         from orchestrator.bridge_runtime import make as make_bridge_runtime
+        from orchestrator.auto_compact import make as make_auto_compact
     handoff_ctx = {
         'home': home,
         'paneA': paneA, 'paneB': paneB,
@@ -2066,6 +2146,35 @@ def main(home: Path, session_name: Optional[str] = None):
         'send_handoff': None,
         'system_refresh_every': SYSTEM_REFRESH_EVERY,
     }
+    # Helper to get actor name for a peer
+    def _get_peer_actor(peer: str) -> str:
+        try:
+            if peer == 'PeerA':
+                return str((resolved.get('peerA') or {}).get('actor') or '')
+            elif peer == 'PeerB':
+                return str((resolved.get('peerB') or {}).get('actor') or '')
+            return ''
+        except Exception:
+            return ''
+
+    # Auto-compact API (idle-detection based context compression)
+    auto_compact_ctx = {
+        'home': home,
+        'actors': actors,
+        'delivery_conf': delivery_conf,
+        'get_peer_actor': _get_peer_actor,
+        'inflight': inflight,
+        'queued': queued,
+        'send_raw_to_cli': _send_raw_to_cli,
+        'paneA': paneA,
+        'paneB': paneB,
+        'log_ledger': log_ledger,
+    }
+    auto_compact_api = make_auto_compact(auto_compact_ctx)
+
+    # Add auto-compact callback to handoff context
+    handoff_ctx['auto_compact_on_handoff'] = auto_compact_api.on_handoff_delivered
+
     handoff_api = make_handoff(handoff_ctx)
     handoff_ctx['send_handoff'] = handoff_api.send_handoff
     _send_handoff = handoff_api.send_handoff
@@ -2252,6 +2361,11 @@ def main(home: Path, session_name: Optional[str] = None):
 
         try:
             keepalive_api.tick()
+        except Exception:
+            pass
+        # Auto-compact tick: check for idle peers ready for context compression
+        try:
+            auto_compact_api.tick()
         except Exception:
             pass
         # Handle ACK first: by mode (file_move watches moves; ack_text parses echoes)
@@ -2456,11 +2570,6 @@ def main(home: Path, session_name: Optional[str] = None):
                     )
                 if sent:
                     last_nudge_ts[label] = nowt
-        except Exception:
-            pass
-        # Heartbeat: write a lightweight alive marker
-        try:
-            (state/"loop.alive").write_text(str(int(time.time())), encoding='utf-8')
         except Exception:
             pass
         # Sleep to maintain main loop tick cadence, then process subsystems

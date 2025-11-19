@@ -41,6 +41,15 @@ delivery:
   inbox_startup_prompt: true
   inbox_startup_prompt_timeout_seconds: 30
   inbox_startup_prompt_noninteractive_timeout_seconds: 0
+  conversation_reset:
+    policy: compact
+    interval_handoffs: 0
+  auto_compact:
+    enabled: true
+    min_interval_seconds: 900
+    min_messages_since_last: 6
+    idle_threshold_seconds: 120
+    check_interval_seconds: 120
   lazy_preamble:
     enabled: true
 startup_wait_seconds: 12

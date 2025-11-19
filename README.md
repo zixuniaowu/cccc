@@ -29,7 +29,7 @@ Two equal peers (not solo AI + tools) that challenge each other, surface better 
 Point-and-click setup wizard (↑↓ + Enter). No YAML editing. No memorizing commands. Tab completion for everything.
 
 **📊 Real-Time Observability**
-Live Timeline shows peer messages. Status panel tracks handoffs, self-checks, and Foreman runs. Always know what's happening.
+Live Timeline shows peer messages. Status panel tracks handoffs, self-checks, and Foreman runs.
 
 </td>
 <td width="50%">
@@ -417,6 +417,38 @@ Peers update these naturally as they work. You can read them anytime to see the 
 
 ## Advanced Features
 
+### Auto-Compact (Context Compression)
+
+CCCC includes intelligent auto-compact to prevent peer context degradation during long-running sessions.
+
+**How it works:**
+- **Idle Detection**: Automatically detects when peers are idle (no inflight messages, no queued work, sufficient silence)
+- **Work Threshold**: Only triggers after meaningful work (≥6 messages exchanged since last compact)
+- **Interval Gating**: Respects minimum time interval (default: 15 minutes) to avoid wasteful compaction
+- **Per-Actor Support**: Each CLI actor declares compact capability in `agents.yaml` (e.g., `/compact` for Claude Code, `/compress` for Gemini CLI)
+
+**Configuration** (in `.cccc/settings/cli_profiles.yaml`):
+```yaml
+delivery:
+  auto_compact:
+    enabled: true                    # Global toggle
+    min_interval_seconds: 900        # Wait 15 min between compacts
+    min_messages_since_last: 6       # Require ≥6 messages of work
+    idle_threshold_seconds: 120      # Peer must be idle for 2 min
+    check_interval_seconds: 120       # Check every 2 minutes
+```
+
+**Benefits:**
+- Maintains peer mental clarity across multi-hour sessions
+- Prevents context window bloat and token waste
+- Zero manual intervention — works automatically in the background
+
+**Diagnostics:**
+- Check `.cccc/state/ledger.jsonl` for `auto-compact` and `auto-compact-skip` events
+- Logs include reason codes (e.g., `insufficient-messages`, `not-idle`, `time-interval`)
+
+---
+
 ### Aux (Optional On-Demand Helper)
 
 Aux is a third peer for burst work (e.g., broad reviews, heavy tests, bulk transforms).
@@ -534,6 +566,7 @@ both: Add a short section to README about team chat tips
 
 - **Self-Check**: Every N handoffs (configurable, default 20), orchestrator triggers a short alignment check
 - **POR Update**: PeerB receives periodic reminders to review `POR.md` and all active `SUBPOR.md` files
+- **Auto-Compact**: When peers are idle after sufficient work, orchestrator automatically compacts context (default: ≥6 messages, 15 min interval, 2 min idle)
 - **Foreman Runs**: Every 15 minutes (if enabled), Foreman performs one standing task or writes one request
 
 ---
@@ -542,15 +575,28 @@ both: Add a short section to README about team chat tips
 
 ```
 .cccc/
-  adapters/bridge_*.py            # Chat bridges (optional)
-  settings/                        # Runtime profiles (tmux/bridges)
-  mailbox/                         # to_user.md / to_peer.md; inbox/processed
-  state/                           # ledger.jsonl, status/session (ephemeral)
-  logs/                            # Extra logs (ephemeral)
+  adapters/bridge_*.py            # Chat bridges (optional: Telegram/Slack/Discord)
+  orchestrator/                    # Core orchestrator modules
+    handoff.py                     # Handoff delivery + self-check
+    auto_compact.py                # Auto-compact logic
+    keepalive.py                   # Keepalive nudge system
+    foreman_scheduler.py           # Foreman scheduling
+    ...
+  settings/                        # Configuration files (no manual edit needed)
+    cli_profiles.yaml              # Actor bindings, delivery config
+    agents.yaml                    # CLI actor definitions
+    policies.yaml                  # Strategic policies
+    telegram.yaml / slack.yaml     # IM bridge configs
+    foreman.yaml                   # Foreman config
+  mailbox/                         # Message exchange (to_user.md, to_peer.md, inbox/, processed/)
+  state/                           # Runtime state (ephemeral, gitignored)
+    ledger.jsonl                   # Event log with auto-compact diagnostics
+    orchestrator.log               # Runtime logs
+    status.json                    # Current orchestrator state
+  logs/                            # Peer CLI logs (ephemeral)
   work/                            # Shared workspace (gitignored)
   tui_ptk/app.py                   # TUI implementation
   orchestrator_tmux.py             # Main orchestrator runtime
-  panel_status.py                  # Status panel
   prompt_weaver.py                 # System prompt builder
   ...
 
@@ -571,13 +617,15 @@ CCCC follows "convention over configuration" principles. Sensible defaults work 
 
 ### Key Config Files (All in `.cccc/settings/`)
 
-- **`cli_profiles.yaml`** — Actor bindings, roles, delivery settings
+- **`cli_profiles.yaml`** — Actor bindings, roles, delivery settings (mailbox, nudge, keepalive, auto-compact)
+- **`agents.yaml`** — CLI actor definitions and capabilities (compact support, commands, IO profiles)
+- **`policies.yaml`** — Strategic policies (autonomy level, handoff filters)
 - **`telegram.yaml`** — Telegram bridge config (token, allowlist, routing)
 - **`slack.yaml`** — Slack bridge config (similar structure)
 - **`discord.yaml`** — Discord bridge config (similar structure)
 - **`foreman.yaml`** — Foreman agent and cadence
 
-**No manual editing required** — TUI Setup Panel handles all common changes.
+**No manual editing required** — TUI Setup Panel handles all common changes. Advanced users can tweak YAML directly for fine-grained control.
 
 ### Environment Variables (Optional Overrides)
 
@@ -637,9 +685,25 @@ CCCC follows "convention over configuration" principles. Sensible defaults work 
 ### How do I debug orchestrator issues?
 
 - Check `.cccc/state/status.json` for current state
-- Check `.cccc/state/ledger.jsonl` for event log
+- Check `.cccc/state/ledger.jsonl` for event log (includes auto-compact events with detailed diagnostics)
+- Check `.cccc/state/orchestrator.log` for runtime logs
 - Check `.cccc/logs/*.log` for detailed peer outputs
 - Run `cccc doctor` to verify environment
+
+### How do I troubleshoot auto-compact?
+
+**Check if it's working:**
+```bash
+grep "auto-compact" .cccc/state/ledger.jsonl | tail -20
+```
+
+**Common skip reasons:**
+- `insufficient-messages` — Peer hasn't done enough work yet (< 6 messages)
+- `not-idle` — Peer has inflight/queued messages or hasn't been silent for 2 minutes
+- `time-interval` — Not enough time since last compact (< 15 minutes)
+- `actor-compact-disabled` — CLI actor doesn't support compact (check `agents.yaml`)
+
+**Adjust thresholds** in `.cccc/settings/cli_profiles.yaml` under `delivery.auto_compact`
 
 ### Where can I see real-world examples?
 

@@ -13,6 +13,9 @@ actors:
     aux:
       invoke_command: 'claude --dangerously-skip-permissions -p "{prompt}"'
       rate_limit_per_minute: 2
+    compact:
+      enabled: true
+      command: "/compact"
     capabilities: "Strong coding; no built-in web browsing; no built-in vision support"
     env_require: []
 
@@ -30,6 +33,9 @@ actors:
     aux:
       invoke_command: 'codex exec --sandbox danger-full-access "{prompt}"'
       rate_limit_per_minute: 2
+    compact:
+      enabled: true
+      command: "/compact"
     capabilities: "Strong coding; multimodal input incl. images"
     env_require: []
 
@@ -48,6 +54,9 @@ actors:
     aux:
       invoke_command: 'gemini -p "{prompt}" --yolo'
       rate_limit_per_minute: 2
+    compact:
+      enabled: true
+      command: "/compress"
     capabilities: "Strong coding; Strong web-searching; Support large context; built-in image support"
     env_require: []
 
@@ -66,6 +75,9 @@ actors:
     aux:
       invoke_command: 'droid exec --auto high "{prompt}"'
       rate_limit_per_minute: 2
+    compact:
+      enabled: true
+      command: "/compress"
     capabilities: "Strong coding; robust auto mode; good long sessions"
     env_require: []
 
@@ -84,6 +96,9 @@ actors:
     aux:
       invoke_command: 'opencode run "{prompt}"'
       rate_limit_per_minute: 2
+    compact:
+      enabled: true
+      command: "/compact"
     capabilities: "Solid coding CLI; steady long sessions; no special env required"
     env_require: []
 
@@ -100,6 +115,9 @@ actors:
     aux:
       invoke_command: 'kilocode --auto "{prompt}"'
       rate_limit_per_minute: 2
+    compact:
+      enabled: false
+      command: "none"
     capabilities: "AI-powered coding assistant with autonomous capabilities"
     env_require: []
 
@@ -116,6 +134,9 @@ actors:
     aux:
       invoke_command: 'copilot -p "{prompt}" --allow-all-tools'
       rate_limit_per_minute: 2
+    compact:
+      enabled: false
+      command: "none"
     capabilities: "GitHub Copilot CLI with tool access; strong coding; integrated with GitHub"
     env_require: []
 
@@ -132,6 +153,9 @@ actors:
     aux:
       invoke_command: 'auggie --print "{prompt}"'
       rate_limit_per_minute: 2
+    compact:
+      enabled: false
+      command: "none"
     capabilities: "Augment Code AI assistant; solid coding support; lightweight"
     env_require: []
 
@@ -148,6 +172,9 @@ actors:
     aux:
       invoke_command: 'cursor-agent -p "{prompt}"'
       rate_limit_per_minute: 2
+    compact:
+      enabled: true
+      command: "/compress"
     capabilities: "Cursor AI agent; strong coding; editor-integrated experience"
     env_require: []
 

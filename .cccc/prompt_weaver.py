@@ -32,7 +32,6 @@ def _calc_rules_hash(home: Path) -> str:
     parts: list[str] = []
     for name in [
         "settings/cli_profiles.yaml",
-        "settings/governance.yaml",
         "settings/telegram.yaml",
         "settings/slack.yaml",
         "settings/discord.yaml",
@@ -145,12 +144,12 @@ def _aux_mode(home: Path) -> str:
     return "on" if actor else "off"
 
 def _conversation_reset(home: Path) -> Tuple[str, Optional[int]]:
-    gv = home/"settings"/"governance.yaml"
-    if not gv.exists():
+    profiles = home/"settings"/"cli_profiles.yaml"
+    if not profiles.exists():
         return "compact", None
-    d = _read_yaml_or_json(gv)
-    c = d.get("conversation") if isinstance(d.get("conversation"), dict) else {}
-    r = c.get("reset") if isinstance(c.get("reset"), dict) else {}
+    d = _read_yaml_or_json(profiles)
+    delivery = d.get("delivery") if isinstance(d.get("delivery"), dict) else {}
+    r = delivery.get("conversation_reset") if isinstance(delivery.get("conversation_reset"), dict) else {}
     policy = str(r.get("policy") or "compact").lower().strip()
     if policy not in ("compact", "clear"):
         policy = "compact"

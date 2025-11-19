@@ -187,6 +187,14 @@ def make(ctx: Dict[str, Any]):
         except Exception:
             pass
 
+        # Auto-compact: increment message counter on successful delivery
+        try:
+            auto_compact_cb = ctx.get('auto_compact_on_handoff')
+            if auto_compact_cb and status == "nudged":
+                auto_compact_cb(receiver_label)
+        except Exception:
+            pass
+
         # Self-check cadence + optional full system injection via shared helper
         try:
             meaningful = sender_label in ("User", "System", "PeerA", "PeerB")

@@ -3016,13 +3016,55 @@ class CCCCSetupApp:
     async def refresh_loop(self) -> None:
         """Background refresh with connection monitoring"""
         seen_messages = set()
+        orchestrator_dead_count = 0  # Track consecutive failed liveness checks
 
         while True:
             try:
                 if not self.setup_visible:
+                    # Check orchestrator liveness via PID file (Unix standard approach)
+                    # This is far superior to file-based heartbeats:
+                    # - Zero disk I/O during runtime (os.kill is a syscall only)
+                    # - Instant detection when process dies
+                    # - No disk wear from frequent writes
+                    try:
+                        pid_file = self.home / "state" / "orchestrator.pid"
+                        if pid_file.exists():
+                            try:
+                                pid_text = pid_file.read_text(encoding='utf-8', errors='replace').strip()
+                                pid = int(pid_text)
+                                # Use os.kill(pid, 0) to check if process exists
+                                # Signal 0 doesn't send a signal, just checks process existence
+                                os.kill(pid, 0)
+                                # Process is alive, reset counter
+                                orchestrator_dead_count = 0
+                            except (ValueError, ProcessLookupError, PermissionError):
+                                # Invalid PID or process doesn't exist
+                                orchestrator_dead_count += 1
+                                if orchestrator_dead_count >= 3:  # 3 checks = 6 seconds
+                                    self._write_timeline("Orchestrator process exited. Shutting down TUI...", 'error')
+                                    await asyncio.sleep(1.0)
+                                    self.app.exit()
+                                    return
+                        else:
+                            # PID file doesn't exist yet (startup) or orchestrator exited
+                            orchestrator_dead_count += 1
+                            if orchestrator_dead_count >= 5:  # More lenient during startup (10 seconds)
+                                self._write_timeline("Orchestrator PID file not found. Exiting TUI...", 'error')
+                                await asyncio.sleep(1.0)
+                                self.app.exit()
+                                return
+                    except Exception as e:
+                        # Unexpected error during liveness check
+                        orchestrator_dead_count += 1
+                        if orchestrator_dead_count >= 5:
+                            self._write_timeline(f"Lost connection to orchestrator: {e}. Exiting TUI...", 'error')
+                            await asyncio.sleep(1.0)
+                            self.app.exit()
+                            return
+
                     # Check for command replies
                     self._check_tui_replies()
-                    
+
                     # Refresh timeline from outbox.jsonl
                     try:
                         outbox = self.home / "state" / "outbox.jsonl"
