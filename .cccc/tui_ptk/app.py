@@ -3418,6 +3418,20 @@ def run(home: Path) -> None:
         # Use prompt_toolkit's built-in async support
         # Start the refresh loop as a background task and run the app
         async def main():
+            # Get event loop for signal handling
+            loop = asyncio.get_running_loop()
+
+            # Setup signal handlers for graceful shutdown
+            # This ensures prompt_toolkit can restore terminal state when receiving signals
+            def handle_signal(signame):
+                print(f"\n[TUI] Received {signame}, shutting down gracefully...")
+                app.app.exit()
+
+            # Register handlers for common termination signals
+            import signal
+            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+                loop.add_signal_handler(sig, lambda s=sig: handle_signal(signal.Signals(s).name))
+
             # Start refresh loop in background
             refresh_task = asyncio.create_task(app.refresh_loop())
 

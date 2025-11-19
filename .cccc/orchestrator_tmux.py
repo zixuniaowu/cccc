@@ -2599,6 +2599,11 @@ def main(home: Path, session_name: Optional[str] = None):
     run("git --no-pager log -n 5 --oneline")
     print("Ledger:", (home/"state/ledger.jsonl"))
 
+    # Critical: Call cleanup to stop foreman/bridges and remove PID file
+    # This ensures no zombie processes or stale files remain
+    # _cleanup_on_exit will call sys.exit(0) after cleanup
+    _cleanup_on_exit()
+
 
 def _parse_args():
     import argparse
