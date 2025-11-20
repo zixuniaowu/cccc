@@ -27,7 +27,8 @@ def make(ctx: Dict[str, Any]):
         try:
             proc_dir = ctx['processed_dir'](home, peer_label)
             retention = ctx['processed_retention']
-            all_files = sorted(proc_dir.iterdir(), key=lambda p: p.name)
+            # Filter out directories, only process files
+            all_files = sorted([f for f in proc_dir.iterdir() if f.is_file()], key=lambda p: p.name)
             if len(all_files) > retention:
                 removed = 0
                 for f in all_files[:len(all_files) - retention]:

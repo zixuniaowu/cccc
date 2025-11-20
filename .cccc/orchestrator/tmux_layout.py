@@ -6,7 +6,7 @@ Copied verbatim from orchestrator_tmux.py (system copy, no logic change).
 from __future__ import annotations
 import os, sys, json, time, shlex, shutil
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 # BEGIN copy from orchestrator_tmux.py
 
@@ -177,8 +177,32 @@ def tmux_capture(pane: str, lines: int=800) -> str:
     code,out,_ = tmux("capture-pane","-t",pane,"-p","-S",f"-{int(lines)}")
     return out if code==0 else ""
 
-def tmux_start_interactive(pane: str, cmd: str):
-    tmux_respawn_pane(pane, f"bash -lc {shlex.quote(cmd)}")
+def tmux_start_interactive(pane: str, cmd: str, *, stderr_log: Optional[str] = None, remain_on_exit: bool = False):
+    """
+    Start an interactive command in a tmux pane
+
+    Args:
+        pane: Target pane identifier (e.g., "session:0.1")
+        cmd: Command to execute
+        stderr_log: Optional absolute path to redirect stderr (append mode)
+        remain_on_exit: If True, pane remains visible after process exits
+    """
+    # Build command with stderr redirection if specified
+    if stderr_log:
+        from pathlib import Path
+        # Ensure log directory exists before redirecting
+        log_dir = Path(stderr_log).parent
+        cmd_with_prep = f"mkdir -p {shlex.quote(str(log_dir))} && {cmd} 2>> {shlex.quote(stderr_log)}"
+    else:
+        cmd_with_prep = cmd
+
+    # Respawn pane with command
+    tmux_respawn_pane(pane, f"bash -lc {shlex.quote(cmd_with_prep)}")
+
+    # Set remain-on-exit for this pane if requested
+    # This keeps the pane visible after process exits, allowing inspection
+    if remain_on_exit:
+        tmux("set-option", "-p", "-t", pane, "remain-on-exit", "on")
 
 def wait_for_ready(pane: str, profile: Dict[str,Any], *, timeout: float = 12.0, poke: bool = True) -> bool:
     # heuristic: look for a prompt growth; keep compatible semantics

@@ -188,7 +188,8 @@ def _archive_inbox_entry(home: Path, receiver_label: str, token: str):
     except Exception:
         return False
     try:
-        files = sorted(proc.iterdir(), key=lambda p: p.name)
+        # Filter out directories, only process files
+        files = sorted([f for f in proc.iterdir() if f.is_file()], key=lambda p: p.name)
         if len(files) > PROCESSED_RETENTION:
             remove_n = len(files) - PROCESSED_RETENTION
             for f in files[:remove_n]:

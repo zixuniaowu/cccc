@@ -3137,19 +3137,14 @@ class CCCCSetupApp:
 
     def _check_residual_inbox(self) -> None:
         """Check for residual inbox messages before orchestrator launch.
-        If messages found, shows dialog. Otherwise continues with launch.
 
-        This check only runs ONCE after initial setup. Subsequent launches skip it
-        because inbox messages are part of normal workflow, not residuals.
+        This check runs on EVERY launch to detect messages left unprocessed
+        from previous session (e.g., after crashes or abnormal shutdown).
+
+        If inbox is empty, check completes instantly (<10ms).
+        If messages found, shows dialog for user to Process or Discard.
         """
         try:
-            # Check if inbox has already been checked (flag file exists)
-            inbox_checked_flag = self.home / "state" / "inbox_checked.flag"
-            if inbox_checked_flag.exists():
-                # Already checked before, skip and continue launch
-                self._continue_launch()
-                return
-
             # Import mailbox functions
             import sys
             sys.path.insert(0, str(self.home))
@@ -3171,16 +3166,13 @@ class CCCCSetupApp:
             if ibB.exists():
                 cntB = len([f for f in ibB.iterdir() if f.is_file()])
 
-            # If no residual messages, set flag and continue
+            # If no residual messages, continue launch directly
             if cntA == 0 and cntB == 0:
-                inbox_checked_flag.parent.mkdir(parents=True, exist_ok=True)
-                inbox_checked_flag.write_text(f"Inbox checked at {time.time()}\n", encoding='utf-8')
                 self._continue_launch()
                 return
 
-            # Show dialog (dialog handlers will set flag after user choice)
-            # Pass flag path to dialog so handlers can set it
-            self._show_inbox_cleanup_dialog(cntA, cntB, inbox_checked_flag)
+            # Show dialog for user to decide how to handle residual messages
+            self._show_inbox_cleanup_dialog(cntA, cntB)
 
         except Exception as e:
             # Log error but don't block launch (use module-level imports to avoid UnboundLocalError)
@@ -3200,20 +3192,71 @@ class CCCCSetupApp:
             # Proceed despite error
             self._continue_launch()
 
-    def _show_inbox_cleanup_dialog(self, cntA: int, cntB: int, flag_path: Path) -> None:
-        """Show clear inbox cleanup dialog with user-friendly messaging
-        
+    def _show_inbox_cleanup_dialog(self, cntA: int, cntB: int) -> None:
+        """Show inbox cleanup dialog with user-friendly messaging
+
         Args:
             cntA: Count of messages in PeerA inbox
             cntB: Count of messages in PeerB inbox
-            flag_path: Path to inbox_checked.flag file (set after user choice)
         """
-        # Debug: Log that we're trying to show the inbox cleanup dialog
-        self._write_timeline(f"Showing inbox cleanup dialog: {cntA} + {cntB} messages", 'debug')
-        
         if self.modal_open:
-            self._write_timeline("Dialog blocked: modal already open", 'debug')
             return
+
+        total = cntA + cntB
+        msg_lines = [
+            f"📬 Found {total} unprocessed message(s) from previous session",
+            ""
+        ]
+        if cntA > 0:
+            msg_lines.append(f"  • PeerA inbox: {cntA} message(s)")
+        if cntB > 0:
+            msg_lines.append(f"  • PeerB inbox: {cntB} message(s)")
+        msg_lines.extend([
+            "",
+            "These messages were not delivered to agents before CCCC stopped.",
+            "",
+            "📌 What should we do with them?",
+            "",
+            "  ✓ Process Now:",
+            "    Agents will receive and respond to these messages",
+            "    (Messages stay in inbox and will be delivered)",
+            "",
+            "  ✗ Discard:",
+            "    Archive these messages to processed/ folder",
+            "    (Agents won't see them, workflow starts fresh)",
+        ])
+
+        alert_text = "\n".join(msg_lines)
+
+        def on_process() -> None:
+            """Process - keep messages in inbox for delivery"""
+            self._cleanup_inbox_messages(discard=False)
+            self._close_dialog()
+            self._write_timeline(f"Processing {total} pending message(s)", 'info')
+            self._continue_launch()
+
+        def on_discard() -> None:
+            """Discard - move messages to processed/ directory"""
+            self._cleanup_inbox_messages(discard=True)
+            self._close_dialog()
+            self._write_timeline(f"Discarded {total} message(s) - starting fresh", 'info')
+            self._continue_launch()
+
+        # Create clear 2-option dialog
+        dialog = Dialog(
+            title="📬 Unprocessed Messages Found",
+            body=HSplit([
+                Label(text=alert_text, style='class:info'),
+            ]),
+            buttons=[
+                Button('✓ Process Now', handler=on_process, width=18),
+                Button('✗ Discard', handler=on_discard, width=18),
+            ],
+            width=Dimension(min=70, max=90, preferred=80),
+            modal=True
+        )
+
+        self._open_dialog(dialog, on_process)  # Default is Process
 
     def _check_tui_replies(self) -> None:
         """Monitor tui-replies.jsonl for command responses"""
@@ -3259,76 +3302,6 @@ class CCCCSetupApp:
                 self._reply_file_pos = f.tell()
         except Exception:
             pass  # Silent fail - don't break TUI
-
-    def _show_inbox_cleanup_dialog_OLD(self, cntA: int, cntB: int, flag_path: Path) -> None:
-
-        total = cntA + cntB
-        msg_lines = [
-            f"📬 Found {total} unprocessed message(s) from previous session",
-            ""
-        ]
-        if cntA > 0:
-            msg_lines.append(f"  • PeerA inbox: {cntA} message(s)")
-        if cntB > 0:
-            msg_lines.append(f"  • PeerB inbox: {cntB} message(s)")
-        msg_lines.extend([
-            "",
-            "These messages were not delivered to agents before CCCC stopped.",
-            "",
-            "📌 What should we do with them?",
-            "",
-            "  ✓ Process Now:",
-            "    Agents will receive and respond to these messages",
-            "    (Messages stay in inbox and will be delivered)",
-            "",
-            "  ✗ Discard:",
-            "    Archive these messages to processed/ folder",
-            "    (Agents won't see them, workflow starts fresh)",
-        ])
-
-        alert_text = "\n".join(msg_lines)
-
-        def on_process() -> None:
-            """Process - keep messages in inbox for delivery"""
-            self._cleanup_inbox_messages(discard=False)
-            # Set flag AFTER user makes choice
-            try:
-                flag_path.parent.mkdir(parents=True, exist_ok=True)
-                flag_path.write_text(f"Inbox checked at {time.time()}\n", encoding='utf-8')
-            except Exception:
-                pass
-            self._close_dialog()
-            self._write_timeline(f"Processing {total} pending message(s)", 'info')
-            self._continue_launch()
-
-        def on_discard() -> None:
-            """Discard - move messages to processed/ directory"""
-            self._cleanup_inbox_messages(discard=True)
-            # Set flag AFTER user makes choice
-            try:
-                flag_path.parent.mkdir(parents=True, exist_ok=True)
-                flag_path.write_text(f"Inbox checked at {time.time()}\n", encoding='utf-8')
-            except Exception:
-                pass
-            self._close_dialog()
-            self._write_timeline(f"Discarded {total} message(s) - starting fresh", 'info')
-            self._continue_launch()
-
-        # Create clear 2-option dialog
-        dialog = Dialog(
-            title="📬 Unprocessed Messages Found",
-            body=HSplit([
-                Label(text=alert_text, style='class:info'),
-            ]),
-            buttons=[
-                Button('✓ Process Now', handler=on_process, width=18),
-                Button('✗ Discard', handler=on_discard, width=18),
-            ],
-            width=Dimension(min=70, max=90, preferred=80),
-            modal=True
-        )
-
-        self._open_dialog(dialog, on_process)  # Default is Process
 
     def _cleanup_inbox_messages(self, discard: bool) -> None:
         """Clean up inbox messages based on user choice.

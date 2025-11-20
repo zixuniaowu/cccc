@@ -2145,6 +2145,8 @@ def main(home: Path, session_name: Optional[str] = None):
         'self_checks_done': self_checks_done,
         'send_handoff': None,
         'system_refresh_every': SYSTEM_REFRESH_EVERY,
+        'processed_dir': _processed_dir,
+        'processed_retention': PROCESSED_RETENTION,
     }
     # Helper to get actor name for a peer
     def _get_peer_actor(peer: str) -> str:
@@ -2259,6 +2261,11 @@ def main(home: Path, session_name: Optional[str] = None):
     _tmux_check_counter = 0
     _tmux_check_interval = 10  # Check every 10 loops (e.g., every 20 seconds if loop is 2s)
 
+    # PEER health check: detect crashes and capture diagnostics on-demand
+    _peer_health_counter = 0
+    _peer_health_interval = 15  # Check every 15 loops (~30 seconds if loop is 2s)
+    _peer_crash_detected = {'PeerA': False, 'PeerB': False}  # Track detected crashes to avoid re-capture
+
     while True:
         # Check if tmux session still exists (for destroy-unattached cleanup)
         # Only check every N loops to reduce overhead
@@ -2285,7 +2292,62 @@ def main(home: Path, session_name: Optional[str] = None):
                     traceback.print_exc()
                 break
         _tmux_check_counter += 1
-        
+
+        # PEER health check: detect crashes and capture pane output for diagnostics
+        # Only check periodically to minimize overhead (zero-cost when peers are alive)
+        if _peer_health_counter % _peer_health_interval == 0:
+            for peer_label, pane in [('PeerA', paneA), ('PeerB', paneB)]:
+                # Skip if already detected (avoid re-capturing same crash)
+                if _peer_crash_detected[peer_label]:
+                    continue
+
+                try:
+                    # Check if pane is dead (lightweight command, <1ms)
+                    rc, out, _ = tmux("list-panes", "-t", pane, "-F", "#{pane_dead}")
+                    if rc == 0 and out.strip() == "1":
+                        # Pane is dead - capture crash diagnostics (one-time operation)
+                        _peer_crash_detected[peer_label] = True
+
+                        # Capture last 1000 lines from tmux pane buffer
+                        try:
+                            timestamp = time.strftime("%Y%m%d-%H%M%S")
+                            crash_log = home / "logs" / f"{peer_label.lower()}_crash_{timestamp}.log"
+                            crash_log.parent.mkdir(parents=True, exist_ok=True)
+
+                            rc_cap, content, _ = tmux("capture-pane", "-t", pane, "-p", "-S", "-1000")
+                            if rc_cap == 0 and content:
+                                crash_log.write_text(content, encoding='utf-8')
+                                log_ledger(home, {
+                                    "from": "system",
+                                    "kind": "peer-crash-detected",
+                                    "peer": peer_label,
+                                    "pane": pane,
+                                    "crash_log": str(crash_log),
+                                    "log_size_bytes": len(content)
+                                })
+                                print(f"[CRASH] {peer_label} pane dead - captured {len(content)} bytes to {crash_log}")
+                            else:
+                                # Log detection even if capture failed
+                                log_ledger(home, {
+                                    "from": "system",
+                                    "kind": "peer-crash-detected",
+                                    "peer": peer_label,
+                                    "pane": pane,
+                                    "note": "capture failed"
+                                })
+                                print(f"[CRASH] {peer_label} pane dead - capture failed")
+                        except Exception as e:
+                            log_ledger(home, {
+                                "from": "system",
+                                "kind": "peer-crash-detected",
+                                "peer": peer_label,
+                                "error": str(e)[:200]
+                            })
+                except Exception:
+                    # Silently continue if health check fails
+                    pass
+        _peer_health_counter += 1
+
         # If startup was deferred due to unconfirmed settings or missing roles, trigger launch+resume when ready
         try:
             auto_launch_pending, resolved = launcher_api.tick(resolved, config_deferred)
