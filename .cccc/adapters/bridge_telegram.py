@@ -1220,6 +1220,19 @@ def main():
                 _append_log(outlog, f"[cmd] foreman action={action} chat={chat_id} req={req_id}")
                 continue
 
+            # Restart control: /restart peera|peerb|both
+            if is_cmd(text, 'restart'):
+                parts = text.split()
+                target = parts[1].lower() if len(parts) > 1 else 'both'
+                if target not in ('peera', 'peerb', 'both', 'a', 'b'):
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /restart peera|peerb|both'}, timeout=15)
+                    continue
+                result, req_id = _enqueue_im_command('restart', {'target': target}, source='telegram', chat_id=chat_id, wait_seconds=6.0)
+                reply = (result.get('message') if result else f'Restart request queued (id={req_id}).')
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
+                _append_log(outlog, f"[cmd] restart target={target} chat={chat_id} req={req_id}")
+                continue
+
             # Enforce mention in group if configured
             if (not is_dm) and require_mention:
                 ents = msg.get('entities') or []
@@ -1493,6 +1506,7 @@ def main():
                     "Routing: a:/b:/both: or /a /b /both → deliver to peers;\n"
                     "Passthrough (CLI): a! <cmd>/b! <cmd> (DM recommended) or /pa <cmd>/pb <cmd> [/pboth <cmd>] in groups;\n"
                     "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux-cli \"<prompt>\" run configured Aux once; /review trigger Aux reminder;\n"
+                    "/restart peera|peerb|both restart PEER agent CLI; /foreman on|off|now|status control background scheduler;\n"
                     "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
                     "/verbose on|off toggle Peer<->Peer summary and Foreman CC; /files [in|out] [N] list recent files; /file N view."
                 )

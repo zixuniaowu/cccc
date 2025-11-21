@@ -741,6 +741,23 @@ def main():
                 _append_log(f"[cmd] foreman ch={ch} req={req_id} action={action}")
                 return
 
+            if re.match(r'^/?restart\b', command_text, re.I):
+                parts = command_text.split()
+                target = parts[1].lower() if len(parts) > 1 else 'both'
+                if target not in ('peera', 'peerb', 'both', 'a', 'b'):
+                    _send_reply('Usage: /restart peera|peerb|both')
+                    return
+                result, req_id = _enqueue_im_command('restart', {'target': target}, source='slack', channel=ch)
+                if result and result.get('ok'):
+                    reply = result.get('message') or 'OK'
+                elif result:
+                    reply = result.get('message') or 'Restart error'
+                else:
+                    reply = f"Restart request queued (id={req_id})."
+                _send_reply(reply)
+                _append_log(f"[cmd] restart ch={ch} req={req_id} target={target}")
+                return
+
             # Routing prefixes only; ignore general chatter without explicit route (support fullwidth colon & /a forms)
             has_prefix = bool(
                 re.search(r"^\s*(a|b|both)[:：]", stripped, re.I) or

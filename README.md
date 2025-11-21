@@ -1,5 +1,7 @@
 # CCCC Pair — Modern Multi-Agent Orchestrator
 
+**English** | [中文](README.zh-CN.md)
+
 Two always-on AI peers co-drive your repository as equals. They plan, build, critique, and converge through evidence — not just talk. You stay in control via an interactive TUI or your team chat.
 
 **🎯 Production-grade orchestrator** • **🖥️ Zero-config TUI** • **📊 Real-time monitoring** • **🧪 Evidence-driven workflow**
@@ -14,6 +16,12 @@ Two always-on AI peers co-drive your repository as equals. They plan, build, cri
 
 > **Modern terminal interface** with interactive setup wizard, real-time timeline, command completion, and status monitoring — all in one clean layout.
 
+### Runtime in Action
+
+![CCCC Runtime Screenshot](./screenshots/tui-runtime.png)
+
+> **Four-pane layout**: Top-left TUI console (Timeline + status bar), top-right PeerA terminal, bottom-right PeerB terminal. Screenshot shows Foreman conducting strategic analysis while both Peers (using opencode) process tasks and coordinate autonomously.
+
 ---
 
 ## ✨ What Makes CCCC Different
@@ -22,8 +30,8 @@ Two always-on AI peers co-drive your repository as equals. They plan, build, cri
 <tr>
 <td width="50%">
 
-**🤝 Dual-Agent Collaboration**
-Two equal peers (not solo AI + tools) that challenge each other, surface better options, and catch errors faster.
+**🤝 Autonomous Dual-Agent Collaboration**
+Two equal peers collaborate and **drive tasks forward automatically** — no constant user intervention needed. They challenge each other, surface better options, and catch errors faster.
 
 **🖥️ Interactive TUI with Zero Config**
 Point-and-click setup wizard (↑↓ + Enter). No YAML editing. No memorizing commands. Tab completion for everything.
@@ -53,12 +61,14 @@ Strategic board (POR.md) and per-task sheets (SUBPOR.md) live in your repo. Ever
 
 ### Single-Agent Pain Points (You May Recognize These)
 
+- 🛑 **Constant Babysitting** — Single agent stalls without your input; you must keep prompting to make progress
 - ⏳ **Stalls & Restarts** — Context evaporates between runs; work drifts and repeats
 - 💬 **Low-Signal Threads** — Long monologues with little verification, no audit trail
 - 🚩 **Vanishing Decisions** — Hard to see what changed, why, and who approved
 
 ### CCCC Payoff with Dual Peers & Modern Tooling
 
+- 🚀 **Autonomous Progress** — Peers communicate and drive tasks forward on their own (10-15 min per cycle); add Foreman for near-continuous operation
 - 🤝 **Multi-Peer Synergy** — One builds, the other challenges; better options emerge; errors die faster
 - ✅ **Evidence-First Loop** — Only tested/logged/committed results count as progress
 - 🖥️ **Interactive TUI** — Zero-config setup, real-time monitoring, command completion built-in
@@ -136,35 +146,96 @@ CCCC features a modern, keyboard-driven TUI with two main modes:
 
 ## Requirements
 
-- **Python** `>= 3.9`
-- **tmux** (`brew install tmux` or `sudo apt install tmux`)
-- **git**
+CCCC uses tmux to manage a multi-pane terminal layout. Ensure the following dependencies are installed:
 
-### Recommended CLI Actors
+| Dependency | Description | Installation |
+|------------|-------------|--------------|
+| **Python** | ≥ 3.9 | Pre-installed on most systems |
+| **tmux** | Terminal multiplexer for multi-pane layout | macOS: `brew install tmux`<br>Ubuntu/Debian: `sudo apt install tmux`<br>Windows: Requires WSL |
+| **git** | Version control | Pre-installed on most systems |
+| **Agent CLI** | At least one required | See below |
 
-- 🔵 **Peer A (default)**: Claude Code — Strong reasoning, careful edits, robust long sessions
-- 🟡 **Peer B (default)**: Codex CLI — Decisive implementation, fast iteration, stable CLI behavior
-- ✨ **Aux (optional)**: Gemini CLI — On-demand helper for burst work (reviews, tests, bulk transforms)
+### Supported CLI Actors
 
-**Also supported**: Factory Droid, OpenCode — All actors can serve as Peer or Aux.
+CCCC is **vendor-agnostic**. Any role (PeerA, PeerB, Aux, Foreman) can use any supported CLI:
 
-> **Note**: CCCC is vendor-agnostic. Any CLI that follows the simple mailbox contract can participate.
+| CLI | Description | Installation |
+|-----|-------------|--------------|
+| **Claude Code** | Strong reasoning, robust long sessions | `npm install -g @anthropic-ai/claude-code` |
+| **Codex CLI** | Fast iteration, decisive implementation | `npm install -g @openai/codex` |
+| **Gemini CLI** | Versatile, good for bulk operations | `npm install -g @google/gemini-cli` |
+| **Factory Droid** | Alternative agent CLI | See project docs |
+| **OpenCode** | Open-source agent CLI | `go install github.com/opencode-ai/opencode@latest` |
+
+> **Mix and match freely** — choose the best CLI for each role based on your needs. Any CLI that follows the mailbox contract can participate.
+
+> **Windows Users**: CCCC requires WSL (Windows Subsystem for Linux). [Install WSL](https://docs.microsoft.com/en-us/windows/wsl/install) first, then proceed in the WSL terminal.
+
+---
+
+## Key Configuration Files: PROJECT.md & FOREMAN_TASK.md
+
+These two files are your primary interface for communicating tasks to the AI. **Write them carefully.**
+
+### PROJECT.md (Project Description)
+
+Located at repo root. **Automatically injected into PeerA and PeerB's system prompts.**
+
+**Should include:**
+- Project background and goals
+- Tech stack and architecture overview
+- Coding conventions and standards
+- Current phase priorities
+- Any context peers need to know
+
+```markdown
+# Project Overview
+This is a xxx system using Python + FastAPI + PostgreSQL...
+
+# Current Priorities
+1. Complete user authentication module
+2. Optimize database query performance
+
+# Coding Standards
+- Use type hints
+- Every function needs a docstring
+- Test coverage > 80%
+```
+
+### FOREMAN_TASK.md (Supervisor Tasks)
+
+Located at repo root. **Automatically injected into Foreman.** Foreman runs every 15 minutes and reads this file to decide what to do.
+
+**Should include:**
+- Periodic check items
+- Standing task list
+- Quality gate requirements
+
+```markdown
+# Foreman Standing Tasks
+
+## Every Check
+1. Run `pytest` to ensure tests pass
+2. Review if POR.md needs updating
+3. Check for unresolved TODOs
+
+## Quality Gates
+- Never skip failing tests
+- New code must have corresponding tests
+```
+
+> **Tip**: The more complex your task, the more important these files become. Clear intent enables autonomous progress.
 
 ---
 
 ## Installation
 
-### Option 1: pipx (Recommended)
-
 ```bash
+# Option 1: pipx (Recommended - auto-isolates environment)
+pip install pipx  # if you don't have pipx
 pipx install cccc-pair
-```
 
-### Option 2: venv
-
-```bash
-python3 -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+# Option 2: pip
 pip install cccc-pair
 ```
 
@@ -172,7 +243,7 @@ pip install cccc-pair
 
 ## Quick Start (5 Minutes)
 
-### 1. Initialize Your Repository
+### Step 1: Initialize Your Repository
 
 ```bash
 cd your-project
@@ -181,15 +252,15 @@ cccc init
 
 This creates the `.cccc/` orchestrator domain (gitignored by default) and `docs/por/` anchors.
 
-### 2. Verify Your Environment
+### Step 2: Verify Your Environment
 
 ```bash
 cccc doctor
 ```
 
-Checks for Python version, tmux, git, and recommended CLI actors.
+Checks for Python version, tmux, git, and installed CLI actors. **Fix any reported issues before proceeding.**
 
-### 3. (Optional) Connect Team Chat
+### Step 3: (Optional) Connect Team Chat
 
 ```bash
 cccc token set  # Paste your Telegram bot token (stored securely in .cccc/settings)
@@ -197,28 +268,29 @@ cccc token set  # Paste your Telegram bot token (stored securely in .cccc/settin
 
 > Telegram/Slack/Discord bridges are optional. CCCC works perfectly standalone.
 
-### 4. Launch the TUI
+### Step 4: Launch
 
 ```bash
 cccc run
 ```
 
 **What happens:**
-- tmux opens with a clean 3-pane layout:
-  - **Left**: CCCC TUI (Setup + Timeline + Input + Status)
+- tmux opens with a 4-pane layout:
+  - **Top-left**: CCCC TUI (Timeline + Input + Status)
+  - **Bottom-left**: Orchestrator log
   - **Top-right**: PeerA terminal
   - **Bottom-right**: PeerB terminal
-- **Setup Panel** opens automatically if this is your first run
+- **Setup Panel** opens automatically on first run
 - **No configuration files to edit** — everything is point-and-click
 
-### 5. Configure Interactively (First Run)
+### Step 5: Configure Interactively (First Run)
 
 The **Setup Panel** guides you through configuration:
 
 1. **Select Actors** (↑↓ to navigate, Enter to apply):
-   - Set `peerA` → `claude`
-   - Set `peerB` → `codex`
-   - Set `aux` → `none` (or choose an actor for on-demand help)
+   - Assign any supported CLI to `peerA` and `peerB`
+   - Optionally assign `aux` for on-demand help (or leave as `none`)
+   - Optionally assign `foreman` for scheduled background tasks
 
 2. **Verify CLI Availability**:
    - TUI automatically checks if `claude`, `codex`, etc. are on PATH
@@ -502,7 +574,7 @@ CCCC includes optional chat bridges to bring the work to where your team already
 ### Features
 
 - **Routing**: Use `a:`, `b:`, or `both:` prefixes, or `/a`, `/b`, `/both` commands
-- **File Exchange**: Upload files to peers, download outputs from `.cccc/work/upload/outbound/`
+- **Bidirectional File Exchange**: Upload files to peers for processing; receive files generated by peers automatically
 - **RFD Cards**: Inline approval buttons for Request-For-Decision cards
 - **Peer Summaries**: Optional (toggle with `/showpeers on|off`)
 

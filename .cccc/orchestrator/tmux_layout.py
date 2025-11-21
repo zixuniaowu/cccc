@@ -106,6 +106,8 @@ def tmux_build_tui_layout(session: str, win_index: str = '0') -> Dict[str,str]:
             panes.append((pid, int(left), int(top)))
         except Exception:
             pass
+    if not panes:
+        raise RuntimeError(f"No panes found in tmux window {target}. Ensure window has panes before calling tmux_build_tui_layout.")
     try:
         coords = sorted({p[1] for p in panes})
         left_x = coords[0]

@@ -2474,6 +2474,12 @@ class CCCCSetupApp:
             self._write_cmd_to_queue("resume", {}, "Resume command sent")
         elif text in ('/refresh', '/sys-refresh'):
             self._write_cmd_to_queue("sys-refresh", {}, "Refresh command sent")
+        elif text.startswith('/restart '):
+            target = text[9:].strip().lower()
+            if target in ('peera', 'peerb', 'both', 'a', 'b'):
+                self._write_cmd_to_queue("restart", {"target": target}, f"Restart {target} command sent")
+            else:
+                self._write_timeline("Usage: /restart peera|peerb|both", 'error')
         elif text == '/quit' or text == 'q':
             self._write_timeline("Shutting down CCCC...", 'system')
             self._quit_app()

@@ -1540,6 +1540,17 @@ def main(home: Path, session_name: Optional[str] = None):
                     if not isinstance(outcome, dict):
                         raise ValueError("foreman command returned invalid result")
                     result = dict(outcome)
+                elif command == "restart":
+                    target = str(args.get("target") or "both").strip().lower()
+                    results = []
+                    if target in ('peera', 'a', 'both'):
+                        success = restart_peer('PeerA', reason='manual-im')
+                        results.append(f"PeerA: {'✓' if success else '✗'}")
+                    if target in ('peerb', 'b', 'both'):
+                        success = restart_peer('PeerB', reason='manual-im')
+                        results.append(f"PeerB: {'✓' if success else '✗'}")
+                    msg = f"Restart {target}: {', '.join(results)}"
+                    result = {"ok": True, "message": msg}
                 else:
                     raise ValueError("unknown command")
             except Exception as exc:
@@ -2091,7 +2102,7 @@ def main(home: Path, session_name: Optional[str] = None):
         nonlocal ready_banner_printed
         if ready_banner_printed:
             return
-        print("\n[READY] Common: /a|/b|/both send; /pause|/resume handoff; /sys-refresh inject SYSTEM.")
+        print("\n[READY] Common: /a|/b|/both send; /pause|/resume handoff; /sys-refresh inject SYSTEM; /restart peera|peerb|both.")
         print("[TIP] Use IM for CLI passthrough (/pa,/pb). TUI has adjacent panes for direct typing.")
         try:
             sys.stdout.write("[READY] Type h or /help for command hints.\n> ")
@@ -2257,6 +2268,112 @@ def main(home: Path, session_name: Optional[str] = None):
         'deliver_paused_box': deliver_paused_box,
     })
 
+    # PEER restart configuration
+    AUTO_RESTART_ENABLED = True  # Enable automatic restart on crash
+    AUTO_RESTART_MAX_ATTEMPTS = 3  # Max restarts in time window
+    AUTO_RESTART_WINDOW_SEC = 600  # Time window (10 minutes)
+
+    def count_recent_restarts(peer_label: str, window_sec: int) -> int:
+        """Count recent restart events from ledger within time window"""
+        try:
+            ledger_path = home / "state" / "ledger.jsonl"
+            if not ledger_path.exists():
+                return 0
+
+            now = time.time()
+            cutoff = now - window_sec
+            count = 0
+
+            with ledger_path.open('r', encoding='utf-8') as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                        if (entry.get("kind") == "peer-restarted" and
+                            entry.get("peer") == peer_label and
+                            float(entry.get("ts", 0)) >= cutoff):
+                            count += 1
+                    except Exception:
+                        continue
+            return count
+        except Exception:
+            return 0
+
+    def restart_peer(peer_label: str, reason: str = "manual") -> bool:
+        """
+        Simple PEER restart: respawn CLI + inject SYSTEM prompt
+
+        Design: New CLI is fresh session, let everything flow naturally.
+        Only needs to respawn process and re-inject SYSTEM prompt.
+        """
+        try:
+            pane = paneA if peer_label == "PeerA" else paneB
+
+            # Read CLI command from last_launch.json
+            try:
+                launch_info = json.loads((state/"last_launch.json").read_text(encoding='utf-8'))
+                peer_key = "peerA" if peer_label == "PeerA" else "peerB"
+                cmd = launch_info[peer_key]["eff"]
+            except Exception as e:
+                log_ledger(home, {
+                    "from": "system",
+                    "kind": "peer-restart-failed",
+                    "peer": peer_label,
+                    "reason": "cannot read launch command",
+                    "error": str(e)[:200]
+                })
+                return False
+
+            # Respawn CLI process
+            stderr_log = str(home / "logs" / f"{peer_label.lower()}.stderr")
+            tmux_start_interactive(pane, cmd, stderr_log=stderr_log, remain_on_exit=True)
+
+            log_ledger(home, {
+                "from": "system",
+                "kind": "peer-restarted",
+                "peer": peer_label,
+                "reason": reason,
+                "ts": time.time()
+            })
+            print(f"[RESTART] {peer_label} restarted (reason: {reason})")
+
+            # Wait for CLI to initialize (5 seconds)
+            time.sleep(5.0)
+
+            # Reset preamble flag so it gets re-injected with next message
+            try:
+                preamble_state = _load_preamble_sent()
+                preamble_state[peer_label] = False
+                _save_preamble_sent(preamble_state)
+            except Exception:
+                pass
+
+            # Inject SYSTEM prompt immediately
+            try:
+                peer_key = "peerA" if peer_label == "PeerA" else "peerB"
+                sys_prompt = weave_system(home, peer_key)
+                _send_handoff("System", peer_label,
+                             f"<FROM_SYSTEM>\n{sys_prompt}\n</FROM_SYSTEM>\n")
+                print(f"[RESTART] {peer_label} SYSTEM prompt injected")
+            except Exception as e:
+                log_ledger(home, {
+                    "from": "system",
+                    "kind": "peer-restart-system-inject-failed",
+                    "peer": peer_label,
+                    "error": str(e)[:200]
+                })
+
+            return True
+
+        except Exception as e:
+            log_ledger(home, {
+                "from": "system",
+                "kind": "peer-restart-exception",
+                "peer": peer_label,
+                "error": str(e)[:200]
+            })
+            print(f"[RESTART] {peer_label} restart failed: {e}")
+            return False
+
     # Tmux alive check: only check every N loops to minimize overhead
     _tmux_check_counter = 0
     _tmux_check_interval = 10  # Check every 10 loops (e.g., every 20 seconds if loop is 2s)
@@ -2343,6 +2460,37 @@ def main(home: Path, session_name: Optional[str] = None):
                                 "peer": peer_label,
                                 "error": str(e)[:200]
                             })
+
+                        # Auto-restart if enabled and within limit
+                        if AUTO_RESTART_ENABLED:
+                            recent_restarts = count_recent_restarts(peer_label, AUTO_RESTART_WINDOW_SEC)
+                            if recent_restarts < AUTO_RESTART_MAX_ATTEMPTS:
+                                # Attempt automatic restart
+                                print(f"[AUTO-RESTART] {peer_label} attempting restart (attempt {recent_restarts + 1}/{AUTO_RESTART_MAX_ATTEMPTS})")
+                                success = restart_peer(peer_label, reason="auto-crash")
+                                if success:
+                                    # Reset detection flag so we can detect future crashes
+                                    _peer_crash_detected[peer_label] = False
+                                else:
+                                    print(f"[AUTO-RESTART] {peer_label} restart failed")
+                            else:
+                                # Reached restart limit - notify user
+                                print(f"[AUTO-RESTART] {peer_label} restart limit reached ({AUTO_RESTART_MAX_ATTEMPTS} restarts in {AUTO_RESTART_WINDOW_SEC}s)")
+                                log_ledger(home, {
+                                    "from": "system",
+                                    "kind": "peer-restart-limit-reached",
+                                    "peer": peer_label,
+                                    "attempts": recent_restarts,
+                                    "window_sec": AUTO_RESTART_WINDOW_SEC
+                                })
+                                try:
+                                    outbox_write(home, {
+                                        "type": "to_user",
+                                        "peer": "System",
+                                        "text": f"⚠️ {peer_label} crashed {AUTO_RESTART_MAX_ATTEMPTS} times in {AUTO_RESTART_WINDOW_SEC//60} minutes. Auto-restart disabled. Please investigate crash logs and restart manually with /restart {peer_label.lower()}."
+                                    })
+                                except Exception:
+                                    pass
                 except Exception:
                     # Silently continue if health check fails
                     pass
@@ -2401,6 +2549,8 @@ def main(home: Path, session_name: Optional[str] = None):
             '_send_raw_to_cli': _send_raw_to_cli,
             # cleanup function for /quit command to use before tmux kill-session
             'cleanup_bridges': _cleanup_bridges,
+            # restart function for /restart command
+            'restart_peer': restart_peer,
         }
         cq = make_cq(cq_ctx)
         upd = cq.consume(max_items=20)

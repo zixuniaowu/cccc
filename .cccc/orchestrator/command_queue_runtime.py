@@ -170,6 +170,25 @@ def make(ctx: Dict[str, Any]):
                                 ok, msg = True, f"handoff {'paused' if deliver_paused else 'resumed'}"
                             elif ctype in ('sys-refresh','sys_refresh','sysrefresh'):
                                 ok, msg = _inject_full_system()
+                            elif ctype in ('restart',):
+                                # Manual PEER restart: /restart peera|peerb|both
+                                try:
+                                    target = str((args.get('target') or obj.get('target') or 'both')).strip().lower()
+                                    restart_fn = ctx.get('restart_peer')
+                                    if not restart_fn:
+                                        ok, msg = False, "restart function not available"
+                                    else:
+                                        results = []
+                                        if target in ('peera', 'a', 'both'):
+                                            success = restart_fn('PeerA', reason='manual')
+                                            results.append(f"PeerA: {'✓' if success else '✗'}")
+                                        if target in ('peerb', 'b', 'both'):
+                                            success = restart_fn('PeerB', reason='manual')
+                                            results.append(f"PeerB: {'✓' if success else '✗'}")
+                                        ok = True
+                                        msg = f"restart {target}: {', '.join(results)}"
+                                except Exception as e:
+                                    ok, msg = False, f"restart failed: {e}"
                             elif ctype in ('clear','reset'):
                                 ok, msg = True, 'clear acknowledged (noop)'
                             elif ctype in ('inbox','inbox_policy','startup_inbox_policy'):
