@@ -4,6 +4,7 @@
 
 两个AI作为平等的伙伴**自主协作、自动推进任务**——你设定目标，它们自己沟通、规划、实现、互相review。你通过TUI或聊天工具随时掌控全局，但不需要持续介入。
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/cccc-pair)](https://pypi.org/project/cccc-pair/)
 [![Python](https://img.shields.io/pypi/pyversions/cccc-pair)](https://pypi.org/project/cccc-pair/)
 [![Telegram](https://img.shields.io/badge/Telegram-社区-2CA5E0?logo=telegram)](https://t.me/ccccpair)
@@ -142,15 +143,19 @@
 
 CCCC不绑定特定AI，任何角色都可以使用以下任一CLI：
 
-| CLI | 特点 |
-|-----|------|
-| **Claude Code** | 推理能力强，长session稳定 |
-| **Codex CLI** | 执行快速，迭代果断 |
-| **Gemini CLI** | 通用性好，适合批量操作 |
-| **Factory Droid** | 替代方案 |
-| **OpenCode** | 开源Agent CLI |
+| CLI | 官方文档 |
+|-----|----------|
+| **Claude Code** | [docs.anthropic.com/claude-code](https://docs.anthropic.com/en/docs/claude-code) |
+| **Codex CLI** | [github.com/openai/codex](https://github.com/openai/codex) |
+| **Gemini CLI** | [github.com/google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) |
+| **Factory Droid** | [factory.ai](https://factory.ai/) |
+| **OpenCode** | [github.com/opencode-ai/opencode](https://github.com/opencode-ai/opencode) |
+| **Kilocode** | [kilo.ai/docs/cli](https://kilo.ai/docs/cli) |
+| **GitHub Copilot** | [github.com/features/copilot/cli](https://github.com/features/copilot/cli) |
+| **Augment Code** | [docs.augmentcode.com/cli](https://docs.augmentcode.com/cli/overview) |
+| **Cursor** | [cursor.com/cli](https://cursor.com/en-US/cli) |
 
-> 任何遵循mailbox协议的CLI都可以接入。
+> 安装方式请参考各CLI的官方文档。任何遵循mailbox协议的CLI都可以接入。
 
 ---
 
@@ -216,16 +221,7 @@ cccc run
 - 首次运行显示Setup面板，用↑↓选择CLI绑定到各角色
 - 确认后Peer们自动启动，开始工作
 
-> **提示**：如果 `cccc doctor` 报错，请根据提示安装缺失的依赖。
-
-### 设置聊天桥接（可选）
-
-```bash
-# 设置Telegram/Slack/Discord token
-cccc token set
-
-# 或者在TUI的Setup面板里配置
-```
+> **提示**：如果 `cccc doctor` 报错，请根据提示安装缺失的依赖。聊天桥接（Telegram/Slack/Discord）可在TUI的Setup面板里配置。
 
 ---
 

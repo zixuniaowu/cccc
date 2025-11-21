@@ -6,6 +6,7 @@ Two always-on AI peers co-drive your repository as equals. They plan, build, cri
 
 **🎯 Production-grade orchestrator** • **🖥️ Zero-config TUI** • **📊 Real-time monitoring** • **🧪 Evidence-driven workflow**
 
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Telegram Community](https://img.shields.io/badge/Telegram-Join_Community-2CA5E0?style=flat&logo=telegram&logoColor=white)](https://t.me/ccccpair)
 
 ---
@@ -159,15 +160,19 @@ CCCC uses tmux to manage a multi-pane terminal layout. Ensure the following depe
 
 CCCC is **vendor-agnostic**. Any role (PeerA, PeerB, Aux, Foreman) can use any supported CLI:
 
-| CLI | Description | Installation |
-|-----|-------------|--------------|
-| **Claude Code** | Strong reasoning, robust long sessions | `npm install -g @anthropic-ai/claude-code` |
-| **Codex CLI** | Fast iteration, decisive implementation | `npm install -g @openai/codex` |
-| **Gemini CLI** | Versatile, good for bulk operations | `npm install -g @google/gemini-cli` |
-| **Factory Droid** | Alternative agent CLI | See project docs |
-| **OpenCode** | Open-source agent CLI | `go install github.com/opencode-ai/opencode@latest` |
+| CLI | Official Docs |
+|-----|---------------|
+| **Claude Code** | [docs.anthropic.com/claude-code](https://docs.anthropic.com/en/docs/claude-code) |
+| **Codex CLI** | [github.com/openai/codex](https://github.com/openai/codex) |
+| **Gemini CLI** | [github.com/google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli) |
+| **Factory Droid** | [factory.ai](https://factory.ai/) |
+| **OpenCode** | [github.com/opencode-ai/opencode](https://github.com/opencode-ai/opencode) |
+| **Kilocode** | [kilo.ai/docs/cli](https://kilo.ai/docs/cli) |
+| **GitHub Copilot** | [github.com/features/copilot/cli](https://github.com/features/copilot/cli) |
+| **Augment Code** | [docs.augmentcode.com/cli](https://docs.augmentcode.com/cli/overview) |
+| **Cursor** | [cursor.com/cli](https://cursor.com/en-US/cli) |
 
-> **Mix and match freely** — choose the best CLI for each role based on your needs. Any CLI that follows the mailbox contract can participate.
+> **Mix and match freely** — choose the best CLI for each role based on your needs. See each CLI's official docs for installation instructions.
 
 > **Windows Users**: CCCC requires WSL (Windows Subsystem for Linux). [Install WSL](https://docs.microsoft.com/en-us/windows/wsl/install) first, then proceed in the WSL terminal.
 
@@ -262,11 +267,7 @@ Checks for Python version, tmux, git, and installed CLI actors. **Fix any report
 
 ### Step 3: (Optional) Connect Team Chat
 
-```bash
-cccc token set  # Paste your Telegram bot token (stored securely in .cccc/settings)
-```
-
-> Telegram/Slack/Discord bridges are optional. CCCC works perfectly standalone.
+> Telegram/Slack/Discord bridges are optional. CCCC works perfectly standalone. Configure them in the TUI Setup Panel if needed.
 
 ### Step 4: Launch
 
@@ -296,9 +297,9 @@ The **Setup Panel** guides you through configuration:
    - TUI automatically checks if `claude`, `codex`, etc. are on PATH
    - If a CLI is missing, the panel shows hints (e.g., "Install with `pip install claude-code`")
 
-3. **(Optional) Configure Telegram**:
-   - If you ran `cccc token set` earlier, you'll see `configured: YES`
-   - Otherwise, select `Set token...` to enter your bot token inline
+3. **(Optional) Configure Chat Bridges**:
+   - Select Telegram/Slack/Discord section to configure tokens
+   - Enter your bot token inline when prompted
 
 4. **Launch**:
    - Once configured, Setup Panel auto-collapses
@@ -581,10 +582,7 @@ CCCC includes optional chat bridges to bring the work to where your team already
 ### Setup
 
 1. **Create a bot** (Telegram: @BotFather, Slack: App Studio, Discord: Developer Portal)
-2. **Set token**:
-   ```bash
-   cccc token set  # Or via TUI Setup Panel
-   ```
+2. **Set token** via TUI Setup Panel (select the bridge section and enter token when prompted)
 3. **Allowlist your chat**:
    - Start a conversation with the bot, send `/whoami` to get your `chat_id`
    - Add `chat_id` to `.cccc/settings/telegram.yaml` (or slack.yaml/discord.yaml) allowlist
