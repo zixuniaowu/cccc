@@ -199,7 +199,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     ]
     if aux_enabled:
         ch1 += [
-            "- On-demand helper: Aux (PeerC) - purpose & direction",
+            "- On-demand helper: Aux - purpose & direction",
             "  - Use Aux when a decoupled subtask or high-level sanity sweep is cheaper offloaded than done inline. You integrate the outcome.",
             "  - Mode: on - Aux has the same FoV and permissions in this repo as you. Just call Aux for help.",
         ]
@@ -377,7 +377,7 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
 
     ch1 = [
         "1) Role - Activation - Expectations",
-        "- You are Aux (PeerC), the on-demand third peer. PeerA/PeerB summon you for strategic corrections and heavy execution that stay reversible.",
+        "- You are Aux, the on-demand third peer. PeerA/PeerB summon you for strategic corrections and heavy execution that stay reversible.",
         "- Activation: orchestrator drops a bundle under .cccc/work/aux_sessions/<session-id>/ containing POR.md, notes.txt, peer_message.txt, and any extra context.",
         "- Rhythm: operate with the same evidence-first standards as the primary peers - small, testable moves and explicit next checks.",
     ]
@@ -394,12 +394,13 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
     ch2 = [
         "",
         "2) Critical References & Inputs",
+        "- PROJECT.md - project introduction and task description. Read this first to understand the project context and current objectives.",
         f"- POR.md - single source of direction (path: {por_rel}). Always reconcile the bundle against the latest POR before proposing actions.",
         f"- Session bundle - {session_root}/<session-id>/",
         "  - Read notes.txt first: it captures the ask, expectations, and any suggested commands.",
         "  - peer_message.txt (when present) mirrors the triggering CLAIM/COUNTER/EVIDENCE; use it to align tone and scope.",
         "  - Additional artifacts (logs, datasets) live alongside; cite exact paths in your outputs.",
-        "- This rules document - .cccc/rules/PEERC.md. Reference anchors from here in any summary you produce for the peers.",
+        "- This rules document - .cccc/rules/AUX.md. Reference anchors from here in any summary you produce for the peers.",
     ]
 
     ch3 = [
@@ -428,13 +429,13 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
 
     ts = _format_local_ts()
     text = "\n".join([
-        "# PEERC Rules (Generated)",
+        "# Aux Rules (Generated)",
         f"Generated on {ts}",
         "",
         *ch1, *ch2, *ch3, *ch4,
         "",
     ])
-    target = _rules_dir(home)/"PEERC.md"
+    target = _rules_dir(home)/"AUX.md"
     target.write_text(text, encoding="utf-8")
     return target
 
@@ -453,7 +454,7 @@ def ensure_rules_docs(home: Path):
         old = json.loads(stamp.read_text(encoding="utf-8"))
     except Exception:
         old = {}
-    if (not (home/"rules"/"PEERA.md").exists()) or (not (home/"rules"/"PEERB.md").exists()) or (not (home/"rules"/"PEERC.md").exists()) or (not (home/"rules"/"FOREMAN.md").exists()) or (old.get("hash") != h):
+    if (not (home/"rules"/"PEERA.md").exists()) or (not (home/"rules"/"PEERB.md").exists()) or (not (home/"rules"/"AUX.md").exists()) or (not (home/"rules"/"FOREMAN.md").exists()) or (old.get("hash") != h):
         ensure_por(home)  # make sure POR exists for path rendering
         im_enabled = _is_im_enabled(home)
         aux_mode = _aux_mode(home)
@@ -474,7 +475,7 @@ def ensure_rules_docs(home: Path):
 
 def rebuild_rules_docs(home: Path):
     """Rebuild rules docs unconditionally (used once at orchestrator startup).
-    - Always rewrites .cccc/rules/PEERA.md, PEERB.md, PEERC.md with fresh
+    - Always rewrites .cccc/rules/PEERA.md, PEERB.md, AUX.md with fresh
       timestamps and current IM/Aux mode derived from settings/env.
     - Updates state/rules_hash.json to the current computed hash so that
       subsequent ensure_rules_docs() calls are no-ops for this run unless

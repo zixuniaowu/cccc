@@ -11,7 +11,7 @@ actors:
       # DEPRECATED: busy_regexes will be removed in a future release.
       busy_regexes: []
     aux:
-      invoke_command: 'claude --dangerously-skip-permissions -p "{prompt}"'
+      invoke_command: 'claude --dangerously-skip-permissions -p "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
     compact:
       enabled: true
@@ -31,7 +31,7 @@ actors:
       # DEPRECATED: busy_regexes will be removed in a future release.
       busy_regexes: []
     aux:
-      invoke_command: 'codex exec --sandbox danger-full-access "{prompt}"'
+      invoke_command: 'codex exec --sandbox danger-full-access "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
     compact:
       enabled: true
@@ -52,7 +52,7 @@ actors:
       # DEPRECATED: busy_regexes will be removed in a future release.
       busy_regexes: []
     aux:
-      invoke_command: 'gemini -p "{prompt}" --yolo'
+      invoke_command: 'gemini -p "Read .cccc/rules/AUX.md first. {prompt}" --yolo'
       rate_limit_per_minute: 2
     compact:
       enabled: true
@@ -73,7 +73,7 @@ actors:
       # DEPRECATED: busy_regexes will be removed in a future release.
       busy_regexes: []
     aux:
-      invoke_command: 'droid exec --auto high "{prompt}"'
+      invoke_command: 'droid exec --auto high "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
     compact:
       enabled: true
@@ -94,7 +94,7 @@ actors:
       # DEPRECATED: busy_regexes will be removed in a future release.
       busy_regexes: []
     aux:
-      invoke_command: 'opencode run "{prompt}"'
+      invoke_command: 'opencode run "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
     compact:
       enabled: true
@@ -113,7 +113,7 @@ actors:
       prompt_regex: ''
       busy_regexes: []
     aux:
-      invoke_command: 'kilocode --auto "{prompt}"'
+      invoke_command: 'kilocode --auto "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
     compact:
       enabled: false
@@ -132,7 +132,7 @@ actors:
       prompt_regex: ''
       busy_regexes: []
     aux:
-      invoke_command: 'copilot -p "{prompt}" --allow-all-tools'
+      invoke_command: 'copilot -p "Read .cccc/rules/AUX.md first. {prompt}" --allow-all-tools'
       rate_limit_per_minute: 2
     compact:
       enabled: false
@@ -151,7 +151,7 @@ actors:
       prompt_regex: ''
       busy_regexes: []
     aux:
-      invoke_command: 'auggie --print "{prompt}"'
+      invoke_command: 'auggie --print "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
     compact:
       enabled: false
@@ -170,7 +170,7 @@ actors:
       prompt_regex: ''
       busy_regexes: []
     aux:
-      invoke_command: 'cursor-agent -p "{prompt}"'
+      invoke_command: 'cursor-agent -p "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
     compact:
       enabled: true

@@ -855,7 +855,7 @@ def main(home: Path, session_name: Optional[str] = None):
         log_ledger(home, {"from": "system", "kind": "aux_reminder", "peers": targets, "reason": reason})
         write_status(deliver_paused)
 
-    # Note: auto Aux trigger based on YAML payload has been removed. Use manual /review or one-off /c (Aux CLI).
+    # Note: auto Aux trigger based on YAML payload has been removed. Use manual /review or one-off /aux (Aux CLI).
 
 
     cli_profiles_path = settings/"cli_profiles.yaml"

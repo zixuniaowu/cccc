@@ -2446,7 +2446,7 @@ class CCCCSetupApp:
             self._write_timeline("  /foreman now        Run Foreman immediately", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Aux:", 'info')
-            self._write_timeline("  /c <prompt>         Run Aux helper", 'info')
+            self._write_timeline("  /aux <prompt>       Run Aux helper", 'info')
             self._write_timeline("  /review             Request Aux review", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Other:", 'info')
@@ -2508,12 +2508,12 @@ class CCCCSetupApp:
             self._write_cmd_to_queue("focus", {"hint": hint}, "Focus command sent")
 
         # Aux command with prompt
-        elif text.startswith('/c '):
-            prompt = text[3:].strip()
+        elif text.startswith('/aux '):
+            prompt = text[5:].strip()
             if prompt:
                 self._write_cmd_to_queue("aux", {"prompt": prompt}, "Aux command sent")
             else:
-                self._write_timeline("Usage: /c <prompt>", 'error')
+                self._write_timeline("Usage: /aux <prompt>", 'error')
 
         # Message sending commands (keep existing logic)
         elif text.startswith('/a '):

@@ -243,7 +243,7 @@ cccc token set
 | `/refresh` | 刷新系统提示词 |
 | `/setup` | 打开/关闭设置面板 |
 | `/foreman on\|off\|status\|now` | 控制Foreman |
-| `/c <提示>` | 调用Aux执行一次性任务 |
+| `/aux <提示>` | 调用Aux执行一次性任务 |
 | `/verbose on\|off` | 开关详细输出 |
 | `/help` | 查看所有命令 |
 | `/quit` | 退出 |

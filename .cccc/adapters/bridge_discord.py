@@ -365,14 +365,14 @@ def main():
                 _log(f"[cmd] focus ch={message.channel.id} req={req_id}")
                 return
 
-            if stripped.lower().startswith('c:') or re.match(r'^/?c\b', stripped, re.I):
-                if stripped.lower().startswith('c:'):
-                    prompt = stripped[2:].strip()
+            if stripped.lower().startswith('aux:') or re.match(r'^/?aux\b', stripped, re.I):
+                if stripped.lower().startswith('aux:'):
+                    prompt = stripped[4:].strip()
                 else:
                     parts = stripped.split(None, 1)
                     prompt = parts[1].strip() if len(parts) > 1 else ''
                 if not prompt:
-                    await _send_reply('Usage: /c <prompt> or c: <prompt>')
+                    await _send_reply('Usage: /aux <prompt> or aux: <prompt>')
                     return
                 result, req_id = _enqueue_im_command('aux_cli', {'prompt': prompt}, source='discord', channel=str(message.channel.id))
                 if result and result.get('ok'):

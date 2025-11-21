@@ -634,14 +634,14 @@ def main():
                 _append_log(f"[cmd] focus ch={ch} req={req_id}")
                 return
 
-            if command_text.strip().lower().startswith('c:') or re.match(r'^/?c\b', command_text, re.I):
-                if command_text.strip().lower().startswith('c:'):
-                    prompt = command_text.strip()[2:].strip()
+            if command_text.strip().lower().startswith('aux:') or re.match(r'^/?aux\b', command_text, re.I):
+                if command_text.strip().lower().startswith('aux:'):
+                    prompt = command_text.strip()[4:].strip()
                 else:
                     pieces = command_text.split(None, 1)
                     prompt = pieces[1].strip() if len(pieces) > 1 else ''
                 if not prompt:
-                    _send_reply('Usage: /c <prompt> or c: <prompt>')
+                    _send_reply('Usage: /aux <prompt> or aux: <prompt>')
                     return
                 result, req_id = _enqueue_im_command('aux_cli', {'prompt': prompt}, source='slack', channel=ch)
                 if result and result.get('ok'):

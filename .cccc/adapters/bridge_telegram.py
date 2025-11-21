@@ -1100,14 +1100,14 @@ def main():
 
             stripped = text.strip()
             prompt = None
-            if stripped.lower().startswith('c:'):
-                prompt = stripped[2:].strip()
-            elif is_cmd(text, 'c'):
+            if stripped.lower().startswith('aux:'):
+                prompt = stripped[4:].strip()
+            elif is_cmd(text, 'aux'):
                 pieces = text.split(None, 1)
                 prompt = pieces[1].strip() if len(pieces) > 1 else ''
             if prompt is not None:
                 if not prompt:
-                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /c <prompt> or c: <prompt>'}, timeout=15)
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Usage: /aux <prompt> or aux: <prompt>'}, timeout=15)
                     continue
                 result, req_id = _enqueue_im_command('aux_cli', {'prompt': prompt}, source='telegram', chat_id=chat_id)
                 if result and result.get('ok'):

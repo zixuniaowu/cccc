@@ -366,7 +366,7 @@ All commands are accessible via Tab completion. Just type `/` and press Tab to e
 | `/quit` | Exit CCCC (detach tmux) | `/quit` |
 | `/setup` | Toggle Setup Panel | `/setup` |
 | `/foreman on\|off\|status\|now` | Control Foreman (if enabled) | `/foreman status` |
-| `/c <prompt>` | Invoke Aux once | `/c Run full test suite` |
+| `/aux <prompt>` | Invoke Aux once | `/aux Run full test suite` |
 | `/review` | Request Aux review | `/review` |
 | `/focus [hint]` | Focus PeerB on a topic | `/focus performance` |
 | `/verbose on\|off` | Toggle peer summaries + Foreman CC | `/verbose off` |
@@ -530,8 +530,8 @@ Aux is a third peer for burst work (e.g., broad reviews, heavy tests, bulk trans
 - Or set `aux→none` to disable
 
 **Invoke Aux:**
-- In TUI: `/c <prompt>` or `/review`
-- In chat bridges: `/aux-cli "<prompt>"`
+- In TUI: `/aux <prompt>` or `/review`
+- In chat bridges: `/aux "<prompt>"` or `aux: <prompt>`
 
 **Use cases:**
 - Strategic reviews (check POR against all SUBPORs)
