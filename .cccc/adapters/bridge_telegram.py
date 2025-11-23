@@ -1047,11 +1047,14 @@ def main():
                     _append_log(outlog, f"[unsubscribe] chat={chat_id}")
                     _append_ledger({"kind":"bridge-unsubscribe","chat":chat_id})
                     continue
-                # Discovery or closed policy: log and optionally reply to whoami
+                # Discovery or closed policy: log and optionally reply to whoami/help
                 _append_log(outlog, f"[drop] message from not-allowed chat={chat_id}")
                 _append_ledger({"kind":"bridge-drop","reason":"not-allowed","chat":chat_id})
                 if discover and is_cmd(text, 'whoami'):
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': f"chat_id={chat_id} (not allowed; send /subscribe to opt-in)"}, timeout=15)
+                elif is_cmd(text, 'help'):
+                    help_txt = "You are not subscribed. Send /subscribe to opt-in first.\n/whoami shows your chat_id; /unsubscribe to leave."
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
                 elif policy == 'open':
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Not subscribed. Send /subscribe to opt-in, /unsubscribe to leave.'}, timeout=15)
                 continue
@@ -1231,6 +1234,24 @@ def main():
                 reply = (result.get('message') if result else f'Restart request queued (id={req_id}).')
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': reply}, timeout=15)
                 _append_log(outlog, f"[cmd] restart target={target} chat={chat_id} req={req_id}")
+                continue
+
+            # Meta commands (must be before require_mention/require_explicit checks)
+            if is_cmd(text, 'help'):
+                help_txt = (
+                    "Routing: a:/b:/both: or /a /b /both → deliver to peers;\n"
+                    "Passthrough (CLI): a! <cmd>/b! <cmd> (DM recommended) or /pa <cmd>/pb <cmd> [/pboth <cmd>] in groups;\n"
+                    "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux \"<prompt>\" run configured Aux once; /review trigger Aux reminder;\n"
+                    "/restart peera|peerb|both restart PEER agent CLI; /foreman on|off|now|status control background scheduler;\n"
+                    "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
+                    "/verbose on|off toggle Peer<->Peer summary and Foreman CC; /files [in|out] [N] list recent files; /file N view."
+                )
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
+                continue
+
+            if is_cmd(text, 'whoami'):
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"chat_id={chat_id}"}, timeout=15)
+                _append_log(outlog, f"[meta] whoami chat={chat_id}")
                 continue
 
             # Enforce mention in group if configured
@@ -1497,22 +1518,6 @@ def main():
                     lines=["No locks info"]
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': "\n".join(lines)}, timeout=15)
                 continue
-            if is_cmd(text, 'whoami'):
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"chat_id={chat_id}"}, timeout=15)
-                _append_log(outlog, f"[meta] whoami chat={chat_id}")
-                continue
-            if is_cmd(text, 'help'):
-                help_txt = (
-                    "Routing: a:/b:/both: or /a /b /both → deliver to peers;\n"
-                    "Passthrough (CLI): a! <cmd>/b! <cmd> (DM recommended) or /pa <cmd>/pb <cmd> [/pboth <cmd>] in groups;\n"
-                    "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux-cli \"<prompt>\" run configured Aux once; /review trigger Aux reminder;\n"
-                    "/restart peera|peerb|both restart PEER agent CLI; /foreman on|off|now|status control background scheduler;\n"
-                    "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
-                    "/verbose on|off toggle Peer<->Peer summary and Foreman CC; /files [in|out] [N] list recent files; /file N view."
-                )
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': help_txt}, timeout=15)
-                continue
-
             # Default: route conversational text to peers via mailbox
             if route_source:
                 routes, body = _route_from_text(route_source, dr)

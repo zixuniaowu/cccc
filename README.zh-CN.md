@@ -82,6 +82,19 @@
 - **双向通信**：在聊天里发指令、收状态、审批RFD
 - **文件互传**：支持双向文件交换——你可以上传文件给Peer处理，Peer生成的文件也会推送给你
 
+**IM 聊天命令**：
+
+| 平台 | 命令 | 说明 |
+|------|------|------|
+| 全平台 | `a: <消息>` / `b: <消息>` / `both: <消息>` | 路由到Peer |
+| 全平台 | `a! <命令>` / `b! <命令>` | CLI直通（无包装直接输入） |
+| 全平台 | `aux: <提示>` 或 `/aux <提示>` | 调用Aux执行一次 |
+| 仅Telegram | `/pa` `/pb` `/pboth` | 群组中的直通命令 |
+| 仅Telegram | `/help` `/whoami` `/status` `/subscribe` `/verbose` | 元命令和设置 |
+| 仅Telegram | `/focus` `/reset` `/foreman` `/restart` | 控制命令 |
+
+> Slack 和 Discord 命令支持较少，建议使用前缀语法（`a:`、`a!`、`aux:`）以确保全平台兼容。
+
 ---
 
 ## 关键配置文件：PROJECT.md 与 FOREMAN_TASK.md

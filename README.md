@@ -591,14 +591,19 @@ CCCC includes optional chat bridges to bring the work to where your team already
 
 ### Commands in Chat
 
-- `/help` — Usage and routing tips
-- `/whoami` — Get your `chat_id` for allowlist
-- `/status` — View orchestrator snapshot
-- `/showpeers on|off` — Toggle peer↔peer summaries
-- `/files [in|out] [N]` — List recent files
-- `a: <message>` — Send to PeerA
-- `b: <message>` — Send to PeerB
-- `both: <message>` — Send to both
+**All Platforms** (Telegram / Slack / Discord):
+- `a: <message>` / `b: <message>` / `both: <message>` — Route to peers
+- `a! <command>` / `b! <command>` — CLI passthrough (direct input, no wrapper)
+- `aux: <prompt>` or `/aux <prompt>` — Run Aux once
+
+**Telegram Only** (most complete):
+- `/a` `/b` `/both` — Slash routing aliases
+- `/pa` `/pb` `/pboth` — Slash passthrough (group-friendly)
+- `/help` `/whoami` `/status` `/queue` `/locks` — Meta commands
+- `/subscribe` `/verbose on|off` `/files` — Subscription & settings
+- `/focus` `/reset` `/foreman` `/restart` `/review` — Control commands
+
+> Slack and Discord have limited command support. Use prefix syntax (`a:`, `a!`, `aux:`) which works everywhere.
 
 ---
 

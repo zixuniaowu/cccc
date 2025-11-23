@@ -1819,6 +1819,14 @@ class CCCCSetupApp:
             self._refresh_ui()
             return
 
+        # Check foreman/aux compatibility
+        if getattr(self.config, 'foreman', None) == 'reuse_aux':
+            aux_val = getattr(self.config, 'aux', None)
+            if not aux_val or aux_val == 'none':
+                self.error_msg = "Foreman is set to 'reuse_aux' but Aux is not configured.\nPlease set Aux to an actor, or change Foreman to 'none' or a specific actor."
+                self._refresh_ui()
+                return
+
         # Check actor availability
         missing_actors = []
         for role, actor in [('PeerA', self.config.peerA), ('PeerB', self.config.peerB), ('Aux', self.config.aux)]:
@@ -1951,13 +1959,24 @@ class CCCCSetupApp:
         roles = cli_profiles.get('roles') or {}
 
         # Preserve existing role configurations, only update what we need to
-        for role_name, actor_name in [('peerA', self.config.peerA), ('peerB', self.config.peerB), ('aux', self.config.aux)]:
+        for role_name, actor_name in [('peerA', self.config.peerA), ('peerB', self.config.peerB)]:
             if actor_name and actor_name != 'none':
                 if role_name not in roles:
                     roles[role_name] = {}
                 # Only update actor and cwd, preserve everything else (inbound_suffix, nudge_suffix, etc.)
                 roles[role_name]['actor'] = actor_name
                 roles[role_name]['cwd'] = '.'
+
+        # Handle aux separately - always write or clear to ensure changes take effect
+        if self.config.aux and self.config.aux != 'none':
+            if 'aux' not in roles:
+                roles['aux'] = {}
+            roles['aux']['actor'] = self.config.aux
+            roles['aux']['cwd'] = '.'
+        else:
+            # Aux disabled: remove aux section entirely to prevent stale config
+            if 'aux' in roles:
+                del roles['aux']
 
         cli_profiles['roles'] = roles
 
@@ -1967,11 +1986,16 @@ class CCCCSetupApp:
         # Write back, preserving all other fields (delivery, tmux, etc.)
         _write_yaml(self.home, 'settings/cli_profiles.yaml', cli_profiles)
 
-        # 2. Save foreman config
+        # 2. Save foreman config - always write to ensure changes take effect
         if self.config.foreman and self.config.foreman != 'none':
             _write_yaml(self.home, 'settings/foreman.yaml', {
                 'agent': self.config.foreman,
                 'enabled': True
+            })
+        else:
+            # Foreman disabled: write enabled=false to ensure it stays off
+            _write_yaml(self.home, 'settings/foreman.yaml', {
+                'enabled': False
             })
 
         # 3. Save IM provider configuration directly to yaml files

@@ -52,7 +52,7 @@ delivery:
     check_interval_seconds: 120
   lazy_preamble:
     enabled: true
-startup_wait_seconds: 12
+startup_wait_seconds: 10
 startup_nudge_seconds: 10
 console_echo: true
 tmux:
@@ -68,7 +68,7 @@ roles:
         and do not reply. ultrathink'
       from_system: ' ultrathink'
     nudge_suffix: ' To send: OVERWRITE (not append) .cccc/mailbox/peerA/to_peer.md
-      or to_user.md (NOT peerB/). If inbox empty or idle: do ONE high-value item
+      or to_user.md. If inbox empty or idle: do ONE high-value item
       - (A) strategic review (drift/priority/ideas), (B) tactical review or rework
       (REV/Pivot), or (C) truly valuable work. Send only with new evidence, risk/pivot,
       or decisional ask; otherwise stay silent. ultrathink'
@@ -82,7 +82,7 @@ roles:
         stay silent and do not reply. ultrathink'
       from_system: ' ultrathink'
     nudge_suffix: ' To send: OVERWRITE (not append) .cccc/mailbox/peerB/to_peer.md
-      or to_user.md (NOT peerA/). If inbox empty or idle: do ONE high-value item
+      or to_user.md. If inbox empty or idle: do ONE high-value item
       - (A) strategic review (drift/priority/ideas), (B) tactical review or rework
       (REV/Pivot), or (C) truly valuable work. Send only with new evidence, risk/pivot,
       or decisional ask; otherwise stay silent. ultrathink'

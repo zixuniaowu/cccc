@@ -77,14 +77,14 @@ def make(ctx: Dict[str, Any]):
         except Exception:
             pass
 
-    def _actor_aux_invoke(actor_id: str) -> str:
+    def _actor_foreman_invoke(actor_id: str) -> str:
+        """Get foreman-specific invoke_command from agents.yaml."""
         try:
             actors_doc = read_yaml(settings/"agents.yaml") if read_yaml else {}
             acts = (actors_doc.get('actors') or {}) if isinstance(actors_doc, dict) else {}
             ad = acts.get(actor_id) or {}
-            aux = ad.get('aux') or {}
-            inv = str(aux.get('invoke_command') or '')
-            return inv
+            foreman_cfg = ad.get('foreman') or {}
+            return str(foreman_cfg.get('invoke_command') or '')
         except Exception:
             return ''
 
@@ -191,13 +191,22 @@ def make(ctx: Dict[str, Any]):
             except Exception:
                 pass
             if agent == 'reuse_aux':
-                template = (aux_binding_box.get('template') or '').strip()
+                # Get aux actor ID and use its foreman config
+                try:
+                    resolved_tmp = load_profiles_fn(home) if load_profiles_fn else {}
+                    aux_actor_id = (resolved_tmp.get('aux') or {}).get('actor') or ''
+                except Exception:
+                    aux_actor_id = ''
+                if aux_actor_id:
+                    template = _actor_foreman_invoke(aux_actor_id)
+                else:
+                    template = ''  # No fallback to aux.invoke_command (which contains AUX.md prefix)
                 run_cwd = Path(aux_binding_box.get('cwd') or '.')
             else:
-                template = _actor_aux_invoke(agent)
+                template = _actor_foreman_invoke(agent)
                 run_cwd = Path.cwd()
             if not template:
-                log_ledger(home, {"from":"system","kind":"foreman-error","reason":f"actor {agent} has no aux.invoke_command"})
+                log_ledger(home, {"from":"system","kind":"foreman-error","reason":f"actor {agent} has no foreman.invoke_command"})
                 return
             if build_exec_args:
                 argv = build_exec_args(template, prompt)

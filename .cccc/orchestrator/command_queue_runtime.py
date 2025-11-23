@@ -306,6 +306,15 @@ def make(ctx: Dict[str, Any]):
                                         launched.append('PeerB')
                                     elif who in ('b','both'):
                                         print(f"[LAUNCH] PeerB not started (CLI unavailable): {_first_bin(pb_eff2) or '(empty)'}")
+
+                                    # Wait for CLIs to initialize before continuing (injected from ctx)
+                                    if launched:
+                                        import time
+                                        wait_seconds = ctx.get('startup_wait_seconds', 10.0)
+                                        print(f"[LAUNCH] Waiting {wait_seconds}s for CLI initialization...")
+                                        time.sleep(wait_seconds)
+                                        print(f"[LAUNCH] Wait complete, proceeding with orchestrator loop")
+
                                     ok = True
                                     msg = f"launched {' & '.join(launched) if launched else 'none'}"
                                     if not launched:

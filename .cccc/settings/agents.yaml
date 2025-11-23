@@ -3,7 +3,7 @@ actors:
     peer:
       command: "claude --dangerously-skip-permissions"
       input_mode: "paste"
-      post_paste_keys: ["Enter", "Enter"]
+      post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
       # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
@@ -13,6 +13,8 @@ actors:
     aux:
       invoke_command: 'claude --dangerously-skip-permissions -p "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
+    foreman:
+      invoke_command: 'claude --dangerously-skip-permissions -p "{prompt}"'
     compact:
       enabled: true
       command: "/compact"
@@ -33,6 +35,8 @@ actors:
     aux:
       invoke_command: 'codex exec --sandbox danger-full-access "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
+    foreman:
+      invoke_command: 'codex exec --sandbox danger-full-access "{prompt}"'
     compact:
       enabled: true
       command: "/compact"
@@ -54,6 +58,8 @@ actors:
     aux:
       invoke_command: 'gemini -p "Read .cccc/rules/AUX.md first. {prompt}" --yolo'
       rate_limit_per_minute: 2
+    foreman:
+      invoke_command: 'gemini -p "{prompt}" --yolo'
     compact:
       enabled: true
       command: "/compress"
@@ -75,6 +81,8 @@ actors:
     aux:
       invoke_command: 'droid exec --auto high "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
+    foreman:
+      invoke_command: 'droid exec --auto high "{prompt}"'
     compact:
       enabled: true
       command: "/compress"
@@ -96,6 +104,8 @@ actors:
     aux:
       invoke_command: 'opencode run "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
+    foreman:
+      invoke_command: 'opencode run "{prompt}"'
     compact:
       enabled: true
       command: "/compact"
@@ -115,6 +125,8 @@ actors:
     aux:
       invoke_command: 'kilocode --auto "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
+    foreman:
+      invoke_command: 'kilocode --auto "{prompt}"'
     compact:
       enabled: false
       command: "none"
@@ -134,6 +146,8 @@ actors:
     aux:
       invoke_command: 'copilot -p "Read .cccc/rules/AUX.md first. {prompt}" --allow-all-tools'
       rate_limit_per_minute: 2
+    foreman:
+      invoke_command: 'copilot -p "{prompt}" --allow-all-tools'
     compact:
       enabled: false
       command: "none"
@@ -153,6 +167,8 @@ actors:
     aux:
       invoke_command: 'auggie --print "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
+    foreman:
+      invoke_command: 'auggie --print "{prompt}"'
     compact:
       enabled: false
       command: "none"
@@ -172,6 +188,8 @@ actors:
     aux:
       invoke_command: 'cursor-agent -p "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
+    foreman:
+      invoke_command: 'cursor-agent -p "{prompt}"'
     compact:
       enabled: true
       command: "/compress"

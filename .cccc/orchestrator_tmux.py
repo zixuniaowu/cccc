@@ -861,6 +861,14 @@ def main(home: Path, session_name: Optional[str] = None):
     cli_profiles_path = settings/"cli_profiles.yaml"
     cli_profiles = read_yaml(cli_profiles_path)
 
+    # Read startup wait time from config (used by launch and restart)
+    try:
+        startup_wait_seconds = float(cli_profiles.get("startup_wait_seconds", 10))
+        if startup_wait_seconds <= 0:
+            startup_wait_seconds = 10.0
+    except Exception:
+        startup_wait_seconds = 10.0
+
     # Foreman helper context (module-based)
     aux_binding_box = AUX_BINDING_BOX
     foreman_ctx = {
@@ -2336,8 +2344,8 @@ def main(home: Path, session_name: Optional[str] = None):
             })
             print(f"[RESTART] {peer_label} restarted (reason: {reason})")
 
-            # Wait for CLI to initialize (5 seconds)
-            time.sleep(5.0)
+            # Wait for CLI to initialize (uses startup_wait_seconds from config)
+            time.sleep(startup_wait_seconds)
 
             # Reset preamble flag so it gets re-injected with next message
             try:
@@ -2522,6 +2530,7 @@ def main(home: Path, session_name: Optional[str] = None):
             'profileA': profileA, 'profileB': profileB,
             'settings': settings,
             'cli_profiles_path': cli_profiles_path,
+            'startup_wait_seconds': startup_wait_seconds,
             'PROCESSED_RETENTION': PROCESSED_RETENTION,
             'write_status': write_status,
             'weave_system': weave_system,
