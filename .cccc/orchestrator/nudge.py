@@ -121,12 +121,12 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
 
 def _compose_nudge_suffix_for(peer_label: str,
                               *, profileA: Dict[str,Any], profileB: Dict[str,Any], aux_mode: str,
-                              aux_invoke: str = "") -> str:
+                              aux_actor: str = "") -> str:
     base = ((profileA.get('nudge_suffix') if peer_label == 'PeerA' else profileB.get('nudge_suffix')) or '').strip()
     aux_line = ""
-    if aux_mode == "on" and str(aux_invoke or '').strip():
-        tpl = str(aux_invoke).replace('{prompt}', '{prompt}')
-        aux_line = f"Aux is ON — delegate decoupled sub-tasks; just invoke: {tpl}; capture evidence and summarize outcome."
+    if aux_mode == "on" and str(aux_actor or '').strip():
+        actor_name = str(aux_actor).strip()
+        aux_line = f"Invoke aux {actor_name} for sub-tasks."
     combined = " ".join(filter(None, [aux_line, base]))
     return combined.strip()
 
@@ -135,14 +135,13 @@ def _send_nudge(home: Path, receiver_label: str, seq: str, mid: str,
                 left_pane: str, right_pane: str,
                 profileA: Dict[str,Any], profileB: Dict[str,Any],
                 aux_mode: str = "off"):
-    aux_invoke_tpl = ""
+    aux_actor_name = ""
     try:
         from common.config import load_profiles as _lp
-        aux_inv = ((_lp(home).get('aux') or {}).get('invoke_command') or '').strip()
-        aux_invoke_tpl = aux_inv
+        aux_actor_name = ((_lp(home).get('aux') or {}).get('actor') or '').strip()
     except Exception:
-        aux_invoke_tpl = ""
-    combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_invoke_tpl)
+        aux_actor_name = ""
+    combined_suffix = _compose_nudge_suffix_for(receiver_label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_actor=aux_actor_name)
     try:
         inbox = _inbox_dir(home, receiver_label)
         trigger_file = None

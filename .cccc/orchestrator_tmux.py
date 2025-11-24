@@ -1038,15 +1038,15 @@ def main(home: Path, session_name: Optional[str] = None):
     aux_resolved = resolved.get('aux') or {}
     aux_command_template = str(aux_resolved.get('invoke_command') or '').strip()
     aux_command = aux_command_template
+    aux_actor = str(aux_resolved.get('actor') or '').strip()
     aux_cwd = str(aux_resolved.get('cwd') or '.')
-    aux_binding_box['template'] = aux_command_template
     aux_binding_box['cwd'] = aux_cwd
     rate_limit_per_minute = int(aux_resolved.get("rate_limit_per_minute") or 2)
     if rate_limit_per_minute <= 0:
         rate_limit_per_minute = 1
     aux_min_interval = 60.0 / rate_limit_per_minute
     # Aux on/off is derived from presence of roles.aux.actor (no separate mode flag)
-    aux_mode = "on" if str((aux_resolved.get('actor') or '')).strip() else "off"
+    aux_mode = "on" if aux_actor else "off"
 
     # Merge input_mode per peer if provided
     imodes = cli_profiles.get("input_mode", {}) if isinstance(cli_profiles.get("input_mode", {}), dict) else {}
@@ -1758,7 +1758,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'profileA': profileA,
         'profileB': profileB,
         'aux_mode': aux_mode,
-        'aux_command': aux_command,
+        'aux_actor': aux_actor,
         'nudge_api': nudge_api,
         'log_ledger': log_ledger,
         'keepalive_debug': KEEPALIVE_DEBUG,
@@ -2204,7 +2204,7 @@ def main(home: Path, session_name: Optional[str] = None):
     bridge_rt = make_bridge_runtime({'home': home, 'log_ledger': log_ledger, 'read_yaml': read_yaml})
 
     def _refresh_role_profiles(new_resolved: Dict[str, Any]):
-        nonlocal resolved, profileA, profileB, aux_resolved, aux_command_template, aux_command, aux_cwd, aux_mode, rate_limit_per_minute, aux_min_interval
+        nonlocal resolved, profileA, profileB, aux_resolved, aux_command_template, aux_command, aux_actor, aux_cwd, aux_mode, rate_limit_per_minute, aux_min_interval
         resolved = new_resolved
         new_profileA = dict((resolved.get('peerA') or {}).get('profile', {}) or {})
         new_profileB = dict((resolved.get('peerB') or {}).get('profile', {}) or {})
@@ -2217,20 +2217,20 @@ def main(home: Path, session_name: Optional[str] = None):
         aux_resolved = resolved.get('aux') or {}
         aux_command_template = str(aux_resolved.get('invoke_command') or '').strip()
         aux_command = aux_command_template
+        aux_actor = str(aux_resolved.get('actor') or '').strip()
         aux_cwd = str(aux_resolved.get('cwd') or '.')
-        aux_binding_box['template'] = aux_command_template
         aux_binding_box['cwd'] = aux_cwd
         rate_limit_per_minute = int(aux_resolved.get("rate_limit_per_minute") or 2)
         if rate_limit_per_minute <= 0:
             rate_limit_per_minute = 1
         aux_min_interval = 60.0 / rate_limit_per_minute
-        aux_mode = "on" if str((aux_resolved.get('actor') or '')).strip() else "off"
+        aux_mode = "on" if aux_actor else "off"
         judges['PeerA'] = PaneIdleJudge(profileA)
         judges['PeerB'] = PaneIdleJudge(profileB)
         keepalive_ctx['profileA'] = profileA
         keepalive_ctx['profileB'] = profileB
         keepalive_ctx['aux_mode'] = aux_mode
-        keepalive_ctx['aux_command'] = aux_command
+        keepalive_ctx['aux_actor'] = aux_actor
         handoff_ctx['profileA'] = profileA
         handoff_ctx['profileB'] = profileB
         handoff_ctx['aux_mode'] = aux_mode
@@ -2615,7 +2615,7 @@ def main(home: Path, session_name: Optional[str] = None):
                                 seq = fn0[:6]
                                 path0 = _inbox_dir(home, label)/fn0
                                 preview = _safe_headline(path0)
-                                suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
+                                suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_actor=aux_actor)
                                 custom = _compose_detailed_nudge(seq, preview, (_inbox_dir(home, label).as_posix()), suffix=suffix)
                                 pane = paneA if label == "PeerA" else paneB
                                 prof = profileA if label == "PeerA" else profileB
@@ -2699,12 +2699,12 @@ def main(home: Path, session_name: Optional[str] = None):
                                     profA_live = (live.get('peerA') or {}).get('profile') or {}
                                     profB_live = (live.get('peerB') or {}).get('profile') or {}
                                     aux_live = live.get('aux') or {}
-                                    aux_mode_live = 'on' if str((aux_live.get('actor') or '')).strip() else 'off'
-                                    aux_inv_live = str(aux_live.get('invoke_command') or '')
+                                    aux_actor_live = str(aux_live.get('actor') or '').strip()
+                                    aux_mode_live = 'on' if aux_actor_live else 'off'
                                 except Exception:
                                     profA_live, profB_live = profileA, profileB
-                                    aux_mode_live, aux_inv_live = aux_mode, aux_command
-                                suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profA_live, profileB=profB_live, aux_mode=aux_mode_live, aux_invoke=aux_inv_live)
+                                    aux_mode_live, aux_actor_live = aux_mode, aux_actor
+                                suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profA_live, profileB=profB_live, aux_mode=aux_mode_live, aux_actor=aux_actor_live)
                                 custom = _compose_detailed_nudge(seq, preview, (_inbox_dir(home, label).as_posix()), suffix=suffix)
                                 pane = paneA if label == "PeerA" else paneB
                                 prof = profA_live if label == "PeerA" else profB_live
@@ -2766,11 +2766,11 @@ def main(home: Path, session_name: Optional[str] = None):
                 profA_live = (live.get('peerA') or {}).get('profile') or {}
                 profB_live = (live.get('peerB') or {}).get('profile') or {}
                 aux_live = live.get('aux') or {}
-                aux_mode_live = 'on' if str((aux_live.get('actor') or '')).strip() else 'off'
-                aux_inv_live = str(aux_live.get('invoke_command') or '')
+                aux_actor_live = str(aux_live.get('actor') or '').strip()
+                aux_mode_live = 'on' if aux_actor_live else 'off'
             except Exception:
                 profA_live, profB_live = profileA, profileB
-                aux_mode_live, aux_inv_live = aux_mode, aux_command
+                aux_mode_live, aux_actor_live = aux_mode, aux_actor
             for label, pane in (("PeerA", paneA), ("PeerB", paneB)):
                 inbox = _inbox_dir(home, label)
                 files = sorted([f for f in inbox.iterdir() if f.is_file()], key=lambda p: p.name)
@@ -2782,12 +2782,12 @@ def main(home: Path, session_name: Optional[str] = None):
                 if label == "PeerA":
                     sent = nudge_api.maybe_send_nudge(
                         home, label, pane, profA_live,
-                        suffix=nudge_api.compose_nudge_suffix_for('PeerA', profileA=profA_live, profileB=profB_live, aux_mode=aux_mode_live, aux_invoke=aux_inv_live)
+                        suffix=nudge_api.compose_nudge_suffix_for('PeerA', profileA=profA_live, profileB=profB_live, aux_mode=aux_mode_live, aux_actor=aux_actor_live)
                     )
                 else:
                     sent = nudge_api.maybe_send_nudge(
                         home, label, pane, profB_live,
-                        suffix=nudge_api.compose_nudge_suffix_for('PeerB', profileA=profA_live, profileB=profB_live, aux_mode=aux_mode_live, aux_invoke=aux_inv_live)
+                        suffix=nudge_api.compose_nudge_suffix_for('PeerB', profileA=profA_live, profileB=profB_live, aux_mode=aux_mode_live, aux_actor=aux_actor_live)
                     )
                 if sent:
                     last_nudge_ts[label] = nowt

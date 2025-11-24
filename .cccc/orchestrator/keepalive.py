@@ -16,7 +16,6 @@ def make(ctx: Dict[str, Any]):
     compose_nudge = ctx['compose_nudge']
     format_ts = ctx['format_ts']
     profileA = ctx['profileA']; profileB = ctx['profileB']
-    aux_mode = ctx['aux_mode']; aux_command = ctx['aux_command']
     nudge_api = ctx['nudge_api']
     log_ledger = ctx['log_ledger']
     keepalive_debug = bool(ctx.get('keepalive_debug', False))
@@ -102,7 +101,8 @@ def make(ctx: Dict[str, Any]):
                 inbox_path = inbox_dir(home, label).as_posix()
             except Exception:
                 inbox_path = ".cccc/mailbox/peerX/inbox"
-            ka_suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=aux_mode, aux_invoke=aux_command)
+            # Dynamically read aux_mode and aux_actor from ctx to get latest values after config refresh
+            ka_suffix = nudge_api.compose_nudge_suffix_for(label, profileA=profileA, profileB=profileB, aux_mode=ctx.get('aux_mode', 'off'), aux_actor=ctx.get('aux_actor', ''))
             ka_nudge = compose_nudge(inbox_path, ts=format_ts(), backlog_gt_zero=False, suffix=ka_suffix)
             _send(label, msg, nudge_text=ka_nudge)
             pending[label] = None
