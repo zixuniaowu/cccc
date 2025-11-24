@@ -1711,6 +1711,8 @@ def main(home: Path, session_name: Optional[str] = None):
     auto_reset_interval_cfg = conversation_reset_interval
     reset_interval_effective = auto_reset_interval_cfg if auto_reset_interval_cfg > 0 else 0
     # Append a minimal, always-on reminder to end with one insight block (never verbose)
+    # Aux review prompt is kept separate and will be appended only in regular self-checks (not SYSTEM refresh)
+    aux_review_prompt = ""
     try:
         INSIGHT_REMINDER = (
             "Insight: add one new angle not restating body (lens + hook/assumption/risk/trade-off/next/delta)."
@@ -1718,12 +1720,10 @@ def main(home: Path, session_name: Optional[str] = None):
         if INSIGHT_REMINDER not in self_check_text:
             self_check_text = self_check_text.rstrip("\n") + "\n" + INSIGHT_REMINDER
         if aux_mode == "on":
-            aux_prompts = (
+            aux_review_prompt = (
                 "Note: Just trigger Aux for any task in which you think it would help.\n"
                 " Schedule a thorough high-order Aux review to your recent works based on the goal now."
             )
-            if "Note: Could Aux" not in self_check_text:
-                self_check_text = self_check_text.rstrip("\n") + "\n" + aux_prompts
     except Exception:
         pass
 
@@ -2159,6 +2159,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'self_check_enabled': self_check_enabled,
         'self_check_every': self_check_every,
         'self_check_text': self_check_text,
+        'aux_review_prompt': aux_review_prompt,
         'in_self_check': {'v': in_self_check},
         'handoffs_peer': handoffs_peer,
         'self_checks_done': self_checks_done,

@@ -66,17 +66,19 @@ def make(ctx: Dict[str, Any]):
                     ctx['self_checks_done'][lbl] = sc_index
                     ctx['in_self_check']['v'] = True
                     try:
-                        msg = ctx['self_check_text'].rstrip()
-                        # Full system/project injection every K self-checks
-                        lines = [msg]
-                        try:
-                            rules_path = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).as_posix()
-                            lines.append(f"Rules: {rules_path}")
-                            lines.append("Project: PROJECT.md")
-                        except Exception:
-                            pass
-                        if sys_refresh_every > 0 and (sc_index % sys_refresh_every) == 0:
-                            # Append PROJECT.md and SYSTEM full content when available
+                        # Determine if this is a SYSTEM refresh (every K self-checks) or regular self-check
+                        is_system_refresh = (sys_refresh_every > 0 and (sc_index % sys_refresh_every) == 0)
+
+                        if is_system_refresh:
+                            # SYSTEM refresh: inject full context without self-check text
+                            lines = []
+                            try:
+                                rules_path = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).as_posix()
+                                lines.append(f"Rules: {rules_path}")
+                                lines.append("Project: PROJECT.md")
+                            except Exception:
+                                pass
+                            # Append PROJECT.md and SYSTEM full content
                             try:
                                 proj_path = (Path.cwd()/"PROJECT.md")
                                 if proj_path.exists():
@@ -90,20 +92,36 @@ def make(ctx: Dict[str, Any]):
                                 rules_txt = ''
                             if rules_txt:
                                 lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
+                            # Add completion message
+                            lines.append("\n[Background refresh complete — continue current work]")
                             # Request POR refresh only for PeerB's SYSTEM injection
-                            # (POR is owned by PeerB, so only PeerB's context refresh should trigger update)
                             if lbl == 'PeerB':
-                                ctx['request_por_refresh']("self-check", force=False)
+                                ctx['request_por_refresh']("system-refresh", force=False)
                             # Runtime cleanup: remove old processed files beyond retention limit
-                            # Cleanup all peers during SYSTEM injection (low-priority maintenance)
                             try:
                                 _cleanup_processed('PeerA')
                                 _cleanup_processed('PeerB')
                             except Exception:
                                 pass
-                        final = "\n".join(lines).strip()
-                        ctx['send_handoff']('System', lbl, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
-                        log_ledger(home, {"from": "system", "kind": "self-check", "every": ctx['self_check_every'], "count": cnt, "peer": lbl})
+                            final = "\n".join(lines).strip()
+                            ctx['send_handoff']('System', lbl, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
+                            log_ledger(home, {"from": "system", "kind": "system-refresh", "every": ctx['self_check_every'], "count": cnt, "peer": lbl})
+                        else:
+                            # Regular self-check: send self-check text with optional aux review prompt
+                            msg = ctx['self_check_text'].rstrip()
+                            aux_prompt = ctx.get('aux_review_prompt', '').strip()
+                            if aux_prompt:
+                                msg = msg + "\n" + aux_prompt
+                            lines = [msg]
+                            try:
+                                rules_path = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).as_posix()
+                                lines.append(f"Rules: {rules_path}")
+                                lines.append("Project: PROJECT.md")
+                            except Exception:
+                                pass
+                            final = "\n".join(lines).strip()
+                            ctx['send_handoff']('System', lbl, f"<FROM_SYSTEM>\n{final}\n</FROM_SYSTEM>\n")
+                            log_ledger(home, {"from": "system", "kind": "self-check", "every": ctx['self_check_every'], "count": cnt, "peer": lbl})
                         did_inject = True
                     finally:
                         ctx['in_self_check']['v'] = False
