@@ -1796,7 +1796,8 @@ def main(home: Path, session_name: Optional[str] = None):
         if hint:
             lines.append(f"Hint: {hint}")
         lines.append("Keep the POR as the single source of truth; avoid duplicating content elsewhere.")
-        payload = f"<FROM_SYSTEM>\n{'\n'.join(lines)}\n</FROM_SYSTEM>\n"
+        body = "\n".join(lines)
+        payload = f"<FROM_SYSTEM>\n{body}\n</FROM_SYSTEM>\n"
         _send_handoff("System", "PeerB", payload)
         por_update_last_request = now
         log_ledger(home, {"from": "system", "kind": "por-refresh", "trigger": trigger, "hint": hint or ""})
