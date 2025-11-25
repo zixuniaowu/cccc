@@ -10,9 +10,31 @@ from typing import Dict, Any, Tuple, Optional
 
 # BEGIN copy from orchestrator_tmux.py
 
+# Module-level tmux socket name for isolation between cccc instances
+# When set, all tmux commands will use `-L <socket>` to create/use an independent tmux server
+# This allows each cccc instance to inherit its own terminal's environment variables
+_TMUX_SOCKET: Optional[str] = None
+
+def set_socket(socket_name: Optional[str]):
+    """Set the tmux socket name for this cccc instance.
+
+    Each cccc instance should use a unique socket (typically the session name)
+    to ensure environment variable isolation between instances.
+    """
+    global _TMUX_SOCKET
+    _TMUX_SOCKET = socket_name
+
+def get_socket() -> Optional[str]:
+    """Get the current tmux socket name."""
+    return _TMUX_SOCKET
+
 def tmux(*args: str) -> Tuple[int,str,str]:
     import subprocess
-    p = subprocess.Popen(["tmux", *args], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    cmd = ["tmux"]
+    if _TMUX_SOCKET:
+        cmd.extend(["-L", _TMUX_SOCKET])
+    cmd.extend(args)
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     out, err = p.communicate()
     return p.returncode, out, err
 

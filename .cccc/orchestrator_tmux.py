@@ -710,6 +710,11 @@ def main(home: Path, session_name: Optional[str] = None):
 
     session  = session_name or os.environ.get("CCCC_SESSION") or f"cccc-{Path.cwd().name}"
 
+    # Set tmux socket for this instance to enable environment variable isolation
+    # Each cccc instance uses its own tmux server, inheriting the terminal's environment
+    from orchestrator.tmux_layout import set_socket
+    set_socket(session)
+
     por_markdown = ensure_por(home)
     try:
         por_display_path = por_markdown.relative_to(Path.cwd())

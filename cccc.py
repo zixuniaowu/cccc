@@ -763,15 +763,17 @@ def main():
         return f"cccc-{Path.cwd().name}"
 
     def _tmux_has_session(session: str) -> bool:
+        """Check if tmux session exists (using session name as socket for isolation)."""
         try:
-            result = subprocess.run(["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            result = subprocess.run(["tmux", "-L", session, "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return result.returncode == 0
         except FileNotFoundError:
             return False
 
     def _tmux_kill_session(session: str) -> bool:
+        """Kill tmux session (using session name as socket for isolation)."""
         try:
-            result = subprocess.run(["tmux", "kill-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            result = subprocess.run(["tmux", "-L", session, "kill-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return result.returncode == 0
         except FileNotFoundError:
             return False
@@ -818,8 +820,9 @@ def main():
             print(f"[RUN] Reusing existing tmux session '{session}'.")
             _write_session_state(session)
         else:
+            # Use session name as socket (-L) for environment isolation between instances
             tmux_args = [
-                "tmux", "new-session", "-d",
+                "tmux", "-L", session, "new-session", "-d",
                 "-s", session,
                 "-n", "cccc",
                 "-c", str(Path.cwd()),
@@ -830,11 +833,12 @@ def main():
                 print(f"[ERROR] tmux new-session failed (exit {result.returncode}).")
                 return
             _write_session_state(session)
-            print(f"[RUN] Started tmux session '{session}'.")
+            print(f"[RUN] Started tmux session '{session}' (socket: {session}).")
         print(f"[RUN] Attaching to session '{session}' (supervised; will cleanup on exit).")
         try:
             # Run tmux client as a child process so our atexit/supervision can run after it exits
-            subprocess.run(["tmux", "attach", "-t", session], check=False)
+            # Use -L to connect to the same socket as the session
+            subprocess.run(["tmux", "-L", session, "attach", "-t", session], check=False)
         finally:
             # Best-effort cleanup bridges on detach/exit
             try:
