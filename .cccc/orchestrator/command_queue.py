@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Command queue helpers copied from orchestrator_tmux.py (system copy, minimal surface):
-- init_command_offsets: restore or initialize tail offsets (skip historical lines)
+Command queue helpers (system copy, minimal surface):
+- init_command_offsets: truncate command files and start from position 0
 - append_command_result: write structured result back to commands.jsonl
 """
 from __future__ import annotations
@@ -10,25 +10,21 @@ from pathlib import Path
 from typing import Dict, Any, Iterable
 
 def init_command_offsets(commands_paths: Iterable[Path], scan_path: Path) -> Dict[str, int]:
+    """Initialize command queue by truncating files and starting from position 0.
+
+    Truncates all command files to ensure clean state on each orchestrator start.
+    The scan_path parameter is kept for API compatibility but no longer used.
+    """
     last_pos_map: Dict[str, int] = {}
-    loaded = False
-    try:
-        snap = json.loads(scan_path.read_text(encoding='utf-8'))
-        _map = snap.get("last_pos_map") or {}
-        for p in commands_paths:
-            key = str(p)
-            if key in _map:
-                last_pos_map[key] = max(0, int(_map.get(key) or 0))
-                loaded = True
-    except Exception:
-        pass
-    if not loaded:
-        for p in commands_paths:
-            key = str(p)
-            try:
-                last_pos_map[key] = max(0, p.stat().st_size)
-            except FileNotFoundError:
-                last_pos_map[key] = 0
+    for p in commands_paths:
+        key = str(p)
+        try:
+            # Truncate file to clear stale commands from previous sessions
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text('', encoding='utf-8')
+        except Exception:
+            pass
+        last_pos_map[key] = 0
     return last_pos_map
 
 def append_command_result(commands_path: Path, cmd_id: str, ok: bool, message: str, **extra):

@@ -48,8 +48,13 @@ def tmux_new_session(name: str) -> Tuple[str,str]:
         raise RuntimeError(f"tmux new-session failed: {err.strip()}")
     return out, err
 
-def tmux_respawn_pane(pane: str, cmd: str):
-    tmux("respawn-pane","-k","-t",pane,cmd)
+def tmux_respawn_pane(pane: str, cmd: str) -> bool:
+    """Respawn a pane with a new command. Returns True on success."""
+    code, out, err = tmux("respawn-pane","-k","-t",pane,cmd)
+    if code != 0:
+        print(f"[TMUX] respawn-pane failed for pane={pane}: {err.strip() if err else 'unknown error'}")
+        return False
+    return True
 
 def tmux_ensure_ledger_tail(session: str, ledger_path: Path):
     # historical helper; safe no-op when not used
@@ -201,7 +206,7 @@ def tmux_capture(pane: str, lines: int=800) -> str:
     code,out,_ = tmux("capture-pane","-t",pane,"-p","-S",f"-{int(lines)}")
     return out if code==0 else ""
 
-def tmux_start_interactive(pane: str, cmd: str, *, stderr_log: Optional[str] = None, remain_on_exit: bool = False):
+def tmux_start_interactive(pane: str, cmd: str, *, stderr_log: Optional[str] = None, remain_on_exit: bool = False) -> bool:
     """
     Start an interactive command in a tmux pane
 
@@ -210,6 +215,9 @@ def tmux_start_interactive(pane: str, cmd: str, *, stderr_log: Optional[str] = N
         cmd: Command to execute
         stderr_log: Optional absolute path to redirect stderr (append mode)
         remain_on_exit: If True, pane remains visible after process exits
+
+    Returns:
+        True if command was started successfully, False otherwise
     """
     # Build command with stderr redirection if specified
     if stderr_log:
@@ -221,12 +229,14 @@ def tmux_start_interactive(pane: str, cmd: str, *, stderr_log: Optional[str] = N
         cmd_with_prep = cmd
 
     # Respawn pane with command
-    tmux_respawn_pane(pane, f"bash -lc {shlex.quote(cmd_with_prep)}")
+    success = tmux_respawn_pane(pane, f"bash -lc {shlex.quote(cmd_with_prep)}")
 
     # Set remain-on-exit for this pane if requested
     # This keeps the pane visible after process exits, allowing inspection
     if remain_on_exit:
         tmux("set-option", "-p", "-t", pane, "remain-on-exit", "on")
+
+    return success
 
 def wait_for_ready(pane: str, profile: Dict[str,Any], *, timeout: float = 12.0, poke: bool = True) -> bool:
     # heuristic: look for a prompt growth; keep compatible semantics

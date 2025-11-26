@@ -293,17 +293,19 @@ def make(ctx: Dict[str, Any]):
                                     if who in ('a','both') and pa_eff2 and _bin_available(pa_eff2):
                                         print(f"[LAUNCH] PeerA → {pa_eff2} (cwd={pa_cwd2}) pane={paneA}")
                                         stderr_log_a = str(home / "logs" / "peerA.stderr")
-                                        tmux_start_interactive(paneA, _wrap_cwd2(pa_eff2, pa_cwd2),
+                                        success_a = tmux_start_interactive(paneA, _wrap_cwd2(pa_eff2, pa_cwd2),
                                                              stderr_log=stderr_log_a, remain_on_exit=True)
-                                        launched.append('PeerA')
+                                        if success_a:
+                                            launched.append('PeerA')
                                     elif who in ('a','both'):
                                         print(f"[LAUNCH] PeerA not started (CLI unavailable): {_first_bin(pa_eff2) or '(empty)'}")
                                     if who in ('b','both') and pb_eff2 and _bin_available(pb_eff2):
                                         print(f"[LAUNCH] PeerB → {pb_eff2} (cwd={pb_cwd2}) pane={paneB}")
                                         stderr_log_b = str(home / "logs" / "peerB.stderr")
-                                        tmux_start_interactive(paneB, _wrap_cwd2(pb_eff2, pb_cwd2),
+                                        success_b = tmux_start_interactive(paneB, _wrap_cwd2(pb_eff2, pb_cwd2),
                                                              stderr_log=stderr_log_b, remain_on_exit=True)
-                                        launched.append('PeerB')
+                                        if success_b:
+                                            launched.append('PeerB')
                                     elif who in ('b','both'):
                                         print(f"[LAUNCH] PeerB not started (CLI unavailable): {_first_bin(pb_eff2) or '(empty)'}")
 
