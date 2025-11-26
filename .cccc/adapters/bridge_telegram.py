@@ -1236,6 +1236,21 @@ def main():
                 _append_log(outlog, f"[cmd] restart target={target} chat={chat_id} req={req_id}")
                 continue
 
+            # Pause/Resume handoff delivery: /pause, /resume
+            if is_cmd(text, 'pause'):
+                result, req_id = _enqueue_im_command('pause', {}, source='telegram', chat_id=chat_id, wait_seconds=2.0)
+                reply = (result.get('message') if result else 'Pause request queued.')
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"⏸ {reply}"}, timeout=15)
+                _append_log(outlog, f"[cmd] pause chat={chat_id} req={req_id}")
+                continue
+
+            if is_cmd(text, 'resume'):
+                result, req_id = _enqueue_im_command('resume', {}, source='telegram', chat_id=chat_id, wait_seconds=2.0)
+                reply = (result.get('message') if result else 'Resume request queued.')
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': f"▶️ {reply}"}, timeout=15)
+                _append_log(outlog, f"[cmd] resume chat={chat_id} req={req_id}")
+                continue
+
             # Meta commands (must be before require_mention/require_explicit checks)
             if is_cmd(text, 'help'):
                 help_txt = (
@@ -1243,6 +1258,7 @@ def main():
                     "Passthrough (CLI): a! <cmd>/b! <cmd> (DM recommended) or /pa <cmd>/pb <cmd> [/pboth <cmd>] in groups;\n"
                     "/focus [hint] ask PeerB to refresh POR.md; /reset [compact|clear] perform reset; /aux \"<prompt>\" run configured Aux once; /review trigger Aux reminder;\n"
                     "/restart peera|peerb|both restart PEER agent CLI; /foreman on|off|now|status control background scheduler;\n"
+                    "/pause stop handoff delivery (messages saved to inbox); /resume restore handoff delivery;\n"
                     "/whoami shows chat_id; /status shows status; /queue shows queue; /locks shows locks; /subscribe opt-in (if enabled); /unsubscribe opt-out;\n"
                     "/verbose on|off toggle Peer<->Peer summary and Foreman CC; /files [in|out] [N] list recent files; /file N view."
                 )

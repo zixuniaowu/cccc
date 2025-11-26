@@ -1564,6 +1564,28 @@ def main(home: Path, session_name: Optional[str] = None):
                         results.append(f"PeerB: {'✓' if success else '✗'}")
                     msg = f"Restart {target}: {', '.join(results)}"
                     result = {"ok": True, "message": msg}
+                elif command == "pause":
+                    nonlocal deliver_paused
+                    deliver_paused = True
+                    deliver_paused_box['v'] = True
+                    write_status(deliver_paused)
+                    result = {"ok": True, "message": "Handoff paused. Messages will be saved to inbox but not delivered."}
+                elif command == "resume":
+                    nonlocal deliver_paused
+                    deliver_paused = False
+                    deliver_paused_box['v'] = False
+                    write_status(deliver_paused)
+                    # Check inbox and send NUDGE if there are pending messages
+                    try:
+                        for label in ('PeerA', 'PeerB'):
+                            inbox = _inbox_dir(home, label)
+                            if inbox.exists() and any(inbox.iterdir()):
+                                pane = paneA if label == 'PeerA' else paneB
+                                prof = profileA if label == 'PeerA' else profileB
+                                nudge_api.maybe_send_nudge(home, label, pane, prof, force=True)
+                    except Exception:
+                        pass
+                    result = {"ok": True, "message": "Handoff resumed."}
                 else:
                     raise ValueError("unknown command")
             except Exception as exc:
