@@ -1475,7 +1475,7 @@ def main(home: Path, session_name: Optional[str] = None):
                 pass
 
     def _process_im_commands():
-        nonlocal aux_mode
+        nonlocal aux_mode, deliver_paused
         try:
             files = sorted(im_command_dir.glob("*.json"))
         except Exception:
@@ -1565,13 +1565,11 @@ def main(home: Path, session_name: Optional[str] = None):
                     msg = f"Restart {target}: {', '.join(results)}"
                     result = {"ok": True, "message": msg}
                 elif command == "pause":
-                    nonlocal deliver_paused
                     deliver_paused = True
                     deliver_paused_box['v'] = True
                     write_status(deliver_paused)
                     result = {"ok": True, "message": "Handoff paused. Messages will be saved to inbox but not delivered."}
                 elif command == "resume":
-                    nonlocal deliver_paused
                     deliver_paused = False
                     deliver_paused_box['v'] = False
                     write_status(deliver_paused)
