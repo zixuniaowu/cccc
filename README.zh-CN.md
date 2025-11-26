@@ -55,8 +55,8 @@
 ### 零配置TUI
 
 - **交互式设置**：首次启动显示Setup面板，↑↓选择、Enter确认，不用编辑配置文件
-- **实时Timeline**：滚动查看所有对话流，PeerA/PeerB/System/You的消息一目了然
-- **状态面板**：实时显示handoff计数、self-check进度、Foreman状态
+- **实时Timeline**：滚动查看所有对话流，PeerA/PeerB/System/You的消息一目了然；消息宽度自动适配终端大小
+- **状态面板**：实时显示handoff计数、self-check进度、Foreman状态；暂停时显示醒目的PAUSED提示
 - **命令补全**：Tab自动补全，Ctrl+R搜索历史，标准快捷键全支持
 
 ### 证据驱动工作流
@@ -247,8 +247,8 @@ cccc run
 | `/a <消息>` | 发送给PeerA |
 | `/b <消息>` | 发送给PeerB |
 | `/both <消息>` | 同时发送给两个Peer |
-| `/pause` | 暂停handoff循环 |
-| `/resume` | 恢复handoff循环 |
+| `/pause` | 暂停handoff投递（消息保存到inbox但不立即发送） |
+| `/resume` | 恢复handoff投递（发送NUDGE处理积压消息） |
 | `/refresh` | 刷新系统提示词 |
 | `/setup` | 打开/关闭设置面板 |
 | `/foreman on\|off\|status\|now` | 控制Foreman |
@@ -355,6 +355,25 @@ FOREMAN_TASK.md                 # Foreman任务定义
 2. 查看 `.cccc/state/ledger.jsonl` 查看事件日志
 3. 查看 `.cccc/state/orchestrator.log` 查看运行日志
 4. 运行 `cccc doctor` 检查环境
+
+### 如何重置状态开始新任务？
+
+使用 `cccc reset` 清理运行时状态，从头开始：
+
+```bash
+# 基本重置：清理 state/mailbox/logs/work，删除 POR/SUBPOR 文件
+cccc reset
+
+# 归档模式：先把 POR/SUBPOR 移到带时间戳的归档目录，再清理
+cccc reset --archive
+```
+
+适用场景：
+- 完成上一个任务后，开始全新的任务
+- 清理积压的inbox消息和运行时状态
+- 重置POR/SUBPOR文件，重新开始规划
+
+> **注意**：如果编排器正在运行，会提示确认。建议先运行 `cccc kill`。
 
 ---
 

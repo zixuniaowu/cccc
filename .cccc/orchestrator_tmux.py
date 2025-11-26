@@ -2173,6 +2173,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'system_refresh_every': SYSTEM_REFRESH_EVERY,
         'processed_dir': _processed_dir,
         'processed_retention': PROCESSED_RETENTION,
+        'deliver_paused_box': deliver_paused_box,
     }
     # Helper to get actor name for a peer
     def _get_peer_actor(peer: str) -> str:
@@ -2567,6 +2568,8 @@ def main(home: Path, session_name: Optional[str] = None):
             'cleanup_bridges': _cleanup_bridges,
             # restart function for /restart command
             'restart_peer': restart_peer,
+            # needed for /resume to send NUDGE for pending inbox messages
+            'maybe_send_nudge': nudge_api.maybe_send_nudge,
         }
         cq = make_cq(cq_ctx)
         upd = cq.consume(max_items=20)

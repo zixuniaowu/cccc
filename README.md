@@ -336,6 +336,7 @@ Once Setup is complete, you interact with peers through the Runtime Panel.
 - Displays all messages from PeerA, PeerB, System, and You
 - Auto-scrolls to latest, or use `PageUp/PageDown` to review history
 - Soft limit: 1200 lines (trims to 800 when exceeded, preserving recent context)
+- Auto-adapts message width to terminal size
 
 **Input** (command entry with rich features):
 - **Tab Completion**: Type `/` and press Tab to see all commands
@@ -348,6 +349,7 @@ Once Setup is complete, you interact with peers through the Runtime Panel.
 - Handoff counts for PeerA/PeerB with next self-check thresholds
 - Last update timestamp
 - Foreman status (if enabled): next run time, last exit code
+- **PAUSED indicator**: Shows prominent banner when handoff is paused via `/pause`
 
 ---
 
@@ -361,8 +363,8 @@ All commands are accessible via Tab completion. Just type `/` and press Tab to e
 | `/a <text>` | Send message to PeerA | `/a Review the auth logic` |
 | `/b <text>` | Send message to PeerB | `/b Fix the failing test` |
 | `/both <text>` | Send message to both peers | `/both Let's plan the next milestone` |
-| `/pause` | Pause handoff loop | `/pause` |
-| `/resume` | Resume handoff loop | `/resume` |
+| `/pause` | Pause handoff delivery (messages saved to inbox) | `/pause` |
+| `/resume` | Resume handoff delivery (sends NUDGE for pending messages) | `/resume` |
 | `/refresh` | Refresh system prompts | `/refresh` |
 | `/quit` | Exit CCCC (detach tmux) | `/quit` |
 | `/setup` | Toggle Setup Panel | `/setup` |
@@ -756,6 +758,25 @@ CCCC follows "convention over configuration" principles. Sensible defaults work 
 ### Can I swap actors mid-session?
 
 **Not yet.** Actors are bound at startup via Setup Panel. To change, exit (`/quit`) and restart `cccc run`. Future versions may support hot-swapping.
+
+### How do I reset state for a new task?
+
+Use `cccc reset` to clear runtime state and start fresh:
+
+```bash
+# Basic reset: clears state/mailbox/logs/work and deletes POR/SUBPOR files
+cccc reset
+
+# Archive mode: moves POR/SUBPOR to timestamped archive before clearing
+cccc reset --archive
+```
+
+This is useful when:
+- Starting a completely new task after finishing the previous one
+- Clearing accumulated inbox messages and runtime state
+- Resetting POR/SUBPOR files to begin fresh planning
+
+> **Note**: If the orchestrator is running, you'll be prompted to confirm. Consider running `cccc kill` first.
 
 ### How do I debug orchestrator issues?
 

@@ -465,7 +465,7 @@ class CCCCSetupApp:
             read_only=True,
             focusable=True,
             focus_on_click=True,  # Enable click-to-focus for mouse events
-            wrap_lines=False
+            wrap_lines=True  # Enable auto-wrap as fallback for dynamic width handling
         )
         
         # Add custom mouse wheel handler for scrolling
@@ -2102,8 +2102,14 @@ class CCCCSetupApp:
 
         lines = []
 
-        # Wrap text at 100 chars for readability
-        max_width = 100
+        # Dynamic wrap width based on terminal size
+        # Reserve some margin for scrollbar (2) and line prefix "│ " (2) and safety margin (4)
+        try:
+            term_width = shutil.get_terminal_size(fallback=(120, 40)).columns
+            max_width = max(40, term_width - 8)  # Minimum 40, subtract margins
+        except Exception:
+            max_width = 100  # Fallback to reasonable default
+
         text_lines = []
         for line in text.split('\n'):
             if not line:
@@ -2397,6 +2403,9 @@ class CCCCSetupApp:
 
         row3 = f"Mailbox: {mailbox_str} │ Active: {active_handoffs} handoffs │ Last: {last_activity_str}"
 
+        # Check if handoff is paused
+        is_paused = status_data.get('paused', False)
+
         # === Build formatted text with proper styling ===
         text = []
         # Optional row 0: warnings banner when present
@@ -2405,6 +2414,15 @@ class CCCCSetupApp:
             text.extend([
                 ('class:warning', '⚠ Dependencies: '),
                 ('class:warning', warn_line),
+                ('', '\n')
+            ])
+        # PAUSED status banner (prominent display when handoff is paused)
+        if is_paused:
+            text.extend([
+                ('class:warning', '⏸ HANDOFF PAUSED'),
+                ('class:info', ' - messages saved to inbox but not delivered. Use '),
+                ('class:success', '/resume'),
+                ('class:info', ' to continue.'),
                 ('', '\n')
             ])
         text.extend([

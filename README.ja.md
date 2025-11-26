@@ -55,8 +55,8 @@
 ### ゼロコンフィグTUI
 
 - **インタラクティブセットアップ**：初回起動時にSetupパネルを表示、↑↓で選択・Enterで確定、設定ファイルの編集不要
-- **リアルタイムTimeline**：すべての会話フローをスクロール表示、PeerA/PeerB/System/Youのメッセージが一目瞭然
-- **ステータスパネル**：handoffカウント、self-check進捗、Foremanステータスをリアルタイム表示
+- **リアルタイムTimeline**：すべての会話フローをスクロール表示、PeerA/PeerB/System/Youのメッセージが一目瞭然；メッセージ幅はターミナルサイズに自動適応
+- **ステータスパネル**：handoffカウント、self-check進捗、Foremanステータスをリアルタイム表示；一時停止時には目立つPAUSED表示
 - **コマンド補完**：Tab自動補完、Ctrl+R履歴検索、標準ショートカット完全対応
 
 ### エビデンス駆動ワークフロー
@@ -247,8 +247,8 @@ TUI入力欄で使用（Tabで補完可能）：
 | `/a <メッセージ>` | PeerAに送信 |
 | `/b <メッセージ>` | PeerBに送信 |
 | `/both <メッセージ>` | 両方のPeerに同時送信 |
-| `/pause` | handoffループを一時停止 |
-| `/resume` | handoffループを再開 |
+| `/pause` | handoff配信を一時停止（メッセージはinboxに保存） |
+| `/resume` | handoff配信を再開（保留中のメッセージにNUDGEを送信） |
 | `/refresh` | システムプロンプトを更新 |
 | `/setup` | 設定パネルを開く/閉じる |
 | `/foreman on\|off\|status\|now` | Foremanを制御 |
@@ -355,6 +355,25 @@ FOREMAN_TASK.md                 # Foremanタスク定義
 2. `.cccc/state/ledger.jsonl` を確認してイベントログを参照
 3. `.cccc/state/orchestrator.log` を確認してランタイムログを参照
 4. `cccc doctor` を実行して環境をチェック
+
+### 新しいタスクのために状態をリセットするには？
+
+`cccc reset` を使用してランタイム状態をクリアし、最初からやり直します：
+
+```bash
+# 基本リセット：state/mailbox/logs/workをクリアし、POR/SUBPORファイルを削除
+cccc reset
+
+# アーカイブモード：POR/SUBPORをタイムスタンプ付きアーカイブに移動してからクリア
+cccc reset --archive
+```
+
+使用シナリオ：
+- 前のタスクを完了し、まったく新しいタスクを開始する場合
+- 蓄積したinboxメッセージとランタイム状態をクリアする場合
+- POR/SUBPORファイルをリセットして計画をやり直す場合
+
+> **注意**：オーケストレーターが実行中の場合、確認が求められます。先に `cccc kill` を実行することをお勧めします。
 
 ---
 
