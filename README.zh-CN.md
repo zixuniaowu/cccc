@@ -438,4 +438,4 @@ cccc reset --archive
 
 ## License
 
-MIT
+Apache 2.0
