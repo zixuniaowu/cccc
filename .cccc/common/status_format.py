@@ -44,6 +44,7 @@ def format_help_for_im(prefix: str = '/') -> str:
         "",
         "\u25b8 Info",
         f"  {p}status \u2192 system status",
+        f"  {p}task \u2192 blueprint task status",
         f"  {p}verbose [on|off] \u2192 toggle summaries",
         "",
         "\u25b8 Account",
@@ -198,3 +199,22 @@ def format_status_compact(state_dir: Path) -> str:
 
     status = "\u23f8" if paused else "\u25b6"  # ⏸ or ▶
     return f"{status} handoffs:{total}"
+
+
+def format_task_for_im(state_dir: Path) -> str:
+    """
+    Format task/blueprint status for IM display.
+
+    Reads from docs/por/blueprint/ via TaskManager.
+    """
+    home_dir = state_dir.parent  # .cccc/state -> .cccc
+    root_dir = home_dir.parent   # .cccc -> project root
+
+    try:
+        from orchestrator.task_manager import TaskManager
+        manager = TaskManager(root_dir)
+        return manager.format_for_im()
+    except ImportError:
+        return "\u2501\u2501\u2501 Blueprint \u2501\u2501\u2501\nModule not available"
+    except Exception as e:
+        return f"\u2501\u2501\u2501 Blueprint \u2501\u2501\u2501\nError: {str(e)[:50]}"

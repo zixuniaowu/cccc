@@ -72,6 +72,12 @@ from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.shortcuts import radiolist_dialog
 from asyncio import create_task
 
+# Blueprint Task Panel (lazy import to avoid circular deps)
+try:
+    from tui_ptk.task_panel import TaskPanel
+except ImportError:
+    TaskPanel = None  # type: ignore
+
 
 class CommandCompleter(Completer):
     """Auto-completion for CCCC commands"""
@@ -94,6 +100,8 @@ class CommandCompleter(Completer):
             ('/foreman', 'Foreman control (on|off|status|now)'),
             ('/aux', 'Run Aux helper'),
             ('/verbose', 'Verbose on|off'),
+            # Blueprint
+            ('/task', 'Show blueprint task status'),
         ]
 
     def get_completions(self, document: Document, complete_event):
@@ -478,6 +486,16 @@ class CCCCSetupApp:
         # Status panel removed - all info now in bottom footer
         self.message_count: int = 0
 
+        # Blueprint task panel (if available)
+        self.task_panel = None
+        if TaskPanel is not None:
+            try:
+                # Use project root (parent of .cccc)
+                root = self.home.parent if self.home.name == '.cccc' else self.home
+                self.task_panel = TaskPanel(root, on_toggle=lambda: self.app.invalidate() if self.app else None)
+            except Exception:
+                pass
+
         # Create the application
         self._create_ui()
 
@@ -831,6 +849,24 @@ class CCCCSetupApp:
             'warning': '#d29922 bold',                  # Orange - Warnings
             'error': '#f85149 bold',                    # Red - Errors
             'critical': '#da3633 bold',                 # Dark red - Critical
+
+            # Blueprint Task Panel - Clear progress visualization
+            'task-panel.collapsed': 'bg:#161b22',       # Collapsed background
+            'task-panel.expanded': 'bg:#0d1117',        # Expanded background
+            'task-panel.header': '#30363d',             # Header border
+            'task-panel.border': '#30363d',             # Panel border
+            'task-panel.icon': '#58a6ff',               # Status icons
+            'task-panel.progress': '#3fb950',           # Progress numbers
+            'task-panel.arrow': '#8b949e',              # Arrow separator
+            'task-panel.current': '#ffa657',            # Current task
+            'task-panel.step': '#79c0ff',               # Step indicator
+            'task-panel.id': '#58a6ff bold',            # Task ID
+            'task-panel.name': '#c9d1d9',               # Task name
+            'task-panel.complete': '#3fb950',           # Complete status
+            'task-panel.active': '#ffa657',             # Active status
+            'task-panel.planned': '#8b949e',            # Planned status
+            'task-panel.hint': '#6e7681',               # Hint text
+            'task-panel.empty': '#8b949e italic',       # Empty state
         })
 
     def _load_existing_config(self) -> None:
@@ -2467,9 +2503,11 @@ class CCCCSetupApp:
             self._write_timeline("  /foreman on|off|status|now   Control background scheduler", 'info')
             self._write_timeline("  /aux <prompt>       Run Aux helper", 'info')
             self._write_timeline("  /verbose on|off     Toggle peer summaries", 'info')
+            self._write_timeline("  /task               Show blueprint task status", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Keyboard:", 'info')
             self._write_timeline("  Ctrl+T              Focus timeline (enable mouse scroll)", 'info')
+            self._write_timeline("  T                   Toggle task panel (when not in input)", 'info')
             self._write_timeline("  Esc                 Return to input from timeline", 'info')
             self._write_timeline("  Ctrl+A/E            Start/end of line", 'info')
             self._write_timeline("  Ctrl+W/U/K          Delete word/start/end", 'info')
@@ -2512,6 +2550,10 @@ class CCCCSetupApp:
                 self._write_cmd_to_queue("verbose", {"value": arg}, f"Verbose {arg} sent")
             else:
                 self._write_timeline("Usage: /verbose on|off", 'error')
+
+        # Blueprint task status
+        elif text == '/task' or text.startswith('/task '):
+            self._show_task_status(text)
 
         # Aux command with prompt
         elif text.startswith('/aux '):
@@ -2581,6 +2623,62 @@ class CCCCSetupApp:
             self._write_timeline(success_msg, 'success')
         except Exception as e:
             self._write_timeline(f"Failed to send command: {str(e)[:50]}", 'error')
+
+    def _show_task_status(self, text: str) -> None:
+        """Show blueprint task status"""
+        try:
+            from orchestrator.task_manager import TaskManager
+            # Use project root (parent of .cccc)
+            root = self.home.parent if self.home.name == '.cccc' else self.home
+            manager = TaskManager(root)
+            summary = manager.get_summary()
+
+            if summary['total_tasks'] == 0:
+                self._write_timeline("", 'info')
+                self._write_timeline("=== Blueprint Status ===", 'info')
+                self._write_timeline("No tasks defined.", 'info')
+                self._write_timeline("", 'info')
+                self._write_timeline("Blueprint commands:", 'info')
+                self._write_timeline("  T key          Toggle task panel", 'info')
+                self._write_timeline("", 'info')
+                self._write_timeline("Agent creates tasks by writing to docs/por/blueprint/", 'info')
+                self._write_timeline("Progress markers: progress: T001.S1 done", 'info')
+                return
+
+            self._write_timeline("", 'info')
+            self._write_timeline("=== Blueprint Status ===", 'info')
+            self._write_timeline(f"Progress: {summary['completed_tasks']}/{summary['total_tasks']} tasks ({summary['progress_percent']}%)", 'info')
+            if summary['current_task']:
+                self._write_timeline(f"Current: {summary['current_task']} [{summary['current_step'] or '-'}]", 'info')
+            self._write_timeline("", 'info')
+
+            # Show task list
+            self._write_timeline("Tasks:", 'info')
+            for t in summary['tasks']:
+                if t['status'] == 'complete':
+                    icon = '✓'
+                elif t['status'] == 'active':
+                    icon = '→'
+                else:
+                    icon = '○'
+                self._write_timeline(f"  {icon} {t['id']} {t['name'][:25]:<25} {t['progress']}", 'info')
+
+            self._write_timeline("", 'info')
+            self._write_timeline("Commands: T to toggle task panel", 'info')
+
+        except ImportError:
+            self._write_timeline("Blueprint module not available", 'error')
+        except Exception as e:
+            self._write_timeline(f"Failed to load tasks: {str(e)[:50]}", 'error')
+
+    def _toggle_task_panel(self) -> None:
+        """Toggle task panel expanded/collapsed state"""
+        if hasattr(self, 'task_panel'):
+            self.task_panel.toggle()
+            try:
+                self.app.invalidate()
+            except Exception:
+                pass
 
     def _open_dialog(self, dialog: Dialog, ok_handler: Optional[callable] = None) -> None:
         """Open dialog"""
@@ -2876,6 +2974,12 @@ class CCCCSetupApp:
         def jump_to_top(event) -> None:
             """Jump to top of timeline (gg, vim-style) - silent navigation"""
             self.timeline.buffer.cursor_position = 0
+
+        # Blueprint task panel toggle (T key)
+        @kb.add('T', filter=~Condition(lambda: self.setup_visible or self.modal_open) & ~has_focus(self.input_field))
+        def toggle_task_panel(event) -> None:
+            """Toggle task panel expanded/collapsed"""
+            self._toggle_task_panel()
 
         # Standard editing shortcuts (runtime phase, input focused, not in search mode)
         @kb.add('c-a', filter=~Condition(lambda: self.setup_visible or self.modal_open or self.reverse_search_mode) & has_focus(self.input_field))

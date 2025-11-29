@@ -296,6 +296,41 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - Write an Ask(to=peerA, action=relay_to_user, ...) line under the relevant Item. Do not address USER directly.",
         ]
 
+    # Blueprint task protocol - progress markers
+    ch3_blueprint = [
+        "- Blueprint task protocol {#blueprint}",
+        "  - When user gives a multi-step goal, create task files in docs/por/blueprint/",
+        "  - Directory: docs/por/blueprint/T001-slug/task.yaml",
+        "  - Task file format (task.yaml):",
+        "    id: T001",
+        "    name: Task Name (5-50 chars)",
+        "    goal: User-visible outcome description",
+        "    status: planned",
+        "    steps:",
+        "      - id: S1",
+        "        name: First step name",
+        "        done: Completion criteria (tests pass, API documented, etc.)",
+        "        status: pending",
+        "      - id: S2",
+        "        name: Second step name",
+        "        done: Completion criteria",
+        "        status: pending",
+        "  - Progress markers (add to message body, orchestrator parses and updates files):",
+        "    progress: T001 start           # Activate task",
+        "    progress: T001.S1 done         # Complete step S1",
+        "    progress: T001.S2 blocked: waiting for API   # Notify blocked (no state change)",
+        "    progress: T001 promoted        # Quick task upgraded to formal task",
+        "  - When to use blueprint:",
+        "    - Multi-step goals (>2 files OR >50 lines total change)",
+        "    - Work spanning multiple handoffs",
+        "    - User explicitly requests planning",
+        "  - Quick tasks (no blueprint needed):",
+        "    - Single-step changes (<=2 files AND <=50 lines)",
+        "    - Immediate fixes/typos",
+        "    - Simple questions",
+    ]
+    ch3 += ch3_blueprint
+
     update_targets = [to_peer]
     if is_peera:
         update_targets.insert(0, to_user)

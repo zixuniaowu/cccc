@@ -18,10 +18,11 @@ ROOT = Path.cwd(); HOME = ROOT/".cccc"
 if str(HOME) not in sys.path: sys.path.insert(0, str(HOME))
 
 try:
-    from common.status_format import format_status_for_im, format_help_for_im  # type: ignore
+    from common.status_format import format_status_for_im, format_help_for_im, format_task_for_im  # type: ignore
 except Exception:
     format_status_for_im = None  # type: ignore
     format_help_for_im = None  # type: ignore
+    format_task_for_im = None  # type: ignore
 
 def read_yaml(p: Path) -> Dict[str, Any]:
     # Back-compat shim to centralized config loader
@@ -395,6 +396,19 @@ def main():
                     status_text = f"{'Paused' if paused else 'Running'} | handoffs: {total}"
                 await _send_reply(status_text)
                 _log(f"[cmd] status ch={message.channel.id}")
+                return
+
+            # Task/Blueprint command: !task
+            if re.match(r'^!task\b', stripped, re.I):
+                if format_task_for_im:
+                    try:
+                        task_text = format_task_for_im(HOME / "state")
+                    except Exception as e:
+                        task_text = f"Error loading blueprint: {str(e)[:100]}"
+                else:
+                    task_text = "Blueprint module not available"
+                await _send_reply(task_text)
+                _log(f"[cmd] task ch={message.channel.id}")
                 return
 
             if re.match(r'^!aux\b', stripped, re.I):

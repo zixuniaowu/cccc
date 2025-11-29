@@ -1252,6 +1252,19 @@ def main():
                 _append_log(outlog, f"[cmd] status chat={chat_id}")
                 continue
 
+            # Task/Blueprint status command
+            if is_cmd(text, 'task'):
+                try:
+                    from common.status_format import format_task_for_im
+                    task_text = format_task_for_im(HOME / "state")
+                except ImportError:
+                    task_text = "Blueprint module not available"
+                except Exception as e:
+                    task_text = f"Error: {str(e)[:100]}"
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': task_text}, timeout=15)
+                _append_log(outlog, f"[cmd] task chat={chat_id}")
+                continue
+
             # Enforce mention in group if configured
             if (not is_dm) and require_mention:
                 ents = msg.get('entities') or []

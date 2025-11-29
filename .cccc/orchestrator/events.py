@@ -16,6 +16,9 @@ def make(ctx: Dict[str, Any]):
         'counter':  { 'counter' },
         'risk':     { 'risk' },
         'next':     { 'next' },
+        # Blueprint task events (logged separately via progress marker parsing)
+        'task':     { 'task' },
+        'step':     { 'step' },
     }
     CANON_KEYS = {a: k for k, vv in KEY_ALIASES.items() for a in vv}
     EVENT_LINE_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?([A-Za-z]+)\s*(?:\(([^)]*)\))?\s*:\s*(.*)$")

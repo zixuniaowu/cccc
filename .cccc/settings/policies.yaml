@@ -6,6 +6,20 @@ context:
     - "node_modules/**"
     - "**/__pycache__/**"
 
+# Blueprint/Task planning configuration
+blueprint:
+  enabled: true
+  # Directory for task definitions (relative to project root)
+  dir: "docs/por/blueprint"
+  # Maximum steps per task (2-8)
+  max_steps: 8
+  # Require scope.yaml for task planning
+  require_scope: false
+  # Auto-complete tasks when all steps done
+  auto_complete: true
+  # Log progress markers to ledger
+  log_to_ledger: true
+
 handoff_filter:
   enabled: true
   cooldown_seconds: 15
