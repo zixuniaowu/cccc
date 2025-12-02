@@ -3554,28 +3554,42 @@ class CCCCSetupApp:
             show_scrollbar=True,
         )
         
-        # Build button list: [◀ Prev] [Next ▶] [Close (Esc)]
-        # Always show all buttons for consistent layout; disable when not applicable
-        buttons = []
-        
         # Position indicator in title
         if total_tasks > 0:
             pos_indicator = f" ({current_idx + 1}/{total_tasks})"
         else:
             pos_indicator = ""
         
-        # Prev button (only if not at start and has multiple tasks)
-        if total_tasks > 1 and current_idx > 0:
-            buttons.append(Button(text="◀ Prev", handler=on_prev, width=12))
+        # Create fixed-position button bar: [◀ Prev] (left) | [Close (Esc)] (center) | [Next ▶] (right)
+        # Buttons always in fixed positions; show placeholder when not applicable
+        can_prev = total_tasks > 1 and current_idx > 0
+        can_next = total_tasks > 1 and current_idx < total_tasks - 1
         
-        # Next button (only if not at end and has multiple tasks)
-        if total_tasks > 1 and current_idx < total_tasks - 1:
-            buttons.append(Button(text="Next ▶", handler=on_next, width=12))
+        # Create buttons (or placeholders for consistent layout)
+        if can_prev:
+            prev_btn = Button(text="◀ Prev", handler=on_prev, width=12)
+        else:
+            # Invisible placeholder - same width as button
+            prev_btn = Window(width=12, height=1)
         
-        # Close button always present
-        buttons.append(Button(text="Close (Esc)", handler=on_close, width=14))
+        close_btn = Button(text="Close (Esc)", handler=on_close, width=14)
         
-        # Create dialog with adaptive size
+        if can_next:
+            next_btn = Button(text="Next ▶", handler=on_next, width=12)
+        else:
+            # Invisible placeholder - same width as button
+            next_btn = Window(width=12, height=1)
+        
+        # Fixed three-column button bar layout
+        button_bar = VSplit([
+            prev_btn,                                    # Left: Prev
+            Window(width=Dimension(weight=1)),           # Flexible spacer
+            close_btn,                                   # Center: Close
+            Window(width=Dimension(weight=1)),           # Flexible spacer  
+            next_btn,                                    # Right: Next
+        ], height=1, padding=1)
+        
+        # Create dialog with custom button bar in body (not using Dialog's buttons param)
         dialog = Dialog(
             title=f"📋 Task {task_id}{pos_indicator}",
             body=HSplit([
@@ -3583,9 +3597,11 @@ class CCCCSetupApp:
                     body=scrollable_content,
                     style='class:task-detail',
                 ),
+                Window(height=1),  # Spacer before buttons
+                button_bar,        # Custom fixed-position button bar
             ], width=Dimension(min=75, max=dialog_width, preferred=dialog_width),
                height=Dimension(min=15, max=dialog_height, preferred=dialog_height)),
-            buttons=buttons,
+            buttons=[],  # No default buttons - using custom layout above
             with_background=True,
         )
         

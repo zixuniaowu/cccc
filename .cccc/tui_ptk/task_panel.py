@@ -239,11 +239,11 @@ class TaskPanel:
         elif completed == total and total > 0:
             current_str = "✓ All complete"
         else:
-            # No active task - show first planned/pending_review task if any
+            # No active task - show first planned task if any
             tasks = summary.get('tasks', [])
             planned_task = None
             for t in tasks:
-                if t.get('status') and str(t['status']).lower() in ('planned', 'pending_review'):
+                if t.get('status') and str(t['status']).lower() == 'planned':
                     planned_task = t
                     break
             if planned_task:
@@ -392,7 +392,6 @@ class TaskPanel:
             'complete': ('✓', 'done'),
             'active': ('→', 'work'),
             'in_progress': ('→', 'work'),
-            'pending_review': ('⏳', 'rev'),
             'planned': ('○', 'plan'),
         }
         return mapping.get(status, ('○', 'plan'))

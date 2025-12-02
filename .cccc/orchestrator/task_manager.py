@@ -69,7 +69,7 @@ class TaskManager:
     # =========================================================================
 
     def _read_yaml(self, path: Path) -> Dict[str, Any]:
-        """Read YAML file, return empty dict on error."""
+        """Read YAML file, return empty dict on error. Logs errors for debugging."""
         if not path.exists():
             return {}
         try:
@@ -79,7 +79,10 @@ class TaskManager:
             else:
                 # Fallback to JSON-like parsing
                 return json.loads(path.read_text(encoding='utf-8'))
-        except Exception:
+        except Exception as e:
+            # Log error for debugging - task.yaml syntax issues are common
+            import sys
+            print(f"[TaskManager] YAML parse error in {path}: {e}", file=sys.stderr)
             return {}
 
     def _write_yaml(self, path: Path, data: Dict[str, Any]) -> bool:
@@ -128,10 +131,12 @@ class TaskManager:
         Synchronize scope.yaml with actual task directories.
 
         Scans blueprint directory and updates scope to match.
+        Warns about duplicate task IDs (multiple directories with same T### prefix).
         """
         scope = self.get_scope()
         existing_ids = set(scope.tasks)
         found_ids = set()
+        id_to_dirs: Dict[str, List[str]] = {}  # Track multiple dirs per ID
 
         # Scan for task directories
         for item in self.blueprint_dir.iterdir():
@@ -141,6 +146,15 @@ class TaskManager:
                 if match:
                     task_id = match.group(1)
                     found_ids.add(task_id)
+                    if task_id not in id_to_dirs:
+                        id_to_dirs[task_id] = []
+                    id_to_dirs[task_id].append(item.name)
+
+        # Warn about duplicate task IDs
+        for tid, dirs in id_to_dirs.items():
+            if len(dirs) > 1:
+                import sys
+                print(f"[TaskManager] WARNING: Duplicate task ID '{tid}' found in multiple directories: {dirs}", file=sys.stderr)
 
         # Add new tasks
         for tid in found_ids - existing_ids:
@@ -189,6 +203,151 @@ class TaskManager:
         task_dir.mkdir(parents=True, exist_ok=True)
         return task_dir
 
+    def _normalize_task_data(self, data: Dict[str, Any], source: str = "") -> Dict[str, Any]:
+        """
+        Normalize and auto-fix common task data issues.
+        
+        This provides resilience against agent format variations:
+        - Status values: 'pending' -> 'planned', unknown -> 'planned'
+        - Step IDs: 'S01' -> 'S1', 'step1' -> 'S1', 's1' -> 'S1'
+        - Step status: unknown -> 'pending'
+        
+        Args:
+            data: Raw task data from YAML
+            source: Source file path for logging
+            
+        Returns:
+            Normalized data dict
+        """
+        import sys
+        
+        # === Task Status Normalization ===
+        if 'status' in data:
+            raw_status = str(data['status']).lower().strip()
+            # Map common variations to valid values
+            status_map = {
+                'planned': 'planned',
+                'active': 'active', 
+                'complete': 'complete',
+                'completed': 'complete',
+                'done': 'complete',
+                'pending': 'planned',      # Common mistake: 'pending' for task
+                'in_progress': 'active',   # Common mistake: step status used for task
+                'in-progress': 'active',
+                'inprogress': 'active',
+                'draft': 'planned',
+                'todo': 'planned',
+                'wip': 'active',
+                'inactive': 'planned',     # Another common variation
+                'paused': 'planned',
+                'blocked': 'active',       # Blocked is still active work
+                'started': 'active',
+            }
+            if raw_status in status_map:
+                data['status'] = status_map[raw_status]
+            else:
+                # Unknown status -> fallback to 'planned' with warning
+                print(f"[TaskManager] WARNING: Unknown task status '{raw_status}' in {source}, defaulting to 'planned'", file=sys.stderr)
+                data['status'] = 'planned'
+        
+        # === Steps Normalization ===
+        if 'steps' in data and isinstance(data['steps'], list):
+            normalized_steps = []
+            for i, step in enumerate(data['steps']):
+                if not isinstance(step, dict):
+                    continue
+                    
+                # Step ID normalization
+                if 'id' in step:
+                    raw_id = str(step['id']).strip()
+                    step['id'] = self._normalize_step_id(raw_id, i + 1)
+                else:
+                    # No ID -> generate one
+                    step['id'] = f"S{i + 1}"
+                
+                # Step Status normalization
+                if 'status' in step:
+                    raw_step_status = str(step['status']).lower().strip()
+                    step_status_map = {
+                        'pending': 'pending',
+                        'in_progress': 'in_progress',
+                        'in-progress': 'in_progress',
+                        'inprogress': 'in_progress',
+                        'active': 'in_progress',
+                        'wip': 'in_progress',
+                        'complete': 'complete',
+                        'completed': 'complete',
+                        'done': 'complete',
+                    }
+                    if raw_step_status in step_status_map:
+                        step['status'] = step_status_map[raw_step_status]
+                    else:
+                        print(f"[TaskManager] WARNING: Unknown step status '{raw_step_status}' in {source}, defaulting to 'pending'", file=sys.stderr)
+                        step['status'] = 'pending'
+                else:
+                    # Missing status -> default to pending
+                    step['status'] = 'pending'
+                
+                # Ensure required fields
+                if 'name' not in step or not step['name']:
+                    step['name'] = f"Step {i + 1}"
+                if 'done' not in step:
+                    step['done'] = ""
+                    
+                normalized_steps.append(step)
+            data['steps'] = normalized_steps
+        
+        return data
+    
+    def _normalize_step_id(self, raw_id: str, fallback_num: int) -> str:
+        """
+        Normalize step ID to standard format (S1, S2, S1.1, etc.)
+        
+        Handles variations:
+        - S1, S01, S001 -> S1
+        - s1, s01 -> S1
+        - Step1, step1, Step-1 -> S1
+        - 1, 01 -> S1
+        - S1.1, S1.2 -> S1.1, S1.2 (preserved)
+        
+        Args:
+            raw_id: Raw step ID string
+            fallback_num: Fallback number if parsing fails
+            
+        Returns:
+            Normalized step ID (S1, S2, S1.1, etc.)
+        """
+        import re
+        
+        # Already valid format
+        if re.match(r'^S\d+(\.\d+)?$', raw_id):
+            # Normalize leading zeros: S01 -> S1
+            match = re.match(r'^S0*(\d+)(\.(\d+))?$', raw_id)
+            if match:
+                main = int(match.group(1))
+                sub = match.group(3)
+                if sub:
+                    return f"S{main}.{int(sub)}"
+                return f"S{main}"
+            return raw_id
+        
+        # Lowercase s: s1, s01
+        if re.match(r'^s\d+(\.\d+)?$', raw_id, re.IGNORECASE):
+            return self._normalize_step_id(raw_id.upper(), fallback_num)
+        
+        # "Step" prefix: Step1, step-1, Step 1
+        match = re.match(r'^step[-\s]?0*(\d+)$', raw_id, re.IGNORECASE)
+        if match:
+            return f"S{int(match.group(1))}"
+        
+        # Just a number: 1, 01, 001
+        match = re.match(r'^0*(\d+)$', raw_id)
+        if match:
+            return f"S{int(match.group(1))}"
+        
+        # Fallback
+        return f"S{fallback_num}"
+
     def get_task(self, task_id: str) -> Optional[TaskDefinition]:
         """
         Load task by ID.
@@ -209,8 +368,13 @@ class TaskManager:
             return None
 
         try:
+            # Normalize data before validation
+            data = self._normalize_task_data(data, str(task_path))
             return TaskDefinition(**data)
-        except Exception:
+        except Exception as e:
+            # Log validation error for debugging
+            import sys
+            print(f"[TaskManager] Task validation error in {task_path}: {e}", file=sys.stderr)
             return None
 
     def save_task(self, task: TaskDefinition) -> bool:
@@ -513,7 +677,6 @@ class TaskManager:
         total = len(tasks)
         completed = sum(1 for t in tasks if t.status == TaskStatus.COMPLETE)
         active = sum(1 for t in tasks if t.status == TaskStatus.ACTIVE)
-        pending_review = sum(1 for t in tasks if t.status == TaskStatus.PENDING_REVIEW)
         planned = sum(1 for t in tasks if t.status == TaskStatus.PLANNED)
 
         # Find current task (first active)
@@ -533,7 +696,6 @@ class TaskManager:
             'total_tasks': total,
             'completed_tasks': completed,
             'active_tasks': active,
-            'pending_review_tasks': pending_review,
             'planned_tasks': planned,
             'current_task': current_task,
             'current_step': current_step,

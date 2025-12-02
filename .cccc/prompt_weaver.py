@@ -348,42 +348,96 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - Write an Ask(to=peerA, action=relay_to_user, ...) line under the relevant Item. Do not address USER directly.",
         ]
 
-    # Task Management Protocol - streamlined (planning-first approach)
+    # Task Management Protocol - role-specific, streamlined
+    # Purpose: Shared work map for progress tracking (not approval workflow)
     ch3_blueprint = [
         "- Blueprint Task Protocol {#task-protocol}",
-        "  WHEN TO CREATE task.yaml: >=3 files OR >50 lines OR new component/API OR user-requested planning",
-        "  SKIP task.yaml: <=2 files AND <=50 lines AND single-concern fix",
+        "  PURPOSE: Shared work map for progress tracking and TUI visualization (not approval workflow)",
+        "  THRESHOLD: Create task when >=3 files OR >50 lines OR multi-step work; skip for simple fixes",
         "",
-        "  CREATE TASK (before coding):",
-        "    Path: docs/por/T###-slug/task.yaml (T001, T002... scan for next available)",
-        "    ```yaml",
-        "    id: T001",
-        "    name: Brief name",
-        "    goal: What 'done' looks like",
-        "    status: active  # planned|pending_review|active|complete",
-        "    steps:",
-        "      - id: S1",
-        "        name: Step description",
-        "        done: Completion criteria",
-        "        status: pending  # pending|in_progress|complete",
-        "    ```",
     ]
-    # Add dual-peer review flow only in dual-peer mode
-    if not single_peer_mode:
+    
+    # Role-specific task instructions
+    if single_peer_mode:
+        # Single peer: full ownership
         ch3_blueprint += [
+            "  YOUR ROLE (single-peer): You create and manage tasks",
+            "    - Create task.yaml BEFORE starting complex work",
+            "    - Update steps/status as you progress",
+            "    - Send progress markers to trigger TUI updates and keepalive",
             "",
-            "  PEER REVIEW (dual-peer): PeerA creates with status='pending_review', PeerB reviews.",
-            "    Approve: change to 'active', send 'progress: T### start'",
-            "    Request changes: keep 'pending_review', reply with feedback",
+            "  CREATE TASK:",
+            "    Path: docs/por/T###-slug/task.yaml",
+            "    - Scan existing T### dirs, use next available ID (T001, T002...)",
+            "    - slug: lowercase-hyphenated (e.g., T001-add-auth)",
+            "    ```yaml",
+            "    id: T001            # Must match directory prefix",
+            "    name: Brief name",
+            "    goal: What 'done' looks like",
+            "    status: active      # planned|active|complete",
+            "    steps:",
+            "      - id: S1          # S1, S2... or S1.1 for sub-steps",
+            "        name: Step description",
+            "        done: Completion criteria",
+            "        status: pending # pending|in_progress|complete",
+            "    ```",
         ]
+    elif is_peera:
+        # PeerA in dual-peer mode: creator role
+        ch3_blueprint += [
+            "  YOUR ROLE (PeerA): You are the task creator",
+            "    - You CREATE task.yaml for complex work (PeerB cannot create tasks)",
+            "    - Create BEFORE coding; this prevents duplicate task conflicts",
+            "    - PeerB can update task content (steps/status) after you create it",
+            "",
+            "  CREATE TASK:",
+            "    Path: docs/por/T###-slug/task.yaml",
+            "    - Scan existing T### dirs, use next available ID (T001, T002...)",
+            "    - slug: lowercase-hyphenated (e.g., T001-add-auth)",
+            "    ```yaml",
+            "    id: T001            # Must match directory prefix",
+            "    name: Brief name",
+            "    goal: What 'done' looks like",
+            "    status: active      # planned|active|complete",
+            "    steps:",
+            "      - id: S1          # S1, S2... or S1.1 for sub-steps",
+            "        name: Step description",
+            "        done: Completion criteria",
+            "        status: pending # pending|in_progress|complete",
+            "    ```",
+        ]
+    else:
+        # PeerB in dual-peer mode: executor/updater role
+        ch3_blueprint += [
+            "  YOUR ROLE (PeerB): You update tasks, PeerA creates them",
+            "    - Do NOT create new task.yaml files (PeerA handles creation to avoid ID conflicts)",
+            "    - You CAN and SHOULD update existing tasks: modify steps, change status, add sub-steps",
+            "    - If complex work needs a task but none exists, ask PeerA to create one",
+            "",
+            "  TASK FORMAT (reference):",
+            "    Path: docs/por/T###-slug/task.yaml",
+            "    ```yaml",
+            "    id: T001            # Do not change; must match directory",
+            "    name: Brief name    # Can update",
+            "    goal: What 'done' looks like  # Can update",
+            "    status: active      # planned|active|complete - update as needed",
+            "    steps:              # Can add/modify steps",
+            "      - id: S1          # S1, S2... or S1.1 for sub-steps",
+            "        name: Step description",
+            "        done: Completion criteria",
+            "        status: pending # pending|in_progress|complete",
+            "    ```",
+        ]
+    
+    # Common progress markers for all roles
     ch3_blueprint += [
         "",
-        "  PROGRESS MARKERS (include in message when state changes):",
-        "    progress: T001 start         # Activate task",
-        "    progress: T001.S1 done       # Complete step",
-        "    progress: T001 complete      # Task finished",
+        "  PROGRESS MARKERS (in message body, triggers TUI update + keepalive):",
+        "    progress: T001 start       # Activate task",
+        "    progress: T001.S1 done     # Step complete",
+        "    progress: T001 complete    # Task done",
         "",
-        "  QUICK TASK (below threshold): Execute directly; if complexity grows, create task.yaml mid-work.",
+        "  QUICK PATH: Below threshold? Execute directly. If complexity grows, create task mid-work.",
     ]
     ch3 += ch3_blueprint
 
@@ -467,55 +521,40 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
     session_root = (home/"work"/"aux_sessions").as_posix()
 
     ch1 = [
-        "1) Role - Activation - Expectations",
-        "- You are Aux, the on-demand third peer. PeerA/PeerB summon you for strategic corrections and heavy execution that stay reversible.",
-        "- Activation: orchestrator drops a bundle under .cccc/work/aux_sessions/<session-id>/ containing POR.md, notes.txt, peer_message.txt, and any extra context.",
-        "- Rhythm: operate with the same evidence-first standards as the primary peers - small, testable moves and explicit next checks.",
+        "1) Role & Activation",
+        "- You are Aux, an on-demand specialist. PeerA/PeerB summon you for focused subtasks.",
+        f"- Session bundle: {session_root}/<session-id>/ (notes.txt, peer_message.txt, artifacts)",
+        "- One session = one deliverable. Keep moves small, testable, reversible.",
     ]
     bnd = _resolve_bindings(home)
     if bnd.get('aux_actor'):
-        # For Aux's own rulebook, show binding state (who I am, cwd, rate),
-        # but do NOT include the caller-side invoke template. That template
-        # belongs in PeerA/PeerB docs — Aux does not need to know how peers
-        # invoke it.
         ch1.append(f"- Binding: actor={bnd.get('aux_actor')}; cwd={bnd.get('aux_cwd') or './'}; rate={bnd.get('aux_rate') or 2}/min")
-    else:
-        ch1.append("- Binding: none (Aux disabled). Bind an Aux actor at startup via the roles wizard to enable offloads.")
 
     ch2 = [
         "",
-        "2) Critical References & Inputs",
-        "- PROJECT.md - project introduction and task description. Read this first to understand the project context and current objectives.",
-        f"- POR.md - single source of direction (path: {por_rel}). Always reconcile the bundle against the latest POR before proposing actions.",
-        f"- Session bundle - {session_root}/<session-id>/",
-        "  - Read notes.txt first: it captures the ask, expectations, and any suggested commands.",
-        "  - peer_message.txt (when present) mirrors the triggering CLAIM/COUNTER/EVIDENCE; use it to align tone and scope.",
-        "  - Additional artifacts (logs, datasets) live alongside; cite exact paths in your outputs.",
-        "- This rules document - .cccc/rules/AUX.md. Reference anchors from here in any summary you produce for the peers.",
+        "2) Context (read in order)",
+        "- notes.txt: the ask, expectations, success criteria",
+        "- peer_message.txt: triggering message context (if present)",
+        f"- POR.md: {por_rel} (strategic direction)",
+        "- docs/por/T*/task.yaml: active tasks (do NOT create new tasks; update existing if instructed)",
+        "- PROJECT.md: project vision and constraints",
     ]
 
     ch3 = [
         "",
-        "3) Execution Cadence",
-        "- Intake",
-        "  - Read POR.md -> notes.txt -> peer_message.txt. Confirm the objective, constraints, and success criteria before editing.",
-        "- Plan",
-        "  - Break work into <=15-minute probes. Prefer deterministic scripts or tight analyses over sprawling exploration.",
-        "- Build",
-        "  - Use .cccc/work/aux_sessions/<session-id>/ for all scratch files, analysis notebooks, and outputs.",
-        "  - Run validations as you go. Capture exact commands and 3-5 stable log lines in `<session-id>/logs/`.",
-        "- Wrap",
-        "  - Summarize the outcome in `<session-id>/outcome.md` (what changed, checks performed, residual risks, next suggestion).",
-        "  - Highlight any assumptions that still need falsification so the invoking peer can follow up.",
+        "3) Execution",
+        "- Plan: break into <=15-minute probes; deterministic scripts over exploration",
+        "- Build: all scratch in session dir; capture commands + 3-5 log lines in <session-id>/logs/",
+        "- Wrap: outcome.md (what changed, checks run, risks, next suggestion)",
     ]
 
     ch4 = [
         "",
-        "4) Deliverables & Boundaries",
-        "- Never edit .cccc/mailbox/** directly; the summoning peer integrates your artifacts into their next message.",
-        "- Keep changes small and reversible. If you create multiple options, name them clearly (e.g., option-a, option-b).",
-        "- Record every check you run (command + stable output) so peers can cite them as evidence.",
-        "- If you uncover strategic misalignment, document it succinctly in outcome.md with a proposed correction path keyed to POR.md sections.",
+        "4) Boundaries",
+        "- Never edit .cccc/mailbox/** - summoning peer integrates your output",
+        "- Do NOT create new task.yaml files - only update existing tasks if instructed",
+        "- Reference paths instead of pasting large outputs",
+        "- Document strategic misalignments in outcome.md with correction path",
     ]
 
     ts = _format_local_ts()
@@ -697,33 +736,34 @@ def _write_rules_for_foreman(home: Path) -> Path:
         f"Generated on {ts}",
         "",
         "Identity",
-        "- You act as the user's proxy. Speak in the user's voice.",
-        "- Each run is non‑interactive and time‑boxed. Do one useful thing or write one short directive.",
+        "- You are the user's autonomous proxy. Speak in the user's voice.",
+        "- Each run: time-boxed, non-interactive. Do one useful thing per run.",
         "",
-        "Timer & Non‑overlap",
-        "- The orchestrator runs you on a fixed interval and never overlaps runs.",
-        "- Keep long work in files; keep messages short.",
+        "Output",
+        "- Write to: `.cccc/mailbox/foreman/to_peer.md`",
+        "- Header: `To: Both|PeerA|PeerB` (default Both)",
+        "- Body: `<TO_PEER> ... </TO_PEER>`",
         "",
-        "Write‑to Path (single hand‑off)",
-        "- Write exactly one message per run to: `.cccc/mailbox/foreman/to_peer.md`.",
-        "- Put one routing header at the top:",
-        "  To: Both|PeerA|PeerB  (default Both)",
-        "- Wrap the body with `<TO_PEER> ... </TO_PEER>`.",
+        "Context (skim then decide)",
+        "- PROJECT.md: vision/constraints",
+        "- docs/por/POR.md: Now/Next/Risks",
+        "- docs/por/T*/task.yaml: active tasks and progress",
+        "- .cccc/mailbox/*/inbox: pending items",
         "",
-        "Anchors to read (skim then decide)",
-        "- Project brief: PROJECT.md",
-        "- Portfolio board: docs/por/POR.md (Now/Next/Risks)",
-        "- Active tasks: docs/por/T*/task.yaml (status/steps/progress)",
-        "- Peer rules: .cccc/rules/PEERA.md, .cccc/rules/PEERB.md",
-        "- Evidence/work roots: docs/evidence/**, .cccc/work/**",
+        "Task awareness",
+        "- Check active tasks before suggesting new work",
+        "- If tasks exist, propose steps that align with current task goals",
+        "- Remind peers of stale tasks (no progress for extended time)",
         "",
-        "Routing defaults & backlog",
-        "- Route architecture/alignment/risks to PeerA; implementation/experiments to PeerB.",
-        "- If many pending inbox items exist, remind to process oldest‑first, then propose one smallest next step aligned to POR/tasks.",
+        "Routing",
+        "- Architecture/alignment/risks → PeerA",
+        "- Implementation/experiments → PeerB",
+        "- Pending inbox items: remind to process oldest-first",
         "",
         "Boundaries",
-        "- Do not paste long logs in messages; reference repo paths only.",
-        "- Do not modify orchestrator code/policies; do not declare 'done'.",
+        "- Reference paths, not paste content",
+        "- Do not modify orchestrator code/policies",
+        "- Do not create new task.yaml files",
         "",
     ]
     target = _rules_dir(home)/"FOREMAN.md"

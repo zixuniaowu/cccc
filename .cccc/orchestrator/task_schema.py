@@ -41,18 +41,15 @@ class StepStatus(str, Enum):
 class TaskStatus(str, Enum):
     """Task lifecycle status.
 
-    Dual-peer workflow:
-    - PeerA creates task with status='pending_review'
-    - PeerB reviews and changes to 'active' (approved) or back to 'planned' (rejected)
-    - Task proceeds through 'active' to 'complete'
+    Simple 3-state model:
+    - planned: Initial draft / planning stage
+    - active: Work in progress
+    - complete: All steps done
 
-    Single-peer workflow:
-    - Peer creates task with status='planned' or 'active'
-    - No review required
+    PeerA creates tasks; both peers can update status and content.
     """
-    PLANNED = "planned"           # Draft, not yet reviewed
-    PENDING_REVIEW = "pending_review"  # Created by PeerA, awaiting PeerB review
-    ACTIVE = "active"             # Approved and in progress
+    PLANNED = "planned"           # Draft, initial planning
+    ACTIVE = "active"             # Work in progress
     COMPLETE = "complete"         # All steps done
 
 
@@ -61,12 +58,13 @@ class Step(BaseModel):
     Individual task step with completion criteria.
 
     Attributes:
-        id: Step identifier (S1, S2, etc.)
+        id: Step identifier (S1, S2, S1.1, etc.)
         name: Brief description of the step
         done: Completion criteria (e.g., "Tests pass", "API documented")
         status: Current execution status
     """
-    id: str = Field(..., pattern=r"^S\d+$", description="Step ID (S1, S2, ...)")
+    # Flexible step ID - will be normalized to S1, S2 format
+    id: str = Field(..., description="Step ID (S1, S2, S1.1, ...)")
     name: str = Field(..., min_length=1, max_length=200, description="Step description")
     done: str = Field(default="", max_length=500, description="Completion criteria")
     status: StepStatus = Field(default=StepStatus.PENDING, description="Step status")
