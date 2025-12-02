@@ -115,8 +115,8 @@ def main():
     p_token.add_argument("action", choices=["set","unset","show"], help="Action: set/unset/show")
     p_token.add_argument("value", nargs="?", help="When action=set, token value (empty = prompt)")
 
-    p_bridge = sub.add_parser("bridge", help="Control chat bridges (telegram|slack|discord|all)")
-    p_bridge.add_argument("name", choices=["telegram","slack","discord","all"], help="Bridge name or 'all'")
+    p_bridge = sub.add_parser("bridge", help="Control chat bridges (telegram|slack|discord|wecom|all)")
+    p_bridge.add_argument("name", choices=["telegram","slack","discord","wecom","all"], help="Bridge name or 'all'")
     p_bridge.add_argument("action", choices=["start","stop","status","restart","logs"], help="Start/stop/show status/restart/show logs")
     p_bridge.add_argument("-n","--lines", type=int, default=120, help="Tail this many lines for logs action")
     p_bridge.add_argument("-f","--follow", action="store_true", help="Follow logs (stream)")
@@ -341,6 +341,14 @@ def main():
                     print("  - discord.py: MISSING (install with: pip install discord.py)")
             except Exception:
                 pass
+            # WeCom quick check
+            try:
+                wcfg = _read_yaml(home/"settings"/"wecom.yaml")
+                we = str((wcfg or {}).get('webhook_url_env') or 'WECOM_WEBHOOK_URL')
+                wh = (wcfg or {}).get('webhook_url') or os.environ.get(we)
+                print(f"- wecom config: {'FOUND' if wcfg else 'NONE'}; webhook_url: {'SET' if wh else 'NOT SET'}")
+            except Exception:
+                pass
         # Roles/actors/commands summary (always available via 'doctor roles')
         try:
             sys.path.insert(0, str(home))
@@ -414,6 +422,7 @@ def main():
             'telegram': home/"adapters"/"bridge_telegram.py",
             'slack':    home/"adapters"/"bridge_slack.py",
             'discord':  home/"adapters"/"bridge_discord.py",
+            'wecom':    home/"adapters"/"bridge_wecom.py",
         }.get(name)
         pid_path = state/f"bridge-{name}.pid"
         log_path = state/f"bridge-{name}.log"
@@ -488,6 +497,18 @@ def main():
                     v = os.environ.get(be, '')
                     if v: env[be] = v; src = f"env:{be}"
                 # Discord requires a valid Bot Token; otherwise exit
+            elif name == 'wecom':
+                cfg = _read_yaml(home/"settings"/"wecom.yaml")
+                webhook_env = str((cfg or {}).get('webhook_url_env') or 'WECOM_WEBHOOK_URL')
+                webhook = None
+                if (cfg or {}).get('webhook_url'):
+                    webhook = str(cfg.get('webhook_url')); src = 'config'
+                else:
+                    v = os.environ.get(webhook_env, '')
+                    if v: webhook = v; src = f"env:{webhook_env}"
+                if not webhook:
+                    print("[BRIDGE] WeCom webhook_url not found. Set wecom.yaml webhook_url or env WECOM_WEBHOOK_URL."); return
+                env[webhook_env] = webhook
 
             # Run from project root
             p = subprocess.Popen([sys.executable, str(script)], env=env, cwd=str(Path.cwd()), start_new_session=True)
@@ -591,7 +612,7 @@ def main():
         name = getattr(args, 'name')
         act = getattr(args, 'action')
         if name == 'all':
-            for nm in ('telegram','slack','discord'):
+            for nm in ('telegram','slack','discord','wecom'):
                 try:
                     print(f"[BRIDGE] {nm} → {act}")
                     _cmd_bridge(nm, act, lines=int(getattr(args,'lines',120) or 120), follow=bool(getattr(args,'follow', False)))

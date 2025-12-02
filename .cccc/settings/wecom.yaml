@@ -1,0 +1,46 @@
+# WeCom (Enterprise WeChat) Robot Webhook Configuration
+# Outbound-only bridge for Enterprise WeChat group robot
+
+# Webhook URL (required)
+# Get this from Enterprise WeChat robot settings page
+# Format: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=YOUR_KEY
+webhook_url: ""
+
+# Optional: Load webhook_url from environment variable
+# If webhook_url is empty, will try to read from this env var
+webhook_url_env: WECOM_WEBHOOK_URL
+
+# Auto-start bridge when running `cccc run`
+autostart: false
+
+# Message type for outbound messages
+# Options: markdown_v2 (recommended), markdown, text
+# - markdown_v2: Full markdown support (best for rich formatting)
+# - markdown: Legacy markdown (limited features)
+# - text: Plain text only
+message_type: markdown_v2
+
+# Rate limiting (WeCom limit: 20 messages/minute)
+rate_limit:
+  max_messages: 18        # Conservative limit (below official 20/min)
+  window_seconds: 60      # Time window in seconds
+
+# Verbose logging (debug mode)
+verbose: false
+
+# Outbound message handling
+outbound:
+  cursor:
+    start_mode: tail      # tail | from_start
+    replay_last: 0        # replay last N events on startup (0 = none)
+
+# Message formatting options
+formatting:
+  include_timestamp: true     # Include timestamp in messages
+  include_evidence: true      # Include evidence section
+  emoji_icons: true           # Use emoji icons (📨, 🔄, etc.)
+
+# Note: WeCom webhook is outbound-only
+# - No inbound message support (webhook cannot receive messages)
+# - No file upload support via webhook
+# - No routing configuration needed (messages are always sent to webhook)
