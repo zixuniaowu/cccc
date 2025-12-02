@@ -2994,7 +2994,7 @@ class CCCCSetupApp:
             ], width=Dimension(min=75, max=dialog_width, preferred=dialog_width),
                height=Dimension(min=15, max=dialog_height, preferred=dialog_height)),
             buttons=[
-                Button(text="    Close (Esc)    ", handler=on_close),
+                Button(text="Close (Esc)", handler=on_close, width=20),
             ],
             with_background=True,
         )
@@ -3280,14 +3280,19 @@ class CCCCSetupApp:
                 pass
 
         # Close modal dialog with Esc (highest priority)
-        @kb.add('escape', filter=Condition(lambda: self.modal_open))
+        # Use eager=True to ensure this runs before other escape handlers
+        @kb.add('escape', filter=Condition(lambda: self.modal_open), eager=True)
         def close_modal(event) -> None:
             """Close any open modal dialog"""
-            self._close_dialog()
-            try:
-                self.app.layout.focus(self.input_field)
-            except Exception:
-                pass
+            # If task detail dialog is open, use special close that preserves Level 1
+            if self.task_detail_open:
+                self._close_task_detail_dialog()
+            else:
+                self._close_dialog()
+                try:
+                    self.app.layout.focus(self.input_field)
+                except Exception:
+                    pass
         
         # Return to input from timeline (Esc)
         @kb.add('escape', filter=has_focus(self.timeline) & ~Condition(lambda: self.modal_open))
@@ -3371,9 +3376,7 @@ class CCCCSetupApp:
             if self.task_panel:
                 task_id = self.task_panel.get_selected_task_id()
                 if task_id:
-                    # Close task list panel first
-                    self.task_panel.toggle()
-                    # Show detail as floating dialog
+                    # Show detail as floating dialog (Level 1 stays open)
                     self._show_task_detail_dialog(task_id)
                 try:
                     self.app.invalidate()
