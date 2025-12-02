@@ -837,10 +837,9 @@ class CCCCSetupApp:
                     if 0 <= row < task_count:
                         # Select the clicked task
                         self.task_panel.selected_index = row
-                        # Open task detail dialog
+                        # Open task detail dialog (Level 1 stays open)
                         task_id = self.task_panel.get_selected_task_id()
                         if task_id:
-                            self.task_panel.toggle()  # Close list
                             self._show_task_detail_dialog(task_id)
                         try:
                             self.app.invalidate()
@@ -3060,9 +3059,12 @@ class CCCCSetupApp:
         self.modal_open = False
         self.dialog_ok_handler = None
 
-        # Refocus first button
+        # Refocus appropriate element based on current phase
         try:
-            self.app.layout.focus(self.btn_peerA)
+            if self.setup_visible:
+                self.app.layout.focus(self.btn_peerA)
+            else:
+                self.app.layout.focus(self.input_field)
         except Exception:
             pass
 
