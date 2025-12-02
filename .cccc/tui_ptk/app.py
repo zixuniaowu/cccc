@@ -62,7 +62,7 @@ from prompt_toolkit.filters import Condition, has_focus
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import (
     Layout, HSplit, VSplit, Window, Float, FloatContainer,
-    FormattedTextControl, Dimension, ScrollablePane
+    FormattedTextControl, Dimension, ScrollablePane, ConditionalContainer
 )
 from prompt_toolkit.widgets import (
     TextArea, Button, Dialog, RadioList, Label, Frame
@@ -73,8 +73,9 @@ from prompt_toolkit.shortcuts import radiolist_dialog
 from asyncio import create_task
 
 # Blueprint Task Panel (lazy import to avoid circular deps)
+# Use relative import since package name varies (cccc_tui_ptk_pkg vs tui_ptk)
 try:
-    from tui_ptk.task_panel import TaskPanel
+    from .task_panel import TaskPanel
 except ImportError:
     TaskPanel = None  # type: ignore
 
@@ -100,8 +101,8 @@ class CommandCompleter(Completer):
             ('/foreman', 'Foreman control (on|off|status|now)'),
             ('/aux', 'Run Aux helper'),
             ('/verbose', 'Verbose on|off'),
-            # Blueprint
-            ('/task', 'Show blueprint task status'),
+            # Tasks
+            ('/task', 'Show task status'),
         ]
 
     def get_completions(self, document: Document, complete_event):
@@ -190,8 +191,9 @@ class SetupConfig:
         """Validate configuration"""
         if not self.peerA:
             return False, "PeerA actor required"
+        # PeerB can be 'none' for single-peer mode
         if not self.peerB:
-            return False, "PeerB actor required"
+            return False, "PeerB actor required (use 'none' for single-peer mode)"
 
         # Check CLI availability
         missing = []
@@ -367,18 +369,63 @@ def create_header() -> Window:
     )
 
 
-def create_runtime_header(status_dot: str = '●', status_color: str = 'class:status.connected') -> Window:
-    """Modern runtime header with connection status"""
-    text = [
-        ('class:title', '❯ CCCC Orchestrator  '),
-        (status_color, status_dot),
-        ('', '\n'),
-        ('class:hint', '  /help for commands  ·  PgUp PgDn for scrolling  ·  /quit or Ctrl+b d to exit'),
-    ]
+def create_runtime_header(status_dot: str = '●', status_color: str = 'class:status.connected',
+                          task_text_func=None, on_task_click=None) -> Window:
+    """Modern runtime header with connection status and task progress (clickable)"""
+    def get_header_text():
+        text = [
+            ('class:title', '❯ CCCC Orchestrator  '),
+            (status_color, status_dot),
+        ]
+        # Add task status if available (clickable area)
+        if task_text_func:
+            task_text = task_text_func()
+            if task_text:
+                text.extend([
+                    ('', '  │  '),
+                    # Make task text clickable with [click] handler
+                    ('class:info [SetCursorPosition]', task_text),
+                    ('class:hint', ' [T/click]'),
+                ])
+        text.extend([
+            ('', '\n'),
+            ('class:hint', '  /help · PgUp/Dn scroll · T:tasks · /quit'),
+        ])
+        return text
+    
+    # Create control with click handler via style token
+    def get_formatted_text():
+        """Generate formatted text with clickable task area"""
+        from prompt_toolkit.formatted_text import FormattedText
+        text = get_header_text()
+        # If click handler provided, make header clickable
+        if on_task_click:
+            # Wrap in mouse handler by returning as list with handler
+            return text
+        return text
+    
+    ctrl = FormattedTextControl(get_formatted_text, focusable=False)
+    
+    # Attach mouse handler to control if click handler provided
+    if on_task_click:
+        original_handler = ctrl.mouse_handler
+        def custom_mouse_handler(mouse_event):
+            from prompt_toolkit.mouse_events import MouseEventType
+            if mouse_event.event_type == MouseEventType.MOUSE_UP:
+                # Click on first line toggles task panel
+                if mouse_event.position.y == 0:
+                    on_task_click()
+                    return None
+            if original_handler:
+                return original_handler(mouse_event)
+            return NotImplemented
+        ctrl.mouse_handler = custom_mouse_handler
+    
     return Window(
-        content=FormattedTextControl(text),
+        content=ctrl,
         height=Dimension(min=2, max=3),
-        dont_extend_height=True
+        dont_extend_height=True,
+        style='class:header',
     )
 
 
@@ -400,6 +447,7 @@ class CCCCSetupApp:
         self.error_msg: str = ''
         self.setup_visible: bool = True
         self.modal_open: bool = False
+        self.task_detail_open: bool = False  # Track if Level 2 task detail is open
         self.current_dialog: Optional[Float] = None
         self.dialog_ok_handler: Optional[callable] = None
         self.floats: List[Float] = []  # FloatContainer floats list
@@ -452,6 +500,16 @@ class CCCCSetupApp:
 
         # Initialize UI components
         self.error_label = Label(text='', style='class:error')
+        # Dynamic hint labels for single-peer mode
+        is_single_peer = self.config.peerB == 'none'
+        self.peerB_hint_label = Label(
+            text='ℹ Single-peer mode: Only PeerA will run' if is_single_peer else 'Validation peer (equal)',
+            style='class:hint'
+        )
+        self.foreman_hint_label = Label(
+            text='💡 Recommended for single-peer autonomous operation' if (is_single_peer and self.config.foreman == 'none') else 'Background scheduler (self-check/maintenance/compact)',
+            style='class:hint'
+        )
         self.buttons: List[Button] = []
         self.setup_content = self._build_setup_panel()
 
@@ -542,10 +600,7 @@ class CCCCSetupApp:
 
             # Update root layout content
             if hasattr(self.root, 'content'):
-                self.root.content = HSplit([
-                    create_header(),
-                    self.setup_content,
-                ])
+                self.root.content = self._build_root_content()
 
             # Reinitialize focus to keep current item focused
             if hasattr(self, 'app') and self.app:
@@ -633,12 +688,18 @@ class CCCCSetupApp:
 
         def get_value_choices(config_name: str) -> List[str]:
             """Get available values for a config option"""
-            if config_name in ['peerA', 'peerB']:
-                # Required peers: only include available actors
+            if config_name == 'peerA':
+                # PeerA: required, only include available actors
                 if self.actors_available:
                     return self.actors_available
                 else:
                     return ['claude']  # Fallback to claude if no actors found
+            elif config_name == 'peerB':
+                # PeerB: include 'none' for single-peer mode
+                if self.actors_available:
+                    return self.actors_available + ['none']
+                else:
+                    return ['claude', 'none']
             elif config_name == 'aux':
                 # Optional: include none and all available actors
                 return ['none'] + self.actors_available
@@ -674,6 +735,7 @@ class CCCCSetupApp:
 
             # Update button text - use direct button reference
             button = None
+            single_peer_ok = False
             if config_name == 'peerA':
                 button = self.btn_peerA
                 required = True
@@ -682,6 +744,7 @@ class CCCCSetupApp:
                 button = self.btn_peerB
                 required = True
                 none_ok = False
+                single_peer_ok = True  # Allow 'none' for single-peer mode
             elif config_name == 'aux':
                 button = self.btn_aux
                 required = False
@@ -699,7 +762,7 @@ class CCCCSetupApp:
                 if config_name == 'mode':
                     button.text = f'[●] {new_value}'
                 else:
-                    button.text = self._format_button_text(new_value, required=required, none_ok=none_ok)
+                    button.text = self._format_button_text(new_value, required=required, none_ok=none_ok, single_peer_ok=single_peer_ok)
 
             # Handle special case: mode change requires UI rebuild
             if config_name == 'mode':
@@ -737,14 +800,82 @@ class CCCCSetupApp:
         self.key_bindings = self._create_key_bindings()
         self._create_dialogs()
 
+    def _build_task_panel_container(self):
+        """Build the conditional task panel container with mouse support."""
+        
+        def get_task_panel_content():
+            """Get task panel content with dynamic width."""
+            if not self.task_panel:
+                return ""
+            # Get terminal width (default to 80 if unavailable)
+            try:
+                width = self.app.output.get_size().columns if self.app else 80
+            except Exception:
+                width = 80
+            # Use 90% of terminal width, min 60, max 120
+            panel_width = max(60, min(120, int(width * 0.9)))
+            return self.task_panel.get_expanded_text(width=panel_width)
+        
+        # Create FormattedTextControl with mouse handler
+        ctrl = FormattedTextControl(
+            get_task_panel_content,
+            focusable=False,
+            show_cursor=False,
+        )
+        
+        # Add mouse handler for task row clicks
+        def handle_mouse(mouse_event):
+            from prompt_toolkit.mouse_events import MouseEventType
+            if mouse_event.event_type == MouseEventType.MOUSE_UP:
+                if self.task_panel:
+                    # Calculate which row was clicked
+                    # Header rows: line 0 (top border), 1 (empty), 2 (column headers), 3 (separator)
+                    # Task rows start at line 4
+                    row = mouse_event.position.y - 4
+                    task_count = self.task_panel.get_task_count()
+                    
+                    if 0 <= row < task_count:
+                        # Select the clicked task
+                        self.task_panel.selected_index = row
+                        # Open task detail dialog
+                        task_id = self.task_panel.get_selected_task_id()
+                        if task_id:
+                            self.task_panel.toggle()  # Close list
+                            self._show_task_detail_dialog(task_id)
+                        try:
+                            self.app.invalidate()
+                        except Exception:
+                            pass
+                        return None  # Consume event
+            return NotImplemented
+        
+        # Attach mouse handler
+        ctrl.mouse_handler = handle_mouse
+        
+        return ConditionalContainer(
+            content=Window(
+                content=ctrl,
+                # Dynamic height based on task count
+                height=Dimension(min=8, max=25, preferred=12),
+                dont_extend_height=False,
+                style='class:task-panel',
+            ),
+            filter=Condition(lambda: self.task_panel is not None and self.task_panel.expanded)
+        )
+
+    def _build_root_content(self):
+        """Build the root content HSplit with header, task panel, and setup panel"""
+        return HSplit([
+            create_header(),
+            self._build_task_panel_container(),  # Shows when expanded
+            self.setup_content,
+        ])
+
     def _create_root_layout(self):
         """Create the root layout"""
-        # Create root container
+        # Create root container with conditional task panel
         self.root = FloatContainer(
-            content=HSplit([
-                create_header(),
-                self.setup_content,
-            ]),
+            content=self._build_root_content(),
             floats=[]
         )
         return Layout(self.root)
@@ -850,11 +981,12 @@ class CCCCSetupApp:
             'error': '#f85149 bold',                    # Red - Errors
             'critical': '#da3633 bold',                 # Dark red - Critical
 
-            # Blueprint Task Panel - Clear progress visualization
+            # Task Panel - Professional dark theme with good contrast
+            'task-panel': 'bg:#1c2128 #c9d1d9',         # Panel background - slightly lighter than main
             'task-panel.collapsed': 'bg:#161b22',       # Collapsed background
-            'task-panel.expanded': 'bg:#0d1117',        # Expanded background
-            'task-panel.header': '#30363d',             # Header border
-            'task-panel.border': '#30363d',             # Panel border
+            'task-panel.expanded': 'bg:#1c2128',        # Expanded background - visible separation
+            'task-panel.header': '#58a6ff bold',        # Header text
+            'task-panel.border': '#3fb950',             # Panel border - green accent
             'task-panel.icon': '#58a6ff',               # Status icons
             'task-panel.progress': '#3fb950',           # Progress numbers
             'task-panel.arrow': '#8b949e',              # Arrow separator
@@ -862,11 +994,22 @@ class CCCCSetupApp:
             'task-panel.step': '#79c0ff',               # Step indicator
             'task-panel.id': '#58a6ff bold',            # Task ID
             'task-panel.name': '#c9d1d9',               # Task name
+            'task-panel.selected': 'bg:#2d333b #ffffff bold',  # Selected row - highlighted
+            'task-panel.pending-review': '#d29922',     # Pending review - amber
             'task-panel.complete': '#3fb950',           # Complete status
             'task-panel.active': '#ffa657',             # Active status
             'task-panel.planned': '#8b949e',            # Planned status
-            'task-panel.hint': '#6e7681',               # Hint text
+            'task-panel.hint': '#8b949e',               # Hint text - more visible
             'task-panel.empty': '#8b949e italic',       # Empty state
+            
+            # Task Detail Dialog - High contrast for readability
+            'task-detail': 'bg:#1c2128 #e6edf3',        # Light text on dark bg
+            'task-detail.title': '#58a6ff bold',        # Title - blue
+            'task-detail.label': '#8b949e',             # Labels - muted
+            'task-detail.value': '#e6edf3',             # Values - bright white
+            'task-detail.step-done': '#3fb950',         # Done steps - green
+            'task-detail.step-active': '#ffa657 bold',  # Active step - orange
+            'task-detail.step-pending': '#6e7681',      # Pending steps - gray
         })
 
     def _load_existing_config(self) -> None:
@@ -883,7 +1026,13 @@ class CCCCSetupApp:
         cli_profiles = _load_yaml(self.home, 'settings/cli_profiles.yaml')
         roles = cli_profiles.get('roles') or {}
         self.config.peerA = str((roles.get('peerA') or {}).get('actor') or '')
-        self.config.peerB = str((roles.get('peerB') or {}).get('actor') or '')
+        # PeerB: handle 'none' explicitly for single-peer mode
+        peerB_actor = str((roles.get('peerB') or {}).get('actor') or '')
+        # Normalize: empty string from missing section means check if section existed
+        if 'peerB' in roles and peerB_actor.lower() == 'none':
+            self.config.peerB = 'none'  # Explicit single-peer mode
+        else:
+            self.config.peerB = peerB_actor
         self.config.aux = str((roles.get('aux') or {}).get('actor') or 'none')
 
         # Load mode selection (im_mode field)
@@ -893,13 +1042,15 @@ class CCCCSetupApp:
         else:
             self.config.mode = 'tmux'
 
-        # Smart defaults for roles
+        # Smart defaults for roles (only apply if not explicitly configured)
         if not self.config.peerA and len(self.actors_available) > 0:
             self.config.peerA = self.actors_available[0]
-        if not self.config.peerB and len(self.actors_available) > 1:
-            self.config.peerB = self.actors_available[1]
-        elif not self.config.peerB and len(self.actors_available) > 0:
-            self.config.peerB = self.actors_available[0]
+        # PeerB: only apply default if NOT explicitly set to 'none' (single-peer mode)
+        if not self.config.peerB and self.config.peerB != 'none':
+            if len(self.actors_available) > 1:
+                self.config.peerB = self.actors_available[1]
+            elif len(self.actors_available) > 0:
+                self.config.peerB = self.actors_available[0]
 
         # Load foreman
         foreman_data = _load_yaml(self.home, 'settings/foreman.yaml')
@@ -957,7 +1108,7 @@ class CCCCSetupApp:
             right_symbol=''
         )
         btn_peerB = Button(
-            text=self._format_button_text(self.config.peerB, required=True),
+            text=self._format_button_text(self.config.peerB, required=True, single_peer_ok=True),
             handler=lambda: self._show_actor_dialog('peerB'),
             width=20,
             left_symbol='',
@@ -1037,7 +1188,7 @@ class CCCCSetupApp:
                 Window(width=10, content=self._create_focused_label('PeerB', 1)),
                 btn_peerB,
                 Window(width=2),
-                Label(text='Validation peer (equal)', style='class:hint'),
+                self.peerB_hint_label,
             ], padding=1),
             Window(height=1),
 
@@ -1053,7 +1204,7 @@ class CCCCSetupApp:
                 Window(width=10, content=self._create_focused_label('Foreman', 3)),
                 btn_foreman,
                 Window(width=2),
-                Label(text='Background scheduler (self-check/maintenance/compact)', style='class:hint'),
+                self.foreman_hint_label,
             ], padding=1),
             Window(height=1),
 
@@ -1345,12 +1496,13 @@ class CCCCSetupApp:
                 self.config.dc_token = self.token_field.text.strip()
                 self.config.dc_chan = self.channel_field.text.strip()
 
-    def _format_button_text(self, value: str, required: bool = False, none_ok: bool = False) -> str:
+    def _format_button_text(self, value: str, required: bool = False, none_ok: bool = False, single_peer_ok: bool = False) -> str:
         """Format button text (no availability status in setup panel)"""
         if not value:
             return '[○] (not set)' if required else '[○] none'
-        if value == 'none' and none_ok:
-            return '[○] none'
+        if value == 'none':
+            if none_ok or single_peer_ok:
+                return '[○] none'
 
         # Just show the value without availability indicator
         return f'[●] {value}'
@@ -1396,10 +1548,23 @@ class CCCCSetupApp:
     def _refresh_ui(self) -> None:
         """Refresh UI"""
         self.btn_peerA.text = self._format_button_text(self.config.peerA, required=True)
-        self.btn_peerB.text = self._format_button_text(self.config.peerB, required=True)
+        self.btn_peerB.text = self._format_button_text(self.config.peerB, required=True, single_peer_ok=True)
         self.btn_aux.text = self._format_button_text(self.config.aux, none_ok=True)
         self.btn_foreman.text = self._format_button_text(self.config.foreman, none_ok=True)
         self.btn_mode.text = f'[●] {self.config.mode}'
+
+        # Update single-peer mode hint labels
+        is_single_peer = self.config.peerB == 'none'
+        if hasattr(self, 'peerB_hint_label'):
+            if is_single_peer:
+                self.peerB_hint_label.text = 'ℹ Single-peer mode: Only PeerA will run'
+            else:
+                self.peerB_hint_label.text = 'Validation peer (equal)'
+        if hasattr(self, 'foreman_hint_label'):
+            if is_single_peer and self.config.foreman == 'none':
+                self.foreman_hint_label.text = '💡 Recommended for single-peer autonomous operation'
+            else:
+                self.foreman_hint_label.text = 'Background scheduler (self-check/maintenance/compact)'
 
         if hasattr(self, 'btn_provider'):
             self.btn_provider.text = self._get_provider_summary()
@@ -1437,9 +1602,11 @@ class CCCCSetupApp:
                 # Not installed: track but don't add to choices
                 unavailable_actors.append(f'{actor}: {hint}')
 
-        # Add 'none' option for optional roles
+        # Add 'none' option for optional roles (aux) and peerB (single-peer mode)
         if role == 'aux':
             choices.insert(0, ('none', f'  {"none".ljust(max_name_len)}  -  Disabled'))
+        elif role == 'peerB':
+            choices.insert(0, ('none', f'  {"none".ljust(max_name_len)}  →  Single-peer mode'))
 
         # Better title formatting
         role_titles = {
@@ -1619,10 +1786,7 @@ class CCCCSetupApp:
             # Rebuild if mode changed
             if old_mode != self.config.mode:
                 self.setup_content = self._build_setup_panel()
-                self.root.content = HSplit([
-                    create_header(),
-                    self.setup_content,
-                ])
+                self.root.content = self._build_root_content()
                 # Update buttons list after mode change
                 self._update_buttons_list()
                 try:
@@ -1954,9 +2118,20 @@ class CCCCSetupApp:
             style='class:input-frame'
         )
         
-        # Rebuild root with clean, full-width layout
+        # Task text function for header (shows progress inline)
+        def get_task_header_text():
+            if self.task_panel:
+                return self.task_panel.get_header_text()
+            return ""
+        
+        # Task click handler for mouse support
+        def on_task_click():
+            self._toggle_task_panel()
+        
+        # Rebuild root with clean, full-width layout including task panel
         self.root.content = HSplit([
-            create_runtime_header(),
+            create_runtime_header(task_text_func=get_task_header_text, on_task_click=on_task_click),
+            self._build_task_panel_container(),  # WBS view when T pressed
             Window(height=1),
             # Timeline label
             Window(
@@ -1970,7 +2145,7 @@ class CCCCSetupApp:
             input_with_frame,
             Window(
                 content=FormattedTextControl(self._get_footer_text),
-                height=Dimension(min=5, max=5),
+                height=Dimension(min=5, max=5),  # Reduced from 6, task status now in header
                 dont_extend_height=True
             ),
         ])
@@ -1992,14 +2167,24 @@ class CCCCSetupApp:
         # Update roles - preserve existing configuration, only update actor and cwd
         roles = cli_profiles.get('roles') or {}
 
-        # Preserve existing role configurations, only update what we need to
-        for role_name, actor_name in [('peerA', self.config.peerA), ('peerB', self.config.peerB)]:
-            if actor_name and actor_name != 'none':
-                if role_name not in roles:
-                    roles[role_name] = {}
-                # Only update actor and cwd, preserve everything else (inbound_suffix, nudge_suffix, etc.)
-                roles[role_name]['actor'] = actor_name
-                roles[role_name]['cwd'] = '.'
+        # Handle PeerA - always required
+        if self.config.peerA and self.config.peerA != 'none':
+            if 'peerA' not in roles:
+                roles['peerA'] = {}
+            roles['peerA']['actor'] = self.config.peerA
+            roles['peerA']['cwd'] = '.'
+
+        # Handle PeerB - 'none' means single-peer mode
+        # IMPORTANT: Always write peerB section explicitly to preserve user's choice
+        # Writing 'actor: none' ensures single-peer mode persists across restarts
+        if 'peerB' not in roles:
+            roles['peerB'] = {}
+        if self.config.peerB and self.config.peerB != 'none':
+            roles['peerB']['actor'] = self.config.peerB
+        else:
+            # Single-peer mode: write explicit 'none' instead of deleting section
+            roles['peerB']['actor'] = 'none'
+        roles['peerB']['cwd'] = '.'
 
         # Handle aux separately - always write or clear to ensure changes take effect
         if self.config.aux and self.config.aux != 'none':
@@ -2020,17 +2205,25 @@ class CCCCSetupApp:
         # Write back, preserving all other fields (delivery, tmux, etc.)
         _write_yaml(self.home, 'settings/cli_profiles.yaml', cli_profiles)
 
-        # 2. Save foreman config - always write to ensure changes take effect
+        # 2. Save foreman config with all settings exposed (preserving user customizations)
+        foreman_config = _load_yaml(self.home, 'settings/foreman.yaml')
+        # Set defaults for all configurable fields so users can see and modify them
+        foreman_config.setdefault('interval_seconds', 900)      # 15 minutes between runs
+        foreman_config.setdefault('max_run_seconds', 900)       # Max duration per run
+        foreman_config.setdefault('prompt_path', './FOREMAN_TASK.md')
+        foreman_config.setdefault('cc_user', True)              # Copy output to user
+        
         if self.config.foreman and self.config.foreman != 'none':
-            _write_yaml(self.home, 'settings/foreman.yaml', {
-                'agent': self.config.foreman,
-                'enabled': True
-            })
+            foreman_config['agent'] = self.config.foreman
+            foreman_config['enabled'] = True
+            foreman_config['allowed'] = True
         else:
-            # Foreman disabled: write enabled=false to ensure it stays off
-            _write_yaml(self.home, 'settings/foreman.yaml', {
-                'enabled': False
-            })
+            # Foreman disabled: clear agent to ensure _is_foreman_configured returns False
+            foreman_config['agent'] = 'none'
+            foreman_config['enabled'] = False
+            foreman_config['allowed'] = False
+        
+        _write_yaml(self.home, 'settings/foreman.yaml', foreman_config)
 
         # 3. Save IM provider configuration directly to yaml files
         # Load existing configs to preserve advanced settings (routing, files, outbound, etc.)
@@ -2440,6 +2633,8 @@ class CCCCSetupApp:
 
         row3 = f"Mailbox: {mailbox_str} │ Active: {active_handoffs} handoffs │ Last: {last_activity_str}"
 
+        # Note: Task status moved to header (accessible via T key for expanded WBS view)
+
         # Check if handoff is paused
         is_paused = status_data.get('paused', False)
 
@@ -2503,11 +2698,14 @@ class CCCCSetupApp:
             self._write_timeline("  /foreman on|off|status|now   Control background scheduler", 'info')
             self._write_timeline("  /aux <prompt>       Run Aux helper", 'info')
             self._write_timeline("  /verbose on|off     Toggle peer summaries", 'info')
-            self._write_timeline("  /task               Show blueprint task status", 'info')
+            self._write_timeline("  /task               Show task status", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Keyboard:", 'info')
             self._write_timeline("  Ctrl+T              Focus timeline (enable mouse scroll)", 'info')
-            self._write_timeline("  T                   Toggle task panel (when not in input)", 'info')
+            self._write_timeline("  T                   Toggle task panel", 'info')
+            self._write_timeline("    ↑↓/jk             Select task (when panel open)", 'info')
+            self._write_timeline("    Enter             Show task detail", 'info')
+            self._write_timeline("    Esc               Close task panel", 'info')
             self._write_timeline("  Esc                 Return to input from timeline", 'info')
             self._write_timeline("  Ctrl+A/E            Start/end of line", 'info')
             self._write_timeline("  Ctrl+W/U/K          Delete word/start/end", 'info')
@@ -2580,6 +2778,14 @@ class CCCCSetupApp:
                 self._write_timeline("Usage: /a <message>", 'error')
 
         elif text.startswith('/b '):
+            # Check single-peer mode before sending
+            try:
+                from common.config import is_single_peer_mode
+                if is_single_peer_mode(self.home):
+                    self._write_timeline("Single-peer mode: use /a instead of /b", 'error')
+                    return
+            except Exception:
+                pass  # Continue with normal flow if check fails
             msg = text[3:].strip()
             if msg:
                 self._write_timeline(f"You > PeerB: {msg}", 'user')
@@ -2625,63 +2831,190 @@ class CCCCSetupApp:
             self._write_timeline(f"Failed to send command: {str(e)[:50]}", 'error')
 
     def _show_task_status(self, text: str) -> None:
-        """Show blueprint task status"""
+        """Show task status or task detail.
+        
+        Usage:
+            /task          - Show all tasks summary
+            /task T001     - Show detailed view of T001
+            /task 1        - Show detailed view of first task
+        """
         try:
+            # Parse command argument
+            parts = text.strip().split(maxsplit=1)
+            task_arg = parts[1].strip().upper() if len(parts) > 1 else None
+            
+            # Use task_panel if available (it has get_task_detail)
+            if self.task_panel:
+                # Show specific task detail as floating dialog
+                if task_arg:
+                    # Support both "T001" and "1" (shorthand)
+                    if task_arg.isdigit():
+                        task_id = f"T{int(task_arg):03d}"
+                    else:
+                        task_id = task_arg
+                    
+                    # Show as floating dialog instead of timeline output
+                    self._show_task_detail_dialog(task_id)
+                    return
+                
+                # Show summary (no argument)
+                summary = self.task_panel._get_summary()
+                if summary['total_tasks'] == 0:
+                    self._write_timeline("", 'info')
+                    self._write_timeline("No tasks defined.", 'info')
+                    self._write_timeline("Agent creates tasks in docs/por/T001-name/task.yaml", 'info')
+                    return
+                
+                self._write_timeline("", 'info')
+                self._write_timeline("=== Blueprint Tasks ===", 'info')
+                self._write_timeline(f"Progress: {summary['completed_tasks']}/{summary['total_tasks']} tasks │ {summary['completed_steps']}/{summary['total_steps']} steps ({summary['progress_percent']}%)", 'info')
+                if summary['current_task']:
+                    self._write_timeline(f"Current: {summary['current_task']} [{summary['current_step'] or '-'}]", 'info')
+                self._write_timeline("", 'info')
+                
+                # Task list with index for quick access
+                self._write_timeline("Tasks (use /task <ID> for details):", 'info')
+                for i, t in enumerate(summary['tasks'], 1):
+                    if t['status'] == 'complete':
+                        icon = '✓'
+                    elif t['status'] == 'active':
+                        icon = '→'
+                    else:
+                        icon = '○'
+                    self._write_timeline(f"  {icon} [{i}] {t['id']} {t['name'][:22]:<22} {t['progress']}", 'info')
+                
+                self._write_timeline("", 'info')
+                self._write_timeline("Tips: T=toggle panel │ /task T001 or /task 1=detail", 'info')
+                return
+            
+            # Fallback: direct TaskManager access
             from orchestrator.task_manager import TaskManager
-            # Use project root (parent of .cccc)
             root = self.home.parent if self.home.name == '.cccc' else self.home
             manager = TaskManager(root)
             summary = manager.get_summary()
 
             if summary['total_tasks'] == 0:
-                self._write_timeline("", 'info')
-                self._write_timeline("=== Blueprint Status ===", 'info')
                 self._write_timeline("No tasks defined.", 'info')
-                self._write_timeline("", 'info')
-                self._write_timeline("Blueprint commands:", 'info')
-                self._write_timeline("  T key          Toggle task panel", 'info')
-                self._write_timeline("", 'info')
-                self._write_timeline("Agent creates tasks by writing to docs/por/blueprint/", 'info')
-                self._write_timeline("Progress markers: progress: T001.S1 done", 'info')
                 return
 
             self._write_timeline("", 'info')
-            self._write_timeline("=== Blueprint Status ===", 'info')
-            self._write_timeline(f"Progress: {summary['completed_tasks']}/{summary['total_tasks']} tasks ({summary['progress_percent']}%)", 'info')
-            if summary['current_task']:
-                self._write_timeline(f"Current: {summary['current_task']} [{summary['current_step'] or '-'}]", 'info')
-            self._write_timeline("", 'info')
-
-            # Show task list
-            self._write_timeline("Tasks:", 'info')
+            self._write_timeline("=== Task Status ===", 'info')
             for t in summary['tasks']:
-                if t['status'] == 'complete':
-                    icon = '✓'
-                elif t['status'] == 'active':
-                    icon = '→'
-                else:
-                    icon = '○'
+                icon = '✓' if t['status'] == 'complete' else '→' if t['status'] == 'active' else '○'
                 self._write_timeline(f"  {icon} {t['id']} {t['name'][:25]:<25} {t['progress']}", 'info')
 
-            self._write_timeline("", 'info')
-            self._write_timeline("Commands: T to toggle task panel", 'info')
-
         except ImportError:
-            self._write_timeline("Blueprint module not available", 'error')
+            self._write_timeline("Task module not available", 'error')
         except Exception as e:
             self._write_timeline(f"Failed to load tasks: {str(e)[:50]}", 'error')
 
     def _toggle_task_panel(self) -> None:
         """Toggle task panel expanded/collapsed state"""
-        if hasattr(self, 'task_panel'):
+        if hasattr(self, 'task_panel') and self.task_panel:
             self.task_panel.toggle()
             try:
                 self.app.invalidate()
             except Exception:
                 pass
 
-    def _open_dialog(self, dialog: Dialog, ok_handler: Optional[callable] = None) -> None:
-        """Open dialog"""
+    def _show_task_detail_by_index(self, index: int) -> None:
+        """Show task detail by 1-based index (for keyboard shortcut 1-9)"""
+        if not self.task_panel:
+            return
+        
+        try:
+            summary = self.task_panel._get_summary()
+            tasks = summary.get('tasks', [])
+            
+            if index < 1 or index > len(tasks):
+                self._write_timeline(f"No task at index {index}", 'info')
+                return
+            
+            task_id = tasks[index - 1].get('id')
+            if task_id:
+                # Show detail and collapse panel
+                detail = self.task_panel.get_task_detail(task_id)
+                self._write_timeline("", 'info')
+                for line in detail.split('\n'):
+                    self._write_timeline(line, 'info')
+                self._write_timeline("", 'info')
+                
+                # Collapse panel after showing detail
+                if self.task_panel.expanded:
+                    self.task_panel.toggle()
+                    try:
+                        self.app.invalidate()
+                    except Exception:
+                        pass
+        except Exception as e:
+            self._write_timeline(f"Failed to show task: {str(e)[:50]}", 'error')
+
+    def _show_task_detail_dialog(self, task_id: str) -> None:
+        """Show task detail as a floating dialog (Level 2) over task list (Level 1)."""
+        if not self.task_panel:
+            return
+        
+        # Get terminal size for adaptive sizing
+        try:
+            term_width = self.app.output.get_size().columns if self.app else 100
+            term_height = self.app.output.get_size().rows if self.app else 30
+        except Exception:
+            term_width, term_height = 100, 30
+        
+        # Calculate dialog dimensions (80% of terminal, with reasonable min/max)
+        dialog_width = max(75, min(130, int(term_width * 0.85)))
+        dialog_height = max(18, min(38, int(term_height * 0.75)))
+        
+        # Get task detail with proper width for content
+        detail_text = self.task_panel.get_task_detail_plain(task_id, width=dialog_width - 8)
+        
+        def on_close():
+            self._close_task_detail_dialog()
+        
+        # Create content area with scrolling
+        content_window = Window(
+            content=FormattedTextControl(detail_text),
+            style='class:task-detail',
+            wrap_lines=False,
+        )
+        
+        scrollable_content = ScrollablePane(
+            content=content_window,
+            show_scrollbar=True,
+        )
+        
+        # Create dialog with adaptive size and properly sized button
+        dialog = Dialog(
+            title=f"📋 Task {task_id} Details",
+            body=HSplit([
+                Frame(
+                    body=scrollable_content,
+                    style='class:task-detail',
+                ),
+            ], width=Dimension(min=75, max=dialog_width, preferred=dialog_width),
+               height=Dimension(min=15, max=dialog_height, preferred=dialog_height)),
+            buttons=[
+                Button(text="    Close (Esc)    ", handler=on_close),
+            ],
+            with_background=True,
+        )
+        
+        # Mark task detail as open (Level 2)
+        self.task_detail_open = True
+        self._open_dialog(dialog)
+    
+    def _close_task_detail_dialog(self) -> None:
+        """Close task detail dialog (Level 2) and return to task list (Level 1)."""
+        self.task_detail_open = False
+        self._close_dialog()
+        # Focus stays on input, task panel (Level 1) remains visible
+        try:
+            self.app.invalidate()
+        except Exception:
+            pass
+
+    def _open_dialog(self, dialog: Dialog, ok_handler: Optional[callable] = None, key_bindings: Optional[KeyBindings] = None) -> None:
+        """Open dialog with optional key bindings."""
         if self.modal_open:
             return
 
@@ -2692,6 +3025,12 @@ class CCCCSetupApp:
         else:
             # Fallback: store in local floats list
             self.floats.append(float_dialog)
+        
+        # Store key bindings for dialog if provided
+        if key_bindings:
+            self._dialog_key_bindings = key_bindings
+        else:
+            self._dialog_key_bindings = None
 
         self.current_dialog = float_dialog
         self.modal_open = True
@@ -2940,8 +3279,18 @@ class CCCCSetupApp:
             except Exception:
                 pass
 
+        # Close modal dialog with Esc (highest priority)
+        @kb.add('escape', filter=Condition(lambda: self.modal_open))
+        def close_modal(event) -> None:
+            """Close any open modal dialog"""
+            self._close_dialog()
+            try:
+                self.app.layout.focus(self.input_field)
+            except Exception:
+                pass
+        
         # Return to input from timeline (Esc)
-        @kb.add('escape', filter=has_focus(self.timeline))
+        @kb.add('escape', filter=has_focus(self.timeline) & ~Condition(lambda: self.modal_open))
         def return_to_input(event) -> None:
             """Return focus to input field from timeline"""
             try:
@@ -2975,11 +3324,72 @@ class CCCCSetupApp:
             """Jump to top of timeline (gg, vim-style) - silent navigation"""
             self.timeline.buffer.cursor_position = 0
 
-        # Blueprint task panel toggle (T key)
+        # Task panel toggle (T key)
         @kb.add('T', filter=~Condition(lambda: self.setup_visible or self.modal_open) & ~has_focus(self.input_field))
         def toggle_task_panel(event) -> None:
             """Toggle task panel expanded/collapsed"""
             self._toggle_task_panel()
+
+        # Task panel navigation (when expanded)
+        # These bindings work even when input_field has focus - task panel is an overlay
+        def is_task_panel_active():
+            """Check if task panel is expanded and should receive navigation."""
+            return (self.task_panel is not None 
+                    and self.task_panel.expanded 
+                    and not self.setup_visible 
+                    and not self.modal_open)
+        
+        task_nav_filter = Condition(is_task_panel_active)
+
+        @kb.add('down', filter=task_nav_filter)
+        @kb.add('j', filter=task_nav_filter & ~has_focus(self.input_field))
+        def task_select_next(event) -> None:
+            """Move selection to next task"""
+            if self.task_panel:
+                self.task_panel.select_next()
+                try:
+                    self.app.invalidate()
+                except Exception:
+                    pass
+
+        @kb.add('up', filter=task_nav_filter)
+        @kb.add('k', filter=task_nav_filter & ~has_focus(self.input_field))
+        def task_select_prev(event) -> None:
+            """Move selection to previous task"""
+            if self.task_panel:
+                self.task_panel.select_prev()
+                try:
+                    self.app.invalidate()
+                except Exception:
+                    pass
+
+        # Enter key: show task detail when panel is expanded
+        # This works even when input is empty (panel takes priority)
+        @kb.add('enter', filter=task_nav_filter & Condition(lambda: len(self.input_field.text.strip()) == 0))
+        def task_show_detail(event) -> None:
+            """Show detail of selected task as floating dialog"""
+            if self.task_panel:
+                task_id = self.task_panel.get_selected_task_id()
+                if task_id:
+                    # Close task list panel first
+                    self.task_panel.toggle()
+                    # Show detail as floating dialog
+                    self._show_task_detail_dialog(task_id)
+                try:
+                    self.app.invalidate()
+                except Exception:
+                    pass
+
+        # Escape key: close task panel (highest priority when panel is open)
+        @kb.add('escape', filter=task_nav_filter)
+        def task_close_panel(event) -> None:
+            """Close task panel with Esc"""
+            if self.task_panel and self.task_panel.expanded:
+                self.task_panel.toggle()
+                try:
+                    self.app.invalidate()
+                except Exception:
+                    pass
 
         # Standard editing shortcuts (runtime phase, input focused, not in search mode)
         @kb.add('c-a', filter=~Condition(lambda: self.setup_visible or self.modal_open or self.reverse_search_mode) & has_focus(self.input_field))
