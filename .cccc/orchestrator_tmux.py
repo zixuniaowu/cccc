@@ -1392,9 +1392,10 @@ def main(home: Path, session_name: Optional[str] = None):
             tmux("set-option","-g","alternate-screen","on")
     except Exception:
         pass
-    # Enable mouse wheel scroll for history while keeping send safety (we cancel copy-mode before sending)
-    tmux("bind-key","-n","WheelUpPane","copy-mode","-e")
-    tmux("bind-key","-n","WheelDownPane","send-keys","-M")
+    # Enable mouse wheel scroll: pass to app when in alternate screen (TUI), else use tmux copy-mode
+    # This allows prompt_toolkit TUI to receive scroll events while preserving tmux scrollback for other panes
+    tmux("bind-key", "-n", "WheelUpPane", "if-shell", "-Ft=", "#{alternate_on}", "send-keys -M", "copy-mode -e")
+    tmux("bind-key", "-n", "WheelDownPane", "send-keys", "-M")
     # Always start with 4-pane layout; single-peer adjustment happens after TUI confirms settings
     print(f"[INFO] Using tmux session: {session} (left-top=TUI / left-bottom=orchestrator log / right=PeerA+PeerB)")
     print(f"[INFO] pane map: left_top={left_top} left_bot={left_bot} PeerA(top)={paneA} PeerB(bottom)={paneB}")
@@ -1740,18 +1741,13 @@ def main(home: Path, session_name: Optional[str] = None):
     in_self_check = False
     handoffs_peer = {"PeerA": 0, "PeerB": 0}
     self_checks_done = {"PeerA": 0, "PeerB": 0}
-    # Self-check text: config takes precedence, code provides fallback only
+    # Self-check text: read from config only (no fallback in code)
     # Purpose: Strategic-level thinking calibration to prevent tunnel vision
-    _sc_text = str(delivery_cfg.get("self_check_text") or "").strip()
-    # Fallback: minimal strategic check (config version is more comprehensive)
-    DEFAULT_SELF_CHECK = (
-        "[Strategic Self-check]\n"
-        "1) Off-course from goal? Point the divergence.\n"
-        "2) Least valuable current task? Propose stop/change.\n"
-        "3) Any misalignment or unclear boundary? Fix it first.\n"
-        "Answer briefly, then resume."
-    )
-    self_check_text = _sc_text if _sc_text else DEFAULT_SELF_CHECK
+    # Config: settings/cli_profiles.yaml -> delivery.self_check_text
+    self_check_text = str(delivery_cfg.get("self_check_text") or "").strip()
+    if not self_check_text:
+        # Minimal inline fallback only if config is completely empty
+        self_check_text = "[Self-check] Off-course? Blocked? Task status accurate? Answer briefly."
 
     auto_reset_interval_cfg = conversation_reset_interval
     reset_interval_effective = auto_reset_interval_cfg if auto_reset_interval_cfg > 0 else 0
@@ -2563,6 +2559,7 @@ def main(home: Path, session_name: Optional[str] = None):
             bridge_rt.ensure_telegram_running()
             bridge_rt.ensure_slack_running()
             bridge_rt.ensure_discord_running()
+            bridge_rt.ensure_wecom_running()
         except Exception:
             pass
         _process_im_commands()

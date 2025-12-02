@@ -95,17 +95,17 @@ grep "auto-compact" .cccc/state/ledger.jsonl | tail -20
 Use `cccc reset` to clear runtime state and start fresh:
 
 ```bash
-# Basic reset: clears state/mailbox/logs/work and deletes POR/SUBPOR files
+# Basic reset: clears state/mailbox/logs/work and deletes POR and task files
 cccc reset
 
-# Archive mode: moves POR/SUBPOR to timestamped archive before clearing
+# Archive mode: moves POR and tasks to timestamped archive before clearing
 cccc reset --archive
 ```
 
 This is useful when:
 - Starting a completely new task after finishing the previous one
 - Clearing accumulated inbox messages and runtime state
-- Resetting POR/SUBPOR files to begin fresh planning
+- Resetting POR and task files to begin fresh planning
 
 > **Note**: If the orchestrator is running, you'll be prompted to confirm. Consider running `cccc kill` first.
 

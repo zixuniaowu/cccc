@@ -34,9 +34,14 @@ Why it matters (brief): it forces a quick reflection and explicit next move so t
 - Tests/logs: provide a minimal, stable snippet + command + range；include commit/log IDs when available.
 - Chat never changes state; only diffs/tests/logs do.
 
-## 6) POR — Plan of Record {#por}
-- Single source of direction: `.cccc/state/POR.md`.
-- Read before major decisions; when direction changes or during self‑check, update POR via a patch diff.
+## 6) Blueprint Tasks — Structured Tracking {#tasks}
+- Path: `docs/por/T###-slug/task.yaml`
+- Structure: id, title, goal, steps (with status), acceptance, progress_markers
+- Responsibility:
+  - PeerA creates new tasks
+  - Any peer can update step status and add progress_markers
+  - Goal/acceptance changes require coordination via to_peer
+- During self-checks: verify task.yaml is accurate; update status if stale
 
 ## 7) Collaboration Rhythm {#rhythm}
 - Explore → Decide → Build → Reflect；keep baton discipline（one smallest Next）。

@@ -61,7 +61,7 @@
 
 ### 证据驱动工作流
 
-- **POR/SUBPOR锚点**：战略板（POR.md）和任务单（SUBPOR.md）存在仓库里，所有人看到同一份真相
+- **Blueprint Task系统**：结构化任务文件（task.yaml）包含目标、步骤、验收标准和状态，TUI中可视化任务面板
 - **小步提交**：每个patch不超过150行，可review、可回滚
 - **审计日志**：ledger.jsonl记录所有事件，出问题能追溯
 
@@ -70,16 +70,17 @@
 | 角色 | 职责 | 必需？ |
 |------|------|--------|
 | **PeerA** | 主要执行者之一，与PeerB平等协作 | 是 |
-| **PeerB** | 主要执行者之一，与PeerA平等协作 | 是 |
+| **PeerB** | 主要执行者之一，与PeerA平等协作；可设为`none`启用单Peer模式 | 是* |
 | **Aux** | 按需调用的辅助角色，处理批量任务、重型测试等 | 否 |
 | **Foreman** | 定时运行的"用户代理"，执行周期性检查和提醒 | 否 |
 
 > **自由搭配**：任何角色都可以使用任何支持的CLI，根据需要灵活配置。
+> **单Peer模式**：PeerB设为`none`时，PeerA独立运行，同样享有完整的基础设施支持（Foreman、自检、保活等）。
 
 ### 多平台桥接
 
-- **Telegram / Slack / Discord**：可选接入，把工作带到团队常用的地方
-- **双向通信**：在聊天里发指令、收状态、审批RFD
+- **Telegram / Slack / Discord / WeCom**：可选接入，把工作带到团队常用的地方
+- **双向通信**：在聊天里发指令、收状态、审批RFD（WeCom仅支持出站[beta]）
 - **文件互传**：支持双向文件交换——你可以上传文件给Peer处理，Peer生成的文件也会推送给你
 
 **IM 聊天命令**：
@@ -366,12 +367,59 @@ both: 我们来规划下一个milestone
   logs/                         # Peer日志
   rules/                        # 系统提示词
 
-docs/por/                       # 锚点文档
-  POR.md                        # 战略板
-  T######-slug/SUBPOR.md        # 任务单
+docs/por/                       # 战略和任务锚点
+  POR.md                        # 战略板（愿景、护栏、路线图）
+  T###-slug/                    # 任务目录（如 T001-auth-module）
+    task.yaml                   # 任务定义：目标、步骤、验收、状态
 
 PROJECT.md                      # 项目简介（会织入系统提示词）
 FOREMAN_TASK.md                 # Foreman任务定义
+```
+
+### POR.md（Plan of Record）
+
+战略锚点，定义方向：
+
+```markdown
+# POR — 计划记录
+
+## 北极星
+项目最终成功的样子。
+
+## 护栏
+不可妥协的约束和质量门槛。
+
+## 现在 / 下一步 / 以后
+- **现在**：当前冲刺重点
+- **下一步**：即将到来的优先级
+- **以后**：未来待办
+
+## 风险与缓解
+已知风险及应对措施。
+```
+
+### Blueprint Task 结构
+
+每个任务存放在 `docs/por/T###-slug/task.yaml`：
+
+```yaml
+id: T001
+title: 实现OAuth支持
+status: in_progress  # pending | in_progress | done | blocked
+goal: 添加OAuth 2.0认证支持
+steps:
+  - id: S1
+    desc: 设计认证流程
+    status: done
+  - id: S2
+    desc: 实现token处理
+    status: in_progress
+acceptance:
+  - OAuth登录端到端可用
+  - 测试覆盖率>80%
+progress_markers:
+  - "2024-01-15: 设计完成"
+  - "2024-01-16: Token端点实现完成"
 ```
 
 ---
@@ -406,19 +454,27 @@ FOREMAN_TASK.md                 # Foreman任务定义
 使用 `cccc reset` 清理运行时状态，从头开始：
 
 ```bash
-# 基本重置：清理 state/mailbox/logs/work，删除 POR/SUBPOR 文件
+# 基本重置：清理 state/mailbox/logs/work，删除任务文件
 cccc reset
 
-# 归档模式：先把 POR/SUBPOR 移到带时间戳的归档目录，再清理
+# 归档模式：先把任务移到带时间戳的归档目录，再清理
 cccc reset --archive
 ```
 
 适用场景：
 - 完成上一个任务后，开始全新的任务
 - 清理积压的inbox消息和运行时状态
-- 重置POR/SUBPOR文件，重新开始规划
+- 重置任务文件，重新开始规划
 
 > **注意**：如果编排器正在运行，会提示确认。建议先运行 `cccc kill`。
+
+### 可以只用一个Peer吗（单Peer模式）？
+
+可以！在Setup面板中将PeerB设为`none`，PeerA会独立运行，同样享有完整的基础设施支持：
+- Foreman定期检查
+- 自检提醒
+- Keepalive保活
+- Blueprint Task跟踪
 
 ---
 

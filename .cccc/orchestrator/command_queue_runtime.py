@@ -158,22 +158,43 @@ def make(ctx: Dict[str, Any]):
                         try:
                             if ctype in ('a','b','both','send'):
                                 text = str(args.get('text') or obj.get('text') or '').strip()
-                                if not text:
+                                images = args.get('images') or []
+                                if not text and not images:
                                     ok, msg = False, 'empty text'
                                 # In single-peer mode, /b is not available
                                 elif single_peer_mode and (ctype == 'b' or target in ('b','peerb','peer_b')):
                                     ok, msg = False, 'single-peer mode: use /a instead'
                                 else:
+                                    # Build message content with optional file references
+                                    # Format matches IM bridges: File: <path>\nSHA256: <hash>  Size: <bytes>  MIME: <type>
+                                    content_parts = []
+                                    if text:
+                                        content_parts.append(text)
+                                    if images:
+                                        for img_path in images:
+                                            # Try to read metadata sidecar if exists
+                                            try:
+                                                meta_path = Path(home.parent) / img_path
+                                                sidecar = meta_path.with_suffix(meta_path.suffix + '.meta.json')
+                                                if sidecar.exists():
+                                                    import json as _json
+                                                    meta = _json.loads(sidecar.read_text(encoding='utf-8'))
+                                                    content_parts.append(f"\nFile: {meta.get('path', img_path)}")
+                                                    content_parts.append(f"SHA256: {meta.get('sha256', 'unknown')}  Size: {meta.get('bytes', 0)}  MIME: {meta.get('mime', 'image/png')}")
+                                                else:
+                                                    # Fallback: just include path
+                                                    content_parts.append(f"\nFile: {img_path}")
+                                            except Exception:
+                                                content_parts.append(f"\nFile: {img_path}")
+                                    full_content = ''.join(content_parts)
                                     if ctype == 'a' or target in ('a','peera','peer_a'):
-                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{full_content}\n</FROM_USER>\n"))
                                     elif ctype == 'b' or target in ('b','peerb','peer_b'):
-                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{full_content}\n</FROM_USER>\n"))
                                     else:
-                                        # 'both' or 'send' - in single-peer mode, only send to PeerA
-                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                        if not single_peer_mode:
-                                            _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                    ok, msg = True, 'sent'
+                                        _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{full_content}\n</FROM_USER>\n"))
+                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{full_content}\n</FROM_USER>\n"))
+                                    ok, msg = True, 'sent' + (f' with {len(images)} file(s)' if images else '')
                             elif ctype in ('pause','resume'):
                                 deliver_paused = (ctype == 'pause')
                                 write_status(deliver_paused)

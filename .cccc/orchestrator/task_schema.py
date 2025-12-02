@@ -67,12 +67,13 @@ class Step(BaseModel):
         status: Current execution status
     """
     id: str = Field(..., pattern=r"^S\d+$", description="Step ID (S1, S2, ...)")
-    name: str = Field(..., min_length=1, max_length=100, description="Step description")
-    done: str = Field(..., min_length=1, max_length=200, description="Completion criteria")
+    name: str = Field(..., min_length=1, max_length=200, description="Step description")
+    done: str = Field(default="", max_length=500, description="Completion criteria")
     status: StepStatus = Field(default=StepStatus.PENDING, description="Step status")
 
     class Config:
         use_enum_values = True
+        extra = 'allow'  # Allow extra fields (current_progress, remaining_work, etc.)
 
 
 class TaskDefinition(BaseModel):
@@ -81,10 +82,10 @@ class TaskDefinition(BaseModel):
 
     Attributes:
         id: Task identifier (T001, T002, etc.)
-        name: Task name (5-50 chars)
+        name: Task name
         goal: User-visible outcome description
         status: Task lifecycle status
-        steps: List of steps (2-8 steps)
+        steps: List of steps
 
     Computed Properties:
         current_step: ID of first non-complete step
@@ -92,13 +93,14 @@ class TaskDefinition(BaseModel):
         progress_percent: Progress as percentage
     """
     id: str = Field(..., pattern=r"^T\d{3}$", description="Task ID (T001, T002, ...)")
-    name: str = Field(..., min_length=5, max_length=50, description="Task name")
-    goal: str = Field(..., min_length=10, max_length=200, description="User-visible outcome")
+    name: str = Field(..., min_length=1, max_length=200, description="Task name")
+    goal: str = Field(..., min_length=1, max_length=1000, description="User-visible outcome")
     status: TaskStatus = Field(default=TaskStatus.PLANNED, description="Task status")
-    steps: List[Step] = Field(..., min_length=2, max_length=8, description="Task steps")
+    steps: List[Step] = Field(default_factory=list, description="Task steps")
 
     class Config:
         use_enum_values = True
+        extra = 'allow'  # Allow extra fields (priority, milestones, etc.)
 
     @property
     def current_step(self) -> Optional[str]:

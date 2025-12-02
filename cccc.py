@@ -189,7 +189,7 @@ def main():
                 print(f"[CLEAN] Failed to purge {d}: {e}")
 
     def _cmd_reset(archive: bool = False):
-        """Reset runtime state for new task. Optionally archive POR/SUBPOR."""
+        """Reset runtime state for new task. Optionally archive POR and task files."""
         # Safety check: warn if orchestrator session is running
         session_file = home / "state" / "session.json"
         if session_file.exists():
@@ -216,43 +216,44 @@ def main():
             except Exception:
                 pass  # Ignore errors reading session state
 
-        # Handle POR/SUBPOR: archive (--archive) or delete (default)
+        # Handle POR and task directories: archive (--archive) or delete (default)
         por_dir = Path.cwd() / "docs" / "por"
         if por_dir.exists():
             por_md = por_dir / "POR.md"
-            subpor_dirs = [d for d in por_dir.iterdir() if d.is_dir() and d.name.startswith('T') and d.name != 'archive']
+            # Find task directories (T###-* pattern, excluding archive and _archive)
+            task_dirs = [d for d in por_dir.iterdir() if d.is_dir() and d.name.startswith('T') and d.name not in ('archive', '_archive')]
 
             if archive:
                 # Archive mode: move to timestamped archive directory
                 timestamp = time.strftime('%Y%m%d-%H%M%S')
-                archive_dir = por_dir / "archive" / timestamp
+                archive_dir = por_dir / "_archive" / timestamp
                 try:
                     archive_dir.mkdir(parents=True, exist_ok=True)
                     if por_md.exists():
                         shutil.move(str(por_md), str(archive_dir / "POR.md"))
                         print(f"[RESET] Archived POR.md")
-                    for subdir in subpor_dirs:
+                    for task_dir in task_dirs:
                         try:
-                            shutil.move(str(subdir), str(archive_dir / subdir.name))
-                            print(f"[RESET] Archived {subdir.name}")
+                            shutil.move(str(task_dir), str(archive_dir / task_dir.name))
+                            print(f"[RESET] Archived task: {task_dir.name}")
                         except Exception as e:
-                            print(f"[RESET] Failed to archive {subdir.name}: {e}")
+                            print(f"[RESET] Failed to archive {task_dir.name}: {e}")
                 except Exception as e:
                     print(f"[RESET] Failed to create archive: {e}")
             else:
-                # Default mode: delete POR/SUBPOR directly
+                # Default mode: delete POR and task directories directly
                 if por_md.exists():
                     try:
                         por_md.unlink()
                         print(f"[RESET] Deleted POR.md")
                     except Exception as e:
                         print(f"[RESET] Failed to delete POR.md: {e}")
-                for subdir in subpor_dirs:
+                for task_dir in task_dirs:
                     try:
-                        shutil.rmtree(subdir)
-                        print(f"[RESET] Deleted {subdir.name}")
+                        shutil.rmtree(task_dir)
+                        print(f"[RESET] Deleted task: {task_dir.name}")
                     except Exception as e:
-                        print(f"[RESET] Failed to delete {subdir.name}: {e}")
+                        print(f"[RESET] Failed to delete {task_dir.name}: {e}")
 
         # Clear runtime directories (same as clean, but with different messaging)
         cleared = []
@@ -285,6 +286,23 @@ def main():
             print(f"- tmux: {'OK' if ok_tmux else 'MISSING'}")
             print(f"- python: {'OK' if ok_py else 'MISSING'} ({sys.executable})")
             print(f"- CCCC_HOME: {home} ({'EXISTS' if home.exists() else 'MISSING'})")
+            # Core dependencies check
+            print("- core dependencies:")
+            try:
+                import yaml
+                print("  - PyYAML: OK")
+            except ImportError:
+                print("  - PyYAML: MISSING (install with: pip install PyYAML>=6.0)")
+            try:
+                import prompt_toolkit
+                print(f"  - prompt_toolkit: OK ({prompt_toolkit.__version__})")
+            except ImportError:
+                print("  - prompt_toolkit: MISSING (install with: pip install prompt_toolkit>=3.0)")
+            try:
+                import pydantic
+                print(f"  - pydantic: OK ({pydantic.__version__})")
+            except ImportError:
+                print("  - pydantic: MISSING (install with: pip install pydantic>=2.0)")
         cfg = _read_yaml(home/"settings"/"telegram.yaml") if home.exists() else {}
         def _resolve_token(c):
             src = None

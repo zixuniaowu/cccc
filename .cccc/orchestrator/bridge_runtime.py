@@ -251,6 +251,36 @@ def make(ctx: Dict[str, Any]):
             return None
         return _spawn_generic('discord', env)
 
+    def ensure_wecom_running() -> Optional[int]:
+        """Ensure WeCom bridge is running. Outbound-only via webhook."""
+        pidf = state/"bridge-wecom.pid"
+        try:
+            if pidf.exists():
+                old_pid = int(pidf.read_text().strip())
+                if _pid_alive(old_pid):
+                    return old_pid
+        except Exception:
+            pass
+
+        cfg = read_yaml(home/"settings"/"wecom.yaml") or {}
+        autostart = cfg.get('autostart', False)
+        if not autostart:
+            return None
+
+        # Check for webhook_url
+        webhook_url = cfg.get('webhook_url') or ''
+        webhook_env = cfg.get('webhook_url_env') or 'WECOM_WEBHOOK_URL'
+        if not webhook_url:
+            webhook_url = os.environ.get(webhook_env, '')
+        if not webhook_url:
+            _warn_once('wecom', 'missing_config:webhook_url',
+                       "WeCom webhook_url not configured. Set settings/wecom.yaml webhook_url or env WECOM_WEBHOOK_URL")
+            return None
+
+        # WeCom uses standard library only (urllib), no extra deps needed
+        env = {webhook_env: webhook_url}
+        return _spawn_generic('wecom', env)
+
     # set warnings path now that 'home' is known
     WARNINGS_PATH = home/"state"/"bridge-warnings.json"
 
@@ -258,4 +288,5 @@ def make(ctx: Dict[str, Any]):
         'ensure_telegram_running': ensure_telegram_running,
         'ensure_slack_running': ensure_slack_running,
         'ensure_discord_running': ensure_discord_running,
+        'ensure_wecom_running': ensure_wecom_running,
     })

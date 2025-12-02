@@ -11,22 +11,13 @@ delivery:
   duplicate_window_seconds: 90
   main_loop_tick_seconds: 2.0
   self_check_every_handoffs: 6
-  self_check_text: '[Strategic Self-check · strict · <=1 line each]
-
-    1) Using current POR/tasks, are we off-course? Point
-    the smallest divergence and the evidence.
-
-    2) Which current task is least worth continuing? Remove sunk cost; propose stop/change
-    and one next step.
-
-    3) Where is the latest low-quality artifact or tech-debt mountain? Should we refuse
-    review and rebuild from scratch? Provide the smallest probe and estimate.
-
-    4) Any misalignment, unclear boundary, or ambiguous acceptance? Fix it in the
-    corresponding task first, then proceed.
-
-    5) If we only had 1 day: what to drop, what to keep, what to do first? List three
-    bullets.'
+  self_check_text: |
+    [Strategic Self-check · <=1 line each]
+    1. Off-course? Point the smallest divergence from goal/tasks.
+    2. Blocked or spinning? Name the blocker and one unblock action.
+    3. Task hygiene: Is docs/por/T###-slug/task.yaml accurate? Update status/progress if stale.
+    4. 1-day constraint: What to drop, keep, do first?
+    Resume after brief answers.
   mailbox_pull_enabled: true
   inbox_dirname: inbox
   processed_retention: 100

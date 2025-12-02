@@ -49,10 +49,10 @@ Live Timeline shows peer messages. Status panel tracks handoffs, self-checks, an
 Only tested patches, stable logs, and commits count as "done". Chat alone never changes state.
 
 **🔗 Multi-Platform Bridges**
-Optional Telegram/Slack/Discord integration. Bring the work to where your team already is.
+Optional Telegram/Slack/Discord/WeCom integration. Bring the work to where your team already is.
 
-**📋 Repo-Native Anchors**
-Strategic board (POR.md) and per-task sheets (SUBPOR.md) live in your repo. Everyone sees the same truth.
+**📋 Blueprint Task System**
+Per-task `task.yaml` files with goal/steps/status. Visual task panel in TUI. Everyone sees the same structured truth.
 
 </td>
 </tr>
@@ -71,11 +71,11 @@ Strategic board (POR.md) and per-task sheets (SUBPOR.md) live in your repo. Ever
 
 ### CCCC Payoff with Dual Peers & Modern Tooling
 
-- 🚀 **Autonomous Progress** — Peers communicate and drive tasks forward on their own (10-15 min per cycle); add Foreman for near-continuous operation
+- 🚀 **Autonomous Progress** — Peers communicate and drive tasks forward on their own (10-15 min per cycle); add Foreman for near-continuous operation. **Single-Peer Mode** also supported for simpler setups.
 - 🤝 **Multi-Peer Synergy** — One builds, the other challenges; better options emerge; errors die faster
 - ✅ **Evidence-First Loop** — Only tested/logged/committed results count as progress
-- 🖥️ **Interactive TUI** — Zero-config setup, real-time monitoring, command completion built-in
-- 📋 **POR/SUBPOR Anchors** — One strategic board (POR) + per-task sheets (SUBPOR) keep everyone aligned without ceremony
+- 🖥️ **Interactive TUI** — Zero-config setup, real-time monitoring, task panel, command completion built-in
+- 📋 **Blueprint Tasks** — Structured `task.yaml` files with goal/steps/status; visual task panel in TUI (press T or click Details)
 - 🔔 **Low-Noise Cadence** — Built-in nudge/self-check trims chatter; panel shows what matters
 - 🔍 **Auditable Decisions** — Recent choices & pivots captured; review and roll forward confidently
 
@@ -85,8 +85,9 @@ Strategic board (POR.md) and per-task sheets (SUBPOR.md) live in your repo. Ever
 
 - You want **autonomous progress you can trust**, with small, reversible steps
 - You need **collaboration you can observe** in TUI/IM, not a black box
-- Your project benefits from a **living strategic board** and lightweight task sheets in the repo
+- Your project benefits from **structured task tracking** with visual status in TUI
 - You care about **repeatability**: tests, stable logs, and commits as the final word
+- You want **flexibility**: dual-peer collaboration or single-peer autonomous mode
 
 ---
 
@@ -96,8 +97,10 @@ CCCC features a modern, keyboard-driven TUI with zero-config setup:
 
 - **Setup Panel** — Interactive wizard (↑↓ + Enter), no YAML editing needed
 - **Runtime Panel** — Real-time Timeline + Status, see all peer messages at a glance
+- **Task Panel** — Press `T` or click `[▼ Details]` to view all tasks with status; Enter for task detail
 - **Tab Completion** — Type `/` and press Tab to explore all commands
 - **Command History** — Up/Down arrows + Ctrl+R reverse search
+- **Image Paste** — Use `/paste` to paste images from clipboard (supports macOS/Linux/Windows/WSL2)
 - **Rich Shortcuts** — Standard editing keys (Ctrl+A/E/W/U/K) work as expected
 
 > See the screenshots above for the actual interface.
@@ -245,6 +248,7 @@ All commands support Tab completion. Type `/` and press Tab to explore.
 | `/aux <prompt>` | Run Aux helper once | `/aux Run full test suite` |
 | `/verbose on\|off` | Toggle peer summaries + Foreman CC | `/verbose off` |
 | `/task [ID]` | Show task status or detail | `/task T001` |
+| `/paste` | Paste image from clipboard | `/paste` |
 
 ### Natural Language Routing
 
@@ -273,8 +277,9 @@ both: Let's discuss the roadmap for next quarter
 ### Key Concepts
 
 - **Mailbox Protocol** — Peers exchange `<TO_USER>` and `<TO_PEER>` messages with evidence refs
-- **POR/SUBPOR Anchors** — Strategic board (`docs/por/POR.md`) and per-task sheets live in your repo
+- **Blueprint Tasks** — Per-task `task.yaml` files in `docs/por/T###-slug/` with goal, steps, acceptance criteria, and status tracking
 - **Evidence Types** — Patch diffs, test logs, benchmark results, commit hashes
+- **Single-Peer Mode** — Set PeerB to `none` for simplified autonomous operation with one agent
 
 > **Deep dive**: See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full collaboration architecture.
 
@@ -309,7 +314,7 @@ Automatically compresses peer context during idle periods to prevent token waste
 
 ---
 
-## IM Bridges (Telegram/Slack/Discord)
+## IM Bridges (Telegram/Slack/Discord/WeCom)
 
 CCCC includes optional chat bridges to bring the work to where your team already is.
 
@@ -320,11 +325,20 @@ CCCC includes optional chat bridges to bring the work to where your team already
 - **RFD Cards**: Inline approval buttons for Request-For-Decision cards
 - **Peer Summaries**: Optional (toggle with `/verbose on|off`)
 
+### Supported Bridges
+
+| Bridge | Direction | Setup |
+|--------|-----------|-------|
+| Telegram | Bidirectional | Bot token via @BotFather |
+| Slack | Bidirectional | Bot token (xoxb-) + App token (xapp-) |
+| Discord | Bidirectional | Bot token via Developer Portal |
+| WeCom | Outbound only [beta] | Webhook URL from group robot |
+
 ### Setup
 
-1. **Create a bot** (Telegram: @BotFather, Slack: App Studio, Discord: Developer Portal)
-2. **Set token** via TUI Setup Panel (select the bridge section and enter token when prompted)
-3. **Allowlist your chat**:
+1. **Create a bot** (Telegram: @BotFather, Slack: App Studio, Discord: Developer Portal, WeCom: Group Robot)
+2. **Set token** via TUI Setup Panel (select the bridge in Connect mode and enter credentials)
+3. **Allowlist your chat** (for bidirectional bridges):
    - Start a conversation with the bot, send `/whoami` to get your `chat_id`
    - Add `chat_id` to `.cccc/settings/telegram.yaml` (or slack.yaml/discord.yaml) allowlist
 4. **Autostart** (optional):
@@ -366,8 +380,8 @@ both: Add a short section to README about team chat tips
 
 ### Cadence
 
-- **Self-Check**: Every N handoffs (configurable, default 20), orchestrator triggers a short alignment check
-- **POR Update**: PeerB receives periodic reminders to review `POR.md` and all active `SUBPOR.md` files
+- **Self-Check**: Every N handoffs (configurable, default 6), orchestrator triggers a strategic alignment check including task hygiene reminders
+- **Task Updates**: Peers are reminded to keep `task.yaml` files accurate during self-checks
 - **Auto-Compact**: When peers are idle after sufficient work, orchestrator automatically compacts context (default: ≥6 messages, 15 min interval, 2 min idle)
 - **Foreman Runs**: Every 15 minutes (if enabled), Foreman performs one standing task or writes one request
 
@@ -380,11 +394,58 @@ both: Add a short section to README about team chat tips
   settings/               # Configuration (TUI handles most changes)
   mailbox/                # Message exchange between peers
   state/                  # Runtime state, logs, ledger
-docs/por/                 # Strategy anchors
-  POR.md                  # Strategic board
-  T######-slug/SUBPOR.md  # Per-task sheets
+docs/por/                 # Strategy and task anchors
+  POR.md                  # Strategic board (vision, guardrails, roadmap)
+  T###-slug/              # Per-task directory (e.g., T001-auth-module)
+    task.yaml             # Task definition: goal, steps, acceptance, status
 PROJECT.md                # Your project brief (injected into system prompts)
 FOREMAN_TASK.md           # Foreman tasks (if using Foreman)
+```
+
+### POR.md (Plan of Record)
+
+The strategic anchor that defines direction:
+
+```markdown
+# POR — Plan of Record
+
+## North Star
+What ultimate success looks like for this project.
+
+## Guardrails
+Non-negotiable constraints and quality gates.
+
+## Now / Next / Later
+- **Now**: Current sprint focus
+- **Next**: Upcoming priorities
+- **Later**: Future backlog
+
+## Risks & Mitigations
+Known risks and how they're being addressed.
+```
+
+### Blueprint Task Structure
+
+Each task lives in `docs/por/T###-slug/task.yaml`:
+
+```yaml
+id: T001
+title: Implement OAuth Support
+status: in_progress  # pending | in_progress | done | blocked
+goal: Add OAuth 2.0 authentication support
+steps:
+  - id: S1
+    desc: Design auth flow
+    status: done
+  - id: S2
+    desc: Implement token handling
+    status: in_progress
+acceptance:
+  - OAuth login works end-to-end
+  - Tests pass with >80% coverage
+progress_markers:
+  - "2024-01-15: Design complete"
+  - "2024-01-16: Token endpoint implemented"
 ```
 
 ---
@@ -422,11 +483,14 @@ No! Setup Panel uses point-and-click (↑↓ + Enter). Tab completion and `/help
 **Can I use CCCC without Telegram/Slack/Discord?**
 Yes! TUI works perfectly standalone. IM bridges are optional.
 
+**Can I run with just one peer (Single-Peer Mode)?**
+Yes! Set PeerB to `none` in the Setup Panel. The single peer operates autonomously with full infrastructure support (Foreman, self-checks, keepalive). Recommended for simpler projects or when you want focused single-agent operation.
+
 **What about safety?**
 Chats never change state directly — only evidence (patches/tests/logs) does. Irreversible changes require dual-sign from both peers. Full audit trail in ledger.
 
 **How do I reset for a new task?**
-Run `cccc reset` (or `cccc reset --archive` to preserve old POR/SUBPOR).
+Run `cccc reset` (or `cccc reset --archive` to preserve old tasks).
 
 **How do I debug issues?**
 Check `.cccc/state/status.json`, `ledger.jsonl`, `orchestrator.log`, or run `cccc doctor`.

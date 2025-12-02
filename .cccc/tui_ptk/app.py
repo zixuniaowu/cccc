@@ -49,6 +49,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -71,6 +72,393 @@ from prompt_toolkit.styles import Style
 from prompt_toolkit.mouse_events import MouseEventType
 from prompt_toolkit.shortcuts import radiolist_dialog
 from asyncio import create_task
+
+
+def _is_wsl() -> bool:
+    """Detect if running in WSL (Windows Subsystem for Linux)."""
+    # Check WSL-specific environment variables
+    if os.environ.get('WSL_DISTRO_NAME') or os.environ.get('WSL_INTEROP') or os.environ.get('WSLENV'):
+        return True
+    # Check /proc/version for WSL signatures
+    try:
+        with open('/proc/version', 'r') as f:
+            version = f.read().lower()
+            if 'microsoft' in version or 'wsl' in version:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def get_clipboard_image(save_dir: Path) -> Optional[str]:
+    """Check clipboard for image and save to file if found.
+    Supports macOS, Linux (X11/Wayland), Windows, and WSL2.
+    Returns the saved file path if an image was found, None otherwise.
+    """
+    import sys
+    
+    if sys.platform == 'darwin':
+        return _get_clipboard_image_macos(save_dir)
+    elif sys.platform == 'linux':
+        # WSL2 requires special handling via PowerShell
+        if _is_wsl():
+            return _get_clipboard_image_wsl(save_dir)
+        return _get_clipboard_image_linux(save_dir)
+    elif sys.platform == 'win32':
+        return _get_clipboard_image_windows(save_dir)
+    return None
+
+
+def _get_clipboard_image_wsl(save_dir: Path) -> Optional[str]:
+    """WSL2 clipboard image extraction using PowerShell.exe via WSL interop.
+    
+    Strategy: Save to Windows TEMP first, then copy to WSL.
+    This is more reliable than trying to save directly to WSL paths.
+    """
+    try:
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = int(time.time() * 1000)
+        filename = f"clipboard_{timestamp}.png"
+        filepath = save_dir / filename
+        
+        # Get Windows temp directory
+        try:
+            result = subprocess.run(
+                ['cmd.exe', '/c', 'echo %TEMP%'],
+                capture_output=True, timeout=5
+            )
+            win_temp = result.stdout.decode('utf-8', errors='replace').strip()
+        except Exception:
+            return None
+        
+        if not win_temp:
+            return None
+        
+        win_filename = f"cccc_clip_{timestamp}.png"
+        win_fullpath = f"{win_temp}\\{win_filename}"
+        
+        # PowerShell script to save clipboard image
+        ps_script = f'''
+Add-Type -AssemblyName System.Windows.Forms
+$img = [System.Windows.Forms.Clipboard]::GetImage()
+if ($img -ne $null) {{
+    $img.Save("{win_fullpath}")
+    Write-Output "OK"
+}} else {{
+    Write-Output "NONE"
+}}
+'''
+        result = subprocess.run(
+            ['powershell.exe', '-NoProfile', '-Command', ps_script],
+            capture_output=True, timeout=20
+        )
+        stdout = result.stdout.decode('utf-8', errors='replace').strip()
+        
+        if stdout != 'OK':
+            return None
+        
+        # Convert Windows path to WSL path and copy
+        try:
+            result = subprocess.run(
+                ['wslpath', '-u', win_fullpath],
+                capture_output=True, text=True, timeout=5
+            )
+            wsl_temp_path = result.stdout.strip()
+        except Exception:
+            return None
+        
+        if not wsl_temp_path or not Path(wsl_temp_path).exists():
+            return None
+        
+        # Copy to target directory
+        import shutil
+        shutil.copy2(wsl_temp_path, filepath)
+        
+        # Clean up Windows temp file
+        try:
+            Path(wsl_temp_path).unlink()
+        except Exception:
+            pass
+        
+        if filepath.exists():
+            return str(filepath)
+        
+        return None
+    except Exception:
+        return None
+
+
+def _get_clipboard_image_macos(save_dir: Path) -> Optional[str]:
+    """macOS clipboard image extraction using osascript."""
+    try:
+        # Check if clipboard contains image data using osascript
+        check_script = '''
+        tell application "System Events"
+            try
+                set clipboardInfo to (clipboard info)
+                repeat with i in clipboardInfo
+                    if (first item of i) is «class PNGf» then
+                        return "PNG"
+                    else if (first item of i) is «class TIFF» then
+                        return "TIFF"
+                    end if
+                end repeat
+            end try
+        end tell
+        return "NONE"
+        '''
+        result = subprocess.run(
+            ['osascript', '-e', check_script],
+            capture_output=True, text=True, timeout=5
+        )
+        clip_type = result.stdout.strip()
+
+        if clip_type not in ('PNG', 'TIFF'):
+            return None
+
+        # Create save directory if needed
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate unique filename
+        timestamp = int(time.time() * 1000)
+        filename = f"clipboard_{timestamp}.png"
+        filepath = save_dir / filename
+
+        # Save clipboard image using osascript
+        save_script = f'''
+        set saveFile to POSIX file "{filepath}"
+        try
+            set imageData to the clipboard as «class PNGf»
+            set fileRef to open for access saveFile with write permission
+            write imageData to fileRef
+            close access fileRef
+            return "OK"
+        on error
+            try
+                close access saveFile
+            end try
+            return "ERROR"
+        end try
+        '''
+        result = subprocess.run(
+            ['osascript', '-e', save_script],
+            capture_output=True, text=True, timeout=10
+        )
+
+        if result.stdout.strip() == 'OK' and filepath.exists():
+            return str(filepath)
+        return None
+
+    except Exception:
+        return None
+
+
+def _get_clipboard_image_linux(save_dir: Path) -> Optional[str]:
+    """Linux clipboard image extraction using xclip or wl-paste."""
+    try:
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = int(time.time() * 1000)
+        filename = f"clipboard_{timestamp}.png"
+        filepath = save_dir / filename
+        
+        # Try wl-paste first (Wayland)
+        try:
+            result = subprocess.run(
+                ['wl-paste', '--type', 'image/png'],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout:
+                filepath.write_bytes(result.stdout)
+                return str(filepath)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        # Try xclip (X11)
+        try:
+            result = subprocess.run(
+                ['xclip', '-selection', 'clipboard', '-t', 'image/png', '-o'],
+                capture_output=True, timeout=5
+            )
+            if result.returncode == 0 and result.stdout:
+                filepath.write_bytes(result.stdout)
+                return str(filepath)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        
+        return None
+    except Exception:
+        return None
+
+
+def _get_clipboard_image_windows(save_dir: Path) -> Optional[str]:
+    """Windows clipboard image extraction using PowerShell."""
+    try:
+        save_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = int(time.time() * 1000)
+        filename = f"clipboard_{timestamp}.png"
+        filepath = save_dir / filename
+        
+        # PowerShell script to save clipboard image
+        ps_script = f'''
+        Add-Type -AssemblyName System.Windows.Forms
+        $img = [System.Windows.Forms.Clipboard]::GetImage()
+        if ($img -ne $null) {{
+            $img.Save("{filepath}")
+            Write-Output "OK"
+        }} else {{
+            Write-Output "NONE"
+        }}
+        '''
+        result = subprocess.run(
+            ['powershell', '-NoProfile', '-Command', ps_script],
+            capture_output=True, text=True, timeout=10
+        )
+        
+        if result.stdout.strip() == 'OK' and filepath.exists():
+            return str(filepath)
+        return None
+    except Exception:
+        return None
+
+
+def get_clipboard_text() -> Optional[str]:
+    """Get text from clipboard (cross-platform, including WSL2)."""
+    import sys
+    try:
+        if sys.platform == 'darwin':
+            result = subprocess.run(['pbpaste'], capture_output=True, text=True, timeout=2)
+            return result.stdout if result.returncode == 0 else None
+        elif sys.platform == 'linux':
+            # WSL2: use PowerShell.exe to access Windows clipboard
+            if _is_wsl():
+                try:
+                    result = subprocess.run(
+                        ['powershell.exe', '-NoProfile', '-Command', 'Get-Clipboard'],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0 and result.stdout:
+                        return result.stdout
+                except Exception:
+                    pass
+            # Try wl-paste first (Wayland), then xclip (X11)
+            try:
+                result = subprocess.run(['wl-paste'], capture_output=True, text=True, timeout=2)
+                if result.returncode == 0:
+                    return result.stdout
+            except FileNotFoundError:
+                pass
+            try:
+                result = subprocess.run(['xclip', '-selection', 'clipboard', '-o'], capture_output=True, text=True, timeout=2)
+                if result.returncode == 0:
+                    return result.stdout
+            except FileNotFoundError:
+                pass
+            return None
+        elif sys.platform == 'win32':
+            result = subprocess.run(['powershell', '-NoProfile', '-Command', 'Get-Clipboard'], capture_output=True, text=True, timeout=2)
+            return result.stdout if result.returncode == 0 else None
+    except Exception:
+        return None
+    return None
+
+
+def parse_message_images(msg: str) -> Tuple[str, List[str]]:
+    """Parse message for image paths prefixed with @.
+    Returns (cleaned_message, list_of_image_paths).
+    Example: "hello @/path/to/img.png world" -> ("hello  world", ["/path/to/img.png"])
+    """
+    import re
+    images = []
+    # Match @/path/to/file.ext (common image extensions)
+    pattern = r'@(/[^\s]+\.(?:png|jpg|jpeg|gif|webp|bmp|tiff))'
+
+    def replace_match(m):
+        path = m.group(1)
+        if Path(path).exists():
+            images.append(path)
+            return ''  # Remove from message
+        return m.group(0)  # Keep original if file doesn't exist
+
+    cleaned = re.sub(pattern, replace_match, msg, flags=re.IGNORECASE)
+    cleaned = ' '.join(cleaned.split())  # Normalize whitespace
+    return cleaned, images
+
+
+def save_image_for_cli(home: Path, image_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Save image to unified inbound-files directory with metadata.
+    Returns metadata dict with path, sha256, size, mime on success.
+    
+    This mirrors the Telegram/Discord/Slack bridge file handling for consistency.
+    """
+    import hashlib
+    import mimetypes
+    import shutil
+    
+    try:
+        src = Path(image_path)
+        if not src.exists():
+            return None
+        
+        # Unified destination directory (same as IM bridges)
+        dest_dir = home / "work" / "inbound-files" / "photos"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate unique filename with timestamp
+        timestamp = int(time.time() * 1000)
+        suffix = src.suffix or '.png'
+        filename = f"tui_{timestamp}{suffix}"
+        dest_path = dest_dir / filename
+        
+        # Copy file
+        shutil.copy2(src, dest_path)
+        
+        # Calculate SHA256
+        sha256 = hashlib.sha256(dest_path.read_bytes()).hexdigest()
+        
+        # Get file size and MIME type
+        file_size = dest_path.stat().st_size
+        mime_type = mimetypes.guess_type(str(dest_path))[0] or 'image/png'
+        
+        # Create sidecar metadata file (same format as Telegram bridge)
+        meta = {
+            'path': str(dest_path.relative_to(home.parent)),  # Relative to project root
+            'sha256': sha256,
+            'bytes': file_size,
+            'mime': mime_type,
+            'source': 'tui-clipboard',
+            'ts': time.strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        sidecar = dest_path.with_suffix(dest_path.suffix + '.meta.json')
+        sidecar.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8')
+        
+        # Append to inbound-index.jsonl (same as IM bridges)
+        try:
+            idx = home / "state" / "inbound-index.jsonl"
+            idx.parent.mkdir(parents=True, exist_ok=True)
+            rec = {
+                'ts': int(time.time()),
+                'path': str(dest_path),
+                'platform': 'tui',
+                'routes': [],  # Will be determined when sending
+                'mime': mime_type,
+                'bytes': file_size,
+                'sha256': sha256
+            }
+            with idx.open('a', encoding='utf-8') as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        
+        return meta
+    except Exception:
+        return None
+
+
+def format_file_for_message(meta: Dict[str, Any]) -> str:
+    """Format file metadata for inclusion in CLI message (same as IM bridges)."""
+    return f"File: {meta['path']}\nSHA256: {meta['sha256']}  Size: {meta['bytes']}  MIME: {meta['mime']}"
 
 # Blueprint Task Panel (lazy import to avoid circular deps)
 # Use relative import since package name varies (cccc_tui_ptk_pkg vs tui_ptk)
@@ -175,6 +563,8 @@ class SetupConfig:
     sl_chan: str = ''
     dc_token: str = ''
     dc_chan: str = ''
+    # WeCom: outbound-only via webhook
+    wc_webhook: str = ''  # Webhook URL for WeCom robot
 
     # Backward compatibility property
     @property
@@ -215,6 +605,8 @@ class SetupConfig:
                 return False, "Slack app token (xapp-) required for inbound communication"
         if self.mode == 'discord' and not self.dc_token:
             return False, "Discord token required"
+        if self.mode == 'wecom' and not self.wc_webhook:
+            return False, "WeCom webhook URL required"
 
         return True, ""
 
@@ -704,8 +1096,8 @@ class CCCCSetupApp:
                 # Foreman options
                 return ['none', 'reuse_aux'] + self.actors_available
             elif config_name == 'mode':
-                # Interaction modes
-                return ['tmux', 'telegram', 'slack', 'discord']
+                # Interaction modes (wecom is beta)
+                return ['tmux', 'telegram', 'slack', 'discord', 'wecom']
             else:
                 return []
 
@@ -1103,6 +1495,10 @@ class CCCCSetupApp:
         if isinstance(channels, list) and channels:
             self.config.dc_chan = str(channels[0])
 
+        # WeCom (outbound-only)
+        wecom_data = _load_yaml(self.home, 'settings/wecom.yaml')
+        self.config.wc_webhook = str(wecom_data.get('webhook_url') or '')
+
     def _check_actor_availability(self) -> None:
         """Check availability of all known actors"""
         # Handle empty actors list
@@ -1238,12 +1634,12 @@ class CCCCSetupApp:
                 Window(width=10, content=self._create_focused_label('Connect', 4)),
                 btn_mode,
                 Window(width=2),
-                Label(text='Interaction mode (tmux only / Telegram / Slack / Discord)', style='class:hint'),
+                Label(text='Interaction mode (tmux / Telegram / Slack / Discord / WeCom[beta])', style='class:hint'),
             ], padding=1),
         ]
 
         # IM Configuration (integrated approach)
-        if self.config.mode in ('telegram', 'slack', 'discord'):
+        if self.config.mode in ('telegram', 'slack', 'discord', 'wecom'):
             items.extend([
                 Window(height=1),
                 create_section_header('IM Configuration'),
@@ -1279,6 +1675,22 @@ class CCCCSetupApp:
                     # Help text
                     Window(height=1),
                     Label(text='Both tokens required for bidirectional communication', style='class:hint'),
+                ])
+            elif self.config.mode == 'wecom':
+                # WeCom only needs webhook URL (outbound-only)
+                items.extend([
+                    # Webhook URL input
+                    VSplit([
+                        Window(width=14, content=FormattedTextControl('Webhook URL:')),
+                        self._create_webhook_field(),
+                        Window(width=2),
+                        Label(text='WeCom robot webhook', style='class:hint'),
+                    ], padding=1),
+
+                    # Help text
+                    Window(height=1),
+                    Label(text='⚠ Outbound-only (no inbound support). Get URL from WeCom group robot settings.', style='class:hint'),
+                    Label(text='[BETA] This bridge is in beta testing.', style='class:warning'),
                 ])
             else:
                 # Telegram and Discord only need bot token
@@ -1491,6 +1903,34 @@ class CCCCSetupApp:
         else:
             return FormattedTextControl('Channel ID:')
 
+    def _create_webhook_field(self):
+        """Create WeCom webhook URL input field"""
+        if not hasattr(self, 'webhook_field'):
+            initial_text = self.config.wc_webhook or ''
+            
+            self.webhook_field = TextArea(
+                height=1,
+                multiline=False,
+                text=initial_text,
+                wrap_lines=False,
+                style='class:input-field'
+            )
+            
+            # Add mouse handler to enable clicking to focus
+            original_handler = self.webhook_field.window.content.mouse_handler
+            def mouse_handler(mouse_event):
+                from prompt_toolkit.mouse_events import MouseEventType
+                if mouse_event.event_type == MouseEventType.MOUSE_UP:
+                    try:
+                        self.app.layout.focus(self.webhook_field)
+                    except Exception:
+                        pass
+                if original_handler:
+                    return original_handler(mouse_event)
+            self.webhook_field.window.content.mouse_handler = mouse_handler
+            
+        return self.webhook_field
+
     def _get_channel_hint(self):
         """Get appropriate hint for channel/chat ID"""
         mode = self.config.mode
@@ -1519,6 +1959,10 @@ class CCCCSetupApp:
             elif mode == 'discord':
                 self.config.dc_token = self.token_field.text.strip()
                 self.config.dc_chan = self.channel_field.text.strip()
+            elif mode == 'wecom':
+                # WeCom only has webhook URL
+                if hasattr(self, 'webhook_field'):
+                    self.config.wc_webhook = self.webhook_field.text.strip()
 
     def _format_button_text(self, value: str, required: bool = False, none_ok: bool = False, single_peer_ok: bool = False) -> str:
         """Format button text (no availability status in setup panel)"""
@@ -1549,6 +1993,9 @@ class CCCCSetupApp:
         elif mode == 'discord':
             tok = '●' if self.config.dc_token else '○'
             return f'[{tok}] token set' if self.config.dc_token else '[○] not configured'
+        elif mode == 'wecom':
+            wh = '●' if self.config.wc_webhook else '○'
+            return f'[{wh}] webhook set [beta]' if self.config.wc_webhook else '[○] not configured [beta]'
         return 'Configure...'
 
     def _update_buttons_list(self) -> None:
@@ -2296,6 +2743,14 @@ class CCCCSetupApp:
                 discord_config['channels'] = channels
             _write_yaml(self.home, 'settings/discord.yaml', discord_config)
 
+        # WeCom: outbound-only webhook
+        elif self.config.mode == 'wecom' and self.config.wc_webhook:
+            wecom_config = _load_yaml(self.home, 'settings/wecom.yaml')
+            wecom_config['webhook_url'] = self.config.wc_webhook
+            wecom_config['autostart'] = True
+            wecom_config['message_type'] = 'markdown_v2'
+            _write_yaml(self.home, 'settings/wecom.yaml', wecom_config)
+
         # 4. Write launch command to trigger orchestrator startup
         # IMPORTANT: Use 'w' mode to overwrite, not 'a' to append
         # Each setup completion should start fresh, not mix with previous sessions
@@ -2573,7 +3028,13 @@ class CCCCSetupApp:
         foreman_status = 'ON' if foreman_enabled else 'OFF'
         foreman_display = f"{foreman_agent} ({foreman_status})" if foreman_agent != 'none' else 'none'
 
-        row1 = f"Agents: {peerA} ⇄ {peerB} │ Aux: {aux_display} │ Foreman: {foreman_display}"
+        # Format peer display - single-peer mode shows differently
+        if peerB == 'none' or peerB.lower() == 'none':
+            peer_display = f"{peerA} (single)"
+        else:
+            peer_display = f"{peerA} ⇄ {peerB}"
+        
+        row1 = f"Agents: {peer_display} │ Aux: {aux_display} │ Foreman: {foreman_display}"
 
         # === Row 2: File Checks + Connection Mode ===
         # Check PROJECT.md (in repo root, which is home.parent)
@@ -2723,6 +3184,7 @@ class CCCCSetupApp:
             self._write_timeline("  /aux <prompt>       Run Aux helper", 'info')
             self._write_timeline("  /verbose on|off     Toggle peer summaries", 'info')
             self._write_timeline("  /task               Show task status", 'info')
+            self._write_timeline("  /paste              Paste image from clipboard", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Keyboard:", 'info')
             self._write_timeline("  Ctrl+T              Focus timeline (enable mouse scroll)", 'info')
@@ -2733,9 +3195,13 @@ class CCCCSetupApp:
             self._write_timeline("  Esc                 Return to input from timeline", 'info')
             self._write_timeline("  Ctrl+A/E            Start/end of line", 'info')
             self._write_timeline("  Ctrl+W/U/K          Delete word/start/end", 'info')
+            self._write_timeline("  Ctrl+V              Paste (image or text)", 'info')
             self._write_timeline("  Up/Down             History", 'info')
             self._write_timeline("  PageUp/Down         Scroll timeline", 'info')
             self._write_timeline("  Ctrl+L              Clear timeline", 'info')
+            self._write_timeline("", 'info')
+            self._write_timeline("Text Selection:", 'info')
+            self._write_timeline("  Shift+Mouse         Select text (bypass TUI mouse)", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Exit:", 'info')
             self._write_timeline("  Ctrl+b d            Detach tmux (exits CCCC)", 'info')
@@ -2773,6 +3239,10 @@ class CCCCSetupApp:
             else:
                 self._write_timeline("Usage: /verbose on|off", 'error')
 
+        # Paste image from clipboard
+        elif text == '/paste':
+            self._handle_paste_image()
+
         # Blueprint task status
         elif text == '/task' or text.startswith('/task '):
             self._show_task_status(text)
@@ -2785,14 +3255,20 @@ class CCCCSetupApp:
             else:
                 self._write_timeline("Usage: /aux <prompt>", 'error')
 
-        # Message sending commands (keep existing logic)
+        # Message sending commands (with image support)
         elif text.startswith('/a '):
             msg = text[3:].strip()
             if msg:
-                self._write_timeline(f"You > PeerA: {msg}", 'user')
+                # Parse for image paths
+                cleaned_msg, images = parse_message_images(msg)
+                display_msg = msg if not images else f"{cleaned_msg} [+{len(images)} image(s)]"
+                self._write_timeline(f"You > PeerA: {display_msg}", 'user')
                 try:
                     with cmds.open('a', encoding='utf-8') as f:
-                        cmd = {"type": "a", "args": {"text": msg}, "source": "tui", "ts": ts}
+                        args = {"text": cleaned_msg if cleaned_msg else "Please see the attached image(s)."}
+                        if images:
+                            args["images"] = images
+                        cmd = {"type": "a", "args": args, "source": "tui", "ts": ts}
                         f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
                         f.flush()
                     self._write_timeline("Sent to PeerA", 'success')
@@ -2812,10 +3288,16 @@ class CCCCSetupApp:
                 pass  # Continue with normal flow if check fails
             msg = text[3:].strip()
             if msg:
-                self._write_timeline(f"You > PeerB: {msg}", 'user')
+                # Parse for image paths
+                cleaned_msg, images = parse_message_images(msg)
+                display_msg = msg if not images else f"{cleaned_msg} [+{len(images)} image(s)]"
+                self._write_timeline(f"You > PeerB: {display_msg}", 'user')
                 try:
                     with cmds.open('a', encoding='utf-8') as f:
-                        cmd = {"type": "b", "args": {"text": msg}, "source": "tui", "ts": ts}
+                        args = {"text": cleaned_msg if cleaned_msg else "Please see the attached image(s)."}
+                        if images:
+                            args["images"] = images
+                        cmd = {"type": "b", "args": args, "source": "tui", "ts": ts}
                         f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
                         f.flush()
                     self._write_timeline("Sent to PeerB", 'success')
@@ -2827,10 +3309,16 @@ class CCCCSetupApp:
         elif text.startswith('/both '):
             msg = text[6:].strip()
             if msg:
-                self._write_timeline(f"You > Both: {msg}", 'user')
+                # Parse for image paths
+                cleaned_msg, images = parse_message_images(msg)
+                display_msg = msg if not images else f"{cleaned_msg} [+{len(images)} image(s)]"
+                self._write_timeline(f"You > Both: {display_msg}", 'user')
                 try:
                     with cmds.open('a', encoding='utf-8') as f:
-                        cmd = {"type": "both", "args": {"text": msg}, "source": "tui", "ts": ts}
+                        args = {"text": cleaned_msg if cleaned_msg else "Please see the attached image(s)."}
+                        if images:
+                            args["images"] = images
+                        cmd = {"type": "both", "args": args, "source": "tui", "ts": ts}
                         f.write(json.dumps(cmd, ensure_ascii=False) + '\n')
                         f.flush()
                     self._write_timeline("Sent to both peers", 'success')
@@ -2841,6 +3329,37 @@ class CCCCSetupApp:
 
         else:
             self._write_timeline(f"Unknown command: {text}. Type /help for help.", 'error')
+
+    def _handle_paste_image(self) -> None:
+        """Handle /paste command - get image from clipboard and insert path"""
+        import tempfile
+        temp_dir = Path(tempfile.gettempdir()) / "cccc_clipboard_temp"
+        
+        self._write_timeline("Checking clipboard for image...", 'info')
+        
+        try:
+            image_path = get_clipboard_image(temp_dir)
+        except Exception as e:
+            self._write_timeline(f"Clipboard error: {e}", 'error')
+            return
+        
+        if image_path:
+            # Save to unified directory with metadata
+            meta = save_image_for_cli(self.home, image_path)
+            if meta:
+                # Insert path reference into input buffer
+                buffer = self.input_field.buffer
+                buffer.insert_text(f"@{meta['path']} ")
+                self._write_timeline(f"Image ready: {meta['path']} ({meta['bytes']} bytes)", 'success')
+                # Clean up temp file
+                try:
+                    Path(image_path).unlink()
+                except Exception:
+                    pass
+            else:
+                self._write_timeline("Failed to save image to project", 'error')
+        else:
+            self._write_timeline("No image found in clipboard", 'info')
 
     def _write_cmd_to_queue(self, cmd_type: str, args: dict, success_msg: str) -> None:
         """Write command to commands.jsonl queue"""
@@ -3534,6 +4053,43 @@ class CCCCSetupApp:
             buffer = self.input_field.buffer
             pos = buffer.cursor_position
             buffer.text = buffer.text[:pos]
+
+        # Ctrl+V paste image from clipboard (or text if no image)
+        # Note: In some terminals, Ctrl+V may be intercepted. Use eager=True to increase priority.
+        @kb.add('c-v', filter=~Condition(lambda: self.setup_visible or self.modal_open or self.reverse_search_mode) & has_focus(self.input_field), eager=True)
+        def paste_clipboard_image(event) -> None:
+            """Check clipboard for image and insert path if found, otherwise paste text"""
+            # Save images to unified .cccc/work/inbound-files/photos/ (same as IM bridges)
+            import tempfile
+            temp_dir = Path(tempfile.gettempdir()) / "cccc_clipboard_temp"
+            
+            try:
+                image_path = get_clipboard_image(temp_dir)
+            except Exception as e:
+                self._write_timeline(f"Clipboard error: {e}", 'error')
+                image_path = None
+            
+            if image_path:
+                # Save to unified directory with metadata
+                meta = save_image_for_cli(self.home, image_path)
+                if meta:
+                    # Insert path reference at cursor position
+                    buffer = self.input_field.buffer
+                    buffer.insert_text(f"@{meta['path']}")
+                    self._write_timeline(f"Image ready: {meta['path']} ({meta['bytes']} bytes)", 'success')
+                    # Clean up temp file
+                    try:
+                        Path(image_path).unlink()
+                    except Exception:
+                        pass
+                else:
+                    self._write_timeline("Failed to save image", 'error')
+            else:
+                # No image in clipboard, try to paste text (cross-platform)
+                text = get_clipboard_text()
+                if text:
+                    buffer = self.input_field.buffer
+                    buffer.insert_text(text)
 
         # Ctrl+R reverse search
         @kb.add('c-r', filter=~Condition(lambda: self.setup_visible or self.modal_open or self.reverse_search_mode) & has_focus(self.input_field))

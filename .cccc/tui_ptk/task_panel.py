@@ -214,7 +214,7 @@ class TaskPanel:
         percent = int(completed_steps / total_steps * 100) if total_steps > 0 else 0
         
         # Base progress info
-        base = f"Tasks {completed}/{total} ({percent}%)"
+        base = f"📋 {completed}/{total} ({percent}%)"
         
         # Current task info with name
         current_id = summary.get('current_task')
@@ -239,7 +239,18 @@ class TaskPanel:
         elif completed == total and total > 0:
             current_str = "✓ All complete"
         else:
-            current_str = ""
+            # No active task - show first planned/pending_review task if any
+            tasks = summary.get('tasks', [])
+            planned_task = None
+            for t in tasks:
+                if t.get('status') and str(t['status']).lower() in ('planned', 'pending_review'):
+                    planned_task = t
+                    break
+            if planned_task:
+                name = planned_task.get('name', '')[:20]
+                current_str = f"⏳ {planned_task['id']}: {name}" if name else f"⏳ {planned_task['id']}"
+            else:
+                current_str = ""
         
         if current_str:
             return f"{base} │ {current_str}"

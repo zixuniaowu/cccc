@@ -102,7 +102,7 @@ Foreman is a lightweight "user proxy" that runs on a timer (default: 15 minutes)
 ### Use cases
 
 - Periodic health checks (run tests every 30 minutes)
-- Reminder to update POR/SUBPORs
+- Reminder to update POR and task files
 - Enforce quality gates (lint, type-check before commit)
 
 ---
@@ -133,7 +133,7 @@ For irreversible or high-impact changes, CCCC supports RFD cards:
 
 ## Session Cadence
 
-- **Self-Check**: Every N handoffs (configurable, default 20), orchestrator triggers a short alignment check
-- **POR Update**: PeerB receives periodic reminders to review `POR.md` and all active `SUBPOR.md` files
+- **Self-Check**: Every N handoffs (configurable, default 6), orchestrator triggers a strategic alignment check including task hygiene reminders
+- **Task Updates**: Peers are reminded to keep `task.yaml` files accurate during self-checks
 - **Auto-Compact**: When peers are idle after sufficient work, orchestrator automatically compacts context
 - **Foreman Runs**: Every 15 minutes (if enabled), Foreman performs one standing task or writes one request

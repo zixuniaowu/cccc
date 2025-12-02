@@ -17,18 +17,18 @@
   - Invoke silently when useful (no prior announcement). Prefer offloading uncoupled tasks to Aux to protect attention for mid‑layer decisions/integration. You own and integrate the outcome.
 
 2) Canonical Docs · Where · Why · How to Maintain
-- POR.md — single source of direction {#por}
-  - Path: .cccc/state/POR.md
-  - Purpose: goals / constraints / risks / next steps. Read before major actions. When direction changes or at phase closure, update POR via a patch diff. Do not duplicate POR content elsewhere.
-  - Structure (keep concise and current):
-    - Summary: Objective, Current Focus, Key Constraints, Acceptance Benchmarks.
-    - Roadmap & Milestones.
-    - Active Tasks & Next Steps.
-    - Risks & Mitigations.
-    - Decisions, Alternatives & Rationale (choice/why/rollback).
-    - Reflections & Open Questions.
+- Blueprint Tasks — per-task tracking {#tasks}
+  - Path: docs/por/T###-slug/task.yaml
+  - Purpose: Structured task tracking with goal, steps, acceptance criteria, and status.
+  - Structure:
+    - id/title: Task identifier and name
+    - goal: What success looks like
+    - steps: Ordered list with status (pending/in_progress/done)
+    - acceptance: Verifiable criteria
+    - progress_markers: Timestamped notes
+  - Responsibility: PeerA creates tasks; any peer can update step status and progress. Goal/acceptance changes require coordination via to_peer.
 - PROJECT.md — project context and scope
-  - Path: PROJECT.md (repo root). Use as scope/context reference. If it conflicts with reality or POR, clarify and align POR.
+  - Path: PROJECT.md (repo root). Use as scope/context reference.
 - This rules document
   - Path: .cccc/rules/PEERA.md. Reference concrete anchors from this file in insight refs when relevant.
 - Work directory — scratchpad / canvas / evidence material
