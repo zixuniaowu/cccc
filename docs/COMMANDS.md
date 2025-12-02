@@ -16,10 +16,10 @@ All commands are accessible via Tab completion. Type `/` and press Tab to explor
 | `/resume` | Resume handoff delivery (sends NUDGE for pending) | `/resume` |
 | `/restart peera\|peerb\|both` | Restart peer CLI process | `/restart peerb` |
 | `/quit` | Exit CCCC (detach tmux) | `/quit` |
-| `/setup` | Toggle Setup Panel | `/setup` |
 | `/foreman on\|off\|status\|now` | Control Foreman (if enabled) | `/foreman status` |
 | `/aux <prompt>` | Run Aux helper once | `/aux Run full test suite` |
 | `/verbose on\|off` | Toggle peer summaries + Foreman CC | `/verbose off` |
+| `/task [ID]` | Show task status or detail | `/task T001` |
 
 ## Natural Language Routing
 
@@ -48,12 +48,12 @@ both: Let's discuss the roadmap for next quarter
 | **Operations** | Foreman control | `/foreman` | `/foreman` | `!foreman` | `!foreman` |
 | | Run Aux helper | `/aux` | `/aux` | `!aux` | `!aux` |
 | | Toggle verbose | `/verbose` | `/verbose` | `!verbose` | `!verbose` |
+| | Task status | `/task` | — | — | — |
 | **Subscription** | Get chat ID | — | `/whoami` | — | — |
 | | Subscribe | — | `/subscribe` | `!subscribe` | `!subscribe` |
 | | Unsubscribe | — | `/unsubscribe` | `!unsubscribe` | `!unsubscribe` |
 | **Utility** | Show status | — | `/status` | `!status` | `!status` |
 | | Show help | `/help` | `/help` | `!help` | `!help` |
-| | Setup panel | `/setup` | — | — | — |
 
 > **Legend**: `/cmd` = slash prefix, `!cmd` = exclamation prefix, `x:` = colon routing, `x!` = passthrough, — = not available
 

@@ -196,14 +196,14 @@ class TaskPanel:
 
     def get_header_text(self) -> str:
         """
-        Get compact header text for status bar.
+        Get rich header text for status bar showing current task progress.
         
-        Format: "📋 2/5 │ 50% │ → T003 [S2]"
+        Format: "Tasks 2/5 (50%) │ → T003: Task Name [S2/4]"
         """
         summary = self._get_summary()
         
         if summary['total_tasks'] == 0:
-            return "📋 No tasks"
+            return ""  # Empty when no tasks
         
         completed = summary['completed_tasks']
         total = summary['total_tasks']
@@ -213,20 +213,37 @@ class TaskPanel:
         completed_steps = summary.get('completed_steps', 0)
         percent = int(completed_steps / total_steps * 100) if total_steps > 0 else 0
         
-        # Current task info
-        current = summary.get('current_task')
-        step = summary.get('current_step')
+        # Base progress info
+        base = f"Tasks {completed}/{total} ({percent}%)"
         
-        if current:
-            current_str = f"→ {current}"
-            if step:
-                current_str += f" [{step}]"
-        elif completed == total:
-            current_str = "✓ Done"
+        # Current task info with name
+        current_id = summary.get('current_task')
+        current_step = summary.get('current_step')
+        
+        if current_id:
+            # Get current task name
+            manager = self._get_manager()
+            task_name = ""
+            step_progress = ""
+            if manager:
+                task = manager.get_task(current_id)
+                if task:
+                    task_name = task.name[:25]  # Truncate long names
+                    # Step progress
+                    step_progress = f"[{task.completed_steps}/{task.total_steps}]"
+            
+            if task_name:
+                current_str = f"→ {current_id}: {task_name} {step_progress}"
+            else:
+                current_str = f"→ {current_id}"
+        elif completed == total and total > 0:
+            current_str = "✓ All complete"
         else:
-            current_str = "○ Idle"
+            current_str = ""
         
-        return f"📋 {completed}/{total} │ {percent}% │ {current_str}"
+        if current_str:
+            return f"{base} │ {current_str}"
+        return base
 
     # =========================================================================
     # Level 1: Expanded WBS View (Toggle with [T])
@@ -492,7 +509,7 @@ class TaskPanel:
     def get_task_detail_plain(self, task_id: str, width: int = 80) -> str:
         """
         Get task detail without box borders (for use in Dialog).
-        Clean, readable format with good spacing.
+        Clean, readable format with good spacing and proper text wrapping.
         
         Args:
             task_id: Task ID to show
@@ -508,38 +525,62 @@ class TaskPanel:
         
         lines = []
         
-        # Task name (title shown in dialog frame)
-        lines.append(f"  {task.name}")
+        # Task name (title shown in dialog frame) - wrap if needed
+        task_name = task.name
+        if _display_width(task_name) > width - 6:
+            task_name = _truncate_to_width(task_name, width - 6)
+        lines.append(f"  {task_name}")
         lines.append("")
         
-        # Goal - wrap if too long
+        # Goal - wrap if too long using proper word wrapping
         lines.append("  Goal:")
         goal_text = task.goal
-        goal_width = width - 6  # Account for indent
-        if len(goal_text) > goal_width:
-            # Simple word wrap
-            words = goal_text.split()
-            current_line = "    "
+        goal_max_width = width - 6  # Account for indent
+        
+        # Word wrap helper function
+        def wrap_text(text: str, max_width: int, indent: str = "    ") -> list:
+            """Wrap text to max_width, handling both ASCII and wide characters."""
+            wrapped_lines = []
+            words = text.split()
+            current_line = indent
+            current_width = _display_width(indent)
+            
             for word in words:
-                if len(current_line) + len(word) + 1 > width - 2:
-                    lines.append(current_line)
-                    current_line = "    " + word
+                word_width = _display_width(word)
+                space_width = 1 if current_line != indent else 0
+                
+                if current_width + space_width + word_width <= max_width:
+                    if current_line != indent:
+                        current_line += " "
+                        current_width += 1
+                    current_line += word
+                    current_width += word_width
                 else:
-                    current_line += (" " if len(current_line) > 4 else "") + word
+                    if current_line != indent:
+                        wrapped_lines.append(current_line)
+                    current_line = indent + word
+                    current_width = _display_width(indent) + word_width
+            
             if current_line.strip():
-                lines.append(current_line)
-        else:
-            lines.append(f"    {goal_text}")
+                wrapped_lines.append(current_line)
+            
+            return wrapped_lines if wrapped_lines else [indent + text]
+        
+        goal_lines = wrap_text(goal_text, goal_max_width, "    ")
+        lines.extend(goal_lines)
         lines.append("")
         
         # Status and progress
         lines.append(f"  Status: {task.status}    Progress: {task.progress} ({task.progress_percent}%)")
         lines.append("")
         
-        # Steps - use dynamic width
+        # Steps - use fixed column widths for alignment
         lines.append("  Steps:")
-        # Calculate step name width: width - indent(4) - icon(2) - id(4) - label(12) - margins(6)
-        step_name_width = max(30, width - 28)
+        
+        # Calculate available width for step name
+        # Layout: indent(4) + icon(1) + space(1) + id(3) + space(2) + name + space(2) + [status](9)
+        # Total fixed: 4 + 1 + 1 + 3 + 2 + 2 + 9 = 22
+        step_name_width = max(25, width - 24)
         
         for step in task.steps:
             status = str(step.status)
@@ -558,9 +599,16 @@ class TaskPanel:
                 icon = '○'
                 status_label = 'pending'
             
-            # Format step line with dynamic width
-            name_display = step.name[:step_name_width]
-            lines.append(f"    {icon} {step.id}  {name_display:<{step_name_width}}  [{status_label}]")
+            # Truncate step name if needed, pad for alignment
+            step_name = step.name
+            if _display_width(step_name) > step_name_width:
+                step_name = _truncate_to_width(step_name, step_name_width)
+            step_name_padded = _pad_to_width(step_name, step_name_width)
+            
+            # Format: "    ✓ S1  Step name padded           [done]"
+            # Use fixed-width status label for alignment
+            status_display = f"[{status_label}]"
+            lines.append(f"    {icon} {step.id}  {step_name_padded}  {status_display}")
         
         lines.append("")
         lines.append("  Press Esc to close")

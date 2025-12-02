@@ -241,10 +241,10 @@ All commands support Tab completion. Type `/` and press Tab to explore.
 | `/resume` | Resume handoff delivery (sends NUDGE for pending) | `/resume` |
 | `/restart peera\|peerb\|both` | Restart peer CLI process | `/restart peerb` |
 | `/quit` | Exit CCCC (detach tmux) | `/quit` |
-| `/setup` | Toggle Setup Panel | `/setup` |
 | `/foreman on\|off\|status\|now` | Control Foreman (if enabled) | `/foreman status` |
 | `/aux <prompt>` | Run Aux helper once | `/aux Run full test suite` |
 | `/verbose on\|off` | Toggle peer summaries + Foreman CC | `/verbose off` |
+| `/task [ID]` | Show task status or detail | `/task T001` |
 
 ### Natural Language Routing
 

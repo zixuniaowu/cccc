@@ -1740,33 +1740,27 @@ def main(home: Path, session_name: Optional[str] = None):
     in_self_check = False
     handoffs_peer = {"PeerA": 0, "PeerB": 0}
     self_checks_done = {"PeerA": 0, "PeerB": 0}
-    # self-check text from config (fallback to a sane default)
+    # Self-check text: config takes precedence, code provides fallback only
+    # Purpose: Strategic-level thinking calibration to prevent tunnel vision
     _sc_text = str(delivery_cfg.get("self_check_text") or "").strip()
+    # Fallback: minimal strategic check (config version is more comprehensive)
     DEFAULT_SELF_CHECK = (
-        "[Self-check] Briefly answer (≤2 line each):\n"
-        "1) Any drift from goal?\n"
-        "2) What’s still unclear? Any new confusion created? Any better ideas?\n"
-        "3) What was missed?\n"
-        "4) The single next check (hook/path/metric).\n"
-        "Continue only after answering."
+        "[Strategic Self-check]\n"
+        "1) Off-course from goal? Point the divergence.\n"
+        "2) Least valuable current task? Propose stop/change.\n"
+        "3) Any misalignment or unclear boundary? Fix it first.\n"
+        "Answer briefly, then resume."
     )
     self_check_text = _sc_text if _sc_text else DEFAULT_SELF_CHECK
 
     auto_reset_interval_cfg = conversation_reset_interval
     reset_interval_effective = auto_reset_interval_cfg if auto_reset_interval_cfg > 0 else 0
-    # Append a minimal, always-on reminder to end with one insight block (never verbose)
-    # Aux review prompt is kept separate and will be appended only in regular self-checks (not SYSTEM refresh)
+    # Aux review prompt for self-checks (only when aux mode is on)
     aux_review_prompt = ""
     try:
-        INSIGHT_REMINDER = (
-            "Insight: add one new angle not restating body (lens + hook/assumption/risk/trade-off/next/delta)."
-        )
-        if INSIGHT_REMINDER not in self_check_text:
-            self_check_text = self_check_text.rstrip("\n") + "\n" + INSIGHT_REMINDER
         if aux_mode == "on":
             aux_review_prompt = (
-                "Note: Just trigger Aux for any task in which you think it would help.\n"
-                " Schedule a thorough high-order Aux review to your recent works based on the goal now."
+                "Aux available: invoke for heavy tasks (tests/reviews/transforms)."
             )
     except Exception:
         pass
@@ -2326,6 +2320,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'write_queue_and_locks': write_queue_and_locks,
         'deliver_paused_box': deliver_paused_box,
         'single_peer_mode': single_peer_mode,
+        'schedule_keepalive': keepalive_api.schedule_from_payload,  # For single-peer mode
     })
 
     # PEER restart configuration

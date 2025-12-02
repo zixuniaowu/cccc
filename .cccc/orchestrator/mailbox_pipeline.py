@@ -28,6 +28,8 @@ def make(ctx: Dict[str, Any]):
     write_queue_and_locks = ctx['write_queue_and_locks']
     deliver_paused_box = ctx['deliver_paused_box']
     _initial_single_peer_mode = bool(ctx.get('single_peer_mode', False))
+    # Keepalive scheduling callback (for single-peer mode to_user/to_peer)
+    schedule_keepalive = ctx.get('schedule_keepalive')
 
     def _is_single_peer() -> bool:
         """Dynamically check single-peer mode (config may have changed via TUI)"""
@@ -64,6 +66,14 @@ def make(ctx: Dict[str, Any]):
                 (home/"mailbox"/"peerA"/"to_user.md").write_text(sentinel, encoding="utf-8")
             except Exception:
                 pass
+            # Single-peer mode: schedule keepalive on to_user events (wrapping for keepalive detection)
+            if current_single_peer and schedule_keepalive:
+                try:
+                    # Wrap with TO_USER tag for keepalive detection
+                    wrapped_txt = f"<TO_USER>{txt}</TO_USER>"
+                    schedule_keepalive("PeerA", wrapped_txt)
+                except Exception:
+                    pass
         if events["peerA"].get("to_peer"):
             payload = events["peerA"]["to_peer"].strip()
             try:
@@ -95,6 +105,14 @@ def make(ctx: Dict[str, Any]):
                 except Exception:
                     pass
                 log_ledger(home, {"from":"PeerA","kind":"to_peer-ack","route":"single-peer","chars":len(payload)})
+                # Single-peer mode: schedule keepalive on to_peer events
+                if schedule_keepalive:
+                    try:
+                        # Wrap with TO_PEER tag for keepalive detection
+                        wrapped_payload = f"<TO_PEER>{payload}</TO_PEER>"
+                        schedule_keepalive("PeerA", wrapped_payload)
+                    except Exception:
+                        pass
             elif should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                 wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                 send_handoff("PeerA", "PeerB", wrapped)

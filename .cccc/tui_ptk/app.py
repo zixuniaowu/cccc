@@ -371,42 +371,39 @@ def create_header() -> Window:
 
 def create_runtime_header(status_dot: str = '●', status_color: str = 'class:status.connected',
                           task_text_func=None, on_task_click=None) -> Window:
-    """Modern runtime header with connection status and task progress (clickable)"""
+    """Modern runtime header with connection status and prominent task button"""
     def get_header_text():
         text = [
             ('class:title', '❯ CCCC Orchestrator  '),
             (status_color, status_dot),
         ]
-        # Add task status if available (clickable area)
+        # Add task info with prominent button
         if task_text_func:
             task_text = task_text_func()
             if task_text:
+                # Task status info + prominent button
                 text.extend([
                     ('', '  │  '),
-                    # Make task text clickable with [click] handler
-                    ('class:info [SetCursorPosition]', task_text),
-                    ('class:hint', ' [T/click]'),
+                    ('class:task-status', task_text),
+                    ('', '  '),
+                    # Prominent button with background - looks like a real button
+                    ('class:button.task.bg', ' ▼ Details '),
+                ])
+            else:
+                # No tasks - just show button
+                text.extend([
+                    ('', '  │  '),
+                    ('class:button.task.bg', ' ▼ Details '),
                 ])
         text.extend([
             ('', '\n'),
-            ('class:hint', '  /help · PgUp/Dn scroll · T:tasks · /quit'),
+            ('class:hint', '  /help · PgUp/Dn scroll · T or click [▼ Details] · /quit'),
         ])
         return text
     
-    # Create control with click handler via style token
-    def get_formatted_text():
-        """Generate formatted text with clickable task area"""
-        from prompt_toolkit.formatted_text import FormattedText
-        text = get_header_text()
-        # If click handler provided, make header clickable
-        if on_task_click:
-            # Wrap in mouse handler by returning as list with handler
-            return text
-        return text
+    ctrl = FormattedTextControl(lambda: get_header_text(), focusable=False)
     
-    ctrl = FormattedTextControl(get_formatted_text, focusable=False)
-    
-    # Attach mouse handler to control if click handler provided
+    # Attach mouse handler for task button click
     if on_task_click:
         original_handler = ctrl.mouse_handler
         def custom_mouse_handler(mouse_event):
@@ -801,7 +798,7 @@ class CCCCSetupApp:
         self._create_dialogs()
 
     def _build_task_panel_container(self):
-        """Build the conditional task panel container with mouse support."""
+        """Build the conditional task panel container with mouse support and adaptive height."""
         
         def get_task_panel_content():
             """Get task panel content with dynamic width."""
@@ -815,6 +812,28 @@ class CCCCSetupApp:
             # Use 90% of terminal width, min 60, max 120
             panel_width = max(60, min(120, int(width * 0.9)))
             return self.task_panel.get_expanded_text(width=panel_width)
+        
+        def get_panel_height():
+            """Calculate panel height based on task count."""
+            if not self.task_panel:
+                return 8
+            task_count = self.task_panel.get_task_count()
+            # Layout analysis:
+            # Line 0: Top border
+            # Line 1: Empty line
+            # Line 2: Column headers (if tasks)
+            # Line 3: Separator (if tasks)
+            # Lines 4-N: Task rows
+            # Line N+1: Empty line
+            # Line N+2: Progress line (if tasks)
+            # Line N+3: Help line
+            # Line N+4: Bottom border
+            if task_count == 0:
+                # No tasks: border(2) + empty(1) + message(1) + empty(1) + border = 6
+                return 6
+            else:
+                # With tasks: border(2) + empty(1) + headers(2) + tasks + empty(1) + summary(2) + border = 8 + tasks
+                return min(8 + task_count, 18)  # Cap at 18 to leave room for timeline
         
         # Create FormattedTextControl with mouse handler
         ctrl = FormattedTextControl(
@@ -851,12 +870,12 @@ class CCCCSetupApp:
         # Attach mouse handler
         ctrl.mouse_handler = handle_mouse
         
+        # Window with dynamic height - use Dimension for proper sizing
         return ConditionalContainer(
             content=Window(
                 content=ctrl,
-                # Dynamic height based on task count
-                height=Dimension(min=8, max=25, preferred=12),
-                dont_extend_height=False,
+                height=lambda: get_panel_height(),
+                dont_extend_height=True,
                 style='class:task-panel',
             ),
             filter=Condition(lambda: self.task_panel is not None and self.task_panel.expanded)
@@ -1009,6 +1028,12 @@ class CCCCSetupApp:
             'task-detail.step-done': '#3fb950',         # Done steps - green
             'task-detail.step-active': '#ffa657 bold',  # Active step - orange
             'task-detail.step-pending': '#6e7681',      # Pending steps - gray
+            
+            # Task status in header (before button)
+            'task-status': '#79c0ff',                     # Task status info
+            
+            # Task Button in Header - PROMINENT with background
+            'button.task.bg': 'bg:#238636 #ffffff bold',  # Green background, white text - OBVIOUS BUTTON
         })
 
     def _load_existing_config(self) -> None:
@@ -2949,9 +2974,17 @@ class CCCCSetupApp:
             self._write_timeline(f"Failed to show task: {str(e)[:50]}", 'error')
 
     def _show_task_detail_dialog(self, task_id: str) -> None:
-        """Show task detail as a floating dialog (Level 2) over task list (Level 1)."""
+        """Show task detail as a floating dialog (Level 2) over task list (Level 1).
+        
+        Supports navigation:
+        - Keyboard: ← → to navigate, Esc to close
+        - Mouse: Click Prev/Next/Close buttons
+        """
         if not self.task_panel:
             return
+        
+        # Store current task ID for navigation
+        self._current_detail_task_id = task_id
         
         # Get terminal size for adaptive sizing
         try:
@@ -2964,11 +2997,31 @@ class CCCCSetupApp:
         dialog_width = max(75, min(130, int(term_width * 0.85)))
         dialog_height = max(18, min(38, int(term_height * 0.75)))
         
+        # Get task list for navigation
+        summary = self.task_panel._get_summary()
+        task_ids = [t['id'] for t in summary.get('tasks', [])]
+        current_idx = task_ids.index(task_id) if task_id in task_ids else 0
+        total_tasks = len(task_ids)
+        
         # Get task detail with proper width for content
         detail_text = self.task_panel.get_task_detail_plain(task_id, width=dialog_width - 8)
         
         def on_close():
             self._close_task_detail_dialog()
+        
+        def on_prev():
+            """Navigate to previous task"""
+            if total_tasks > 1 and current_idx > 0:
+                prev_id = task_ids[current_idx - 1]
+                self._close_dialog()
+                self._show_task_detail_dialog(prev_id)
+        
+        def on_next():
+            """Navigate to next task"""
+            if total_tasks > 1 and current_idx < total_tasks - 1:
+                next_id = task_ids[current_idx + 1]
+                self._close_dialog()
+                self._show_task_detail_dialog(next_id)
         
         # Create content area with scrolling
         content_window = Window(
@@ -2982,9 +3035,30 @@ class CCCCSetupApp:
             show_scrollbar=True,
         )
         
-        # Create dialog with adaptive size and properly sized button
+        # Build button list: [◀ Prev] [Next ▶] [Close (Esc)]
+        # Always show all buttons for consistent layout; disable when not applicable
+        buttons = []
+        
+        # Position indicator in title
+        if total_tasks > 0:
+            pos_indicator = f" ({current_idx + 1}/{total_tasks})"
+        else:
+            pos_indicator = ""
+        
+        # Prev button (only if not at start and has multiple tasks)
+        if total_tasks > 1 and current_idx > 0:
+            buttons.append(Button(text="◀ Prev", handler=on_prev, width=12))
+        
+        # Next button (only if not at end and has multiple tasks)
+        if total_tasks > 1 and current_idx < total_tasks - 1:
+            buttons.append(Button(text="Next ▶", handler=on_next, width=12))
+        
+        # Close button always present
+        buttons.append(Button(text="Close (Esc)", handler=on_close, width=14))
+        
+        # Create dialog with adaptive size
         dialog = Dialog(
-            title=f"📋 Task {task_id} Details",
+            title=f"📋 Task {task_id}{pos_indicator}",
             body=HSplit([
                 Frame(
                     body=scrollable_content,
@@ -2992,14 +3066,14 @@ class CCCCSetupApp:
                 ),
             ], width=Dimension(min=75, max=dialog_width, preferred=dialog_width),
                height=Dimension(min=15, max=dialog_height, preferred=dialog_height)),
-            buttons=[
-                Button(text="Close (Esc)", handler=on_close, width=20),
-            ],
+            buttons=buttons,
             with_background=True,
         )
         
         # Mark task detail as open (Level 2)
         self.task_detail_open = True
+        self._current_task_ids = task_ids
+        self._current_task_idx = current_idx
         self._open_dialog(dialog)
     
     def _close_task_detail_dialog(self) -> None:
@@ -3295,6 +3369,31 @@ class CCCCSetupApp:
                     self.app.layout.focus(self.input_field)
                 except Exception:
                     pass
+        
+        # Task detail navigation with arrow keys
+        @kb.add('left', filter=Condition(lambda: self.task_detail_open and self.modal_open))
+        def task_detail_prev(event) -> None:
+            """Navigate to previous task in detail dialog"""
+            try:
+                if hasattr(self, '_current_task_ids') and hasattr(self, '_current_task_idx'):
+                    if self._current_task_idx > 0:
+                        prev_id = self._current_task_ids[self._current_task_idx - 1]
+                        self._close_dialog()
+                        self._show_task_detail_dialog(prev_id)
+            except Exception:
+                pass
+        
+        @kb.add('right', filter=Condition(lambda: self.task_detail_open and self.modal_open))
+        def task_detail_next(event) -> None:
+            """Navigate to next task in detail dialog"""
+            try:
+                if hasattr(self, '_current_task_ids') and hasattr(self, '_current_task_idx'):
+                    if self._current_task_idx < len(self._current_task_ids) - 1:
+                        next_id = self._current_task_ids[self._current_task_idx + 1]
+                        self._close_dialog()
+                        self._show_task_detail_dialog(next_id)
+            except Exception:
+                pass
         
         # Return to input from timeline (Esc)
         @kb.add('escape', filter=has_focus(self.timeline) & ~Condition(lambda: self.modal_open))

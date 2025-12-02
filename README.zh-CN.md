@@ -271,10 +271,10 @@ cccc run
 | `/resume` | 恢复handoff投递（发送NUDGE处理积压消息） |
 | `/restart peera\|peerb\|both` | 重启Peer CLI进程 |
 | `/quit` | 退出CCCC（分离tmux） |
-| `/setup` | 打开/关闭设置面板 |
 | `/foreman on\|off\|status\|now` | 控制Foreman（如已启用） |
 | `/aux <提示>` | 调用Aux执行一次性任务 |
 | `/verbose on\|off` | 开关Peer摘要 + Foreman抄送 |
+| `/task [ID]` | 显示任务状态或详情 |
 
 **自然语言路由**（不用斜杠也行）：
 ```
@@ -300,12 +300,12 @@ both: 我们来规划下一个milestone
 | **操作** | Foreman控制 | `/foreman` | `/foreman` | `!foreman` | `!foreman` |
 | | 运行Aux | `/aux` | `/aux` | `!aux` | `!aux` |
 | | 详细模式 | `/verbose` | `/verbose` | `!verbose` | `!verbose` |
+| | 任务状态 | `/task` | — | — | — |
 | **订阅** | 获取chat ID | — | `/whoami` | — | — |
 | | 订阅 | — | `/subscribe` | `!subscribe` | `!subscribe` |
 | | 取消订阅 | — | `/unsubscribe` | `!unsubscribe` | `!unsubscribe` |
 | **工具** | 显示状态 | — | `/status` | `!status` | `!status` |
 | | 显示帮助 | `/help` | `/help` | `!help` | `!help` |
-| | 设置面板 | `/setup` | — | — | — |
 
 > **图例**：`/cmd` = 斜杠前缀，`!cmd` = 叹号前缀，`x:` = 冒号路由，`x!` = 直通，— = 不支持
 

@@ -13,7 +13,7 @@ delivery:
   self_check_every_handoffs: 6
   self_check_text: '[Strategic Self-check · strict · <=1 line each]
 
-    1) Using POR (North-star/Guardrails/Now-Next-Later), are we off-course? Point
+    1) Using current POR/tasks, are we off-course? Point
     the smallest divergence and the evidence.
 
     2) Which current task is least worth continuing? Remove sunk cost; propose stop/change

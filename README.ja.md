@@ -271,10 +271,10 @@ TUI入力欄で使用（Tabで補完可能）：
 | `/resume` | handoff配信を再開（保留中にNUDGE送信） |
 | `/restart peera\|peerb\|both` | Peer CLIプロセスを再起動 |
 | `/quit` | CCCCを終了（tmuxをデタッチ） |
-| `/setup` | 設定パネルを開く/閉じる |
 | `/foreman on\|off\|status\|now` | Foremanを制御（有効な場合） |
 | `/aux <プロンプト>` | Auxを呼び出して一度だけタスクを実行 |
 | `/verbose on\|off` | Peer要約 + Foreman CCをオン/オフ |
+| `/task [ID]` | タスクステータスまたは詳細を表示 |
 
 **自然言語ルーティング**（スラッシュなしでもOK）：
 ```
@@ -300,12 +300,12 @@ both: 次のマイルストーンを計画しよう
 | **操作** | Foreman制御 | `/foreman` | `/foreman` | `!foreman` | `!foreman` |
 | | Auxを実行 | `/aux` | `/aux` | `!aux` | `!aux` |
 | | 詳細モード | `/verbose` | `/verbose` | `!verbose` | `!verbose` |
+| | タスク表示 | `/task` | — | — | — |
 | **サブスクリプション** | chat IDを取得 | — | `/whoami` | — | — |
 | | サブスクライブ | — | `/subscribe` | `!subscribe` | `!subscribe` |
 | | サブスクライブ解除 | — | `/unsubscribe` | `!unsubscribe` | `!unsubscribe` |
 | **ユーティリティ** | ステータス表示 | — | `/status` | `!status` | `!status` |
 | | ヘルプ表示 | `/help` | `/help` | `!help` | `!help` |
-| | 設定パネル | `/setup` | — | — | — |
 
 > **凡例**：`/cmd` = スラッシュプレフィックス、`!cmd` = 感嘆符プレフィックス、`x:` = コロンルーティング、`x!` = パススルー、— = 非対応
 
