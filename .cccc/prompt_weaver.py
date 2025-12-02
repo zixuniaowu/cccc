@@ -31,10 +31,11 @@ def _calc_rules_hash(home: Path) -> str:
     import hashlib
     parts: list[str] = []
     for name in [
-        "settings/cli_profiles.yaml",
+        "settings/cli_profiles.yaml",  # Contains roles (peerA/peerB/aux) config
         "settings/telegram.yaml",
         "settings/slack.yaml",
         "settings/discord.yaml",
+        "settings/foreman.yaml",       # Foreman config (separate from cli_profiles)
     ]:
         fp = home / name
         if fp.exists():
@@ -43,7 +44,7 @@ def _calc_rules_hash(home: Path) -> str:
             except Exception:
                 pass
     # Bump the generation suffix when changing rules content semantics
-    payload = "\n".join(parts) + "\nGEN:9"
+    payload = "\n".join(parts) + "\nGEN:10"
     return hashlib.sha1(payload.encode("utf-8", errors="replace")).hexdigest()
 
 def _is_im_enabled(home: Path) -> bool:
@@ -143,6 +144,30 @@ def _aux_mode(home: Path) -> str:
     actor = str((aux_role.get('actor') or '').strip())
     return "on" if actor else "off"
 
+def _is_single_peer_mode(home: Path) -> bool:
+    """Detect if running in single-peer mode (PeerB=none)."""
+    conf_path = home/"settings"/"cli_profiles.yaml"
+    conf = _read_yaml_or_json(conf_path) if conf_path.exists() else {}
+    roles = conf.get('roles') if isinstance(conf.get('roles'), dict) else conf
+    peer_b = roles.get('peerB') if isinstance(roles.get('peerB'), dict) else {}
+    actor = str((peer_b.get('actor') or '').strip().lower())
+    return not actor or actor == 'none'
+
+def _is_foreman_configured(home: Path) -> bool:
+    """Detect if foreman is configured (has an agent assigned).
+
+    Note: This checks if foreman is CONFIGURED, not if it's currently ENABLED.
+    - Configured = agent is set (can be toggled on/off at runtime)
+    - Not configured = agent is 'none' or missing (foreman unavailable)
+
+    Rule files should exist when foreman is CONFIGURED, regardless of enabled state,
+    because user can toggle /foreman on at any time.
+    """
+    conf_path = home/"settings"/"foreman.yaml"
+    conf = _read_yaml_or_json(conf_path) if conf_path.exists() else {}
+    agent = str(conf.get('agent', '') or '').strip().lower()
+    return bool(agent) and agent != 'none'
+
 def _conversation_reset(home: Path) -> Tuple[str, Optional[int]]:
     profiles = home/"settings"/"cli_profiles.yaml"
     if not profiles.exists():
@@ -175,7 +200,7 @@ def _format_local_ts() -> str:
     main = dt.strftime("%Y-%m-%d %H:%M:%S")
     return f"{main} {tzname} ({offset_str})" if tzname else f"{main} ({offset_str})"
 
-def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: str) -> Path:
+def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: str, single_peer_mode: bool = False) -> Path:
     is_peera = (peer.lower() == "peera" or peer == "peerA")
     role_name = "PeerA" if is_peera else "PeerB"
     rules_filename = "PEERA.md" if is_peera else "PEERB.md"
@@ -185,18 +210,37 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     por_rel = por_path(home).as_posix()
     aux_enabled = aux_mode == "on"
 
-    ch1 = [
-        "1) Who You Are - Collaborators - Purpose",
-        "- Equal peers",
-        "  - You and the other peer collaborate as equals to deliver evidence-first, small, reversible steps that outperform a single expert.",
-        "- Ethos (non-negotiable)",
-        "  - Agency and ownership; act like a top generalist.",
-        "  - Widen perspective; Keep higher-order thinking.",
-        "  - Evidence-first; chat never changes state.",
-        "  - Taste and clarity: simple, tight, clean.",
-        "  - Anti-laziness: refuse low-signal output; prefer decisive micro-moves.",
+    # Single-peer mode: only PeerA is active
+    if single_peer_mode:
+        ch1 = [
+            "1) Who You Are - Mode - Purpose",
+            "- Single-peer mode",
+            "  - You are the sole executing agent with full CCCC infrastructure: Foreman, Aux, self-check, auto-compact, Blueprint, IM bridges.",
+            "  - User provides direction and decisions; System maintains work rhythm via keepalive.",
+            "- Ethos (non-negotiable)",
+            "  - Agency and ownership; act like a top generalist.",
+            "  - Widen perspective; Keep higher-order thinking.",
+            "  - Evidence-first; chat never changes state.",
+            "  - Taste and clarity: simple, tight, clean.",
+            "  - Anti-laziness: refuse low-signal output; prefer decisive micro-moves.",
+            "- Self-review emphasis (important in single-peer mode)",
+            "  - Without a peer to review your work: after significant steps, ask yourself \"Is this direction correct?\"",
+            "  - Before committing changes: \"What could go wrong?\"",
+            "  - When uncertain: Report to user via to_user.md rather than proceed blindly.",
+        ]
+    else:
+        ch1 = [
+            "1) Who You Are - Collaborators - Purpose",
+            "- Equal peers",
+            "  - You and the other peer collaborate as equals to deliver evidence-first, small, reversible steps that outperform a single expert.",
+            "- Ethos (non-negotiable)",
+            "  - Agency and ownership; act like a top generalist.",
+            "  - Widen perspective; Keep higher-order thinking.",
+            "  - Evidence-first; chat never changes state.",
+            "  - Taste and clarity: simple, tight, clean.",
+            "  - Anti-laziness: refuse low-signal output; prefer decisive micro-moves.",
 
-    ]
+        ]
     if aux_enabled:
         ch1 += [
             "- On-demand helper: Aux - purpose & direction",
@@ -204,13 +248,14 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - Mode: on - Aux has the same FoV and permissions in this repo as you. Just call Aux for help.",
         ]
     else:
+        aux_desc = "handle strategy checks and heavy lifting directly." if not single_peer_mode else "handle strategy checks and heavy lifting yourself."
         ch1 += [
             "- Aux availability",
-            "  - Aux is disabled for this run. You and your peer handle strategy checks and heavy lifting directly.",
+            f"  - Aux is disabled for this run. You {aux_desc}",
         ]
 
     # PeerB must not address USER directly. Make the I/O boundary explicit early.
-    if not is_peera:
+    if not is_peera and not single_peer_mode:
         ch1 += [
             "- IO contract (strict)",
             "  - Outbound routes: to_peer only. Never send to USER. All user-facing messages are owned by PeerA or System.",
@@ -221,12 +266,11 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "2) Canonical references and anchors",
         f"- POR.md - single source of direction (path: {por_rel})",
         "  - Keep North-star, guardrails, bets/assumptions, Now/Next/Later, and portfolio health here (no details).",
-        "- SUBPOR - execution anchor (one task = one SUBPOR)",
-        "  - Location: docs/por/T######-slug/SUBPOR.md",
-        "  - Sections: goal/scope; non-goals; deliverable and interface; 3-5 acceptance items; cheapest probe; evidence refs; risks/deps; next (single, decidable).",
-        "  - Rule: Do NOT create a new SUBPOR unless the other peer explicitly ACKs your propose-subtask.",
-        ("  - SUBPOR creation is owned only by PeerB. Both peers can update/maintain the sheet after creation." if is_peera else "  - SUBPOR creation is owned only by YOU. Both peers can update/maintain the sheet after creation."),
-        ("" if is_peera else "  - Create after ACK: python .cccc/por_subpor.py subpor new --title \"...\" --owner peerB [--slug s] [--timebox 1d]"),
+        "- Blueprint task system - structured task tracking for complex work",
+        "  - Location: docs/por/T###-slug/task.yaml",
+        "  - Use for: multi-step goals (>2 files OR >50 lines); work spanning multiple handoffs; user-requested planning",
+        "  - Skip for: quick tasks (<=2 files AND <=50 lines); immediate fixes; simple questions",
+        "  - See Chapter 3 for full protocol",
         "- Work surfaces",
         "  - Use .cccc/work/** for scratch, samples, logs. Cite exact paths and line ranges instead of pasting large blobs.",
         "  - Boundary: do not modify orchestrator code/config/policies; use mailbox/work/state/logs exactly as documented.",
@@ -246,7 +290,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - 3 Validate (command + 1-3 stable lines; cite exact paths/line ranges).",
         "  - 4 Write the message using the skeleton in Chapter 4.",
         "  - 5 Add one insight (WHY + Next + refs); do not repeat the body.",
-        "  - 6 If direction changed, update POR and the relevant SUBPOR.",
+        "  - 6 If direction changed, update POR. If task exists, send progress marker.",
         "- Evidence and change budget",
         "  - Done = has verifiable evidence (commit/test/log).",
         "  - Only tests/logs/commits count as evidence. Avoid speculative big refactors; always show the smallest reproducible check.",
@@ -266,9 +310,29 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "    Next[(tag=...)]: <single next step, ≤30 minutes>",
         "  - Human-only lines (not parsed): Outcome / Why / Opposite / Files / Refs.",
         "  - Non-English aliases are supported at runtime; documentation uses English keywords only.",
-        "- Progress keepalive (runtime)",
-        "  - When your message contains a `Progress:` line and the other peer stays silent, the orchestrator may send you a delayed (~60s, configurable) FROM_SYSTEM keepalive to continue your next step; it is suppressed when your inbox already has messages or there are in‑flight/queued handoffs for you.",
+        "- Progress keepalive (runtime)" if not single_peer_mode else "- Progress keepalive (single-peer mode)",
+        ("  - When your message contains a `Progress:` line, System sends a continuation prompt (~4 min delay, up to 3 nudges) to maintain work rhythm."
+         if single_peer_mode else
+         "  - When your message contains a `Progress:` line and the other peer stays silent, the orchestrator may send you a delayed (~60s, configurable) FROM_SYSTEM keepalive to continue your next step; it is suppressed when your inbox already has messages or there are in‑flight/queued handoffs for you."),
     ]
+    # Single-peer mode: simplified channel guidance (use to_user.md primarily)
+    if single_peer_mode:
+        ch3 += [
+            "- Communication channel (single-peer)",
+            "  - Use **to_user.md** for all output - progress, questions, and results.",
+            "  - System monitors Progress markers to maintain work rhythm (triggers keepalive).",
+            "  - Format your messages with Progress markers:",
+            "    ```",
+            "    <TO_USER>",
+            "    Progress(tag=impl): Completed auth middleware",
+            "    Next: Add unit tests for login flow",
+            "    ",
+            "    [Summary for user if needed]",
+            "    </TO_USER>",
+            "    ```",
+            "  - When System detects Progress, it will send continuation prompts (~4 min) to maintain rhythm.",
+            "  - Note: to_peer.md also works if you prefer separate channels, but to_user.md is simpler.",
+        ]
     # Aux section reflects current binding (actor/invoke/cwd/rate)
     from pathlib import Path as _P
     bnd = _resolve_bindings(home)
@@ -296,38 +360,76 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - Write an Ask(to=peerA, action=relay_to_user, ...) line under the relevant Item. Do not address USER directly.",
         ]
 
-    # Blueprint task protocol - progress markers
+    # Task Management Protocol - complete specification
     ch3_blueprint = [
-        "- Blueprint task protocol {#blueprint}",
-        "  - When user gives a multi-step goal, create task files in docs/por/blueprint/",
-        "  - Directory: docs/por/blueprint/T001-slug/task.yaml",
-        "  - Task file format (task.yaml):",
+        "- Task Management Protocol {#task-protocol}",
+        "  PHASE 1 - GOAL DETECTION: When you receive a message, detect if it's a goal:",
+        "  - Goal signals: action verbs (add, implement, create, build, refactor), outcome descriptions, feature scope",
+        "  - NOT a goal: questions, follow-ups to existing work, single-file fixes, clarifications",
+        "",
+        "  PHASE 2 - THRESHOLD CHECK: If it's a goal, check if formal planning is needed:",
+        "  - SKIP planning (Quick Task) if ALL true:",
+        "    * Files affected: <=2 files",
+        "    * Lines changed: <=50 lines total",
+        "    * Type: bugfix, typo, config, docs, minor refactor",
+        "    * Single concern (not cross-cutting)",
+        "  - REQUIRE planning if ANY true:",
+        "    * Files affected: >=3 files",
+        "    * New components: any new module/class/API",
+        "    * User-facing change: new feature, UI change",
+        "    * Uncertainty: you're unsure about approach",
+        "",
+        "  PHASE 3 - PLANNING (dual-peer: PeerA creates, PeerB reviews):",
+        "  - Directory: docs/por/T###-slug/task.yaml",
+        "  - Task ID: T001, T002... (scan docs/por/ to find next available)",
+        "  - REQUIRED: Create task.yaml file BEFORE starting execution",
+        "  - Dual-peer mode: set status='pending_review', post plan in TO_PEER for review",
+        "  - Single-peer mode: set status='planned' or 'active', post plan in TO_USER",
+        "  - task.yaml format:",
+        "    ```yaml",
         "    id: T001",
-        "    name: Task Name (5-50 chars)",
-        "    goal: User-visible outcome description",
-        "    status: planned",
+        "    name: Short descriptive name (5-50 chars)",
+        "    goal: Clear success criteria - what 'done' looks like",
+        "    status: planned  # planned | pending_review | active | complete",
         "    steps:",
         "      - id: S1",
-        "        name: First step name",
-        "        done: Completion criteria (tests pass, API documented, etc.)",
-        "        status: pending",
+        "        name: First step description",
+        "        done: Concrete completion criteria",
+        "        status: pending  # pending | in_progress | complete",
         "      - id: S2",
-        "        name: Second step name",
+        "        name: Second step",
         "        done: Completion criteria",
         "        status: pending",
-        "  - Progress markers (add to message body, orchestrator parses and updates files):",
-        "    progress: T001 start           # Activate task",
-        "    progress: T001.S1 done         # Complete step S1",
-        "    progress: T001.S2 blocked: waiting for API   # Notify blocked (no state change)",
-        "    progress: T001 promoted        # Quick task upgraded to formal task",
-        "  - When to use blueprint:",
-        "    - Multi-step goals (>2 files OR >50 lines total change)",
-        "    - Work spanning multiple handoffs",
-        "    - User explicitly requests planning",
-        "  - Quick tasks (no blueprint needed):",
-        "    - Single-step changes (<=2 files AND <=50 lines)",
-        "    - Immediate fixes/typos",
-        "    - Simple questions",
+        "    ```",
+        "    Status values (EXACT strings, case-sensitive):",
+        "    - Task status: planned → pending_review → active → complete",
+        "    - Step status: pending → in_progress → complete",
+        "",
+        "  PHASE 3.5 - PEER REVIEW (dual-peer only):",
+        "  - When you receive a task with status='pending_review':",
+        "    * Review goal clarity, step completeness, and approach soundness",
+        "    * If approved: change status to 'active' and send 'progress: T### start'",
+        "    * If needs changes: reply with specific feedback, keep status='pending_review'",
+        "    * If rejected: change status to 'planned' with reason in TO_PEER",
+        "  - Review criteria: Is the goal measurable? Are steps 2-8 and sized right? Any risks?",
+        "",
+        "  PHASE 4 - EXECUTION: Use progress markers (orchestrator updates files):",
+        "  - Marker format: progress: <target> <action>",
+        "  - Actions:",
+        "    progress: T001 start           # Activate task (after review), first step becomes in_progress",
+        "    progress: T001.S1 done         # Complete step, advance to next",
+        "    progress: T001.S2 blocked: reason   # Notify blocked (step stays in_progress)",
+        "    progress: T001 promoted        # Quick task -> formal task (create task.yaml first)",
+        "  - Include marker at end of TO_USER message when state changes",
+        "  - Example message:",
+        "    <TO_USER>",
+        "    API implementation complete, tests passing. Starting frontend next.",
+        "    progress: T001.S2 done",
+        "    </TO_USER>",
+        "",
+        "  QUICK TASK (below threshold):",
+        "  - Execute directly, no task.yaml needed",
+        "  - If complexity discovered mid-work: create task.yaml, send 'progress: T### promoted'",
     ]
     ch3 += ch3_blueprint
 
@@ -343,7 +445,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         f"  - Update-only: always overwrite {target_list}; do NOT append or create new variants.",
         "  - After sending, your message file is replaced with a one-line status sentinel 'MAILBOX:SENT v1 …'. Don't care about it; simply overwrite the whole file with your next message.",
         "  - Encoding: UTF-8 (no BOM).",
-        "  - Do not claim done unless acceptance is checked in SUBPOR and you include minimal verifiable evidence (tests/stable logs/commit refs).",
+        "  - Do not claim done unless you include minimal verifiable evidence (tests/stable logs/commit refs). If using tasks, send progress marker.",
     ]
     ch4 += [
         "  - Keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced `insight` block (insight is for explore/reflect/idea only; the system does not parse governance from it).",
@@ -489,29 +591,76 @@ def ensure_rules_docs(home: Path):
         old = json.loads(stamp.read_text(encoding="utf-8"))
     except Exception:
         old = {}
-    if (not (home/"rules"/"PEERA.md").exists()) or (not (home/"rules"/"PEERB.md").exists()) or (not (home/"rules"/"AUX.md").exists()) or (not (home/"rules"/"FOREMAN.md").exists()) or (old.get("hash") != h):
+
+    # Detect current configuration
+    single_peer = _is_single_peer_mode(home)
+    aux_mode = _aux_mode(home)
+    foreman_configured = _is_foreman_configured(home)
+
+    # Check required files exist (only check files for ACTIVE components)
+    peera_missing = not (home/"rules"/"PEERA.md").exists()
+    peerb_missing = not single_peer and not (home/"rules"/"PEERB.md").exists()
+    aux_missing = (aux_mode == "on") and not (home/"rules"/"AUX.md").exists()
+    foreman_missing = foreman_configured and not (home/"rules"/"FOREMAN.md").exists()
+    hash_changed = old.get("hash") != h
+
+    if peera_missing or peerb_missing or aux_missing or foreman_missing or hash_changed:
         ensure_por(home)  # make sure POR exists for path rendering
         im_enabled = _is_im_enabled(home)
-        aux_mode = _aux_mode(home)
-        _write_rules_for_peer(home, "peerA", im_enabled=im_enabled, aux_mode=aux_mode)
-        _write_rules_for_peer(home, "peerB", im_enabled=im_enabled, aux_mode=aux_mode)
-        _write_rules_for_aux(home, aux_mode=aux_mode)
-        _write_rules_for_foreman(home)
-        # Append Aux section in POR only when Aux is enabled and the section does not exist yet
+
+        # Generate PEERA.md (always needed)
+        _write_rules_for_peer(home, "peerA", im_enabled=im_enabled, aux_mode=aux_mode, single_peer_mode=single_peer)
+
+        # PEERB.md: generate only in dual-peer mode, delete in single-peer mode
+        if not single_peer:
+            _write_rules_for_peer(home, "peerB", im_enabled=im_enabled, aux_mode=aux_mode, single_peer_mode=False)
+        else:
+            peerb_rules = home / "rules" / "PEERB.md"
+            if peerb_rules.exists():
+                try:
+                    peerb_rules.unlink()
+                except Exception:
+                    pass
+
+        # AUX.md: generate only when aux is enabled, delete when disabled
         if aux_mode == "on":
+            _write_rules_for_aux(home, aux_mode=aux_mode)
             try:
                 ensure_aux_section(home)
             except Exception:
                 pass
+        else:
+            aux_rules = home / "rules" / "AUX.md"
+            if aux_rules.exists():
+                try:
+                    aux_rules.unlink()
+                except Exception:
+                    pass
+
+        # FOREMAN.md: generate only when foreman is configured, delete when not configured
+        if foreman_configured:
+            _write_rules_for_foreman(home)
+        else:
+            foreman_rules = home / "rules" / "FOREMAN.md"
+            if foreman_rules.exists():
+                try:
+                    foreman_rules.unlink()
+                except Exception:
+                    pass
+
         try:
             stamp.write_text(json.dumps({"hash": h}, ensure_ascii=False), encoding="utf-8")
         except Exception:
             pass
 
 def rebuild_rules_docs(home: Path):
-    """Rebuild rules docs unconditionally (used once at orchestrator startup).
-    - Always rewrites .cccc/rules/PEERA.md, PEERB.md, AUX.md with fresh
-      timestamps and current IM/Aux mode derived from settings/env.
+    """Rebuild rules docs unconditionally (called at launch time after TUI confirms settings).
+    - Generates rule files only for ACTIVE/CONFIGURED components:
+      - PEERA.md: always generated
+      - PEERB.md: only in dual-peer mode (deleted in single-peer mode)
+      - AUX.md: only when aux is enabled (deleted when disabled)
+      - FOREMAN.md: only when foreman is configured (deleted when not configured)
+        Note: "configured" means agent is set (not 'none'), regardless of enabled state
     - Updates state/rules_hash.json to the current computed hash so that
       subsequent ensure_rules_docs() calls are no-ops for this run unless
       settings change.
@@ -519,15 +668,48 @@ def rebuild_rules_docs(home: Path):
     ensure_por(home)
     im_enabled = _is_im_enabled(home)
     aux_mode = _aux_mode(home)
-    _write_rules_for_peer(home, "peerA", im_enabled=im_enabled, aux_mode=aux_mode)
-    _write_rules_for_peer(home, "peerB", im_enabled=im_enabled, aux_mode=aux_mode)
-    _write_rules_for_aux(home, aux_mode=aux_mode)
-    _write_rules_for_foreman(home)
+    single_peer = _is_single_peer_mode(home)
+    foreman_configured = _is_foreman_configured(home)
+
+    # Generate PEERA.md (always needed)
+    _write_rules_for_peer(home, "peerA", im_enabled=im_enabled, aux_mode=aux_mode, single_peer_mode=single_peer)
+
+    # PEERB.md: generate only in dual-peer mode, delete in single-peer mode
+    if not single_peer:
+        _write_rules_for_peer(home, "peerB", im_enabled=im_enabled, aux_mode=aux_mode, single_peer_mode=False)
+    else:
+        peerb_rules = home / "rules" / "PEERB.md"
+        if peerb_rules.exists():
+            try:
+                peerb_rules.unlink()
+            except Exception:
+                pass
+
+    # AUX.md: generate only when aux is enabled, delete when disabled
     if aux_mode == "on":
+        _write_rules_for_aux(home, aux_mode=aux_mode)
         try:
             ensure_aux_section(home)
         except Exception:
             pass
+    else:
+        aux_rules = home / "rules" / "AUX.md"
+        if aux_rules.exists():
+            try:
+                aux_rules.unlink()
+            except Exception:
+                pass
+
+    # FOREMAN.md: generate only when foreman is configured, delete when not configured
+    if foreman_configured:
+        _write_rules_for_foreman(home)
+    else:
+        foreman_rules = home / "rules" / "FOREMAN.md"
+        if foreman_rules.exists():
+            try:
+                foreman_rules.unlink()
+            except Exception:
+                pass
     # Record hash so later 'ensure' calls can skip
     try:
         h = _calc_rules_hash(home)
@@ -577,13 +759,13 @@ def _write_rules_for_foreman(home: Path) -> Path:
         "Anchors to read (skim then decide)",
         "- Project brief: PROJECT.md",
         "- Portfolio board: docs/por/POR.md (Now/Next/Risks)",
-        "- Active tasks: docs/por/T*/SUBPOR.md (Owner/Next/Acceptance)",
+        "- Active tasks: docs/por/T*/task.yaml (status/steps/progress)",
         "- Peer rules: .cccc/rules/PEERA.md, .cccc/rules/PEERB.md",
         "- Evidence/work roots: docs/evidence/**, .cccc/work/**",
         "",
         "Routing defaults & backlog",
         "- Route architecture/alignment/risks to PeerA; implementation/experiments to PeerB.",
-        "- If many pending inbox items exist, remind to process oldest‑first, then propose one smallest next step aligned to POR/SUBPOR.",
+        "- If many pending inbox items exist, remind to process oldest‑first, then propose one smallest next step aligned to POR/tasks.",
         "",
         "Boundaries",
         "- Do not paste long logs in messages; reference repo paths only.",

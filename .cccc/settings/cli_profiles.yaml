@@ -23,7 +23,7 @@ delivery:
     review and rebuild from scratch? Provide the smallest probe and estimate.
 
     4) Any misalignment, unclear boundary, or ambiguous acceptance? Fix it in the
-    corresponding SUBPOR first, then proceed.
+    corresponding task first, then proceed.
 
     5) If we only had 1 day: what to drop, what to keep, what to do first? List three
     bullets.'

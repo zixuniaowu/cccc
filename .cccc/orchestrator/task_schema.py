@@ -39,10 +39,21 @@ class StepStatus(str, Enum):
 
 
 class TaskStatus(str, Enum):
-    """Task lifecycle status."""
-    PLANNED = "planned"
-    ACTIVE = "active"
-    COMPLETE = "complete"
+    """Task lifecycle status.
+
+    Dual-peer workflow:
+    - PeerA creates task with status='pending_review'
+    - PeerB reviews and changes to 'active' (approved) or back to 'planned' (rejected)
+    - Task proceeds through 'active' to 'complete'
+
+    Single-peer workflow:
+    - Peer creates task with status='planned' or 'active'
+    - No review required
+    """
+    PLANNED = "planned"           # Draft, not yet reviewed
+    PENDING_REVIEW = "pending_review"  # Created by PeerA, awaiting PeerB review
+    ACTIVE = "active"             # Approved and in progress
+    COMPLETE = "complete"         # All steps done
 
 
 class Step(BaseModel):

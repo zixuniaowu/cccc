@@ -10,7 +10,7 @@ context:
 blueprint:
   enabled: true
   # Directory for task definitions (relative to project root)
-  dir: "docs/por/blueprint"
+  dir: "docs/por"
   # Maximum steps per task (2-8)
   max_steps: 8
   # Require scope.yaml for task planning

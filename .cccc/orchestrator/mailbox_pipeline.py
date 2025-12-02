@@ -3,6 +3,8 @@ from __future__ import annotations
 import time, hashlib
 from typing import Dict, Any
 
+from common.config import is_single_peer_mode
+
 
 def make(ctx: Dict[str, Any]):
     home = ctx['home']
@@ -25,8 +27,18 @@ def make(ctx: Dict[str, Any]):
     write_status = ctx['write_status']
     write_queue_and_locks = ctx['write_queue_and_locks']
     deliver_paused_box = ctx['deliver_paused_box']
+    _initial_single_peer_mode = bool(ctx.get('single_peer_mode', False))
+
+    def _is_single_peer() -> bool:
+        """Dynamically check single-peer mode (config may have changed via TUI)"""
+        try:
+            return is_single_peer_mode(home)
+        except Exception:
+            return _initial_single_peer_mode
 
     def process():
+        # Re-check single-peer mode each iteration (config may have changed via TUI)
+        current_single_peer = _is_single_peer()
         events = scan_mailboxes(home, mbox_idx)
         payload = ""
         if events["peerA"].get("to_user"):
@@ -69,7 +81,21 @@ def make(ctx: Dict[str, Any]):
             except Exception:
                 pass
         if payload:
-            if should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
+            # In single-peer mode, skip forwarding to PeerB (keepalive handles continuation)
+            if current_single_peer:
+                try:
+                    eid2 = hashlib.sha1(payload.encode('utf-8','ignore')).hexdigest()[:12]
+                except Exception:
+                    eid2 = str(int(time.time()))
+                try:
+                    tsz = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())
+                    sha8 = sha256_text(payload)[:8]
+                    sentinel = compose_sentinel(ts=tsz, eid=eid2, sha8=sha8, route="PeerA→System")
+                    (home/"mailbox"/"peerA"/"to_peer.md").write_text(sentinel, encoding="utf-8")
+                except Exception:
+                    pass
+                log_ledger(home, {"from":"PeerA","kind":"to_peer-ack","route":"single-peer","chars":len(payload)})
+            elif should_forward(payload, "PeerA", "PeerB", policies, state, override_enabled=False):
                 wrapped = f"<FROM_PeerA>\n{payload}\n</FROM_PeerA>\n"
                 send_handoff("PeerA", "PeerB", wrapped)
                 try:
@@ -90,6 +116,12 @@ def make(ctx: Dict[str, Any]):
                     pass
             else:
                 log_ledger(home, {"from":"PeerA","kind":"handoff-drop","route":"mailbox","reason":"low-signal-or-cooldown","chars":len(payload)})
+        # Skip PeerB events in single-peer mode (PeerB not running)
+        if current_single_peer:
+            mbox_idx.save()
+            write_status(deliver_paused_box['v'])
+            write_queue_and_locks()
+            return
         if events["peerB"].get("to_user"):
             txt = events["peerB"].get("to_user"," ").strip()
             try:

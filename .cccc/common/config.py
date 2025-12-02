@@ -78,9 +78,12 @@ def load_profiles(home: Path) -> Dict[str, Any]:
     for r in (peerA_role, peerB_role, aux_role):
         _assert_no_role_io_keys(r)
 
-    def _resolve_peer(role: Dict[str, Any], fallback_name: str) -> Tuple[str, Dict[str, Any], str]:
+    def _resolve_peer(role: Dict[str, Any], fallback_name: str, *, allow_none: bool = False) -> Tuple[str, Dict[str, Any], str]:
         actor_id = str(role.get('actor') or '').strip()
-        if not actor_id:
+        # Handle 'none' or empty actor for single-peer mode
+        if not actor_id or actor_id.lower() == 'none':
+            if allow_none:
+                return 'none', {}, ''
             raise ValueError(f"Missing roles.{fallback_name}.actor")
         ad = actors.get(actor_id)
         if not isinstance(ad, dict):
@@ -95,7 +98,8 @@ def load_profiles(home: Path) -> Dict[str, Any]:
         return actor_id, merged_profile, cmd
 
     pa_actor, pa_profile, pa_cmd = _resolve_peer(peerA_role, 'peerA')
-    pb_actor, pb_profile, pb_cmd = _resolve_peer(peerB_role, 'peerB')
+    # PeerB allows 'none' for single-peer mode
+    pb_actor, pb_profile, pb_cmd = _resolve_peer(peerB_role, 'peerB', allow_none=True)
 
     # Aux (new semantics): aux is ON when roles.aux.actor is set; otherwise OFF
     aux_actor_id = str(aux_role.get('actor') or '').strip()
@@ -177,3 +181,37 @@ def ensure_env_vars(keys: List[str], *, prompt: bool = True) -> List[str]:
             pass
         missing = [k for k in keys if not os.environ.get(k)]
     return missing
+
+
+def is_single_peer_mode(home: Path = None, roles_cfg: Dict[str, Any] = None) -> bool:
+    """
+    Detect if running in single-peer mode.
+
+    Single-peer mode is enabled when PeerB actor is 'none' or empty.
+    This allows CCCC to operate with only PeerA while preserving all
+    orchestration infrastructure (Foreman, Aux, self-check, Blueprint).
+
+    Args:
+        home: .cccc directory path (optional, used to load config if roles_cfg not provided)
+        roles_cfg: Pre-loaded roles configuration (optional)
+
+    Returns:
+        True if single-peer mode, False for dual-peer mode
+    """
+    if roles_cfg is None:
+        if home is None:
+            return False
+        try:
+            cli_profiles = _read_yaml(home / "settings" / "cli_profiles.yaml")
+            roles_cfg = cli_profiles.get('roles') or cli_profiles
+        except Exception:
+            return False
+
+    peer_b = roles_cfg.get('peerB') or {}
+    if isinstance(peer_b, dict):
+        actor = peer_b.get('actor', '')
+    else:
+        actor = ''
+
+    actor = str(actor).strip().lower()
+    return not actor or actor == 'none'

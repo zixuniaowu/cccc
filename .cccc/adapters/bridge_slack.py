@@ -42,6 +42,15 @@ def read_yaml(p: Path) -> Dict[str, Any]:
 
 def _now(): return time.strftime('%Y-%m-%d %H:%M:%S')
 
+def _is_single_peer_mode() -> bool:
+    """Detect if running in single-peer mode (PeerB=none)."""
+    conf_path = HOME/"settings"/"cli_profiles.yaml"
+    conf = read_yaml(conf_path) if conf_path.exists() else {}
+    roles = conf.get('roles') if isinstance(conf.get('roles'), dict) else conf
+    peer_b = roles.get('peerB') if isinstance(roles.get('peerB'), dict) else {}
+    actor = str((peer_b.get('actor') or '').strip().lower())
+    return not actor or actor == 'none'
+
 def _append_log(line: str):
     p = HOME/"state"/"bridge-slack.log"; p.parent.mkdir(parents=True, exist_ok=True)
     with p.open('a', encoding='utf-8') as f: f.write(f"{_now()} {line}\n")
@@ -102,7 +111,13 @@ def _acquire_singleton_lock(name: str = "slack-bridge"):
         sys.exit(0)
     return f
 
-def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
+def _route_from_text(text: str, default_route: str, *, single_peer_mode: bool = False) -> Tuple[List[str], str]:
+    """Parse routing prefix from text and return (routes, remaining_text).
+
+    In single-peer mode:
+    - 'b' routes return (['_error_single_peer'], text) to signal an error
+    - 'both' routes are converted to ['peerA'] only
+    """
     t = (text or '').strip()
     # Support ASCII and fullwidth colon after explicit key: a:/b:/both:
     m = re.match(r"^(a|b|both)[:：]\s*", t, re.I)
@@ -111,11 +126,16 @@ def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
         if kind == 'a':
             return ['peerA'], t
         if kind == 'b':
+            if single_peer_mode:
+                return ['_error_single_peer'], t
             return ['peerB'], t
-        return ['peerA','peerB'], t
+        return ['peerA'] if single_peer_mode else ['peerA','peerB'], t
     if default_route == 'a': return ['peerA'], t
-    if default_route == 'b': return ['peerB'], t
-    return ['peerA','peerB'], t
+    if default_route == 'b':
+        if single_peer_mode:
+            return ['_error_single_peer'], t
+        return ['peerB'], t
+    return ['peerA'] if single_peer_mode else ['peerA','peerB'], t
 
 def _ensure_inbox_dirs(peer: str) -> Tuple[Path, Path, Path]:
     base = HOME/"mailbox"/peer; inbox = base/"inbox"; proc = base/"processed"; state = HOME/"state"
@@ -667,12 +687,12 @@ def main():
                 _append_log(f"[cmd] status ch={ch}")
                 return
 
-            # Task/Blueprint status command: !task
+            # Task status command: !task
             if re.match(r'^!task\b', command_text, re.I):
                 if format_task_for_im:
                     task_text = format_task_for_im(HOME / "state")
                 else:
-                    task_text = "Blueprint module not available"
+                    task_text = "Task module not available"
                 _send_reply(task_text)
                 _append_log(f"[cmd] task ch={ch}")
                 return
@@ -859,7 +879,10 @@ def main():
                 # Allow only subscribe/unsubscribe without prefix; drop other chatter
                 _append_log(f"[inbound] drop without prefix ch={ch}")
                 return
-            routes, body = _route_from_text(stripped, default_route)
+            routes, body = _route_from_text(stripped, default_route, single_peer_mode=_is_single_peer_mode())
+            if routes == ['_error_single_peer']:
+                _send_reply('Single-peer mode: use a: instead of b:')
+                return
             mid = f"slack-{int(time.time())}-{user[-4:]}"
             _write_inbox(routes, body, mid)
         except Exception:

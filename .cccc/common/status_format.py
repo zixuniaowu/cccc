@@ -44,7 +44,7 @@ def format_help_for_im(prefix: str = '/') -> str:
         "",
         "\u25b8 Info",
         f"  {p}status \u2192 system status",
-        f"  {p}task \u2192 blueprint task status",
+        f"  {p}task \u2192 task status",
         f"  {p}verbose [on|off] \u2192 toggle summaries",
         "",
         "\u25b8 Account",
@@ -201,20 +201,24 @@ def format_status_compact(state_dir: Path) -> str:
     return f"{status} handoffs:{total}"
 
 
-def format_task_for_im(state_dir: Path) -> str:
+def format_task_for_im(state_dir: Path, task_id: Optional[str] = None) -> str:
     """
     Format task/blueprint status for IM display.
 
-    Reads from docs/por/blueprint/ via TaskManager.
+    Uses TaskPanel for consistent WBS-style output.
+
+    Args:
+        state_dir: Path to .cccc/state
+        task_id: Optional specific task ID for detail view
     """
     home_dir = state_dir.parent  # .cccc/state -> .cccc
     root_dir = home_dir.parent   # .cccc -> project root
 
     try:
-        from orchestrator.task_manager import TaskManager
-        manager = TaskManager(root_dir)
-        return manager.format_for_im()
+        from tui_ptk.task_panel import TaskPanel
+        panel = TaskPanel(root_dir)
+        return panel.format_for_im(task_id)
     except ImportError:
-        return "\u2501\u2501\u2501 Blueprint \u2501\u2501\u2501\nModule not available"
+        return "\u2501\u2501\u2501 Tasks \u2501\u2501\u2501\nModule not available"
     except Exception as e:
-        return f"\u2501\u2501\u2501 Blueprint \u2501\u2501\u2501\nError: {str(e)[:50]}"
+        return f"\u2501\u2501\u2501 Tasks \u2501\u2501\u2501\nError: {str(e)[:50]}"

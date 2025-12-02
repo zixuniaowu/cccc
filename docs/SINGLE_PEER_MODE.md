@@ -54,54 +54,60 @@ Single-peer mode allows CCCC to operate with only one agent (PeerA), providing:
 | to_peer.md | Other AI Peer | System (rhythm keeper) | Work progress, Progress events |
 | to_user.md | Human User | Human User (unchanged) | Summaries, questions, results |
 
-### Information Flow
+### Information Flow (Simplified)
 
 ```
 ┌──────────────────────────────────────────────────────────┐
 │                         Agent                             │
 │                                                          │
-│  to_peer.md ────────→ System (Rhythm Keeper)             │
-│      │                 • Monitors Progress events        │
-│      │                 • Triggers keepalive continuation │
-│      │                 • Counts handoffs for self-check  │
-│      │                                                   │
-│  to_user.md ────────→ User (Decision Maker)              │
-│                        • Reads summaries and results     │
-│                        • Provides direction and input    │
-│                        • Responds via TUI/IM             │
+│  to_user.md ────────→ User + System                      │
+│                        • User reads summaries/results    │
+│                        • System monitors Progress events │
+│                        • Triggers keepalive continuation │
+│                                                          │
+│  (to_peer.md also works but to_user.md is recommended)   │
 └──────────────────────────────────────────────────────────┘
 ```
 
-### Why Both Channels Remain Meaningful
+### Simplified Channel Guidance
 
-| Aspect | to_peer.md | to_user.md |
-|--------|-----------|------------|
-| Audience | Machine (System) | Human (User) |
-| Content | Technical progress, handoff context | User-facing summaries |
-| Processing | Automatic (keepalive trigger) | Manual (user reads) |
-| Frequency | Every work step | Milestones, questions |
+**Recommendation**: Use **to_user.md** for all output in single-peer mode.
+
+| Situation | Write to | Example |
+|-----------|----------|---------|
+| Work progress | to_user.md | `Progress(tag=impl): Added auth` |
+| Need user input | to_user.md | Question + context |
+| Task complete | to_user.md | Summary of results |
+
+**Why simplified?**
+- One channel is easier to reason about
+- System monitors Progress markers in both TO_PEER and TO_USER tags
+- User sees everything in one place
+- to_peer.md still works if agent prefers it (backward compatible)
 
 ---
 
 ## Mechanism Reuse
 
-### Keepalive (Unchanged Logic)
+### Keepalive (Unified Logic)
 
-Current keepalive trigger condition:
+Keepalive trigger condition (accepts both TO_PEER and TO_USER):
 ```python
-# keepalive.py - existing logic
+# keepalive.py - unified logic
 def schedule_from_payload(sender_label: str, payload: str):
-    if "<TO_PEER>" not in (payload or ""):
+    # Accept both TO_PEER and TO_USER tags
+    if "<TO_PEER>" not in (payload or "") and "<TO_USER>" not in (payload or ""):
         return
     if not _has_progress_event(payload):
         return
     pending[sender_label] = {"due": time.time() + delay_s, ...}
 ```
 
-**In single-peer mode**:
-- Agent still writes TO_PEER with Progress events
-- Same trigger condition applies
-- Only the response routing changes (System sends Continue instead of delivering to PeerB)
+**Unified behavior**:
+- Progress markers in either TO_PEER or TO_USER trigger keepalive
+- Guard conditions (inbox empty, no inflight, no queued) prevent false positives
+- Single-peer: recommended to use TO_USER, but TO_PEER also works
+- Dual-peer: unchanged behavior (TO_PEER is primary)
 
 ### Self-Check (Unchanged Logic)
 

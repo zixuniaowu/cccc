@@ -39,6 +39,15 @@ def read_yaml(p: Path) -> Dict[str, Any]:
             except Exception:
                 return {}
 
+def _is_single_peer_mode() -> bool:
+    """Detect if running in single-peer mode (PeerB=none)."""
+    conf_path = HOME/"settings"/"cli_profiles.yaml"
+    conf = read_yaml(conf_path) if conf_path.exists() else {}
+    roles = conf.get('roles') if isinstance(conf.get('roles'), dict) else conf
+    peer_b = roles.get('peerB') if isinstance(roles.get('peerB'), dict) else {}
+    actor = str((peer_b.get('actor') or '').strip().lower())
+    return not actor or actor == 'none'
+
 def _now(): return time.strftime('%Y-%m-%d %H:%M:%S')
 def _log(line: str):
     p = HOME/"state"/"bridge-discord.log"; p.parent.mkdir(parents=True, exist_ok=True)
@@ -103,7 +112,13 @@ TAG_RE = re.compile(r"<\s*FROM_USER\s*>", re.I)
 def _wrap_from_user(s: str) -> str:
     return s if TAG_RE.search(s or '') else f"<FROM_USER>\n{(s or '').strip()}\n</FROM_USER>\n"
 
-def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
+def _route_from_text(text: str, default_route: str, *, single_peer_mode: bool = False) -> Tuple[List[str], str]:
+    """Parse routing prefix from text and return (routes, remaining_text).
+
+    In single-peer mode:
+    - 'b' routes return (['_error_single_peer'], text) to signal an error
+    - 'both' routes are converted to ['peerA'] only
+    """
     t = (text or '').strip()
     # Strip leading mention (e.g., <@1234567890>) if present
     t = re.sub(r"^\s*<@!?\d+>\s+", "", t)
@@ -114,11 +129,16 @@ def _route_from_text(text: str, default_route: str) -> Tuple[List[str], str]:
         if kind == 'a':
             return ['peerA'], t
         if kind == 'b':
+            if single_peer_mode:
+                return ['_error_single_peer'], t
             return ['peerB'], t
-        return ['peerA','peerB'], t
+        return ['peerA'] if single_peer_mode else ['peerA','peerB'], t
     if default_route == 'a': return ['peerA'], t
-    if default_route == 'b': return ['peerB'], t
-    return ['peerA','peerB'], t
+    if default_route == 'b':
+        if single_peer_mode:
+            return ['_error_single_peer'], t
+        return ['peerB'], t
+    return ['peerA'] if single_peer_mode else ['peerA','peerB'], t
 
 def _ensure_inbox(peer: str):
     base = HOME/"mailbox"/peer; inbox=base/"inbox"; proc=base/"processed"; state=HOME/"state"
@@ -398,15 +418,15 @@ def main():
                 _log(f"[cmd] status ch={message.channel.id}")
                 return
 
-            # Task/Blueprint command: !task
+            # Task status command: !task
             if re.match(r'^!task\b', stripped, re.I):
                 if format_task_for_im:
                     try:
                         task_text = format_task_for_im(HOME / "state")
                     except Exception as e:
-                        task_text = f"Error loading blueprint: {str(e)[:100]}"
+                        task_text = f"Error loading tasks: {str(e)[:100]}"
                 else:
-                    task_text = "Blueprint module not available"
+                    task_text = "Task module not available"
                 await _send_reply(task_text)
                 _log(f"[cmd] task ch={message.channel.id}")
                 return
@@ -569,7 +589,10 @@ def main():
                 except Exception:
                     pass
                 return
-            routes, body = _route_from_text(text, default_route)
+            routes, body = _route_from_text(text, default_route, single_peer_mode=_is_single_peer_mode())
+            if routes == ['_error_single_peer']:
+                await message.channel.send('Single-peer mode: use a: instead of b:')
+                return
             mid = f"dc-{int(time.time())}-{str(message.author.id)[-4:]}"
             # Save attachments if any
             try:

@@ -19,7 +19,7 @@ from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_
 try:  # package import (python -m .cccc.orchestrator_tmux)
     from .orchestrator.tmux_layout import (
         tmux, tmux_session_exists, tmux_new_session, tmux_respawn_pane,
-        tmux_build_tui_layout, tmux_paste, tmux_type, tmux_capture,
+        tmux_build_tui_layout, tmux_build_single_peer_layout, tmux_paste, tmux_type, tmux_capture,
         tmux_start_interactive, wait_for_ready,
     )
     from .orchestrator.logging_util import log_ledger, outbox_write
@@ -46,7 +46,7 @@ try:  # package import (python -m .cccc.orchestrator_tmux)
 except ImportError:  # script import (python .cccc/orchestrator_tmux.py)
     from orchestrator.tmux_layout import (
         tmux, tmux_session_exists, tmux_new_session, tmux_respawn_pane,
-        tmux_build_tui_layout, tmux_paste, tmux_type, tmux_capture,
+        tmux_build_tui_layout, tmux_build_single_peer_layout, tmux_paste, tmux_type, tmux_capture,
         tmux_start_interactive, wait_for_ready,
     )
     from orchestrator.logging_util import log_ledger, outbox_write
@@ -70,7 +70,7 @@ except ImportError:  # script import (python .cccc/orchestrator_tmux.py)
     from orchestrator.foreman import make as make_foreman
     from orchestrator.launcher import make as make_launcher
     from orchestrator.keepalive import make as make_keepalive
-from common.config import load_profiles, ensure_env_vars
+from common.config import load_profiles, ensure_env_vars, is_single_peer_mode
 from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox, compose_sentinel, sha256_text, is_sentinel_text
 from por_manager import ensure_por, por_path, por_status_snapshot, read_por_text
 
@@ -987,13 +987,8 @@ def main(home: Path, session_name: Optional[str] = None):
                 pass
     except Exception:
         pass
-    # Rebuild rules once after bindings are finalized (either from wizard or existing config),
-    # so that Aux mode and timestamps are accurate for this run.
-    try:
-        from prompt_weaver import rebuild_rules_docs  # type: ignore
-        rebuild_rules_docs(home)
-    except Exception:
-        pass
+    # NOTE: Rule files are generated on-demand at launch time (after TUI confirms settings).
+    # Early generation was removed because TUI may change config after orchestrator starts.
     # Load roles + actors; ensure required env vars in memory (never persist)
     config_deferred = False
     try:
@@ -1006,15 +1001,15 @@ def main(home: Path, session_name: Optional[str] = None):
         print(f"[WARN] config load failed; waiting for roles via TUI: {exc}")
         resolved = { 'peerA': {}, 'peerB': {}, 'aux': {}, 'bindings': {}, 'actors': {}, 'env_require': [] }
         config_deferred = True
-    try:
-        from prompt_weaver import ensure_rules_docs  # type: ignore
-        ensure_rules_docs(home)
-    except Exception:
-        pass
+    # NOTE: ensure_rules_docs removed here - rules are generated on-demand at launch time
 
     # legacy _rewrite_aux_mode_block removed; aux on/off is derived from roles.aux.actor
 
-    
+    # Always start with dual-peer mode (4-pane layout)
+    # Single-peer mode detection and layout adjustment happens in launch command handler
+    # This ensures users always see the TUI setup screen first
+    single_peer_mode = False  # Layout starts as 4-pane; adjusted after TUI confirms settings
+
     # Role profiles merged with actor IO settings
     profileA = dict((resolved.get('peerA') or {}).get('profile', {}) or {})
     profileB = dict((resolved.get('peerB') or {}).get('profile', {}) or {})
@@ -1319,24 +1314,29 @@ def main(home: Path, session_name: Optional[str] = None):
         tmux("new-window","-t",session,"-n","ui")
         # Select UI window
         tmux("select-window","-t",f"{session}:1")
+        # ALWAYS build 4-pane layout first (TUI/Log/PeerA/PeerB)
+        # Single-peer layout adjustment happens later in launch command after TUI confirms settings
         pos = tmux_build_tui_layout(session, '1')
-        # Fallback guard: ensure we actually have 3 panes (left + two on right)
+        # Fallback guard: ensure we actually have 4 panes
         try:
             code,_out,_ = tmux("list-panes","-t",session,"-F","#P")
             panes = (_out.strip().splitlines() if code==0 else [])
-            if len(panes) < 3:
+            if len(panes) < 4:
                 # Create bottom-right pane explicitly then re-map
                 tmux("split-window","-v","-t",pos.get('rt', f"{session}:1.1"))
                 pos = tmux_build_tui_layout(session, '1')
-                print("[TMUX] ensured 3 panes (right split)")
+                print("[TMUX] ensured 4 panes (right split)")
         except Exception:
             pass
+        print("[TMUX] Built default 4-pane layout (TUI/Log/PeerA/PeerB)")
         left_top = pos['lt']
         left_bot = pos.get('lb', pos['lt'])
         right = pos['rt']
         paneA = pos['rt']
         paneB = pos.get('rb', right)
-        (state/"session.json").write_text(json.dumps({"session":session,"ui_window":"1","left":left_top,"left_bottom":left_bot,"right":right,**pos}), encoding="utf-8")
+        # Note: single_peer layout adjustment will happen in launch command handler
+        session_data = {"session":session,"ui_window":"1","left":left_top,"left_bottom":left_bot,"right":right,"single_peer":False,**pos}
+        (state/"session.json").write_text(json.dumps(session_data, ensure_ascii=False, indent=2), encoding="utf-8")
     else:
         # Resize to current terminal as well to avoid stale small size from background server
         try:
@@ -1357,23 +1357,26 @@ def main(home: Path, session_name: Optional[str] = None):
         if not have_ui:
             tmux("new-window","-t",session,"-n","ui")
         tmux("select-window","-t",f"{session}:1")
+        # ALWAYS build 4-pane layout (existing session case - shouldn't normally happen with fresh start)
         pos = tmux_build_tui_layout(session, '1')
-        # Fallback guard on existing session too
+        # Fallback guard: ensure 4 panes
         try:
             code,_out,_ = tmux("list-panes","-t",session,"-F","#P")
             panes = (_out.strip().splitlines() if code==0 else [])
-            if len(panes) < 3:
+            if len(panes) < 4:
                 tmux("split-window","-v","-t",pos.get('rt', f"{session}:1.1"))
                 pos = tmux_build_tui_layout(session, '1')
-                print("[TMUX] ensured 3 panes (right split, existing)")
+                print("[TMUX] ensured 4 panes (right split, existing)")
         except Exception:
             pass
+        print("[TMUX] Built default 4-pane layout (existing session)")
         left_top = pos['lt']
         left_bot = pos.get('lb', pos['lt'])
         right = pos['rt']
         paneA = pos['rt']
         paneB = pos.get('rb', right)
-        (state/"session.json").write_text(json.dumps({"session":session,"ui_window":"1","left":left_top,"left_bottom":left_bot,"right":right,**pos}), encoding="utf-8")
+        session_data = {"session":session,"ui_window":"1","left":left_top,"left_bottom":left_bot,"right":right,"single_peer":False,**pos}
+        (state/"session.json").write_text(json.dumps(session_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # Improve usability: larger history for all panes; keep mouse on but avoid binding wheel to copy-mode
     tmux("set-option","-g","mouse","on")
@@ -1392,10 +1395,12 @@ def main(home: Path, session_name: Optional[str] = None):
     # Enable mouse wheel scroll for history while keeping send safety (we cancel copy-mode before sending)
     tmux("bind-key","-n","WheelUpPane","copy-mode","-e")
     tmux("bind-key","-n","WheelDownPane","send-keys","-M")
+    # Always start with 4-pane layout; single-peer adjustment happens after TUI confirms settings
     print(f"[INFO] Using tmux session: {session} (left-top=TUI / left-bottom=orchestrator log / right=PeerA+PeerB)")
     print(f"[INFO] pane map: left_top={left_top} left_bot={left_bot} PeerA(top)={paneA} PeerB(bottom)={paneB}")
     try:
-        (state/"panes.json").write_text(json.dumps({"left": left_top, "left_bottom": left_bot, "peerA": paneA, "peerB": paneB}, ensure_ascii=False, indent=2), encoding='utf-8')
+        panes_data = {"left": left_top, "left_bottom": left_bot, "peerA": paneA, "peerB": paneB, "single_peer": False}
+        (state/"panes.json").write_text(json.dumps(panes_data, ensure_ascii=False, indent=2), encoding='utf-8')
     except Exception:
         pass
     print(f"[TIP] tmux UI session ready: {session}. Use /quit or tmux commands to exit.")
@@ -1711,6 +1716,20 @@ def main(home: Path, session_name: Optional[str] = None):
             keepalive_delay_s = 5.0
     except Exception:
         keepalive_delay_s = 60.0
+    # Single-peer mode keepalive parameters (longer delay, limited nudges)
+    single_peer_cfg = delivery_cfg.get("single_peer", {}) if isinstance(delivery_cfg.get("single_peer"), dict) else {}
+    try:
+        single_peer_delay_s = float(single_peer_cfg.get("keepalive_delay_seconds", 240))  # 4 minutes
+        if single_peer_delay_s < 30:
+            single_peer_delay_s = 30.0
+    except Exception:
+        single_peer_delay_s = 240.0
+    try:
+        single_peer_max_nudges = int(single_peer_cfg.get("keepalive_max_nudges", 3))
+        if single_peer_max_nudges < 1:
+            single_peer_max_nudges = 1
+    except Exception:
+        single_peer_max_nudges = 3
     pending_keepalive: Dict[str, Optional[Dict[str, Any]]] = {"PeerA": None, "PeerB": None}
 
     # Periodic self-check configuration
@@ -1787,6 +1806,10 @@ def main(home: Path, session_name: Optional[str] = None):
         'nudge_api': nudge_api,
         'log_ledger': log_ledger,
         'keepalive_debug': KEEPALIVE_DEBUG,
+        # Single-peer mode parameters
+        'single_peer_mode': single_peer_mode,
+        'single_peer_delay_s': single_peer_delay_s,
+        'single_peer_max_nudges': single_peer_max_nudges,
     }
     keepalive_api = make_keepalive(keepalive_ctx)
 
@@ -1806,12 +1829,12 @@ def main(home: Path, session_name: Optional[str] = None):
         lines = [
             f"POR update requested (trigger: {trigger}).",
             f"File: {por_display_path}",
-            "Also review all active SUBPORs (docs/por/T######-slug/SUBPOR.md):",
-            "- For each: confirm Goal/Scope, 3-5 Acceptance, Cheapest Probe, Kill, single Next (decidable).",
-            "- Align POR Now/Next with each SUBPOR Next; close/rescope stale items; ensure evidence/risks/decisions have recent refs (commit/test/log).",
-            "- Check for gaps: missing tasks, unowned work, new risks; propose a new SUBPOR (after peer ACK) when needed.",
-            "- Sanity-check portfolio coherence across POR/SUBPOR: priorities, sequencing, ownership.",
-            "If everything is current, reply in to_peer.md with 1-2 verified points. Tools: .cccc/por_subpor.py subpor new | lint"
+            "Also review all active tasks (docs/por/T###-slug/task.yaml):",
+            "- For each task: confirm goal, steps, and status. Use progress markers to update.",
+            "- Align POR Now/Next with active tasks; close/rescope stale items; ensure evidence has recent refs (commit/test/log).",
+            "- Check for gaps: missing tasks, unowned work, new risks; create task.yaml when planning new work.",
+            "- Sanity-check portfolio coherence across POR and active tasks.",
+            "If everything is current, reply in to_peer.md with 1-2 verified points."
         ]
         if hint:
             lines.append(f"Hint: {hint}")
@@ -2302,6 +2325,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'write_status': write_status,
         'write_queue_and_locks': write_queue_and_locks,
         'deliver_paused_box': deliver_paused_box,
+        'single_peer_mode': single_peer_mode,
     })
 
     # PEER restart configuration
@@ -2560,6 +2584,7 @@ def main(home: Path, session_name: Optional[str] = None):
             'cli_profiles_path': cli_profiles_path,
             'startup_wait_seconds': startup_wait_seconds,
             'PROCESSED_RETENTION': PROCESSED_RETENTION,
+            'single_peer_mode': single_peer_mode,
             'write_status': write_status,
             'weave_system': weave_system,
             'send_handoff': _send_handoff,

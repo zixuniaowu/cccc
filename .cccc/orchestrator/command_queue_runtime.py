@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .command_queue import init_command_offsets, append_command_result
+from common.config import is_single_peer_mode
 
 def make(ctx: Dict[str, Any]):
     home: Path = ctx['home']
@@ -17,6 +18,7 @@ def make(ctx: Dict[str, Any]):
     settings = ctx['settings']
     cli_profiles_path: Path = ctx['cli_profiles_path']
     PROCESSED_RETENTION: int = int(ctx.get('PROCESSED_RETENTION', 200))
+    single_peer_mode: bool = bool(ctx.get('single_peer_mode', False))
 
     # External helpers/functions
     write_status = ctx['write_status']
@@ -42,10 +44,13 @@ def make(ctx: Dict[str, Any]):
 
     def _inject_full_system():
         try:
-            sysA = ctx['weave_system'](home, "peerA"); sysB = ctx['weave_system'](home, "peerB")
+            sysA = ctx['weave_system'](home, "peerA")
             _send_handoff("System", "PeerA", f"<FROM_SYSTEM>\n{sysA}\n</FROM_SYSTEM>\n")
-            _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
-            return True, "SYSTEM injected to both peers"
+            if not single_peer_mode:
+                sysB = ctx['weave_system'](home, "peerB")
+                _send_handoff("System", "PeerB", f"<FROM_SYSTEM>\n{sysB}\n</FROM_SYSTEM>\n")
+                return True, "SYSTEM injected to both peers"
+            return True, "SYSTEM injected to PeerA (single-peer mode)"
         except Exception as e:
             return False, f"inject failed: {e}"
 
@@ -155,14 +160,19 @@ def make(ctx: Dict[str, Any]):
                                 text = str(args.get('text') or obj.get('text') or '').strip()
                                 if not text:
                                     ok, msg = False, 'empty text'
+                                # In single-peer mode, /b is not available
+                                elif single_peer_mode and (ctype == 'b' or target in ('b','peerb','peer_b')):
+                                    ok, msg = False, 'single-peer mode: use /a instead'
                                 else:
                                     if ctype == 'a' or target in ('a','peera','peer_a'):
                                         _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
                                     elif ctype == 'b' or target in ('b','peerb','peer_b'):
                                         _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
                                     else:
+                                        # 'both' or 'send' - in single-peer mode, only send to PeerA
                                         _send_handoff('User','PeerA', _maybe_prepend_preamble('PeerA', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
-                                        _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
+                                        if not single_peer_mode:
+                                            _send_handoff('User','PeerB', _maybe_prepend_preamble('PeerB', f"<FROM_USER>\n{text}\n</FROM_USER>\n"))
                                     ok, msg = True, 'sent'
                             elif ctype in ('pause','resume'):
                                 deliver_paused = (ctype == 'pause')
@@ -238,6 +248,45 @@ def make(ctx: Dict[str, Any]):
                             elif ctype in ('launch','launch_peers'):
                                 try:
                                     who = str((args.get('who') or 'both')).lower()
+                                    # Re-check single-peer mode at launch time (config may have changed via TUI)
+                                    current_single_peer = is_single_peer_mode(home)
+                                    if current_single_peer and not single_peer_mode:
+                                        # Switching to single-peer mode: close PeerB pane
+                                        print(f"[LAUNCH] Single-peer mode: closing PeerB pane")
+                                        try:
+                                            tmux("kill-pane", "-t", paneB)
+                                            # Update session.json to mark single-peer mode
+                                            try:
+                                                sess_path = state / "session.json"
+                                                if sess_path.exists():
+                                                    sess_data = json.loads(sess_path.read_text(encoding="utf-8"))
+                                                    sess_data["single_peer"] = True
+                                                    sess_path.write_text(json.dumps(sess_data, ensure_ascii=False, indent=2), encoding="utf-8")
+                                            except Exception:
+                                                pass
+                                            print(f"[LAUNCH] PeerB pane closed, PeerA expanded")
+                                        except Exception as e:
+                                            print(f"[LAUNCH] Warning: failed to close PeerB pane: {e}")
+                                    # Generate rules files at launch time (after TUI confirms settings)
+                                    # This is the canonical place for rule generation - NOT at orchestrator startup
+                                    try:
+                                        from prompt_weaver import rebuild_rules_docs
+                                        rebuild_rules_docs(home)
+                                        print(f"[LAUNCH] Generated rules files for {'single-peer' if current_single_peer else 'dual-peer'} mode")
+                                    except Exception as e:
+                                        print(f"[LAUNCH] Warning: failed to generate rules: {e}")
+                                    # In single-peer mode, treat 'both' as 'a' and skip 'b'
+                                    if current_single_peer:
+                                        if who == 'both':
+                                            who = 'a'
+                                        elif who == 'b':
+                                            ok, msg = True, "skipped (single-peer mode)"
+                                            print(f"[LAUNCH] PeerB skipped (single-peer mode)")
+                                            # Early exit for 'b' in single-peer mode
+                                            if cmd_id:
+                                                processed_command_ids.add(cmd_id)
+                                            append_command_result(commands_path, cmd_id or '-', ok, msg)
+                                            continue
                                     try:
                                         resolved = load_profiles(home)
                                     except Exception:
@@ -257,7 +306,7 @@ def make(ctx: Dict[str, Any]):
                                     pa_cmd2 = (resolved.get('peerA') or {}).get('command') or ''
                                     pb_cmd2 = (resolved.get('peerB') or {}).get('command') or ''
                                     pa_eff2 = os.environ.get('CLAUDE_I_CMD') or pa_cmd2
-                                    pb_eff2 = os.environ.get('CODEX_I_CMD') or pb_cmd2
+                                    pb_eff2 = os.environ.get('CODEX_I_CMD') or pb_cmd2 if not current_single_peer else ''
                                     def _normalize_absbin(cmd: str) -> str:
                                         try:
                                             prog = _first_bin(cmd)
@@ -273,16 +322,20 @@ def make(ctx: Dict[str, Any]):
                                         except Exception:
                                             return cmd
                                     pa_eff2 = _normalize_absbin(pa_eff2)
-                                    pb_eff2 = _normalize_absbin(pb_eff2)
+                                    pb_eff2 = _normalize_absbin(pb_eff2) if not current_single_peer else ''
                                     a_ok = _bin_available(pa_eff2) if who in ('a','both') else True
-                                    b_ok = _bin_available(pb_eff2) if who in ('b','both') else True
+                                    b_ok = True if current_single_peer else (_bin_available(pb_eff2) if who in ('b','both') else True)
                                     try:
-                                        (state/"last_launch.json").write_text(json.dumps({
+                                        launch_data = {
                                             "who": who,
+                                            "single_peer": current_single_peer,
                                             "peerA": {"cmd": pa_cmd2, "eff": pa_eff2, "ok": a_ok},
-                                            "peerB": {"cmd": pb_cmd2, "eff": pb_eff2, "ok": b_ok},
-                                            "paneA": paneA, "paneB": paneB,
-                                        }, ensure_ascii=False, indent=2), encoding='utf-8')
+                                            "paneA": paneA,
+                                        }
+                                        if not current_single_peer:
+                                            launch_data["peerB"] = {"cmd": pb_cmd2, "eff": pb_eff2, "ok": b_ok}
+                                            launch_data["paneB"] = paneB
+                                        (state/"last_launch.json").write_text(json.dumps(launch_data, ensure_ascii=False, indent=2), encoding='utf-8')
                                     except Exception:
                                         pass
                                     if (who in ('a','both')) and (not a_ok):
@@ -292,7 +345,7 @@ def make(ctx: Dict[str, Any]):
                                             outbox_write(home, {"type":"to_user","peer":"System","text":msg})
                                         except Exception:
                                             pass
-                                    if (who in ('b','both')) and (not b_ok):
+                                    if not current_single_peer and (who in ('b','both')) and (not b_ok):
                                         ok = False
                                         msg = f"PeerB CLI unavailable: {_first_bin(pb_eff2) or '(empty)'}"
                                         try:
@@ -300,14 +353,15 @@ def make(ctx: Dict[str, Any]):
                                         except Exception:
                                             pass
                                     pa_cwd2 = (resolved.get('peerA') or {}).get('cwd') or '.'
-                                    pb_cwd2 = (resolved.get('peerB') or {}).get('cwd') or '.'
+                                    pb_cwd2 = (resolved.get('peerB') or {}).get('cwd') or '.' if not current_single_peer else '.'
                                     def _wrap_cwd2(cmd: str, cwd: str | None) -> str:
                                         if cwd and cwd not in ('.',''):
                                             return f"cd {cwd} && {cmd}"
                                         return cmd
                                     launched = []
                                     if who in ('a','both') and pa_eff2 and _bin_available(pa_eff2):
-                                        print(f"[LAUNCH] PeerA → {pa_eff2} (cwd={pa_cwd2}) pane={paneA}")
+                                        mode_label = " [SINGLE-PEER]" if current_single_peer else ""
+                                        print(f"[LAUNCH] PeerA → {pa_eff2} (cwd={pa_cwd2}) pane={paneA}{mode_label}")
                                         stderr_log_a = str(home / "logs" / "peerA.stderr")
                                         success_a = tmux_start_interactive(paneA, _wrap_cwd2(pa_eff2, pa_cwd2),
                                                              stderr_log=stderr_log_a, remain_on_exit=True)
@@ -315,15 +369,17 @@ def make(ctx: Dict[str, Any]):
                                             launched.append('PeerA')
                                     elif who in ('a','both'):
                                         print(f"[LAUNCH] PeerA not started (CLI unavailable): {_first_bin(pa_eff2) or '(empty)'}")
-                                    if who in ('b','both') and pb_eff2 and _bin_available(pb_eff2):
-                                        print(f"[LAUNCH] PeerB → {pb_eff2} (cwd={pb_cwd2}) pane={paneB}")
-                                        stderr_log_b = str(home / "logs" / "peerB.stderr")
-                                        success_b = tmux_start_interactive(paneB, _wrap_cwd2(pb_eff2, pb_cwd2),
-                                                             stderr_log=stderr_log_b, remain_on_exit=True)
-                                        if success_b:
-                                            launched.append('PeerB')
-                                    elif who in ('b','both'):
-                                        print(f"[LAUNCH] PeerB not started (CLI unavailable): {_first_bin(pb_eff2) or '(empty)'}")
+                                    # Skip PeerB launch entirely in single-peer mode
+                                    if not current_single_peer:
+                                        if who in ('b','both') and pb_eff2 and _bin_available(pb_eff2):
+                                            print(f"[LAUNCH] PeerB → {pb_eff2} (cwd={pb_cwd2}) pane={paneB}")
+                                            stderr_log_b = str(home / "logs" / "peerB.stderr")
+                                            success_b = tmux_start_interactive(paneB, _wrap_cwd2(pb_eff2, pb_cwd2),
+                                                                 stderr_log=stderr_log_b, remain_on_exit=True)
+                                            if success_b:
+                                                launched.append('PeerB')
+                                        elif who in ('b','both'):
+                                            print(f"[LAUNCH] PeerB not started (CLI unavailable): {_first_bin(pb_eff2) or '(empty)'}")
 
                                     # Wait for CLIs to initialize before continuing (injected from ctx)
                                     if launched:

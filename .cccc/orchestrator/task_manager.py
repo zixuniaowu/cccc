@@ -3,7 +3,7 @@
 Blueprint Task Manager - CRUD operations for tasks.
 
 This module handles all task file operations:
-- Loading and saving tasks from docs/por/blueprint/
+- Loading and saving tasks from docs/por/
 - Processing progress markers from agent messages
 - Maintaining scope.yaml (auto-managed)
 - Generating task summaries for TUI/IM
@@ -40,7 +40,8 @@ class TaskManager:
     Manages Blueprint tasks - file operations and state updates.
 
     Directory structure:
-        docs/por/blueprint/
+        docs/por/
+            POR.md              # Strategic Plan of Record (north star)
             scope.yaml          # Task list and metadata (auto-managed)
             T001-task-name/
                 task.yaml       # Task definition
@@ -53,10 +54,10 @@ class TaskManager:
         Initialize TaskManager.
 
         Args:
-            root: Project root directory (contains docs/por/blueprint/)
+            root: Project root directory (contains docs/por/)
         """
         self.root = Path(root)
-        self.blueprint_dir = self.root / "docs" / "por" / "blueprint"
+        self.blueprint_dir = self.root / "docs" / "por"
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
@@ -369,7 +370,7 @@ class TaskManager:
 
         # Handle step-level markers
         if not task:
-            return False, f"Task {marker.task_id} not found"
+            return False, f"Task {marker.task_id} not found. Create task.yaml first in docs/por/{marker.task_id}-slug/"
 
         if marker.action == 'done':
             return self._handle_step_done(task, marker.step_id)
@@ -383,7 +384,7 @@ class TaskManager:
     def _handle_task_start(self, task_id: str, task: Optional[TaskDefinition]) -> Tuple[bool, str]:
         """Handle 'progress: T001 start' marker."""
         if not task:
-            return False, f"Task {task_id} not found"
+            return False, f"Task {task_id} not found. Create task.yaml first in docs/por/{task_id}-slug/"
 
         if task.status == TaskStatus.ACTIVE:
             return True, f"Task {task_id} already active"
@@ -512,6 +513,7 @@ class TaskManager:
         total = len(tasks)
         completed = sum(1 for t in tasks if t.status == TaskStatus.COMPLETE)
         active = sum(1 for t in tasks if t.status == TaskStatus.ACTIVE)
+        pending_review = sum(1 for t in tasks if t.status == TaskStatus.PENDING_REVIEW)
         planned = sum(1 for t in tasks if t.status == TaskStatus.PLANNED)
 
         # Find current task (first active)
@@ -531,6 +533,7 @@ class TaskManager:
             'total_tasks': total,
             'completed_tasks': completed,
             'active_tasks': active,
+            'pending_review_tasks': pending_review,
             'planned_tasks': planned,
             'current_task': current_task,
             'current_step': current_step,
@@ -613,10 +616,10 @@ class TaskManager:
         """
         summary = self.get_summary()
         if summary['total_tasks'] == 0:
-            return "━━━ Blueprint ━━━\nNo tasks defined"
+            return "━━━ Tasks ━━━\nNo tasks defined"
 
         lines = [
-            "━━━ Blueprint ━━━",
+            "━━━ Tasks ━━━",
             f"▸ Progress: {summary['completed_tasks']}/{summary['total_tasks']} tasks ({summary['progress_percent']}%)",
         ]
 

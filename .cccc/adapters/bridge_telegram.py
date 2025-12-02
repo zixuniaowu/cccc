@@ -49,6 +49,18 @@ def read_yaml(p: Path) -> Dict[str, Any]:
         except Exception:
             return {}
 
+def _is_single_peer_mode() -> bool:
+    """Detect if running in single-peer mode (PeerB=none)."""
+    try:
+        conf_path = HOME/"settings"/"cli_profiles.yaml"
+        conf = read_yaml(conf_path) if conf_path.exists() else {}
+        roles = conf.get('roles') if isinstance(conf.get('roles'), dict) else conf
+        peer_b = roles.get('peerB') if isinstance(roles.get('peerB'), dict) else {}
+        actor = str((peer_b.get('actor') or '').strip().lower())
+        return not actor or actor == 'none'
+    except Exception:
+        return False
+
 def _now():
     import time
     return time.strftime('%Y-%m-%d %H:%M:%S')
@@ -126,7 +138,13 @@ def _mid() -> str:
     import uuid, time
     return f"tg-{int(time.time())}-{uuid.uuid4().hex[:6]}"
 
-def _route_from_text(text: str, default_route: str):
+def _route_from_text(text: str, default_route: str, *, single_peer_mode: bool = False):
+    """Parse routing prefix from text and return (routes, remaining_text).
+
+    In single-peer mode:
+    - 'b' routes return (['_error_single_peer'], text) to signal an error
+    - 'both' routes are converted to ['peerA'] only
+    """
     t = text.strip()
     # Support plain prefixes: a:/b:/both: (ASCII or fullwidth colon)
     m = re.match(r"^(a|b|both)[:：]\s*", t, re.I)
@@ -136,8 +154,11 @@ def _route_from_text(text: str, default_route: str):
         if kind == 'a':
             return ['peerA'], t
         if kind == 'b':
+            if single_peer_mode:
+                return ['_error_single_peer'], t
             return ['peerB'], t
-        return ['peerA','peerB'], t
+        # 'both'
+        return ['peerA'] if single_peer_mode else ['peerA','peerB'], t
     # Support slash commands (group privacy mode): /a …, /b …, /both …, with optional @BotName
     m2 = re.match(r"^/(a|b|both)(?:@\S+)?\s+", t, re.I)
     if m2:
@@ -146,8 +167,11 @@ def _route_from_text(text: str, default_route: str):
         if cmd == 'a':
             return ['peerA'], t
         if cmd == 'b':
+            if single_peer_mode:
+                return ['_error_single_peer'], t
             return ['peerB'], t
-        return ['peerA','peerB'], t
+        # 'both'
+        return ['peerA'] if single_peer_mode else ['peerA','peerB'], t
     # Support mention form: @BotName a: … or @BotName /a …
     m3 = re.match(r"^@\S+\s+(a|b|both)[:：]\s*", t, re.I)
     if m3:
@@ -156,8 +180,11 @@ def _route_from_text(text: str, default_route: str):
         if kind == 'a':
             return ['peerA'], t
         if kind == 'b':
+            if single_peer_mode:
+                return ['_error_single_peer'], t
             return ['peerB'], t
-        return ['peerA','peerB'], t
+        # 'both'
+        return ['peerA'] if single_peer_mode else ['peerA','peerB'], t
     m4 = re.match(r"^@\S+\s+/(a|b|both)(?:@\S+)?\s+", t, re.I)
     if m4:
         cmd = m4.group(1).lower()
@@ -165,13 +192,19 @@ def _route_from_text(text: str, default_route: str):
         if cmd == 'a':
             return ['peerA'], t
         if cmd == 'b':
+            if single_peer_mode:
+                return ['_error_single_peer'], t
             return ['peerB'], t
-        return ['peerA','peerB'], t
+        # 'both'
+        return ['peerA'] if single_peer_mode else ['peerA','peerB'], t
     if default_route == 'a':
         return ['peerA'], t
     if default_route == 'b':
+        if single_peer_mode:
+            # Default to peerA in single-peer mode (no error)
+            return ['peerA'], t
         return ['peerB'], t
-    return ['peerA','peerB'], t
+    return ['peerA'] if single_peer_mode else ['peerA','peerB'], t
 
 def _wrap_with_mid(payload: str, mid: str) -> str:
     """Insert [MID: …] after the first recognized opening tag if present;
@@ -1252,13 +1285,13 @@ def main():
                 _append_log(outlog, f"[cmd] status chat={chat_id}")
                 continue
 
-            # Task/Blueprint status command
+            # Task status command
             if is_cmd(text, 'task'):
                 try:
                     from common.status_format import format_task_for_im
                     task_text = format_task_for_im(HOME / "state")
                 except ImportError:
-                    task_text = "Blueprint module not available"
+                    task_text = "Task module not available"
                 except Exception as e:
                     task_text = f"Error: {str(e)[:100]}"
                 tg_api('sendMessage', {'chat_id': chat_id, 'text': task_text}, timeout=15)
@@ -1307,7 +1340,11 @@ def main():
                         _append_log(outlog, f"[error] inbound-file-reply: {e}")
                         metas = []
                     if metas:
-                        routes, _ = _route_from_text(text or '/both', dr)
+                        routes, _ = _route_from_text(text or '/both', dr, single_peer_mode=_is_single_peer_mode())
+                        if routes == ['_error_single_peer']:
+                            tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Single-peer mode: use !a or a: instead of !b'}, timeout=10)
+                            metas = []
+                            continue
                         lines = ["<FROM_USER>", f"[MID: {_mid()}]"]
                         if rtext:
                             lines.append(f"Quoted: {redact(rtext)[:200]}")
@@ -1375,7 +1412,10 @@ def main():
                         meta.update({'mime': mime, 'caption': caption, 'mid': midf})
                         metas.append(meta)
                     # Build inbox payload
-                    routes, _ = _route_from_text(route_source or '', dr)
+                    routes, _ = _route_from_text(route_source or '', dr, single_peer_mode=_is_single_peer_mode())
+                    if routes == ['_error_single_peer']:
+                        tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Single-peer mode: use !a or a: instead of !b'}, timeout=10)
+                        continue
                     lines = ["<FROM_USER>"]
                     lines.append(f"[MID: {_mid()}]")
                     if caption:
@@ -1469,7 +1509,10 @@ def main():
                 continue
             # Default: route conversational text to peers via mailbox
             if route_source:
-                routes, body = _route_from_text(route_source, dr)
+                routes, body = _route_from_text(route_source, dr, single_peer_mode=_is_single_peer_mode())
+                if routes == ['_error_single_peer']:
+                    tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Single-peer mode: use !a or a: instead of !b'}, timeout=10)
+                    continue
                 stripped = redact(body).strip()
                 if stripped:
                     mid_val = _mid()
