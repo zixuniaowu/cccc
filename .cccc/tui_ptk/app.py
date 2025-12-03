@@ -1206,26 +1206,33 @@ class CCCCSetupApp:
             return self.task_panel.get_expanded_text(width=panel_width)
         
         def get_panel_height():
-            """Calculate panel height based on task count."""
+            """Calculate panel height based on display items (tasks + errors)."""
             if not self.task_panel:
                 return 8
-            task_count = self.task_panel.get_task_count()
-            # Layout analysis:
-            # Line 0: Top border
-            # Line 1: Empty line
-            # Line 2: Column headers (if tasks)
-            # Line 3: Separator (if tasks)
-            # Lines 4-N: Task rows
-            # Line N+1: Empty line
-            # Line N+2: Progress line (if tasks)
-            # Line N+3: Help line
-            # Line N+4: Bottom border
-            if task_count == 0:
-                # No tasks: border(2) + empty(1) + message(1) + empty(1) + border = 6
-                return 6
+            
+            # Get display items count and error count
+            display_count, error_count = self.task_panel.get_display_item_count()
+            
+            # Layout analysis (line count):
+            # 1: Top border
+            # 2: Empty line
+            # 3: Column headers (if items exist)
+            # 4: Separator (if items exist)
+            # 5-N: Task/error rows (display_count)
+            # N+1: Empty line
+            # N+2: Progress line (if items exist)
+            # N+3: Error warning line (if error_count > 0)
+            # N+4: Help line
+            # N+5: Bottom border
+            if display_count == 0:
+                # No items: top(1) + empty(1) + message(1) + empty(1) + bottom(1) = 5
+                return 5
             else:
-                # With tasks: border(2) + empty(1) + headers(2) + tasks + empty(1) + summary(2) + border = 8 + tasks
-                return min(8 + task_count, 18)  # Cap at 18 to leave room for timeline
+                # Base: top(1) + empty(1) + header(1) + sep(1) + items + empty(1) + progress(1) + help(1) + bottom(1) = 8 + items
+                base_height = 8 + display_count
+                if error_count > 0:
+                    base_height += 1  # Error warning line
+                return min(base_height, 20)  # Cap at 20 to leave room for timeline
         
         # Create FormattedTextControl with mouse handler
         ctrl = FormattedTextControl(
@@ -1243,9 +1250,9 @@ class CCCCSetupApp:
                     # Header rows: line 0 (top border), 1 (empty), 2 (column headers), 3 (separator)
                     # Task rows start at line 4
                     row = mouse_event.position.y - 4
-                    task_count = self.task_panel.get_task_count()
+                    display_count, _ = self.task_panel.get_display_item_count()
                     
-                    if 0 <= row < task_count:
+                    if 0 <= row < display_count:
                         # Select the clicked task
                         self.task_panel.selected_index = row
                         # Open task detail dialog (Level 1 stays open)

@@ -47,6 +47,11 @@ class TaskManager:
                 task.yaml       # Task definition
             T002-another-task/
                 task.yaml
+    
+    Error Handling:
+        - Parse errors are captured in self.parse_errors (dict: task_id -> error_msg)
+        - Errors are NOT printed to stderr to avoid screen flooding
+        - TUI/IM can query parse_errors for display
     """
 
     def __init__(self, root: Path):
@@ -58,31 +63,92 @@ class TaskManager:
         """
         self.root = Path(root)
         self.blueprint_dir = self.root / "docs" / "por"
+        # Error tracking: task_id -> error message (cleared on successful load)
+        self.parse_errors: Dict[str, str] = {}
         self._ensure_dirs()
 
     def _ensure_dirs(self) -> None:
         """Ensure blueprint directory exists."""
         self.blueprint_dir.mkdir(parents=True, exist_ok=True)
+    
+    def refresh(self) -> None:
+        """
+        Refresh task state by re-scanning the blueprint directory.
+        
+        This clears existing parse_errors and reloads all tasks,
+        capturing any new parse errors in the process.
+        """
+        # Clear stale errors before re-scan
+        self.parse_errors.clear()
+        # Re-sync scope (scans directory, loads tasks, captures errors)
+        self._sync_scope()
+        # Also try to load each task to catch validation errors
+        scope = self.get_scope()
+        for task_id in scope.tasks:
+            self.get_task(task_id)  # This captures parse errors
+    
+    def get_parse_errors(self) -> Dict[str, str]:
+        """Get current parse errors for display in TUI/IM."""
+        return self.parse_errors.copy()
+    
+    def clear_error(self, task_id: str) -> None:
+        """Clear error for a specific task (called when task is successfully loaded)."""
+        self.parse_errors.pop(task_id, None)
 
     # =========================================================================
     # File I/O Utilities
     # =========================================================================
 
-    def _read_yaml(self, path: Path) -> Dict[str, Any]:
-        """Read YAML file, return empty dict on error. Logs errors for debugging."""
+    def _read_yaml(self, path: Path, task_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Read YAML file with robust error handling.
+        
+        Features:
+        - Handles multi-document YAML (takes first document only)
+        - Stores errors in self.parse_errors for TUI/IM display
+        - No stderr output to avoid screen flooding
+        
+        Args:
+            path: Path to YAML file
+            task_id: Optional task ID for error tracking
+        """
         if not path.exists():
             return {}
         try:
+            raw_text = path.read_text(encoding='utf-8')
+            
             if yaml:
-                content = yaml.safe_load(path.read_text(encoding='utf-8'))
-                return content if isinstance(content, dict) else {}
+                # Use safe_load_all to handle multi-document YAML gracefully
+                # Only use the first document (common agent mistake: appending with ---)
+                try:
+                    docs = list(yaml.safe_load_all(raw_text))
+                    content = docs[0] if docs else {}
+                except yaml.YAMLError:
+                    # Fallback: try safe_load for better error messages
+                    content = yaml.safe_load(raw_text)
             else:
                 # Fallback to JSON-like parsing
-                return json.loads(path.read_text(encoding='utf-8'))
+                content = json.loads(raw_text)
+            
+            # Clear error on successful parse
+            if task_id:
+                self.clear_error(task_id)
+            return content if isinstance(content, dict) else {}
+            
         except Exception as e:
-            # Log error for debugging - task.yaml syntax issues are common
-            import sys
-            print(f"[TaskManager] YAML parse error in {path}: {e}", file=sys.stderr)
+            # Store error for TUI/IM display (no stderr print to avoid flood)
+            if task_id:
+                # Extract concise, actionable error message
+                err_str = str(e)
+                # Extract line/column info if available
+                if 'line' in err_str and 'column' in err_str:
+                    # Keep YAML error context
+                    if len(err_str) > 150:
+                        err_str = err_str[:150] + "..."
+                else:
+                    if len(err_str) > 100:
+                        err_str = err_str[:100] + "..."
+                self.parse_errors[task_id] = f"YAML: {err_str}"
             return {}
 
     def _write_yaml(self, path: Path, data: Dict[str, Any]) -> bool:
@@ -131,7 +197,7 @@ class TaskManager:
         Synchronize scope.yaml with actual task directories.
 
         Scans blueprint directory and updates scope to match.
-        Warns about duplicate task IDs (multiple directories with same T### prefix).
+        Tracks duplicate task IDs in parse_errors (no stderr print).
         """
         scope = self.get_scope()
         existing_ids = set(scope.tasks)
@@ -150,11 +216,10 @@ class TaskManager:
                         id_to_dirs[task_id] = []
                     id_to_dirs[task_id].append(item.name)
 
-        # Warn about duplicate task IDs
+        # Track duplicate task IDs as errors (no stderr print)
         for tid, dirs in id_to_dirs.items():
             if len(dirs) > 1:
-                import sys
-                print(f"[TaskManager] WARNING: Duplicate task ID '{tid}' found in multiple directories: {dirs}", file=sys.stderr)
+                self.parse_errors[tid] = f"Duplicate: {', '.join(dirs)}"
 
         # Add new tasks
         for tid in found_ids - existing_ids:
@@ -163,6 +228,8 @@ class TaskManager:
         # Remove deleted tasks
         for tid in existing_ids - found_ids:
             scope.remove_task(tid)
+            # Also clear any error for removed tasks
+            self.clear_error(tid)
 
         self.save_scope(scope)
         return scope
@@ -212,6 +279,8 @@ class TaskManager:
         - Step IDs: 'S01' -> 'S1', 'step1' -> 'S1', 's1' -> 'S1'
         - Step status: unknown -> 'pending'
         
+        Note: Warnings are silently handled (no stderr print) to avoid screen flood.
+        
         Args:
             data: Raw task data from YAML
             source: Source file path for logging
@@ -219,8 +288,6 @@ class TaskManager:
         Returns:
             Normalized data dict
         """
-        import sys
-        
         # === Task Status Normalization ===
         if 'status' in data:
             raw_status = str(data['status']).lower().strip()
@@ -246,8 +313,7 @@ class TaskManager:
             if raw_status in status_map:
                 data['status'] = status_map[raw_status]
             else:
-                # Unknown status -> fallback to 'planned' with warning
-                print(f"[TaskManager] WARNING: Unknown task status '{raw_status}' in {source}, defaulting to 'planned'", file=sys.stderr)
+                # Unknown status -> fallback to 'planned' (silent)
                 data['status'] = 'planned'
         
         # === Steps Normalization ===
@@ -282,7 +348,7 @@ class TaskManager:
                     if raw_step_status in step_status_map:
                         step['status'] = step_status_map[raw_step_status]
                     else:
-                        print(f"[TaskManager] WARNING: Unknown step status '{raw_step_status}' in {source}, defaulting to 'pending'", file=sys.stderr)
+                        # Unknown step status -> fallback to 'pending' (silent)
                         step['status'] = 'pending'
                 else:
                     # Missing status -> default to pending
@@ -363,18 +429,41 @@ class TaskManager:
             return None
 
         task_path = task_dir / "task.yaml"
-        data = self._read_yaml(task_path)
+        # Pass task_id for error tracking
+        data = self._read_yaml(task_path, task_id=task_id)
         if not data:
+            # If no data but file exists, error was already recorded in _read_yaml
             return None
+
+        # === Detect non-standard formats and record as errors ===
+        # Check for 'phases' instead of 'steps' (common mistake)
+        has_phases = 'phases' in data and isinstance(data.get('phases'), list) and len(data['phases']) > 0
+        has_steps = 'steps' in data and isinstance(data.get('steps'), list) and len(data['steps']) > 0
+        
+        if has_phases and not has_steps:
+            # Task uses 'phases' instead of 'steps' - this is a format error
+            self.parse_errors[task_id] = "Format: uses 'phases' instead of 'steps'. Rename 'phases' to 'steps' and ensure each step has id/name/status."
+            return None
+        
+        # Check for completely missing steps (and no phases either)
+        if not has_steps and not has_phases:
+            # No steps defined at all - record as warning but still parse
+            # (task without steps is technically valid but unusual)
+            pass
 
         try:
             # Normalize data before validation
             data = self._normalize_task_data(data, str(task_path))
-            return TaskDefinition(**data)
+            task = TaskDefinition(**data)
+            # Clear any previous error on successful load
+            self.clear_error(task_id)
+            return task
         except Exception as e:
-            # Log validation error for debugging
-            import sys
-            print(f"[TaskManager] Task validation error in {task_path}: {e}", file=sys.stderr)
+            # Store validation error (don't print to stderr)
+            err_str = str(e)
+            if len(err_str) > 200:
+                err_str = err_str[:200] + "..."
+            self.parse_errors[task_id] = f"Validation: {err_str}"
             return None
 
     def save_task(self, task: TaskDefinition) -> bool:
@@ -669,7 +758,7 @@ class TaskManager:
         Get overall blueprint summary for TUI/IM.
 
         Returns:
-            Dict with summary statistics and task list
+            Dict with summary statistics, task list, and any parse errors
         """
         tasks = self.list_tasks()
 
@@ -691,6 +780,9 @@ class TaskManager:
         # Overall step progress
         total_steps = sum(t.total_steps for t in tasks)
         completed_steps = sum(t.completed_steps for t in tasks)
+        
+        # Include parse errors for TUI/IM display
+        errors = self.get_parse_errors()
 
         return {
             'total_tasks': total,
@@ -711,7 +803,9 @@ class TaskManager:
                     'current_step': t.current_step,
                 }
                 for t in tasks
-            ]
+            ],
+            'parse_errors': errors,  # Dict of task_id -> error_msg
+            'error_count': len(errors),
         }
 
     def format_status_line(self) -> str:

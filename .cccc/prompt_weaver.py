@@ -380,6 +380,8 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "        name: Step description",
             "        done: Completion criteria",
             "        status: pending # pending|in_progress|complete",
+            "        # Optional when complete:",
+            "        # outputs: [{path: 'work/result.md', note: 'Deliverable'}]",
             "    ```",
         ]
     elif is_peera:
@@ -404,6 +406,8 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "        name: Step description",
             "        done: Completion criteria",
             "        status: pending # pending|in_progress|complete",
+            "        # Optional when complete:",
+            "        # outputs: [{path: 'work/result.md', note: 'Deliverable'}]",
             "    ```",
         ]
     else:
@@ -426,6 +430,8 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "        name: Step description",
             "        done: Completion criteria",
             "        status: pending # pending|in_progress|complete",
+            "        # Optional when complete:",
+            "        # outputs: [{path: 'work/result.md', note: 'Deliverable'}]",
             "    ```",
         ]
     

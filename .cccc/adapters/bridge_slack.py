@@ -687,12 +687,17 @@ def main():
                 _append_log(f"[cmd] status ch={ch}")
                 return
 
-            # Task status command: !task
+            # Task status command: !task [T001|1]
             if re.match(r'^!task\b', command_text, re.I):
-                if format_task_for_im:
-                    task_text = format_task_for_im(HOME / "state")
-                else:
-                    task_text = "Task module not available"
+                try:
+                    from common.status_format import parse_task_command
+                    task_id = parse_task_command(command_text.replace('!', '/'))  # Convert !task to /task for parser
+                    if format_task_for_im:
+                        task_text = format_task_for_im(HOME / "state", task_id)
+                    else:
+                        task_text = "Task module not available"
+                except Exception as e:
+                    task_text = f"Error: {str(e)[:100]}"
                 _send_reply(task_text)
                 _append_log(f"[cmd] task ch={ch}")
                 return

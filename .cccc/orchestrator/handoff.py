@@ -182,6 +182,24 @@ def make(ctx: Dict[str, Any]):
                             if aux_prompt:
                                 msg = msg + "\n" + aux_prompt
                             lines = [msg]
+                            
+                            # Add task parse errors if any (only for PeerA who owns task creation)
+                            if lbl == 'PeerA':
+                                try:
+                                    tm = _get_task_manager(home)
+                                    if tm:
+                                        tm.refresh()  # Ensure latest state
+                                        errors = tm.get_parse_errors()
+                                        if errors:
+                                            err_lines = ["", "⚠️ Task File Errors (please fix):"]
+                                            for tid, err_msg in list(errors.items())[:3]:  # Limit to 3
+                                                err_lines.append(f"  - {tid}: {err_msg[:80]}")
+                                            if len(errors) > 3:
+                                                err_lines.append(f"  ... and {len(errors)-3} more")
+                                            lines.extend(err_lines)
+                                except Exception:
+                                    pass
+                            
                             try:
                                 rules_path = (home/'rules'/('PEERA.md' if lbl=='PeerA' else 'PEERB.md')).as_posix()
                                 lines.append(f"Rules: {rules_path}")

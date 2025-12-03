@@ -1288,8 +1288,9 @@ def main():
             # Task status command
             if is_cmd(text, 'task'):
                 try:
-                    from common.status_format import format_task_for_im
-                    task_text = format_task_for_im(HOME / "state")
+                    from common.status_format import format_task_for_im, parse_task_command
+                    task_id = parse_task_command(text)
+                    task_text = format_task_for_im(HOME / "state", task_id)
                 except ImportError:
                     task_text = "Task module not available"
                 except Exception as e:

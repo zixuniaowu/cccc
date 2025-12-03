@@ -418,15 +418,17 @@ def main():
                 _log(f"[cmd] status ch={message.channel.id}")
                 return
 
-            # Task status command: !task
+            # Task status command: !task [T001|1]
             if re.match(r'^!task\b', stripped, re.I):
-                if format_task_for_im:
-                    try:
-                        task_text = format_task_for_im(HOME / "state")
-                    except Exception as e:
-                        task_text = f"Error loading tasks: {str(e)[:100]}"
-                else:
-                    task_text = "Task module not available"
+                try:
+                    from common.status_format import parse_task_command
+                    task_id = parse_task_command(stripped.replace('!', '/'))  # Convert !task to /task for parser
+                    if format_task_for_im:
+                        task_text = format_task_for_im(HOME / "state", task_id)
+                    else:
+                        task_text = "Task module not available"
+                except Exception as e:
+                    task_text = f"Error loading tasks: {str(e)[:100]}"
                 await _send_reply(task_text)
                 _log(f"[cmd] task ch={message.channel.id}")
                 return

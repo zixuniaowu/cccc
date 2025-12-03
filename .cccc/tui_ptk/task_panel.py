@@ -155,6 +155,26 @@ class TaskPanel:
         summary = self._get_summary()
         return len(summary.get('tasks', []))
 
+    def get_display_item_count(self) -> Tuple[int, int]:
+        """
+        Get count of display items (tasks + error entries) and error count.
+        
+        Returns:
+            Tuple of (total_display_items, error_count)
+            - total_display_items: tasks + error entries (for navigation/height)
+            - error_count: number of parse errors (for error line display)
+        """
+        summary = self._get_summary()
+        tasks = summary.get('tasks', [])
+        parse_errors = summary.get('parse_errors', {})
+        
+        # Count items that will be displayed
+        seen_ids = set(t.get('id', '???') for t in tasks)
+        error_entries = sum(1 for task_id in parse_errors if task_id not in seen_ids)
+        
+        total_display_items = len(tasks) + error_entries
+        return total_display_items, len(parse_errors)
+
     def select_next(self) -> bool:
         """Move selection to next task. Returns True if moved."""
         count = self.get_task_count()
@@ -282,6 +302,7 @@ class TaskPanel:
         """
         summary = self._get_summary()
         tasks = summary.get('tasks', [])
+        parse_errors = summary.get('parse_errors', {})
         
         # Use provided width, ensure minimum
         # INNER is the content width inside the borders (excluding the two ┃ chars)
@@ -309,10 +330,42 @@ class TaskPanel:
         # Empty line
         add_row("")
         
-        if not tasks:
+        # Collect all displayable items (tasks + errors)
+        display_items = []
+        seen_ids = set()
+        
+        # Add valid tasks
+        for t in tasks:
+            task_id = t.get('id', '???')
+            seen_ids.add(task_id)
+            display_items.append({
+                'type': 'task',
+                'id': task_id,
+                'name': t.get('name', 'Unnamed'),
+                'status': t.get('status', 'planned'),
+                'progress': t.get('progress', '0/0'),
+            })
+        
+        # Add error entries for tasks that failed to parse
+        for task_id, error_msg in parse_errors.items():
+            if task_id not in seen_ids:
+                # Extract short error description
+                short_error = error_msg[:35] + "..." if len(error_msg) > 35 else error_msg
+                display_items.append({
+                    'type': 'error',
+                    'id': task_id,
+                    'name': f"⚠ {short_error}",
+                    'status': 'error',
+                    'progress': '-',
+                    'error': error_msg,
+                })
+        
+        # Sort by task ID
+        display_items.sort(key=lambda x: x['id'])
+        
+        if not display_items:
             # No tasks message
             add_row("   No tasks defined. Agent will create tasks in docs/por/")
-            add_row("")
         else:
             # Calculate dynamic name width based on panel width
             # Layout: 3(indent) + 2(St) + 3(space) + 5(ID) + 4(space) + NAME + 4(space) + 8(progress) + 3(margin)
@@ -326,18 +379,21 @@ class TaskPanel:
             add_row(sep)
             
             # Clamp selected_index to valid range
-            selected_idx = max(0, min(self.selected_index, len(tasks) - 1))
+            selected_idx = max(0, min(self.selected_index, len(display_items) - 1))
             self.selected_index = selected_idx
             
-            # Task rows
-            for idx, t in enumerate(tasks):
-                status = t.get('status', 'planned')
-                task_id = t.get('id', '???')
-                name = t.get('name', 'Unnamed')
-                progress = t.get('progress', '0/0')
+            # Task/Error rows
+            for idx, item in enumerate(display_items):
+                task_id = item['id']
+                name = item['name']
+                progress = item['progress']
+                item_type = item.get('type', 'task')
                 
                 # Status icon
-                icon = self._get_status_icon(status)
+                if item_type == 'error':
+                    icon = '!'  # Error indicator
+                else:
+                    icon = self._get_status_icon(item['status'])
                 
                 # Truncate and pad name
                 name_display = _truncate_to_width(name, name_width)
@@ -363,8 +419,11 @@ class TaskPanel:
         add_row("")
         
         # Summary and help section
-        if tasks:
-            # Calculate stats
+        valid_task_count = len(tasks)
+        error_count = len(parse_errors)
+        
+        if valid_task_count > 0 or error_count > 0:
+            # Calculate stats (only from valid tasks)
             completed = summary.get('completed_tasks', 0)
             total = summary.get('total_tasks', 0)
             total_steps = summary.get('total_steps', 0)
@@ -377,6 +436,11 @@ class TaskPanel:
             if current:
                 progress_info += f" │ Current: {current}"
             add_row(progress_info)
+            
+            # Error warning line (if any)
+            if error_count > 0:
+                error_warn = f"   ⚠ {error_count} task(s) have YAML errors - fix task.yaml"
+                add_row(error_warn)
             
             # Help line
             add_row("   ↑↓/click select │ Enter → detail │ Esc/T close")
@@ -619,6 +683,28 @@ class TaskPanel:
             # Use fixed-width status label for alignment
             status_display = f"[{status_label}]"
             lines.append(f"    {icon} {step.id}  {step_name_padded}  {status_display}")
+            
+            # Show progress note for in-progress steps
+            if status == 'in_progress' and hasattr(step, 'progress') and step.progress:
+                progress_text = step.progress
+                if _display_width(progress_text) > width - 12:
+                    progress_text = _truncate_to_width(progress_text, width - 12)
+                lines.append(f"         └─ {progress_text}")
+            
+            # Show outputs for completed steps (if available)
+            if status == 'complete' and hasattr(step, 'get_outputs_list'):
+                outputs = step.get_outputs_list()
+                if outputs:
+                    for out in outputs[:2]:  # Limit to 2 outputs per step
+                        path = out.get('path', '')
+                        note = out.get('note', '')
+                        if path:
+                            out_text = f"📄 {path}"
+                            if note:
+                                out_text += f" ({note[:20]})" if len(note) > 20 else f" ({note})"
+                            if _display_width(out_text) > width - 12:
+                                out_text = _truncate_to_width(out_text, width - 12)
+                            lines.append(f"         └─ {out_text}")
         
         lines.append("")
         lines.append("  Press Esc to close")
@@ -644,56 +730,93 @@ class TaskPanel:
         return self._format_summary_im()
 
     def _format_summary_im(self) -> str:
-        """Format summary for IM."""
+        """Format summary for IM - comprehensive view with all steps."""
         summary = self._get_summary()
+        parse_errors = summary.get('parse_errors', {})
         
-        if summary['total_tasks'] == 0:
+        if summary['total_tasks'] == 0 and not parse_errors:
             return "📋 Blueprint Status\n\nNo tasks defined.\nCreate tasks in docs/por/T001-name/task.yaml"
         
-        lines = ["📋 Blueprint Status", ""]
+        lines = ["━━━ Blueprint Tasks ━━━", ""]
         
-        # Task list
+        # Get full task data for detailed view
+        manager = self._get_manager()
+        tasks_data = manager.list_tasks() if manager else []
+        
         for t in summary['tasks']:
-            icon = self._get_status_icon(t.get('status', 'planned'))
             task_id = t.get('id', '???')
-            name = t.get('name', 'Unnamed')[:18]
+            name = t.get('name', 'Unnamed')
+            status = t.get('status', 'planned')
+            icon = self._get_status_icon(status)
             progress = t.get('progress', '0/0')
             
-            current_step = t.get('current_step', '')
-            if t.get('status') == 'active' and current_step:
-                line = f"{icon} {task_id} {name:<18} {progress}  ← {current_step}"
-            else:
-                line = f"{icon} {task_id} {name:<18} {progress}"
+            # Task header with full name
+            lines.append(f"{icon} {task_id}: {name}")
+            lines.append(f"   Status: {status} │ Progress: {progress}")
             
-            lines.append(line)
+            # Get steps for this task
+            task_obj = None
+            if manager:
+                task_obj = manager.get_task(task_id)
+            
+            if task_obj and task_obj.steps:
+                lines.append("   Steps:")
+                for step in task_obj.steps:
+                    if step.status == 'complete':
+                        s_icon = '✓'
+                    elif step.status == 'in_progress':
+                        s_icon = '→'
+                    else:
+                        s_icon = '○'
+                    
+                    suffix = " ← current" if step.status == 'in_progress' else ""
+                    # Truncate step name if too long for IM
+                    step_name = step.name[:40] + "..." if len(step.name) > 40 else step.name
+                    lines.append(f"   {s_icon} {step.id} {step_name}{suffix}")
+                    
+                    # Show progress note for in-progress steps (summary view - brief)
+                    if step.status == 'in_progress' and hasattr(step, 'progress') and step.progress:
+                        progress_text = step.progress[:40] + "..." if len(step.progress) > 40 else step.progress
+                        lines.append(f"       └─ {progress_text}")
+                    
+                    # Show outputs for completed steps (summary view - only path)
+                    if step.status == 'complete' and hasattr(step, 'get_outputs_list'):
+                        outputs = step.get_outputs_list()
+                        if outputs:
+                            out = outputs[0]  # Only show first output in summary
+                            path = out.get('path', '')
+                            if path:
+                                lines.append(f"       └─ 📄 {path}")
+            
+            lines.append("")  # Blank line between tasks
         
-        lines.append("")
+        # Show parse errors (if any)
+        if parse_errors:
+            lines.append("━━━ Parse Errors ━━━")
+            for task_id, error_msg in parse_errors.items():
+                # Truncate long error messages
+                short_error = error_msg[:60] + "..." if len(error_msg) > 60 else error_msg
+                lines.append(f"⚠ {task_id}: {short_error}")
+            lines.append("")
         
-        # Summary
+        # Overall summary
         completed = summary.get('completed_tasks', 0)
         total = summary.get('total_tasks', 0)
         total_steps = summary.get('total_steps', 0)
         completed_steps = summary.get('completed_steps', 0)
         step_pct = int(completed_steps / total_steps * 100) if total_steps > 0 else 0
         
-        lines.append(f"Progress: {completed}/{total} tasks │ {completed_steps}/{total_steps} steps │ {step_pct}%")
+        lines.append("━━━ Summary ━━━")
+        lines.append(f"Tasks: {completed}/{total} │ Steps: {completed_steps}/{total_steps} │ {step_pct}%")
+        
+        if parse_errors:
+            lines.append(f"⚠ {len(parse_errors)} task(s) with YAML errors")
         
         current = summary.get('current_task')
         step = summary.get('current_step')
         if current:
-            # Get step name
-            step_name = ""
-            for t in summary['tasks']:
-                if t.get('id') == current:
-                    step_name = self._get_step_name(t, step) if step else ""
-                    break
-            
-            if step_name:
-                lines.append(f"Current: {current} {step} - {step_name}")
-            elif step:
-                lines.append(f"Current: {current} {step}")
-            else:
-                lines.append(f"Current: {current}")
+            step_info = f" {step}" if step else ""
+            lines.append(f"Current: {current}{step_info}")
         
         return "\n".join(lines)
 
@@ -726,6 +849,23 @@ class TaskPanel:
             
             suffix = " ← current" if step.status == 'in_progress' else ""
             lines.append(f"{icon} {step.id} {step.name}{suffix}")
+            
+            # Show progress note for in-progress steps
+            if step.status == 'in_progress' and hasattr(step, 'progress') and step.progress:
+                progress_text = step.progress[:60] + "..." if len(step.progress) > 60 else step.progress
+                lines.append(f"    └─ {progress_text}")
+            
+            # Show outputs for completed steps
+            if step.status == 'complete' and hasattr(step, 'get_outputs_list'):
+                outputs = step.get_outputs_list()
+                for out in outputs[:2]:  # Limit to 2 outputs
+                    path = out.get('path', '')
+                    note = out.get('note', '')
+                    if path:
+                        out_text = f"📄 {path}"
+                        if note:
+                            out_text += f" ({note[:25]}...)" if len(note) > 25 else f" ({note})"
+                        lines.append(f"    └─ {out_text}")
         
         return "\n".join(lines)
 

@@ -53,6 +53,21 @@ class TaskStatus(str, Enum):
     COMPLETE = "complete"         # All steps done
 
 
+class StepOutput(BaseModel):
+    """
+    Output/deliverable from a completed step.
+    
+    Attributes:
+        path: Relative path to output file
+        note: Brief description of the output
+    """
+    path: str = Field(..., description="Relative path to output file")
+    note: str = Field(default="", description="Brief description")
+    
+    class Config:
+        extra = 'allow'
+
+
 class Step(BaseModel):
     """
     Individual task step with completion criteria.
@@ -62,16 +77,34 @@ class Step(BaseModel):
         name: Brief description of the step
         done: Completion criteria (e.g., "Tests pass", "API documented")
         status: Current execution status
+        outputs: Optional list of deliverables (for completed steps)
+        progress: Optional progress note (for in-progress steps)
     """
     # Flexible step ID - will be normalized to S1, S2 format
     id: str = Field(..., description="Step ID (S1, S2, S1.1, ...)")
     name: str = Field(..., min_length=1, max_length=200, description="Step description")
     done: str = Field(default="", max_length=500, description="Completion criteria")
     status: StepStatus = Field(default=StepStatus.PENDING, description="Step status")
+    # Optional: deliverables when step is complete
+    outputs: Optional[List[Union[StepOutput, Dict[str, str]]]] = Field(default=None, description="Step outputs/deliverables")
+    # Optional: progress note for in-progress steps
+    progress: Optional[str] = Field(default=None, description="Current progress note")
 
     class Config:
         use_enum_values = True
         extra = 'allow'  # Allow extra fields (current_progress, remaining_work, etc.)
+    
+    def get_outputs_list(self) -> List[Dict[str, str]]:
+        """Get outputs as list of dicts (normalized)."""
+        if not self.outputs:
+            return []
+        result = []
+        for out in self.outputs:
+            if isinstance(out, StepOutput):
+                result.append({"path": out.path, "note": out.note})
+            elif isinstance(out, dict):
+                result.append({"path": out.get("path", ""), "note": out.get("note", "")})
+        return result
 
 
 class TaskDefinition(BaseModel):

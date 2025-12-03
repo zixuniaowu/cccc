@@ -44,7 +44,8 @@ def format_help_for_im(prefix: str = '/') -> str:
         "",
         "\u25b8 Info",
         f"  {p}status \u2192 system status",
-        f"  {p}task \u2192 task status",
+        f"  {p}task \u2192 all tasks with steps",
+        f"  {p}task T001 \u2192 detail for T001",
         f"  {p}verbose [on|off] \u2192 toggle summaries",
         "",
         "\u25b8 Account",
@@ -111,23 +112,38 @@ def format_status_for_im(state_dir: Path) -> str:
         health = "\u26a0 Offline"  # ⚠
 
     lines.append(f"\u2501\u2501\u2501 CCCC {health} \u2501\u2501\u2501")  # ━━━
+    lines.append("")
 
     # === Peers: Read from settings (authoritative) ===
     peer_a_actor = (roles_cfg.get('peerA') or {}).get('actor') or 'unset'
     peer_b_actor = (roles_cfg.get('peerB') or {}).get('actor') or 'unset'
     aux_actor = (roles_cfg.get('aux') or {}).get('actor') or ''
+    
+    # Check if single peer mode
+    is_single_peer = peer_b_actor in ('none', 'unset', '')
 
-    # CLI availability from runtime status (if available)
+    # CLI running status from runtime (process actually running)
     setup = st.get('setup') or {}
     cli = setup.get('cli') or {}
-    peer_a_ok = (cli.get('peerA') or {}).get('available', True)  # Assume OK if no status
-    peer_b_ok = (cli.get('peerB') or {}).get('available', True)
+    
+    # Get running state from last_handoff timestamps or pane status
+    peer_a_running = bool((cli.get('peerA') or {}).get('available', True))
+    peer_b_running = bool((cli.get('peerB') or {}).get('available', True)) if not is_single_peer else False
 
-    a_status = "\u2713" if peer_a_ok else "\u2717"  # ✓ or ✗
-    b_status = "\u2713" if peer_b_ok else "\u2717"
+    if is_single_peer:
+        # Single peer mode display
+        lines.append(f"\u25b8 Mode: Single Peer")
+        a_icon = "\u25b6" if peer_a_running else "\u23f8"  # ▶ or ⏸
+        lines.append(f"\u25b8 Peer: {peer_a_actor} {a_icon}")
+    else:
+        # Dual peer mode display
+        lines.append(f"\u25b8 Mode: Dual Peer")
+        a_icon = "\u25b6" if peer_a_running else "\u23f8"
+        b_icon = "\u25b6" if peer_b_running else "\u23f8"
+        lines.append(f"\u25b8 PeerA: {peer_a_actor} {a_icon}")
+        lines.append(f"\u25b8 PeerB: {peer_b_actor} {b_icon}")
 
-    lines.append(f"\u25b8 PeerA: {peer_a_actor} {a_status}")  # ▸
-    lines.append(f"\u25b8 PeerB: {peer_b_actor} {b_status}")
+    lines.append("")
 
     # === Handoffs: Activity metrics ===
     reset = st.get('reset') or {}
@@ -135,7 +151,10 @@ def format_status_for_im(state_dir: Path) -> str:
     h_a = reset.get('handoffs_peerA', 0)
     h_b = reset.get('handoffs_peerB', 0)
 
-    lines.append(f"\u25b8 Handoffs: {total} (A:{h_a} B:{h_b})")
+    if is_single_peer:
+        lines.append(f"\u25b8 Handoffs: {total}")
+    else:
+        lines.append(f"\u25b8 Handoffs: {total} (A:{h_a} B:{h_b})")
 
     # === Inbox: Count files directly from mailbox (authoritative) ===
     mailbox_dir = home_dir / "mailbox"
@@ -148,7 +167,13 @@ def format_status_for_im(state_dir: Path) -> str:
     except Exception:
         inbox_b = 0
 
-    lines.append(f"\u25b8 Inbox: A:{inbox_a} B:{inbox_b}")  # Always show
+    if is_single_peer:
+        if inbox_a > 0:
+            lines.append(f"\u25b8 Inbox: {inbox_a} pending")
+        else:
+            lines.append(f"\u25b8 Inbox: empty")
+    else:
+        lines.append(f"\u25b8 Inbox: A:{inbox_a} B:{inbox_b}")
 
     # === Aux: Optional helper (from settings) ===
     if aux_actor and aux_actor != 'none':
@@ -173,12 +198,14 @@ def format_status_for_im(state_dir: Path) -> str:
             f_state = 'idle'
         lines.append(f"\u25b8 Foreman: {foreman_agent} ({f_state})")
 
+    lines.append("")
+
     # === Timestamp ===
     ts = st.get('ts', '')
     if ts:
         # Show just time portion
         time_part = ts.split(' ')[-1] if ' ' in ts else ts
-        lines.append(f"\u23f1 {time_part}")  # ⏱
+        lines.append(f"\u23f1 Updated: {time_part}")  # ⏱
 
     return '\n'.join(lines)
 
@@ -222,3 +249,40 @@ def format_task_for_im(state_dir: Path, task_id: Optional[str] = None) -> str:
         return "\u2501\u2501\u2501 Tasks \u2501\u2501\u2501\nModule not available"
     except Exception as e:
         return f"\u2501\u2501\u2501 Tasks \u2501\u2501\u2501\nError: {str(e)[:50]}"
+
+
+def parse_task_command(text: str) -> Optional[str]:
+    """
+    Parse /task command to extract task_id.
+    
+    Examples:
+        /task -> None
+        /task T001 -> T001
+        /task 1 -> T001
+        
+    Returns:
+        task_id or None for summary view
+    """
+    import re
+    text = text.strip()
+    
+    # Match /task or !task followed by optional ID
+    match = re.match(r'^[/!]task(?:\s+(.+))?$', text, re.I)
+    if not match:
+        return None
+    
+    arg = match.group(1)
+    if not arg:
+        return None
+    
+    arg = arg.strip()
+    
+    # Already a task ID like T001, T002
+    if re.match(r'^T\d+$', arg, re.I):
+        return arg.upper()
+    
+    # Just a number like 1, 2
+    if re.match(r'^\d+$', arg):
+        return f"T{arg.zfill(3)}"
+    
+    return arg  # Return as-is, let TaskPanel handle validation
