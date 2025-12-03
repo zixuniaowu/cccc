@@ -1396,6 +1396,18 @@ def main(home: Path, session_name: Optional[str] = None):
     # This allows prompt_toolkit TUI to receive scroll events while preserving tmux scrollback for other panes
     tmux("bind-key", "-n", "WheelUpPane", "if-shell", "-Ft=", "#{alternate_on}", "send-keys -M", "copy-mode -e")
     tmux("bind-key", "-n", "WheelDownPane", "send-keys", "-M")
+    # macOS clipboard integration: sync tmux selection to system clipboard
+    if sys.platform == "darwin":
+        # Enable OSC 52 clipboard (modern tmux 3.2+)
+        tmux("set-option", "-g", "set-clipboard", "on")
+        # Mouse drag selection: copy to clipboard and cancel copy-mode
+        tmux("bind-key", "-T", "copy-mode", "MouseDragEnd1Pane",
+             "send-keys -X copy-pipe-and-cancel 'pbcopy'")
+        tmux("bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane",
+             "send-keys -X copy-pipe-and-cancel 'pbcopy'")
+        # vi-copy mode: 'y' to copy selection to clipboard
+        tmux("bind-key", "-T", "copy-mode-vi", "y",
+             "send-keys -X copy-pipe-and-cancel 'pbcopy'")
     # Always start with 4-pane layout; single-peer adjustment happens after TUI confirms settings
     print(f"[INFO] Using tmux session: {session} (left-top=TUI / left-bottom=orchestrator log / right=PeerA+PeerB)")
     print(f"[INFO] pane map: left_top={left_top} left_bot={left_bot} PeerA(top)={paneA} PeerB(bottom)={paneB}")
