@@ -1829,7 +1829,8 @@ def main(home: Path, session_name: Optional[str] = None):
         lines.append("Keep the POR as the single source of truth; avoid duplicating content elsewhere.")
         body = "\n".join(lines)
         payload = f"<FROM_SYSTEM>\n{body}\n</FROM_SYSTEM>\n"
-        _send_handoff("System", "PeerB", payload)
+        # Send POR refresh to PeerA (who owns POR/task maintenance in both single/dual-peer modes)
+        _send_handoff("System", "PeerA", payload)
         por_update_last_request = now
         log_ledger(home, {"from": "system", "kind": "por-refresh", "trigger": trigger, "hint": hint or ""})
 
