@@ -29,6 +29,7 @@ Navigation:
   • Shift+G: Jump to bottom (latest messages)
   • gg: Jump to top (oldest messages)
   • Ctrl+L: Clear screen
+  • Mouse drag: Select and auto-copy to clipboard
 
 Connection & Status:
   • Real-time connection monitoring (● connected / ○ disconnected)
@@ -2562,28 +2563,83 @@ class CCCCSetupApp:
             self.app.exit()
 
     def _setup_timeline_mouse_scroll(self) -> None:
-        """Setup mouse wheel scrolling for timeline"""
+        """Setup mouse wheel scrolling and text selection for timeline"""
         from prompt_toolkit.mouse_events import MouseEventType
-        
+        from prompt_toolkit.selection import SelectionState, SelectionType
+
         # Get the original mouse handler
         original_handler = self.timeline.window.content.mouse_handler
-        
+
+        # Track drag state for selection
+        self._mouse_drag_start_pos = None
+
         def custom_mouse_handler(mouse_event):
+            buffer = self.timeline.buffer
+
             # Handle scroll events
             if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-                # Scroll down by moving cursor down
-                for _ in range(3):  # Scroll 3 lines at a time
-                    self.timeline.buffer.cursor_down()
+                for _ in range(3):
+                    buffer.cursor_down()
                 return None
             elif mouse_event.event_type == MouseEventType.SCROLL_UP:
-                # Scroll up by moving cursor up
-                for _ in range(3):  # Scroll 3 lines at a time
-                    self.timeline.buffer.cursor_up()
+                for _ in range(3):
+                    buffer.cursor_up()
                 return None
-            else:
-                # For other events, use original handler
+
+            # Handle mouse selection (drag to select)
+            elif mouse_event.event_type == MouseEventType.MOUSE_DOWN:
+                # Start selection - calculate position from mouse coordinates
+                # First, call original handler to move cursor
+                if original_handler:
+                    original_handler(mouse_event)
+                # Record start position for drag selection
+                self._mouse_drag_start_pos = buffer.cursor_position
+                # Clear any existing selection
+                buffer.selection_state = None
+                return None
+
+            elif mouse_event.event_type == MouseEventType.MOUSE_MOVE:
+                # Dragging - update selection
+                if self._mouse_drag_start_pos is not None:
+                    # Move cursor to current mouse position
+                    if original_handler:
+                        original_handler(mouse_event)
+                    # Create/update selection from start to current position
+                    buffer.selection_state = SelectionState(
+                        original_cursor_position=self._mouse_drag_start_pos,
+                        type=SelectionType.CHARACTERS
+                    )
+                return None
+
+            elif mouse_event.event_type == MouseEventType.MOUSE_UP:
+                # End selection and auto-copy to clipboard
+                if self._mouse_drag_start_pos is not None:
+                    if original_handler:
+                        original_handler(mouse_event)
+                    # If we actually dragged (selected text)
+                    if buffer.cursor_position != self._mouse_drag_start_pos:
+                        buffer.selection_state = SelectionState(
+                            original_cursor_position=self._mouse_drag_start_pos,
+                            type=SelectionType.CHARACTERS
+                        )
+                        # Auto-copy selection to clipboard (macOS)
+                        try:
+                            start = min(self._mouse_drag_start_pos, buffer.cursor_position)
+                            end = max(self._mouse_drag_start_pos, buffer.cursor_position)
+                            selected_text = buffer.document.text[start:end]
+                            if selected_text.strip():
+                                subprocess.run(['pbcopy'], input=selected_text, text=True, timeout=2)
+                                self._write_timeline(f"Copied {len(selected_text.splitlines())} lines (Cmd+V to paste)", 'success')
+                        except Exception:
+                            pass
+                    self._mouse_drag_start_pos = None
+                return None
+
+            # For other events, use original handler
+            if original_handler:
                 return original_handler(mouse_event)
-        
+            return None
+
         # Replace the mouse handler
         self.timeline.window.content.mouse_handler = custom_mouse_handler
 
@@ -3208,6 +3264,7 @@ class CCCCSetupApp:
             self._write_timeline("  Ctrl+L              Clear timeline", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Text Selection:", 'info')
+            self._write_timeline("  Mouse drag          Select text (auto-copy)", 'info')
             self._write_timeline("  Shift+Mouse         Select text (bypass TUI mouse)", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Exit:", 'info')
