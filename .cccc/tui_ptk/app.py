@@ -2615,87 +2615,77 @@ class CCCCSetupApp:
             self.app.exit()
 
     def _setup_timeline_mouse_scroll(self) -> None:
-        """Setup mouse wheel scrolling and text selection for timeline and input field"""
+        """Setup mouse wheel scrolling and text selection for timeline"""
         from prompt_toolkit.mouse_events import MouseEventType
         from prompt_toolkit.selection import SelectionState, SelectionType
 
-        # --- Helper to create a custom handler for a specific buffer/window ---
-        def create_custom_handler(window_content, buffer_obj):
-            original_handler = window_content.mouse_handler
-            # State closure for this handler
-            drag_state = {'start': None}
+        # Get the original mouse handler for timeline
+        original_handler = self.timeline.window.content.mouse_handler
 
-            def handler(mouse_event):
-                # Handle scroll events (consume these, don't propagate)
-                if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-                    for _ in range(3):
-                        buffer_obj.cursor_down()
-                    return None
-                elif mouse_event.event_type == MouseEventType.SCROLL_UP:
-                    for _ in range(3):
-                        buffer_obj.cursor_up()
-                    return None
+        # Track drag state for selection (timeline only)
+        self._mouse_drag_start_pos = None
 
-                # Handle mouse selection (drag to select)
-                elif mouse_event.event_type == MouseEventType.MOUSE_DOWN:
+        def custom_mouse_handler(mouse_event):
+            buffer = self.timeline.buffer
+
+            # Handle scroll events (consume these, don't propagate)
+            if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+                for _ in range(3):
+                    buffer.cursor_down()
+                return None
+            elif mouse_event.event_type == MouseEventType.SCROLL_UP:
+                for _ in range(3):
+                    buffer.cursor_up()
+                return None
+
+            # Handle mouse selection (drag to select) - timeline only
+            elif mouse_event.event_type == MouseEventType.MOUSE_DOWN:
+                if original_handler:
+                    original_handler(mouse_event)
+                self._mouse_drag_start_pos = buffer.cursor_position
+                buffer.selection_state = None
+                return None
+
+            elif mouse_event.event_type == MouseEventType.MOUSE_MOVE:
+                if self._mouse_drag_start_pos is not None:
                     if original_handler:
                         original_handler(mouse_event)
-                    drag_state['start'] = buffer_obj.cursor_position
-                    buffer_obj.selection_state = None
-                    # Let event propagate for focus handling (crucial for input field)
-                    return None
+                    buffer.selection_state = SelectionState(
+                        original_cursor_position=self._mouse_drag_start_pos,
+                        type=SelectionType.CHARACTERS
+                    )
+                return None
 
-                elif mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-                    if drag_state['start'] is not None:
-                        if original_handler:
-                            original_handler(mouse_event)
-                        buffer_obj.selection_state = SelectionState(
-                            original_cursor_position=drag_state['start'],
+            elif mouse_event.event_type == MouseEventType.MOUSE_UP:
+                if self._mouse_drag_start_pos is not None:
+                    if original_handler:
+                        original_handler(mouse_event)
+                    if buffer.cursor_position != self._mouse_drag_start_pos:
+                        buffer.selection_state = SelectionState(
+                            original_cursor_position=self._mouse_drag_start_pos,
                             type=SelectionType.CHARACTERS
                         )
-                    return None
-
-                elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-                    if drag_state['start'] is not None:
-                        if original_handler:
-                            original_handler(mouse_event)
-                        if buffer_obj.cursor_position != drag_state['start']:
-                            buffer_obj.selection_state = SelectionState(
-                                original_cursor_position=drag_state['start'],
-                                type=SelectionType.CHARACTERS
-                            )
-                            # Auto-copy
-                            try:
-                                start = min(drag_state['start'], buffer_obj.cursor_position)
-                                end = max(drag_state['start'], buffer_obj.cursor_position)
-                                selected_text = buffer_obj.document.text[start:end]
-                                if selected_text.strip():
-                                    if set_clipboard_text(selected_text):
-                                        lines = len(selected_text.splitlines())
-                                        self._show_temp_notification(f"✓ Copied {lines} line{'s' if lines != 1 else ''}")
-                            except Exception:
-                                pass
-                        drag_state['start'] = None
-                    return None
-
-                # For other events, use original handler and let it propagate
-                if original_handler:
-                    return original_handler(mouse_event)
+                        # Auto-copy selection to clipboard (cross-platform)
+                        try:
+                            start = min(self._mouse_drag_start_pos, buffer.cursor_position)
+                            end = max(self._mouse_drag_start_pos, buffer.cursor_position)
+                            selected_text = buffer.document.text[start:end]
+                            if selected_text.strip():
+                                if set_clipboard_text(selected_text):
+                                    lines = len(selected_text.splitlines())
+                                    self._show_temp_notification(f"✓ Copied {lines} line{'s' if lines != 1 else ''}")
+                        except Exception:
+                            pass
+                    self._mouse_drag_start_pos = None
                 return None
-            
-            return handler
 
-        # Apply to Timeline
-        self.timeline.window.content.mouse_handler = create_custom_handler(
-            self.timeline.window.content, 
-            self.timeline.buffer
-        )
-        
-        # Apply to Input Field (so users can drag-select-copy there too)
-        self.input_field.window.content.mouse_handler = create_custom_handler(
-            self.input_field.window.content,
-            self.input_field.buffer
-        )
+            # For other events, use original handler
+            if original_handler:
+                return original_handler(mouse_event)
+            return None
+
+        # Apply only to Timeline (input_field uses default behavior with focus_on_click=True)
+        self.timeline.window.content.mouse_handler = custom_mouse_handler
 
     def _build_runtime_ui(self) -> None:
         """Build modern runtime UI (Full-width Timeline + Input + Footer)"""
