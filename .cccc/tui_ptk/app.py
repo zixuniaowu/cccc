@@ -4578,6 +4578,29 @@ class CCCCSetupApp:
             pass
 
 
+def _reset_terminal() -> None:
+    """
+    Reset terminal to a clean state after prompt_toolkit exits.
+    
+    This is a safety net to ensure the terminal is usable even if
+    prompt_toolkit's cleanup fails or is interrupted.
+    
+    ANSI escape sequences used:
+    - \033[?1049l : Exit alternate screen buffer (return to main screen)
+    - \033[?25h   : Show cursor (in case it was hidden)
+    - \033[0m     : Reset all attributes (colors, bold, etc.)
+    """
+    import sys
+    try:
+        if sys.stdout.isatty():
+            sys.stdout.write('\033[?1049l')  # Exit alternate screen
+            sys.stdout.write('\033[?25h')    # Show cursor
+            sys.stdout.write('\033[0m')      # Reset attributes
+            sys.stdout.flush()
+    except Exception:
+        pass  # Best effort - don't crash on terminal reset failure
+
+
 def run(home: Path) -> None:
     """Entry point - simplified for stability"""
     try:
@@ -4603,8 +4626,9 @@ def run(home: Path) -> None:
 
             # Setup signal handlers for graceful shutdown
             # This ensures prompt_toolkit can restore terminal state when receiving signals
+            # IMPORTANT: Do NOT print in signal handlers - it corrupts terminal state
             def handle_signal(signame):
-                print(f"\n[TUI] Received {signame}, shutting down gracefully...")
+                # Silently request exit - let prompt_toolkit handle terminal cleanup
                 app.app.exit()
 
             # Register handlers for common termination signals
@@ -4628,8 +4652,14 @@ def run(home: Path) -> None:
 
         # Run the main async function
         asyncio.run(main())
+        
+        # Explicit terminal reset after prompt_toolkit exits
+        # This ensures terminal is properly restored even if prompt_toolkit cleanup fails
+        _reset_terminal()
 
     except Exception as e:
+        # Reset terminal before printing error (in case we're in alternate screen)
+        _reset_terminal()
         print(f"Error starting TUI: {e}")
         import traceback
         traceback.print_exc()
