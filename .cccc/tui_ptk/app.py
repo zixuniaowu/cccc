@@ -363,6 +363,53 @@ def get_clipboard_text() -> Optional[str]:
     return None
 
 
+def set_clipboard_text(text: str) -> bool:
+    """Set text to clipboard (cross-platform, including WSL2).
+    
+    Returns True if successful, False otherwise.
+    Supports macOS, Linux (X11/Wayland), Windows, and WSL2.
+    """
+    import sys
+    try:
+        if sys.platform == 'darwin':
+            # macOS
+            result = subprocess.run(['pbcopy'], input=text, text=True, timeout=2)
+            return result.returncode == 0
+        elif sys.platform == 'linux':
+            # WSL2: use clip.exe to access Windows clipboard
+            if _is_wsl():
+                try:
+                    result = subprocess.run(['clip.exe'], input=text, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return True
+                except FileNotFoundError:
+                    pass
+            # Try wl-copy first (Wayland), then xclip (X11), then xsel
+            for cmd in [
+                ['wl-copy'],
+                ['xclip', '-selection', 'clipboard'],
+                ['xsel', '--clipboard', '--input']
+            ]:
+                try:
+                    result = subprocess.run(cmd, input=text, text=True, timeout=2)
+                    if result.returncode == 0:
+                        return True
+                except FileNotFoundError:
+                    continue
+            return False
+        elif sys.platform == 'win32':
+            # Windows
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command', 
+                 f'Set-Clipboard -Value {repr(text)}'],
+                timeout=2
+            )
+            return result.returncode == 0
+        return False
+    except Exception:
+        return False
+
+
 def parse_message_images(msg: str) -> Tuple[str, List[str]]:
     """Parse message for image paths prefixed with @.
     Returns (cleaned_message, list_of_image_paths).
@@ -2622,14 +2669,15 @@ class CCCCSetupApp:
                             original_cursor_position=self._mouse_drag_start_pos,
                             type=SelectionType.CHARACTERS
                         )
-                        # Auto-copy selection to clipboard (macOS)
+                        # Auto-copy selection to clipboard (cross-platform)
                         try:
                             start = min(self._mouse_drag_start_pos, buffer.cursor_position)
                             end = max(self._mouse_drag_start_pos, buffer.cursor_position)
                             selected_text = buffer.document.text[start:end]
                             if selected_text.strip():
-                                subprocess.run(['pbcopy'], input=selected_text, text=True, timeout=2)
-                                self._write_timeline(f"Copied {len(selected_text.splitlines())} lines (Cmd+V to paste)", 'success')
+                                if set_clipboard_text(selected_text):
+                                    lines = len(selected_text.splitlines())
+                                    self._write_timeline(f"Copied {lines} line{'s' if lines != 1 else ''} to clipboard", 'success')
                         except Exception:
                             pass
                     self._mouse_drag_start_pos = None

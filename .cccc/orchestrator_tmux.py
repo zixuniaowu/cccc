@@ -1396,18 +1396,37 @@ def main(home: Path, session_name: Optional[str] = None):
     # This allows prompt_toolkit TUI to receive scroll events while preserving tmux scrollback for other panes
     tmux("bind-key", "-n", "WheelUpPane", "if-shell", "-Ft=", "#{alternate_on}", "send-keys -M", "copy-mode -e")
     tmux("bind-key", "-n", "WheelDownPane", "send-keys", "-M")
-    # macOS clipboard integration: sync tmux selection to system clipboard
+    
+    # Cross-platform clipboard integration: sync tmux selection to system clipboard
+    # Detect available clipboard tool and configure tmux copy-pipe accordingly
+    clipboard_cmd = None
     if sys.platform == "darwin":
+        clipboard_cmd = 'pbcopy'
+    elif sys.platform == "linux":
+        # WSL2: use clip.exe
+        if shutil.which('clip.exe'):
+            clipboard_cmd = 'clip.exe'
+        # Native Linux: try wl-copy (Wayland), xclip (X11), or xsel
+        elif shutil.which('wl-copy'):
+            clipboard_cmd = 'wl-copy'
+        elif shutil.which('xclip'):
+            clipboard_cmd = 'xclip -selection clipboard'
+        elif shutil.which('xsel'):
+            clipboard_cmd = 'xsel --clipboard --input'
+    elif sys.platform == "win32":
+        clipboard_cmd = 'clip.exe'
+    
+    if clipboard_cmd:
         # Enable OSC 52 clipboard (modern tmux 3.2+)
         tmux("set-option", "-g", "set-clipboard", "on")
         # Mouse drag selection: copy to clipboard and cancel copy-mode
         tmux("bind-key", "-T", "copy-mode", "MouseDragEnd1Pane",
-             "send-keys -X copy-pipe-and-cancel 'pbcopy'")
+             f"send-keys -X copy-pipe-and-cancel '{clipboard_cmd}'")
         tmux("bind-key", "-T", "copy-mode-vi", "MouseDragEnd1Pane",
-             "send-keys -X copy-pipe-and-cancel 'pbcopy'")
+             f"send-keys -X copy-pipe-and-cancel '{clipboard_cmd}'")
         # vi-copy mode: 'y' to copy selection to clipboard
         tmux("bind-key", "-T", "copy-mode-vi", "y",
-             "send-keys -X copy-pipe-and-cancel 'pbcopy'")
+             f"send-keys -X copy-pipe-and-cancel '{clipboard_cmd}'")
     # Always start with 4-pane layout; single-peer adjustment happens after TUI confirms settings
     print(f"[INFO] Using tmux session: {session} (left-top=TUI / left-bottom=orchestrator log / right=PeerA+PeerB)")
     print(f"[INFO] pane map: left_top={left_top} left_bot={left_bot} PeerA(top)={paneA} PeerB(bottom)={paneB}")
