@@ -949,6 +949,10 @@ class CCCCSetupApp:
         )
         self.buttons: List[Button] = []
         self.setup_content = self._build_setup_panel()
+        
+        # Temporary notification state (for footer messages that auto-clear)
+        self._temp_notification = None  # (message, expire_time)
+        self._notification_task = None  # asyncio task for clearing
 
         # Initialize Runtime UI after setup UI is built
         ts = time.strftime('%H:%M:%S')
@@ -977,6 +981,7 @@ class CCCCSetupApp:
             multiline=False,
             completer=ThreadedCompleter(self.command_completer),
             complete_while_typing=True,
+            focus_on_click=True,
         )
         # Status panel removed - all info now in bottom footer
         self.message_count: int = 0
@@ -2610,86 +2615,87 @@ class CCCCSetupApp:
             self.app.exit()
 
     def _setup_timeline_mouse_scroll(self) -> None:
-        """Setup mouse wheel scrolling and text selection for timeline"""
+        """Setup mouse wheel scrolling and text selection for timeline and input field"""
         from prompt_toolkit.mouse_events import MouseEventType
         from prompt_toolkit.selection import SelectionState, SelectionType
 
-        # Get the original mouse handler
-        original_handler = self.timeline.window.content.mouse_handler
+        # --- Helper to create a custom handler for a specific buffer/window ---
+        def create_custom_handler(window_content, buffer_obj):
+            original_handler = window_content.mouse_handler
+            # State closure for this handler
+            drag_state = {'start': None}
 
-        # Track drag state for selection
-        self._mouse_drag_start_pos = None
+            def handler(mouse_event):
+                # Handle scroll events (consume these, don't propagate)
+                if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+                    for _ in range(3):
+                        buffer_obj.cursor_down()
+                    return None
+                elif mouse_event.event_type == MouseEventType.SCROLL_UP:
+                    for _ in range(3):
+                        buffer_obj.cursor_up()
+                    return None
 
-        def custom_mouse_handler(mouse_event):
-            buffer = self.timeline.buffer
-
-            # Handle scroll events
-            if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
-                for _ in range(3):
-                    buffer.cursor_down()
-                return None
-            elif mouse_event.event_type == MouseEventType.SCROLL_UP:
-                for _ in range(3):
-                    buffer.cursor_up()
-                return None
-
-            # Handle mouse selection (drag to select)
-            elif mouse_event.event_type == MouseEventType.MOUSE_DOWN:
-                # Start selection - calculate position from mouse coordinates
-                # First, call original handler to move cursor
-                if original_handler:
-                    original_handler(mouse_event)
-                # Record start position for drag selection
-                self._mouse_drag_start_pos = buffer.cursor_position
-                # Clear any existing selection
-                buffer.selection_state = None
-                return None
-
-            elif mouse_event.event_type == MouseEventType.MOUSE_MOVE:
-                # Dragging - update selection
-                if self._mouse_drag_start_pos is not None:
-                    # Move cursor to current mouse position
+                # Handle mouse selection (drag to select)
+                elif mouse_event.event_type == MouseEventType.MOUSE_DOWN:
                     if original_handler:
                         original_handler(mouse_event)
-                    # Create/update selection from start to current position
-                    buffer.selection_state = SelectionState(
-                        original_cursor_position=self._mouse_drag_start_pos,
-                        type=SelectionType.CHARACTERS
-                    )
-                return None
+                    drag_state['start'] = buffer_obj.cursor_position
+                    buffer_obj.selection_state = None
+                    # Let event propagate for focus handling (crucial for input field)
+                    return None
 
-            elif mouse_event.event_type == MouseEventType.MOUSE_UP:
-                # End selection and auto-copy to clipboard
-                if self._mouse_drag_start_pos is not None:
-                    if original_handler:
-                        original_handler(mouse_event)
-                    # If we actually dragged (selected text)
-                    if buffer.cursor_position != self._mouse_drag_start_pos:
-                        buffer.selection_state = SelectionState(
-                            original_cursor_position=self._mouse_drag_start_pos,
+                elif mouse_event.event_type == MouseEventType.MOUSE_MOVE:
+                    if drag_state['start'] is not None:
+                        if original_handler:
+                            original_handler(mouse_event)
+                        buffer_obj.selection_state = SelectionState(
+                            original_cursor_position=drag_state['start'],
                             type=SelectionType.CHARACTERS
                         )
-                        # Auto-copy selection to clipboard (cross-platform)
-                        try:
-                            start = min(self._mouse_drag_start_pos, buffer.cursor_position)
-                            end = max(self._mouse_drag_start_pos, buffer.cursor_position)
-                            selected_text = buffer.document.text[start:end]
-                            if selected_text.strip():
-                                if set_clipboard_text(selected_text):
-                                    lines = len(selected_text.splitlines())
-                                    self._write_timeline(f"Copied {lines} line{'s' if lines != 1 else ''} to clipboard", 'success')
-                        except Exception:
-                            pass
-                    self._mouse_drag_start_pos = None
+                    return None
+
+                elif mouse_event.event_type == MouseEventType.MOUSE_UP:
+                    if drag_state['start'] is not None:
+                        if original_handler:
+                            original_handler(mouse_event)
+                        if buffer_obj.cursor_position != drag_state['start']:
+                            buffer_obj.selection_state = SelectionState(
+                                original_cursor_position=drag_state['start'],
+                                type=SelectionType.CHARACTERS
+                            )
+                            # Auto-copy
+                            try:
+                                start = min(drag_state['start'], buffer_obj.cursor_position)
+                                end = max(drag_state['start'], buffer_obj.cursor_position)
+                                selected_text = buffer_obj.document.text[start:end]
+                                if selected_text.strip():
+                                    if set_clipboard_text(selected_text):
+                                        lines = len(selected_text.splitlines())
+                                        self._show_temp_notification(f"✓ Copied {lines} line{'s' if lines != 1 else ''}")
+                            except Exception:
+                                pass
+                        drag_state['start'] = None
+                    return None
+
+                # For other events, use original handler and let it propagate
+                if original_handler:
+                    return original_handler(mouse_event)
                 return None
+            
+            return handler
 
-            # For other events, use original handler
-            if original_handler:
-                return original_handler(mouse_event)
-            return None
-
-        # Replace the mouse handler
-        self.timeline.window.content.mouse_handler = custom_mouse_handler
+        # Apply to Timeline
+        self.timeline.window.content.mouse_handler = create_custom_handler(
+            self.timeline.window.content, 
+            self.timeline.buffer
+        )
+        
+        # Apply to Input Field (so users can drag-select-copy there too)
+        self.input_field.window.content.mouse_handler = create_custom_handler(
+            self.input_field.window.content,
+            self.input_field.buffer
+        )
 
     def _build_runtime_ui(self) -> None:
         """Build modern runtime UI (Full-width Timeline + Input + Footer)"""
@@ -2963,6 +2969,33 @@ class CCCCSetupApp:
 
         # Auto-scroll to bottom
         self.timeline.buffer.cursor_position = len(self.timeline.text)
+    
+    def _show_temp_notification(self, message: str, duration: float = 1.5) -> None:
+        """Show a temporary notification in the footer that auto-clears after duration seconds.
+        
+        Args:
+            message: Notification text to display
+            duration: Seconds before auto-clearing (default: 1.5)
+        """
+        import time
+        self._temp_notification = (message, time.time() + duration)
+        
+        # Cancel any existing notification task
+        if self._notification_task and not self._notification_task.done():
+            self._notification_task.cancel()
+        
+        # Schedule auto-clear
+        async def clear_notification():
+            await asyncio.sleep(duration)
+            self._temp_notification = None
+            if self.app:
+                self.app.invalidate()  # Trigger re-render
+        
+        self._notification_task = asyncio.create_task(clear_notification())
+        
+        # Trigger immediate re-render to show the notification
+        if self.app:
+            self.app.invalidate()
 
     def _start_reverse_search(self) -> None:
         """Start reverse search mode"""
@@ -3253,6 +3286,20 @@ class CCCCSetupApp:
                 ('class:info', ' to continue.'),
                 ('', '\n')
             ])
+        
+        # Temporary notification row (if active)
+        if self._temp_notification:
+            msg, expire_time = self._temp_notification
+            import time
+            if time.time() < expire_time:
+                text.extend([
+                    ('class:success', msg),
+                    ('', '\n')
+                ])
+            else:
+                # Expired, clear it
+                self._temp_notification = None
+        
         text.extend([
             ('class:section', '─' * 80 + '\n'),
             ('class:info', row1), ('', '\n'),
