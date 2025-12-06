@@ -311,15 +311,15 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "    Next[(tag=...)]: <single next step, ≤30 minutes>",
         "  - Human-only lines (not parsed): Outcome / Why / Opposite / Files / Refs.",
         "  - Non-English aliases are supported at runtime; documentation uses English keywords only.",
-        "- Progress keepalive",
-        "  - When you include a `Progress:` line, System sends a continuation prompt (~60s) to maintain work rhythm.",
+        "- Next keepalive",
+        "  - When you include a `Next:` line declaring your next step, System sends a continuation prompt (~60s) to maintain work rhythm if you stall.",
     ]
     # Single-peer mode: simplified channel guidance (use to_user.md primarily)
     if single_peer_mode:
         ch3 += [
             "- Communication channel (single-peer)",
             "  - Use **to_user.md** for all output - progress, questions, and results.",
-            "  - Include Progress markers to trigger keepalive and maintain work rhythm.",
+            "  - Include Next markers to declare your next step and trigger keepalive.",
         ]
     # Aux section reflects current binding (actor/invoke/cwd/rate)
     from pathlib import Path as _P

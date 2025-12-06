@@ -230,7 +230,7 @@ def make(ctx: Dict[str, Any]):
                 return
         except Exception:
             pass
-        # Schedule keepalive on progress lines
+        # Schedule keepalive on Next declarations
         try:
             if sender_label in ("PeerA","PeerB"):
                 schedule_cb = ctx.get('schedule_keepalive')

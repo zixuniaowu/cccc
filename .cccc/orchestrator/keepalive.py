@@ -2,17 +2,17 @@
 """
 Keepalive Mechanism - Unified for Single/Dual Peer Modes
 
-Purpose: When a peer sends a Progress message and the conversation stalls,
+Purpose: When a peer declares a Next step and the conversation stalls,
          send ONE continuation prompt to maintain work rhythm.
 
-Trigger: Peer sends message containing "Progress:" line (in to_peer or to_user)
+Trigger: Peer sends message containing "Next:" line (in to_peer or to_user)
 Behavior: After delay_s (default 60s), if no new activity, send one keepalive
-         Each new Progress REPLACES pending keepalive (resets timer)
+         Each new Next REPLACES pending keepalive (resets timer)
 
 Unified Design:
 - Same logic for single-peer and dual-peer modes
-- One Progress → One potential keepalive (after delay)
-- New Progress cancels old pending and starts fresh
+- One Next declaration → One potential keepalive (after delay)
+- New Next cancels old pending and starts fresh
 - Skip if inbox/inflight/queued not empty
 """
 from __future__ import annotations
@@ -30,14 +30,13 @@ def make(ctx: Dict[str, Any]):
     inflight = ctx['inflight']
     queued = ctx['queued']
     list_inbox_files = ctx['list_inbox_files']
-    inbox_dir = ctx['inbox_dir']
-    compose_nudge = ctx['compose_nudge']
-    format_ts = ctx['format_ts']
     profileA = ctx['profileA']; profileB = ctx['profileB']
-    nudge_api = ctx['nudge_api']
     log_ledger = ctx['log_ledger']
     keepalive_debug = bool(ctx.get('keepalive_debug', False))
-    send_box = {'fn': ctx.get('send_handoff')}
+    # Keepalive sends message directly to pane, NOT via send_handoff (which writes to inbox)
+    paste_when_ready = ctx.get('paste_when_ready')
+    paneA = ctx.get('paneA', '')
+    paneB = ctx.get('paneB', '')
 
     _initial_single_peer_mode = bool(ctx.get('single_peer_mode', False))
 
@@ -47,7 +46,6 @@ def make(ctx: Dict[str, Any]):
         except Exception:
             return _initial_single_peer_mode
 
-    EVENT_PROGRESS_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?Progress\s*(?:\(|:)\s*")
     EVENT_NEXT_RE = re.compile(r"(?mi)^\s*(?:[-*]\s*)?Next\s*(?:\(|:)\s*(.+)$")
 
     def _extract_body_from_tags(payload: str) -> str:
@@ -63,14 +61,8 @@ def make(ctx: Dict[str, Any]):
         except Exception:
             return payload or ""
 
-    def _has_progress_event(payload: str) -> bool:
-        try:
-            body = _extract_body_from_tags(payload)
-            return bool(EVENT_PROGRESS_RE.search(body))
-        except Exception:
-            return False
-
     def _extract_next(payload: str) -> str:
+        """Extract the first Next: line content from payload. Returns empty string if none found."""
         try:
             body = _extract_body_from_tags(payload)
             mm = EVENT_NEXT_RE.findall(body)
@@ -78,27 +70,26 @@ def make(ctx: Dict[str, Any]):
         except Exception:
             return ""
 
-    def bind_send(send_fn):
-        send_box['fn'] = send_fn
+    def _has_next_declaration(payload: str) -> bool:
+        """Check if payload contains a Next: declaration (the keepalive trigger)."""
+        return bool(_extract_next(payload))
 
-    def _send(label: str, text: str, *, nudge_text: Optional[str] = None):
-        fn = send_box.get('fn')
-        if not fn:
-            return
-        fn('System', label, text, nudge_text=nudge_text)
+    def bind_send(send_fn):
+        # Legacy: no longer used, keepalive sends directly to pane
+        pass
 
     def schedule_from_payload(sender_label: str, payload: str):
         """
-        Schedule keepalive when peer sends Progress message.
+        Schedule keepalive when peer declares a Next step.
         
         Called from:
         - Dual-peer: send_handoff (for TO_PEER messages)
         - Single-peer: mailbox_pipeline (for to_user/to_peer events)
         
         Behavior:
-        - Each Progress schedules ONE keepalive after delay_s
-        - New Progress REPLACES any pending keepalive (restarts timer)
-        - This means active peers continuously get keepalive feedback
+        - Each Next declaration schedules ONE keepalive after delay_s
+        - New Next REPLACES any pending keepalive (restarts timer)
+        - This ensures peers who declare intent get reminded if they stall
         """
         if not enabled:
             return
@@ -113,10 +104,10 @@ def make(ctx: Dict[str, Any]):
             if sender_label not in ("PeerA", "PeerB"):
                 return
         
-        # Check for Progress marker in TO_PEER or TO_USER tags
+        # Check for Next declaration in TO_PEER or TO_USER tags
         if "<TO_PEER>" not in (payload or "") and "<TO_USER>" not in (payload or ""):
             return
-        if not _has_progress_event(payload):
+        if not _has_next_declaration(payload):
             return
         
         nx = _extract_next(payload)
@@ -181,29 +172,26 @@ def make(ctx: Dict[str, Any]):
                 pending[label] = None
                 continue
             
-            # Build keepalive message
+            # Build keepalive message (sent directly to pane, no inbox write)
             nxt = (ent.get('next') or '').strip()
+            
+            # Keepalive message: simple continuation prompt
+            # NOTE: Do NOT append nudge/inbox instructions here because:
+            # 1. Keepalive only fires when inbox is EMPTY (see skip conditions above)
+            # 2. Peer declared Next step - it knows what to do
+            # 3. We just need a gentle "continue" reminder
             if nxt:
-                msg = f"<FROM_SYSTEM>\nContinue: {nxt}\n</FROM_SYSTEM>\n"
+                ka_msg = f"[KEEPALIVE] Continue: {nxt}"
             else:
-                msg = "<FROM_SYSTEM>\nContinue.\n</FROM_SYSTEM>\n"
+                ka_msg = "[KEEPALIVE] Continue your work."
             
-            try:
-                inbox_path = inbox_dir(home, label).as_posix()
-            except Exception:
-                inbox_path = ".cccc/mailbox/peerX/inbox"
+            # Send directly to pane (no inbox write)
+            pane = paneA if label == 'PeerA' else paneB
+            profile = profileA if label == 'PeerA' else profileB
+            if paste_when_ready and pane:
+                paste_when_ready(pane, profile, ka_msg, timeout=6.0, poke=False)
             
-            ka_suffix = nudge_api.compose_nudge_suffix_for(
-                label,
-                profileA=profileA,
-                profileB=profileB,
-                aux_mode=ctx.get('aux_mode', 'off'),
-                aux_actor=ctx.get('aux_actor', '')
-            )
-            ka_nudge = compose_nudge(inbox_path, ts=format_ts(), backlog_gt_zero=False, suffix=ka_suffix)
-            _send(label, msg, nudge_text=ka_nudge)
-            
-            # Clear pending (one keepalive per Progress)
+            # Clear pending (one keepalive per Next declaration)
             pending[label] = None
             
             try:

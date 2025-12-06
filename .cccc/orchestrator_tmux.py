@@ -1709,7 +1709,7 @@ def main(home: Path, session_name: Optional[str] = None):
             main_loop_tick_seconds = 0.2
     except Exception:
         main_loop_tick_seconds = 2.0
-    # Progress keepalive (lightweight): delayed system echo back to sender to keep CLI alive
+    # Next keepalive (lightweight): delayed system echo back to sender to keep CLI alive
     keepalive_enabled = bool(delivery_cfg.get("keepalive_enabled", True))
     try:
         keepalive_delay_s = float(delivery_cfg.get("keepalive_delay_seconds", 60))
@@ -1786,20 +1786,18 @@ def main(home: Path, session_name: Optional[str] = None):
         'inflight': inflight,
         'queued': queued,
         'list_inbox_files': _list_inbox_files,
-        'inbox_dir': _inbox_dir,
-        'compose_nudge': _compose_nudge,
-        'format_ts': _format_local_ts,
         'profileA': profileA,
         'profileB': profileB,
-        'aux_mode': aux_mode,
-        'aux_actor': aux_actor,
-        'nudge_api': nudge_api,
         'log_ledger': log_ledger,
         'keepalive_debug': KEEPALIVE_DEBUG,
         # Single-peer mode parameters
         'single_peer_mode': single_peer_mode,
         'single_peer_delay_s': single_peer_delay_s,
         'single_peer_max_nudges': single_peer_max_nudges,
+        # Direct pane access for keepalive (no inbox write)
+        'paste_when_ready': paste_when_ready,
+        'paneA': paneA,
+        'paneB': paneB,
     }
     keepalive_api = make_keepalive(keepalive_ctx)
 
