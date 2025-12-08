@@ -12,11 +12,7 @@ from __future__ import annotations
 import sys, json, time, argparse
 from pathlib import Path
 from typing import Dict, Any, List
-try:
-    # Local import (script runs from .cccc). Used for a reliable POR fallback.
-    from por_manager import por_status_snapshot as _por_snap  # type: ignore
-except Exception:
-    _por_snap = None  # type: ignore
+# POR removed - context tracking now via context/context.yaml
 
 
 def read_jsonl(path: Path, limit: int = 2000) -> List[Dict[str, Any]]:

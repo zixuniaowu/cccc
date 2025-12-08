@@ -11,14 +11,14 @@ CCCC uses a simple, file-based mailbox contract:
 - **Evidence types**: patch diffs, test logs, benchmark results, commit hashes
 - **State changes**: Only messages with valid evidence (e.g., `patch.diff`, `test:passed`) affect the codebase
 
-## Repo-Native Anchors (POR/SUBPOR)
+## Execution Context (ccontext compatible)
 
-Strategy and execution live in your repository under `docs/por/`:
+Execution status tracking lives in your repository under `context/`:
 
-- **`POR.md`** (strategic board): North star, deliverables, roadmap (Now/Next/Later), risk radar, recent decisions
-- **`T######-slug/SUBPOR.md`** (per-task sheet): Goal, acceptance criteria, cheapest probe, kill criteria, implementation notes, next step
+- **`context.yaml`** (execution status): Milestones (project phases), notes (lessons learned), references (important files)
+- **`tasks/T###.yaml`** (task definitions): Goal, steps, acceptance criteria, status
 
-Peers update these naturally as they work. You can read them anytime to see the big picture.
+Peers update these naturally as they work. You can read them anytime to see the current state.
 
 ## Collaboration Architecture
 
@@ -42,7 +42,7 @@ flowchart TB
     subgraph ArtifactLayer["Artifact Layer (Persistent State)"]
         Codebase["📁 Codebase<br/>(patches)"]
         Ledger["📋 Ledger<br/>(audit)"]
-        POR["📊 POR/<br/>SUBPOR"]
+        Context["📊 context/<br/>(milestones/tasks)"]
     end
 
     User -->|"direct command"| Peers
@@ -52,7 +52,7 @@ flowchart TB
 
     Peers --> Codebase
     Peers --> Ledger
-    Peers --> POR
+    Peers --> Context
 ```
 
 **Diagram notes:**
@@ -63,7 +63,7 @@ flowchart TB
 ## Key Relationships
 
 - **User → Peers**: Direct commands or delegated through Foreman (scheduled)
-- **Peers ⇄ Aux**: Invoke strategic (POR review) or tactical (tests, bulk work) help as needed
+- **Peers ⇄ Aux**: Invoke strategic (context review) or tactical (tests, bulk work) help as needed
 - **Peers → Artifacts**: Generate evidence (patches, tests, logs) directly or via Aux
 - **Foreman**: Optional user proxy for periodic health checks and task scheduling
 - **Aux**: Optional on-demand helper, invoked by peers for strategic or tactical work
@@ -106,10 +106,10 @@ flowchart TB
   prompt_weaver.py                 # System prompt builder
   ...
 
-docs/
-  por/
-    POR.md                         # Strategic board (North star, roadmap, decisions)
-    T000123-your-task/SUBPOR.md    # Per-task sheet (goal/acceptance/probe/next)
+context/
+  context.yaml                     # Execution status (milestones, notes, references)
+  tasks/
+    T001.yaml                      # Task definition (goal, steps, status)
 
 PROJECT.md                         # Your project brief (woven into system prompts)
 FOREMAN_TASK.md                    # Foreman task brief (if using Foreman)

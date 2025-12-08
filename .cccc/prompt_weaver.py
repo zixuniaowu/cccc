@@ -2,8 +2,6 @@
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 from datetime import datetime, timezone as _tz, timedelta
-
-from por_manager import ensure_por, por_path, ensure_aux_section
 import json
 
 def _read_yaml_or_json(p: Path) -> Dict[str, Any]:
@@ -207,7 +205,6 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     base = f".cccc/mailbox/{peer}"
     to_user = f"{base}/to_user.md"
     to_peer = f"{base}/to_peer.md"
-    por_rel = por_path(home).as_posix()
     aux_enabled = aux_mode == "on"
 
     # Single-peer mode: only PeerA is active
@@ -264,9 +261,11 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     ch2 = [
         "",
         "2) Canonical references and anchors",
-        f"- POR.md - single source of direction (path: {por_rel})",
-        "  - Keep North-star, guardrails, bets/assumptions, Now/Next/Later, and portfolio health here (no details).",
-        "- Blueprint task system - structured task tracking for complex work",
+        "- context/ directory - execution status tracking (ccontext compatible)",
+        "  - context/context.yaml: milestones (project phases), notes (lessons), references",
+        "  - context/tasks/T###.yaml: active task definitions with steps",
+        "  - Use milestones to track project journey; use tasks for concrete work items",
+        "- Task system - structured task tracking for complex work",
         "  - Location: context/tasks/T###.yaml",
         "  - Use for: multi-step goals (>2 files OR >50 lines); work spanning multiple handoffs; user-requested planning",
         "  - Skip for: quick tasks (<=2 files AND <=50 lines); immediate fixes; simple questions",
@@ -276,7 +275,6 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - Boundary: do not modify orchestrator code/config/policies; use mailbox/work/state/logs exactly as documented.",
         "- PROJECT.md - user-facing scope and context (repo root, maintained by user)",
         "  - Read to align on vision, constraints, stakeholders, non-goals, and links. Do NOT edit unless explicitly asked by the user.",
-        "  - If PROJECT.md and POR drift, note a one-line clarification in POR and continue with the updated direction; propose edits to the user via <TO_USER> if needed.",
     ]
 
     ch3 = [
@@ -284,14 +282,14 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "3) How to execute (lean and decisive)",
         "- One-round loop (follow in order)",
         "  - Align before you act; keep one decidable next step per message (<=30 minutes).",
-        "  - 0 Check tasks: scan context/tasks/T*.yaml for active tasks; if none and goal is non-trivial, create one first.",
-        "  - 1 Read POR (goal/guardrails/bets/roadmap).",
+        "  - 0 Check context: scan context/context.yaml for milestones and context/tasks/T*.yaml for active tasks.",
+        "  - 1 If no active milestone, create one in context/context.yaml first.",
         "  - 2 Pick exactly one smallest decisional probe.",
         "  - 3 Build; keep changes small and reversible.",
         "  - 4 Validate (command + 1-3 stable lines; cite exact paths/line ranges).",
         "  - 5 Write the message using the skeleton in Chapter 4.",
         "  - 6 Add one insight (WHY + Next + refs); do not repeat the body.",
-        "  - 7 If direction changed, update POR. If task exists, update its status.",
+        "  - 7 Update task status; record lessons in context/context.yaml notes if learned something important.",
         "- Evidence and change budget",
         "  - Done = has verifiable evidence (commit/test/log).",
         "  - Only tests/logs/commits count as evidence. Avoid speculative big refactors; always show the smallest reproducible check.",
@@ -494,7 +492,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - Checks: <cmd + stable 1-2 lines> -> pass|fail|n/a",
         "  - Risks/unknowns: [...]",
         "  - Next: <one smallest decisive step>",
-        f"  - refs: [\"POR.md#...\", \".cccc/rules/{role_name}.md#...\"]",
+        f"  - refs: [\"context/context.yaml\", \".cccc/rules/{role_name}.md#...\"]",
         "- File I/O (keep these two lines verbatim) {#file-io}",
         "  - Inbound: uploads go to .cccc/work/upload/inbound/YYYYMMDD/MID__name with a sibling .meta.json; also indexed into state/inbound-index.jsonl.",
         "  - Outbound: drop files into .cccc/work/upload/outbound/ (flat). Use <name>.route with a|b|both or first line of <name>.caption.txt starting with a:/b:/both:. On success a <name>.sent.json ACK is written.",
@@ -525,7 +523,6 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
 
 
 def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
-    por_rel = por_path(home).as_posix()
     session_root = (home/"work"/"aux_sessions").as_posix()
 
     ch1 = [
@@ -543,7 +540,7 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "2) Context (read in order)",
         "- notes.txt: the ask, expectations, success criteria",
         "- peer_message.txt: triggering message context (if present)",
-        f"- POR.md: {por_rel} (strategic direction)",
+        "- context/context.yaml: milestones and execution status",
         "- context/tasks/T*.yaml: active tasks (do NOT create new tasks; update existing if instructed)",
         "- PROJECT.md: project vision and constraints",
     ]
@@ -606,7 +603,6 @@ def ensure_rules_docs(home: Path):
     hash_changed = old.get("hash") != h
 
     if peera_missing or peerb_missing or aux_missing or foreman_missing or hash_changed:
-        ensure_por(home)  # make sure POR exists for path rendering
         im_enabled = _is_im_enabled(home)
 
         # Generate PEERA.md (always needed)
@@ -626,10 +622,6 @@ def ensure_rules_docs(home: Path):
         # AUX.md: generate only when aux is enabled, delete when disabled
         if aux_mode == "on":
             _write_rules_for_aux(home, aux_mode=aux_mode)
-            try:
-                ensure_aux_section(home)
-            except Exception:
-                pass
         else:
             aux_rules = home / "rules" / "AUX.md"
             if aux_rules.exists():
@@ -666,7 +658,6 @@ def rebuild_rules_docs(home: Path):
       subsequent ensure_rules_docs() calls are no-ops for this run unless
       settings change.
     """
-    ensure_por(home)
     im_enabled = _is_im_enabled(home)
     aux_mode = _aux_mode(home)
     single_peer = _is_single_peer_mode(home)
@@ -689,10 +680,6 @@ def rebuild_rules_docs(home: Path):
     # AUX.md: generate only when aux is enabled, delete when disabled
     if aux_mode == "on":
         _write_rules_for_aux(home, aux_mode=aux_mode)
-        try:
-            ensure_aux_section(home)
-        except Exception:
-            pass
     else:
         aux_rules = home / "rules" / "AUX.md"
         if aux_rules.exists():
@@ -754,7 +741,7 @@ def _write_rules_for_foreman(home: Path) -> Path:
         "",
         "Context (skim then decide)",
         "- PROJECT.md: vision/constraints",
-        "- docs/por/POR.md: Now/Next/Risks",
+        "- context/context.yaml: milestones and execution status",
         "- context/tasks/T*.yaml: active tasks and progress",
         "- .cccc/mailbox/*/inbox: pending items",
         "",
@@ -814,13 +801,12 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
     except Exception:
         pass
     # Fallback: construct a minimal banner if rules are not yet available
-    por_file = por_path(home)
     rules_path = (home/"rules"/("PEERA.md" if (peer.lower()=="peera" or peer=="peerA") else "PEERB.md")).as_posix()
     other = "peerB" if (peer.lower()=="peera" or peer=="peerA") else "peerA"
     lines = [
         "CCCC Runtime SYSTEM (full)",
         f"* You are {peer}. Collaborate as equals with {other}.",
-        f"* POR: {por_file.as_posix()} (single source; update when direction changes).",
+        f"* Context: context/context.yaml (milestones); context/tasks/ (tasks).",
         f"* Rules: {rules_path} - follow this document; keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced insight block.",
         "",
     ]

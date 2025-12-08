@@ -17,7 +17,7 @@ def make(ctx: Dict[str, Any]):
     self_check_every = ctx['self_check_every']
     instr_counter_box = ctx['instr_counter_box']
     handoffs_peer = ctx['handoffs_peer']
-    por_status_snapshot = ctx['por_status_snapshot']
+    # por_status_snapshot removed - context tracking now via context/context.yaml
     _aux_snapshot = ctx['_aux_snapshot']
     cli_profiles = ctx['cli_profiles']
     settings = ctx['settings']
@@ -118,7 +118,6 @@ def make(ctx: Dict[str, Any]):
             "mailbox_counts": mbox_counts,
             "mailbox_last": mbox_last,
             "handoff_filter_enabled": eff_filter,
-            "por": por_status_snapshot(home),
             "aux": _aux_snapshot(),
             "reset": {
                 "policy": conversation_reset_policy,

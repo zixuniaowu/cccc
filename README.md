@@ -394,38 +394,45 @@ both: Add a short section to README about team chat tips
   settings/               # Configuration (TUI handles most changes)
   mailbox/                # Message exchange between peers
   state/                  # Runtime state, logs, ledger
-docs/por/                 # Strategic direction
-  POR.md                  # Strategic board (vision, guardrails, roadmap)
 context/                  # Execution tracking (ccontext compatible)
-  tasks/                  # Blueprint task files
-    T001.yaml             # Task definition: goal, steps, acceptance, status
+  context.yaml            # Milestones, notes, references
+  tasks/                  # Task definitions
+    T001.yaml             # Task: goal, steps, acceptance, status
 PROJECT.md                # Your project brief (injected into system prompts)
 FOREMAN_TASK.md           # Foreman tasks (if using Foreman)
 ```
 
-### POR.md (Plan of Record)
+### context/context.yaml (Execution Status)
 
-The strategic anchor that defines direction:
+Tracks project execution status with milestones:
 
-```markdown
-# POR — Plan of Record
+```yaml
+milestones:
+  - id: M1
+    name: Phase 1 - Core Implementation
+    description: Build foundation with schema, storage, tools
+    status: done  # done | active | pending
+    started: "2024-12-01"
+    completed: "2024-12-07"
+    outcomes: "15 tools, 42 tests passing"
+  - id: M2
+    name: Phase 2 - Integration
+    status: active
+    started: "2024-12-07"
 
-## North Star
-What ultimate success looks like for this project.
+notes:
+  - id: N001
+    content: "Always run tests before committing"
+    score: 50  # Decays over time
 
-## Guardrails
-Non-negotiable constraints and quality gates.
-
-## Now / Next / Later
-- **Now**: Current sprint focus
-- **Next**: Upcoming priorities
-- **Later**: Future backlog
-
-## Risks & Mitigations
-Known risks and how they're being addressed.
+references:
+  - id: R001
+    url: src/core/handler.py
+    note: Main request handler
+    score: 40
 ```
 
-### Blueprint Task Structure
+### Task Structure
 
 Each task lives in `context/tasks/T###.yaml`:
 

@@ -105,7 +105,7 @@ def main():
     p_clean = sub.add_parser("clean", help="Purge .cccc/{mailbox,work,logs,state}/ runtime artifacts")
 
     p_reset = sub.add_parser("reset", help="Reset runtime state for new task (clear state/mailbox/logs/work)")
-    p_reset.add_argument("--archive", action="store_true", help="Archive docs/por/ before reset")
+    p_reset.add_argument("--archive", action="store_true", help="Archive context/ before reset")
 
     p_doctor = sub.add_parser("doctor", help="Environment check (git/tmux/python/telegram)")
     p_doctor.add_argument("what", nargs="?", default="all", choices=["all","roles"], help="Subset to check: all|roles (default: all)")
@@ -189,7 +189,7 @@ def main():
                 print(f"[CLEAN] Failed to purge {d}: {e}")
 
     def _cmd_reset(archive: bool = False):
-        """Reset runtime state for new task. Optionally archive POR and task files."""
+        """Reset runtime state for new task. Optionally archive context files."""
         # Safety check: warn if orchestrator session is running
         session_file = home / "state" / "session.json"
         if session_file.exists():
@@ -216,44 +216,40 @@ def main():
             except Exception:
                 pass  # Ignore errors reading session state
 
-        # Handle POR and task directories: archive (--archive) or delete (default)
-        por_dir = Path.cwd() / "docs" / "por"
-        if por_dir.exists():
-            por_md = por_dir / "POR.md"
-            # Find task directories (T###-* pattern, excluding archive and _archive)
-            task_dirs = [d for d in por_dir.iterdir() if d.is_dir() and d.name.startswith('T') and d.name not in ('archive', '_archive')]
+        # Handle context directory: archive (--archive) or delete (default)
+        context_dir = Path.cwd() / "context"
+        if context_dir.exists():
+            context_yaml = context_dir / "context.yaml"
+            tasks_dir = context_dir / "tasks"
 
             if archive:
                 # Archive mode: move to timestamped archive directory
                 timestamp = time.strftime('%Y%m%d-%H%M%S')
-                archive_dir = por_dir / "_archive" / timestamp
+                archive_dir = context_dir / "_archive" / timestamp
                 try:
                     archive_dir.mkdir(parents=True, exist_ok=True)
-                    if por_md.exists():
-                        shutil.move(str(por_md), str(archive_dir / "POR.md"))
-                        print(f"[RESET] Archived POR.md")
-                    for task_dir in task_dirs:
-                        try:
-                            shutil.move(str(task_dir), str(archive_dir / task_dir.name))
-                            print(f"[RESET] Archived task: {task_dir.name}")
-                        except Exception as e:
-                            print(f"[RESET] Failed to archive {task_dir.name}: {e}")
+                    if context_yaml.exists():
+                        shutil.move(str(context_yaml), str(archive_dir / "context.yaml"))
+                        print(f"[RESET] Archived context.yaml")
+                    if tasks_dir.exists():
+                        shutil.move(str(tasks_dir), str(archive_dir / "tasks"))
+                        print(f"[RESET] Archived tasks/")
                 except Exception as e:
                     print(f"[RESET] Failed to create archive: {e}")
             else:
-                # Default mode: delete POR and task directories directly
-                if por_md.exists():
+                # Default mode: delete context files directly
+                if context_yaml.exists():
                     try:
-                        por_md.unlink()
-                        print(f"[RESET] Deleted POR.md")
+                        context_yaml.unlink()
+                        print(f"[RESET] Deleted context.yaml")
                     except Exception as e:
-                        print(f"[RESET] Failed to delete POR.md: {e}")
-                for task_dir in task_dirs:
+                        print(f"[RESET] Failed to delete context.yaml: {e}")
+                if tasks_dir.exists():
                     try:
-                        shutil.rmtree(task_dir)
-                        print(f"[RESET] Deleted task: {task_dir.name}")
+                        shutil.rmtree(tasks_dir)
+                        print(f"[RESET] Deleted tasks/")
                     except Exception as e:
-                        print(f"[RESET] Failed to delete {task_dir.name}: {e}")
+                        print(f"[RESET] Failed to delete tasks/: {e}")
 
         # Clear runtime directories (same as clean, but with different messaging)
         cleared = []

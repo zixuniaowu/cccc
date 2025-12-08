@@ -72,7 +72,6 @@ except ImportError:  # script import (python .cccc/orchestrator_tmux.py)
     from orchestrator.keepalive import make as make_keepalive
 from common.config import load_profiles, ensure_env_vars, is_single_peer_mode
 from mailbox import ensure_mailbox, MailboxIndex, scan_mailboxes, reset_mailbox, compose_sentinel, sha256_text, is_sentinel_text
-from por_manager import ensure_por, por_path, por_status_snapshot, read_por_text
 
 
 # Rebind to external helpers to prefer module implementations
@@ -479,7 +478,6 @@ def git_commit(msg: str):
 
 # ---------- prompt weaving ----------
 def weave_system(home: Path, peer: str) -> str:
-    ensure_por(home)
     from prompt_weaver import weave_minimal_system_prompt, ensure_rules_docs
     try:
         ensure_rules_docs(home)
@@ -491,7 +489,6 @@ def weave_preamble_text(home: Path, peer: str) -> str:
     """Preamble for the very first user message (full SYSTEM)."""
     try:
         from prompt_weaver import weave_system_prompt
-        ensure_por(home)
         return weave_system_prompt(home, peer)
     except Exception:
         # Fallback to minimal system if full generation fails
@@ -715,12 +712,7 @@ def main(home: Path, session_name: Optional[str] = None):
     from orchestrator.tmux_layout import set_socket
     set_socket(session)
 
-    por_markdown = ensure_por(home)
-    try:
-        por_display_path = por_markdown.relative_to(Path.cwd())
-    except ValueError:
-        por_display_path = por_markdown
-    por_update_last_request = 0.0
+    context_update_last_request = 0.0
 
     def _perform_reset(mode: str, *, trigger: str, reason: str) -> str:
         mode_norm = (mode or "").lower()
@@ -741,17 +733,17 @@ def main(home: Path, session_name: Optional[str] = None):
                 pass
             log_ledger(home, {"from": "system", "kind": "reset", "mode": "compact", "trigger": trigger})
             write_status(deliver_paused)
-            _request_por_refresh(f"reset-{mode_norm}", force=True)
+            _request_context_refresh(f"reset-{mode_norm}", force=True)
             return "Manual compact executed"
         clear_msg = (
-            "<FROM_SYSTEM>\nReset requested: treat this as a fresh exchange. Discard interim scratch context and rely on POR.md for direction.\n"
+            "<FROM_SYSTEM>\nReset requested: treat this as a fresh exchange. Discard interim scratch context and rely on context/context.yaml for milestones and context/tasks/ for active work.\n"
             "</FROM_SYSTEM>\n"
         )
         _send_handoff("System", "PeerA", clear_msg)
         _send_handoff("System", "PeerB", clear_msg)
         log_ledger(home, {"from": "system", "kind": "reset", "mode": "clear", "trigger": trigger})
         write_status(deliver_paused)
-        _request_por_refresh(f"reset-{mode_norm}", force=True)
+        _request_context_refresh(f"reset-{mode_norm}", force=True)
         return "Manual clear notice issued"
 
     aux_mode = "off"
@@ -775,11 +767,6 @@ def main(home: Path, session_name: Optional[str] = None):
                 session_id += f"-{peer_label.lower()}"
             session_path = aux_work_root/session_id
             session_path.mkdir(parents=True, exist_ok=True)
-            try:
-                por_snapshot = read_por_text(home)
-            except Exception:
-                por_snapshot = ""
-            (session_path/"POR.md").write_text(por_snapshot, encoding="utf-8")
             details: List[str] = []
             details.append("# Aux Helper Context")
             details.append(f"Reason: {reason}")
@@ -798,15 +785,16 @@ def main(home: Path, session_name: Optional[str] = None):
             details.append("```bash")
             if aux_command:
                 details.append("# Prompt with inline text")
-                details.append(f"{aux_command.replace('{prompt}', 'Review the latest POR context and suggest improvements')}")
+                details.append(f"{aux_command.replace('{prompt}', 'Review the context and suggest improvements')}")
                 details.append("# Point to specific files or directories")
-                details.append(f"{aux_command.replace('{prompt}', '@docs/ @.cccc/work/aux_sessions/{session_id} Provide a review summary')}")
+                details.append(f"{aux_command.replace('{prompt}', '@context/ @.cccc/work/aux_sessions/{session_id} Provide a review summary')}")
             else:
                 details.append("# Aux not configured; select an Aux actor at startup to enable one-line invokes.")
             details.append("```")
             details.append("")
             details.append("## Data in this bundle")
-            details.append("- `POR.md`: snapshot of the current Plan-of-Record.")
+            details.append("- `context/context.yaml`: milestones and execution status (read from repo root)")
+            details.append("- `context/tasks/`: active tasks (read from repo root)")
             details.append("- `peer_message.txt`: the triggering message or artifact from the peer.")
             details.append("- `notes.txt`: this instruction file.")
             (session_path/"notes.txt").write_text("\n".join(details), encoding="utf-8")
@@ -1530,8 +1518,8 @@ def main(home: Path, session_name: Optional[str] = None):
             try:
                 if command == "focus":
                     raw = str(args.get("raw") or "")
-                    _request_por_refresh(f"focus-{source}", hint=raw or None, force=True)
-                    result = {"ok": True, "message": "POR refresh requested."}
+                    _request_context_refresh(f"focus-{source}", hint=raw or None, force=True)
+                    result = {"ok": True, "message": "Context refresh requested."}
                 elif command == "reset":
                     mode = str(args.get("mode") or default_reset_mode)
                     message = _perform_reset(mode, trigger=source, reason=f"{source}-{mode}")
@@ -1840,30 +1828,27 @@ def main(home: Path, session_name: Optional[str] = None):
     def _send_handoff(sender_label: str, receiver_label: str, payload: str, require_mid: Optional[bool]=None, *, nudge_text: Optional[str]=None):
         return handoff_api.send_handoff(sender_label, receiver_label, payload, require_mid, nudge_text=nudge_text)
 
-    def _request_por_refresh(trigger: str, hint: Optional[str] = None, *, force: bool = False):
-        nonlocal por_update_last_request
+    def _request_context_refresh(trigger: str, hint: Optional[str] = None, *, force: bool = False):
+        nonlocal context_update_last_request
         now = time.time()
-        if (not force) and (now - por_update_last_request) < 60.0:
+        if (not force) and (now - context_update_last_request) < 60.0:
             return
         lines = [
-            f"POR update requested (trigger: {trigger}).",
-            f"File: {por_display_path}",
-            "Also review all active tasks (context/tasks/T###.yaml):",
-            "- For each task: confirm goal, steps, and status. Update task files directly or via MCP tools.",
-            "- Align POR Now/Next with active tasks; close/rescope stale items; ensure evidence has recent refs (commit/test/log).",
-            "- Check for gaps: missing tasks, unowned work, new risks; create T###.yaml in context/tasks/ when planning new work.",
-            "- Sanity-check portfolio coherence across POR and active tasks.",
+            f"Context update requested (trigger: {trigger}).",
+            "Review execution status:",
+            "- context/context.yaml: milestones (project phases), notes (lessons), references",
+            "- context/tasks/T###.yaml: active tasks with steps and status",
+            "For each active task: confirm goal, steps, and status. Update files directly or via MCP tools.",
+            "Check for gaps: missing tasks, unowned work, new risks; create T###.yaml when planning new work.",
             "If everything is current, reply in to_peer.md with 1-2 verified points."
         ]
         if hint:
             lines.append(f"Hint: {hint}")
-        lines.append("Keep the POR as the single source of truth; avoid duplicating content elsewhere.")
         body = "\n".join(lines)
         payload = f"<FROM_SYSTEM>\n{body}\n</FROM_SYSTEM>\n"
-        # Send POR refresh to PeerA (who owns POR/task maintenance in both single/dual-peer modes)
         _send_handoff("System", "PeerA", payload)
-        por_update_last_request = now
-        log_ledger(home, {"from": "system", "kind": "por-refresh", "trigger": trigger, "hint": hint or ""})
+        context_update_last_request = now
+        log_ledger(home, {"from": "system", "kind": "context-refresh", "trigger": trigger, "hint": hint or ""})
 
     def _ack_receiver(label: str, event_text: Optional[str] = None):
         # ACK policy:
@@ -2146,7 +2131,6 @@ def main(home: Path, session_name: Optional[str] = None):
         'self_check_every': self_check_every,
         'instr_counter_box': {'v': instr_counter},
         'handoffs_peer': handoffs_peer,
-        'por_status_snapshot': por_status_snapshot,
         '_aux_snapshot': _aux_snapshot,
         'cli_profiles': cli_profiles,
         'settings': settings,
@@ -2222,7 +2206,7 @@ def main(home: Path, session_name: Optional[str] = None):
         'aux_mode': aux_mode, 'last_nudge_ts': last_nudge_ts,
         'schedule_keepalive': keepalive_api.schedule_from_payload,
         'is_low_signal': is_low_signal,
-        'request_por_refresh': _request_por_refresh,
+        'request_context_refresh': _request_context_refresh,
         'new_mid': new_mid, 'wrap_with_mid': wrap_with_mid,
         'maybe_send_nudge': nudge_api.maybe_send_nudge, 'send_nudge': nudge_api.send_nudge,
         'self_check_enabled': self_check_enabled,

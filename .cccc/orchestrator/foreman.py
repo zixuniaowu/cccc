@@ -68,7 +68,7 @@ def make(ctx: Dict[str, Any]):
 "Purpose (free text)\n- Describe what matters to the project right now.\n\n"
 "Current objectives (ranked, short)\n- 1) \n- 2) \n- 3) \n\n"
 "Standing work (edit freely)\n- List repeatable, non-interactive jobs you want Foreman to do from time to time.\n\n"
-"Useful references\n- PROJECT.md\n- docs/por/POR.md\n- context/tasks/T*.yaml (active tasks)\n- docs/evidence/**  and  .cccc/work/**\n\n"
+"Useful references\n- PROJECT.md\n- context/context.yaml (milestones, execution status)\n- context/tasks/T*.yaml (active tasks)\n- docs/evidence/**  and  .cccc/work/**\n\n"
 "How to act each run\n- Do one useful, non-interactive step within the time box (≤ 30m).\n- Save temporary outputs to .cccc/work/foreman/<YYYYMMDD-HHMMSS>/.\n- Write one message to .cccc/mailbox/foreman/to_peer.md with header To: Both|PeerA|PeerB and wrap body in <TO_PEER>..</TO_PEER>.\n\n"
 "Escalation\n- If a decision is needed, write a 6–10 line RFD and ask the peer.\n\n"
 "Safety\n- Do not modify orchestrator code/policies; provide checkable artifacts.\n"
