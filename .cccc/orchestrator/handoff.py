@@ -3,12 +3,11 @@
 Stateful handoff API (Context factory)
 - Equivalent to legacy inline logic in orchestrator_tmux.py for send_handoff/keepalive,
   now modularized via explicit ctx wiring to keep behavior consistent.
-- Includes Blueprint progress marker parsing for task tracking.
 """
 from __future__ import annotations
 import re, time, hashlib
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 
 from .handoff_helpers import (
@@ -34,58 +33,6 @@ def _get_task_manager(home: Path):
         except ImportError:
             pass
     return _task_manager
-
-def _process_progress_markers(home: Path, sender_label: str, payload: str) -> List[Tuple[str, bool, str]]:
-    """
-    Process progress markers in message payload.
-
-    Args:
-        home: .cccc directory path
-        sender_label: Sender (PeerA, PeerB, etc.)
-        payload: Message payload to parse
-
-    Returns:
-        List of (marker_str, success, message) tuples
-    """
-    manager = _get_task_manager(home)
-    if not manager:
-        return []
-
-    try:
-        from .task_schema import parse_progress_markers
-        markers = parse_progress_markers(payload)
-        if not markers:
-            return []
-
-        results = []
-        peer = 'peerA' if sender_label == 'PeerA' else 'peerB'
-        for marker in markers:
-            success, msg = manager._apply_marker(marker, peer)
-            marker_str = f"{marker.target} {marker.action}"
-            if marker.reason:
-                marker_str += f": {marker.reason}"
-            results.append((marker_str, success, msg))
-
-            # Log to ledger
-            log_ledger(home, {
-                "from": sender_label,
-                "kind": "progress-marker",
-                "marker": marker_str,
-                "success": success,
-                "message": msg,
-                "task_id": marker.task_id,
-                "step_id": marker.step_id,
-            })
-
-        return results
-    except Exception as e:
-        # Log error but don't fail handoff
-        log_ledger(home, {
-            "from": "system",
-            "kind": "progress-marker-error",
-            "error": str(e)[:100],
-        })
-        return []
 
 def make(ctx: Dict[str, Any]):
     home: Path = ctx['home']
@@ -305,18 +252,6 @@ def make(ctx: Dict[str, Any]):
             auto_compact_cb = ctx.get('auto_compact_on_handoff')
             if auto_compact_cb and status == "nudged":
                 auto_compact_cb(receiver_label)
-        except Exception:
-            pass
-
-        # Blueprint: Process progress markers from peer messages
-        try:
-            if sender_label in ("PeerA", "PeerB") and status == "nudged":
-                marker_results = _process_progress_markers(home, sender_label, payload)
-                # Notify TUI/bridges of task updates if any markers processed
-                if marker_results:
-                    task_update_cb = ctx.get('on_task_update')
-                    if task_update_cb:
-                        task_update_cb(marker_results)
         except Exception:
             pass
 

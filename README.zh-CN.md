@@ -61,7 +61,7 @@
 
 ### 证据驱动工作流
 
-- **Blueprint Task系统**：结构化任务文件（task.yaml）包含目标、步骤、验收标准和状态，TUI中可视化任务面板
+- **Blueprint Task系统**：结构化任务文件（`context/tasks/T###.yaml`）包含目标、步骤、验收标准和状态，TUI中可视化任务面板
 - **小步提交**：每个patch不超过150行，可review、可回滚
 - **审计日志**：ledger.jsonl记录所有事件，出问题能追溯
 
@@ -367,10 +367,11 @@ both: 我们来规划下一个milestone
   logs/                         # Peer日志
   rules/                        # 系统提示词
 
-docs/por/                       # 战略和任务锚点
+docs/por/                       # 战略方向
   POR.md                        # 战略板（愿景、护栏、路线图）
-  T###-slug/                    # 任务目录（如 T001-auth-module）
-    task.yaml                   # 任务定义：目标、步骤、验收、状态
+context/                        # 执行追踪（ccontext兼容）
+  tasks/                        # Blueprint任务文件
+    T001.yaml                   # 任务定义：目标、步骤、验收、状态
 
 PROJECT.md                      # 项目简介（会织入系统提示词）
 FOREMAN_TASK.md                 # Foreman任务定义
@@ -400,27 +401,25 @@ FOREMAN_TASK.md                 # Foreman任务定义
 
 ### Blueprint Task 结构
 
-每个任务存放在 `docs/por/T###-slug/task.yaml`：
+每个任务存放在 `context/tasks/T###.yaml`：
 
 ```yaml
 id: T001
-title: 实现OAuth支持
-status: in_progress  # pending | in_progress | done | blocked
+name: 实现OAuth支持
 goal: 添加OAuth 2.0认证支持
+status: active  # planned | active | complete
 steps:
   - id: S1
-    desc: 设计认证流程
-    status: done
+    name: 设计认证流程
+    done: 认证流程文档完成
+    status: complete  # pending | in_progress | complete
   - id: S2
-    desc: 实现token处理
+    name: 实现token处理
+    done: Token端点可用
     status: in_progress
-acceptance:
-  - OAuth登录端到端可用
-  - 测试覆盖率>80%
-progress_markers:
-  - "2024-01-15: 设计完成"
-  - "2024-01-16: Token端点实现完成"
 ```
+
+Agent在消息中发送进度标记（如 `progress: T001.S1 done`），编排器自动更新任务文件。
 
 ---
 

@@ -15,7 +15,7 @@ delivery:
     [Strategic Self-check · <=1 line each]
     1. Off-course? Point the smallest divergence from goal/tasks.
     2. Blocked or spinning? Name the blocker and one unblock action.
-    3. Task hygiene: Is docs/por/T###-slug/task.yaml accurate? Update status/progress if stale.
+    3. Task hygiene: Is context/tasks/T###.yaml accurate? Update status/progress if stale.
     4. 1-day constraint: What to drop, keep, do first?
     Resume after brief answers.
   mailbox_pull_enabled: true

@@ -1,16 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-Blueprint Task Manager - CRUD operations for tasks.
+Task Manager - CRUD operations for tasks using ccontext directory structure.
 
 This module handles all task file operations:
-- Loading and saving tasks from docs/por/
-- Processing progress markers from agent messages
-- Maintaining scope.yaml (auto-managed)
+- Loading and saving tasks from context/tasks/
 - Generating task summaries for TUI/IM
+
+Directory structure (ccontext mode):
+    context/
+        context.yaml         # Execution context (milestones, notes, references)
+        tasks/
+            T001.yaml        # Task definitions
+            T002.yaml
+        archive/
+            tasks/           # Completed/archived tasks
+
+Two modes:
+- ccontext mode: context/ directory exists, use context/tasks/
+- init mode: context/ does not exist, wait for Agent/MCP to create it
 
 Design principles:
 - Single source of truth: Orchestrator manages all task files
-- Agents send progress markers, Manager updates files
+- With MCP: Agents use ccontext MCP tools to update context/tasks
+- Without MCP: Agents edit YAML files directly
 - Atomic file operations to prevent corruption
 """
 from __future__ import annotations
@@ -21,7 +33,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 try:
     import yaml
@@ -29,24 +41,28 @@ except ImportError:
     yaml = None  # type: ignore
 
 from orchestrator.task_schema import (
-    TaskDefinition, Step, Scope, ProgressMarker,
+    TaskDefinition, Step, Scope,
     TaskStatus, StepStatus,
-    parse_progress_markers, generate_next_task_id, validate_task_id
+    generate_next_task_id, validate_task_id
 )
 
 
 class TaskManager:
     """
-    Manages Blueprint tasks - file operations and state updates.
+    Manages tasks using ccontext directory structure.
 
-    Directory structure:
-        docs/por/
-            POR.md              # Strategic Plan of Record (north star)
-            scope.yaml          # Task list and metadata (auto-managed)
-            T001-task-name/
-                task.yaml       # Task definition
-            T002-another-task/
-                task.yaml
+    Directory structure (ccontext mode):
+        context/
+            context.yaml        # Execution context
+            tasks/
+                T001.yaml       # Task definition
+                T002.yaml
+            archive/
+                tasks/          # Archived tasks
+    
+    Two modes:
+        - ccontext mode: context/ exists, fully operational
+        - init mode: context/ does not exist, waiting for initialization
     
     Error Handling:
         - Parse errors are captured in self.parse_errors (dict: task_id -> error_msg)
@@ -59,33 +75,47 @@ class TaskManager:
         Initialize TaskManager.
 
         Args:
-            root: Project root directory (contains docs/por/)
+            root: Project root directory
         """
         self.root = Path(root)
-        self.blueprint_dir = self.root / "docs" / "por"
+        self.context_dir = self.root / "context"
+        self.tasks_dir = self.context_dir / "tasks"
+        self.archive_dir = self.context_dir / "archive" / "tasks"
         # Error tracking: task_id -> error message (cleared on successful load)
         self.parse_errors: Dict[str, str] = {}
-        self._ensure_dirs()
+        # Mode detection
+        self._ready = self.context_dir.exists()
 
     def _ensure_dirs(self) -> None:
-        """Ensure blueprint directory exists."""
-        self.blueprint_dir.mkdir(parents=True, exist_ok=True)
+        """Ensure context directories exist (only when ready)."""
+        if self._ready:
+            self.tasks_dir.mkdir(parents=True, exist_ok=True)
+            self.archive_dir.mkdir(parents=True, exist_ok=True)
+    
+    def is_ready(self) -> bool:
+        """Check if context directory is initialized."""
+        return self._ready
     
     def refresh(self) -> None:
         """
-        Refresh task state by re-scanning the blueprint directory.
+        Refresh task state by re-scanning the context directory.
         
         This clears existing parse_errors and reloads all tasks,
         capturing any new parse errors in the process.
+        Also re-checks if context/ directory exists.
         """
+        # Re-check mode
+        self._ready = self.context_dir.exists()
+        
+        if not self._ready:
+            self.parse_errors.clear()
+            return
+        
         # Clear stale errors before re-scan
         self.parse_errors.clear()
-        # Re-sync scope (scans directory, loads tasks, captures errors)
-        self._sync_scope()
-        # Also try to load each task to catch validation errors
-        scope = self.get_scope()
-        for task_id in scope.tasks:
-            self.get_task(task_id)  # This captures parse errors
+        # Load all tasks to catch validation errors
+        for task in self.list_tasks():
+            pass  # list_tasks already captures parse errors
     
     def get_parse_errors(self) -> Dict[str, str]:
         """Get current parse errors for display in TUI/IM."""
@@ -172,103 +202,80 @@ class TaskManager:
             return False
 
     # =========================================================================
-    # Scope Management
+    # Scope Management (simplified for ccontext mode)
     # =========================================================================
 
     def get_scope(self) -> Scope:
-        """Load scope.yaml or create default."""
-        path = self.blueprint_dir / "scope.yaml"
-        data = self._read_yaml(path)
-        if data:
-            try:
-                return Scope(**data)
-            except Exception:
-                pass
-        return Scope()
+        """
+        Get task scope by scanning context/tasks/ directory.
+        
+        In ccontext mode, there is no scope.yaml file.
+        We build the scope dynamically from existing task files.
+        """
+        if not self._ready:
+            return Scope()
+        
+        scope = Scope()
+        # Scan tasks directory for T###.yaml files
+        if self.tasks_dir.exists():
+            for item in sorted(self.tasks_dir.glob("T*.yaml")):
+                # Extract task ID from filename (T001.yaml -> T001)
+                task_id = item.stem
+                if validate_task_id(task_id):
+                    scope.add_task(task_id)
+        return scope
 
     def save_scope(self, scope: Scope) -> bool:
-        """Save scope.yaml."""
-        scope.updated = datetime.now().isoformat()
-        path = self.blueprint_dir / "scope.yaml"
-        return self._write_yaml(path, scope.model_dump())
-
-    def _sync_scope(self) -> Scope:
         """
-        Synchronize scope.yaml with actual task directories.
-
-        Scans blueprint directory and updates scope to match.
-        Tracks duplicate task IDs in parse_errors (no stderr print).
+        No-op in ccontext mode.
+        
+        In ccontext mode, scope is derived from task files, not stored separately.
+        This method is kept for API compatibility but does nothing.
         """
-        scope = self.get_scope()
-        existing_ids = set(scope.tasks)
-        found_ids = set()
-        id_to_dirs: Dict[str, List[str]] = {}  # Track multiple dirs per ID
+        return True
 
-        # Scan for task directories
-        for item in self.blueprint_dir.iterdir():
-            if item.is_dir() and item.name.startswith('T'):
-                # Extract task ID from directory name (T001-slug -> T001)
-                match = re.match(r'^(T\d{3})', item.name)
-                if match:
-                    task_id = match.group(1)
-                    found_ids.add(task_id)
-                    if task_id not in id_to_dirs:
-                        id_to_dirs[task_id] = []
-                    id_to_dirs[task_id].append(item.name)
-
-        # Track duplicate task IDs as errors (no stderr print)
-        for tid, dirs in id_to_dirs.items():
-            if len(dirs) > 1:
-                self.parse_errors[tid] = f"Duplicate: {', '.join(dirs)}"
-
-        # Add new tasks
-        for tid in found_ids - existing_ids:
-            scope.add_task(tid)
-
-        # Remove deleted tasks
-        for tid in existing_ids - found_ids:
-            scope.remove_task(tid)
-            # Also clear any error for removed tasks
-            self.clear_error(tid)
-
-        self.save_scope(scope)
-        return scope
+    def _get_task_ids(self) -> List[str]:
+        """
+        Get all task IDs from context/tasks/ directory.
+        
+        Returns sorted list of task IDs (T001, T002, etc.)
+        """
+        if not self._ready or not self.tasks_dir.exists():
+            return []
+        
+        task_ids = []
+        for item in sorted(self.tasks_dir.glob("T*.yaml")):
+            task_id = item.stem
+            if validate_task_id(task_id):
+                task_ids.append(task_id)
+        return task_ids
 
     # =========================================================================
     # Task CRUD Operations
     # =========================================================================
 
-    def _get_task_dir(self, task_id: str) -> Optional[Path]:
+    def _get_task_path(self, task_id: str) -> Optional[Path]:
         """
-        Find task directory by ID.
+        Get path to task file.
 
-        Directory format: T001-slug-name
+        File format: context/tasks/T001.yaml
         """
         if not validate_task_id(task_id):
             return None
+        if not self._ready:
+            return None
+        return self.tasks_dir / f"{task_id}.yaml"
 
-        for item in self.blueprint_dir.iterdir():
-            if item.is_dir() and item.name.startswith(task_id):
-                return item
-        return None
-
-    def _create_task_dir(self, task_id: str, name: str) -> Path:
+    def _ensure_tasks_dir(self) -> bool:
         """
-        Create task directory with slug from name.
-
-        Args:
-            task_id: Task ID (T001)
-            name: Task name for slug generation
-
-        Returns:
-            Path to created directory
+        Ensure tasks directory exists.
+        
+        Returns True if directory exists or was created.
         """
-        # Generate slug from name
-        slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')[:30]
-        dir_name = f"{task_id}-{slug}" if slug else task_id
-        task_dir = self.blueprint_dir / dir_name
-        task_dir.mkdir(parents=True, exist_ok=True)
-        return task_dir
+        if not self._ready:
+            return False
+        self.tasks_dir.mkdir(parents=True, exist_ok=True)
+        return True
 
     def _normalize_task_data(self, data: Dict[str, Any], source: str = "") -> Dict[str, Any]:
         """
@@ -424,11 +431,10 @@ class TaskManager:
         Returns:
             TaskDefinition or None if not found
         """
-        task_dir = self._get_task_dir(task_id)
-        if not task_dir:
+        task_path = self._get_task_path(task_id)
+        if not task_path or not task_path.exists():
             return None
 
-        task_path = task_dir / "task.yaml"
         # Pass task_id for error tracking
         data = self._read_yaml(task_path, task_id=task_id)
         if not data:
@@ -470,7 +476,7 @@ class TaskManager:
         """
         Save task to disk.
 
-        Creates directory if needed, updates scope.yaml.
+        Creates tasks directory if needed.
 
         Args:
             task: TaskDefinition to save
@@ -478,24 +484,15 @@ class TaskManager:
         Returns:
             True on success
         """
-        task_dir = self._get_task_dir(task.id)
-        if not task_dir:
-            task_dir = self._create_task_dir(task.id, task.name)
-
-        task_path = task_dir / "task.yaml"
-        success = self._write_yaml(task_path, task.model_dump())
-
-        if success:
-            # Update scope
-            scope = self.get_scope()
-            scope.add_task(task.id)
-            self.save_scope(scope)
-
-        return success
+        if not self._ensure_tasks_dir():
+            return False
+        
+        task_path = self.tasks_dir / f"{task.id}.yaml"
+        return self._write_yaml(task_path, task.model_dump())
 
     def delete_task(self, task_id: str) -> bool:
         """
-        Delete task and its directory.
+        Delete task file.
 
         Args:
             task_id: Task ID to delete
@@ -503,32 +500,29 @@ class TaskManager:
         Returns:
             True on success
         """
-        task_dir = self._get_task_dir(task_id)
-        if not task_dir:
+        task_path = self._get_task_path(task_id)
+        if not task_path or not task_path.exists():
             return False
 
         try:
-            import shutil
-            shutil.rmtree(task_dir)
-
-            # Update scope
-            scope = self.get_scope()
-            scope.remove_task(task_id)
-            self.save_scope(scope)
+            task_path.unlink()
+            self.clear_error(task_id)
             return True
         except Exception:
             return False
 
     def list_tasks(self) -> List[TaskDefinition]:
         """
-        List all tasks in priority order (from scope).
+        List all tasks in ID order.
 
         Returns:
             List of TaskDefinition objects
         """
-        scope = self._sync_scope()
+        if not self._ready:
+            return []
+        
         tasks = []
-        for task_id in scope.tasks:
+        for task_id in self._get_task_ids():
             task = self.get_task(task_id)
             if task:
                 tasks.append(task)
@@ -546,9 +540,12 @@ class TaskManager:
         Returns:
             Created TaskDefinition or None on error
         """
+        if not self._ready:
+            return None
+        
         # Generate next task ID
-        scope = self.get_scope()
-        task_id = generate_next_task_id(scope.tasks)
+        existing_ids = self._get_task_ids()
+        task_id = generate_next_task_id(existing_ids)
 
         # Build steps
         task_steps = []
@@ -572,182 +569,6 @@ class TaskManager:
         if self.save_task(task):
             return task
         return None
-
-    # =========================================================================
-    # Progress Marker Processing
-    # =========================================================================
-
-    def process_markers(self, text: str, peer: str) -> List[Tuple[ProgressMarker, bool, str]]:
-        """
-        Process all progress markers in a message.
-
-        Args:
-            text: Message text containing markers
-            peer: Peer that sent the message (peerA, peerB)
-
-        Returns:
-            List of (marker, success, message) tuples
-        """
-        markers = parse_progress_markers(text)
-        results = []
-
-        for marker in markers:
-            success, msg = self._apply_marker(marker, peer)
-            results.append((marker, success, msg))
-
-        return results
-
-    def _apply_marker(self, marker: ProgressMarker, peer: str) -> Tuple[bool, str]:
-        """
-        Apply a single progress marker.
-
-        Args:
-            marker: Parsed ProgressMarker
-            peer: Peer that sent the marker
-
-        Returns:
-            (success, message) tuple
-        """
-        task = self.get_task(marker.task_id)
-
-        # Handle task-level markers
-        if marker.is_task_level:
-            if marker.action == 'start':
-                return self._handle_task_start(marker.task_id, task)
-            elif marker.action == 'promoted':
-                return self._handle_quick_task_promotion(marker.task_id, peer)
-            elif marker.action == 'done':
-                return self._handle_task_done(marker.task_id, task)
-            else:
-                return False, f"Unknown task action: {marker.action}"
-
-        # Handle step-level markers
-        if not task:
-            return False, f"Task {marker.task_id} not found. Create task.yaml first in docs/por/{marker.task_id}-slug/"
-
-        if marker.action == 'done':
-            return self._handle_step_done(task, marker.step_id)
-        elif marker.action == 'in_progress':
-            return self._handle_step_in_progress(task, marker.step_id)
-        elif marker.action == 'blocked':
-            return self._handle_step_blocked(task, marker.step_id, marker.reason, peer)
-        else:
-            return False, f"Unknown step action: {marker.action}"
-
-    def _handle_task_start(self, task_id: str, task: Optional[TaskDefinition]) -> Tuple[bool, str]:
-        """Handle 'progress: T001 start' marker."""
-        if not task:
-            return False, f"Task {task_id} not found. Create task.yaml first in docs/por/{task_id}-slug/"
-
-        if task.status == TaskStatus.ACTIVE:
-            return True, f"Task {task_id} already active"
-
-        task.status = TaskStatus.ACTIVE
-        # Set first step to in_progress
-        if task.steps and task.steps[0].status == StepStatus.PENDING:
-            task.steps[0].status = StepStatus.IN_PROGRESS
-
-        if self.save_task(task):
-            return True, f"Task {task_id} started"
-        return False, f"Failed to save task {task_id}"
-
-    def _handle_task_done(self, task_id: str, task: Optional[TaskDefinition]) -> Tuple[bool, str]:
-        """Handle 'progress: T001 done' marker - complete all remaining steps."""
-        if not task:
-            return False, f"Task {task_id} not found"
-
-        # Complete all steps
-        for step in task.steps:
-            if step.status != StepStatus.COMPLETE:
-                step.status = StepStatus.COMPLETE
-
-        task.status = TaskStatus.COMPLETE
-
-        if self.save_task(task):
-            return True, f"Task {task_id} completed"
-        return False, f"Failed to save task {task_id}"
-
-    def _handle_quick_task_promotion(self, task_id: str, peer: str) -> Tuple[bool, str]:
-        """
-        Handle 'progress: T001 promoted' marker.
-
-        This creates a placeholder task that the agent should then define.
-        """
-        # Create minimal task as placeholder
-        scope = self.get_scope()
-        if task_id in scope.tasks:
-            return False, f"Task {task_id} already exists"
-
-        # Use next ID if specified doesn't match
-        actual_id = generate_next_task_id(scope.tasks)
-
-        task = TaskDefinition(
-            id=actual_id,
-            name="Promoted Quick Task",
-            goal="Task promoted from quick task - awaiting definition",
-            status=TaskStatus.ACTIVE,
-            steps=[
-                Step(id="S1", name="Define task scope", done="Task definition complete", status=StepStatus.IN_PROGRESS),
-                Step(id="S2", name="Execute task", done="Implementation complete", status=StepStatus.PENDING),
-            ]
-        )
-
-        if self.save_task(task):
-            return True, f"Quick task promoted to {actual_id}"
-        return False, f"Failed to create promoted task"
-
-    def _handle_step_done(self, task: TaskDefinition, step_id: str) -> Tuple[bool, str]:
-        """Handle 'progress: T001.S1 done' marker."""
-        step = task.get_step(step_id)
-        if not step:
-            return False, f"Step {step_id} not found in {task.id}"
-
-        step.status = StepStatus.COMPLETE
-
-        # Activate next step if any
-        next_step = task.get_step(f"S{int(step_id[1:]) + 1}")
-        if next_step and next_step.status == StepStatus.PENDING:
-            next_step.status = StepStatus.IN_PROGRESS
-
-        # Check if all steps complete
-        if all(s.status == StepStatus.COMPLETE for s in task.steps):
-            task.status = TaskStatus.COMPLETE
-
-        if self.save_task(task):
-            return True, f"Step {task.id}.{step_id} completed"
-        return False, f"Failed to save task {task.id}"
-
-    def _handle_step_in_progress(self, task: TaskDefinition, step_id: str) -> Tuple[bool, str]:
-        """Handle 'progress: T001.S1 in_progress' marker."""
-        step = task.get_step(step_id)
-        if not step:
-            return False, f"Step {step_id} not found in {task.id}"
-
-        step.status = StepStatus.IN_PROGRESS
-
-        # Ensure task is active
-        if task.status == TaskStatus.PLANNED:
-            task.status = TaskStatus.ACTIVE
-
-        if self.save_task(task):
-            return True, f"Step {task.id}.{step_id} in progress"
-        return False, f"Failed to save task {task.id}"
-
-    def _handle_step_blocked(self, task: TaskDefinition, step_id: str,
-                            reason: Optional[str], peer: str) -> Tuple[bool, str]:
-        """
-        Handle 'progress: T001.S1 blocked: reason' marker.
-
-        Note: blocked is notification only, no state change.
-        The step remains in its current state.
-        """
-        step = task.get_step(step_id)
-        if not step:
-            return False, f"Step {step_id} not found in {task.id}"
-
-        # Log blocked notification (no state change)
-        reason_str = reason or "no reason given"
-        return True, f"Step {task.id}.{step_id} blocked: {reason_str}"
 
     # =========================================================================
     # Summary Generation

@@ -16,7 +16,7 @@ def make(ctx: Dict[str, Any]):
         'counter':  { 'counter' },
         'risk':     { 'risk' },
         'next':     { 'next' },
-        # Blueprint task events (logged separately via progress marker parsing)
+        # Blueprint task events (logged separately)
         'task':     { 'task' },
         'step':     { 'step' },
     }

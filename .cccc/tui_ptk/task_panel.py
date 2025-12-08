@@ -9,7 +9,7 @@ Provides clear visualization of:
 - Step-level details
 
 Design principles:
-- Single source of truth: task.yaml files
+- Single source of truth: context/tasks/T###.yaml files
 - WBS (Work Breakdown Structure) style display
 - Consistent across TUI and IM interfaces
 - Professional alignment and spacing
@@ -75,7 +75,7 @@ class TaskPanel:
         Initialize Task Panel.
 
         Args:
-            root: Project root directory (contains docs/por/)
+            root: Project root directory (contains context/)
             on_toggle: Optional callback when panel is toggled
         """
         self.root = root
@@ -365,7 +365,7 @@ class TaskPanel:
         
         if not display_items:
             # No tasks message
-            add_row("   No tasks defined. Agent will create tasks in docs/por/")
+            add_row("   No tasks defined. Agent will create tasks in context/tasks/")
         else:
             # Calculate dynamic name width based on panel width
             # Layout: 3(indent) + 2(St) + 3(space) + 5(ID) + 4(space) + NAME + 4(space) + 8(progress) + 3(margin)
@@ -439,7 +439,7 @@ class TaskPanel:
             
             # Error warning line (if any)
             if error_count > 0:
-                error_warn = f"   ⚠ {error_count} task(s) have YAML errors - fix task.yaml"
+                error_warn = f"   ⚠ {error_count} task(s) have YAML errors - check context/tasks/"
                 add_row(error_warn)
             
             # Help line
@@ -735,7 +735,7 @@ class TaskPanel:
         parse_errors = summary.get('parse_errors', {})
         
         if summary['total_tasks'] == 0 and not parse_errors:
-            return "📋 Blueprint Status\n\nNo tasks defined.\nCreate tasks in docs/por/T001-name/task.yaml"
+            return "📋 Blueprint Status\n\nNo tasks defined.\nCreate tasks in context/tasks/T001.yaml"
         
         lines = ["━━━ Blueprint Tasks ━━━", ""]
         

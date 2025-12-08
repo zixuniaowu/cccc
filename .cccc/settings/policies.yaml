@@ -17,7 +17,7 @@ blueprint:
   require_scope: false
   # Auto-complete tasks when all steps done
   auto_complete: true
-  # Log progress markers to ledger
+  # Log task updates to ledger
   log_to_ledger: true
 
 handoff_filter:

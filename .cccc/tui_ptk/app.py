@@ -613,6 +613,9 @@ class SetupConfig:
     dc_chan: str = ''
     # WeCom: outbound-only via webhook
     wc_webhook: str = ''  # Webhook URL for WeCom robot
+    # ccontext MCP: per-peer setting for execution context tracking
+    peerA_ccontext_mcp: bool = False
+    peerB_ccontext_mcp: bool = False
 
     # Backward compatibility property
     @property
@@ -1502,6 +1505,7 @@ class CCCCSetupApp:
         cli_profiles = _load_yaml(self.home, 'settings/cli_profiles.yaml')
         roles = cli_profiles.get('roles') or {}
         self.config.peerA = str((roles.get('peerA') or {}).get('actor') or '')
+        self.config.peerA_ccontext_mcp = bool((roles.get('peerA') or {}).get('ccontext_mcp', False))
         # PeerB: handle 'none' explicitly for single-peer mode
         peerB_actor = str((roles.get('peerB') or {}).get('actor') or '')
         # Normalize: empty string from missing section means check if section existed
@@ -1509,6 +1513,7 @@ class CCCCSetupApp:
             self.config.peerB = 'none'  # Explicit single-peer mode
         else:
             self.config.peerB = peerB_actor
+        self.config.peerB_ccontext_mcp = bool((roles.get('peerB') or {}).get('ccontext_mcp', False))
         self.config.aux = str((roles.get('aux') or {}).get('actor') or 'none')
 
         # Load mode selection (im_mode field)
@@ -1629,10 +1634,27 @@ class CCCCSetupApp:
             left_symbol='',
             right_symbol=''
         )
+        # ccontext MCP toggle buttons
+        btn_peerA_ccontext = Button(
+            text=self._format_ccontext_toggle(self.config.peerA_ccontext_mcp),
+            handler=self._toggle_peerA_ccontext,
+            width=14,
+            left_symbol='',
+            right_symbol=''
+        )
+        btn_peerB_ccontext = Button(
+            text=self._format_ccontext_toggle(self.config.peerB_ccontext_mcp),
+            handler=self._toggle_peerB_ccontext,
+            width=14,
+            left_symbol='',
+            right_symbol=''
+        )
 
         # Store button references
         self.btn_peerA = btn_peerA
         self.btn_peerB = btn_peerB
+        self.btn_peerA_ccontext = btn_peerA_ccontext
+        self.btn_peerB_ccontext = btn_peerB_ccontext
         self.btn_aux = btn_aux
         self.btn_foreman = btn_foreman
         self.btn_mode = btn_mode
@@ -1661,13 +1683,17 @@ class CCCCSetupApp:
             VSplit([
                 Window(width=10, content=self._create_focused_label('PeerA', 0)),
                 btn_peerA,
-                Window(width=2),
-                Label(text='Strategic peer (equal)', style='class:hint'),
+                Window(width=1),
+                btn_peerA_ccontext,
+                Window(width=1),
+                Label(text='Strategic peer', style='class:hint'),
             ], padding=1),
             VSplit([
                 Window(width=10, content=self._create_focused_label('PeerB', 1)),
                 btn_peerB,
-                Window(width=2),
+                Window(width=1),
+                btn_peerB_ccontext,
+                Window(width=1),
                 self.peerB_hint_label,
             ], padding=1),
             Window(height=1),
@@ -2035,6 +2061,20 @@ class CCCCSetupApp:
         # Just show the value without availability indicator
         return f'[●] {value}'
 
+    def _format_ccontext_toggle(self, enabled: bool) -> str:
+        """Format ccontext MCP toggle button text"""
+        return '[☑] ccontext' if enabled else '[☐] ccontext'
+
+    def _toggle_peerA_ccontext(self) -> None:
+        """Toggle peerA ccontext MCP setting"""
+        self.config.peerA_ccontext_mcp = not self.config.peerA_ccontext_mcp
+        self.btn_peerA_ccontext.text = self._format_ccontext_toggle(self.config.peerA_ccontext_mcp)
+
+    def _toggle_peerB_ccontext(self) -> None:
+        """Toggle peerB ccontext MCP setting"""
+        self.config.peerB_ccontext_mcp = not self.config.peerB_ccontext_mcp
+        self.btn_peerB_ccontext.text = self._format_ccontext_toggle(self.config.peerB_ccontext_mcp)
+
     def _get_provider_summary(self) -> str:
         """Provider summary"""
         mode = self.config.mode
@@ -2083,6 +2123,11 @@ class CCCCSetupApp:
         self.btn_aux.text = self._format_button_text(self.config.aux, none_ok=True)
         self.btn_foreman.text = self._format_button_text(self.config.foreman, none_ok=True)
         self.btn_mode.text = f'[●] {self.config.mode}'
+        # Update ccontext toggle buttons
+        if hasattr(self, 'btn_peerA_ccontext'):
+            self.btn_peerA_ccontext.text = self._format_ccontext_toggle(self.config.peerA_ccontext_mcp)
+        if hasattr(self, 'btn_peerB_ccontext'):
+            self.btn_peerB_ccontext.text = self._format_ccontext_toggle(self.config.peerB_ccontext_mcp)
 
         # Update single-peer mode hint labels
         is_single_peer = self.config.peerB == 'none'
@@ -2751,6 +2796,7 @@ class CCCCSetupApp:
                 roles['peerA'] = {}
             roles['peerA']['actor'] = self.config.peerA
             roles['peerA']['cwd'] = '.'
+            roles['peerA']['ccontext_mcp'] = self.config.peerA_ccontext_mcp
 
         # Handle PeerB - 'none' means single-peer mode
         # IMPORTANT: Always write peerB section explicitly to preserve user's choice
@@ -2763,6 +2809,7 @@ class CCCCSetupApp:
             # Single-peer mode: write explicit 'none' instead of deleting section
             roles['peerB']['actor'] = 'none'
         roles['peerB']['cwd'] = '.'
+        roles['peerB']['ccontext_mcp'] = self.config.peerB_ccontext_mcp
 
         # Handle aux separately - always write or clear to ensure changes take effect
         if self.config.aux and self.config.aux != 'none':
@@ -3554,7 +3601,7 @@ class CCCCSetupApp:
                 if summary['total_tasks'] == 0:
                     self._write_timeline("", 'info')
                     self._write_timeline("No tasks defined.", 'info')
-                    self._write_timeline("Agent creates tasks in docs/por/T001-name/task.yaml", 'info')
+                    self._write_timeline("Agent creates tasks in context/tasks/T001.yaml", 'info')
                     return
                 
                 self._write_timeline("", 'info')

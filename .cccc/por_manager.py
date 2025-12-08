@@ -170,7 +170,7 @@ def ensure_aux_section(home: Path) -> bool:
         AUX_SECTION_TITLE,
         "Strategic only: list meta-review/revise items offloaded to Aux.",
         "Keep each item compact: what (one line), why (one line), optional acceptance.",
-        "Tactical Aux subtasks now live in each task.yaml under 'Aux (tactical)'; do not list them here.",
+        "Tactical Aux subtasks now live in each context/tasks/T###.yaml under 'Aux (tactical)'; do not list them here.",
         "After integrating Aux results, either remove the item or mark it done.",
         "- [ ] <meta-review — why — acceptance(optional)>",
         "- [ ] <revise — why — acceptance(optional)>",

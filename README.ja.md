@@ -61,7 +61,7 @@
 
 ### エビデンス駆動ワークフロー
 
-- **Blueprintタスクシステム**：構造化されたtask.yamlファイル（目標/ステップ/受入基準/ステータス）、TUIでタスクパネルを表示可能
+- **Blueprintタスクシステム**：構造化された`context/tasks/T###.yaml`ファイル（目標/ステップ/受入基準/ステータス）、TUIでタスクパネルを表示可能
 - **小さなコミット**：各パッチは150行以下、レビュー可能・ロールバック可能
 - **監査ログ**：ledger.jsonlがすべてのイベントを記録し、問題発生時に追跡可能
 
@@ -367,10 +367,11 @@ both: 次のマイルストーンを計画しよう
   logs/                         # Peerログ
   rules/                        # システムプロンプト
 
-docs/por/                       # 戦略とタスクアンカー
+docs/por/                       # 戦略方向
   POR.md                        # 戦略ボード（ビジョン、ガードレール、ロードマップ）
-  T###-slug/                    # タスクディレクトリ（例：T001-auth-module）
-    task.yaml                   # タスク定義：目標、ステップ、受入基準、ステータス
+context/                        # 実行追跡（ccontext互換）
+  tasks/                        # Blueprintタスクファイル
+    T001.yaml                   # タスク定義：目標、ステップ、受入基準、ステータス
 
 PROJECT.md                      # プロジェクト概要（システムプロンプトに織り込まれる）
 FOREMAN_TASK.md                 # Foremanタスク定義
@@ -400,27 +401,25 @@ FOREMAN_TASK.md                 # Foremanタスク定義
 
 ### Blueprintタスク構造
 
-各タスクは `docs/por/T###-slug/task.yaml` に配置：
+各タスクは `context/tasks/T###.yaml` に配置：
 
 ```yaml
 id: T001
-title: OAuth認証の実装
-status: in_progress  # pending | in_progress | done | blocked
+name: OAuth認証の実装
 goal: OAuth 2.0認証サポートを追加
+status: active  # planned | active | complete
 steps:
   - id: S1
-    desc: 認証フローの設計
-    status: done
+    name: 認証フローの設計
+    done: 認証フロー文書完成
+    status: complete  # pending | in_progress | complete
   - id: S2
-    desc: トークン処理の実装
+    name: トークン処理の実装
+    done: トークンエンドポイント動作
     status: in_progress
-acceptance:
-  - OAuthログインがエンドツーエンドで動作
-  - テストカバレッジ80%以上
-progress_markers:
-  - "2024-01-15: 設計完了"
-  - "2024-01-16: トークンエンドポイント実装完了"
 ```
+
+エージェントはメッセージに進捗マーカー（例：`progress: T001.S1 done`）を送信し、オーケストレーターが自動的にタスクファイルを更新します。
 
 ---
 

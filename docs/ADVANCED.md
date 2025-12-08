@@ -134,6 +134,6 @@ For irreversible or high-impact changes, CCCC supports RFD cards:
 ## Session Cadence
 
 - **Self-Check**: Every N handoffs (configurable, default 6), orchestrator triggers a strategic alignment check including task hygiene reminders
-- **Task Updates**: Peers are reminded to keep `task.yaml` files accurate during self-checks
+- **Task Updates**: Peers are reminded to keep `context/tasks/*.yaml` files accurate during self-checks
 - **Auto-Compact**: When peers are idle after sufficient work, orchestrator automatically compacts context
 - **Foreman Runs**: Every 15 minutes (if enabled), Foreman performs one standing task or writes one request

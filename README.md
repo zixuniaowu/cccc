@@ -52,7 +52,7 @@ Only tested patches, stable logs, and commits count as "done". Chat alone never 
 Optional Telegram/Slack/Discord/WeCom integration. Bring the work to where your team already is.
 
 **📋 Blueprint Task System**
-Per-task `task.yaml` files with goal/steps/status. Visual task panel in TUI. Everyone sees the same structured truth.
+Per-task `T###.yaml` files in `context/tasks/` with goal/steps/status. Visual task panel in TUI. Everyone sees the same structured truth.
 
 </td>
 </tr>
@@ -75,7 +75,7 @@ Per-task `task.yaml` files with goal/steps/status. Visual task panel in TUI. Eve
 - 🤝 **Multi-Peer Synergy** — One builds, the other challenges; better options emerge; errors die faster
 - ✅ **Evidence-First Loop** — Only tested/logged/committed results count as progress
 - 🖥️ **Interactive TUI** — Zero-config setup, real-time monitoring, task panel, command completion built-in
-- 📋 **Blueprint Tasks** — Structured `task.yaml` files with goal/steps/status; visual task panel in TUI (press T or click Details)
+- 📋 **Blueprint Tasks** — Structured `context/tasks/T###.yaml` files with goal/steps/status; visual task panel in TUI (press T or click Details)
 - 🔔 **Low-Noise Cadence** — Built-in nudge/self-check trims chatter; panel shows what matters
 - 🔍 **Auditable Decisions** — Recent choices & pivots captured; review and roll forward confidently
 
@@ -277,7 +277,7 @@ both: Let's discuss the roadmap for next quarter
 ### Key Concepts
 
 - **Mailbox Protocol** — Peers exchange `<TO_USER>` and `<TO_PEER>` messages with evidence refs
-- **Blueprint Tasks** — Per-task `task.yaml` files in `docs/por/T###-slug/` with goal, steps, acceptance criteria, and status tracking
+- **Blueprint Tasks** — Per-task `T###.yaml` files in `context/tasks/` with goal, steps, acceptance criteria, and status tracking
 - **Evidence Types** — Patch diffs, test logs, benchmark results, commit hashes
 - **Single-Peer Mode** — Set PeerB to `none` for simplified autonomous operation with one agent
 
@@ -381,7 +381,7 @@ both: Add a short section to README about team chat tips
 ### Cadence
 
 - **Self-Check**: Every N handoffs (configurable, default 6), orchestrator triggers a strategic alignment check including task hygiene reminders
-- **Task Updates**: Peers are reminded to keep `task.yaml` files accurate during self-checks
+- **Task Updates**: Peers are reminded to keep `context/tasks/*.yaml` files accurate during self-checks
 - **Auto-Compact**: When peers are idle after sufficient work, orchestrator automatically compacts context (default: ≥6 messages, 15 min interval, 2 min idle)
 - **Foreman Runs**: Every 15 minutes (if enabled), Foreman performs one standing task or writes one request
 
@@ -394,10 +394,11 @@ both: Add a short section to README about team chat tips
   settings/               # Configuration (TUI handles most changes)
   mailbox/                # Message exchange between peers
   state/                  # Runtime state, logs, ledger
-docs/por/                 # Strategy and task anchors
+docs/por/                 # Strategic direction
   POR.md                  # Strategic board (vision, guardrails, roadmap)
-  T###-slug/              # Per-task directory (e.g., T001-auth-module)
-    task.yaml             # Task definition: goal, steps, acceptance, status
+context/                  # Execution tracking (ccontext compatible)
+  tasks/                  # Blueprint task files
+    T001.yaml             # Task definition: goal, steps, acceptance, status
 PROJECT.md                # Your project brief (injected into system prompts)
 FOREMAN_TASK.md           # Foreman tasks (if using Foreman)
 ```
@@ -426,27 +427,25 @@ Known risks and how they're being addressed.
 
 ### Blueprint Task Structure
 
-Each task lives in `docs/por/T###-slug/task.yaml`:
+Each task lives in `context/tasks/T###.yaml`:
 
 ```yaml
 id: T001
-title: Implement OAuth Support
-status: in_progress  # pending | in_progress | done | blocked
+name: Implement OAuth Support
 goal: Add OAuth 2.0 authentication support
+status: active  # planned | active | complete
 steps:
   - id: S1
-    desc: Design auth flow
-    status: done
+    name: Design auth flow
+    done: Auth flow documented
+    status: complete  # pending | in_progress | complete
   - id: S2
-    desc: Implement token handling
+    name: Implement token handling
+    done: Token endpoint working
     status: in_progress
-acceptance:
-  - OAuth login works end-to-end
-  - Tests pass with >80% coverage
-progress_markers:
-  - "2024-01-15: Design complete"
-  - "2024-01-16: Token endpoint implemented"
 ```
+
+Agents update task files directly (edit `context/tasks/T###.yaml`) or via ccontext MCP tools if installed.
 
 ---
 

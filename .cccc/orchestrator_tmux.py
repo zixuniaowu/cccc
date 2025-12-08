@@ -1848,10 +1848,10 @@ def main(home: Path, session_name: Optional[str] = None):
         lines = [
             f"POR update requested (trigger: {trigger}).",
             f"File: {por_display_path}",
-            "Also review all active tasks (docs/por/T###-slug/task.yaml):",
-            "- For each task: confirm goal, steps, and status. Use progress markers to update.",
+            "Also review all active tasks (context/tasks/T###.yaml):",
+            "- For each task: confirm goal, steps, and status. Update task files directly or via MCP tools.",
             "- Align POR Now/Next with active tasks; close/rescope stale items; ensure evidence has recent refs (commit/test/log).",
-            "- Check for gaps: missing tasks, unowned work, new risks; create task.yaml when planning new work.",
+            "- Check for gaps: missing tasks, unowned work, new risks; create T###.yaml in context/tasks/ when planning new work.",
             "- Sanity-check portfolio coherence across POR and active tasks.",
             "If everything is current, reply in to_peer.md with 1-2 verified points."
         ]

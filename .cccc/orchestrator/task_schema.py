@@ -10,7 +10,7 @@ This module defines the core data models for the Blueprint task system:
 Design principles:
 - Minimal schema (6 fields) for high reliability
 - Computed properties (progress, current_step) instead of stored fields
-- Agent sends progress markers, Orchestrator manages files
+- With MCP: Agent uses ccontext tools; Without MCP: Agent edits files directly
 """
 from __future__ import annotations
 
@@ -195,87 +195,6 @@ class Scope(BaseModel):
         """Remove a task ID from the scope."""
         if task_id in self.tasks:
             self.tasks.remove(task_id)
-
-
-# Progress Marker Parsing
-class ProgressMarker(BaseModel):
-    """
-    Parsed progress marker from agent message.
-
-    Format: progress: <target> <action>[: <reason>]
-    Examples:
-        progress: T001 start
-        progress: T001.S1 done
-        progress: T001.S2 blocked: waiting for API
-        progress: T001 promoted
-    """
-    target: str = Field(..., description="Task or step target (T001 or T001.S1)")
-    action: str = Field(..., description="Action (start, done, blocked, promoted)")
-    reason: Optional[str] = Field(default=None, description="Optional reason for blocked")
-
-    @property
-    def task_id(self) -> str:
-        """Extract task ID from target."""
-        if '.' in self.target:
-            return self.target.split('.')[0]
-        return self.target
-
-    @property
-    def step_id(self) -> Optional[str]:
-        """Extract step ID from target, if present."""
-        if '.' in self.target:
-            return self.target.split('.')[1]
-        return None
-
-    @property
-    def is_task_level(self) -> bool:
-        """Check if this marker targets a task (not a step)."""
-        return '.' not in self.target
-
-
-# Marker pattern: progress: <target> <action>[: <reason>]
-# Target format: T### (task) or T###.S# (step)
-# Examples: T001, T001.S1, T001.S2, T012.S10
-MARKER_PATTERN = re.compile(
-    r'progress:\s*(T\d{3}(?:\.S\d+)?)\s+(\w+)(?::\s*(.+?))?(?:\n|$)',
-    re.IGNORECASE | re.MULTILINE
-)
-
-
-def parse_progress_markers(text: str) -> List[ProgressMarker]:
-    """
-    Parse all progress markers from a message.
-
-    Args:
-        text: Message text to parse
-
-    Returns:
-        List of ProgressMarker objects, in order of appearance
-
-    Examples:
-        >>> parse_progress_markers("progress: T001 start")
-        [ProgressMarker(target='T001', action='start', reason=None)]
-
-        >>> parse_progress_markers("progress: T001.S1 done\\nprogress: T001.S2 in_progress")
-        [ProgressMarker(target='T001.S1', action='done', ...), ...]
-    """
-    markers = []
-    for match in MARKER_PATTERN.finditer(text):
-        target, action, reason = match.groups()
-        # Normalize target format (ensure uppercase)
-        target = target.upper()
-        # Normalize action
-        action = action.lower()
-        # Strip reason whitespace
-        reason = reason.strip() if reason else None
-
-        markers.append(ProgressMarker(
-            target=target,
-            action=action,
-            reason=reason
-        ))
-
-    return markers
 
 
 def validate_task_id(task_id: str) -> bool:

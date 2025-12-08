@@ -267,7 +267,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         f"- POR.md - single source of direction (path: {por_rel})",
         "  - Keep North-star, guardrails, bets/assumptions, Now/Next/Later, and portfolio health here (no details).",
         "- Blueprint task system - structured task tracking for complex work",
-        "  - Location: docs/por/T###-slug/task.yaml",
+        "  - Location: context/tasks/T###.yaml",
         "  - Use for: multi-step goals (>2 files OR >50 lines); work spanning multiple handoffs; user-requested planning",
         "  - Skip for: quick tasks (<=2 files AND <=50 lines); immediate fixes; simple questions",
         "  - See Chapter 3 for full protocol",
@@ -284,14 +284,14 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "3) How to execute (lean and decisive)",
         "- One-round loop (follow in order)",
         "  - Align before you act; keep one decidable next step per message (<=30 minutes).",
-        "  - 0 Check tasks: scan docs/por/T*/task.yaml for active tasks; if none and goal is non-trivial, create one first.",
+        "  - 0 Check tasks: scan context/tasks/T*.yaml for active tasks; if none and goal is non-trivial, create one first.",
         "  - 1 Read POR (goal/guardrails/bets/roadmap).",
         "  - 2 Pick exactly one smallest decisional probe.",
         "  - 3 Build; keep changes small and reversible.",
         "  - 4 Validate (command + 1-3 stable lines; cite exact paths/line ranges).",
         "  - 5 Write the message using the skeleton in Chapter 4.",
         "  - 6 Add one insight (WHY + Next + refs); do not repeat the body.",
-        "  - 7 If direction changed, update POR. If task exists, send progress marker.",
+        "  - 7 If direction changed, update POR. If task exists, update its status.",
         "- Evidence and change budget",
         "  - Done = has verifiable evidence (commit/test/log).",
         "  - Only tests/logs/commits count as evidence. Avoid speculative big refactors; always show the smallest reproducible check.",
@@ -362,14 +362,15 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         # Single peer: full ownership
         ch3_blueprint += [
             "  YOUR ROLE (single-peer): You create and manage tasks",
-            "    - Create task.yaml BEFORE starting complex work",
+            "    - Create T###.yaml BEFORE starting complex work",
             "    - Update steps/status as you progress",
-            "    - Send progress markers to trigger TUI updates and keepalive",
+            "    - With MCP: Use ccontext tools to update task status",
+            "    - Without MCP: Edit context/tasks/T###.yaml directly",
             "",
             "  CREATE TASK:",
-            "    Path: docs/por/T###-slug/task.yaml",
-            "    - Scan existing T### dirs, use next available ID (T001, T002...)",
-            "    - slug: lowercase-hyphenated (e.g., T001-add-auth)",
+            "    Path: context/tasks/T###.yaml",
+            "    - Scan existing T###.yaml files, use next available ID (T001, T002...)",
+            "    - Create context/tasks/ directory if not exists",
             "    ```yaml",
             "    id: T001            # Must match directory prefix",
             "    name: Brief name",
@@ -388,14 +389,14 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         # PeerA in dual-peer mode: creator role
         ch3_blueprint += [
             "  YOUR ROLE (PeerA): You are the task creator",
-            "    - You CREATE task.yaml for complex work (PeerB cannot create tasks)",
+            "    - You CREATE T###.yaml for complex work (PeerB cannot create tasks)",
             "    - Create BEFORE coding; this prevents duplicate task conflicts",
             "    - PeerB can update task content (steps/status) after you create it",
             "",
             "  CREATE TASK:",
-            "    Path: docs/por/T###-slug/task.yaml",
-            "    - Scan existing T### dirs, use next available ID (T001, T002...)",
-            "    - slug: lowercase-hyphenated (e.g., T001-add-auth)",
+            "    Path: context/tasks/T###.yaml",
+            "    - Scan existing T###.yaml files, use next available ID (T001, T002...)",
+            "    - Create context/tasks/ directory if not exists",
             "    ```yaml",
             "    id: T001            # Must match directory prefix",
             "    name: Brief name",
@@ -414,12 +415,12 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         # PeerB in dual-peer mode: executor/updater role
         ch3_blueprint += [
             "  YOUR ROLE (PeerB): You update tasks, PeerA creates them",
-            "    - Do NOT create new task.yaml files (PeerA handles creation to avoid ID conflicts)",
+            "    - Do NOT create new T###.yaml files (PeerA handles creation to avoid ID conflicts)",
             "    - You CAN and SHOULD update existing tasks: modify steps, change status, add sub-steps",
             "    - If complex work needs a task but none exists, ask PeerA to create one",
             "",
             "  TASK FORMAT (reference):",
-            "    Path: docs/por/T###-slug/task.yaml",
+            "    Path: context/tasks/T###.yaml",
             "    ```yaml",
             "    id: T001            # Do not change; must match directory",
             "    name: Brief name    # Can update",
@@ -435,13 +436,14 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "    ```",
         ]
     
-    # Common progress markers for all roles
+    # Status update guidance
     ch3_blueprint += [
         "",
-        "  PROGRESS MARKERS (in message body, triggers TUI update + keepalive):",
-        "    progress: T001 start       # Activate task",
-        "    progress: T001.S1 done     # Step complete",
-        "    progress: T001 complete    # Task done",
+        "  STATUS UPDATES:",
+        "    - With ccontext MCP: Use update_task tool to change status/steps",
+        "    - Without MCP: Edit context/tasks/T###.yaml directly (status field)",
+        "    - Valid status: planned → active → complete",
+        "    - Valid step status: pending → in_progress → complete",
         "",
         "  QUICK PATH: Below threshold? Execute directly. If complexity grows, create task mid-work.",
     ]
@@ -459,7 +461,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         f"  - Update-only: always overwrite {target_list}; do NOT append or create new variants.",
         "  - After sending, your message file is replaced with a one-line status sentinel 'MAILBOX:SENT v1 …'. Don't care about it; simply overwrite the whole file with your next message.",
         "  - Encoding: UTF-8 (no BOM).",
-        "  - Do not claim done unless you include minimal verifiable evidence (tests/stable logs/commit refs). If using tasks, send progress marker.",
+        "  - Do not claim done unless you include minimal verifiable evidence (tests/stable logs/commit refs). If using tasks, update task status.",
     ]
     ch4 += [
         "  - Keep <TO_USER>/<TO_PEER> wrappers; end with exactly one fenced `insight` block (insight is for explore/reflect/idea only; the system does not parse governance from it).",
@@ -542,7 +544,7 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "- notes.txt: the ask, expectations, success criteria",
         "- peer_message.txt: triggering message context (if present)",
         f"- POR.md: {por_rel} (strategic direction)",
-        "- docs/por/T*/task.yaml: active tasks (do NOT create new tasks; update existing if instructed)",
+        "- context/tasks/T*.yaml: active tasks (do NOT create new tasks; update existing if instructed)",
         "- PROJECT.md: project vision and constraints",
     ]
 
@@ -558,7 +560,7 @@ def _write_rules_for_aux(home: Path, *, aux_mode: str) -> Path:
         "",
         "4) Boundaries",
         "- Never edit .cccc/mailbox/** - summoning peer integrates your output",
-        "- Do NOT create new task.yaml files - only update existing tasks if instructed",
+        "- Do NOT create new T###.yaml files - only update existing tasks if instructed",
         "- Reference paths instead of pasting large outputs",
         "- Document strategic misalignments in outcome.md with correction path",
     ]
@@ -753,7 +755,7 @@ def _write_rules_for_foreman(home: Path) -> Path:
         "Context (skim then decide)",
         "- PROJECT.md: vision/constraints",
         "- docs/por/POR.md: Now/Next/Risks",
-        "- docs/por/T*/task.yaml: active tasks and progress",
+        "- context/tasks/T*.yaml: active tasks and progress",
         "- .cccc/mailbox/*/inbox: pending items",
         "",
         "Task awareness",
@@ -769,7 +771,7 @@ def _write_rules_for_foreman(home: Path) -> Path:
         "Boundaries",
         "- Reference paths, not paste content",
         "- Do not modify orchestrator code/policies",
-        "- Do not create new task.yaml files",
+        "- Do not create new T###.yaml files",
         "",
     ]
     target = _rules_dir(home)/"FOREMAN.md"
