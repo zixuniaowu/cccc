@@ -183,7 +183,7 @@ Located at repo root. **Automatically injected into Foreman.** Foreman runs ever
 
 ## Every Check
 1. Run `pytest` to ensure tests pass
-2. Review if POR.md needs updating
+2. Review milestones in context/context.yaml
 3. Check for unresolved TODOs
 
 ## Quality Gates

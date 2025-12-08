@@ -160,7 +160,7 @@
 
 ## 每次检查
 1. 运行 `pytest` 确保测试通过
-2. 检查 POR.md 是否需要更新
+2. 检查 context/context.yaml 的里程碑状态
 3. 查看是否有未处理的TODO
 
 ## 质量要求
@@ -341,7 +341,7 @@ both: 我们来规划下一个milestone
 可选的定时任务角色，每隔一段时间（默认15分钟）执行一个预设任务：
 - 编辑 `FOREMAN_TASK.md` 定义任务
 - 用 `/foreman on|off` 控制开关
-- 适合周期性检查、提醒更新POR等场景
+- 适合周期性检查、提醒更新上下文等场景
 
 ### RFD（请求决策）
 
@@ -367,39 +367,46 @@ both: 我们来规划下一个milestone
   logs/                         # Peer日志
   rules/                        # 系统提示词
 
-docs/por/                       # 战略方向
-  POR.md                        # 战略板（愿景、护栏、路线图）
 context/                        # 执行追踪（ccontext兼容）
-  tasks/                        # Blueprint任务文件
+  context.yaml                  # 里程碑、笔记、引用
+  tasks/                        # 任务文件
     T001.yaml                   # 任务定义：目标、步骤、验收、状态
 
 PROJECT.md                      # 项目简介（会织入系统提示词）
 FOREMAN_TASK.md                 # Foreman任务定义
 ```
 
-### POR.md（Plan of Record）
+### context/context.yaml（执行状态）
 
-战略锚点，定义方向：
+通过里程碑追踪项目执行状态：
 
-```markdown
-# POR — 计划记录
+```yaml
+milestones:
+  - id: M1
+    name: 阶段1 - 核心实现
+    description: 构建基础
+    status: done  # done | active | pending
+    started: "2024-12-01"
+    completed: "2024-12-07"
+    outcomes: "15个工具，42个测试通过"
+  - id: M2
+    name: 阶段2 - 集成
+    status: active
+    started: "2024-12-07"
 
-## 北极星
-项目最终成功的样子。
+notes:
+  - id: N001
+    content: "提交前务必运行测试"
+    score: 50  # 随时间衰减
 
-## 护栏
-不可妥协的约束和质量门槛。
-
-## 现在 / 下一步 / 以后
-- **现在**：当前冲刺重点
-- **下一步**：即将到来的优先级
-- **以后**：未来待办
-
-## 风险与缓解
-已知风险及应对措施。
+references:
+  - id: R001
+    url: src/core/handler.py
+    note: 主请求处理器
+    score: 40
 ```
 
-### Blueprint Task 结构
+### 任务结构
 
 每个任务存放在 `context/tasks/T###.yaml`：
 

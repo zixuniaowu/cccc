@@ -160,7 +160,7 @@
 
 ## 毎回のチェック
 1. `pytest` を実行してテストが通ることを確認
-2. POR.md が更新が必要かチェック
+2. context/context.yaml のマイルストーンを確認
 3. 未処理のTODOがないか確認
 
 ## 品質要件
@@ -341,7 +341,7 @@ both: 次のマイルストーンを計画しよう
 オプションの定期タスクロール、一定間隔（デフォルト15分）でプリセットタスクを実行：
 - `FOREMAN_TASK.md` を編集してタスクを定義
 - `/foreman on|off` でオン/オフを制御
-- 定期チェック、POR更新リマインダーなどのシナリオに最適
+- 定期チェック、コンテキスト更新リマインダーなどのシナリオに最適
 
 ### RFD（決定リクエスト）
 
@@ -367,39 +367,46 @@ both: 次のマイルストーンを計画しよう
   logs/                         # Peerログ
   rules/                        # システムプロンプト
 
-docs/por/                       # 戦略方向
-  POR.md                        # 戦略ボード（ビジョン、ガードレール、ロードマップ）
 context/                        # 実行追跡（ccontext互換）
-  tasks/                        # Blueprintタスクファイル
+  context.yaml                  # マイルストーン、メモ、参照
+  tasks/                        # タスクファイル
     T001.yaml                   # タスク定義：目標、ステップ、受入基準、ステータス
 
 PROJECT.md                      # プロジェクト概要（システムプロンプトに織り込まれる）
 FOREMAN_TASK.md                 # Foremanタスク定義
 ```
 
-### POR.md（Plan of Record）
+### context/context.yaml（実行ステータス）
 
-戦略アンカー、方向性を定義：
+マイルストーンでプロジェクト実行状態を追跡：
 
-```markdown
-# POR — 計画記録
+```yaml
+milestones:
+  - id: M1
+    name: フェーズ1 - コア実装
+    description: 基盤構築
+    status: done  # done | active | pending
+    started: "2024-12-01"
+    completed: "2024-12-07"
+    outcomes: "15ツール、42テスト合格"
+  - id: M2
+    name: フェーズ2 - 統合
+    status: active
+    started: "2024-12-07"
 
-## 北極星
-プロジェクトの究極の成功の姿。
+notes:
+  - id: N001
+    content: "コミット前に必ずテストを実行"
+    score: 50  # 時間経過で減衰
 
-## ガードレール
-妥協できない制約と品質ゲート。
-
-## 今 / 次 / 後
-- **今**：現在のスプリント重点
-- **次**：次の優先事項
-- **後**：将来のバックログ
-
-## リスクと緩和策
-既知のリスクと対処方法。
+references:
+  - id: R001
+    url: src/core/handler.py
+    note: メインリクエストハンドラ
+    score: 40
 ```
 
-### Blueprintタスク構造
+### タスク構造
 
 各タスクは `context/tasks/T###.yaml` に配置：
 

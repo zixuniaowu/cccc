@@ -98,13 +98,6 @@ def render(home: Path):
     mcounts = (status.get("mailbox_counts") or {})
     mlast = (status.get("mailbox_last") or {})
     anti = status.get("handoff_filter_enabled")
-    por = status.get("por") or {}
-    # Always show POR path/updated; fall back to computing when status lacks it
-    if not por and _por_snap is not None:
-        try:
-            por = _por_snap(home)
-        except Exception:
-            por = {}
     coach = status.get("aux") or {}
 
     lines: List[str] = []
@@ -127,11 +120,8 @@ def render(home: Path):
             rc = fman.get('last_rc')
             rc_s = f" rc={rc}" if rc is not None else ""
             lines.append(f"Foreman: ON  last @ {last}{rc_s}  next @ {fman.get('next_due') or '-'}  cc: {'ON' if fman.get('cc_user') else 'OFF'}")
-    # Show POR path and updated time even without summary
-    lines.append(f"POR path={(por.get('path') if isinstance(por, dict) else '-') or '-'}  updated={(por.get('updated_at') if isinstance(por, dict) else '-') or '-'}")
-    summary = (por.get('summary') if isinstance(por, dict) else '') or ''
-    if summary:
-        lines.append(f"POR summary: {summary[:160]}")
+    # Context tracking info (context/context.yaml and context/tasks/)
+    lines.append("Context: context/context.yaml (milestones) + context/tasks/ (tasks)")
     # Reset cadence / remaining rounds (if present)
     rst = status.get("reset") or {}
     k = rst.get("next_self_check_in")

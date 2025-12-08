@@ -485,7 +485,7 @@ def make(ctx: Dict[str, Any]):
                             elif ctype in ('focus',):
                                 try:
                                     hint = str((args.get('hint') or obj.get('hint') or '')).strip()
-                                    ctx['request_por_refresh']('focus-tui', hint=hint or None, force=True)
+                                    ctx['request_context_refresh']('focus-tui', hint=hint or None, force=True)
                                     ok, msg = True, 'focus requested'
                                 except Exception as e:
                                     ok, msg = False, f'focus failed: {e}'

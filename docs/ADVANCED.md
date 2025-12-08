@@ -67,7 +67,7 @@ Aux is a third peer for burst work (e.g., broad reviews, heavy tests, bulk trans
 
 ### Use cases
 
-- Strategic reviews (check POR against all SUBPORs)
+- Strategic reviews (check milestones against active tasks)
 - Heavy lifting (run full test suites, generate bulk fixtures)
 - External checks (dependency audits, security scans)
 
@@ -102,7 +102,7 @@ Foreman is a lightweight "user proxy" that runs on a timer (default: 15 minutes)
 ### Use cases
 
 - Periodic health checks (run tests every 30 minutes)
-- Reminder to update POR and task files
+- Reminder to update context and task files
 - Enforce quality gates (lint, type-check before commit)
 
 ---

@@ -110,9 +110,9 @@ def make(ctx: Dict[str, Any]):
                                 lines.append("\n--- SYSTEM (full) ---\n" + rules_txt)
                             # Add completion message
                             lines.append("\n[Background refresh complete — continue current work]")
-                            # Request POR refresh for PeerA's SYSTEM injection (PeerA owns POR/task maintenance)
+                            # Request context refresh for PeerA's SYSTEM injection (PeerA owns context/task maintenance)
                             if lbl == 'PeerA':
-                                ctx['request_por_refresh']("system-refresh", force=False)
+                                ctx['request_context_refresh']("system-refresh", force=False)
                             # Runtime cleanup: remove old processed files beyond retention limit
                             try:
                                 _cleanup_processed('PeerA')
