@@ -1311,10 +1311,12 @@ class CCCCSetupApp:
                     if 0 <= row < display_count:
                         # Select the clicked task
                         self.task_panel.selected_index = row
-                        # Open task detail dialog (Level 1 stays open)
+                        self.task_panel.selected_area = 'tasks'
+                        # Open unified detail dialog on tasks tab
                         task_id = self.task_panel.get_selected_task_id()
                         if task_id:
-                            self._show_task_detail_dialog(task_id)
+                            self.task_panel.set_detail_task_by_id(task_id)
+                            self._show_unified_detail_dialog(initial_tab='tasks')
                         try:
                             self.app.invalidate()
                         except Exception:
@@ -3592,8 +3594,9 @@ class CCCCSetupApp:
                     else:
                         task_id = task_arg
                     
-                    # Show as floating dialog instead of timeline output
-                    self._show_task_detail_dialog(task_id)
+                    # Set the task and show unified detail dialog
+                    self.task_panel.set_detail_task_by_id(task_id)
+                    self._show_unified_detail_dialog(initial_tab='tasks')
                     return
                 
                 # Show summary (no argument)
@@ -3614,7 +3617,7 @@ class CCCCSetupApp:
                 # Task list with index for quick access
                 self._write_timeline("Tasks (use /task <ID> for details):", 'info')
                 for i, t in enumerate(summary['tasks'], 1):
-                    if t['status'] == 'complete':
+                    if t['status'] == 'done':
                         icon = '✓'
                     elif t['status'] == 'active':
                         icon = '→'
@@ -3639,7 +3642,7 @@ class CCCCSetupApp:
             self._write_timeline("", 'info')
             self._write_timeline("=== Task Status ===", 'info')
             for t in summary['tasks']:
-                icon = '✓' if t['status'] == 'complete' else '→' if t['status'] == 'active' else '○'
+                icon = '✓' if t['status'] == 'done' else '→' if t['status'] == 'active' else '○'
                 self._write_timeline(f"  {icon} {t['id']} {t['name'][:25]:<25} {t['progress']}", 'info')
 
         except ImportError:
@@ -3688,18 +3691,34 @@ class CCCCSetupApp:
         except Exception as e:
             self._write_timeline(f"Failed to show task: {str(e)[:50]}", 'error')
 
-    def _show_task_detail_dialog(self, task_id: str) -> None:
-        """Show task detail as a floating dialog (Level 2) over task list (Level 1).
+    def _close_task_detail_dialog(self) -> None:
+        """Close task detail dialog (Level 2) and return to task list (Level 1)."""
+        self.task_detail_open = False
+        self._close_dialog()
+        # Focus stays on input, task panel (Level 1) remains visible
+        try:
+            self.app.invalidate()
+        except Exception:
+            pass
+
+    def _show_unified_detail_dialog(self, initial_tab: str = 'tasks') -> None:
+        """
+        Show unified Level 2 detail dialog with tab bar.
         
-        Supports navigation:
-        - Keyboard: ← → to navigate, Esc to close
-        - Mouse: Click Prev/Next/Close buttons
+        Args:
+            initial_tab: Which tab to show initially ('milestones', 'tasks', 'notes', 'refs')
         """
         if not self.task_panel:
             return
         
-        # Store current task ID for navigation
-        self._current_detail_task_id = task_id
+        # Set initial tab
+        self.task_panel.set_tab(initial_tab)
+        
+        # If entering tasks tab from Level 1 task selection, sync the index
+        if initial_tab == 'tasks':
+            task_id = self.task_panel.get_selected_task_id()
+            if task_id:
+                self.task_panel.set_detail_task_by_id(task_id)
         
         # Get terminal size for adaptive sizing
         try:
@@ -3708,39 +3727,19 @@ class CCCCSetupApp:
         except Exception:
             term_width, term_height = 100, 30
         
-        # Calculate dialog dimensions (80% of terminal, with reasonable min/max)
         dialog_width = max(75, min(130, int(term_width * 0.85)))
         dialog_height = max(18, min(38, int(term_height * 0.75)))
         
-        # Get task list for navigation
-        summary = self.task_panel._get_summary()
-        task_ids = [t['id'] for t in summary.get('tasks', [])]
-        current_idx = task_ids.index(task_id) if task_id in task_ids else 0
-        total_tasks = len(task_ids)
-        
-        # Get task detail with proper width for content
-        detail_text = self.task_panel.get_task_detail_plain(task_id, width=dialog_width - 8)
+        def get_content():
+            """Get current tab content (called on each refresh)."""
+            return self.task_panel.get_detail_view(width=dialog_width - 8)
         
         def on_close():
             self._close_task_detail_dialog()
         
-        def on_prev():
-            """Navigate to previous task"""
-            if total_tasks > 1 and current_idx > 0:
-                prev_id = task_ids[current_idx - 1]
-                self._close_dialog()
-                self._show_task_detail_dialog(prev_id)
-        
-        def on_next():
-            """Navigate to next task"""
-            if total_tasks > 1 and current_idx < total_tasks - 1:
-                next_id = task_ids[current_idx + 1]
-                self._close_dialog()
-                self._show_task_detail_dialog(next_id)
-        
-        # Create content area with scrolling
+        # Create dynamic content window
         content_window = Window(
-            content=FormattedTextControl(detail_text),
+            content=FormattedTextControl(lambda: get_content()),
             style='class:task-detail',
             wrap_lines=False,
         )
@@ -3750,68 +3749,34 @@ class CCCCSetupApp:
             show_scrollbar=True,
         )
         
-        # Position indicator in title
-        if total_tasks > 0:
-            pos_indicator = f" ({current_idx + 1}/{total_tasks})"
-        else:
-            pos_indicator = ""
-        
-        # Create fixed-position button bar: [◀ Prev] (left) | [Close (Esc)] (center) | [Next ▶] (right)
-        # Buttons always in fixed positions; show placeholder when not applicable
-        can_prev = total_tasks > 1 and current_idx > 0
-        can_next = total_tasks > 1 and current_idx < total_tasks - 1
-        
-        # Create buttons (or placeholders for consistent layout)
-        if can_prev:
-            prev_btn = Button(text="◀ Prev", handler=on_prev, width=12)
-        else:
-            # Invisible placeholder - same width as button
-            prev_btn = Window(width=12, height=1)
-        
         close_btn = Button(text="Close (Esc)", handler=on_close, width=14)
         
-        if can_next:
-            next_btn = Button(text="Next ▶", handler=on_next, width=12)
-        else:
-            # Invisible placeholder - same width as button
-            next_btn = Window(width=12, height=1)
-        
-        # Fixed three-column button bar layout
         button_bar = VSplit([
-            prev_btn,                                    # Left: Prev
-            Window(width=Dimension(weight=1)),           # Flexible spacer
-            close_btn,                                   # Center: Close
-            Window(width=Dimension(weight=1)),           # Flexible spacer  
-            next_btn,                                    # Right: Next
+            Window(width=Dimension(weight=1)),
+            close_btn,
+            Window(width=Dimension(weight=1)),
         ], height=1, padding=1)
         
-        # Create dialog with custom button bar in body (not using Dialog's buttons param)
         dialog = Dialog(
-            title=f"📋 Task {task_id}{pos_indicator}",
+            title="📋 Context Details",
             body=HSplit([
                 Frame(
                     body=scrollable_content,
                     style='class:task-detail',
                 ),
-                Window(height=1),  # Spacer before buttons
-                button_bar,        # Custom fixed-position button bar
+                Window(height=1),
+                button_bar,
             ], width=Dimension(min=75, max=dialog_width, preferred=dialog_width),
                height=Dimension(min=15, max=dialog_height, preferred=dialog_height)),
-            buttons=[],  # No default buttons - using custom layout above
+            buttons=[],
             with_background=True,
         )
         
-        # Mark task detail as open (Level 2)
         self.task_detail_open = True
-        self._current_task_ids = task_ids
-        self._current_task_idx = current_idx
         self._open_dialog(dialog)
-    
-    def _close_task_detail_dialog(self) -> None:
-        """Close task detail dialog (Level 2) and return to task list (Level 1)."""
-        self.task_detail_open = False
-        self._close_dialog()
-        # Focus stays on input, task panel (Level 1) remains visible
+
+    def _refresh_detail_dialog(self) -> None:
+        """Refresh the detail dialog content (after tab switch or navigation)."""
         try:
             self.app.invalidate()
         except Exception:
@@ -4101,28 +4066,86 @@ class CCCCSetupApp:
                 except Exception:
                     pass
         
-        # Task detail navigation with arrow keys
+        # Level 2 detail dialog navigation
         @kb.add('left', filter=Condition(lambda: self.task_detail_open and self.modal_open))
-        def task_detail_prev(event) -> None:
-            """Navigate to previous task in detail dialog"""
+        def detail_prev(event) -> None:
+            """Navigate to previous task (only in tasks tab)"""
             try:
-                if hasattr(self, '_current_task_ids') and hasattr(self, '_current_task_idx'):
-                    if self._current_task_idx > 0:
-                        prev_id = self._current_task_ids[self._current_task_idx - 1]
-                        self._close_dialog()
-                        self._show_task_detail_dialog(prev_id)
+                if self.task_panel and self.task_panel.current_tab == 'tasks':
+                    self.task_panel.prev_task_in_detail()
+                    self._refresh_detail_dialog()
             except Exception:
                 pass
         
         @kb.add('right', filter=Condition(lambda: self.task_detail_open and self.modal_open))
-        def task_detail_next(event) -> None:
-            """Navigate to next task in detail dialog"""
+        def detail_next(event) -> None:
+            """Navigate to next task (only in tasks tab)"""
             try:
-                if hasattr(self, '_current_task_ids') and hasattr(self, '_current_task_idx'):
-                    if self._current_task_idx < len(self._current_task_ids) - 1:
-                        next_id = self._current_task_ids[self._current_task_idx + 1]
-                        self._close_dialog()
-                        self._show_task_detail_dialog(next_id)
+                if self.task_panel and self.task_panel.current_tab == 'tasks':
+                    self.task_panel.next_task_in_detail()
+                    self._refresh_detail_dialog()
+            except Exception:
+                pass
+        
+        # Tab key: switch tabs in Level 2 detail dialog
+        @kb.add('tab', filter=Condition(lambda: self.task_detail_open and self.modal_open))
+        def detail_next_tab(event) -> None:
+            """Switch to next tab"""
+            try:
+                if self.task_panel:
+                    self.task_panel.switch_tab(1)
+                    self._refresh_detail_dialog()
+            except Exception:
+                pass
+        
+        @kb.add('s-tab', filter=Condition(lambda: self.task_detail_open and self.modal_open))
+        def detail_prev_tab(event) -> None:
+            """Switch to previous tab"""
+            try:
+                if self.task_panel:
+                    self.task_panel.switch_tab(-1)
+                    self._refresh_detail_dialog()
+            except Exception:
+                pass
+        
+        # M/T/N/R quick keys for tab switching in Level 2
+        @kb.add('m', filter=Condition(lambda: self.task_detail_open and self.modal_open))
+        def detail_milestones_tab(event) -> None:
+            """Switch to Milestones tab"""
+            try:
+                if self.task_panel:
+                    self.task_panel.set_tab('milestones')
+                    self._refresh_detail_dialog()
+            except Exception:
+                pass
+        
+        @kb.add('t', filter=Condition(lambda: self.task_detail_open and self.modal_open))
+        def detail_tasks_tab(event) -> None:
+            """Switch to Tasks tab"""
+            try:
+                if self.task_panel:
+                    self.task_panel.set_tab('tasks')
+                    self._refresh_detail_dialog()
+            except Exception:
+                pass
+        
+        @kb.add('n', filter=Condition(lambda: self.task_detail_open and self.modal_open))
+        def detail_notes_tab(event) -> None:
+            """Switch to Notes tab"""
+            try:
+                if self.task_panel:
+                    self.task_panel.set_tab('notes')
+                    self._refresh_detail_dialog()
+            except Exception:
+                pass
+        
+        @kb.add('r', filter=Condition(lambda: self.task_detail_open and self.modal_open))
+        def detail_refs_tab(event) -> None:
+            """Switch to Refs tab"""
+            try:
+                if self.task_panel:
+                    self.task_panel.set_tab('refs')
+                    self._refresh_detail_dialog()
             except Exception:
                 pass
         
@@ -4200,16 +4223,15 @@ class CCCCSetupApp:
                 except Exception:
                     pass
 
-        # Enter key: show task detail when panel is expanded
+        # Enter key: show detail based on selected area
         # This works even when input is empty (panel takes priority)
         @kb.add('enter', filter=task_nav_filter & Condition(lambda: len(self.input_field.text.strip()) == 0))
         def task_show_detail(event) -> None:
-            """Show detail of selected task as floating dialog"""
+            """Show unified detail dialog based on selected area"""
             if self.task_panel:
-                task_id = self.task_panel.get_selected_task_id()
-                if task_id:
-                    # Show detail as floating dialog (Level 1 stays open)
-                    self._show_task_detail_dialog(task_id)
+                area = self.task_panel.get_selected_area()
+                tab = self.task_panel.get_tab_for_area(area)
+                self._show_unified_detail_dialog(initial_tab=tab)
                 try:
                     self.app.invalidate()
                 except Exception:

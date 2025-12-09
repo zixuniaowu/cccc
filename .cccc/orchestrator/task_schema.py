@@ -35,7 +35,7 @@ class StepStatus(str, Enum):
     """Step execution status."""
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
-    COMPLETE = "complete"
+    DONE = "done"
 
 
 class TaskStatus(str, Enum):
@@ -44,13 +44,13 @@ class TaskStatus(str, Enum):
     Simple 3-state model:
     - planned: Initial draft / planning stage
     - active: Work in progress
-    - complete: All steps done
+    - done: All steps done
 
     PeerA creates tasks; both peers can update status and content.
     """
     PLANNED = "planned"           # Draft, initial planning
     ACTIVE = "active"             # Work in progress
-    COMPLETE = "complete"         # All steps done
+    DONE = "done"                 # All steps done
 
 
 class StepOutput(BaseModel):
@@ -70,20 +70,20 @@ class StepOutput(BaseModel):
 
 class Step(BaseModel):
     """
-    Individual task step with completion criteria.
+    Individual task step with acceptance criteria.
 
     Attributes:
         id: Step identifier (S1, S2, S1.1, etc.)
         name: Brief description of the step
-        done: Completion criteria (e.g., "Tests pass", "API documented")
+        acceptance: Acceptance criteria (e.g., "Tests pass", "API documented")
         status: Current execution status
-        outputs: Optional list of deliverables (for completed steps)
+        outputs: Optional list of deliverables (for done steps)
         progress: Optional progress note (for in-progress steps)
     """
     # Flexible step ID - will be normalized to S1, S2 format
     id: str = Field(..., description="Step ID (S1, S2, S1.1, ...)")
     name: str = Field(..., min_length=1, max_length=200, description="Step description")
-    done: str = Field(default="", max_length=500, description="Completion criteria")
+    acceptance: str = Field(default="", max_length=500, description="Acceptance criteria")
     status: StepStatus = Field(default=StepStatus.PENDING, description="Step status")
     # Optional: deliverables when step is complete
     outputs: Optional[List[Union[StepOutput, Dict[str, str]]]] = Field(default=None, description="Step outputs/deliverables")
@@ -135,30 +135,30 @@ class TaskDefinition(BaseModel):
 
     @property
     def current_step(self) -> Optional[str]:
-        """Get the ID of the first non-complete step."""
+        """Get the ID of the first non-done step."""
         for step in self.steps:
-            if step.status != StepStatus.COMPLETE:
+            if step.status != StepStatus.DONE:
                 return step.id
         return None
 
     @property
     def progress(self) -> str:
-        """Get progress as 'completed/total' string."""
-        completed = sum(1 for s in self.steps if s.status == StepStatus.COMPLETE)
-        return f"{completed}/{len(self.steps)}"
+        """Get progress as 'done/total' string."""
+        done_count = sum(1 for s in self.steps if s.status == StepStatus.DONE)
+        return f"{done_count}/{len(self.steps)}"
 
     @property
     def progress_percent(self) -> int:
         """Get progress as percentage (0-100)."""
         if not self.steps:
             return 0
-        completed = sum(1 for s in self.steps if s.status == StepStatus.COMPLETE)
-        return int(completed / len(self.steps) * 100)
+        done_count = sum(1 for s in self.steps if s.status == StepStatus.DONE)
+        return int(done_count / len(self.steps) * 100)
 
     @property
     def completed_steps(self) -> int:
-        """Get count of completed steps."""
-        return sum(1 for s in self.steps if s.status == StepStatus.COMPLETE)
+        """Get count of done steps."""
+        return sum(1 for s in self.steps if s.status == StepStatus.DONE)
 
     @property
     def total_steps(self) -> int:

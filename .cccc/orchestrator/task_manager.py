@@ -302,20 +302,7 @@ class TaskManager:
             status_map = {
                 'planned': 'planned',
                 'active': 'active', 
-                'complete': 'complete',
-                'completed': 'complete',
-                'done': 'complete',
-                'pending': 'planned',      # Common mistake: 'pending' for task
-                'in_progress': 'active',   # Common mistake: step status used for task
-                'in-progress': 'active',
-                'inprogress': 'active',
-                'draft': 'planned',
-                'todo': 'planned',
-                'wip': 'active',
-                'inactive': 'planned',     # Another common variation
-                'paused': 'planned',
-                'blocked': 'active',       # Blocked is still active work
-                'started': 'active',
+                'done': 'done',
             }
             if raw_status in status_map:
                 data['status'] = status_map[raw_status]
@@ -344,13 +331,7 @@ class TaskManager:
                     step_status_map = {
                         'pending': 'pending',
                         'in_progress': 'in_progress',
-                        'in-progress': 'in_progress',
-                        'inprogress': 'in_progress',
-                        'active': 'in_progress',
-                        'wip': 'in_progress',
-                        'complete': 'complete',
-                        'completed': 'complete',
-                        'done': 'complete',
+                        'done': 'done',
                     }
                     if raw_step_status in step_status_map:
                         step['status'] = step_status_map[raw_step_status]
@@ -364,8 +345,8 @@ class TaskManager:
                 # Ensure required fields
                 if 'name' not in step or not step['name']:
                     step['name'] = f"Step {i + 1}"
-                if 'done' not in step:
-                    step['done'] = ""
+                if 'acceptance' not in step:
+                    step['acceptance'] = ''
                     
                 normalized_steps.append(step)
             data['steps'] = normalized_steps
@@ -553,7 +534,7 @@ class TaskManager:
             task_steps.append(Step(
                 id=f"S{i}",
                 name=s.get('name', f'Step {i}'),
-                done=s.get('done', 'Completed'),
+                acceptance=s.get('acceptance', 'Done'),
                 status=StepStatus.PENDING
             ))
 
@@ -571,6 +552,91 @@ class TaskManager:
         return None
 
     # =========================================================================
+    # Context Operations (milestones, notes, references)
+    # =========================================================================
+
+    def _context_path(self) -> Path:
+        """Get path to context.yaml."""
+        return self.context_dir / "context.yaml"
+
+    def load_context(self) -> Dict[str, Any]:
+        """
+        Load context from context.yaml.
+        
+        Returns:
+            Dict with milestones, notes, references lists
+        """
+        if not self._ready:
+            return {'milestones': [], 'notes': [], 'references': []}
+        
+        path = self._context_path()
+        if not path.exists():
+            return {'milestones': [], 'notes': [], 'references': []}
+        
+        try:
+            data = self._read_yaml(path)
+            return {
+                'milestones': data.get('milestones', []),
+                'notes': data.get('notes', []),
+                'references': data.get('references', []),
+            }
+        except Exception:
+            return {'milestones': [], 'notes': [], 'references': []}
+
+    def get_active_milestone(self) -> Optional[Dict[str, Any]]:
+        """
+        Get the currently active milestone.
+        
+        Returns:
+            Active milestone dict or None
+        """
+        context = self.load_context()
+        for m in context.get('milestones', []):
+            if m.get('status') == 'active':
+                return m
+        return None
+
+    def get_milestones_for_display(self) -> List[Dict[str, Any]]:
+        """
+        Get milestones for display (last 3 done + all active/pending).
+        
+        Returns:
+            List of milestone dicts
+        """
+        context = self.load_context()
+        milestones = context.get('milestones', [])
+        
+        done = [m for m in milestones if m.get('status') == 'done']
+        active_pending = [m for m in milestones if m.get('status') != 'done']
+        
+        # Take last 3 done milestones
+        recent_done = done[-3:] if done else []
+        
+        return recent_done + active_pending
+
+    def get_notes(self) -> List[Dict[str, Any]]:
+        """
+        Get notes sorted by score (descending).
+        
+        Returns:
+            List of note dicts
+        """
+        context = self.load_context()
+        notes = context.get('notes', [])
+        return sorted(notes, key=lambda n: n.get('score', 0), reverse=True)
+
+    def get_references(self) -> List[Dict[str, Any]]:
+        """
+        Get references sorted by score (descending).
+        
+        Returns:
+            List of reference dicts
+        """
+        context = self.load_context()
+        refs = context.get('references', [])
+        return sorted(refs, key=lambda r: r.get('score', 0), reverse=True)
+
+    # =========================================================================
     # Summary Generation
     # =========================================================================
 
@@ -585,7 +651,7 @@ class TaskManager:
 
         # Calculate overall stats
         total = len(tasks)
-        completed = sum(1 for t in tasks if t.status == TaskStatus.COMPLETE)
+        completed = sum(1 for t in tasks if t.status == TaskStatus.DONE)
         active = sum(1 for t in tasks if t.status == TaskStatus.ACTIVE)
         planned = sum(1 for t in tasks if t.status == TaskStatus.PLANNED)
 
@@ -662,7 +728,7 @@ class TaskManager:
 
         for task in tasks:
             # Status icon
-            if task.status == TaskStatus.COMPLETE:
+            if task.status == TaskStatus.DONE:
                 icon = '✓'
             elif task.status == TaskStatus.ACTIVE:
                 icon = '→'
@@ -675,7 +741,7 @@ class TaskManager:
                 lines.append(f"    Goal: {task.goal}")
                 lines.append(f"    Progress: {task.progress} ({task.progress_percent}%)")
                 for step in task.steps:
-                    step_icon = '✓' if step.status == StepStatus.COMPLETE else ('→' if step.status == StepStatus.IN_PROGRESS else '○')
+                    step_icon = '✓' if step.status == StepStatus.DONE else ('→' if step.status == StepStatus.IN_PROGRESS else '○')
                     lines.append(f"      {step_icon} {step.id}: {step.name}")
                 lines.append('')
             else:
@@ -707,7 +773,7 @@ class TaskManager:
 
         # Task list (compact)
         for t in summary['tasks'][:5]:  # Limit to 5 for IM
-            if t['status'] == 'complete':
+            if t['status'] == 'done':
                 icon = '✓'
             elif t['status'] == 'active':
                 icon = '→'
