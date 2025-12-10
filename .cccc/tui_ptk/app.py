@@ -613,9 +613,6 @@ class SetupConfig:
     dc_chan: str = ''
     # WeCom: outbound-only via webhook
     wc_webhook: str = ''  # Webhook URL for WeCom robot
-    # ccontext MCP: per-peer setting for execution context tracking
-    peerA_ccontext_mcp: bool = False
-    peerB_ccontext_mcp: bool = False
 
     # Backward compatibility property
     @property
@@ -1262,33 +1259,13 @@ class CCCCSetupApp:
             return self.task_panel.get_expanded_text(width=panel_width)
         
         def get_panel_height():
-            """Calculate panel height based on display items (tasks + errors)."""
+            """Get panel height from actual rendered line count."""
             if not self.task_panel:
-                return 8
+                return 10
             
-            # Get display items count and error count
-            display_count, error_count = self.task_panel.get_display_item_count()
-            
-            # Layout analysis (line count):
-            # 1: Top border
-            # 2: Empty line
-            # 3: Column headers (if items exist)
-            # 4: Separator (if items exist)
-            # 5-N: Task/error rows (display_count)
-            # N+1: Empty line
-            # N+2: Progress line (if items exist)
-            # N+3: Error warning line (if error_count > 0)
-            # N+4: Help line
-            # N+5: Bottom border
-            if display_count == 0:
-                # No items: top(1) + empty(1) + message(1) + empty(1) + bottom(1) = 5
-                return 5
-            else:
-                # Base: top(1) + empty(1) + header(1) + sep(1) + items + empty(1) + progress(1) + help(1) + bottom(1) = 8 + items
-                base_height = 8 + display_count
-                if error_count > 0:
-                    base_height += 1  # Error warning line
-                return min(base_height, 20)  # Cap at 20 to leave room for timeline
+            # Use actual line count from last render, with reasonable bounds
+            line_count = self.task_panel.get_line_count()
+            return min(max(line_count, 8), 25)  # Min 8, max 25 lines
         
         # Create FormattedTextControl with mouse handler
         ctrl = FormattedTextControl(
@@ -1507,7 +1484,7 @@ class CCCCSetupApp:
         cli_profiles = _load_yaml(self.home, 'settings/cli_profiles.yaml')
         roles = cli_profiles.get('roles') or {}
         self.config.peerA = str((roles.get('peerA') or {}).get('actor') or '')
-        self.config.peerA_ccontext_mcp = bool((roles.get('peerA') or {}).get('ccontext_mcp', False))
+        # Note: ccontext_mcp settings ignored for backward compatibility
         # PeerB: handle 'none' explicitly for single-peer mode
         peerB_actor = str((roles.get('peerB') or {}).get('actor') or '')
         # Normalize: empty string from missing section means check if section existed
@@ -1515,7 +1492,7 @@ class CCCCSetupApp:
             self.config.peerB = 'none'  # Explicit single-peer mode
         else:
             self.config.peerB = peerB_actor
-        self.config.peerB_ccontext_mcp = bool((roles.get('peerB') or {}).get('ccontext_mcp', False))
+        # Note: ccontext_mcp settings ignored for backward compatibility
         self.config.aux = str((roles.get('aux') or {}).get('actor') or 'none')
 
         # Load mode selection (im_mode field)
@@ -1636,27 +1613,10 @@ class CCCCSetupApp:
             left_symbol='',
             right_symbol=''
         )
-        # ccontext MCP toggle buttons
-        btn_peerA_ccontext = Button(
-            text=self._format_ccontext_toggle(self.config.peerA_ccontext_mcp),
-            handler=self._toggle_peerA_ccontext,
-            width=14,
-            left_symbol='',
-            right_symbol=''
-        )
-        btn_peerB_ccontext = Button(
-            text=self._format_ccontext_toggle(self.config.peerB_ccontext_mcp),
-            handler=self._toggle_peerB_ccontext,
-            width=14,
-            left_symbol='',
-            right_symbol=''
-        )
 
         # Store button references
         self.btn_peerA = btn_peerA
         self.btn_peerB = btn_peerB
-        self.btn_peerA_ccontext = btn_peerA_ccontext
-        self.btn_peerB_ccontext = btn_peerB_ccontext
         self.btn_aux = btn_aux
         self.btn_foreman = btn_foreman
         self.btn_mode = btn_mode
@@ -1685,17 +1645,13 @@ class CCCCSetupApp:
             VSplit([
                 Window(width=10, content=self._create_focused_label('PeerA', 0)),
                 btn_peerA,
-                Window(width=1),
-                btn_peerA_ccontext,
-                Window(width=1),
+                Window(width=2),
                 Label(text='Strategic peer', style='class:hint'),
             ], padding=1),
             VSplit([
                 Window(width=10, content=self._create_focused_label('PeerB', 1)),
                 btn_peerB,
-                Window(width=1),
-                btn_peerB_ccontext,
-                Window(width=1),
+                Window(width=2),
                 self.peerB_hint_label,
             ], padding=1),
             Window(height=1),
@@ -2063,20 +2019,6 @@ class CCCCSetupApp:
         # Just show the value without availability indicator
         return f'[●] {value}'
 
-    def _format_ccontext_toggle(self, enabled: bool) -> str:
-        """Format ccontext MCP toggle button text"""
-        return '[☑] ccontext' if enabled else '[☐] ccontext'
-
-    def _toggle_peerA_ccontext(self) -> None:
-        """Toggle peerA ccontext MCP setting"""
-        self.config.peerA_ccontext_mcp = not self.config.peerA_ccontext_mcp
-        self.btn_peerA_ccontext.text = self._format_ccontext_toggle(self.config.peerA_ccontext_mcp)
-
-    def _toggle_peerB_ccontext(self) -> None:
-        """Toggle peerB ccontext MCP setting"""
-        self.config.peerB_ccontext_mcp = not self.config.peerB_ccontext_mcp
-        self.btn_peerB_ccontext.text = self._format_ccontext_toggle(self.config.peerB_ccontext_mcp)
-
     def _get_provider_summary(self) -> str:
         """Provider summary"""
         mode = self.config.mode
@@ -2125,12 +2067,6 @@ class CCCCSetupApp:
         self.btn_aux.text = self._format_button_text(self.config.aux, none_ok=True)
         self.btn_foreman.text = self._format_button_text(self.config.foreman, none_ok=True)
         self.btn_mode.text = f'[●] {self.config.mode}'
-        # Update ccontext toggle buttons
-        if hasattr(self, 'btn_peerA_ccontext'):
-            self.btn_peerA_ccontext.text = self._format_ccontext_toggle(self.config.peerA_ccontext_mcp)
-        if hasattr(self, 'btn_peerB_ccontext'):
-            self.btn_peerB_ccontext.text = self._format_ccontext_toggle(self.config.peerB_ccontext_mcp)
-
         # Update single-peer mode hint labels
         is_single_peer = self.config.peerB == 'none'
         if hasattr(self, 'peerB_hint_label'):
@@ -2798,7 +2734,7 @@ class CCCCSetupApp:
                 roles['peerA'] = {}
             roles['peerA']['actor'] = self.config.peerA
             roles['peerA']['cwd'] = '.'
-            roles['peerA']['ccontext_mcp'] = self.config.peerA_ccontext_mcp
+            # Note: ccontext_mcp removed - agents use adaptive MCP/YAML
 
         # Handle PeerB - 'none' means single-peer mode
         # IMPORTANT: Always write peerB section explicitly to preserve user's choice
@@ -2811,7 +2747,7 @@ class CCCCSetupApp:
             # Single-peer mode: write explicit 'none' instead of deleting section
             roles['peerB']['actor'] = 'none'
         roles['peerB']['cwd'] = '.'
-        roles['peerB']['ccontext_mcp'] = self.config.peerB_ccontext_mcp
+        # Note: ccontext_mcp removed - agents use adaptive MCP/YAML
 
         # Handle aux separately - always write or clear to ensure changes take effect
         if self.config.aux and self.config.aux != 'none':
@@ -3737,11 +3673,66 @@ class CCCCSetupApp:
         def on_close():
             self._close_task_detail_dialog()
         
-        # Create dynamic content window
+        # Create dynamic tab bar that updates on refresh
+        def get_tab_text(tab_name: str, label: str, key: str) -> str:
+            """Get tab button text (changes based on current tab)."""
+            is_current = self.task_panel.current_tab == tab_name
+            if is_current:
+                return f'[{key}] {label}'
+            else:
+                return f' {key}  {label} '
+        
+        def make_tab_button(tab_name: str, label: str, key: str) -> Button:
+            """Create a tab button that switches to the specified tab."""
+            def handler():
+                self.task_panel.set_tab(tab_name)
+                # Update all tab button texts
+                for btn_info in tab_buttons_info:
+                    btn_info['button'].text = get_tab_text(btn_info['tab'], btn_info['label'], btn_info['key'])
+                self._refresh_detail_dialog()
+            
+            button = Button(
+                text=get_tab_text(tab_name, label, key),
+                handler=handler,
+                width=len(label) + 5,
+                left_symbol='',
+                right_symbol='',
+            )
+            return button
+        
+        # Track buttons for dynamic updates
+        tab_buttons_info = []
+        
+        # Create tab buttons
+        milestones_btn = make_tab_button('milestones', 'Milestones', 'M')
+        tab_buttons_info.append({'button': milestones_btn, 'tab': 'milestones', 'label': 'Milestones', 'key': 'M'})
+        
+        tasks_btn = make_tab_button('tasks', 'Tasks', 'T')
+        tab_buttons_info.append({'button': tasks_btn, 'tab': 'tasks', 'label': 'Tasks', 'key': 'T'})
+        
+        notes_btn = make_tab_button('notes', 'Notes', 'N')
+        tab_buttons_info.append({'button': notes_btn, 'tab': 'notes', 'label': 'Notes', 'key': 'N'})
+        
+        refs_btn = make_tab_button('refs', 'Refs', 'R')
+        tab_buttons_info.append({'button': refs_btn, 'tab': 'refs', 'label': 'Refs', 'key': 'R'})
+        
+        # Tab bar with clickable buttons
+        tab_bar = VSplit([
+            milestones_btn,
+            Window(width=2),
+            tasks_btn,
+            Window(width=2),
+            notes_btn,
+            Window(width=2),
+            refs_btn,
+            Window(width=Dimension(weight=1)),  # Spacer
+        ], height=1, padding=1)
+        
+        # Content window with word wrapping enabled
         content_window = Window(
             content=FormattedTextControl(lambda: get_content()),
             style='class:task-detail',
-            wrap_lines=False,
+            wrap_lines=True,  # Enable auto word-wrap
         )
         
         scrollable_content = ScrollablePane(
@@ -3760,6 +3751,8 @@ class CCCCSetupApp:
         dialog = Dialog(
             title="📋 Context Details",
             body=HSplit([
+                tab_bar,  # Clickable tab buttons at top
+                Window(height=1, char='─'),  # Separator
                 Frame(
                     body=scrollable_content,
                     style='class:task-detail',
@@ -4537,6 +4530,13 @@ class CCCCSetupApp:
 
                         # Update status panel
                         self._update_status()
+                    
+                    # Refresh task panel to pick up new/changed YAML files
+                    if self.task_panel:
+                        try:
+                            self.task_panel.refresh()
+                        except Exception:
+                            pass
 
                 # Request a redraw so footer warnings/status reflect latest files
                 try:

@@ -102,6 +102,8 @@ class TaskPanel:
         self.current_tab = 'tasks'
         # Current task index for Level 2 Tasks tab navigation
         self.detail_task_index = 0
+        # Track actual line count for height calculation
+        self._last_line_count = 10  # Default fallback
 
     def _get_manager(self):
         """Lazy-load TaskManager with proper path setup."""
@@ -162,6 +164,13 @@ class TaskPanel:
         """Force refresh of task data."""
         if self._manager:
             self._manager.refresh()
+
+    def get_line_count(self) -> int:
+        """Get the actual line count from last get_expanded_text() call.
+        
+        Used by app.py for accurate height calculation.
+        """
+        return self._last_line_count
 
     # =========================================================================
     # Navigation Methods (for Level 1 keyboard navigation)
@@ -610,6 +619,9 @@ class TaskPanel:
         # Bottom border
         lines.append(f"┗{'━' * INNER}┛")
         
+        # Track actual line count for height calculation
+        self._last_line_count = len(lines)
+        
         return "\n".join(lines)
 
     def _get_status_display(self, status: str) -> Tuple[str, str]:
@@ -649,30 +661,18 @@ class TaskPanel:
 
     def get_detail_view(self, width: int = 80) -> str:
         """
-        Get unified Level 2 detail view with tab bar.
+        Get unified Level 2 detail view content (without tab bar - tabs are in UI).
         
         Args:
             width: Available width for rendering
         
         Returns:
-            Formatted string with tab bar and current tab content
+            Formatted string with current tab content
         """
         lines = []
         INNER = max(50, width - 4)
         
-        def add_row(content: str) -> None:
-            content_width = _display_width(content)
-            padding = INNER - content_width
-            if padding > 0:
-                content = content + ' ' * padding
-            lines.append(content)
-        
-        # Tab bar
-        tab_bar = self._render_tab_bar(INNER)
-        lines.append(tab_bar)
-        lines.append("─" * INNER)
-        
-        # Content based on current tab
+        # Content based on current tab (no tab bar - handled by TUI buttons)
         if self.current_tab == 'milestones':
             content = self._render_milestones_content(INNER)
         elif self.current_tab == 'tasks':
@@ -686,12 +686,12 @@ class TaskPanel:
         
         lines.append(content)
         
-        # Footer with navigation hints
-        lines.append("─" * INNER)
+        # Footer with navigation hints (compact)
+        lines.append("")
         if self.current_tab == 'tasks':
-            lines.append("Tab: switch │ ← → prev/next task │ Esc: close")
+            lines.append("← → prev/next task │ Esc: close")
         else:
-            lines.append("Tab: switch │ Esc: close")
+            lines.append("Esc: close")
         
         return "\n".join(lines)
 
@@ -733,9 +733,8 @@ class TaskPanel:
                 icon = '○'
                 status_label = '[pending]'
             
-            # Main line
-            name_display = _truncate_to_width(name, width - 25)
-            lines.append(f"  {icon} {m_id}: {name_display} {status_label}")
+            # Main line - no truncation, let it wrap naturally
+            lines.append(f"  {icon} {m_id}: {name} {status_label}")
             
             # Additional info for done/active milestones
             if status == 'done':
@@ -744,16 +743,16 @@ class TaskPanel:
                 if completed:
                     lines.append(f"      Completed: {completed}")
                 if outcomes:
-                    outcomes_display = _truncate_to_width(outcomes, width - 16)
-                    lines.append(f"      Outcomes: {outcomes_display}")
+                    # No truncation - let it wrap
+                    lines.append(f"      Outcomes: {outcomes}")
             elif status == 'active':
                 started = m.get('started', '')
                 desc = m.get('description', '')
                 if started:
                     lines.append(f"      Started: {started}")
                 if desc:
-                    desc_display = _truncate_to_width(desc, width - 8)
-                    lines.append(f"      {desc_display}")
+                    # No truncation - let it wrap
+                    lines.append(f"      {desc}")
             
             lines.append("")  # Blank line between milestones
         
@@ -775,15 +774,15 @@ class TaskPanel:
         
         lines = []
         
-        # Task header
-        lines.append(f"  {task.id}: {_truncate_to_width(task.name, width - 10)}")
+        # Task header - no truncation
+        lines.append(f"  {task.id}: {task.name}")
         lines.append("")
-        lines.append(f"  Goal: {_truncate_to_width(task.goal, width - 10)}")
+        lines.append(f"  Goal: {task.goal}")
         lines.append(f"  Status: {task.status}  │  Progress: {task.progress} ({task.progress_percent}%)")
         lines.append("")
         lines.append("  Steps:")
         
-        # Steps
+        # Steps - no truncation on step names
         for step in task.steps:
             status = str(step.status)
             if status == 'done':
@@ -796,8 +795,8 @@ class TaskPanel:
                 icon = '○'
                 label = '[pending]'
             
-            step_name = _truncate_to_width(step.name, width - 25)
-            lines.append(f"    {icon} {step.id} {step_name} {label}")
+            # Let step name wrap naturally
+            lines.append(f"    {icon} {step.id} {step.name} {label}")
         
         lines.append("")
         
@@ -826,9 +825,11 @@ class TaskPanel:
             content = n.get('content', '')
             n_id = n.get('id', '?')
             
-            # Truncate content for display
-            content_display = _truncate_to_width(content, width - 15)
-            lines.append(f"  [{score:>3}] {n_id}: {content_display}")
+            # Header with score
+            lines.append(f"  {n_id} (score: {score})")
+            # Content - let it wrap naturally
+            lines.append(f"    {content}")
+            lines.append("")  # Blank line between notes
         
         return "\n".join(lines) if lines else "  No notes."
 
@@ -849,12 +850,14 @@ class TaskPanel:
             note = r.get('note', '')
             r_id = r.get('id', '?')
             
-            # URL or path
-            url_display = _truncate_to_width(url, width - 15)
-            lines.append(f"  [{score:>3}] {r_id}: {url_display}")
+            # Header with score
+            lines.append(f"  {r_id} (score: {score})")
+            # URL - let it wrap
+            lines.append(f"    URL: {url}")
+            # Note - let it wrap
             if note:
-                note_display = _truncate_to_width(note, width - 10)
-                lines.append(f"         {note_display}")
+                lines.append(f"    Note: {note}")
+            lines.append("")  # Blank line between refs
         
         return "\n".join(lines) if lines else "  No references."
 

@@ -166,6 +166,14 @@ def _is_foreman_configured(home: Path) -> bool:
     agent = str(conf.get('agent', '') or '').strip().lower()
     return bool(agent) and agent != 'none'
 
+def _is_ccontext_mcp_enabled(home: Path, peer: str) -> bool:
+    """DEPRECATED: ccontext MCP detection removed.
+    
+    Kept for backward compatibility but always returns False.
+    Agents now use adaptive MCP/YAML approach automatically.
+    """
+    return False
+
 def _conversation_reset(home: Path) -> Tuple[str, Optional[int]]:
     profiles = home/"settings"/"cli_profiles.yaml"
     if not profiles.exists():
@@ -357,91 +365,82 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
     
     # Role-specific task instructions
     if single_peer_mode:
-        # Single peer: full ownership
         ch3_blueprint += [
             "  YOUR ROLE (single-peer): You create and manage tasks",
             "    - Create T###.yaml BEFORE starting complex work",
             "    - Update steps/status as you progress",
-            "    - With MCP: Use ccontext tools to update task status",
-            "    - Without MCP: Edit context/tasks/T###.yaml directly",
             "",
-            "  CREATE TASK:",
-            "    Path: context/tasks/T###.yaml",
-            "    - Scan existing T###.yaml files, use next available ID (T001, T002...)",
-            "    - Create context/tasks/ directory if not exists",
-            "    ```yaml",
-            "    id: T001            # Must match directory prefix",
-            "    name: Brief name",
-            "    goal: What 'done' looks like",
-            "    status: active      # planned|active|complete",
-            "    steps:",
-            "      - id: S1          # S1, S2... or S1.1 for sub-steps",
-            "        name: Step description",
-            "        done: Completion criteria",
-            "        status: pending # pending|in_progress|complete",
-            "        # Optional when complete:",
-            "        # outputs: [{path: 'work/result.md', note: 'Deliverable'}]",
-            "    ```",
         ]
     elif is_peera:
-        # PeerA in dual-peer mode: creator role
         ch3_blueprint += [
             "  YOUR ROLE (PeerA): You are the task creator",
             "    - You CREATE T###.yaml for complex work (PeerB cannot create tasks)",
             "    - Create BEFORE coding; this prevents duplicate task conflicts",
             "    - PeerB can update task content (steps/status) after you create it",
             "",
-            "  CREATE TASK:",
-            "    Path: context/tasks/T###.yaml",
-            "    - Scan existing T###.yaml files, use next available ID (T001, T002...)",
-            "    - Create context/tasks/ directory if not exists",
-            "    ```yaml",
-            "    id: T001            # Must match directory prefix",
-            "    name: Brief name",
-            "    goal: What 'done' looks like",
-            "    status: active      # planned|active|complete",
-            "    steps:",
-            "      - id: S1          # S1, S2... or S1.1 for sub-steps",
-            "        name: Step description",
-            "        done: Completion criteria",
-            "        status: pending # pending|in_progress|complete",
-            "        # Optional when complete:",
-            "        # outputs: [{path: 'work/result.md', note: 'Deliverable'}]",
-            "    ```",
         ]
     else:
-        # PeerB in dual-peer mode: executor/updater role
         ch3_blueprint += [
             "  YOUR ROLE (PeerB): You update tasks, PeerA creates them",
             "    - Do NOT create new T###.yaml files (PeerA handles creation to avoid ID conflicts)",
             "    - You CAN and SHOULD update existing tasks: modify steps, change status, add sub-steps",
             "    - If complex work needs a task but none exists, ask PeerA to create one",
             "",
-            "  TASK FORMAT (reference):",
-            "    Path: context/tasks/T###.yaml",
-            "    ```yaml",
-            "    id: T001            # Do not change; must match directory",
-            "    name: Brief name    # Can update",
-            "    goal: What 'done' looks like  # Can update",
-            "    status: active      # planned|active|complete - update as needed",
-            "    steps:              # Can add/modify steps",
-            "      - id: S1          # S1, S2... or S1.1 for sub-steps",
-            "        name: Step description",
-            "        done: Completion criteria",
-            "        status: pending # pending|in_progress|complete",
-            "        # Optional when complete:",
-            "        # outputs: [{path: 'work/result.md', note: 'Deliverable'}]",
-            "    ```",
         ]
     
-    # Status update guidance
+    # Unified Execution Status section - adaptive MCP/YAML approach
     ch3_blueprint += [
+        "  EXECUTION STATUS (context/ directory) {#execution}",
+        "    Anchor: context/ for all execution state tracking.",
+        "    Two methods available - use what works for your environment:",
         "",
-        "  STATUS UPDATES:",
-        "    - With ccontext MCP: Use update_task tool to change status/steps",
-        "    - Without MCP: Edit context/tasks/T###.yaml directly (status field)",
-        "    - Valid status: planned → active → complete",
-        "    - Valid step status: pending → in_progress → complete",
+        "    METHOD 1 (Preferred): ccontext MCP tools",
+        "      If your CLI supports MCP and has ccontext server installed:",
+        "      • Query: get_context, list_tasks, get_task",
+        "      • Update: add_milestone, update_milestone, create_task, update_task",
+        "      • Enrich: add_note, add_reference",
+        "      • Consult MCP tool descriptions for exact parameters",
+        "      • Benefit: Type-safe, auto-validated, atomic operations",
+        "",
+        "    METHOD 2 (Universal): Direct YAML editing",
+        "      Always works - use when MCP unavailable or as fallback:",
+        "",
+        "      context/context.yaml:",
+        "        milestones:",
+        "          - id: M1                    # M1, M2...",
+        "            name: \"Phase name\"",
+        "            description: \"Details, checkpoints\"",
+        "            status: active            # pending|active|done",
+        "            started: \"2025-01-15\"     # ISO date (active/done)",
+        "            completed: \"2025-01-20\"   # ISO date (done only)",
+        "            outcomes: \"Results\"       # done only",
+        "        notes:",
+        "          - id: N001                  # N001, N002...",
+        "            content: \"Lesson learned\"",
+        "            score: 15                 # -100~100, default 15, decays",
+        "        references:",
+        "          - id: R001                  # R001, R002...",
+        "            url: \"path/or/url\"",
+        "            note: \"Why useful\"",
+        "            score: 15",
+        "",
+        "      context/tasks/T###.yaml:",
+        "        id: T001                      # T001, T002...",
+        "        name: \"Task name\"",
+        "        goal: \"Completion criteria\"",
+        "        status: active                # planned|active|done",
+        "        assignee: peerA               # optional",
+        "        steps:",
+        "          - id: S1                    # S1, S2...",
+        "            name: \"Step description\"",
+        "            acceptance: \"How to verify done\"",
+        "            status: in_progress       # pending|in_progress|done",
+        "",
+        "    USAGE STRATEGY:",
+        "      • Try MCP first if available (cleaner, safer)",
+        "      • Fallback to YAML when MCP unavailable or fails",
+        "      • Mix both as needed (read via MCP, emergency fix via YAML)",
+        "      • All methods maintain same context/ structure",
         "",
         "  QUICK PATH: Below threshold? Execute directly. If complexity grows, create task mid-work.",
     ]
