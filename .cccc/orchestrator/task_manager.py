@@ -559,29 +559,35 @@ class TaskManager:
         """Get path to context.yaml."""
         return self.context_dir / "context.yaml"
 
+    def _presence_path(self) -> Path:
+        """Get path to presence.yaml (gitignored runtime state)."""
+        return self.context_dir / "presence.yaml"
+
     def load_context(self) -> Dict[str, Any]:
         """
         Load context from context.yaml.
-        
+
         Returns:
-            Dict with milestones, notes, references lists
+            Dict with vision, sketch, milestones, notes, references
         """
         if not self._ready:
-            return {'milestones': [], 'notes': [], 'references': []}
-        
+            return {'vision': None, 'sketch': None, 'milestones': [], 'notes': [], 'references': []}
+
         path = self._context_path()
         if not path.exists():
-            return {'milestones': [], 'notes': [], 'references': []}
-        
+            return {'vision': None, 'sketch': None, 'milestones': [], 'notes': [], 'references': []}
+
         try:
             data = self._read_yaml(path)
             return {
+                'vision': data.get('vision'),
+                'sketch': data.get('sketch'),
                 'milestones': data.get('milestones', []),
                 'notes': data.get('notes', []),
                 'references': data.get('references', []),
             }
         except Exception:
-            return {'milestones': [], 'notes': [], 'references': []}
+            return {'vision': None, 'sketch': None, 'milestones': [], 'notes': [], 'references': []}
 
     def get_active_milestone(self) -> Optional[Dict[str, Any]]:
         """
@@ -628,13 +634,236 @@ class TaskManager:
     def get_references(self) -> List[Dict[str, Any]]:
         """
         Get references sorted by score (descending).
-        
+
         Returns:
             List of reference dicts
         """
         context = self.load_context()
         refs = context.get('references', [])
         return sorted(refs, key=lambda r: r.get('score', 0), reverse=True)
+
+    # =========================================================================
+    # Vision/Sketch Operations
+    # =========================================================================
+
+    def get_vision(self) -> Optional[str]:
+        """
+        Get the project vision.
+
+        Returns:
+            Vision string or None
+        """
+        context = self.load_context()
+        return context.get('vision')
+
+    def get_sketch(self) -> Optional[str]:
+        """
+        Get the execution blueprint (sketch).
+
+        Returns:
+            Sketch markdown string or None
+        """
+        context = self.load_context()
+        return context.get('sketch')
+
+    # =========================================================================
+    # Presence Operations
+    # =========================================================================
+
+    def get_presence(self) -> List[Dict[str, Any]]:
+        """
+        Get all agents' presence status from presence.yaml.
+
+        Returns:
+            List of agent presence dicts
+        """
+        if not self._ready:
+            return []
+
+        path = self._presence_path()
+        if not path.exists():
+            return []
+
+        try:
+            data = self._read_yaml(path)
+            return data.get('agents', [])
+        except Exception:
+            return []
+
+    def _normalize_agent_id(self, agent_id: str) -> str:
+        """
+        Normalize agent ID to canonical format (peer-a, peer-b).
+
+        Accepts various formats:
+        - peerA, PeerA, peera, peer-a, peer_a -> peer-a
+        - peerB, PeerB, peerb, peer-b, peer_b -> peer-b
+
+        Returns:
+            Normalized agent ID (peer-a or peer-b) or original if unrecognized
+        """
+        if not agent_id:
+            return agent_id
+        normalized = agent_id.lower().replace('_', '-').replace(' ', '-')
+        # Map various formats to canonical form
+        if normalized in ('peera', 'peer-a', 'a'):
+            return 'peer-a'
+        if normalized in ('peerb', 'peer-b', 'b'):
+            return 'peer-b'
+        return agent_id  # Return original for unrecognized IDs
+
+    def update_presence(
+        self,
+        agent_id: str,
+        status: str,
+    ) -> bool:
+        """
+        Update an agent's presence status.
+
+        Args:
+            agent_id: Agent ID (any format - will be normalized to peer-a/peer-b)
+            status: Natural language description of what the agent is doing/thinking
+
+        Returns:
+            True on success
+        """
+        if not self._ready:
+            return False
+
+        # Normalize agent_id to canonical format
+        agent_id = self._normalize_agent_id(agent_id)
+
+        path = self._presence_path()
+
+        # Load existing data
+        if path.exists():
+            data = self._read_yaml(path)
+        else:
+            data = {'agents': [], 'heartbeat_timeout_seconds': 300}
+
+        agents = data.get('agents', [])
+
+        # Clean up: remove any duplicate entries with non-canonical IDs
+        # Keep only entries with canonical IDs or unrecognized IDs
+        seen_canonical = set()
+        cleaned_agents = []
+        for a in agents:
+            aid = a.get('id', '')
+            normalized_aid = self._normalize_agent_id(aid)
+            if normalized_aid in ('peer-a', 'peer-b'):
+                if normalized_aid not in seen_canonical:
+                    # Update the ID to canonical form
+                    a['id'] = normalized_aid
+                    cleaned_agents.append(a)
+                    seen_canonical.add(normalized_aid)
+                # Skip duplicates
+            else:
+                # Keep unrecognized IDs as-is
+                cleaned_agents.append(a)
+        agents = cleaned_agents
+
+        # Find or create agent entry
+        agent_entry = None
+        for a in agents:
+            if a.get('id') == agent_id:
+                agent_entry = a
+                break
+
+        if agent_entry is None:
+            agent_entry = {'id': agent_id}
+            agents.append(agent_entry)
+
+        # Update fields
+        agent_entry['status'] = status
+        agent_entry['updated_at'] = datetime.utcnow().isoformat() + 'Z'
+
+        # Remove empty status
+        if not agent_entry.get('status'):
+            agent_entry.pop('status', None)
+
+        # Re-find and update in list
+        for i, a in enumerate(agents):
+            if a.get('id') == agent_id:
+                agents[i] = agent_entry
+                break
+
+        data['agents'] = agents
+
+        return self._write_yaml(path, data)
+
+    def set_agent_idle(self, agent_id: str) -> bool:
+        """
+        Clear an agent's status.
+
+        Args:
+            agent_id: Agent ID
+
+        Returns:
+            True on success
+        """
+        return self.update_presence(
+            agent_id=agent_id,
+            status='',
+        )
+
+    # =========================================================================
+    # IM Formatters (for IM commands like /task, /sketch, /presence)
+    # =========================================================================
+
+    def format_sketch_for_im(self) -> str:
+        """
+        Format sketch/vision for IM display.
+
+        Format:
+        ━━━ Vision ━━━
+        [vision statement]
+
+        ━━━ Sketch ━━━
+        [sketch markdown]
+        """
+        lines = []
+
+        vision = self.get_vision()
+        if vision:
+            lines.append("━━━ Vision ━━━")
+            lines.append(vision)
+            lines.append("")
+
+        sketch = self.get_sketch()
+        if sketch:
+            lines.append("━━━ Sketch ━━━")
+            lines.append(sketch)
+        else:
+            lines.append("━━━ Sketch ━━━")
+            lines.append("No sketch defined.")
+
+        return '\n'.join(lines)
+
+    def format_presence_for_im(self) -> str:
+        """
+        Format presence for IM display.
+
+        Format:
+        ━━━ Team Status ━━━
+        peer-a: Debugging JWT edge case, found timezone issue
+        peer-b: (no status)
+        """
+        presence = self.get_presence()
+
+        if not presence:
+            return "━━━ Team Status ━━━\nNo presence data."
+
+        lines = ["━━━ Team Status ━━━"]
+
+        for agent in presence:
+            agent_id = agent.get('id', 'unknown')
+            status = agent.get('status', '')
+
+            if status:
+                lines.append(f"{agent_id}: {status}")
+            else:
+                lines.append(f"{agent_id}: (no status)")
+
+        return '\n'.join(lines)
 
     # =========================================================================
     # Summary Generation

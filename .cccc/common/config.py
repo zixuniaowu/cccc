@@ -43,7 +43,7 @@ def _merge_role_and_actor(role: Dict[str, Any], actor_peer: Dict[str, Any]) -> D
 def _assert_no_role_io_keys(role: Dict[str, Any]):
     forbidden = {
         'input_mode', 'post_paste_keys', 'send_sequence', 'compose_newline_key',
-        'idle_quiet_seconds', 'prompt_regex', 'busy_regexes', 'command'
+        'idle_quiet_seconds', 'command'
     }
     bad = forbidden.intersection(set((role or {}).keys()))
     if bad:

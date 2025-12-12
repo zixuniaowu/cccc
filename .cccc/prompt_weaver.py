@@ -166,14 +166,6 @@ def _is_foreman_configured(home: Path) -> bool:
     agent = str(conf.get('agent', '') or '').strip().lower()
     return bool(agent) and agent != 'none'
 
-def _is_ccontext_mcp_enabled(home: Path, peer: str) -> bool:
-    """DEPRECATED: ccontext MCP detection removed.
-    
-    Kept for backward compatibility but always returns False.
-    Agents now use adaptive MCP/YAML approach automatically.
-    """
-    return False
-
 def _conversation_reset(home: Path) -> Tuple[str, Optional[int]]:
     profiles = home/"settings"/"cli_profiles.yaml"
     if not profiles.exists():
@@ -354,95 +346,77 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "  - Write an Ask(to=peerA, action=relay_to_user, ...) line under the relevant Item. Do not address USER directly.",
         ]
 
-    # Task Management Protocol - role-specific, streamlined
-    # Purpose: Shared work map for progress tracking (not approval workflow)
+    # Context System - unified collaboration state
+    # Design principle: Why → What → How (concept first, operation second)
     ch3_blueprint = [
-        "- Blueprint Task Protocol {#task-protocol}",
-        "  PURPOSE: Shared work map for progress tracking and TUI visualization (not approval workflow)",
-        "  THRESHOLD: Create task when >=3 files OR >50 lines OR multi-step work; skip for simple fixes",
+        "- Context System {#context}",
+        "  PURPOSE: Shared state enabling collaboration visibility, progress tracking, and coordination.",
+        "",
+        "  CONCEPT HIERARCHY (understand before operating):",
+        "    ┌─ Vision ────── What we're building (one-liner, stable)",
+        "    ├─ Sketch ────── Execution blueprint: current phase, priorities, risks (update on phase changes)",
+        "    ├─ Milestones ── Project phases with checkpoints (M1, M2...)",
+        "    ├─ Tasks ─────── Concrete work items with steps (T001, T002... in context/tasks/)",
+        "    ├─ Presence ──── Live agent status: who's doing what NOW (auto + manual updates)",
+        "    └─ Notes/Refs ── Accumulated knowledge and references",
+        "",
+        "  FILES:",
+        "    context/context.yaml  → vision, sketch, milestones, notes, references",
+        "    context/tasks/T###.yaml → individual task definitions with steps",
+        "    context/presence.yaml → agent status (gitignored, runtime state)",
         "",
     ]
-    
-    # Role-specific task instructions
+
+    # Role-specific task creation rules
     if single_peer_mode:
         ch3_blueprint += [
-            "  YOUR ROLE (single-peer): You create and manage tasks",
-            "    - Create T###.yaml BEFORE starting complex work",
-            "    - Update steps/status as you progress",
+            "  TASK CREATION: You create and manage all tasks",
+            "    • Create T###.yaml BEFORE complex work (>=3 files OR >50 lines OR multi-step)",
+            "    • Quick work: execute directly, create task mid-work if complexity grows",
             "",
         ]
     elif is_peera:
         ch3_blueprint += [
-            "  YOUR ROLE (PeerA): You are the task creator",
-            "    - You CREATE T###.yaml for complex work (PeerB cannot create tasks)",
-            "    - Create BEFORE coding; this prevents duplicate task conflicts",
-            "    - PeerB can update task content (steps/status) after you create it",
+            "  TASK CREATION [PeerA responsibility]:",
+            "    • You CREATE T###.yaml files (PeerB updates existing, cannot create new)",
+            "    • Threshold: >=3 files OR >50 lines OR multi-step work",
+            "    • Create BEFORE coding to prevent ID conflicts",
+            "    • Quick work: execute directly, create task mid-work if complexity grows",
             "",
         ]
     else:
         ch3_blueprint += [
-            "  YOUR ROLE (PeerB): You update tasks, PeerA creates them",
-            "    - Do NOT create new T###.yaml files (PeerA handles creation to avoid ID conflicts)",
-            "    - You CAN and SHOULD update existing tasks: modify steps, change status, add sub-steps",
-            "    - If complex work needs a task but none exists, ask PeerA to create one",
+            "  TASK CREATION [PeerB role]:",
+            "    • Do NOT create T###.yaml (PeerA creates to avoid ID conflicts)",
+            "    • You CAN update existing tasks: steps, status, sub-steps",
+            "    • If complex work needs task but none exists, ask PeerA to create",
             "",
         ]
-    
-    # Unified Execution Status section - adaptive MCP/YAML approach
+
+    # Operation methods - simplified, no verbose schemas
     ch3_blueprint += [
-        "  EXECUTION STATUS (context/ directory) {#execution}",
-        "    Anchor: context/ for all execution state tracking.",
-        "    Two methods available - use what works for your environment:",
+        "  HOW TO OPERATE:",
         "",
-        "    METHOD 1 (Preferred): ccontext MCP tools",
-        "      If your CLI supports MCP and has ccontext server installed:",
-        "      • Query: get_context, list_tasks, get_task",
-        "      • Update: add_milestone, update_milestone, create_task, update_task",
-        "      • Enrich: add_note, add_reference",
-        "      • Consult MCP tool descriptions for exact parameters",
-        "      • Benefit: Type-safe, auto-validated, atomic operations",
+        "    MCP Tools (preferred when available):",
+        "      Query:     get_context, get_presence, list_tasks, get_task",
+        "      Blueprint: update_vision, update_sketch",
+        "      Progress:  create_task, update_task, add_milestone, update_milestone",
+        "      Status:    update_my_status (call when starting/finishing task work)",
+        "      Knowledge: add_note, add_reference",
         "",
-        "    METHOD 2 (Universal): Direct YAML editing",
-        "      Always works - use when MCP unavailable or as fallback:",
+        "    Direct YAML (fallback or when MCP unavailable):",
+        "      Edit context/context.yaml for vision, sketch, milestones, notes, refs",
+        "      Edit context/tasks/T###.yaml for task details and step status",
+        "      Edit context/presence.yaml to update your status manually",
+        "      (Refer to existing files for schema - they are self-documenting)",
         "",
-        "      context/context.yaml:",
-        "        milestones:",
-        "          - id: M1                    # M1, M2...",
-        "            name: \"Phase name\"",
-        "            description: \"Details, checkpoints\"",
-        "            status: active            # pending|active|done",
-        "            started: \"2025-01-15\"     # ISO date (active/done)",
-        "            completed: \"2025-01-20\"   # ISO date (done only)",
-        "            outcomes: \"Results\"       # done only",
-        "        notes:",
-        "          - id: N001                  # N001, N002...",
-        "            content: \"Lesson learned\"",
-        "            score: 15                 # -100~100, default 15, decays",
-        "        references:",
-        "          - id: R001                  # R001, R002...",
-        "            url: \"path/or/url\"",
-        "            note: \"Why useful\"",
-        "            score: 15",
+        "  PRESENCE PROTOCOL:",
+        f"    • Your agent_id: {'peer-a' if is_peera else 'peer-b'} (use this exact value in update_my_status)",
+        "    • Presence = natural language description of what you're doing/thinking (1-2 sentences)",
+        "    • Example: 'Debugging JWT edge case, found timezone issue' or 'Waiting for PeerA to confirm schema'",
+        "    • Update when: starting work, making progress, hitting blockers, completing work",
+        "    • Your peer and user see this in TUI header - keep it meaningful and current",
         "",
-        "      context/tasks/T###.yaml:",
-        "        id: T001                      # T001, T002...",
-        "        name: \"Task name\"",
-        "        goal: \"Completion criteria\"",
-        "        status: active                # planned|active|done",
-        "        assignee: peerA               # optional",
-        "        steps:",
-        "          - id: S1                    # S1, S2...",
-        "            name: \"Step description\"",
-        "            acceptance: \"How to verify done\"",
-        "            status: in_progress       # pending|in_progress|done",
-        "",
-        "    USAGE STRATEGY:",
-        "      • Try MCP first if available (cleaner, safer)",
-        "      • Fallback to YAML when MCP unavailable or fails",
-        "      • Mix both as needed (read via MCP, emergency fix via YAML)",
-        "      • All methods maintain same context/ structure",
-        "",
-        "  QUICK PATH: Below threshold? Execute directly. If complexity grows, create task mid-work.",
     ]
     ch3 += ch3_blueprint
 
@@ -796,6 +770,15 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
                 txt = txt.rstrip() + "\n\n" + _runtime_bindings_one_liner(home) + "\n"
             except Exception:
                 pass
+
+            # Append presence/sketch section for real-time awareness
+            try:
+                presence_sketch = _presence_sketch_section(home)
+                if presence_sketch:
+                    txt = txt.rstrip() + "\n\n" + presence_sketch
+            except Exception:
+                pass
+
             return txt
     except Exception:
         pass
@@ -814,7 +797,95 @@ def weave_system_prompt(home: Path, peer: str, por: Optional[Dict[str, Any]] = N
         lines.append("")
     except Exception:
         pass
+    # Add presence/sketch section in fallback as well
+    try:
+        presence_sketch = _presence_sketch_section(home)
+        if presence_sketch:
+            lines.append(presence_sketch)
+            lines.append("")
+    except Exception:
+        pass
     return "\n".join(lines)
+
+
+def _presence_sketch_section(home: Path) -> str:
+    """
+    Generate presence and sketch section for system prompts.
+
+    This provides agents with real-time awareness of:
+    - Other agents' current status and tasks (Presence)
+    - The high-level execution blueprint (Sketch)
+
+    Args:
+        home: Path to .cccc directory
+
+    Returns:
+        Formatted string with presence and sketch data
+    """
+    lines: list[str] = []
+
+    # Derive project root from home (.cccc directory)
+    project_root = home.parent if home.name == '.cccc' else home
+
+    # Read context.yaml for vision and sketch
+    context_path = project_root / "context" / "context.yaml"
+    context: Dict[str, Any] = {}
+    if context_path.exists():
+        try:
+            context = _read_yaml_or_json(context_path)
+        except Exception:
+            pass
+
+    # Vision (brief)
+    vision = context.get('vision')
+    if vision:
+        vision_str = str(vision).strip()
+        if vision_str:
+            lines.append("--- Vision ---")
+            lines.append(vision_str)
+            lines.append("")
+
+    # Sketch (execution blueprint)
+    sketch = context.get('sketch')
+    if sketch:
+        sketch_str = str(sketch).strip()
+        if sketch_str:
+            lines.append("--- Execution Blueprint (Sketch) ---")
+            lines.append(sketch_str)
+            lines.append("")
+
+    # Presence (agent status)
+    presence_path = project_root / "context" / "presence.yaml"
+    if presence_path.exists():
+        try:
+            presence_data = _read_yaml_or_json(presence_path)
+            agents = presence_data.get('agents', [])
+            if agents:
+                lines.append("--- Agent Presence (Live Status) ---")
+                for agent in agents:
+                    agent_id = agent.get('id', 'unknown')
+                    status = agent.get('status', '')
+                    updated_at = agent.get('updated_at', '')
+
+                    # Status display
+                    if status:
+                        icon = '●'
+                        status_display = status
+                    else:
+                        icon = '○'
+                        status_display = '(idle)'
+
+                    parts = [f"{icon} {agent_id}: {status_display}"]
+                    if updated_at:
+                        parts.append(f"@{updated_at[:19]}")
+
+                    lines.append("  " + " | ".join(parts))
+                lines.append("")
+        except Exception:
+            pass
+
+    return "\n".join(lines)
+
 
 def _runtime_bindings_snippet(home: Path) -> str:
     def _read_yaml(p: Path) -> Dict[str, Any]:

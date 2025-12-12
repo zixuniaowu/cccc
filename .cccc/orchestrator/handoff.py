@@ -255,6 +255,25 @@ def make(ctx: Dict[str, Any]):
         except Exception:
             pass
 
+        # Update presence: mark receiver as having received message
+        # Note: We do NOT automatically set sender to idle - the sender may
+        # still be working after handoff (e.g., waiting for response, parallel tasks).
+        # Sender should update their own presence status via MCP tools.
+        # Note: We set a simple "receiving" message. Agents should update their
+        # presence with meaningful status descriptions as they work.
+        try:
+            if status == "nudged" and receiver_label in ("PeerA", "PeerB"):
+                tm = _get_task_manager(home)
+                if tm:
+                    # Map PeerA/PeerB to presence agent IDs
+                    agent_id = "peer-a" if receiver_label == "PeerA" else "peer-b"
+                    tm.update_presence(
+                        agent_id=agent_id,
+                        status=f"Receiving handoff from {sender_label}",
+                    )
+        except Exception:
+            pass
+
         # Self-check cadence + optional full system injection via shared helper
         try:
             meaningful = sender_label in ("User", "System", "PeerA", "PeerB")

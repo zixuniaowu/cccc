@@ -88,8 +88,8 @@ def _maybe_send_nudge(home: Path, receiver_label: str, pane: str,
     if inflight and not force:
         if (now - last_prog) >= max(1.0, float(NUDGE_PROGRESS_TIMEOUT_S)):
             interval = min(float(NUDGE_BACKOFF_MAX_MS), float(NUDGE_BACKOFF_BASE_MS) * (2 ** max(0, retries))) / 1000.0
-            min_legacy = max(1.0, float(NUDGE_RESEND_SECONDS))
-            interval = max(interval, min_legacy)
+            min_resend = max(1.0, float(NUDGE_RESEND_SECONDS))
+            interval = max(interval, min_resend)
             try:
                 jpct = float(NUDGE_JITTER_PCT)
                 if jpct and jpct > 0.0:

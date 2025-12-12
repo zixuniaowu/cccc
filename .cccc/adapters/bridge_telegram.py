@@ -325,13 +325,6 @@ def load_runtime() -> Dict[str, Any]:
             return json.loads(p.read_text(encoding='utf-8'))
     except Exception:
         pass
-    # Back-compat: fall back to legacy telegram-runtime.json
-    try:
-        legacy = HOME/"state"/"telegram-runtime.json"
-        if legacy.exists():
-            return json.loads(legacy.read_text(encoding='utf-8'))
-    except Exception:
-        pass
     return {}
 
 def save_runtime(obj: Dict[str, Any]):
@@ -1299,6 +1292,36 @@ def main():
                 _append_log(outlog, f"[cmd] task chat={chat_id}")
                 continue
 
+            # Sketch command
+            if is_cmd(text, 'sketch'):
+                try:
+                    from orchestrator.task_manager import TaskManager
+                    root = HOME.parent if HOME.name == '.cccc' else HOME
+                    manager = TaskManager(root)
+                    sketch_text = manager.format_sketch_for_im()
+                except ImportError:
+                    sketch_text = "Task module not available"
+                except Exception as e:
+                    sketch_text = f"Error: {str(e)[:100]}"
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': sketch_text}, timeout=15)
+                _append_log(outlog, f"[cmd] sketch chat={chat_id}")
+                continue
+
+            # Presence command
+            if is_cmd(text, 'presence'):
+                try:
+                    from orchestrator.task_manager import TaskManager
+                    root = HOME.parent if HOME.name == '.cccc' else HOME
+                    manager = TaskManager(root)
+                    presence_text = manager.format_presence_for_im()
+                except ImportError:
+                    presence_text = "Task module not available"
+                except Exception as e:
+                    presence_text = f"Error: {str(e)[:100]}"
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': presence_text}, timeout=15)
+                _append_log(outlog, f"[cmd] presence chat={chat_id}")
+                continue
+
             # Enforce mention in group if configured
             if (not is_dm) and require_mention:
                 ents = msg.get('entities') or []
@@ -1477,7 +1500,7 @@ def main():
                 else:
                     tg_api('sendMessage', {'chat_id': chat_id, 'text': 'Self-subscribe disabled; contact admin.'}, timeout=15)
                 continue
-            # Verbose toggle (alias for legacy showpeers): /verbose on|off
+            # Verbose toggle: /verbose on|off
             if re.match(r"^\s*/?verbose\s+(on|off)\b", text.strip().lower()):
                 val = text.strip().lower().endswith('on')
                 # Update runtime show_peer_messages

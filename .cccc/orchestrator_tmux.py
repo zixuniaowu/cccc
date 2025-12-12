@@ -15,7 +15,7 @@ except Exception:  # pragma: no cover
 from glob import glob
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, List
-from delivery import deliver_or_queue, flush_outbox_if_idle, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
+from delivery import deliver_or_queue, PaneIdleJudge, new_mid, wrap_with_mid, send_text, find_acks_from_output
 try:  # package import (python -m .cccc.orchestrator_tmux)
     from .orchestrator.tmux_layout import (
         tmux, tmux_session_exists, tmux_new_session, tmux_respawn_pane,
@@ -107,7 +107,7 @@ def _dbg(msg: str) -> None:
             print(msg)
         except Exception:
             pass
-# legacy patch/diff handling removed
+
 SECTION_RE_TPL = r"<\s*{tag}\s*>([\s\S]*?)</\s*{tag}\s*>"
 INPUT_END_MARK = "[CCCC_INPUT_END]"
 
@@ -358,18 +358,13 @@ def parse_section(text: str, tag: str) -> str:
     m = re.search(SECTION_RE_TPL.format(tag=tag), text, re.I)
     return (m.group(1).strip() if m else "")
 
-## Legacy diff/patch helpers removed (extract_patches/normalize/inline detection)
-
 # ---------- handoff anti-loop ----------
 is_high_signal = _pf_is_high_signal
 is_low_signal = _pf_is_low_signal
 should_forward = _pf_should_forward
 
-## Legacy diff helpers removed (count_changed_lines/extract_paths_from_patch)
-
 # ---------- tmux ----------
 def paste_when_ready(pane: str, profile: Dict[str,Any], text: str, *, timeout: float = 10.0, poke: bool = True):
-    # Removed obsolete wait_for_ready check (legacy heuristic that almost always timed out)
     # send_text handles delivery reliably using bracketed paste or char-by-char typing
     # timeout and poke parameters kept for compatibility but unused
     send_text(pane, text, profile)
@@ -395,14 +390,7 @@ def read_yaml(p: Path) -> Dict[str,Any]:
             d[k.strip()] = v.strip().strip('"\'')
         return d
 
-# Removed legacy file reader helper; config is loaded via read_yaml at startup.
-
 # ---------- ledger & policies ----------
-## moved to .orchestrator.logging_util
-
-## Legacy policy helper removed (allowed_by_policies)
-
-
 
 def try_lint():
     LINT_CMD=os.environ.get("LINT_CMD","").strip()
@@ -471,8 +459,6 @@ def try_tests() -> bool:
     if err.strip(): print(err.strip())
     return ok
 
-## Legacy apply helpers removed (git apply precheck/apply)
-
 def git_commit(msg: str):
     run("git add -A"); run(f"git commit -m {shlex.quote(msg)}")
 
@@ -526,128 +512,6 @@ def context_blob(policies: Dict[str,Any], phase: str) -> str:
 def print_block(title: str, body: str):
     """Console-less mode: do not echo blocks to stdout."""
     return
-
-def exchange_once(home: Path, sender_pane: str, receiver_pane: str, payload: str,
-                  context: str, who: str, policies: Dict[str,Any], phase: str,
-                  profileA: Dict[str,Any], profileB: Dict[str,Any], delivery_conf: Dict[str,Any],
-                  deliver_enabled: bool=True,
-                  dedup_peer: Optional[Dict[str,str]] = None):
-    sender_profile = profileA if who=="PeerA" else profileB
-    # Paste minimal message; no extra context/wrappers (caller supplies FROM_* tags)
-    before_len = len(tmux_capture(sender_pane, lines=800))
-    paste_when_ready(sender_pane, sender_profile, payload)
-    # Wait for response: prefer <TO_USER>/<TO_PEER>, or idle prompt
-    judge = PaneIdleJudge(sender_profile)
-    start = time.time()
-    timeout = float(delivery_conf.get("read_timeout_seconds", 8))
-    window = ""
-    while time.time() - start < timeout:
-        content = tmux_capture(sender_pane, lines=800)
-        window = content[before_len:]
-        # Do not strip wrappers here; keep window for diagnostics (mailbox path does not rely on this)
-        if ("<TO_USER>" in window) or ("<TO_PEER>" in window):
-            break
-        idle, _ = judge.refresh(sender_pane)
-        if idle and time.time() - start > 1.2:
-            break
-        time.sleep(0.25)
-    # Parse only output after the last INPUT to avoid picking up SYSTEM or our injected <TO_*>.
-    # The 'window' slice is computed in the wait loop; parse the latest sections (window-only).
-    def last(tag):
-        items=re.findall(SECTION_RE_TPL.format(tag=tag), window, re.I)
-        return (items[-1].strip() if items else "")
-    to_user = last("TO_USER"); to_peer = last("TO_PEER");
-    # Extract the last ```insight fenced block (no backward-compat for tags)
-    def _last_insight(text: str) -> str:
-        try:
-            m = re.findall(r"```insight\s*([\s\S]*?)```", text, re.I)
-            return (m[-1].strip() if m else "")
-        except Exception:
-            return ""
-    # Note: insight is present in window for diagnostics only; forwarding uses mailbox path
-    _insight_diag = _last_insight(window)
-    # Do not print <TO_USER> here (the background poller will report it); focus on handoffs only
-
-    # patch/diff scanning removed
-
-    if to_peer.strip():
-        # De-duplicate: avoid handing off the same content repeatedly
-        if dedup_peer is not None:
-            h = hashlib.sha1(to_peer.encode("utf-8", errors="replace")).hexdigest()
-            key = f"{who}:to_peer"
-            if dedup_peer.get(key) == h:
-                pass
-            else:
-                dedup_peer[key] = h
-        
-        if not deliver_enabled:
-            log_ledger(home, {"from": who, "kind": "handoff-skipped", "reason": "paused", "chars": len(to_peer)})
-        else:
-            # use inbox + nudge; wrap with outer source marker and append META as sibling block
-            recv = "PeerB" if who == "PeerA" else "PeerA"
-            outer = f"FROM_{who}"
-            body = f"<{outer}>\n{to_peer}\n</{outer}>\n\n"
-            if meta_tag and meta_text.strip():
-                body += f"<{meta_tag}>\n{meta_text}\n</{meta_tag}>\n"
-            mid = new_mid()
-            text_with_mid = wrap_with_mid(body, mid)
-            try:
-                seq, _ = _write_inbox_message(home, recv, text_with_mid, mid)
-                nudge_api.send_nudge(home, recv, seq, mid, paneA, paneB, profileA, profileB,
-                            aux_mode)
-                try:
-                    last_nudge_ts[recv] = time.time()
-                except Exception:
-                    pass
-                status = "nudged"
-            except Exception as e:
-                status = f"failed:{e}"
-                seq = "000000"
-            log_ledger(home, {"from": who, "kind": "handoff", "status": status, "mid": mid, "seq": seq, "chars": len(to_peer)})
-            _dbg(f"[HANDOFF] {who} → {recv} ({len(to_peer)} chars, status={status}, seq={seq})")
-
-def scan_and_process_after_input(home: Path, pane: str, other_pane: str, who: str,
-                                 policies: Dict[str,Any], phase: str,
-                                 profileA: Dict[str,Any], profileB: Dict[str,Any], delivery_conf: Dict[str,Any],
-                                 deliver_enabled: bool, last_windows: Dict[str,int],
-                                 dedup_user: Dict[str,str], dedup_peer: Dict[str,str]):
-    # Capture the whole window and parse it to avoid TUI clear/echo policies causing length regressions/no growth
-    content = tmux_capture(pane, lines=1000)
-    # Record total length (diagnostic only), not a gating condition
-    last_windows[who] = len(content)
-    # Remove echoed [INPUT]...END sections we injected to avoid mis-parsing
-    sanitized = re.sub(r"\[INPUT\][\s\S]*?"+re.escape(INPUT_END_MARK), "", content, flags=re.I)
-
-    def last(tag):
-        items=re.findall(SECTION_RE_TPL.format(tag=tag), sanitized, re.I)
-        return (items[-1].strip() if items else "")
-    to_user = last("TO_USER"); to_peer = last("TO_PEER")
-    if to_user:
-        h = hashlib.sha1(to_user.encode("utf-8", errors="replace")).hexdigest()
-        key = f"{who}:to_user"
-        if dedup_user.get(key) != h:
-            dedup_user[key] = h
-            to_user_print = (to_user[:2000] + ("\n…[truncated]" if len(to_user) > 2000 else ""))
-            print_block(f"{who} → USER", to_user_print)
-            log_ledger(home, {"from":who,"kind":"to_user","chars":len(to_user)})
-
-    # patch/diff scanning removed
-
-    if to_peer and to_peer.strip():
-        h2 = hashlib.sha1(to_peer.encode("utf-8", errors="replace")).hexdigest()
-        key2 = f"{who}:to_peer"
-        if dedup_peer.get(key2) == h2:
-            return
-        dedup_peer[key2] = h2
-        if not deliver_enabled:
-            log_ledger(home, {"from": who, "kind": "handoff-skipped", "reason": "paused", "chars": len(to_peer)})
-        else:
-            if who == "PeerA":
-                status, mid = deliver_or_queue(home, other_pane, "peerB", to_peer, profileB, delivery_conf)
-            else:
-                status, mid = deliver_or_queue(home, other_pane, "peerA", to_peer, profileA, delivery_conf)
-            log_ledger(home, {"from": who, "kind": "handoff", "status": status, "mid": mid, "chars": len(to_peer)})
-            _dbg(f"[HANDOFF] {who} → {'PeerB' if who=='PeerA' else 'PeerA'} ({len(to_peer)} chars, status={status})")
 
 
 # ---------- MAIN ----------
@@ -989,9 +853,6 @@ def main(home: Path, session_name: Optional[str] = None):
         print(f"[WARN] config load failed; waiting for roles via TUI: {exc}")
         resolved = { 'peerA': {}, 'peerB': {}, 'aux': {}, 'bindings': {}, 'actors': {}, 'env_require': [] }
         config_deferred = True
-    # NOTE: ensure_rules_docs removed here - rules are generated on-demand at launch time
-
-    # legacy _rewrite_aux_mode_block removed; aux on/off is derived from roles.aux.actor
 
     # Always start with dual-peer mode (4-pane layout)
     # Single-peer mode detection and layout adjustment happens in launch command handler
@@ -1020,8 +881,6 @@ def main(home: Path, session_name: Optional[str] = None):
         conversation_reset_interval = 0
     default_reset_mode = conversation_reset_policy if conversation_reset_policy in ("compact", "clear") else "compact"
 
-    # Delivery mode (tmux only). Legacy 'bridge' mode removed.
-    # Delivery mode fixed to tmux (legacy bridge removed)
     # Source AUX template from bound actor (agents.yaml); role may override rate
     aux_resolved = resolved.get('aux') or {}
     aux_command_template = str(aux_resolved.get('invoke_command') or '').strip()
@@ -2254,7 +2113,6 @@ def main(home: Path, session_name: Optional[str] = None):
     handoff_api = make_handoff(handoff_ctx)
     handoff_ctx['send_handoff'] = handoff_api.send_handoff
     _send_handoff = handoff_api.send_handoff
-    keepalive_api.bind_send(_send_handoff)
     events_api = make_events({'home': home, 'send_handoff': _send_handoff})
     bridge_rt = make_bridge_runtime({'home': home, 'log_ledger': log_ledger, 'read_yaml': read_yaml})
 

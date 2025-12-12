@@ -6,10 +6,6 @@ actors:
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
-      # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
-      prompt_regex: '(?mi)^\s*(?:claude|assistant|a:|>)\s*$'
-      # DEPRECATED: busy_regexes will be removed in a future release.
-      busy_regexes: []
     aux:
       invoke_command: 'claude --dangerously-skip-permissions -p "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
@@ -29,9 +25,6 @@ actors:
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
       compose_newline_key: "C-j"
-      prompt_regex: '(?mi)^\s*(?:codex(?:\s*chat)?|>>>|>)\s*$'
-      # DEPRECATED: busy_regexes will be removed in a future release.
-      busy_regexes: []
     aux:
       invoke_command: 'codex exec --sandbox danger-full-access "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
@@ -44,17 +37,12 @@ actors:
     env_require: []
 
   gemini:
-    # Can be bound to Peer and Aux roles
     peer:
       command: "gemini --yolo"
       input_mode: "paste"
       post_paste_keys: ["Enter", "Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
-      # DEPRECATED: prompt_regex will be removed in a future release; rely on smarter readiness heuristics instead.
-      prompt_regex: ''
-      # DEPRECATED: busy_regexes will be removed in a future release.
-      busy_regexes: []
     aux:
       invoke_command: 'gemini -p "Read .cccc/rules/AUX.md first. {prompt}" --yolo'
       rate_limit_per_minute: 2
@@ -67,17 +55,12 @@ actors:
     env_require: []
 
   droid:
-    # Can be bound to Peer and Aux roles
     peer:
       command: "droid --auto high"
       input_mode: "paste"
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
-      # DEPRECATED: prompt_regex will be removed in a future release; leave empty.
-      prompt_regex: ''
-      # DEPRECATED: busy_regexes will be removed in a future release.
-      busy_regexes: []
     aux:
       invoke_command: 'droid exec --auto high "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
@@ -90,17 +73,12 @@ actors:
     env_require: []
 
   opencode:
-    # Can be bound to Peer and Aux roles
     peer:
       command: "opencode"
       input_mode: "paste"
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
-      # DEPRECATED: prompt_regex will be removed in a future release; leave empty.
-      prompt_regex: ''
-      # DEPRECATED: busy_regexes will be removed in a future release.
-      busy_regexes: []
     aux:
       invoke_command: 'opencode run "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
@@ -113,15 +91,12 @@ actors:
     env_require: []
 
   kilocode:
-    # Can be bound to Peer and Aux roles
     peer:
       command: "kilocode"
       input_mode: "paste"
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
-      prompt_regex: ''
-      busy_regexes: []
     aux:
       invoke_command: 'kilocode --auto "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
@@ -134,15 +109,12 @@ actors:
     env_require: []
 
   copilot:
-    # Can be bound to Peer and Aux roles (GitHub Copilot CLI)
     peer:
       command: "copilot"
       input_mode: "paste"
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
-      prompt_regex: ''
-      busy_regexes: []
     aux:
       invoke_command: 'copilot -p "Read .cccc/rules/AUX.md first. {prompt}" --allow-all-tools'
       rate_limit_per_minute: 2
@@ -155,15 +127,12 @@ actors:
     env_require: []
 
   auggie:
-    # Can be bound to Peer and Aux roles (Auggie CLI)
     peer:
       command: "auggie"
       input_mode: "paste"
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
-      prompt_regex: ''
-      busy_regexes: []
     aux:
       invoke_command: 'auggie --print "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2
@@ -176,15 +145,12 @@ actors:
     env_require: []
 
   cursor:
-    # Can be bound to Peer and Aux roles (Cursor CLI)
     peer:
       command: "cursor-agent"
       input_mode: "paste"
       post_paste_keys: ["Enter"]
       send_sequence: "Enter"
       idle_quiet_seconds: 1.0
-      prompt_regex: ''
-      busy_regexes: []
     aux:
       invoke_command: 'cursor-agent -p "Read .cccc/rules/AUX.md first. {prompt}"'
       rate_limit_per_minute: 2

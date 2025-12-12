@@ -537,8 +537,10 @@ class CommandCompleter(Completer):
             ('/foreman', 'Foreman control (on|off|status|now)'),
             ('/aux', 'Run Aux helper'),
             ('/verbose', 'Verbose on|off'),
-            # Tasks
+            # Tasks/Context
             ('/task', 'Show task status'),
+            ('/sketch', 'Show project sketch'),
+            ('/presence', 'Show team presence'),
         ]
 
     def get_completions(self, document: Document, complete_event):
@@ -613,17 +615,6 @@ class SetupConfig:
     dc_chan: str = ''
     # WeCom: outbound-only via webhook
     wc_webhook: str = ''  # Webhook URL for WeCom robot
-
-    # Backward compatibility property
-    @property
-    def sl_token(self) -> str:
-        """Backward compatibility - return bot token"""
-        return self.sl_bot_token
-
-    @sl_token.setter
-    def sl_token(self, value: str):
-        """Backward compatibility - set bot token"""
-        self.sl_bot_token = value
 
     def is_valid(self, actors: List[str], home: Path) -> tuple[bool, str]:
         """Validate configuration"""
@@ -1243,76 +1234,16 @@ class CCCCSetupApp:
         self._create_dialogs()
 
     def _build_task_panel_container(self):
-        """Build the conditional task panel container with mouse support and adaptive height."""
-        
-        def get_task_panel_content():
-            """Get task panel content with dynamic width."""
-            if not self.task_panel:
-                return ""
-            # Get terminal width (default to 80 if unavailable)
-            try:
-                width = self.app.output.get_size().columns if self.app else 80
-            except Exception:
-                width = 80
-            # Use 90% of terminal width, min 60, max 120
-            panel_width = max(60, min(120, int(width * 0.9)))
-            return self.task_panel.get_expanded_text(width=panel_width)
-        
-        def get_panel_height():
-            """Get panel height from actual rendered line count."""
-            if not self.task_panel:
-                return 10
-            
-            # Use actual line count from last render, with reasonable bounds
-            line_count = self.task_panel.get_line_count()
-            return min(max(line_count, 8), 25)  # Min 8, max 25 lines
-        
-        # Create FormattedTextControl with mouse handler
-        ctrl = FormattedTextControl(
-            get_task_panel_content,
-            focusable=False,
-            show_cursor=False,
-        )
-        
-        # Add mouse handler for task row clicks
-        def handle_mouse(mouse_event):
-            from prompt_toolkit.mouse_events import MouseEventType
-            if mouse_event.event_type == MouseEventType.MOUSE_UP:
-                if self.task_panel:
-                    # Calculate which row was clicked
-                    # Header rows: line 0 (top border), 1 (empty), 2 (column headers), 3 (separator)
-                    # Task rows start at line 4
-                    row = mouse_event.position.y - 4
-                    display_count, _ = self.task_panel.get_display_item_count()
-                    
-                    if 0 <= row < display_count:
-                        # Select the clicked task
-                        self.task_panel.selected_index = row
-                        self.task_panel.selected_area = 'tasks'
-                        # Open unified detail dialog on tasks tab
-                        task_id = self.task_panel.get_selected_task_id()
-                        if task_id:
-                            self.task_panel.set_detail_task_by_id(task_id)
-                            self._show_unified_detail_dialog(initial_tab='tasks')
-                        try:
-                            self.app.invalidate()
-                        except Exception:
-                            pass
-                        return None  # Consume event
-            return NotImplemented
-        
-        # Attach mouse handler
-        ctrl.mouse_handler = handle_mouse
-        
-        # Window with dynamic height - use Dimension for proper sizing
+        """Build task panel container placeholder.
+
+        Level 1 (expanded WBS list) has been removed per design decision.
+        This method returns an always-hidden container for layout compatibility.
+        Use [T] key or header button to open Level 2 tabbed dialog directly.
+        """
+        # Return empty hidden container - Level 1 removed
         return ConditionalContainer(
-            content=Window(
-                content=ctrl,
-                height=lambda: get_panel_height(),
-                dont_extend_height=True,
-                style='class:task-panel',
-            ),
-            filter=Condition(lambda: self.task_panel is not None and self.task_panel.expanded)
+            content=Window(height=0),
+            filter=Condition(lambda: False)
         )
 
     def _build_root_content(self):
@@ -1484,7 +1415,6 @@ class CCCCSetupApp:
         cli_profiles = _load_yaml(self.home, 'settings/cli_profiles.yaml')
         roles = cli_profiles.get('roles') or {}
         self.config.peerA = str((roles.get('peerA') or {}).get('actor') or '')
-        # Note: ccontext_mcp settings ignored for backward compatibility
         # PeerB: handle 'none' explicitly for single-peer mode
         peerB_actor = str((roles.get('peerB') or {}).get('actor') or '')
         # Normalize: empty string from missing section means check if section existed
@@ -1492,7 +1422,6 @@ class CCCCSetupApp:
             self.config.peerB = 'none'  # Explicit single-peer mode
         else:
             self.config.peerB = peerB_actor
-        # Note: ccontext_mcp settings ignored for backward compatibility
         self.config.aux = str((roles.get('aux') or {}).get('actor') or 'none')
 
         # Load mode selection (im_mode field)
@@ -2734,7 +2663,6 @@ class CCCCSetupApp:
                 roles['peerA'] = {}
             roles['peerA']['actor'] = self.config.peerA
             roles['peerA']['cwd'] = '.'
-            # Note: ccontext_mcp removed - agents use adaptive MCP/YAML
 
         # Handle PeerB - 'none' means single-peer mode
         # IMPORTANT: Always write peerB section explicitly to preserve user's choice
@@ -2747,7 +2675,6 @@ class CCCCSetupApp:
             # Single-peer mode: write explicit 'none' instead of deleting section
             roles['peerB']['actor'] = 'none'
         roles['peerB']['cwd'] = '.'
-        # Note: ccontext_mcp removed - agents use adaptive MCP/YAML
 
         # Handle aux separately - always write or clear to ensure changes take effect
         if self.config.aux and self.config.aux != 'none':
@@ -3317,6 +3244,8 @@ class CCCCSetupApp:
             self._write_timeline("  /aux <prompt>       Run Aux helper", 'info')
             self._write_timeline("  /verbose on|off     Toggle peer summaries", 'info')
             self._write_timeline("  /task               Show task status", 'info')
+            self._write_timeline("  /sketch             Show project sketch", 'info')
+            self._write_timeline("  /presence           Show team presence", 'info')
             self._write_timeline("  /paste              Paste image from clipboard", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Keyboard:", 'info')
@@ -3380,6 +3309,14 @@ class CCCCSetupApp:
         # Blueprint task status
         elif text == '/task' or text.startswith('/task '):
             self._show_task_status(text)
+
+        # Sketch/vision display
+        elif text == '/sketch':
+            self._show_sketch()
+
+        # Presence display
+        elif text == '/presence':
+            self._show_presence()
 
         # Aux command with prompt
         elif text.startswith('/aux '):
@@ -3586,10 +3523,43 @@ class CCCCSetupApp:
         except Exception as e:
             self._write_timeline(f"Failed to load tasks: {str(e)[:50]}", 'error')
 
+    def _show_sketch(self) -> None:
+        """Show sketch/vision via /sketch command."""
+        try:
+            from orchestrator.task_manager import TaskManager
+            root = self.home.parent if self.home.name == '.cccc' else self.home
+            manager = TaskManager(root)
+            output = manager.format_sketch_for_im()
+            self._write_timeline("", 'info')
+            for line in output.split('\n'):
+                self._write_timeline(line, 'info')
+            self._write_timeline("", 'info')
+        except ImportError:
+            self._write_timeline("Task module not available", 'error')
+        except Exception as e:
+            self._write_timeline(f"Failed to load sketch: {str(e)[:50]}", 'error')
+
+    def _show_presence(self) -> None:
+        """Show team presence via /presence command."""
+        try:
+            from orchestrator.task_manager import TaskManager
+            root = self.home.parent if self.home.name == '.cccc' else self.home
+            manager = TaskManager(root)
+            output = manager.format_presence_for_im()
+            self._write_timeline("", 'info')
+            for line in output.split('\n'):
+                self._write_timeline(line, 'info')
+            self._write_timeline("", 'info')
+        except ImportError:
+            self._write_timeline("Task module not available", 'error')
+        except Exception as e:
+            self._write_timeline(f"Failed to load presence: {str(e)[:50]}", 'error')
+
     def _toggle_task_panel(self) -> None:
-        """Toggle task panel expanded/collapsed state"""
+        """Open Level 2 task detail dialog directly (no Level 1 expansion)."""
         if hasattr(self, 'task_panel') and self.task_panel:
-            self.task_panel.toggle()
+            # Go directly to Level 2 tabbed dialog
+            self._show_unified_detail_dialog(initial_tab='tasks')
             try:
                 self.app.invalidate()
             except Exception:
@@ -3610,28 +3580,19 @@ class CCCCSetupApp:
             
             task_id = tasks[index - 1].get('id')
             if task_id:
-                # Show detail and collapse panel
+                # Show detail output in timeline (for numeric shortcuts)
                 detail = self.task_panel.get_task_detail(task_id)
                 self._write_timeline("", 'info')
                 for line in detail.split('\n'):
                     self._write_timeline(line, 'info')
                 self._write_timeline("", 'info')
-                
-                # Collapse panel after showing detail
-                if self.task_panel.expanded:
-                    self.task_panel.toggle()
-                    try:
-                        self.app.invalidate()
-                    except Exception:
-                        pass
         except Exception as e:
             self._write_timeline(f"Failed to show task: {str(e)[:50]}", 'error')
 
     def _close_task_detail_dialog(self) -> None:
-        """Close task detail dialog (Level 2) and return to task list (Level 1)."""
+        """Close task detail dialog (Level 2) and return to normal view."""
         self.task_detail_open = False
         self._close_dialog()
-        # Focus stays on input, task panel (Level 1) remains visible
         try:
             self.app.invalidate()
         except Exception:
@@ -3649,13 +3610,7 @@ class CCCCSetupApp:
         
         # Set initial tab
         self.task_panel.set_tab(initial_tab)
-        
-        # If entering tasks tab from Level 1 task selection, sync the index
-        if initial_tab == 'tasks':
-            task_id = self.task_panel.get_selected_task_id()
-            if task_id:
-                self.task_panel.set_detail_task_by_id(task_id)
-        
+
         # Get terminal size for adaptive sizing
         try:
             term_width = self.app.output.get_size().columns if self.app else 100
@@ -3702,28 +3657,37 @@ class CCCCSetupApp:
         
         # Track buttons for dynamic updates
         tab_buttons_info = []
-        
-        # Create tab buttons
-        milestones_btn = make_tab_button('milestones', 'Milestones', 'M')
-        tab_buttons_info.append({'button': milestones_btn, 'tab': 'milestones', 'label': 'Milestones', 'key': 'M'})
-        
+
+        # Create tab buttons - order by importance: Tasks > Sketch > Milestones > Notes > Refs
+        # Note: Presence tab removed - presence is shown in header (Decision: 2024-12 simplification)
         tasks_btn = make_tab_button('tasks', 'Tasks', 'T')
         tab_buttons_info.append({'button': tasks_btn, 'tab': 'tasks', 'label': 'Tasks', 'key': 'T'})
-        
+
+        sketch_btn = make_tab_button('sketch', 'Sketch', 'K')
+        tab_buttons_info.append({'button': sketch_btn, 'tab': 'sketch', 'label': 'Sketch', 'key': 'K'})
+
+        milestones_btn = make_tab_button('milestones', 'Milestones', 'M')
+        tab_buttons_info.append({'button': milestones_btn, 'tab': 'milestones', 'label': 'Milestones', 'key': 'M'})
+
         notes_btn = make_tab_button('notes', 'Notes', 'N')
         tab_buttons_info.append({'button': notes_btn, 'tab': 'notes', 'label': 'Notes', 'key': 'N'})
-        
+
         refs_btn = make_tab_button('refs', 'Refs', 'R')
         tab_buttons_info.append({'button': refs_btn, 'tab': 'refs', 'label': 'Refs', 'key': 'R'})
-        
-        # Tab bar with clickable buttons
+
+        # Store tab_buttons_info for keyboard updates
+        self._detail_tab_buttons = tab_buttons_info
+
+        # Tab bar with clickable buttons - order matches TABS
         tab_bar = VSplit([
-            milestones_btn,
-            Window(width=2),
             tasks_btn,
-            Window(width=2),
+            Window(width=1),
+            sketch_btn,
+            Window(width=1),
+            milestones_btn,
+            Window(width=1),
             notes_btn,
-            Window(width=2),
+            Window(width=1),
             refs_btn,
             Window(width=Dimension(weight=1)),  # Spacer
         ], height=1, padding=1)
@@ -3769,8 +3733,16 @@ class CCCCSetupApp:
         self._open_dialog(dialog)
 
     def _refresh_detail_dialog(self) -> None:
-        """Refresh the detail dialog content (after tab switch or navigation)."""
+        """Refresh the detail dialog content and tab button states."""
         try:
+            # Update tab button texts to reflect current tab
+            if hasattr(self, '_detail_tab_buttons') and self._detail_tab_buttons:
+                for btn_info in self._detail_tab_buttons:
+                    is_current = self.task_panel.current_tab == btn_info['tab']
+                    if is_current:
+                        btn_info['button'].text = f"[{btn_info['key']}] {btn_info['label']}"
+                    else:
+                        btn_info['button'].text = f" {btn_info['key']}  {btn_info['label']} "
             self.app.invalidate()
         except Exception:
             pass
@@ -4101,7 +4073,7 @@ class CCCCSetupApp:
             except Exception:
                 pass
         
-        # M/T/N/R quick keys for tab switching in Level 2
+        # M/T/N/R/K/P quick keys for tab switching in Level 2
         @kb.add('m', filter=Condition(lambda: self.task_detail_open and self.modal_open))
         def detail_milestones_tab(event) -> None:
             """Switch to Milestones tab"""
@@ -4111,7 +4083,7 @@ class CCCCSetupApp:
                     self._refresh_detail_dialog()
             except Exception:
                 pass
-        
+
         @kb.add('t', filter=Condition(lambda: self.task_detail_open and self.modal_open))
         def detail_tasks_tab(event) -> None:
             """Switch to Tasks tab"""
@@ -4121,7 +4093,19 @@ class CCCCSetupApp:
                     self._refresh_detail_dialog()
             except Exception:
                 pass
-        
+
+        @kb.add('k', filter=Condition(lambda: self.task_detail_open and self.modal_open))
+        def detail_sketch_tab(event) -> None:
+            """Switch to Sketch tab"""
+            try:
+                if self.task_panel:
+                    self.task_panel.set_tab('sketch')
+                    self._refresh_detail_dialog()
+            except Exception:
+                pass
+
+        # Note: 'p' key for Presence tab removed - presence shown in header
+
         @kb.add('n', filter=Condition(lambda: self.task_detail_open and self.modal_open))
         def detail_notes_tab(event) -> None:
             """Switch to Notes tab"""
@@ -4131,7 +4115,7 @@ class CCCCSetupApp:
                     self._refresh_detail_dialog()
             except Exception:
                 pass
-        
+
         @kb.add('r', filter=Condition(lambda: self.task_detail_open and self.modal_open))
         def detail_refs_tab(event) -> None:
             """Switch to Refs tab"""
@@ -4177,69 +4161,11 @@ class CCCCSetupApp:
             """Jump to top of timeline (gg, vim-style) - silent navigation"""
             self.timeline.buffer.cursor_position = 0
 
-        # Task panel toggle (T key)
+        # Task panel toggle (T key) - opens Level 2 dialog directly
         @kb.add('T', filter=~Condition(lambda: self.setup_visible or self.modal_open) & ~has_focus(self.input_field))
         def toggle_task_panel(event) -> None:
-            """Toggle task panel expanded/collapsed"""
+            """Open Level 2 task detail dialog"""
             self._toggle_task_panel()
-
-        # Task panel navigation (when expanded)
-        # These bindings work even when input_field has focus - task panel is an overlay
-        def is_task_panel_active():
-            """Check if task panel is expanded and should receive navigation."""
-            return (self.task_panel is not None 
-                    and self.task_panel.expanded 
-                    and not self.setup_visible 
-                    and not self.modal_open)
-        
-        task_nav_filter = Condition(is_task_panel_active)
-
-        @kb.add('down', filter=task_nav_filter)
-        @kb.add('j', filter=task_nav_filter & ~has_focus(self.input_field))
-        def task_select_next(event) -> None:
-            """Move selection to next task"""
-            if self.task_panel:
-                self.task_panel.select_next()
-                try:
-                    self.app.invalidate()
-                except Exception:
-                    pass
-
-        @kb.add('up', filter=task_nav_filter)
-        @kb.add('k', filter=task_nav_filter & ~has_focus(self.input_field))
-        def task_select_prev(event) -> None:
-            """Move selection to previous task"""
-            if self.task_panel:
-                self.task_panel.select_prev()
-                try:
-                    self.app.invalidate()
-                except Exception:
-                    pass
-
-        # Enter key: show detail based on selected area
-        # This works even when input is empty (panel takes priority)
-        @kb.add('enter', filter=task_nav_filter & Condition(lambda: len(self.input_field.text.strip()) == 0))
-        def task_show_detail(event) -> None:
-            """Show unified detail dialog based on selected area"""
-            if self.task_panel:
-                area = self.task_panel.get_selected_area()
-                tab = self.task_panel.get_tab_for_area(area)
-                self._show_unified_detail_dialog(initial_tab=tab)
-                try:
-                    self.app.invalidate()
-                except Exception:
-                    pass
-
-        # Escape key: close task panel (highest priority when panel is open)
-        @kb.add('escape', filter=task_nav_filter)
-        def task_close_panel(event) -> None:
-            """Close task panel with Esc"""
-            if self.task_panel and self.task_panel.expanded:
-                self.task_panel.toggle()
-                try:
-                    self.app.invalidate()
-                except Exception:
-                    pass
 
         # Standard editing shortcuts (runtime phase, input focused, not in search mode)
         @kb.add('c-a', filter=~Condition(lambda: self.setup_visible or self.modal_open or self.reverse_search_mode) & has_focus(self.input_field))

@@ -74,10 +74,6 @@ def make(ctx: Dict[str, Any]):
         """Check if payload contains a Next: declaration (the keepalive trigger)."""
         return bool(_extract_next(payload))
 
-    def bind_send(send_fn):
-        # Legacy: no longer used, keepalive sends directly to pane
-        pass
-
     def schedule_from_payload(sender_label: str, payload: str):
         """
         Schedule keepalive when peer declares a Next step.
@@ -205,7 +201,6 @@ def make(ctx: Dict[str, Any]):
                 pass
 
     return type('KeepaliveAPI', (), {
-        'bind_send': bind_send,
         'schedule_from_payload': schedule_from_payload,
         'tick': tick,
     })

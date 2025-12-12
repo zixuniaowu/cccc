@@ -63,23 +63,36 @@ def _truncate_to_width(s: str, max_width: int, ellipsis: str = '…') -> str:
 class TaskPanel:
     """
     Task Panel widget for CCCC TUI.
-    
-    Provides three display levels:
-    - Level 0 (Header): Compact status bar line - always visible
-    - Level 1 (Expanded): Full task list with progress - toggle with [T]
-    - Level 2 (Detail): Unified detail view with tabs (Milestones/Tasks/Notes/Refs)
-    
-    Level 1 Navigation Areas:
-    - 'milestone': Current active milestone (top)
-    - 'tasks': Task list (middle, default)
-    - 'notes': Notes entry (bottom)
-    - 'refs': References entry (bottom)
+
+    Provides 2-level TUI architecture:
+    - Level 0 (Header): Presence-first status bar - always visible
+      Format: "A: T003 JWT → S2 │ B: T005 User → S1"
+    - Level 2 (Dialog): Tabbed detail view - toggle with [T]
+      Tabs: Tasks, Sketch, Milestones, Notes, Refs
+
+    Design: Press [T] to go directly from Header to Tabbed Dialog.
+    There is no intermediate Level 1 (expanded list) - it was removed for simpler UX.
+    Note: Presence tab was removed - presence is shown in header (Decision: 2024-12 simplification).
     """
 
-    # Tab order for Level 2
-    TABS = ['milestones', 'tasks', 'notes', 'refs']
-    TAB_LABELS = {'milestones': 'Milestones', 'tasks': 'Tasks', 'notes': 'Notes', 'refs': 'Refs'}
-    TAB_KEYS = {'milestones': 'M', 'tasks': 'T', 'notes': 'N', 'refs': 'R'}
+    # Tab order for Level 2 dialog
+    # Order by importance: Tasks (daily work) > Sketch (plan) > Milestones (phases) > Notes > Refs
+    # Note: Presence tab removed - presence is shown in header (Decision: 2024-12 simplification)
+    TABS = ['tasks', 'sketch', 'milestones', 'notes', 'refs']
+    TAB_LABELS = {
+        'tasks': 'Tasks',
+        'sketch': 'Sketch',
+        'milestones': 'Milestones',
+        'notes': 'Notes',
+        'refs': 'Refs'
+    }
+    TAB_KEYS = {
+        'tasks': 'T',
+        'sketch': 'K',
+        'milestones': 'M',
+        'notes': 'N',
+        'refs': 'R'
+    }
 
     def __init__(self, root: Path, on_toggle: Optional[Callable[[], None]] = None):
         """
@@ -87,17 +100,11 @@ class TaskPanel:
 
         Args:
             root: Project root directory (contains context/)
-            on_toggle: Optional callback when panel is toggled
+            on_toggle: Optional callback when Level 2 dialog is opened
         """
         self.root = root
-        self.expanded = False
         self.on_toggle = on_toggle
         self._manager = None
-        # Navigation state for Level 1
-        self.selected_index = 0
-        self._cached_task_count = 0
-        # Level 1 navigation area: 'milestone', 'tasks', 'notes', 'refs'
-        self.selected_area = 'tasks'
         # Level 2 tab state
         self.current_tab = 'tasks'
         # Current task index for Level 2 Tasks tab navigation
@@ -151,129 +158,17 @@ class TaskPanel:
             'tasks': []
         }
 
-    def toggle(self) -> None:
-        """Toggle between expanded and collapsed view."""
-        self.expanded = not self.expanded
-        # Reset selection when closing panel
-        if not self.expanded:
-            self.selected_index = 0
-        if self.on_toggle:
-            self.on_toggle()
-
     def refresh(self) -> None:
         """Force refresh of task data."""
         if self._manager:
             self._manager.refresh()
 
     def get_line_count(self) -> int:
-        """Get the actual line count from last get_expanded_text() call.
-        
-        Used by app.py for accurate height calculation.
+        """Get the line count for height calculation.
+
+        Legacy method kept for compatibility. Returns default value.
         """
         return self._last_line_count
-
-    # =========================================================================
-    # Navigation Methods (for Level 1 keyboard navigation)
-    # =========================================================================
-
-    def get_task_count(self) -> int:
-        """Get number of tasks for navigation bounds."""
-        summary = self._get_summary()
-        return len(summary.get('tasks', []))
-
-    def get_display_item_count(self) -> Tuple[int, int]:
-        """
-        Get count of display items (tasks + error entries) and error count.
-        
-        Returns:
-            Tuple of (total_display_items, error_count)
-            - total_display_items: tasks + error entries (for navigation/height)
-            - error_count: number of parse errors (for error line display)
-        """
-        summary = self._get_summary()
-        tasks = summary.get('tasks', [])
-        parse_errors = summary.get('parse_errors', {})
-        
-        # Count items that will be displayed
-        seen_ids = set(t.get('id', '???') for t in tasks)
-        error_entries = sum(1 for task_id in parse_errors if task_id not in seen_ids)
-        
-        total_display_items = len(tasks) + error_entries
-        return total_display_items, len(parse_errors)
-
-    def select_next(self) -> bool:
-        """
-        Move selection down in Level 1.
-        Navigation order: tasks (with internal index) -> notes -> refs -> (wrap to tasks)
-        
-        Returns:
-            True if selection moved
-        """
-        task_count = self.get_task_count()
-        
-        if self.selected_area == 'tasks':
-            if task_count > 0 and self.selected_index < task_count - 1:
-                self.selected_index += 1
-                return True
-            # Move to notes
-            self.selected_area = 'notes'
-            return True
-        elif self.selected_area == 'notes':
-            self.selected_area = 'refs'
-            return True
-        elif self.selected_area == 'refs':
-            # Wrap to tasks
-            self.selected_area = 'tasks'
-            self.selected_index = 0
-            return True
-        return False
-
-    def select_prev(self) -> bool:
-        """
-        Move selection up in Level 1.
-        Navigation order: refs -> notes -> tasks (with internal index)
-        
-        Returns:
-            True if selection moved
-        """
-        task_count = self.get_task_count()
-        
-        if self.selected_area == 'tasks':
-            if self.selected_index > 0:
-                self.selected_index -= 1
-                return True
-            # Wrap to refs
-            self.selected_area = 'refs'
-            return True
-        elif self.selected_area == 'notes':
-            self.selected_area = 'tasks'
-            self.selected_index = max(0, task_count - 1)
-            return True
-        elif self.selected_area == 'refs':
-            self.selected_area = 'notes'
-            return True
-        return False
-
-    def get_selected_task_id(self) -> Optional[str]:
-        """Get the task ID of currently selected task (only if in tasks area)."""
-        if self.selected_area != 'tasks':
-            return None
-        summary = self._get_summary()
-        tasks = summary.get('tasks', [])
-        if not tasks:
-            return None
-        idx = max(0, min(self.selected_index, len(tasks) - 1))
-        self.selected_index = idx
-        return tasks[idx].get('id')
-
-    def get_selected_area(self) -> str:
-        """Get currently selected area in Level 1."""
-        return self.selected_area
-
-    def reset_selection(self) -> None:
-        """Reset selection to first task."""
-        self.selected_index = 0
-        self.selected_area = 'tasks'
 
     # =========================================================================
     # Level 2 Tab Navigation
@@ -308,16 +203,6 @@ class TaskPanel:
             self.current_tab = tab_name
             return True
         return False
-
-    def get_tab_for_area(self, area: str) -> str:
-        """Map Level 1 area to Level 2 tab."""
-        mapping = {
-            'milestone': 'milestones',
-            'tasks': 'tasks',
-            'notes': 'notes',
-            'refs': 'refs',
-        }
-        return mapping.get(area, 'tasks')
 
     def next_task_in_detail(self) -> Optional[str]:
         """
@@ -372,257 +257,105 @@ class TaskPanel:
         return False
 
     # =========================================================================
-    # Level 0: Header Strip (Always Visible in Status Bar)
+    # Level 0: Header Strip (Presence-First Design)
     # =========================================================================
 
-    def get_header_text(self) -> str:
+    def get_header_text(self, width: int = 80) -> str:
         """
-        Get rich header text for status bar showing current task progress.
-        
-        Format: "Tasks 2/5 (50%) │ → T003: Task Name [S2/4]"
+        Get Presence-only header text for status bar.
+
+        Design rationale (from comprehensive_design.md Decision 6):
+        - Header ONLY shows Presence - no sketch summary, no progress %
+        - Presence is MOST valuable - directly shows what agents are doing
+        - Progress % is misleading (not real project completion)
+        - Single "current task" is ambiguous in multi-agent scenario
+        - User quote: "如果空间不够还不如都留给两位agent的Presence信息"
+
+        Format:
+        - Full: "A: T003 JWT → S2 │ B: T005 User → S1"
+        - Idle: "A: T003 → S2 │ B: ○ idle"
+        - Narrow: "A: T003 S2 │ B: T005 S1"
+
+        Args:
+            width: Available width for header
+
+        Returns:
+            Formatted presence-only header string
+        """
+        manager = self._get_manager()
+        if not manager:
+            return ""
+
+        # Get presence data
+        presence = manager.get_presence()
+
+        if not presence:
+            # No presence data - fallback to showing current task
+            return self._get_legacy_header_text()
+
+        # Format presence for each agent
+        # New simple format: "A: <status text> │ B: <status text>"
+        presence_parts = []
+        for agent in presence:
+            agent_id = agent.get('id', '?')
+            # Use short label (A for peer-a, B for peer-b, etc.)
+            short_id = self._get_short_agent_id(agent_id)
+            status = agent.get('status', '')
+
+            if status:
+                # Truncate status to fit in header
+                max_status_len = (width - 10) // 2  # Leave room for IDs and separator
+                if len(status) > max_status_len:
+                    status = status[:max_status_len - 2] + ".."
+                presence_parts.append(f"{short_id}: {status}")
+            else:
+                presence_parts.append(f"{short_id}: (idle)")
+
+        return " │ ".join(presence_parts)
+
+    def _get_short_agent_id(self, agent_id: str) -> str:
+        """Convert agent ID to short display name."""
+        mapping = {
+            'peer-a': 'A',
+            'peer-b': 'B',
+            'peera': 'A',
+            'peerb': 'B',
+            'a': 'A',
+            'b': 'B',
+        }
+        return mapping.get(agent_id.lower(), agent_id[:3].upper())
+
+    def _get_legacy_header_text(self) -> str:
+        """
+        Fallback header when no presence data available.
+        Shows current task progress (legacy format).
         """
         summary = self._get_summary()
-        
+
         if summary['total_tasks'] == 0:
-            return ""  # Empty when no tasks
-        
-        completed = summary['completed_tasks']
-        total = summary['total_tasks']
-        
-        # Calculate step-level progress
-        total_steps = summary.get('total_steps', 0)
-        completed_steps = summary.get('completed_steps', 0)
-        percent = int(completed_steps / total_steps * 100) if total_steps > 0 else 0
-        
-        # Base progress info
-        base = f"📋 {completed}/{total} ({percent}%)"
-        
-        # Current task info with name
+            return ""
+
+        # Current task info
         current_id = summary.get('current_task')
         current_step = summary.get('current_step')
-        
+
         if current_id:
-            # Get current task name
             manager = self._get_manager()
             task_name = ""
-            step_progress = ""
             if manager:
                 task = manager.get_task(current_id)
                 if task:
-                    task_name = task.name[:25]  # Truncate long names
-                    # Step progress
-                    step_progress = f"[{task.completed_steps}/{task.total_steps}]"
-            
+                    task_name = task.name[:20]
+
             if task_name:
-                current_str = f"→ {current_id}: {task_name} {step_progress}"
-            else:
-                current_str = f"→ {current_id}"
-        elif completed == total and total > 0:
-            current_str = "✓ All complete"
+                if current_step:
+                    return f"→ {current_id}: {task_name} [{current_step}]"
+                return f"→ {current_id}: {task_name}"
+            return f"→ {current_id}"
+        elif summary['completed_tasks'] == summary['total_tasks']:
+            return "✓ All tasks complete"
         else:
-            # No active task - show first planned task if any
-            tasks = summary.get('tasks', [])
-            planned_task = None
-            for t in tasks:
-                if t.get('status') and str(t['status']).lower() == 'planned':
-                    planned_task = t
-                    break
-            if planned_task:
-                name = planned_task.get('name', '')[:20]
-                current_str = f"⏳ {planned_task['id']}: {name}" if name else f"⏳ {planned_task['id']}"
-            else:
-                current_str = ""
-        
-        if current_str:
-            return f"{base} │ {current_str}"
-        return base
-
-    # =========================================================================
-    # Level 1: Expanded WBS View (Toggle with [T])
-    # =========================================================================
-
-    def get_expanded_text(self, width: int = 80) -> str:
-        """
-        Get expanded task list with dynamic width.
-        
-        Args:
-            width: Panel width (auto-detected from terminal)
-        
-        Layout:
-        ┏━━ Blueprint Tasks ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ [T] ━━┓
-        ┃ 🎯 M2: API Integration [active]                                      ┃  ← Milestone
-        ┃ ─────────────────────────────────────────────────────────────────── ┃
-        ┃   St   ID      Name                                        Progress  ┃
-        ┃   ✓    T001    OAuth Implementation Complete                  4/4    ┃
-        ┃ ▶ →    T002    Dashboard Analytics Feature                    2/5    ┃
-        ┃   ○    T003    User Settings Panel                            0/3    ┃
-        ┃                                                                      ┃
-        ┃   Progress: 1/3 tasks │ 6/12 steps (50%)                            ┃
-        ┃ ─────────────────────────────────────────────────────────────────── ┃
-        ┃   📝 Notes (3)                                                       ┃  ← Entry
-        ┃   📎 References (2)                                                  ┃  ← Entry
-        ┃ ─────────────────────────────────────────────────────────────────── ┃
-        ┃   ↑↓ select │ Enter detail │ T close                                 ┃
-        ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-        """
-        summary = self._get_summary()
-        tasks = summary.get('tasks', [])
-        parse_errors = summary.get('parse_errors', {})
-        
-        # Get context data
-        manager = self._get_manager()
-        active_milestone = manager.get_active_milestone() if manager else None
-        notes = manager.get_notes() if manager else []
-        refs = manager.get_references() if manager else []
-        
-        # Use provided width, ensure minimum
-        INNER = max(58, width - 4)
-        
-        lines = []
-        
-        def add_row(content: str) -> None:
-            """Add a row with proper padding and border."""
-            content_width = _display_width(content)
-            padding = INNER - content_width
-            if padding > 0:
-                content = content + ' ' * padding
-            lines.append(f"┃{content}┃")
-        
-        def add_separator() -> None:
-            """Add a thin separator line."""
-            add_row(" " + "─" * (INNER - 2) + " ")
-        
-        # Top border with title
-        title = "━━ Blueprint Tasks "
-        toggle_hint = " [T] ━━"
-        title_len = len(title) + len(toggle_hint)
-        border_fill = INNER - title_len
-        if border_fill < 0:
-            border_fill = 0
-        lines.append(f"┏{title}{'━' * border_fill}{toggle_hint}┓")
-        
-        # === Milestone Section ===
-        if active_milestone:
-            m_name = active_milestone.get('name', 'Unnamed')
-            m_name_display = _truncate_to_width(m_name, INNER - 25)
-            milestone_line = f" 🎯 {m_name_display} [active]"
-            add_row(milestone_line)
-            add_separator()
-        
-        # === Tasks Section ===
-        # Collect all displayable items (tasks + errors)
-        display_items = []
-        seen_ids = set()
-        
-        for t in tasks:
-            task_id = t.get('id', '???')
-            seen_ids.add(task_id)
-            display_items.append({
-                'type': 'task',
-                'id': task_id,
-                'name': t.get('name', 'Unnamed'),
-                'status': t.get('status', 'planned'),
-                'progress': t.get('progress', '0/0'),
-            })
-        
-        for task_id, error_msg in parse_errors.items():
-            if task_id not in seen_ids:
-                short_error = error_msg[:35] + "..." if len(error_msg) > 35 else error_msg
-                display_items.append({
-                    'type': 'error',
-                    'id': task_id,
-                    'name': f"⚠ {short_error}",
-                    'status': 'error',
-                    'progress': '-',
-                })
-        
-        display_items.sort(key=lambda x: x['id'])
-        
-        if not display_items:
-            add_row("   No tasks defined. Agent will create tasks in context/tasks/")
-        else:
-            name_width = INNER - 32
-            name_width = max(20, min(60, name_width))
-            
-            header = f"   St   ID      {'Name':<{name_width}}    Progress"
-            add_row(header)
-            sep = f"   ──   ────    {'─' * name_width}    ────────"
-            add_row(sep)
-            
-            selected_idx = max(0, min(self.selected_index, len(display_items) - 1))
-            self.selected_index = selected_idx
-            
-            for idx, item in enumerate(display_items):
-                task_id = item['id']
-                name = item['name']
-                progress = item['progress']
-                item_type = item.get('type', 'task')
-                
-                if item_type == 'error':
-                    icon = '!'
-                else:
-                    icon = self._get_status_icon(item['status'])
-                
-                name_display = _truncate_to_width(name, name_width)
-                name_padded = _pad_to_width(name_display, name_width)
-                prog_display = f"{progress:>8}"
-                
-                is_selected = (idx == selected_idx) and (self.selected_area == 'tasks')
-                sel = "▶" if is_selected else " "
-                
-                if is_selected:
-                    row = f" {sel} {icon}    {task_id:<5}   {name_padded}    {prog_display}"
-                else:
-                    row = f"   {icon}    {task_id:<5}   {name_padded}    {prog_display}"
-                
-                add_row(row)
-        
-        add_row("")
-        
-        # Progress summary
-        valid_task_count = len(tasks)
-        error_count = len(parse_errors)
-        
-        if valid_task_count > 0 or error_count > 0:
-            completed = summary.get('completed_tasks', 0)
-            total = summary.get('total_tasks', 0)
-            total_steps = summary.get('total_steps', 0)
-            completed_steps = summary.get('completed_steps', 0)
-            step_pct = int(completed_steps / total_steps * 100) if total_steps > 0 else 0
-            current = summary.get('current_task', '')
-            
-            progress_info = f"   Progress: {completed}/{total} tasks │ {completed_steps}/{total_steps} steps ({step_pct}%)"
-            if current:
-                progress_info += f" │ {current}"
-            add_row(progress_info)
-            
-            if error_count > 0:
-                add_row(f"   ⚠ {error_count} task(s) have YAML errors")
-        
-        # === Notes/Refs Entry Section ===
-        add_separator()
-        
-        # Notes entry
-        notes_sel = "▶" if self.selected_area == 'notes' else " "
-        notes_count = len(notes)
-        add_row(f" {notes_sel} 📝 Notes ({notes_count})")
-        
-        # References entry  
-        refs_sel = "▶" if self.selected_area == 'refs' else " "
-        refs_count = len(refs)
-        add_row(f" {refs_sel} 📎 References ({refs_count})")
-        
-        # Help line
-        add_separator()
-        add_row("   ↑↓ select │ Enter detail │ T close")
-        
-        # Bottom border
-        lines.append(f"┗{'━' * INNER}┛")
-        
-        # Track actual line count for height calculation
-        self._last_line_count = len(lines)
-        
-        return "\n".join(lines)
+            return ""
 
     def _get_status_display(self, status: str) -> Tuple[str, str]:
         """Get icon and short label for status."""
@@ -673,10 +406,13 @@ class TaskPanel:
         INNER = max(50, width - 4)
         
         # Content based on current tab (no tab bar - handled by TUI buttons)
+        # Note: Presence tab removed - presence is shown in header
         if self.current_tab == 'milestones':
             content = self._render_milestones_content(INNER)
         elif self.current_tab == 'tasks':
             content = self._render_tasks_content(INNER)
+        elif self.current_tab == 'sketch':
+            content = self._render_sketch_content(INNER)
         elif self.current_tab == 'notes':
             content = self._render_notes_content(INNER)
         elif self.current_tab == 'refs':
@@ -685,14 +421,7 @@ class TaskPanel:
             content = "Unknown tab"
         
         lines.append(content)
-        
-        # Footer with navigation hints (compact)
-        lines.append("")
-        if self.current_tab == 'tasks':
-            lines.append("← → prev/next task │ Esc: close")
-        else:
-            lines.append("Esc: close")
-        
+
         return "\n".join(lines)
 
     def _render_tab_bar(self, width: int) -> str:
@@ -860,6 +589,64 @@ class TaskPanel:
             lines.append("")  # Blank line between refs
         
         return "\n".join(lines) if lines else "  No references."
+
+    def _render_sketch_content(self, width: int) -> str:
+        """
+        Render sketch tab content.
+
+        Shows:
+        - Vision statement (if set)
+        - Execution blueprint (markdown with light H2 enhancement)
+        """
+        manager = self._get_manager()
+        if not manager:
+            return "  No data available"
+
+        lines = []
+
+        # Vision section
+        vision = manager.get_vision()
+        if vision:
+            lines.append("  ━━ Vision ━━")
+            lines.append(f"  {vision}")
+            lines.append("")
+
+        # Sketch section
+        sketch = manager.get_sketch()
+        if sketch:
+            lines.append("  ━━ Execution Blueprint ━━")
+            lines.append("")
+
+            # Light markdown enhancement for prompt_toolkit display
+            # Transform ## Title → ━━ Title ━━
+            for line in sketch.split('\n'):
+                if line.startswith('## '):
+                    section_title = line[3:].strip()
+                    lines.append(f"  ── {section_title} ──")
+                elif line.startswith('# '):
+                    # Main title
+                    main_title = line[2:].strip()
+                    lines.append(f"  ━━ {main_title} ━━")
+                elif line.startswith('- '):
+                    # Bullet points - add indent
+                    lines.append(f"    • {line[2:]}")
+                elif line.startswith('**') and line.endswith('**'):
+                    # Bold text - show with marker
+                    bold_text = line[2:-2]
+                    lines.append(f"  ▸ {bold_text}")
+                else:
+                    # Normal text
+                    if line.strip():
+                        lines.append(f"    {line}")
+                    else:
+                        lines.append("")
+        else:
+            lines.append("  No sketch defined yet.")
+            lines.append("")
+            lines.append("  Agents can create a sketch using update_sketch() MCP tool")
+            lines.append("  or by editing context/context.yaml directly.")
+
+        return "\n".join(lines)
 
     # =========================================================================
     # Task Detail Formatters (for timeline output and IM)

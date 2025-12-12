@@ -67,19 +67,6 @@ def tmux_ensure_ledger_tail(session: str, ledger_path: Path):
     except Exception:
         pass
 
-def tmux_build_2x2(session: str) -> Dict[str,str]:
-    # legacy fallback; retained for compatibility
-    tmux("kill-pane","-a","-t",f"{session}:0.0")
-    tmux("split-window","-h","-t",f"{session}:0.0")
-    tmux("split-window","-v","-t",f"{session}:0.1")
-    tmux("split-window","-v","-t",f"{session}:0.0")
-    code,out,_ = tmux("list-panes","-t",session,"-F","#{pane_id}")
-    ids = out.strip().splitlines() if code==0 else []
-    return {"lt": ids[0] if len(ids)>0 else f"{session}:0.0",
-            "lb": ids[2] if len(ids)>2 else f"{session}:0.0",
-            "rt": ids[1] if len(ids)>1 else f"{session}:0.0",
-            "rb": ids[3] if len(ids)>3 else f"{session}:0.0"}
-
 def tmux_build_single_peer_layout(session: str, win_index: str = '0') -> Dict[str,str]:
     """Build 3-pane layout for single-peer mode.
 
@@ -329,14 +316,6 @@ def tmux_build_tui_layout(session: str, win_index: str = '0') -> Dict[str,str]:
     except Exception:
         pass
     return positions
-
-def tmux_ensure_quadrants(session: str, ledger_path: Path):
-    # legacy compatibility helper
-    try:
-        tmux_build_tui_layout(session, '0')
-        tmux_ensure_ledger_tail(session, ledger_path)
-    except Exception:
-        pass
 
 def tmux_paste(pane: str, text: str):
     tmux("send-keys","-t",pane,text)

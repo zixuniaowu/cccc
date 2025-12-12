@@ -26,7 +26,7 @@ except Exception:
     format_task_for_im = None  # type: ignore
 
 def read_yaml(p: Path) -> Dict[str, Any]:
-    # Back-compat shim: delegate to common config reader
+    # Delegate to common config reader with yaml fallback
     try:
         from common.config import read_config as _rc  # type: ignore
         return _rc(p)
@@ -700,6 +700,32 @@ def main():
                     task_text = f"Error: {str(e)[:100]}"
                 _send_reply(task_text)
                 _append_log(f"[cmd] task ch={ch}")
+                return
+
+            # Sketch command: !sketch
+            if re.match(r'^!sketch\b', command_text, re.I):
+                try:
+                    from orchestrator.task_manager import TaskManager
+                    root = HOME.parent if HOME.name == '.cccc' else HOME
+                    manager = TaskManager(root)
+                    sketch_text = manager.format_sketch_for_im()
+                except Exception as e:
+                    sketch_text = f"Error: {str(e)[:100]}"
+                _send_reply(sketch_text)
+                _append_log(f"[cmd] sketch ch={ch}")
+                return
+
+            # Presence command: !presence
+            if re.match(r'^!presence\b', command_text, re.I):
+                try:
+                    from orchestrator.task_manager import TaskManager
+                    root = HOME.parent if HOME.name == '.cccc' else HOME
+                    manager = TaskManager(root)
+                    presence_text = manager.format_presence_for_im()
+                except Exception as e:
+                    presence_text = f"Error: {str(e)[:100]}"
+                _send_reply(presence_text)
+                _append_log(f"[cmd] presence ch={ch}")
                 return
 
             if re.match(r'^!aux\b', command_text, re.I):

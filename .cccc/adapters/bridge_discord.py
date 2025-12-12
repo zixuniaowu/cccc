@@ -25,7 +25,7 @@ except Exception:
     format_task_for_im = None  # type: ignore
 
 def read_yaml(p: Path) -> Dict[str, Any]:
-    # Back-compat shim to centralized config loader
+    # Delegate to common config reader with yaml fallback
     try:
         from common.config import read_config as _rc  # type: ignore
         return _rc(p)
@@ -431,6 +431,32 @@ def main():
                     task_text = f"Error loading tasks: {str(e)[:100]}"
                 await _send_reply(task_text)
                 _log(f"[cmd] task ch={message.channel.id}")
+                return
+
+            # Sketch command: !sketch
+            if re.match(r'^!sketch\b', stripped, re.I):
+                try:
+                    from orchestrator.task_manager import TaskManager
+                    root = HOME.parent if HOME.name == '.cccc' else HOME
+                    manager = TaskManager(root)
+                    sketch_text = manager.format_sketch_for_im()
+                except Exception as e:
+                    sketch_text = f"Error: {str(e)[:100]}"
+                await _send_reply(sketch_text)
+                _log(f"[cmd] sketch ch={message.channel.id}")
+                return
+
+            # Presence command: !presence
+            if re.match(r'^!presence\b', stripped, re.I):
+                try:
+                    from orchestrator.task_manager import TaskManager
+                    root = HOME.parent if HOME.name == '.cccc' else HOME
+                    manager = TaskManager(root)
+                    presence_text = manager.format_presence_for_im()
+                except Exception as e:
+                    presence_text = f"Error: {str(e)[:100]}"
+                await _send_reply(presence_text)
+                _log(f"[cmd] presence ch={message.channel.id}")
                 return
 
             if re.match(r'^!aux\b', stripped, re.I):

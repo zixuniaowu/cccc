@@ -91,39 +91,27 @@ def send_ctrl_c(pane: str):
 
 # --- State & idle detection ---
 class PaneIdleJudge:
+    """Simple idle detection based on screen quiet duration.
+
+    This is NOT a precise idle detector - it only checks if the pane content
+    has been stable for `idle_quiet_seconds`. Use as a basic throttling mechanism,
+    not as a reliable indicator of CLI state.
+    """
     def __init__(self, profile: Dict[str,Any]):
-        self.prompt_re = re.compile(profile.get("prompt_regex",""), re.I) if profile.get("prompt_regex") else None
-        self.busy_res  = [re.compile(p, re.I) for p in profile.get("busy_regexes",[])]
         self.quiet_sec = float(profile.get("idle_quiet_seconds", 1.5))
         self._last_snapshot = ""
         self._last_change_ts = 0.0
 
     def refresh(self, pane: str) -> Tuple[bool, str]:
-        """Return (is_idle, reason)."""
+        """Return (is_idle, reason). Idle means screen unchanged for quiet_sec."""
         text = capture_pane(pane, lines=1200)
         now = time.time()
         if text != self._last_snapshot:
             self._last_snapshot = text
             self._last_change_ts = now
 
-        tail = text.splitlines()[-30:]  # inspect the most recent 30 lines
-        tail_txt = "\n".join(tail)
-
-        # If any busy regex matches → busy
-        for rx in self.busy_res:
-            if rx.search(tail_txt):
-                return False, "busy_regex"
-
-        # If prompt detected and quiet for a while → idle
-        if self.prompt_re and self.prompt_re.search(tail_txt):
-            if now - self._last_change_ts >= self.quiet_sec:
-                return True, "prompt+quiet"
-            else:
-                return False, "prompt-but-noisy"
-
-        # Fallback without prompt: rely on quiet duration
         if now - self._last_change_ts >= self.quiet_sec:
-            return True, "quiet-only"
+            return True, "quiet"
 
         return False, "changing"
 
@@ -247,35 +235,3 @@ def deliver_or_queue(home: Path, pane: str, peer: str, payload: str,
         outbox.enqueue(mid, text)
         return "queued", mid
     return "delivered", mid
-
-def flush_outbox_if_idle(home: Path, pane: str, peer: str,
-                         profile: Dict[str,Any], delivery_conf: Dict[str,Any]) -> List[str]:
-    """If idle, flush up to N queued items; return list of ACKed mids."""
-    judge = PaneIdleJudge(profile)
-    outbox = Outbox(home, peer)
-    require_ack = bool(delivery_conf.get("require_ack", False))
-    if not require_ack:
-        # If ACK is not required, nothing to flush
-        return []
-    batch = int(delivery_conf.get("max_flush_batch", 3))
-
-    idle, _ = judge.refresh(pane)
-    if not idle: return []
-
-    items = outbox.load_all()
-    if not items: return []
-    sent_mids=[]
-    for it in items[:batch]:
-        mid = it["mid"]; text = it["payload"]
-        send_text(pane, text, profile)
-        time.sleep(1.0)
-        latest = capture_pane(pane, 1200)
-        acks, nacks = find_acks_from_output(latest)
-        if mid in acks:
-            outbox.remove(mid); sent_mids.append(mid)
-        elif mid in nacks:
-            outbox.remove(mid)  # Drop and account (caller may record reason)
-        else:
-            # Keep in queue; try later
-            pass
-    return sent_mids
