@@ -327,15 +327,27 @@ def get_clipboard_text() -> Optional[str]:
     import sys
     try:
         if sys.platform == 'darwin':
-            result = subprocess.run(['pbpaste'], capture_output=True, text=True, timeout=2)
+            result = subprocess.run(
+                ['pbpaste'],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=2
+            )
             return result.stdout if result.returncode == 0 else None
         elif sys.platform == 'linux':
             # WSL2: use PowerShell.exe to access Windows clipboard
             if _is_wsl():
                 try:
+                    ps_cmd = '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-Clipboard -Raw'
                     result = subprocess.run(
-                        ['powershell.exe', '-NoProfile', '-Command', 'Get-Clipboard'],
-                        capture_output=True, text=True, timeout=5
+                        ['powershell.exe', '-NoProfile', '-Command', ps_cmd],
+                        capture_output=True,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        timeout=5
                     )
                     if result.returncode == 0 and result.stdout:
                         return result.stdout
@@ -343,20 +355,42 @@ def get_clipboard_text() -> Optional[str]:
                     pass
             # Try wl-paste first (Wayland), then xclip (X11)
             try:
-                result = subprocess.run(['wl-paste'], capture_output=True, text=True, timeout=2)
+                result = subprocess.run(
+                    ['wl-paste'],
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    timeout=2
+                )
                 if result.returncode == 0:
                     return result.stdout
             except FileNotFoundError:
                 pass
             try:
-                result = subprocess.run(['xclip', '-selection', 'clipboard', '-o'], capture_output=True, text=True, timeout=2)
+                result = subprocess.run(
+                    ['xclip', '-selection', 'clipboard', '-o'],
+                    capture_output=True,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    timeout=2
+                )
                 if result.returncode == 0:
                     return result.stdout
             except FileNotFoundError:
                 pass
             return None
         elif sys.platform == 'win32':
-            result = subprocess.run(['powershell', '-NoProfile', '-Command', 'Get-Clipboard'], capture_output=True, text=True, timeout=2)
+            ps_cmd = '[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; Get-Clipboard -Raw'
+            result = subprocess.run(
+                ['powershell', '-NoProfile', '-Command', ps_cmd],
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=2
+            )
             return result.stdout if result.returncode == 0 else None
     except Exception:
         return None
@@ -373,13 +407,31 @@ def set_clipboard_text(text: str) -> bool:
     try:
         if sys.platform == 'darwin':
             # macOS
-            result = subprocess.run(['pbcopy'], input=text, text=True, timeout=2)
+            result = subprocess.run(
+                ['pbcopy'],
+                input=text,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=2
+            )
             return result.returncode == 0
         elif sys.platform == 'linux':
             # WSL2: use clip.exe to access Windows clipboard
             if _is_wsl():
                 try:
-                    result = subprocess.run(['clip.exe'], input=text, text=True, timeout=2)
+                    ps_cmd = (
+                        '[Console]::InputEncoding=[System.Text.Encoding]::UTF8; '
+                        '$t=[Console]::In.ReadToEnd(); Set-Clipboard -Value $t'
+                    )
+                    result = subprocess.run(
+                        ['powershell.exe', '-NoProfile', '-Command', ps_cmd],
+                        input=text,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        timeout=5
+                    )
                     if result.returncode == 0:
                         return True
                 except FileNotFoundError:
@@ -391,7 +443,14 @@ def set_clipboard_text(text: str) -> bool:
                 ['xsel', '--clipboard', '--input']
             ]:
                 try:
-                    result = subprocess.run(cmd, input=text, text=True, timeout=2)
+                    result = subprocess.run(
+                        cmd,
+                        input=text,
+                        text=True,
+                        encoding='utf-8',
+                        errors='replace',
+                        timeout=2
+                    )
                     if result.returncode == 0:
                         return True
                 except FileNotFoundError:
@@ -399,9 +458,16 @@ def set_clipboard_text(text: str) -> bool:
             return False
         elif sys.platform == 'win32':
             # Windows
+            ps_cmd = (
+                '[Console]::InputEncoding=[System.Text.Encoding]::UTF8; '
+                '$t=[Console]::In.ReadToEnd(); Set-Clipboard -Value $t'
+            )
             result = subprocess.run(
-                ['powershell', '-NoProfile', '-Command', 
-                 f'Set-Clipboard -Value {repr(text)}'],
+                ['powershell', '-NoProfile', '-Command', ps_cmd],
+                input=text,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
                 timeout=2
             )
             return result.returncode == 0
@@ -537,10 +603,6 @@ class CommandCompleter(Completer):
             ('/foreman', 'Foreman control (on|off|status|now)'),
             ('/aux', 'Run Aux helper'),
             ('/verbose', 'Verbose on|off'),
-            # Tasks/Context
-            ('/task', 'Show task status'),
-            ('/sketch', 'Show project sketch'),
-            ('/presence', 'Show team presence'),
         ]
 
     def get_completions(self, document: Document, complete_event):
@@ -800,59 +862,160 @@ def create_header() -> Window:
     )
 
 
-def create_runtime_header(status_dot: str = '●', status_color: str = 'class:status.connected',
-                          task_text_func=None, on_task_click=None) -> Window:
-    """Modern runtime header with connection status and prominent task button"""
+def create_runtime_header(
+    status_dot: str = '●',
+    status_color: str = 'class:status.connected',
+    presence_lines_func=None,
+    on_task_click=None,
+) -> HSplit:
+    """Modern runtime header with connection status and bounded-dynamic presence (3–5 lines)."""
+    def _get_width() -> int:
+        try:
+            return get_app().output.get_size().columns
+        except Exception:
+            return 100
+
+    _presence_cache: Dict[str, Any] = {
+        "t": 0.0,
+        "width": 0,
+        "lines": ["A: —", "", "B: —", ""],
+    }
+
+    def _compute_presence_lines(width: int) -> List[str]:
+        lines: List[str] = []
+        if presence_lines_func:
+            try:
+                indent = "  "
+                usable_width = max(0, width - len(indent))
+                lines = presence_lines_func(usable_width) or []
+            except Exception:
+                lines = []
+
+        if not isinstance(lines, list):
+            lines = []
+
+        while len(lines) < 4:
+            lines.append("")
+        line_a1 = str(lines[0] or "A: —")
+        line_a2 = str(lines[1] or "")
+        line_b1 = str(lines[2] or "B: —")
+        line_b2 = str(lines[3] or "")
+        return [line_a1, line_a2, line_b1, line_b2]
+
+    def _get_presence_lines() -> List[str]:
+        width = _get_width()
+        now = time.monotonic()
+        if width == _presence_cache["width"] and (now - float(_presence_cache["t"])) < 0.2:
+            return list(_presence_cache["lines"])
+
+        lines = _compute_presence_lines(width)
+        _presence_cache["width"] = width
+        _presence_cache["t"] = now
+        _presence_cache["lines"] = list(lines)
+        return lines
+
     def get_header_text():
-        text = [
-            ('class:title', '❯ CCCC Orchestrator  '),
-            (status_color, status_dot),
-        ]
-        # Add task info with prominent button
-        if task_text_func:
-            task_text = task_text_func()
-            if task_text:
-                # Task status info + prominent button
-                text.extend([
-                    ('', '  │  '),
-                    ('class:task-status', task_text),
-                    ('', '  '),
-                    # Prominent button with background - looks like a real button
-                    ('class:button.task.bg', ' ▼ Details '),
-                ])
-            else:
-                # No tasks - just show button
-                text.extend([
-                    ('', '  │  '),
-                    ('class:button.task.bg', ' ▼ Details '),
-                ])
+        width = _get_width()
+
+        text = [('class:title', '❯ CCCC ')]
+        if width >= 95:
+            text.append(('class:subtitle', 'Orchestrator '))
+        text.append((status_color, status_dot))
+
         text.extend([
-            ('', '\n'),
-            ('class:hint', '  /help · PgUp/Dn scroll · T or click [▼ Details] · /quit'),
+            ('', '  '),
+            ('class:button.task.bg', ' ▼ Context [T] '),
+            ('', '  '),
+            ('class:hint', 'Help: '),
+            ('class:value', '/help'),
+            ('', '  '),
+            ('class:hint', 'Quit: '),
+            ('class:value', '/quit'),
         ])
+
+        if width >= 110:
+            text.extend([
+                ('', '  '),
+                ('class:separator', '│'),
+                ('', '  '),
+                ('class:hint', 'Route: '),
+                ('class:value', '/a'),
+                ('', ' '),
+                ('class:value', '/b'),
+                ('', ' '),
+                ('class:value', '/both'),
+            ])
         return text
-    
-    ctrl = FormattedTextControl(lambda: get_header_text(), focusable=False)
-    
-    # Attach mouse handler for task button click
+
+    ctrl = FormattedTextControl(get_header_text, focusable=False)
+
     if on_task_click:
         original_handler = ctrl.mouse_handler
+
         def custom_mouse_handler(mouse_event):
-            from prompt_toolkit.mouse_events import MouseEventType
             if mouse_event.event_type == MouseEventType.MOUSE_UP:
-                # Click on first line toggles task panel
-                if mouse_event.position.y == 0:
-                    on_task_click()
-                    return None
+                on_task_click()
+                return None
             if original_handler:
                 return original_handler(mouse_event)
             return NotImplemented
+
         ctrl.mouse_handler = custom_mouse_handler
-    
-    return Window(
+
+    indent = "  "
+
+    def _presence_line(index: int) -> str:
+        lines = _get_presence_lines()
+        try:
+            return str(lines[index] or "")
+        except Exception:
+            return ""
+
+    header_line = Window(
         content=ctrl,
-        height=Dimension(min=2, max=3),
+        height=1,
         dont_extend_height=True,
+        style='class:header',
+    )
+    a1_line = Window(
+        content=FormattedTextControl(lambda: [('class:task-status', indent + (_presence_line(0) or "A: —"))]),
+        height=1,
+        dont_extend_height=True,
+        style='class:header',
+    )
+    a2_line = ConditionalContainer(
+        content=Window(
+            content=FormattedTextControl(lambda: [('class:task-status', indent + _presence_line(1))]),
+            height=1,
+            dont_extend_height=True,
+            style='class:header',
+        ),
+        filter=Condition(lambda: bool(_presence_line(1).strip())),
+    )
+    b1_line = Window(
+        content=FormattedTextControl(lambda: [('class:task-status', indent + (_presence_line(2) or "B: —"))]),
+        height=1,
+        dont_extend_height=True,
+        style='class:header',
+    )
+    b2_line = ConditionalContainer(
+        content=Window(
+            content=FormattedTextControl(lambda: [('class:task-status', indent + _presence_line(3))]),
+            height=1,
+            dont_extend_height=True,
+            style='class:header',
+        ),
+        filter=Condition(lambda: bool(_presence_line(3).strip())),
+    )
+
+    return HSplit(
+        [
+            header_line,
+            a1_line,
+            a2_line,
+            b1_line,
+            b2_line,
+        ],
         style='class:header',
     )
 
@@ -898,6 +1061,7 @@ class CCCCSetupApp:
         self.search_query: str = ''
         self.search_results: List[str] = []
         self.search_index: int = 0
+        self._last_context_tab: Optional[str] = None
 
         # Actor availability cache: {actor_name: (is_available, hint)}
         self.actor_availability: Dict[str, Tuple[bool, str]] = {}
@@ -1319,11 +1483,27 @@ class CCCCSetupApp:
             'status.warning': '#d29922',                # Orange - Warning
             
             # Dialog/Modal components - Better contrast
-            'dialog': 'bg:#161b22',                     # Darker background for depth
-            'dialog.body': 'bg:#0d1117',                # Even darker for content area
+            'dialog': 'bg:#161b22 #c9d1d9',             # Darker background for depth
+            'dialog.body': 'bg:#0d1117 #c9d1d9',        # Even darker for content area
             'dialog.border': '#30363d',                 # Subtle border
             'dialog.frame.label': '#c9d1d9',            # Frame labels - high contrast
-            
+
+            # Frames (input box, context content, etc.)
+            'frame.border': 'bg:#0d1117 #30363d',
+            'frame.label': 'bg:#0d1117 #c9d1d9',
+
+            # Text areas (prompt_toolkit default dialog style is light/gray; override to dark theme)
+            'text-area': 'bg:#0d1117 #c9d1d9',
+            'text-area.prompt': '#58a6ff bold',
+
+            # Dialog-specific overrides (defeat prompt_toolkit defaults like: "dialog.body text-area bg:#cccccc")
+            'dialog.body text-area': 'bg:#161b22 #e6edf3',
+            'dialog.body text-area last-line': 'nounderline',
+            'dialog.body shadow': 'bg:#000000',
+            'dialog.body scrollbar.background': 'bg:#0d1117 #30363d',
+            'dialog.body scrollbar.button': 'bg:#30363d #c9d1d9',
+            'dialog.body scrollbar.arrow': '#8b949e',
+
             # Buttons - Modern flat design with clear states
             'button': 'bg:#21262d #c9d1d9',             # Default: Elevated gray
             'button.focused': 'bg:#238636 #ffffff bold', # Focused: GitHub green
@@ -1386,19 +1566,25 @@ class CCCCSetupApp:
             'task-panel.empty': '#8b949e italic',       # Empty state
             
             # Task Detail Dialog - High contrast for readability
-            'task-detail': 'bg:#1c2128 #e6edf3',        # Light text on dark bg
+            'task-detail': 'bg:#161b22 #e6edf3',        # Elevated panel bg, bright text
             'task-detail.title': '#58a6ff bold',        # Title - blue
             'task-detail.label': '#8b949e',             # Labels - muted
+            'task-detail.hint': 'bg:#0d1117 #c9d1d9',   # Hint bar: deep bg, readable text
             'task-detail.value': '#e6edf3',             # Values - bright white
             'task-detail.step-done': '#3fb950',         # Done steps - green
             'task-detail.step-active': '#ffa657 bold',  # Active step - orange
-            'task-detail.step-pending': '#6e7681',      # Pending steps - gray
+            'task-detail.step-pending': '#8b949e',      # Pending steps - muted (more readable)
+
+            # Scrollbars (for scrollable dialogs/panes)
+            'scrollbar.background': 'bg:#0d1117 #30363d',
+            'scrollbar.button': 'bg:#30363d #c9d1d9',
+            'scrollbar.arrow': '#8b949e',
             
             # Task status in header (before button)
             'task-status': '#79c0ff',                     # Task status info
             
             # Task Button in Header - PROMINENT with background
-            'button.task.bg': 'bg:#238636 #ffffff bold',  # Green background, white text - OBVIOUS BUTTON
+            'button.task.bg': 'bg:#1f6feb #ffffff bold',  # Blue background, white text - primary action
         })
 
     def _load_existing_config(self) -> None:
@@ -2608,11 +2794,13 @@ class CCCCSetupApp:
             style='class:input-frame'
         )
         
-        # Task text function for header (shows progress inline)
-        def get_task_header_text():
+        def get_presence_lines(width: int = 80):
             if self.task_panel:
-                return self.task_panel.get_header_text()
-            return ""
+                try:
+                    return self.task_panel.get_presence_header_lines(width=width, lines_per_agent=2)
+                except Exception:
+                    pass
+            return ["A: —", "", "B: —", ""]
         
         # Task click handler for mouse support
         def on_task_click():
@@ -2620,14 +2808,17 @@ class CCCCSetupApp:
         
         # Rebuild root with clean, full-width layout including task panel
         self.root.content = HSplit([
-            create_runtime_header(task_text_func=get_task_header_text, on_task_click=on_task_click),
+            create_runtime_header(
+                presence_lines_func=get_presence_lines,
+                on_task_click=on_task_click,
+            ),
             self._build_task_panel_container(),  # WBS view when T pressed
-            Window(height=1),
             # Timeline label
             Window(
                 content=FormattedTextControl([('class:section', '💬 Conversation:')]),
                 height=1,
-                dont_extend_height=True
+                dont_extend_height=True,
+                style='class:text-area',
             ),
             # Timeline - simple and direct
             self.timeline,
@@ -3243,17 +3434,15 @@ class CCCCSetupApp:
             self._write_timeline("  /foreman on|off|status|now   Control background scheduler", 'info')
             self._write_timeline("  /aux <prompt>       Run Aux helper", 'info')
             self._write_timeline("  /verbose on|off     Toggle peer summaries", 'info')
-            self._write_timeline("  /task               Show task status", 'info')
-            self._write_timeline("  /sketch             Show project sketch", 'info')
-            self._write_timeline("  /presence           Show team presence", 'info')
             self._write_timeline("  /paste              Paste image from clipboard", 'info')
             self._write_timeline("", 'info')
             self._write_timeline("Keyboard:", 'info')
             self._write_timeline("  Ctrl+T              Focus timeline (enable mouse scroll)", 'info')
-            self._write_timeline("  T                   Toggle task panel", 'info')
-            self._write_timeline("    ↑↓/jk             Select task (when panel open)", 'info')
-            self._write_timeline("    Enter             Show task detail", 'info')
-            self._write_timeline("    Esc               Close task panel", 'info')
+            self._write_timeline("  T                   Open Context panel", 'info')
+            self._write_timeline("    Tab/Shift+Tab      Switch tabs", 'info')
+            self._write_timeline("    ↑↓/PgUp/PgDn       Scroll (or mouse wheel)", 'info')
+            self._write_timeline("    Tasks: ←/→         Prev/next task", 'info')
+            self._write_timeline("    Esc               Close Context panel", 'info')
             self._write_timeline("  Esc                 Return to input from timeline", 'info')
             self._write_timeline("  Ctrl+A/E            Start/end of line", 'info')
             self._write_timeline("  Ctrl+W/U/K          Delete word/start/end", 'info')
@@ -3306,17 +3495,9 @@ class CCCCSetupApp:
         elif text == '/paste':
             self._handle_paste_image()
 
-        # Blueprint task status
-        elif text == '/task' or text.startswith('/task '):
-            self._show_task_status(text)
-
-        # Sketch/vision display
-        elif text == '/sketch':
-            self._show_sketch()
-
-        # Presence display
-        elif text == '/presence':
-            self._show_presence()
+        # Unified context command
+        elif text == '/context' or text.startswith('/context '):
+            self._write_timeline("In TUI, use [T] (Context) instead of /context.", 'info')
 
         # Aux command with prompt
         elif text.startswith('/aux '):
@@ -3444,122 +3625,11 @@ class CCCCSetupApp:
         except Exception as e:
             self._write_timeline(f"Failed to send command: {str(e)[:50]}", 'error')
 
-    def _show_task_status(self, text: str) -> None:
-        """Show task status or task detail.
-        
-        Usage:
-            /task          - Show all tasks summary
-            /task T001     - Show detailed view of T001
-            /task 1        - Show detailed view of first task
-        """
-        try:
-            # Parse command argument
-            parts = text.strip().split(maxsplit=1)
-            task_arg = parts[1].strip().upper() if len(parts) > 1 else None
-            
-            # Use task_panel if available (it has get_task_detail)
-            if self.task_panel:
-                # Show specific task detail as floating dialog
-                if task_arg:
-                    # Support both "T001" and "1" (shorthand)
-                    if task_arg.isdigit():
-                        task_id = f"T{int(task_arg):03d}"
-                    else:
-                        task_id = task_arg
-                    
-                    # Set the task and show unified detail dialog
-                    self.task_panel.set_detail_task_by_id(task_id)
-                    self._show_unified_detail_dialog(initial_tab='tasks')
-                    return
-                
-                # Show summary (no argument)
-                summary = self.task_panel._get_summary()
-                if summary['total_tasks'] == 0:
-                    self._write_timeline("", 'info')
-                    self._write_timeline("No tasks defined.", 'info')
-                    self._write_timeline("Agent creates tasks in context/tasks/T001.yaml", 'info')
-                    return
-                
-                self._write_timeline("", 'info')
-                self._write_timeline("=== Blueprint Tasks ===", 'info')
-                self._write_timeline(f"Progress: {summary['completed_tasks']}/{summary['total_tasks']} tasks │ {summary['completed_steps']}/{summary['total_steps']} steps ({summary['progress_percent']}%)", 'info')
-                if summary['current_task']:
-                    self._write_timeline(f"Current: {summary['current_task']} [{summary['current_step'] or '-'}]", 'info')
-                self._write_timeline("", 'info')
-                
-                # Task list with index for quick access
-                self._write_timeline("Tasks (use /task <ID> for details):", 'info')
-                for i, t in enumerate(summary['tasks'], 1):
-                    if t['status'] == 'done':
-                        icon = '✓'
-                    elif t['status'] == 'active':
-                        icon = '→'
-                    else:
-                        icon = '○'
-                    self._write_timeline(f"  {icon} [{i}] {t['id']} {t['name'][:22]:<22} {t['progress']}", 'info')
-                
-                self._write_timeline("", 'info')
-                self._write_timeline("Tips: T=toggle panel │ /task T001 or /task 1=detail", 'info')
-                return
-            
-            # Fallback: direct TaskManager access
-            from orchestrator.task_manager import TaskManager
-            root = self.home.parent if self.home.name == '.cccc' else self.home
-            manager = TaskManager(root)
-            summary = manager.get_summary()
-
-            if summary['total_tasks'] == 0:
-                self._write_timeline("No tasks defined.", 'info')
-                return
-
-            self._write_timeline("", 'info')
-            self._write_timeline("=== Task Status ===", 'info')
-            for t in summary['tasks']:
-                icon = '✓' if t['status'] == 'done' else '→' if t['status'] == 'active' else '○'
-                self._write_timeline(f"  {icon} {t['id']} {t['name'][:25]:<25} {t['progress']}", 'info')
-
-        except ImportError:
-            self._write_timeline("Task module not available", 'error')
-        except Exception as e:
-            self._write_timeline(f"Failed to load tasks: {str(e)[:50]}", 'error')
-
-    def _show_sketch(self) -> None:
-        """Show sketch/vision via /sketch command."""
-        try:
-            from orchestrator.task_manager import TaskManager
-            root = self.home.parent if self.home.name == '.cccc' else self.home
-            manager = TaskManager(root)
-            output = manager.format_sketch_for_im()
-            self._write_timeline("", 'info')
-            for line in output.split('\n'):
-                self._write_timeline(line, 'info')
-            self._write_timeline("", 'info')
-        except ImportError:
-            self._write_timeline("Task module not available", 'error')
-        except Exception as e:
-            self._write_timeline(f"Failed to load sketch: {str(e)[:50]}", 'error')
-
-    def _show_presence(self) -> None:
-        """Show team presence via /presence command."""
-        try:
-            from orchestrator.task_manager import TaskManager
-            root = self.home.parent if self.home.name == '.cccc' else self.home
-            manager = TaskManager(root)
-            output = manager.format_presence_for_im()
-            self._write_timeline("", 'info')
-            for line in output.split('\n'):
-                self._write_timeline(line, 'info')
-            self._write_timeline("", 'info')
-        except ImportError:
-            self._write_timeline("Task module not available", 'error')
-        except Exception as e:
-            self._write_timeline(f"Failed to load presence: {str(e)[:50]}", 'error')
-
     def _toggle_task_panel(self) -> None:
         """Open Level 2 task detail dialog directly (no Level 1 expansion)."""
         if hasattr(self, 'task_panel') and self.task_panel:
             # Go directly to Level 2 tabbed dialog
-            self._show_unified_detail_dialog(initial_tab='tasks')
+            self._show_unified_detail_dialog()
             try:
                 self.app.invalidate()
             except Exception:
@@ -3591,25 +3661,34 @@ class CCCCSetupApp:
 
     def _close_task_detail_dialog(self) -> None:
         """Close task detail dialog (Level 2) and return to normal view."""
+        try:
+            if self.task_panel and self.task_panel.current_tab:
+                self._last_context_tab = self.task_panel.current_tab
+        except Exception:
+            pass
         self.task_detail_open = False
+        self._detail_get_content = None
+        self._detail_content_area = None
         self._close_dialog()
         try:
             self.app.invalidate()
         except Exception:
             pass
 
-    def _show_unified_detail_dialog(self, initial_tab: str = 'tasks') -> None:
+    def _show_unified_detail_dialog(self, initial_tab: Optional[str] = None) -> None:
         """
         Show unified Level 2 detail dialog with tab bar.
         
         Args:
-            initial_tab: Which tab to show initially ('milestones', 'tasks', 'notes', 'refs')
+            initial_tab: Which tab to show initially ('sketch', 'milestones', 'tasks', 'notes', 'refs')
         """
         if not self.task_panel:
             return
         
-        # Set initial tab
-        self.task_panel.set_tab(initial_tab)
+        # Set initial tab (default: restore last, else Sketch)
+        effective_tab = initial_tab or self._last_context_tab or 'sketch'
+        if not self.task_panel.set_tab(effective_tab):
+            self.task_panel.set_tab('sketch')
 
         # Get terminal size for adaptive sizing
         try:
@@ -3624,7 +3703,10 @@ class CCCCSetupApp:
         def get_content():
             """Get current tab content (called on each refresh)."""
             return self.task_panel.get_detail_view(width=dialog_width - 8)
-        
+
+        # Store content getter for refresh routines (keyboard/mouse actions)
+        self._detail_get_content = get_content
+
         def on_close():
             self._close_task_detail_dialog()
         
@@ -3636,6 +3718,13 @@ class CCCCSetupApp:
                 return f'[{key}] {label}'
             else:
                 return f' {key}  {label} '
+
+        def _focus_detail_content() -> None:
+            try:
+                if getattr(self, "_detail_content_area", None) is not None:
+                    self.app.layout.focus(self._detail_content_area)
+            except Exception:
+                pass
         
         def make_tab_button(tab_name: str, label: str, key: str) -> Button:
             """Create a tab button that switches to the specified tab."""
@@ -3645,6 +3734,7 @@ class CCCCSetupApp:
                 for btn_info in tab_buttons_info:
                     btn_info['button'].text = get_tab_text(btn_info['tab'], btn_info['label'], btn_info['key'])
                 self._refresh_detail_dialog()
+                _focus_detail_content()
             
             button = Button(
                 text=get_tab_text(tab_name, label, key),
@@ -3658,16 +3748,16 @@ class CCCCSetupApp:
         # Track buttons for dynamic updates
         tab_buttons_info = []
 
-        # Create tab buttons - order by importance: Tasks > Sketch > Milestones > Notes > Refs
+        # Create tab buttons - order by conceptual hierarchy: Sketch > Milestones > Tasks > Notes > Refs
         # Note: Presence tab removed - presence is shown in header (Decision: 2024-12 simplification)
-        tasks_btn = make_tab_button('tasks', 'Tasks', 'T')
-        tab_buttons_info.append({'button': tasks_btn, 'tab': 'tasks', 'label': 'Tasks', 'key': 'T'})
-
         sketch_btn = make_tab_button('sketch', 'Sketch', 'K')
         tab_buttons_info.append({'button': sketch_btn, 'tab': 'sketch', 'label': 'Sketch', 'key': 'K'})
 
         milestones_btn = make_tab_button('milestones', 'Milestones', 'M')
         tab_buttons_info.append({'button': milestones_btn, 'tab': 'milestones', 'label': 'Milestones', 'key': 'M'})
+
+        tasks_btn = make_tab_button('tasks', 'Tasks', 'T')
+        tab_buttons_info.append({'button': tasks_btn, 'tab': 'tasks', 'label': 'Tasks', 'key': 'T'})
 
         notes_btn = make_tab_button('notes', 'Notes', 'N')
         tab_buttons_info.append({'button': notes_btn, 'tab': 'notes', 'label': 'Notes', 'key': 'N'})
@@ -3680,29 +3770,108 @@ class CCCCSetupApp:
 
         # Tab bar with clickable buttons - order matches TABS
         tab_bar = VSplit([
-            tasks_btn,
-            Window(width=1),
             sketch_btn,
             Window(width=1),
             milestones_btn,
+            Window(width=1),
+            tasks_btn,
             Window(width=1),
             notes_btn,
             Window(width=1),
             refs_btn,
             Window(width=Dimension(weight=1)),  # Spacer
         ], height=1, padding=1)
-        
-        # Content window with word wrapping enabled
-        content_window = Window(
-            content=FormattedTextControl(lambda: get_content()),
-            style='class:task-detail',
-            wrap_lines=True,  # Enable auto word-wrap
+
+        # Task navigation (mouse-clickable) for Tasks tab
+        def get_task_nav_text() -> str:
+            try:
+                if not self.task_panel or self.task_panel.current_tab != 'tasks':
+                    return ""
+                summary = self.task_panel._get_summary()
+                tasks = summary.get('tasks', [])
+                total = len(tasks)
+                if total <= 0:
+                    return ""
+                current_idx = self.task_panel.detail_task_index + 1
+                current_idx = max(1, min(current_idx, total))
+                return f"Task {current_idx} of {total}"
+            except Exception:
+                return ""
+
+        def on_prev_task() -> None:
+            try:
+                if self.task_panel and self.task_panel.current_tab == 'tasks':
+                    self.task_panel.prev_task_in_detail()
+                    self._refresh_detail_dialog()
+                    _focus_detail_content()
+            except Exception:
+                pass
+
+        def on_next_task() -> None:
+            try:
+                if self.task_panel and self.task_panel.current_tab == 'tasks':
+                    self.task_panel.next_task_in_detail()
+                    self._refresh_detail_dialog()
+                    _focus_detail_content()
+            except Exception:
+                pass
+
+        prev_task_btn = Button(text="◀ Prev", handler=on_prev_task, width=8)
+        next_task_btn = Button(text="Next ▶", handler=on_next_task, width=8)
+        task_nav_text = Window(
+            height=1,
+            content=FormattedTextControl(lambda: get_task_nav_text()),
+            style='class:task-detail.hint',
         )
-        
-        scrollable_content = ScrollablePane(
-            content=content_window,
-            show_scrollbar=True,
+
+        task_nav_bar = ConditionalContainer(
+            content=VSplit(
+                [
+                    prev_task_btn,
+                    Window(width=1),
+                    next_task_btn,
+                    Window(width=2),
+                    task_nav_text,
+                    Window(width=Dimension(weight=1)),
+                ],
+                height=1,
+                padding=1,
+            ),
+            filter=Condition(lambda: bool(self.task_panel and self.task_panel.current_tab == 'tasks')),
         )
+
+        # Content: use a focusable read-only TextArea so keyboard scroll + mouse wheel work.
+        detail_content = TextArea(
+            text=get_content(),
+            read_only=True,
+            focusable=True,
+            focus_on_click=True,
+            wrap_lines=True,
+            scrollbar=True,
+        )
+        self._detail_content_area = detail_content
+
+        # Mouse wheel scroll support (consume wheel events and move cursor to scroll)
+        try:
+            original_handler = detail_content.window.content.mouse_handler
+
+            def content_mouse_handler(mouse_event):
+                buffer = detail_content.buffer
+                if mouse_event.event_type == MouseEventType.SCROLL_DOWN:
+                    for _ in range(3):
+                        buffer.cursor_down()
+                    return None
+                if mouse_event.event_type == MouseEventType.SCROLL_UP:
+                    for _ in range(3):
+                        buffer.cursor_up()
+                    return None
+                if original_handler:
+                    return original_handler(mouse_event)
+                return None
+
+            detail_content.window.content.mouse_handler = content_mouse_handler
+        except Exception:
+            pass
         
         close_btn = Button(text="Close (Esc)", handler=on_close, width=14)
         
@@ -3713,12 +3882,24 @@ class CCCCSetupApp:
         ], height=1, padding=1)
         
         dialog = Dialog(
-            title="📋 Context Details",
+            title="📋 Context",
             body=HSplit([
                 tab_bar,  # Clickable tab buttons at top
-                Window(height=1, char='─'),  # Separator
+                Window(height=1, char='─', style='class:separator'),  # Separator
+                VSplit(
+                    [
+                        Window(
+                            height=1,
+                            content=FormattedTextControl("Tab/Shift+Tab: tabs  │  Scroll: ↑↓/PgUp/PgDn/Mouse wheel  │  Tasks: ←/→"),
+                            style='class:task-detail.hint',
+                        ),
+                    ],
+                    height=1,
+                    padding=1,
+                ),
+                task_nav_bar,
                 Frame(
-                    body=scrollable_content,
+                    body=detail_content,
                     style='class:task-detail',
                 ),
                 Window(height=1),
@@ -3731,6 +3912,10 @@ class CCCCSetupApp:
         
         self.task_detail_open = True
         self._open_dialog(dialog)
+        try:
+            self.app.layout.focus(detail_content)
+        except Exception:
+            pass
 
     def _refresh_detail_dialog(self) -> None:
         """Refresh the detail dialog content and tab button states."""
@@ -3743,6 +3928,16 @@ class CCCCSetupApp:
                         btn_info['button'].text = f"[{btn_info['key']}] {btn_info['label']}"
                     else:
                         btn_info['button'].text = f" {btn_info['key']}  {btn_info['label']} "
+
+            # Refresh content text (tab/task changed)
+            if getattr(self, "_detail_content_area", None) is not None and getattr(self, "_detail_get_content", None) is not None:
+                try:
+                    new_text = self._detail_get_content()
+                    if isinstance(new_text, str) and new_text != self._detail_content_area.text:
+                        self._detail_content_area.text = new_text
+                        self._detail_content_area.buffer.cursor_position = 0
+                except Exception:
+                    pass
             self.app.invalidate()
         except Exception:
             pass

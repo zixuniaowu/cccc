@@ -265,6 +265,10 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "  - context/context.yaml: milestones (project phases), notes (lessons), references",
         "  - context/tasks/T###.yaml: active task definitions with steps",
         "  - Use milestones to track project journey; use tasks for concrete work items",
+        "- Ownership (CCCC policy)",
+        "  - PeerA creates/deletes milestones and tasks; maintains the tree.",
+        "  - PeerB does NOT create/delete milestones/tasks; flag gaps to PeerA.",
+        "  - Both peers update vision/sketch/milestone/task content.",
         "- Task system - structured task tracking for complex work",
         "  - Location: context/tasks/T###.yaml",
         "  - Use for: multi-step goals (>2 files OR >50 lines); work spanning multiple handoffs; user-requested planning",
@@ -283,7 +287,7 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "- One-round loop (follow in order)",
         "  - Align before you act; keep one decidable next step per message (<=30 minutes).",
         "  - 0 Check context: scan context/context.yaml for milestones and context/tasks/T*.yaml for active tasks.",
-        "  - 1 If no active milestone, create one in context/context.yaml first.",
+        "  - 1 If no active milestone, create/activate one in context/context.yaml first.",
         "  - 2 Pick exactly one smallest decisional probe.",
         "  - 3 Build; keep changes small and reversible.",
         "  - 4 Validate (command + 1-3 stable lines; cite exact paths/line ranges).",
@@ -318,6 +322,13 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
             "- Communication channel (single-peer)",
             "  - Use **to_user.md** for all output - progress, questions, and results.",
             "  - Include Next markers to declare your next step and trigger keepalive.",
+        ]
+    # PeerB should not create milestones/tasks; rewrite step 1 accordingly
+    if (not is_peera) and (not single_peer_mode):
+        ch3 = [
+            ("  - 1 If no active milestone, ask PeerA to create/activate one in context/context.yaml."
+             if line.startswith("  - 1 If no active milestone") else line)
+            for line in ch3
         ]
     # Aux section reflects current binding (actor/invoke/cwd/rate)
     from pathlib import Path as _P
@@ -367,18 +378,20 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         "",
     ]
 
-    # Role-specific task creation rules
+    # Role-specific structure creation rules (milestones + tasks)
     if single_peer_mode:
         ch3_blueprint += [
-            "  TASK CREATION: You create and manage all tasks",
+            "  MILESTONE/TASK CREATION: You create and manage milestones and tasks",
+            "    • Milestones: create/activate in context/context.yaml (or MCP: create_milestone)",
             "    • Create T###.yaml BEFORE complex work (>=3 files OR >50 lines OR multi-step)",
             "    • Quick work: execute directly, create task mid-work if complexity grows",
             "",
         ]
     elif is_peera:
         ch3_blueprint += [
-            "  TASK CREATION [PeerA responsibility]:",
-            "    • You CREATE T###.yaml files (PeerB updates existing, cannot create new)",
+            "  MILESTONE/TASK CREATION [PeerA responsibility]:",
+            "    • You CREATE milestones and T###.yaml files (PeerB updates existing, cannot create new)",
+            "    • Milestones: create/activate in context/context.yaml (or MCP: create_milestone)",
             "    • Threshold: >=3 files OR >50 lines OR multi-step work",
             "    • Create BEFORE coding to prevent ID conflicts",
             "    • Quick work: execute directly, create task mid-work if complexity grows",
@@ -386,23 +399,33 @@ def _write_rules_for_peer(home: Path, peer: str, *, im_enabled: bool, aux_mode: 
         ]
     else:
         ch3_blueprint += [
-            "  TASK CREATION [PeerB role]:",
-            "    • Do NOT create T###.yaml (PeerA creates to avoid ID conflicts)",
+            "  MILESTONE/TASK CREATION [PeerB role]:",
+            "    • Do NOT create milestones or T###.yaml (PeerA creates to avoid duplicates/ID conflicts)",
             "    • You CAN update existing tasks: steps, status, sub-steps",
-            "    • If complex work needs task but none exists, ask PeerA to create",
+            "    • You CAN update existing milestones/tasks content (status/desc/outcomes/steps) when aligned",
+            "    • If an active milestone/task is missing, ask PeerA to create/activate it",
             "",
         ]
 
     # Operation methods - simplified, no verbose schemas
+    ch3_blueprint += ["  HOW TO OPERATE:", "", "    MCP Tools (preferred when available):"]
     ch3_blueprint += [
-        "  HOW TO OPERATE:",
-        "",
-        "    MCP Tools (preferred when available):",
-        "      Query:     get_context, get_presence, list_tasks, get_task",
+        "      Read:      get_context, get_presence, list_tasks",
         "      Blueprint: update_vision, update_sketch",
-        "      Progress:  create_task, update_task, add_milestone, update_milestone",
-        "      Status:    update_my_status (call when starting/finishing task work)",
-        "      Knowledge: add_note, add_reference",
+    ]
+    if single_peer_mode or is_peera:
+        ch3_blueprint += [
+            "      Structure: create_milestone, create_task",
+            "      Progress:  update_milestone, update_task, commit_updates",
+        ]
+    else:
+        ch3_blueprint += [
+            "      Progress:  update_milestone, update_task, commit_updates",
+            "      Create:    (not allowed) ask PeerA to create milestones/tasks",
+        ]
+    ch3_blueprint += [
+        "      Status:    update_my_status, clear_status",
+        "      Knowledge: add_note, update_note, add_reference, update_reference",
         "",
         "    Direct YAML (fallback or when MCP unavailable):",
         "      Edit context/context.yaml for vision, sketch, milestones, notes, refs",
@@ -851,8 +874,60 @@ def _presence_sketch_section(home: Path) -> str:
         sketch_str = str(sketch).strip()
         if sketch_str:
             lines.append("--- Execution Blueprint (Sketch) ---")
+            lines.append("NOTE: Sketch is a static blueprint only (no TODO/progress/tasks here).")
             lines.append(sketch_str)
             lines.append("")
+
+    # Now (execution status summary): active milestone + active tasks
+    try:
+        milestones_raw = context.get('milestones', [])
+        milestones = milestones_raw if isinstance(milestones_raw, list) else []
+        active_ms: Optional[Dict[str, Any]] = None
+        for m in milestones:
+            if isinstance(m, dict) and str(m.get('status', '')).lower() == 'active':
+                active_ms = m
+                break
+
+        tasks_dir = project_root / "context" / "tasks"
+        active_tasks: list[str] = []
+        if tasks_dir.exists():
+            for fp in sorted(tasks_dir.glob("T*.yaml")):
+                try:
+                    tdata = _read_yaml_or_json(fp)
+                except Exception:
+                    continue
+                if not isinstance(tdata, dict):
+                    continue
+                st = str(tdata.get('status', '')).lower()
+                if st == 'active':
+                    tid = str(tdata.get('id') or fp.stem).strip()
+                    name = str(tdata.get('name') or '').strip()
+                    if name:
+                        if len(name) > 40:
+                            name = name[:37] + "..."
+                        active_tasks.append(f"{tid} {name}".strip())
+                    else:
+                        active_tasks.append(tid)
+
+        if active_ms or active_tasks or milestones or tasks_dir.exists():
+            lines.append("--- Now (Execution Status) ---")
+            if active_ms:
+                ms_id = str(active_ms.get('id') or '').strip()
+                ms_name = str(active_ms.get('name') or '').strip()
+                ms_line = f"{ms_id} {ms_name}".strip() or ms_id or ms_name or "(unnamed)"
+                lines.append(f"Active Milestone: {ms_line}")
+            else:
+                lines.append("Active Milestone: (none)")
+            if active_tasks:
+                shown = active_tasks[:5]
+                lines.append("Active Tasks: " + "; ".join(shown))
+                if len(active_tasks) > 5:
+                    lines.append(f"... and {len(active_tasks)-5} more")
+            else:
+                lines.append("Active Tasks: (none)")
+            lines.append("")
+    except Exception:
+        pass
 
     # Presence (agent status)
     presence_path = project_root / "context" / "presence.yaml"

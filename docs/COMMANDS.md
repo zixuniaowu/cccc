@@ -19,7 +19,6 @@ All commands are accessible via Tab completion. Type `/` and press Tab to explor
 | `/foreman on\|off\|status\|now` | Control Foreman (if enabled) | `/foreman status` |
 | `/aux <prompt>` | Run Aux helper once | `/aux Run full test suite` |
 | `/verbose on\|off` | Toggle peer summaries + Foreman CC | `/verbose off` |
-| `/task [ID]` | Show task status or detail | `/task T001` |
 
 ## Natural Language Routing
 
@@ -45,10 +44,10 @@ both: Let's discuss the roadmap for next quarter
 | | Resume delivery | `/resume` | `/resume` | `!resume` | `!resume` |
 | | Restart peer | `/restart` | `/restart` | `!restart` | `!restart` |
 | | Quit/Exit | `/quit` | — | — | — |
+| **Context** | Context snapshot (ccontext) | — | `/context` | `!context` | `!context` |
 | **Operations** | Foreman control | `/foreman` | `/foreman` | `!foreman` | `!foreman` |
 | | Run Aux helper | `/aux` | `/aux` | `!aux` | `!aux` |
 | | Toggle verbose | `/verbose` | `/verbose` | `!verbose` | `!verbose` |
-| | Task status | `/task` | — | — | — |
 | **Subscription** | Get chat ID | — | `/whoami` | — | — |
 | | Subscribe | — | `/subscribe` | `!subscribe` | `!subscribe` |
 | | Unsubscribe | — | `/unsubscribe` | `!unsubscribe` | `!unsubscribe` |
@@ -83,6 +82,7 @@ CCCC TUI includes rich keyboard support for efficiency.
 ### Telegram Commands (slash prefix)
 
 - `/a` `/b` `/both` — Routing aliases
+- `/context [now|sketch|milestones|tasks|notes|refs|presence]` — Context snapshot (ccontext)
 - `/pa` `/pb` `/pboth` — Passthrough aliases (group-friendly)
 - `/aux <prompt>` — Run Aux helper once
 - `/foreman on|off|status|now` — Control Foreman scheduler
@@ -96,6 +96,7 @@ CCCC TUI includes rich keyboard support for efficiency.
 ### Slack / Discord Commands (exclamation prefix)
 
 - `!aux <prompt>` — Run Aux helper once
+- `!context [now|sketch|milestones|tasks|notes|refs|presence]` — Context snapshot (ccontext)
 - `!foreman on|off|status|now` — Control Foreman scheduler
 - `!restart peera|peerb|both` — Restart peer CLI
 - `!pause` `!resume` — Pause/resume handoff delivery

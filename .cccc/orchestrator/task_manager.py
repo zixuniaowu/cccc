@@ -622,25 +622,25 @@ class TaskManager:
 
     def get_notes(self) -> List[Dict[str, Any]]:
         """
-        Get notes sorted by score (descending).
+        Get notes sorted by ttl (descending).
         
         Returns:
             List of note dicts
         """
         context = self.load_context()
         notes = context.get('notes', [])
-        return sorted(notes, key=lambda n: n.get('score', 0), reverse=True)
+        return sorted(notes, key=lambda n: n.get('ttl', n.get('score', 0)), reverse=True)
 
     def get_references(self) -> List[Dict[str, Any]]:
         """
-        Get references sorted by score (descending).
+        Get references sorted by ttl (descending).
 
         Returns:
             List of reference dicts
         """
         context = self.load_context()
         refs = context.get('references', [])
-        return sorted(refs, key=lambda r: r.get('score', 0), reverse=True)
+        return sorted(refs, key=lambda r: r.get('ttl', r.get('score', 0)), reverse=True)
 
     # =========================================================================
     # Vision/Sketch Operations
@@ -806,7 +806,7 @@ class TaskManager:
         )
 
     # =========================================================================
-    # IM Formatters (for IM commands like /task, /sketch, /presence)
+    # IM Formatters (for /context subcommands)
     # =========================================================================
 
     def format_sketch_for_im(self) -> str:

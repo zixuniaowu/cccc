@@ -687,45 +687,16 @@ def main():
                 _append_log(f"[cmd] status ch={ch}")
                 return
 
-            # Task status command: !task [T001|1]
-            if re.match(r'^!task\b', command_text, re.I):
+            # Unified context command: !context [tasks|milestones|sketch|presence] [...]
+            if re.match(r'^!context\b', command_text, re.I):
                 try:
-                    from common.status_format import parse_task_command
-                    task_id = parse_task_command(command_text.replace('!', '/'))  # Convert !task to /task for parser
-                    if format_task_for_im:
-                        task_text = format_task_for_im(HOME / "state", task_id)
-                    else:
-                        task_text = "Task module not available"
+                    from common.status_format import parse_context_command, format_context_for_im
+                    sub, arg = parse_context_command(command_text)
+                    ctx_text = format_context_for_im(HOME / "state", sub, arg)
                 except Exception as e:
-                    task_text = f"Error: {str(e)[:100]}"
-                _send_reply(task_text)
-                _append_log(f"[cmd] task ch={ch}")
-                return
-
-            # Sketch command: !sketch
-            if re.match(r'^!sketch\b', command_text, re.I):
-                try:
-                    from orchestrator.task_manager import TaskManager
-                    root = HOME.parent if HOME.name == '.cccc' else HOME
-                    manager = TaskManager(root)
-                    sketch_text = manager.format_sketch_for_im()
-                except Exception as e:
-                    sketch_text = f"Error: {str(e)[:100]}"
-                _send_reply(sketch_text)
-                _append_log(f"[cmd] sketch ch={ch}")
-                return
-
-            # Presence command: !presence
-            if re.match(r'^!presence\b', command_text, re.I):
-                try:
-                    from orchestrator.task_manager import TaskManager
-                    root = HOME.parent if HOME.name == '.cccc' else HOME
-                    manager = TaskManager(root)
-                    presence_text = manager.format_presence_for_im()
-                except Exception as e:
-                    presence_text = f"Error: {str(e)[:100]}"
-                _send_reply(presence_text)
-                _append_log(f"[cmd] presence ch={ch}")
+                    ctx_text = f"Error: {str(e)[:100]}"
+                _send_reply(ctx_text)
+                _append_log(f"[cmd] context ch={ch}")
                 return
 
             if re.match(r'^!aux\b', command_text, re.I):

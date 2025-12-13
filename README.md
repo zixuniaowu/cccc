@@ -51,8 +51,10 @@ Only tested patches, stable logs, and commits count as "done". Chat alone never 
 **🔗 Multi-Platform Bridges**
 Optional Telegram/Slack/Discord/WeCom integration. Bring the work to where your team already is.
 
-**📋 Blueprint Task System**
-Per-task `T###.yaml` files in `context/tasks/` with goal/steps/status. Visual task panel in TUI. Everyone sees the same structured truth.
+**🧭 ccontext Context System**
+Portable, file-first shared state in `context/` (ccontext-compatible): `context/context.yaml` (vision/sketch/milestones/notes/refs) + `context/tasks/` (tasks/steps) + runtime `context/presence.yaml`. This replaces the legacy POR/SubPOR mechanism.
+Recommended: install and configure ccontext MCP for tool-driven context updates: https://github.com/ChesterRa/ccontext
+No MCP? CCCC still works with the same ccontext-compatible `context/` mechanism (maintained by peers).
 
 </td>
 </tr>
@@ -75,7 +77,7 @@ Per-task `T###.yaml` files in `context/tasks/` with goal/steps/status. Visual ta
 - 🤝 **Multi-Peer Synergy** — One builds, the other challenges; better options emerge; errors die faster
 - ✅ **Evidence-First Loop** — Only tested/logged/committed results count as progress
 - 🖥️ **Interactive TUI** — Zero-config setup, real-time monitoring, task panel, command completion built-in
-- 📋 **Blueprint Tasks** — Structured `context/tasks/T###.yaml` files with goal/steps/status; visual task panel in TUI (press T or click Details)
+- 🧭 **Context Details (ccontext)** — Shared `context/` with vision/sketch/milestones/tasks/notes/refs + runtime presence; open in TUI with `T`
 - 🔔 **Low-Noise Cadence** — Built-in nudge/self-check trims chatter; panel shows what matters
 - 🔍 **Auditable Decisions** — Recent choices & pivots captured; review and roll forward confidently
 
@@ -97,7 +99,7 @@ CCCC features a modern, keyboard-driven TUI with zero-config setup:
 
 - **Setup Panel** — Interactive wizard (↑↓ + Enter), no YAML editing needed
 - **Runtime Panel** — Real-time Timeline + Status, see all peer messages at a glance
-- **Task Panel** — Press `T` or click `[▼ Details]` to view all tasks with status; Enter for task detail
+- **Context Details** — Press `T` to view Sketch/Milestones/Tasks/Notes/Refs (ccontext)
 - **Tab Completion** — Type `/` and press Tab to explore all commands
 - **Command History** — Up/Down arrows + Ctrl+R reverse search
 - **Image Paste** — Use `/paste` to paste images from clipboard (supports macOS/Linux/Windows/WSL2)
@@ -221,6 +223,8 @@ cccc doctor   # Fix any issues before proceeding
 cccc run      # TUI opens with interactive Setup Panel
 ```
 
+Optional (recommended): install and configure ccontext MCP for tool-driven context updates (https://github.com/ChesterRa/ccontext). Without MCP, CCCC still runs on the same ccontext-compatible `context/` files maintained by peers.
+
 **What happens on launch:**
 - tmux opens with 4 panes: TUI (top-left), log (bottom-left), PeerA (top-right), PeerB (bottom-right)
 - Setup Panel guides you to select CLI actors (↑↓ + Enter)
@@ -232,7 +236,7 @@ cccc run      # TUI opens with interactive Setup Panel
 
 ## Commands Reference
 
-All commands support Tab completion. Type `/` and press Tab to explore.
+Most commands support Tab completion. Type `/` and press Tab to explore.
 
 | Command | Description | Example |
 |---------|-------------|---------|
@@ -247,8 +251,11 @@ All commands support Tab completion. Type `/` and press Tab to explore.
 | `/foreman on\|off\|status\|now` | Control Foreman (if enabled) | `/foreman status` |
 | `/aux <prompt>` | Run Aux helper once | `/aux Run full test suite` |
 | `/verbose on\|off` | Toggle peer summaries + Foreman CC | `/verbose off` |
-| `/task [ID]` | Show task status or detail | `/task T001` |
 | `/paste` | Paste image from clipboard | `/paste` |
+
+**IM bridges** also support a unified context command:
+- Telegram: `/context [now|sketch|milestones|tasks|notes|refs|presence]`
+- Slack/Discord: `!context [now|sketch|milestones|tasks|notes|refs|presence]`
 
 ### Natural Language Routing
 
@@ -277,7 +284,7 @@ both: Let's discuss the roadmap for next quarter
 ### Key Concepts
 
 - **Mailbox Protocol** — Peers exchange `<TO_USER>` and `<TO_PEER>` messages with evidence refs
-- **Blueprint Tasks** — Per-task `T###.yaml` files in `context/tasks/` with goal, steps, acceptance criteria, and status tracking
+- **ccontext Context** — `context/context.yaml` (vision/sketch/milestones/notes/refs) + `context/tasks/T###.yaml` (tasks/steps) + runtime `context/presence.yaml` (replaces POR/SubPOR)
 - **Evidence Types** — Patch diffs, test logs, benchmark results, commit hashes
 - **Single-Peer Mode** — Set PeerB to `none` for simplified autonomous operation with one agent
 
@@ -395,18 +402,24 @@ both: Add a short section to README about team chat tips
   mailbox/                # Message exchange between peers
   state/                  # Runtime state, logs, ledger
 context/                  # Execution tracking (ccontext compatible)
-  context.yaml            # Milestones, notes, references
+  context.yaml            # Vision, sketch, milestones, notes, references
+  presence.yaml           # Runtime presence (gitignored)
   tasks/                  # Task definitions
     T001.yaml             # Task: goal, steps, acceptance, status
 PROJECT.md                # Your project brief (injected into system prompts)
 FOREMAN_TASK.md           # Foreman tasks (if using Foreman)
 ```
 
-### context/context.yaml (Execution Status)
+### context/context.yaml (ccontext)
 
-Tracks project execution status with milestones:
+Shared context for peers (ccontext-compatible). Tracks vision/sketch, milestones, and knowledge:
 
 ```yaml
+vision: "Ship a reliable multi-agent workflow"
+sketch: |
+  Static blueprint: architecture, constraints, strategy.
+  (Do not use sketch as a TODO list or status board.)
+
 milestones:
   - id: M1
     name: Phase 1 - Core Implementation
@@ -423,13 +436,13 @@ milestones:
 notes:
   - id: N001
     content: "Always run tests before committing"
-    score: 50  # Decays over time
+    ttl: 30  # Typical: 10/30/100 (short/normal/long)
 
 references:
   - id: R001
     url: src/core/handler.py
     note: Main request handler
-    score: 40
+    ttl: 30
 ```
 
 ### Task Structure

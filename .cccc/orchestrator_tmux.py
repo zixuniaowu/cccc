@@ -1625,7 +1625,11 @@ def main(home: Path, session_name: Optional[str] = None):
     self_check_text = str(delivery_cfg.get("self_check_text") or "").strip()
     if not self_check_text:
         # Minimal inline fallback only if config is completely empty
-        self_check_text = "[Self-check] Off-course? Blocked? Task status accurate? Answer briefly."
+        self_check_text = (
+            "[Self-check] Off-course or blocked? Are milestone/task/step updates accurate? "
+            "PeerA: check missing/obsolete milestones/tasks; PeerB: flag gaps. "
+            "Keep sketch static (no TODO/progress). Answer briefly."
+        )
 
     auto_reset_interval_cfg = conversation_reset_interval
     reset_interval_effective = auto_reset_interval_cfg if auto_reset_interval_cfg > 0 else 0

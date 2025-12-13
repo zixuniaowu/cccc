@@ -61,7 +61,7 @@
 
 ### 证据驱动工作流
 
-- **Blueprint Task系统**：结构化任务文件（`context/tasks/T###.yaml`）包含目标、步骤、验收标准和状态，TUI中可视化任务面板
+- **ccontext Context系统**：统一的 `context/` 目录（ccontext兼容）：`context/context.yaml`（vision/sketch/里程碑/notes/refs）+ `context/tasks/`（任务/步骤）+ `context/presence.yaml`（运行时presence）。替代旧 por/subpor 机制。推荐提前安装并配置 ccontext MCP：https://github.com/ChesterRa/ccontext 。即使未安装，CCCC 也会使用同一套兼容的 `context/` 机制运行（由 Peer 自动维护）
 - **小步提交**：每个patch不超过150行，可review、可回滚
 - **审计日志**：ledger.jsonl记录所有事件，出问题能追溯
 
@@ -93,6 +93,7 @@
 
 **Telegram 命令**（斜杠前缀）：
 - `/a` `/b` `/both` — 路由别名
+- `/context [now|sketch|milestones|tasks|notes|refs|presence]` — 查看共享上下文（ccontext）
 - `/pa` `/pb` `/pboth` — 直通别名（群组友好）
 - `/aux <提示>` — 调用Aux执行一次
 - `/foreman on|off|status|now` — 控制Foreman
@@ -105,6 +106,7 @@
 
 **Slack / Discord 命令**（叹号前缀）：
 - `!aux <提示>` — 调用Aux执行一次
+- `!context [now|sketch|milestones|tasks|notes|refs|presence]` — 查看共享上下文（ccontext）
 - `!foreman on|off|status|now` — 控制Foreman
 - `!restart peera|peerb|both` — 重启Peer CLI
 - `!pause` `!resume` — 暂停/恢复投递
@@ -249,6 +251,8 @@ cccc doctor
 cccc run
 ```
 
+可选（推荐）：提前安装并配置 ccontext MCP（https://github.com/ChesterRa/ccontext）以使用工具化的 context 更新体验；未安装也没关系，CCCC 仍会使用兼容的 `context/` 文件机制运行（由 Peer 自动维护）。
+
 **启动后会看到**：
 - tmux打开4窗格布局：左上TUI、左下日志、右上PeerA、右下PeerB
 - 首次运行显示Setup面板，用↑↓选择CLI绑定到各角色
@@ -275,7 +279,6 @@ cccc run
 | `/foreman on\|off\|status\|now` | 控制Foreman（如已启用） |
 | `/aux <提示>` | 调用Aux执行一次性任务 |
 | `/verbose on\|off` | 开关Peer摘要 + Foreman抄送 |
-| `/task [ID]` | 显示任务状态或详情 |
 
 **自然语言路由**（不用斜杠也行）：
 ```
@@ -298,10 +301,10 @@ both: 我们来规划下一个milestone
 | | 恢复投递 | `/resume` | `/resume` | `!resume` | `!resume` |
 | | 重启Peer | `/restart` | `/restart` | `!restart` | `!restart` |
 | | 退出 | `/quit` | — | — | — |
+| **上下文** | 查看context（ccontext） | — | `/context` | `!context` | `!context` |
 | **操作** | Foreman控制 | `/foreman` | `/foreman` | `!foreman` | `!foreman` |
 | | 运行Aux | `/aux` | `/aux` | `!aux` | `!aux` |
 | | 详细模式 | `/verbose` | `/verbose` | `!verbose` | `!verbose` |
-| | 任务状态 | `/task` | — | — | — |
 | **订阅** | 获取chat ID | — | `/whoami` | — | — |
 | | 订阅 | — | `/subscribe` | `!subscribe` | `!subscribe` |
 | | 取消订阅 | — | `/unsubscribe` | `!unsubscribe` | `!unsubscribe` |
@@ -368,7 +371,8 @@ both: 我们来规划下一个milestone
   rules/                        # 系统提示词
 
 context/                        # 执行追踪（ccontext兼容）
-  context.yaml                  # 里程碑、笔记、引用
+  context.yaml                  # vision/sketch/里程碑/笔记/引用
+  presence.yaml                 # 运行时presence（gitignore）
   tasks/                        # 任务文件
     T001.yaml                   # 任务定义：目标、步骤、验收、状态
 
@@ -376,11 +380,15 @@ PROJECT.md                      # 项目简介（会织入系统提示词）
 FOREMAN_TASK.md                 # Foreman任务定义
 ```
 
-### context/context.yaml（执行状态）
+### context/context.yaml（ccontext）
 
-通过里程碑追踪项目执行状态：
+共享上下文（ccontext兼容），用于记录 vision/sketch、里程碑与知识：
 
 ```yaml
+vision: "交付一个可靠的双Peer编排工作流"
+sketch: |
+  静态蓝图：架构、约束、策略（不要把它当作待办/进度看板）。
+
 milestones:
   - id: M1
     name: 阶段1 - 核心实现
@@ -397,13 +405,13 @@ milestones:
 notes:
   - id: N001
     content: "提交前务必运行测试"
-    score: 50  # 随时间衰减
+    ttl: 30  # 典型：10/30/100（短/中/长）
 
 references:
   - id: R001
     url: src/core/handler.py
     note: 主请求处理器
-    score: 40
+    ttl: 30
 ```
 
 ### 任务结构
@@ -427,6 +435,7 @@ steps:
 ```
 
 Agent在消息中发送进度标记（如 `progress: T001.S1 done`），编排器自动更新任务文件。
+Peer可直接编辑 `context/tasks/T###.yaml`，或在安装 ccontext MCP 后通过工具更新任务与里程碑。
 
 ---
 
@@ -480,7 +489,7 @@ cccc reset --archive
 - Foreman定期检查
 - 自检提醒
 - Keepalive保活
-- Blueprint Task跟踪
+- ccontext Context跟踪
 
 ---
 

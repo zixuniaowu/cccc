@@ -1278,48 +1278,18 @@ def main():
                 _append_log(outlog, f"[cmd] status chat={chat_id}")
                 continue
 
-            # Task status command
-            if is_cmd(text, 'task'):
+            # Unified context command
+            if is_cmd(text, 'context'):
                 try:
-                    from common.status_format import format_task_for_im, parse_task_command
-                    task_id = parse_task_command(text)
-                    task_text = format_task_for_im(HOME / "state", task_id)
+                    from common.status_format import format_context_for_im, parse_context_command
+                    sub, arg = parse_context_command(text)
+                    ctx_text = format_context_for_im(HOME / "state", sub, arg)
                 except ImportError:
-                    task_text = "Task module not available"
+                    ctx_text = "Context module not available"
                 except Exception as e:
-                    task_text = f"Error: {str(e)[:100]}"
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': task_text}, timeout=15)
-                _append_log(outlog, f"[cmd] task chat={chat_id}")
-                continue
-
-            # Sketch command
-            if is_cmd(text, 'sketch'):
-                try:
-                    from orchestrator.task_manager import TaskManager
-                    root = HOME.parent if HOME.name == '.cccc' else HOME
-                    manager = TaskManager(root)
-                    sketch_text = manager.format_sketch_for_im()
-                except ImportError:
-                    sketch_text = "Task module not available"
-                except Exception as e:
-                    sketch_text = f"Error: {str(e)[:100]}"
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': sketch_text}, timeout=15)
-                _append_log(outlog, f"[cmd] sketch chat={chat_id}")
-                continue
-
-            # Presence command
-            if is_cmd(text, 'presence'):
-                try:
-                    from orchestrator.task_manager import TaskManager
-                    root = HOME.parent if HOME.name == '.cccc' else HOME
-                    manager = TaskManager(root)
-                    presence_text = manager.format_presence_for_im()
-                except ImportError:
-                    presence_text = "Task module not available"
-                except Exception as e:
-                    presence_text = f"Error: {str(e)[:100]}"
-                tg_api('sendMessage', {'chat_id': chat_id, 'text': presence_text}, timeout=15)
-                _append_log(outlog, f"[cmd] presence chat={chat_id}")
+                    ctx_text = f"Error: {str(e)[:100]}"
+                tg_api('sendMessage', {'chat_id': chat_id, 'text': ctx_text}, timeout=15)
+                _append_log(outlog, f"[cmd] context chat={chat_id}")
                 continue
 
             # Enforce mention in group if configured

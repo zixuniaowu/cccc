@@ -5,6 +5,7 @@ Shared between Telegram, Slack, and Discord bridges.
 """
 from __future__ import annotations
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -44,8 +45,13 @@ def format_help_for_im(prefix: str = '/') -> str:
         "",
         "\u25b8 Info",
         f"  {p}status \u2192 system status",
-        f"  {p}task \u2192 all tasks with steps",
-        f"  {p}task T001 \u2192 detail for T001",
+        f"  {p}context \u2192 context overview (now)",
+        f"  {p}context tasks [T001|1] \u2192 tasks summary/detail",
+        f"  {p}context milestones \u2192 milestones timeline",
+        f"  {p}context sketch \u2192 vision + sketch",
+        f"  {p}context notes \u2192 top notes",
+        f"  {p}context refs \u2192 top references",
+        f"  {p}context presence \u2192 team presence",
         f"  {p}verbose [on|off] \u2192 toggle summaries",
         "",
         "\u25b8 Account",
@@ -251,38 +257,220 @@ def format_task_for_im(state_dir: Path, task_id: Optional[str] = None) -> str:
         return f"\u2501\u2501\u2501 Tasks \u2501\u2501\u2501\nError: {str(e)[:50]}"
 
 
-def parse_task_command(text: str) -> Optional[str]:
+def parse_context_command(text: str) -> tuple[Optional[str], Optional[str]]:
     """
-    Parse /task command to extract task_id.
-    
+    Parse /context or !context commands.
+
     Examples:
-        /task -> None
-        /task T001 -> T001
-        /task 1 -> T001
-        
-    Returns:
-        task_id or None for summary view
+        /context -> (None, None)
+        /context tasks -> ("tasks", None)
+        /context tasks T001 -> ("tasks", "T001")
+        !context milestones -> ("milestones", None)
     """
-    import re
     text = text.strip()
-    
-    # Match /task or !task followed by optional ID
-    match = re.match(r'^[/!]task(?:\s+(.+))?$', text, re.I)
+    match = re.match(r'^[/!]context(?:\s+(.+))?$', text, re.I)
     if not match:
-        return None
-    
-    arg = match.group(1)
-    if not arg:
-        return None
-    
-    arg = arg.strip()
-    
-    # Already a task ID like T001, T002
-    if re.match(r'^T\d+$', arg, re.I):
-        return arg.upper()
-    
-    # Just a number like 1, 2
-    if re.match(r'^\d+$', arg):
-        return f"T{arg.zfill(3)}"
-    
-    return arg  # Return as-is, let TaskPanel handle validation
+        return None, None
+    rest = match.group(1)
+    if not rest:
+        return None, None
+    parts = rest.strip().split(None, 1)
+    sub = parts[0].lower() if parts else None
+    arg = parts[1].strip() if len(parts) > 1 else None
+    return sub, arg
+
+
+def format_context_for_im(state_dir: Path, sub: Optional[str] = None, arg: Optional[str] = None) -> str:
+    """
+    Unified context formatter for IM.
+
+    Subcommands:
+      - tasks [T001|1]
+      - milestones
+      - sketch
+      - presence
+      - (none): now summary
+    """
+    home_dir = state_dir.parent  # .cccc/state -> .cccc
+    root_dir = home_dir.parent   # .cccc -> project root
+
+    try:
+        from orchestrator.task_manager import TaskManager
+        tm = TaskManager(root_dir)
+    except Exception:
+        tm = None
+
+    def _short(s: Any, max_len: int = 180) -> str:
+        t = " ".join(str(s or "").split())
+        if not t:
+            return ""
+        return (t[: max_len - 1] + "…") if len(t) > max_len else t
+
+    if tm and hasattr(tm, "is_ready") and not tm.is_ready():
+        return "\n".join([
+            "━━━ Context ━━━",
+            "Context not initialized (missing context/).",
+            "Create context/context.yaml and context/tasks/ to enable /context.",
+        ])
+
+    if sub in (None, "", "now"):
+        lines = ["━━━ Context ━━━"]
+        if tm:
+            try:
+                vision = tm.get_vision()
+            except Exception:
+                vision = None
+            if vision:
+                lines.append(f"Vision: {_short(vision, 140)}")
+
+            try:
+                ms = tm.get_active_milestone()
+            except Exception:
+                ms = None
+            if ms:
+                mid = str(ms.get("id", "") or "").strip()
+                name = str(ms.get("name", "") or "").strip()
+                ms_line = f"{mid}: {name}".strip(": ").strip() if (mid or name) else ""
+                lines.append(f"Milestone: → {ms_line}" if ms_line else "Milestone: → (active)")
+            else:
+                lines.append("Milestone: (none)")
+            try:
+                summary = tm.get_summary()
+                active = []
+                for t in (summary.get("tasks") or []):
+                    if str(t.get("status", "")).lower() == "active":
+                        active.append(t)
+                if active:
+                    lines.append(f"Active tasks: {len(active)}")
+                    for t in active[:4]:
+                        tid = str(t.get("id", "") or "").strip()
+                        name = str(t.get("name", "") or "").strip()
+                        lines.append(f"  → {tid}: {_short(name, 80)}".rstrip(": "))
+                    if len(active) > 4:
+                        lines.append(f"  … and {len(active) - 4} more")
+                else:
+                    lines.append("Active tasks: (none)")
+                parse_errors = summary.get("parse_errors", {}) or {}
+                if parse_errors:
+                    ids = ", ".join(list(parse_errors.keys())[:6])
+                    suffix = "…" if len(parse_errors) > 6 else ""
+                    lines.append(f"⚠ Task YAML errors: {ids}{suffix}")
+            except Exception:
+                lines.append("Active tasks: (unavailable)")
+        else:
+            lines.append("Context not available.")
+        lines.append("")
+        lines.append("Tips: context sketch | milestones | tasks | notes | refs | presence")
+        return "\n".join(lines)
+
+    if sub in ("tasks", "task"):
+        task_id = None
+        if arg:
+            a = arg.strip()
+            if re.match(r'^T\\d+$', a, re.I):
+                task_id = a.upper()
+            elif re.match(r'^\\d+$', a):
+                task_id = f"T{a.zfill(3)}"
+            else:
+                task_id = a.upper()
+        return format_task_for_im(state_dir, task_id)
+
+    if sub in ("milestones", "milestone"):
+        if not tm:
+            return "━━━ Milestones ━━━\nContext not available."
+        try:
+            all_ms = (tm.load_context() or {}).get("milestones", []) or []
+        except Exception:
+            all_ms = []
+
+        active = [m for m in all_ms if str(m.get("status", "")).lower() == "active"]
+        pending = [m for m in all_ms if str(m.get("status", "")).lower() not in ("done", "active")]
+        done = [m for m in all_ms if str(m.get("status", "")).lower() == "done"]
+        recent_done = done[-3:] if done else []
+
+        if not (active or pending or recent_done):
+            return "━━━ Milestones ━━━\nNo milestones defined."
+        lines = ["━━━ Milestones ━━━"]
+        def _fmt(m: Dict[str, Any]) -> None:
+            st = str(m.get("status", "pending")).lower()
+            icon = "✓" if st == "done" else ("→" if st == "active" else "○")
+            name = str(m.get("name", "") or "").strip()
+            mid = str(m.get("id", "") or "").strip()
+            lines.append(f"{icon} {mid}: {name}".strip(": "))
+
+        for m in active:
+            _fmt(m)
+        for m in pending:
+            _fmt(m)
+        if recent_done:
+            lines.append("")
+            lines.append("Recent done:")
+            for m in recent_done:
+                _fmt(m)
+        return "\n".join(lines)
+
+    if sub == "sketch":
+        if not tm:
+            return "━━━ Sketch ━━━\nContext not available."
+        try:
+            return tm.format_sketch_for_im()
+        except Exception as e:
+            return f"━━━ Sketch ━━━\nError: {str(e)[:80]}"
+
+    if sub in ("notes", "note"):
+        if not tm:
+            return "━━━ Notes ━━━\nContext not available."
+        try:
+            notes = tm.get_notes()
+        except Exception:
+            notes = []
+        if not notes:
+            return "━━━ Notes ━━━\nNo notes yet."
+        lines = ["━━━ Notes ━━━"]
+        shown = notes[:5]
+        for n in shown:
+            nid = str(n.get("id", "") or "").strip()
+            ttl = n.get("ttl", n.get("score", 0))
+            content = _short(n.get("content", ""), 200)
+            header = f"{nid} (ttl:{ttl})".strip()
+            lines.append(header)
+            lines.append(f"  {content}" if content else "  —")
+        if len(notes) > 5:
+            lines.append(f"… and {len(notes) - 5} more")
+        return "\n".join(lines)
+
+    if sub in ("refs", "ref", "reference", "references"):
+        if not tm:
+            return "━━━ Refs ━━━\nContext not available."
+        try:
+            refs = tm.get_references()
+        except Exception:
+            refs = []
+        if not refs:
+            return "━━━ Refs ━━━\nNo references yet."
+        lines = ["━━━ Refs ━━━"]
+        shown = refs[:5]
+        for r in shown:
+            rid = str(r.get("id", "") or "").strip()
+            ttl = r.get("ttl", r.get("score", 0))
+            url = _short(r.get("url", ""), 180)
+            note = _short(r.get("note", ""), 140)
+            header = f"{rid} (ttl:{ttl})".strip()
+            lines.append(header)
+            if url:
+                lines.append(f"  {url}")
+            if note:
+                lines.append(f"  {note}")
+        if len(refs) > 5:
+            lines.append(f"… and {len(refs) - 5} more")
+        return "\n".join(lines)
+
+    if sub == "presence":
+        if not tm:
+            return "━━━ Presence ━━━\nContext not available."
+        try:
+            return tm.format_presence_for_im()
+        except Exception as e:
+            return f"━━━ Presence ━━━\nError: {str(e)[:80]}"
+
+    return "Usage: context [sketch|milestones|tasks|notes|refs|presence] ..."

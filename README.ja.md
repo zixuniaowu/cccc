@@ -61,7 +61,7 @@
 
 ### エビデンス駆動ワークフロー
 
-- **Blueprintタスクシステム**：構造化された`context/tasks/T###.yaml`ファイル（目標/ステップ/受入基準/ステータス）、TUIでタスクパネルを表示可能
+- **ccontext Contextシステム**：統一された `context/` ディレクトリ（ccontext互換）：`context/context.yaml`（vision/sketch/マイルストーン/notes/refs）+ `context/tasks/`（タスク/ステップ）+ `context/presence.yaml`（実行時presence）。旧 por/subpor 仕組みを置き換えます。推奨：ccontext MCP を事前にインストール/設定（https://github.com/ChesterRa/ccontext）。未インストールでも、CCCC は同じ ccontext 互換の `context/` を Peer が自動維持するため動作します
 - **小さなコミット**：各パッチは150行以下、レビュー可能・ロールバック可能
 - **監査ログ**：ledger.jsonlがすべてのイベントを記録し、問題発生時に追跡可能
 
@@ -93,6 +93,7 @@
 
 **Telegramコマンド**（スラッシュプレフィックス）：
 - `/a` `/b` `/both` — ルーティングエイリアス
+- `/context [now|sketch|milestones|tasks|notes|refs|presence]` — 共有コンテキスト表示（ccontext）
 - `/pa` `/pb` `/pboth` — パススルーエイリアス（グループ向け）
 - `/aux <プロンプト>` — Auxを1回実行
 - `/foreman on|off|status|now` — Foremanを制御
@@ -105,6 +106,7 @@
 
 **Slack / Discordコマンド**（感嘆符プレフィックス）：
 - `!aux <プロンプト>` — Auxを1回実行
+- `!context [now|sketch|milestones|tasks|notes|refs|presence]` — 共有コンテキスト表示（ccontext）
 - `!foreman on|off|status|now` — Foremanを制御
 - `!restart peera|peerb|both` — Peer CLIを再起動
 - `!pause` `!resume` — 配信を一時停止/再開
@@ -249,6 +251,8 @@ cccc doctor
 cccc run
 ```
 
+任意（推奨）：ccontext MCP を事前にインストール/設定（https://github.com/ChesterRa/ccontext）すると、ツール駆動で context を更新できます。未インストールでも、CCCC は同じ ccontext 互換の `context/` ファイル（Peer が自動維持）で動作します。
+
 **起動後の画面**：
 - tmuxが4ペインレイアウトで開く：左上TUI、左下ログ、右上PeerA、右下PeerB
 - 初回実行時はSetupパネルが表示され、↑↓でCLIを各ロールに割り当て
@@ -275,7 +279,6 @@ TUI入力欄で使用（Tabで補完可能）：
 | `/foreman on\|off\|status\|now` | Foremanを制御（有効な場合） |
 | `/aux <プロンプト>` | Auxを呼び出して一度だけタスクを実行 |
 | `/verbose on\|off` | Peer要約 + Foreman CCをオン/オフ |
-| `/task [ID]` | タスクステータスまたは詳細を表示 |
 
 **自然言語ルーティング**（スラッシュなしでもOK）：
 ```
@@ -298,10 +301,10 @@ both: 次のマイルストーンを計画しよう
 | | 配信を再開 | `/resume` | `/resume` | `!resume` | `!resume` |
 | | Peerを再起動 | `/restart` | `/restart` | `!restart` | `!restart` |
 | | 終了 | `/quit` | — | — | — |
+| **コンテキスト** | Context表示（ccontext） | — | `/context` | `!context` | `!context` |
 | **操作** | Foreman制御 | `/foreman` | `/foreman` | `!foreman` | `!foreman` |
 | | Auxを実行 | `/aux` | `/aux` | `!aux` | `!aux` |
 | | 詳細モード | `/verbose` | `/verbose` | `!verbose` | `!verbose` |
-| | タスク表示 | `/task` | — | — | — |
 | **サブスクリプション** | chat IDを取得 | — | `/whoami` | — | — |
 | | サブスクライブ | — | `/subscribe` | `!subscribe` | `!subscribe` |
 | | サブスクライブ解除 | — | `/unsubscribe` | `!unsubscribe` | `!unsubscribe` |
@@ -368,7 +371,8 @@ both: 次のマイルストーンを計画しよう
   rules/                        # システムプロンプト
 
 context/                        # 実行追跡（ccontext互換）
-  context.yaml                  # マイルストーン、メモ、参照
+  context.yaml                  # vision/sketch/マイルストーン/notes/refs
+  presence.yaml                 # 実行時presence（gitignore）
   tasks/                        # タスクファイル
     T001.yaml                   # タスク定義：目標、ステップ、受入基準、ステータス
 
@@ -376,11 +380,15 @@ PROJECT.md                      # プロジェクト概要（システムプロ�
 FOREMAN_TASK.md                 # Foremanタスク定義
 ```
 
-### context/context.yaml（実行ステータス）
+### context/context.yaml（ccontext）
 
-マイルストーンでプロジェクト実行状態を追跡：
+共有コンテキスト（ccontext互換）。vision/sketch、マイルストーン、知識を管理：
 
 ```yaml
+vision: "信頼できるデュアルPeerオーケストレーションを実現する"
+sketch: |
+  静的ブループリント：アーキテクチャ、制約、戦略（TODO/進捗ボードとして使わない）。
+
 milestones:
   - id: M1
     name: フェーズ1 - コア実装
@@ -397,13 +405,13 @@ milestones:
 notes:
   - id: N001
     content: "コミット前に必ずテストを実行"
-    score: 50  # 時間経過で減衰
+    ttl: 30  # 目安：10/30/100（短/通常/長期）
 
 references:
   - id: R001
     url: src/core/handler.py
     note: メインリクエストハンドラ
-    score: 40
+    ttl: 30
 ```
 
 ### タスク構造
@@ -426,7 +434,7 @@ steps:
     status: in_progress
 ```
 
-エージェントはメッセージに進捗マーカー（例：`progress: T001.S1 done`）を送信し、オーケストレーターが自動的にタスクファイルを更新します。
+Peerは `context/tasks/T###.yaml` を直接編集するか、ccontext MCP がある場合はツール経由でタスク/マイルストーンを更新できます。
 
 ---
 
@@ -480,7 +488,7 @@ cccc reset --archive
 - Foremanの定期チェック
 - セルフチェックリマインダー
 - キープアライブ
-- Blueprintタスク追跡
+- ccontext Context追跡
 
 ---
 

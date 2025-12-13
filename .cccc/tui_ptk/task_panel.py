@@ -16,6 +16,8 @@ Design principles:
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
+import re
 import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -60,6 +62,167 @@ def _truncate_to_width(s: str, max_width: int, ellipsis: str = '…') -> str:
     return result
 
 
+def _clip_prefix_to_width(s: str, max_width: int) -> str:
+    """Take a prefix that fits within max display width (no ellipsis)."""
+    if max_width <= 0:
+        return ""
+    result = ""
+    width = 0
+    for char in s:
+        char_width = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        if width + char_width > max_width:
+            break
+        result += char
+        width += char_width
+    return result
+
+
+def _clip_suffix_to_width(s: str, max_width: int) -> str:
+    """Take a suffix that fits within max display width (no ellipsis)."""
+    if max_width <= 0:
+        return ""
+    result_rev = ""
+    width = 0
+    for char in reversed(s):
+        char_width = 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
+        if width + char_width > max_width:
+            break
+        result_rev += char
+        width += char_width
+    return "".join(reversed(result_rev))
+
+
+def _ellipsize_middle_to_width(s: str, max_width: int, ellipsis: str = "…") -> str:
+    """Ellipsize in the middle to preserve both start and end."""
+    if _display_width(s) <= max_width:
+        return s
+    ell_w = _display_width(ellipsis)
+    if max_width <= ell_w:
+        return ellipsis if ell_w == max_width else ""
+    remaining = max_width - ell_w
+    left_w = remaining // 2
+    right_w = remaining - left_w
+    left = _clip_prefix_to_width(s, left_w)
+    right = _clip_suffix_to_width(s, right_w)
+    return f"{left}{ellipsis}{right}"
+
+
+def _condense_status_for_header(status: str) -> str:
+    """Condense verbose status strings for single-line header display."""
+    s = " ".join(str(status or "").split())
+    if not s:
+        return ""
+
+    # Replace long parenthetical lists with an ellipsis marker to reduce noise.
+    def _condense_paren(match: re.Match[str]) -> str:
+        inner = match.group(1) or ""
+        inner_stripped = inner.strip()
+        if len(inner_stripped) <= 24:
+            return f"({inner_stripped})"
+        if ("," in inner_stripped) or ("，" in inner_stripped) or (";" in inner_stripped):
+            return "(…)"
+        if len(inner_stripped) > 40:
+            return "(…)"
+        return f"({inner_stripped})"
+
+    s = re.sub(r"\(([^)]*)\)", _condense_paren, s)
+    return s
+
+
+def _split_one_line_for_wrap(s: str, max_width: int) -> Tuple[str, int]:
+    """Split a single line from the front of s for header wrapping.
+
+    Returns (line, consumed_chars_in_s).
+    """
+    if not s or max_width <= 0:
+        return "", 0
+
+    prefix = _clip_prefix_to_width(s, max_width)
+    if not prefix:
+        return "", 0
+
+    # Fits fully on this line.
+    if len(prefix) == len(s):
+        return prefix, len(prefix)
+
+    prefix_rstrip = prefix.rstrip()
+    last_space = prefix_rstrip.rfind(" ")
+    if last_space != -1:
+        candidate_line = prefix_rstrip[:last_space].rstrip()
+        if candidate_line and (_display_width(candidate_line) >= int(max_width * 0.6)):
+            return candidate_line, last_space + 1
+
+    # Hard-wrap (keeps more signal when the next token is long).
+    return prefix_rstrip, len(prefix)
+
+
+def _wrap_text_to_lines(text: str, max_width: int) -> List[str]:
+    """Wrap text into lines constrained by display width.
+
+    - Prefers breaking on spaces.
+    - Uses hard-wrapping when word-boundary wrap would waste lots of space.
+    """
+    text = " ".join(str(text or "").split()).strip()
+    if not text:
+        return []
+    if max_width <= 0:
+        return [""]
+
+    remaining = text
+    lines: List[str] = []
+    while remaining:
+        line, consumed = _split_one_line_for_wrap(remaining, max_width)
+        if not line or consumed <= 0:
+            break
+        lines.append(line)
+        remaining = remaining[consumed:].lstrip()
+    return lines
+
+
+def _wrap_text_max_lines(text: str, max_width: int, max_lines: int) -> List[str]:
+    """Wrap text to max_lines and ellipsize the last line if truncated."""
+    if max_lines <= 0:
+        return []
+    text = " ".join(str(text or "").split()).strip()
+    if not text:
+        return []
+    if max_width <= 0:
+        return [""]
+
+    ellipsis = "…"
+    ell_w = _display_width(ellipsis)
+
+    remaining = text
+    out: List[str] = []
+    for i in range(max_lines):
+        if not remaining:
+            break
+
+        is_last = (i == max_lines - 1)
+        if not is_last:
+            line, consumed = _split_one_line_for_wrap(remaining, max_width)
+            if not line or consumed <= 0:
+                break
+            out.append(line)
+            remaining = remaining[consumed:].lstrip()
+            continue
+
+        # Last allowed line: maximize information density by hard-clipping and adding ellipsis.
+        if _display_width(remaining) <= max_width:
+            out.append(remaining)
+            break
+
+        if max_width <= ell_w:
+            out.append(_truncate_to_width(ellipsis, max_width, ellipsis=""))
+            break
+
+        prefix = _clip_prefix_to_width(remaining, max_width - ell_w).rstrip()
+        out.append(prefix + ellipsis)
+        break
+
+    return out
+
+
 class TaskPanel:
     """
     Task Panel widget for CCCC TUI.
@@ -68,7 +231,7 @@ class TaskPanel:
     - Level 0 (Header): Presence-first status bar - always visible
       Format: "A: T003 JWT → S2 │ B: T005 User → S1"
     - Level 2 (Dialog): Tabbed detail view - toggle with [T]
-      Tabs: Tasks, Sketch, Milestones, Notes, Refs
+      Tabs: Sketch, Milestones, Tasks, Notes, Refs
 
     Design: Press [T] to go directly from Header to Tabbed Dialog.
     There is no intermediate Level 1 (expanded list) - it was removed for simpler UX.
@@ -76,9 +239,9 @@ class TaskPanel:
     """
 
     # Tab order for Level 2 dialog
-    # Order by importance: Tasks (daily work) > Sketch (plan) > Milestones (phases) > Notes > Refs
+    # Order by conceptual hierarchy: Sketch > Milestones > Tasks > Notes > Refs
     # Note: Presence tab removed - presence is shown in header (Decision: 2024-12 simplification)
-    TABS = ['tasks', 'sketch', 'milestones', 'notes', 'refs']
+    TABS = ['sketch', 'milestones', 'tasks', 'notes', 'refs']
     TAB_LABELS = {
         'tasks': 'Tasks',
         'sketch': 'Sketch',
@@ -273,7 +436,7 @@ class TaskPanel:
 
         Format:
         - Full: "A: T003 JWT → S2 │ B: T005 User → S1"
-        - Idle: "A: T003 → S2 │ B: ○ idle"
+        - No status: "A: T003 → S2 │ B: —"
         - Narrow: "A: T003 S2 │ B: T005 S1"
 
         Args:
@@ -309,9 +472,126 @@ class TaskPanel:
                     status = status[:max_status_len - 2] + ".."
                 presence_parts.append(f"{short_id}: {status}")
             else:
-                presence_parts.append(f"{short_id}: (idle)")
+                presence_parts.append(f"{short_id}: —")
 
         return " │ ".join(presence_parts)
+
+    def get_presence_lines(self, width: int = 80) -> List[str]:
+        """Get 2-line presence summary for the runtime header."""
+        manager = self._get_manager()
+        if not manager:
+            return ["A: —", "B: —"]
+
+        presence = manager.get_presence() or []
+        if not presence:
+            legacy = self._get_legacy_header_text()
+            if legacy:
+                legacy = " ".join(str(legacy).split())
+                return [_truncate_to_width(f"A: {legacy}", width), "B: —"]
+            return ["A: —", "B: —"]
+
+        def _parse_ts(ts: str) -> Optional[datetime]:
+            if not ts:
+                return None
+            try:
+                s = str(ts).replace("Z", "+00:00")
+                dt = datetime.fromisoformat(s)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(timezone.utc)
+            except Exception:
+                return None
+
+        best: Dict[str, Tuple[datetime, str]] = {}
+        for agent in presence:
+            agent_id = str(agent.get("id", "") or "")
+            short_id = self._get_short_agent_id(agent_id)
+            if short_id not in ("A", "B"):
+                continue
+
+            status = str(agent.get("status", "") or "")
+            status = _condense_status_for_header(status)
+            status = status if status else "—"
+            ts = _parse_ts(str(agent.get("updated_at", "") or "")) or datetime.fromtimestamp(0, tz=timezone.utc)
+
+            prev = best.get(short_id)
+            if prev is None or ts >= prev[0]:
+                best[short_id] = (ts, status)
+
+        lines: List[str] = []
+        for short_id in ("A", "B"):
+            status = best.get(short_id, (datetime.fromtimestamp(0, tz=timezone.utc), "—"))[1]
+            prefix = f"{short_id}: "
+            max_status_width = max(0, width - _display_width(prefix))
+            status_trunc = _ellipsize_middle_to_width(status, max_status_width)
+            lines.append(prefix + status_trunc)
+
+        return lines
+
+    def get_presence_header_lines(self, width: int = 80, lines_per_agent: int = 2) -> List[str]:
+        """Get fixed number of presence lines for the runtime header (wrap + truncate).
+
+        Returns: [A line1, A line2, B line1, B line2] when lines_per_agent=2.
+        """
+        manager = self._get_manager()
+        if not manager:
+            return ["A: —", "", "B: —", ""] if lines_per_agent == 2 else []
+
+        presence = manager.get_presence() or []
+        if not presence:
+            legacy = self._get_legacy_header_text()
+            legacy = " ".join(str(legacy or "").split())
+            a_status = legacy if legacy else "—"
+            b_status = "—"
+        else:
+            def _parse_ts(ts: str) -> Optional[datetime]:
+                if not ts:
+                    return None
+                try:
+                    s = str(ts).replace("Z", "+00:00")
+                    dt = datetime.fromisoformat(s)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt.astimezone(timezone.utc)
+                except Exception:
+                    return None
+
+            best: Dict[str, Tuple[datetime, str]] = {}
+            for agent in presence:
+                agent_id = str(agent.get("id", "") or "")
+                short_id = self._get_short_agent_id(agent_id)
+                if short_id not in ("A", "B"):
+                    continue
+
+                status = str(agent.get("status", "") or "")
+                status = _condense_status_for_header(status)
+                status = status if status else "—"
+                ts = _parse_ts(str(agent.get("updated_at", "") or "")) or datetime.fromtimestamp(0, tz=timezone.utc)
+
+                prev = best.get(short_id)
+                if prev is None or ts >= prev[0]:
+                    best[short_id] = (ts, status)
+
+            a_status = best.get("A", (datetime.fromtimestamp(0, tz=timezone.utc), "—"))[1]
+            b_status = best.get("B", (datetime.fromtimestamp(0, tz=timezone.utc), "—"))[1]
+
+        def _format_agent(short_id: str, status: str) -> List[str]:
+            prefix = f"{short_id}: "
+            prefix_w = _display_width(prefix)
+            avail = max(0, width - prefix_w)
+            wrapped = _wrap_text_max_lines(status, avail, max(1, lines_per_agent)) or ["—"]
+            while len(wrapped) < max(1, lines_per_agent):
+                wrapped.append("")
+            lines_out = [prefix + wrapped[0]]
+            indent = " " * prefix_w
+            for cont in wrapped[1:lines_per_agent]:
+                lines_out.append((indent + cont) if cont else "")
+            while len(lines_out) < lines_per_agent:
+                lines_out.append("")
+            return lines_out[:lines_per_agent]
+
+        lines = _format_agent("A", a_status) + _format_agent("B", b_status)
+        return lines
 
     def _get_short_agent_id(self, agent_id: str) -> str:
         """Convert agent ID to short display name."""
@@ -550,12 +830,12 @@ class TaskPanel:
         
         lines = []
         for n in notes:
-            score = n.get('score', 0)
+            ttl = n.get('ttl', n.get('score', 0))
             content = n.get('content', '')
             n_id = n.get('id', '?')
             
-            # Header with score
-            lines.append(f"  {n_id} (score: {score})")
+            # Header with ttl
+            lines.append(f"  {n_id} (ttl: {ttl})")
             # Content - let it wrap naturally
             lines.append(f"    {content}")
             lines.append("")  # Blank line between notes
@@ -574,13 +854,13 @@ class TaskPanel:
         
         lines = []
         for r in refs:
-            score = r.get('score', 0)
+            ttl = r.get('ttl', r.get('score', 0))
             url = r.get('url', '')
             note = r.get('note', '')
             r_id = r.get('id', '?')
             
-            # Header with score
-            lines.append(f"  {r_id} (score: {score})")
+            # Header with ttl
+            lines.append(f"  {r_id} (ttl: {ttl})")
             # URL - let it wrap
             lines.append(f"    URL: {url}")
             # Note - let it wrap
@@ -879,7 +1159,7 @@ class TaskPanel:
         return "\n".join(lines)
 
     # =========================================================================
-    # IM-friendly output (for /task command in bridges)
+    # IM-friendly output (for /context tasks in bridges)
     # =========================================================================
 
     def format_for_im(self, task_id: Optional[str] = None) -> str:
