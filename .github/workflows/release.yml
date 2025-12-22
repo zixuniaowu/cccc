@@ -22,10 +22,6 @@ jobs:
         run: |
           python -m pip install -U pip build twine
 
-      - name: Sync scaffold
-        run: |
-          python scripts/sync_scaffold.py
-
       - name: Build
         run: |
           python -m build
@@ -50,4 +46,3 @@ jobs:
           TWINE_PASSWORD: ${{ steps.repo.outputs.token }}
         run: |
           python -m twine upload --repository-url "${{ steps.repo.outputs.url }}" dist/*
-

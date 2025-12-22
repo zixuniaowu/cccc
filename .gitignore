@@ -1,13 +1,5 @@
-# CCCC orchestrator shared workspace (non-authoritative)
-.cccc/work/**
-.cccc/state/**
-.cccc/logs/**
-.cccc/mailbox/**
-.cccc/rules/**
-# Optional local personas (not used at runtime)
-.cccc/personas/**
-# Local, non-tracked runtime config (no secrets in repo)
-.cccc/settings/telegram.yaml
+# Local runtime home (vNext uses ~/.cccc; ignore repo-local .cccc if created)
+.cccc/**
 
 # Python bytecode caches
 **/__pycache__/**
@@ -25,12 +17,6 @@
 /build/
 *.egg-info/
 
-# Root-level AI prompt guides are for local tooling only
-/CLAUDE.md
-/AGENTS.md
-/GEMINI.md
-/examples/agents/*.yaml
-
 # Local/editor/platform noise
 .DS_Store
 .idea/
@@ -39,16 +25,3 @@
 
 # Local dev environments
 /venv-publish/
-
-# Build-time generated scaffold (created by scripts/sync_scaffold.py)
-/cccc_scaffold/
-
-# Optional: keep repo minimal (docs/tests can be reintroduced later)
-# Keep docs/*.md for README links, ignore subdirectories
-/docs/_drafts/
-/docs/archive/
-/docs/releases/
-/docs/por/
-/docs/schemas/
-/docs/plan/
-/tests/

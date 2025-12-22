@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cccc-pair"
-version = "0.3.28"
-description = "Autonomous dual-AI orchestration runtime delivering evidence-first, small-step software execution with tmux-managed peers, governed handoffs, and IM bridge integration"
+version = "0.4.0a0"
+description = "Global multi-agent delivery kernel with working groups, scopes, and an append-only collaboration ledger"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
 authors = [
@@ -19,9 +19,9 @@ dependencies = [
   "pydantic>=2.0",
 ]
 classifiers = [
-  "Development Status :: 5 - Production/Stable",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
@@ -40,40 +40,13 @@ Repository = "https://github.com/ChesterRa/cccc"
 Issues = "https://github.com/ChesterRa/cccc/issues"
 
 [project.scripts]
-cccc = "cccc:main"
+cccc = "cccc.cli:main"
+ccccd = "cccc.daemon_main:main"
 
 [tool.setuptools]
-py-modules = ["cccc"]
 include-package-data = true
+package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
-include = ["cccc_scaffold"]
-
-[tool.setuptools.package-data]
-"cccc_scaffold" = ["scaffold/**"]
-
-# Install the runtime scaffold under the installation prefix at ".cccc/"
-# We purposefully exclude state/logs/work/mailbox and caches from the distribution.
-[tool.setuptools.data-files]
-# Preserve subdirectory layout under the installation prefix
-".cccc" = [
-  ".cccc/*.py",
-]
-".cccc/adapters" = [
-  ".cccc/adapters/*.py",
-]
-".cccc/prompts" = [
-  ".cccc/prompts/*",
-]
-".cccc/settings" = [
-  ".cccc/settings/*",
-]
-".cccc/tui_ptk" = [
-  ".cccc/tui_ptk/*.py",
-]
-".cccc/orchestrator" = [
-  ".cccc/orchestrator/*.py",
-]
-".cccc/common" = [
-  ".cccc/common/*.py",
-]
+where = ["src"]
+include = ["cccc*"]
