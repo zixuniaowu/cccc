@@ -201,26 +201,32 @@ src/
 - `contracts` 只依赖 stdlib/类型定义：它是未来多语言重写的稳定边界。
 - `kernel` 依赖 `contracts`；不依赖 `ports`/`runners`。
 - `daemon` 依赖 `kernel` + `runners`；不依赖具体 UI（TUI/IM）。
-- `ports/*` 只通过 IPC 与 `daemon` 交互；禁止绕过 daemon 直接写 ledger/state（防止多写者）。
+- 目标形态：`ports/*` 只通过 IPC 与 `daemon` 交互，避免多写者导致的漂移。
+- MVP 允许：当 daemon 不可用时，CLI 可以做有限的本地写入（dev convenience），但后续应逐步收敛到单写者。
 
 ## 9. 迭代路线（不考虑向后兼容的最短路径）
 
 ### Phase 1：先做“全局 home + group/scope 基础骨架”
-- `CCCC_HOME`、`registry.json`、`groups/<group_id>/` 初始化
-- `group.yaml`（至少含 scopes 与默认 scope）、`groups/<group_id>/ledger.jsonl` 初始化（默认 group = 当前 repo）
-- `ccccd` 能启动、能 attach 当前仓库到 group/scope、能写最小事件到 group ledger
+- ✅ `CCCC_HOME`、`registry.json`、`groups/<group_id>/` 初始化
+- ✅ `group.yaml`（scopes、active scope、actors）、`groups/<group_id>/ledger.jsonl` 初始化
+- ✅ `ccccd` 能启动/停止、能 attach scope、能写最小事件到 group ledger
+- ✅ IPC 契约（v1 request/response）+ append-only 事件（v1 event/message）
+- ✅ active group（减少日常摩擦：send/tail 默认走 active group）
 
 ### Phase 2：把 UI/IM/CLI 统一到“发命令 + 读 ledger”
 - TUI 只做工作台（不再直接读写散落的 state 文件）
 - IM 入口与输出同源（都落账）
+- ✅ CLI 已具备基础 port 行为：send/tail/use/actor/inbox/read（通过 IPC 或本地 fallback）
 
 ### Phase 3：Runner 抽象（tmux 变成实现之一）
 - 保留 tmux runner（本地体验）
 - 引入 headless runner（pty/subprocess），为 N agents 与无人值守铺路
 
 ### Phase 4：Actor/Role 编排（可扩编、可解散、群组寻址）
-- 支持 `@all/@peers/@role:*` 的寻址与解析
-- 生命周期管理成为一等能力（spawn/scale/down）
+- ✅ actor registry + 权限（group 内最多 1 foreman；foreman 可管理 peers；peer 只能操作自己）
+- ✅ inbox/read（面向 MCP 的“取消息 + 已读标记”基础语义）
+- ⏭️ 支持 `@all/@peers/@role:*` 的完整寻址与解析（含自定义 roles/tags）
+- ⏭️ 生命周期管理成为一等能力（spawn/scale/down，runner+supervisor 驱动）
 
 ---
 

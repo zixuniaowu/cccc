@@ -71,7 +71,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.cmd == "status":
         resp = call_daemon({"op": "ping"}, paths=paths)
         if resp.get("ok"):
-            print(f"ccccd: running pid={resp.get('pid')} version={resp.get('version')}")
+            r = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+            print(f"ccccd: running pid={r.get('pid')} version={r.get('version')}")
             return 0
         print("ccccd: not running")
         return 1
@@ -81,4 +82,3 @@ def main(argv: Optional[list[str]] = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -15,8 +15,8 @@ pip install -e .
 export CCCC_HOME=~/.cccc   # optional (default is ~/.cccc)
 cccc attach .
 cccc groups
-cccc send <group_id> "hello"
-cccc tail <group_id> -n 20
+cccc send "hello"
+cccc tail -n 20
 ```
 
 Planning doc: `docs/vnext/CCCC_NEXT_GLOBAL_DAEMON.md`

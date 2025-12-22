@@ -77,6 +77,7 @@ def create_group(reg: Registry, *, title: str) -> Group:
         "updated_at": now,
         "active_scope_key": "",
         "scopes": [],
+        "actors": [],
     }
     atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
 
@@ -212,6 +213,7 @@ def ensure_group_for_scope(reg: Registry, scope: ScopeIdentity) -> Group:
         "updated_at": now,
         "active_scope_key": "",
         "scopes": [],
+        "actors": [],
     }
     atomic_write_text(gp / "group.yaml", yaml.safe_dump(group_doc, allow_unicode=True, sort_keys=False))
 

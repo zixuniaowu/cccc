@@ -22,11 +22,15 @@ Developer Commands (minimal)
 - Install/editable: `pip install -e .`
 - Daemon: `cccc daemon start|status|stop`
 - Attach current repo to a group (auto-create): `cccc attach .`
+- Active group: `cccc active` / `cccc use <group_id>`
 - Create an empty group: `cccc group create --title "my group"`
 - Attach scope to an existing group: `cccc attach . --group <group_id>`
 - Set active scope for a group: `cccc group use <group_id> <path>`
-- Send message to group ledger: `cccc send <group_id> "text" [--path <path>]`
-- View ledger: `cccc tail <group_id> -n 50 [-f]`
+- Send message: `cccc send "text" [--group <group_id>] [--to <selector>] [--path <path>]`
+- View ledger: `cccc tail -n 50 [-f] [--group <group_id>]`
+- Actors: `cccc actor list|add|remove|set-role|start|stop|restart`
+- Inbox: `cccc inbox --actor-id <id> [--mark-read]` / `cccc read <event_id> --actor-id <id>`
+- Prompt: `cccc prompt --actor-id <id>`
 
 Rules (important)
 - Never commit unless explicitly instructed by the user.
