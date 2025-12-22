@@ -13,7 +13,7 @@ from . import __version__
 from .contracts.v1 import ChatMessageData
 from .daemon.server import call_daemon
 from .kernel.active import load_active, set_active_group_id
-from .kernel.actors import add_actor, list_actors, remove_actor, set_actor_role, update_actor
+from .kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, set_actor_role, update_actor
 from .kernel.group import attach_scope_to_group, create_group, ensure_group_for_scope, load_group, set_active_scope
 from .kernel.inbox import find_event, get_cursor, set_cursor, unread_messages
 from .kernel.ledger import append_event, follow, read_last_lines
@@ -195,14 +195,14 @@ def cmd_send(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
         return 2
 
-    to: list[str] = []
+    to_tokens: list[str] = []
     to_raw = getattr(args, "to", None)
     if isinstance(to_raw, list):
         for item in to_raw:
             if not isinstance(item, str):
                 continue
             parts = [p.strip() for p in item.split(",") if p.strip()]
-            to.extend(parts)
+            to_tokens.extend(parts)
     if _ensure_daemon_running():
         resp = call_daemon(
             {
@@ -212,7 +212,7 @@ def cmd_send(args: argparse.Namespace) -> int:
                     "text": args.text,
                     "by": str(args.by or "user"),
                     "path": str(args.path or ""),
-                    "to": to,
+                    "to": to_tokens,
                 },
             }
         )
@@ -221,6 +221,11 @@ def cmd_send(args: argparse.Namespace) -> int:
             return 0
 
     # Fallback: local execution (dev convenience)
+    try:
+        to = resolve_recipient_tokens(group, to_tokens)
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "invalid_recipient", "message": str(e)}})
+        return 2
     scope_key = str(group.doc.get("active_scope_key") or "")
     if args.path:
         scope = detect_scope(Path(args.path))
@@ -663,7 +668,8 @@ def cmd_prompt(args: argparse.Namespace) -> int:
             "- Source of truth: The group ledger is the shared chat+audit log. Keep it clean and actionable.",
             "- Messaging:",
             "  - Read: cccc inbox --actor-id <you> --by <you> [--mark-read]",
-            "  - Send: cccc send \"...\" --by <you> --to <target> (targets: @all, @peers, @foreman, or actor ids)",
+            "  - Send: cccc send \"...\" --by <you> --to <target>",
+            "    - targets: user/@user, @all, @foreman, actor-id, or actor title",
             "  - Mark read: cccc read <event_id> --actor-id <you> --by <you>",
             "- Permissions:",
             f"  - {perms}".rstrip(),

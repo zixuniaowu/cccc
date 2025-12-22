@@ -15,7 +15,7 @@ from ..kernel.group import attach_scope_to_group, create_group, set_active_scope
 from ..kernel.ledger import append_event
 from ..kernel.registry import load_registry
 from ..kernel.scope import detect_scope
-from ..kernel.actors import add_actor, list_actors, remove_actor, set_actor_role, update_actor
+from ..kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, set_actor_role, update_actor
 from ..kernel.inbox import find_event, get_cursor, set_cursor, unread_messages
 from ..kernel.permissions import require_actor_permission, require_inbox_permission
 from ..paths import ensure_home
@@ -440,14 +440,20 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         text = str(args.get("text") or "")
         by = str(args.get("by") or "user")
         to_raw = args.get("to")
-        to: list[str] = []
+        to_tokens: list[str] = []
         if isinstance(to_raw, list):
-            to = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
+            to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
+
+        try:
+            to = resolve_recipient_tokens(group, to_tokens)
+        except Exception as e:
+            return _error("invalid_recipient", str(e)), False
+
         path = str(args.get("path") or "").strip()
         if path:
             scope = detect_scope(Path(path))

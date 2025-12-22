@@ -154,3 +154,69 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
     group.save()
     return dict(item)
 
+
+def resolve_recipient_tokens(group: Group, tokens: List[str]) -> List[str]:
+    raw: List[str] = []
+    for t in tokens:
+        if not isinstance(t, str):
+            continue
+        s = t.strip()
+        if not s:
+            continue
+        raw.append(s)
+
+    if not raw:
+        return []
+
+    actors = list_actors(group)
+    id_set = {str(a.get("id")) for a in actors if isinstance(a, dict) and isinstance(a.get("id"), str)}
+    title_map: Dict[str, List[str]] = {}
+    for a in actors:
+        if not isinstance(a, dict):
+            continue
+        aid = a.get("id")
+        title = a.get("title")
+        if not isinstance(aid, str) or not aid.strip():
+            continue
+        if not isinstance(title, str) or not title.strip():
+            continue
+        key = title.strip().casefold()
+        title_map.setdefault(key, []).append(aid.strip())
+
+    def _canonical_one(token: str) -> str:
+        t = token.strip()
+        if not t:
+            return ""
+
+        # IM-like mentions: allow "@peer-a" / "@Claude" by stripping leading "@"
+        if t.startswith("@") and t not in ("@all", "@peers", "@foreman", "@user"):
+            t = t[1:].strip()
+
+        if t in ("@all", "@peers", "@foreman"):
+            return t
+        if t in ("user", "@user"):
+            return "user"
+
+        if t in id_set:
+            return t
+
+        key = t.casefold()
+        ids = title_map.get(key) or []
+        if len(ids) == 1:
+            return ids[0]
+        if len(ids) > 1:
+            raise ValueError(f"ambiguous recipient title: {t}")
+
+        raise ValueError(f"unknown recipient: {t}")
+
+    out: List[str] = []
+    seen = set()
+    for t in raw:
+        c = _canonical_one(t)
+        if not c:
+            continue
+        if c in seen:
+            continue
+        seen.add(c)
+        out.append(c)
+    return out
