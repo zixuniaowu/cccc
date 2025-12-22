@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import time
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -325,28 +326,73 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
         return 2
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
     actor_id = str(args.actor_id or "").strip()
     role = str(args.role or "peer").strip()
     title = str(args.title or "").strip()
     by = str(args.by or "user").strip()
+    command: list[str] = []
+    if args.command:
+        try:
+            command = shlex.split(str(args.command))
+        except Exception:
+            command = [str(args.command)]
+    env: dict[str, str] = {}
+    if isinstance(args.env, list):
+        for item in args.env:
+            if not isinstance(item, str) or "=" not in item:
+                continue
+            k, v = item.split("=", 1)
+            k = k.strip()
+            if not k:
+                continue
+            env[k] = v
+    default_scope_key = ""
+    if args.scope:
+        default_scope_key = detect_scope(Path(args.scope)).scope_key
+        scopes = group.doc.get("scopes") if isinstance(group.doc.get("scopes"), list) else []
+        attached = any(isinstance(s, dict) and s.get("scope_key") == default_scope_key for s in scopes)
+        if not attached:
+            _print_json({"ok": False, "error": {"code": "scope_not_attached", "message": f"scope not attached: {default_scope_key}"}})
+            return 2
 
     if _ensure_daemon_running():
         resp = call_daemon(
-            {"op": "actor_add", "args": {"group_id": group_id, "actor_id": actor_id, "role": role, "title": title, "by": by}}
+            {
+                "op": "actor_add",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "role": role,
+                    "title": title,
+                    "by": by,
+                    "command": command,
+                    "env": env,
+                    "default_scope_key": default_scope_key,
+                },
+            }
         )
         if resp.get("ok"):
             _print_json(resp)
             return 0
 
-    group = load_group(group_id)
-    if group is None:
-        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
-        return 2
     try:
         require_actor_permission(group, by=by, action="actor.add")
         if role not in ("foreman", "peer"):
             raise ValueError("invalid role")
-        actor = add_actor(group, actor_id=actor_id, role=role, title=title)
+        actor = add_actor(
+            group,
+            actor_id=actor_id,
+            role=role,
+            title=title,
+            command=command,
+            env=env,
+            default_scope_key=default_scope_key,
+        )
     except Exception as e:
         _print_json({"ok": False, "error": {"code": "actor_add_failed", "message": str(e)}})
         return 2
@@ -499,6 +545,75 @@ def cmd_actor_restart(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "actor_restart_failed", "message": str(e)}})
         return 2
     ev = append_event(group.ledger_path, kind="actor.restart", group_id=group.group_id, scope_key="", by=by, data={"actor_id": actor_id})
+    _print_json({"ok": True, "result": {"actor": actor, "event": ev}})
+    return 0
+
+
+def cmd_actor_update(args: argparse.Namespace) -> int:
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    actor_id = str(args.actor_id or "").strip()
+    by = str(args.by or "user").strip()
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
+    patch: dict[str, Any] = {}
+    if args.title is not None:
+        patch["title"] = str(args.title or "")
+    if args.role:
+        patch["role"] = str(args.role)
+    if args.command is not None:
+        cmd: list[str] = []
+        if str(args.command).strip():
+            try:
+                cmd = shlex.split(str(args.command))
+            except Exception:
+                cmd = [str(args.command)]
+        patch["command"] = cmd
+    if isinstance(args.env, list) and args.env:
+        env: dict[str, str] = {}
+        for item in args.env:
+            if not isinstance(item, str) or "=" not in item:
+                continue
+            k, v = item.split("=", 1)
+            k = k.strip()
+            if not k:
+                continue
+            env[k] = v
+        patch["env"] = env
+    if args.scope:
+        scope_key = detect_scope(Path(args.scope)).scope_key
+        scopes = group.doc.get("scopes") if isinstance(group.doc.get("scopes"), list) else []
+        attached = any(isinstance(s, dict) and s.get("scope_key") == scope_key for s in scopes)
+        if not attached:
+            _print_json({"ok": False, "error": {"code": "scope_not_attached", "message": f"scope not attached: {scope_key}"}})
+            return 2
+        patch["default_scope_key"] = scope_key
+    if args.enabled is not None:
+        patch["enabled"] = bool(args.enabled)
+
+    if not patch:
+        _print_json({"ok": False, "error": {"code": "empty_patch", "message": "nothing to update"}})
+        return 2
+
+    if _ensure_daemon_running():
+        resp = call_daemon({"op": "actor_update", "args": {"group_id": group_id, "actor_id": actor_id, "patch": patch, "by": by}})
+        _print_json(resp)
+        return 0 if resp.get("ok") else 2
+
+    try:
+        require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)
+        actor = update_actor(group, actor_id, patch)
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "actor_update_failed", "message": str(e)}})
+        return 2
+    ev = append_event(group.ledger_path, kind="actor.update", group_id=group.group_id, scope_key="", by=by, data={"actor_id": actor_id, "patch": patch})
     _print_json({"ok": True, "result": {"actor": actor, "event": ev}})
     return 0
 
@@ -756,6 +871,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_add.add_argument("actor_id", help="Actor id (e.g. peer-a, peer-b, foreman)")
     p_actor_add.add_argument("--role", choices=["peer", "foreman"], default="peer", help="Role (default: peer)")
     p_actor_add.add_argument("--title", default="", help="Display title (optional)")
+    p_actor_add.add_argument("--command", default="", help="Command to run (shell-like string; optional)")
+    p_actor_add.add_argument("--env", action="append", default=[], help="Environment var (KEY=VAL), repeatable")
+    p_actor_add.add_argument("--scope", default="", help="Default scope path for this actor (optional; must be attached)")
     p_actor_add.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_add.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_add.set_defaults(func=cmd_actor_add)
@@ -790,6 +908,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_restart.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_restart.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_restart.set_defaults(func=cmd_actor_restart)
+
+    p_actor_update = actor_sub.add_parser("update", help="Update an actor (title/role/command/env/scope/enabled)")
+    p_actor_update.add_argument("actor_id", help="Actor id")
+    p_actor_update.add_argument("--title", default=None, help="New title")
+    p_actor_update.add_argument("--role", choices=["peer", "foreman"], default="", help="New role")
+    p_actor_update.add_argument("--command", default=None, help="Replace command (shell-like string); use empty to clear")
+    p_actor_update.add_argument("--env", action="append", default=[], help="Replace env with these KEY=VAL entries (repeatable)")
+    p_actor_update.add_argument("--scope", default="", help="Set default scope path (must be attached)")
+    p_actor_update.add_argument("--enabled", type=int, choices=[0, 1], default=None, help="Set enabled (1) or disabled (0)")
+    p_actor_update.add_argument("--by", default="user", help="Requester (default: user)")
+    p_actor_update.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_actor_update.set_defaults(func=cmd_actor_update)
 
     p_inbox = sub.add_parser("inbox", help="List unread chat messages for an actor (like a group-chat inbox)")
     p_inbox.add_argument("--actor-id", required=True, help="Target actor id")

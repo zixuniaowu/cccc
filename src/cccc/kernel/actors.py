@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from ..contracts.v1 import Actor, ActorRole
 from ..util.time import utc_now_iso
 from .group import Group
+
+_ACTOR_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 
 def _ensure_actor_list(group: Group) -> List[Dict[str, Any]]:
@@ -55,6 +58,10 @@ def add_actor(
     aid = actor_id.strip()
     if not aid:
         raise ValueError("missing actor id")
+    if not _ACTOR_ID_RE.match(aid):
+        raise ValueError("invalid actor id (use a simple token; use title for display)")
+    if aid.casefold() == "user":
+        raise ValueError("reserved actor id: user")
 
     existing = find_actor(group, aid)
     if existing is not None:

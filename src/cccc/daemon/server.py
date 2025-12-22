@@ -19,6 +19,7 @@ from ..kernel.actors import add_actor, list_actors, remove_actor, resolve_recipi
 from ..kernel.inbox import find_event, get_cursor, set_cursor, unread_messages
 from ..kernel.permissions import require_actor_permission, require_inbox_permission
 from ..paths import ensure_home
+from ..runners import tmux as tmux_runner
 from ..util.fs import atomic_write_text, read_json
 from ..util.time import utc_now_iso
 
@@ -211,6 +212,9 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         role = str(args.get("role") or "").strip()
         title = str(args.get("title") or "").strip()
         by = str(args.get("by") or "user").strip()
+        command_raw = args.get("command")
+        env_raw = args.get("env")
+        default_scope_key = str(args.get("default_scope_key") or "").strip()
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
         group = load_group(group_id)
@@ -220,7 +224,21 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             require_actor_permission(group, by=by, action="actor.add")
             if role not in ("foreman", "peer"):
                 raise ValueError("invalid role")
-            actor = add_actor(group, actor_id=actor_id, role=role, title=title)
+            command: list[str] = []
+            if isinstance(command_raw, list) and all(isinstance(x, str) for x in command_raw):
+                command = [str(x) for x in command_raw if str(x).strip()]
+            env: Dict[str, str] = {}
+            if isinstance(env_raw, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env_raw.items()):
+                env = {str(k): str(v) for k, v in env_raw.items()}
+            actor = add_actor(
+                group,
+                actor_id=actor_id,
+                role=role,
+                title=title,
+                command=command,
+                env=env,
+                default_scope_key=default_scope_key,
+            )
         except Exception as e:
             return _error("actor_add_failed", str(e)), False
         ev = append_event(
@@ -321,6 +339,19 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         try:
             require_actor_permission(group, by=by, action="actor.start", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": True})
+            session = tmux_runner.session_name(group.group_id)
+            scope_key = str(actor.get("default_scope_key") or group.doc.get("active_scope_key") or "").strip()
+            cwd = Path.cwd()
+            if scope_key and isinstance(group.doc.get("scopes"), list):
+                for sc in group.doc.get("scopes") or []:
+                    if isinstance(sc, dict) and str(sc.get("scope_key") or "") == scope_key:
+                        url = str(sc.get("url") or "").strip()
+                        if url:
+                            cwd = Path(url)
+                        break
+            cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
+            env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
+            tmux_runner.ensure_window(session, window=actor_id, cwd=cwd, command=list(cmd or []), env=dict(env or {}))
         except Exception as e:
             return _error("actor_start_failed", str(e)), False
         ev = append_event(
@@ -345,6 +376,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         try:
             require_actor_permission(group, by=by, action="actor.stop", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": False})
+            session = tmux_runner.session_name(group.group_id)
+            tmux_runner.kill_window(session, actor_id)
         except Exception as e:
             return _error("actor_stop_failed", str(e)), False
         ev = append_event(
@@ -369,6 +402,20 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         try:
             require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": True})
+            session = tmux_runner.session_name(group.group_id)
+            tmux_runner.kill_window(session, actor_id)
+            scope_key = str(actor.get("default_scope_key") or group.doc.get("active_scope_key") or "").strip()
+            cwd = Path.cwd()
+            if scope_key and isinstance(group.doc.get("scopes"), list):
+                for sc in group.doc.get("scopes") or []:
+                    if isinstance(sc, dict) and str(sc.get("scope_key") or "") == scope_key:
+                        url = str(sc.get("url") or "").strip()
+                        if url:
+                            cwd = Path(url)
+                        break
+            cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
+            env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
+            tmux_runner.ensure_window(session, window=actor_id, cwd=cwd, command=list(cmd or []), env=dict(env or {}))
         except Exception as e:
             return _error("actor_restart_failed", str(e)), False
         ev = append_event(
