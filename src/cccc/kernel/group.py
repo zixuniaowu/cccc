@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,7 +56,7 @@ def load_group(group_id: str) -> Optional[Group]:
         return None
 
 
-def create_group(reg: Registry, *, title: str) -> Group:
+def create_group(reg: Registry, *, title: str, topic: str = "") -> Group:
     home = ensure_home()
     groups_dir = home / "groups"
     groups_dir.mkdir(parents=True, exist_ok=True)
@@ -73,8 +74,10 @@ def create_group(reg: Registry, *, title: str) -> Group:
         "v": 1,
         "group_id": group_id,
         "title": title.strip() if title.strip() else "working-group",
+        "topic": topic.strip(),
         "created_at": now,
         "updated_at": now,
+        "running": False,
         "active_scope_key": "",
         "scopes": [],
         "actors": [],
@@ -84,6 +87,7 @@ def create_group(reg: Registry, *, title: str) -> Group:
     reg.groups[group_id] = {
         "group_id": group_id,
         "title": group_doc["title"],
+        "topic": group_doc["topic"],
         "path": str(gp),
         "default_scope_key": "",
         "created_at": now,
@@ -209,8 +213,10 @@ def ensure_group_for_scope(reg: Registry, scope: ScopeIdentity) -> Group:
         "v": 1,
         "group_id": group_id,
         "title": scope.label,
+        "topic": "",
         "created_at": now,
         "updated_at": now,
+        "running": False,
         "active_scope_key": "",
         "scopes": [],
         "actors": [],
@@ -220,6 +226,7 @@ def ensure_group_for_scope(reg: Registry, scope: ScopeIdentity) -> Group:
     reg.groups[group_id] = {
         "group_id": group_id,
         "title": scope.label,
+        "topic": "",
         "path": str(gp),
         "default_scope_key": "",
         "created_at": now,
@@ -228,3 +235,85 @@ def ensure_group_for_scope(reg: Registry, scope: ScopeIdentity) -> Group:
     reg.save()
 
     return attach_scope_to_group(reg, Group(group_id=group_id, path=gp, doc=group_doc), scope, set_active=True)
+
+
+def update_group(reg: Registry, group: Group, *, patch: Dict[str, Any]) -> Group:
+    if "title" in patch:
+        title = str(patch.get("title") or "").strip()
+        if title:
+            group.doc["title"] = title
+
+    if "topic" in patch:
+        topic = str(patch.get("topic") or "").strip()
+        group.doc["topic"] = topic
+
+    group.save()
+
+    meta = reg.groups.get(group.group_id)
+    if isinstance(meta, dict):
+        meta["title"] = str(group.doc.get("title") or meta.get("title") or "")
+        meta["topic"] = str(group.doc.get("topic") or "")
+        meta["updated_at"] = str(group.doc.get("updated_at") or utc_now_iso())
+    reg.save()
+    return group
+
+
+def detach_scope_from_group(reg: Registry, group: Group, *, scope_key: str) -> Group:
+    wanted = scope_key.strip()
+    if not wanted:
+        raise ValueError("missing scope_key")
+
+    scopes = group.doc.get("scopes")
+    if not isinstance(scopes, list):
+        scopes = []
+
+    before = len(scopes)
+    scopes = [s for s in scopes if not (isinstance(s, dict) and str(s.get("scope_key") or "") == wanted)]
+    if len(scopes) == before:
+        raise ValueError(f"scope not attached: {wanted}")
+    group.doc["scopes"] = scopes
+
+    if str(group.doc.get("active_scope_key") or "") == wanted:
+        new_active = ""
+        for sc in scopes:
+            if not isinstance(sc, dict):
+                continue
+            k = str(sc.get("scope_key") or "").strip()
+            if k:
+                new_active = k
+                break
+        group.doc["active_scope_key"] = new_active
+
+    try:
+        shutil.rmtree(group.path / "scopes" / wanted)
+    except Exception:
+        pass
+
+    if reg.defaults.get(wanted) == group.group_id:
+        reg.defaults.pop(wanted, None)
+
+    group.save()
+
+    meta = reg.groups.get(group.group_id)
+    if isinstance(meta, dict):
+        meta["default_scope_key"] = str(group.doc.get("active_scope_key") or "")
+        meta["updated_at"] = str(group.doc.get("updated_at") or utc_now_iso())
+    reg.save()
+    return group
+
+
+def delete_group(reg: Registry, *, group_id: str) -> None:
+    gid = group_id.strip()
+    if not gid:
+        raise ValueError("missing group_id")
+
+    home = ensure_home()
+    gp = home / "groups" / gid
+    if gp.exists():
+        shutil.rmtree(gp)
+
+    reg.groups.pop(gid, None)
+    for k, v in list(reg.defaults.items()):
+        if v == gid:
+            reg.defaults.pop(k, None)
+    reg.save()

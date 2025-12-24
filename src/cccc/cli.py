@@ -8,19 +8,32 @@ import sys
 import time
 import shlex
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from . import __version__
 from .contracts.v1 import ChatMessageData
 from .daemon.server import call_daemon
 from .kernel.active import load_active, set_active_group_id
 from .kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, set_actor_role, update_actor
-from .kernel.group import attach_scope_to_group, create_group, ensure_group_for_scope, load_group, set_active_scope
+from .kernel.group import (
+    attach_scope_to_group,
+    create_group,
+    delete_group,
+    detach_scope_from_group,
+    ensure_group_for_scope,
+    load_group,
+    set_active_scope,
+    update_group,
+)
 from .kernel.inbox import find_event, get_cursor, set_cursor, unread_messages
 from .kernel.ledger import append_event, follow, read_last_lines
-from .kernel.permissions import require_actor_permission, require_inbox_permission
+from .kernel.ledger_retention import compact as compact_ledger
+from .kernel.ledger_retention import snapshot as snapshot_ledger
+from .kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
 from .kernel.registry import load_registry
 from .kernel.scope import detect_scope
+from .kernel.system_prompt import render_system_prompt
+from .paths import ensure_home
 
 
 def _print_json(obj: Any) -> None:
@@ -56,6 +69,25 @@ def _resolve_group_id(explicit: str) -> str:
         return gid
     active = load_active()
     return str(active.get("active_group_id") or "").strip()
+
+
+def _default_entry() -> int:
+    # vNext default: `cccc` boots the local web console (FastAPI + UI under /ui).
+    from .ports.web.main import main as web_main
+
+    argv: list[str] = []
+    host = str(os.environ.get("CCCC_WEB_HOST") or "").strip()
+    if host:
+        argv.extend(["--host", host])
+    port = str(os.environ.get("CCCC_WEB_PORT") or "").strip()
+    if port:
+        argv.extend(["--port", port])
+    if str(os.environ.get("CCCC_WEB_RELOAD") or "").strip():
+        argv.append("--reload")
+    log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip()
+    if log_level:
+        argv.extend(["--log-level", log_level])
+    return int(web_main(argv))
 
 
 def cmd_attach(args: argparse.Namespace) -> int:
@@ -104,7 +136,7 @@ def cmd_attach(args: argparse.Namespace) -> int:
 
 def cmd_group_create(args: argparse.Namespace) -> int:
     if _ensure_daemon_running():
-        resp = call_daemon({"op": "group_create", "args": {"title": args.title, "by": "cli"}})
+        resp = call_daemon({"op": "group_create", "args": {"title": args.title, "topic": str(args.topic or ""), "by": "cli"}})
         if resp.get("ok"):
             try:
                 gid = str((resp.get("result") or {}).get("group_id") or "").strip()
@@ -116,14 +148,14 @@ def cmd_group_create(args: argparse.Namespace) -> int:
             return 0
 
     reg = load_registry()
-    group = create_group(reg, title=str(args.title or "working-group"))
+    group = create_group(reg, title=str(args.title or "working-group"), topic=str(args.topic or ""))
     ev = append_event(
         group.ledger_path,
         kind="group.create",
         group_id=group.group_id,
         scope_key="",
         by="cli",
-        data={"title": group.doc.get("title", "")},
+        data={"title": group.doc.get("title", ""), "topic": group.doc.get("topic", "")},
     )
     set_active_group_id(group.group_id)
     _print_json({"ok": True, "result": {"group_id": group.group_id, "title": group.doc.get("title"), "event": ev}})
@@ -137,6 +169,107 @@ def cmd_group_show(args: argparse.Namespace) -> int:
         return 2
     _print_json({"ok": True, "result": {"group": group.doc}})
     return 0
+
+
+def cmd_group_update(args: argparse.Namespace) -> int:
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    by = str(args.by or "user").strip()
+
+    patch: dict[str, Any] = {}
+    if args.title is not None:
+        title = str(args.title or "").strip()
+        if not title:
+            _print_json({"ok": False, "error": {"code": "invalid_title", "message": "title cannot be empty"}})
+            return 2
+        patch["title"] = title
+    if args.topic is not None:
+        patch["topic"] = str(args.topic or "")
+    if not patch:
+        _print_json({"ok": False, "error": {"code": "invalid_patch", "message": "provide --title and/or --topic"}})
+        return 2
+
+    if _ensure_daemon_running():
+        resp = call_daemon({"op": "group_update", "args": {"group_id": group_id, "by": by, "patch": patch}})
+        if resp.get("ok"):
+            _print_json(resp)
+            return 0
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+    try:
+        require_group_permission(group, by=by, action="group.update")
+        reg = load_registry()
+        group = update_group(reg, group, patch=dict(patch))
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "group_update_failed", "message": str(e)}})
+        return 2
+    ev = append_event(group.ledger_path, kind="group.update", group_id=group.group_id, scope_key="", by=by, data={"patch": dict(patch)})
+    _print_json({"ok": True, "result": {"group_id": group.group_id, "group": group.doc, "event": ev}})
+    return 0
+
+
+def cmd_group_detach_scope(args: argparse.Namespace) -> int:
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    by = str(args.by or "user").strip()
+    scope_key = str(args.scope_key or "").strip()
+    if not scope_key:
+        _print_json({"ok": False, "error": {"code": "missing_scope_key", "message": "missing scope_key"}})
+        return 2
+
+    if _ensure_daemon_running():
+        resp = call_daemon({"op": "group_detach_scope", "args": {"group_id": group_id, "scope_key": scope_key, "by": by}})
+        if resp.get("ok"):
+            _print_json(resp)
+            return 0
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+    try:
+        require_group_permission(group, by=by, action="group.detach_scope")
+        reg = load_registry()
+        group = detach_scope_from_group(reg, group, scope_key=scope_key)
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "group_detach_scope_failed", "message": str(e)}})
+        return 2
+    ev = append_event(
+        group.ledger_path,
+        kind="group.detach_scope",
+        group_id=group.group_id,
+        scope_key=scope_key,
+        by=by,
+        data={"scope_key": scope_key},
+    )
+    _print_json({"ok": True, "result": {"group_id": group.group_id, "event": ev}})
+    return 0
+
+
+def cmd_group_delete(args: argparse.Namespace) -> int:
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    by = str(args.by or "user").strip()
+    confirm = str(args.confirm or "").strip()
+    if confirm != group_id:
+        _print_json({"ok": False, "error": {"code": "confirm_required", "message": f"pass --confirm {group_id} to delete"}})
+        return 2
+
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
+        return 2
+    resp = call_daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
 
 
 def cmd_group_use(args: argparse.Namespace) -> int:
@@ -172,6 +305,36 @@ def cmd_group_use(args: argparse.Namespace) -> int:
     )
     _print_json({"ok": True, "result": {"group_id": group.group_id, "active_scope_key": scope.scope_key, "event": ev}})
     return 0
+
+
+def cmd_group_start(args: argparse.Namespace) -> int:
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    by = str(args.by or "user").strip()
+
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
+        return 2
+    resp = call_daemon({"op": "group_start", "args": {"group_id": group_id, "by": by}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_group_stop(args: argparse.Namespace) -> int:
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    by = str(args.by or "user").strip()
+
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
+        return 2
+    resp = call_daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
 
 
 def cmd_groups(args: argparse.Namespace) -> int:
@@ -257,6 +420,16 @@ def cmd_send(args: argparse.Namespace) -> int:
         by=str(args.by or "user"),
         data=ChatMessageData(text=args.text, format="plain", to=to).model_dump(),
     )
+    try:
+        reg = load_registry()
+        meta = reg.groups.get(group.group_id)
+        if isinstance(meta, dict):
+            ts = str(event.get("ts") or meta.get("updated_at") or "")
+            if ts:
+                meta["updated_at"] = ts
+                reg.save()
+    except Exception:
+        pass
     _print_json({"ok": True, "result": {"event": event}})
     return 0
 
@@ -276,6 +449,63 @@ def cmd_tail(args: argparse.Namespace) -> int:
         return 0
     for line in read_last_lines(group.ledger_path, args.lines):
         print(line)
+    return 0
+
+
+def cmd_ledger_snapshot(args: argparse.Namespace) -> int:
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    by = str(args.by or "user").strip()
+    reason = str(args.reason or "manual").strip()
+
+    if _ensure_daemon_running():
+        resp = call_daemon({"op": "ledger_snapshot", "args": {"group_id": group_id, "by": by, "reason": reason}})
+        _print_json(resp)
+        return 0 if resp.get("ok") else 2
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+    try:
+        require_group_permission(group, by=by, action="group.update")
+        snap = snapshot_ledger(group, reason=reason)
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "ledger_snapshot_failed", "message": str(e)}})
+        return 2
+    _print_json({"ok": True, "result": {"snapshot": snap}})
+    return 0
+
+
+def cmd_ledger_compact(args: argparse.Namespace) -> int:
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    by = str(args.by or "user").strip()
+    reason = str(args.reason or "manual").strip()
+    force = bool(args.force)
+
+    if _ensure_daemon_running():
+        resp = call_daemon(
+            {"op": "ledger_compact", "args": {"group_id": group_id, "by": by, "reason": reason, "force": force}}
+        )
+        _print_json(resp)
+        return 0 if resp.get("ok") else 2
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+    try:
+        require_group_permission(group, by=by, action="group.update")
+        res = compact_ledger(group, reason=reason, force=force)
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "ledger_compact_failed", "message": str(e)}})
+        return 2
+    _print_json({"ok": True, "result": res})
     return 0
 
 
@@ -335,6 +565,7 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
     role = str(args.role or "peer").strip()
     title = str(args.title or "").strip()
     by = str(args.by or "user").strip()
+    submit = str(args.submit or "enter").strip() or "enter"
     command: list[str] = []
     if args.command:
         try:
@@ -369,6 +600,7 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
                     "actor_id": actor_id,
                     "role": role,
                     "title": title,
+                    "submit": submit,
                     "by": by,
                     "command": command,
                     "env": env,
@@ -392,6 +624,7 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
             command=command,
             env=env,
             default_scope_key=default_scope_key,
+            submit=submit,
         )
     except Exception as e:
         _print_json({"ok": False, "error": {"code": "actor_add_failed", "message": str(e)}})
@@ -595,6 +828,8 @@ def cmd_actor_update(args: argparse.Namespace) -> int:
             _print_json({"ok": False, "error": {"code": "scope_not_attached", "message": f"scope not attached: {scope_key}"}})
             return 2
         patch["default_scope_key"] = scope_key
+    if args.submit is not None:
+        patch["submit"] = str(args.submit)
     if args.enabled is not None:
         patch["enabled"] = bool(args.enabled)
 
@@ -753,48 +988,25 @@ def cmd_prompt(args: argparse.Namespace) -> int:
     if actor is None:
         _print_json({"ok": False, "error": {"code": "actor_not_found", "message": f"actor not found: {actor_id}"}})
         return 2
-
-    title = str(group.doc.get("title") or group_id)
-    role = str(actor.get("role") or "")
-    scopes = group.doc.get("scopes") if isinstance(group.doc.get("scopes"), list) else []
-    active_scope_key = str(group.doc.get("active_scope_key") or "")
-    scope_lines: list[str] = []
-    for sc in scopes:
-        if not isinstance(sc, dict):
-            continue
-        sk = str(sc.get("scope_key") or "")
-        url = str(sc.get("url") or "")
-        label = str(sc.get("label") or sk)
-        mark = " (active)" if sk and sk == active_scope_key else ""
-        if url:
-            scope_lines.append(f"- {label}: {url}{mark}")
-
-    perms = ""
-    if role == "foreman":
-        perms = "You can manage other peers in this group (create/update/stop/restart)."
-    elif role == "peer":
-        perms = "You can only stop/restart yourself. Do not manage other actors."
-
-    prompt = "\n".join(
-        [
-            "SYSTEM (CCCC vNext)",
-            f"- Identity: {actor_id} ({role}) in working group '{title}' ({group_id})",
-            "- Style: Be terse. Use bullets. No fluff. Treat messages like orders/status reports.",
-            "- Source of truth: The group ledger is the shared chat+audit log. Keep it clean and actionable.",
-            "- Messaging:",
-            "  - Read: cccc inbox --actor-id <you> --by <you> [--mark-read]",
-            "  - Send: cccc send \"...\" --by <you> --to <target>",
-            "    - targets: user/@user, @all, @foreman, actor-id, or actor title",
-            "  - Mark read: cccc read <event_id> --actor-id <you> --by <you>",
-            "- Permissions:",
-            f"  - {perms}".rstrip(),
-            "- Scopes:",
-            *(scope_lines or ["- (none attached yet)"]),
-        ]
-    ).strip() + "\n"
+    prompt = render_system_prompt(group=group, actor=actor)
 
     _print_json({"ok": True, "result": {"group_id": group_id, "actor_id": actor_id, "prompt": prompt}})
     return 0
+
+
+def cmd_web(args: argparse.Namespace) -> int:
+    from .ports.web.main import main as web_main
+
+    argv: list[str] = []
+    if str(args.host or "").strip():
+        argv.extend(["--host", str(args.host)])
+    if args.port is not None:
+        argv.extend(["--port", str(int(args.port))])
+    if bool(args.reload):
+        argv.append("--reload")
+    if str(args.log_level or "").strip():
+        argv.extend(["--log-level", str(args.log_level)])
+    return int(web_main(argv))
 
 
 def cmd_daemon(args: argparse.Namespace) -> int:
@@ -839,16 +1051,46 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_group_create = group_sub.add_parser("create", help="Create an empty working group")
     p_group_create.add_argument("--title", default="working-group", help="Group title (default: working-group)")
+    p_group_create.add_argument("--topic", default="", help="Group topic (optional)")
     p_group_create.set_defaults(func=cmd_group_create)
 
     p_group_show = group_sub.add_parser("show", help="Show group metadata")
     p_group_show.add_argument("group_id", help="Target group_id")
     p_group_show.set_defaults(func=cmd_group_show)
 
+    p_group_update = group_sub.add_parser("update", help="Update group metadata (title/topic)")
+    p_group_update.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_group_update.add_argument("--title", default=None, help="New title")
+    p_group_update.add_argument("--topic", default=None, help="New topic (use empty string to clear)")
+    p_group_update.add_argument("--by", default="user", help="Requester (default: user)")
+    p_group_update.set_defaults(func=cmd_group_update)
+
+    p_group_detach = group_sub.add_parser("detach-scope", help="Detach a workspace scope from a group")
+    p_group_detach.add_argument("scope_key", help="Scope key to detach (see: cccc group show <id>)")
+    p_group_detach.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_group_detach.add_argument("--by", default="user", help="Requester (default: user)")
+    p_group_detach.set_defaults(func=cmd_group_detach_scope)
+
+    p_group_delete = group_sub.add_parser("delete", help="Delete a group and its local state (destructive)")
+    p_group_delete.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_group_delete.add_argument("--confirm", default="", help="Type the group_id to confirm deletion")
+    p_group_delete.add_argument("--by", default="user", help="Requester (default: user)")
+    p_group_delete.set_defaults(func=cmd_group_delete)
+
     p_group_use = group_sub.add_parser("use", help="Set group's active scope (must already be attached)")
     p_group_use.add_argument("group_id", help="Target group_id")
     p_group_use.add_argument("path", nargs="?", default=".", help="Path inside target scope (default: .)")
     p_group_use.set_defaults(func=cmd_group_use)
+
+    p_group_start = group_sub.add_parser("start", help="Start a working group (spawn enabled actors)")
+    p_group_start.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_group_start.add_argument("--by", default="user", help="Requester (default: user)")
+    p_group_start.set_defaults(func=cmd_group_start)
+
+    p_group_stop = group_sub.add_parser("stop", help="Stop a working group (stop all running actors)")
+    p_group_stop.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_group_stop.add_argument("--by", default="user", help="Requester (default: user)")
+    p_group_stop.set_defaults(func=cmd_group_stop)
 
     p_groups = sub.add_parser("groups", help="List known working groups")
     p_groups.set_defaults(func=cmd_groups)
@@ -874,6 +1116,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_add.add_argument("--command", default="", help="Command to run (shell-like string; optional)")
     p_actor_add.add_argument("--env", action="append", default=[], help="Environment var (KEY=VAL), repeatable")
     p_actor_add.add_argument("--scope", default="", help="Default scope path for this actor (optional; must be attached)")
+    p_actor_add.add_argument("--submit", choices=["enter", "newline", "none"], default="enter", help="Submit key (default: enter)")
     p_actor_add.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_add.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_add.set_defaults(func=cmd_actor_add)
@@ -916,6 +1159,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_update.add_argument("--command", default=None, help="Replace command (shell-like string); use empty to clear")
     p_actor_update.add_argument("--env", action="append", default=[], help="Replace env with these KEY=VAL entries (repeatable)")
     p_actor_update.add_argument("--scope", default="", help="Set default scope path (must be attached)")
+    p_actor_update.add_argument("--submit", choices=["enter", "newline", "none"], default=None, help="Submit key")
     p_actor_update.add_argument("--enabled", type=int, choices=[0, 1], default=None, help="Set enabled (1) or disabled (0)")
     p_actor_update.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_update.add_argument("--group", default="", help="Target group_id (default: active group)")
@@ -960,9 +1204,32 @@ def build_parser() -> argparse.ArgumentParser:
     p_tail.add_argument("-f", "--follow", action="store_true", help="Follow (like tail -f)")
     p_tail.set_defaults(func=cmd_tail)
 
+    p_ledger = sub.add_parser("ledger", help="Ledger maintenance (snapshot/compaction)")
+    ledger_sub = p_ledger.add_subparsers(dest="action", required=True)
+
+    p_ls = ledger_sub.add_parser("snapshot", help="Write a ledger snapshot under group state/")
+    p_ls.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_ls.add_argument("--by", default="user", help="Requester (default: user)")
+    p_ls.add_argument("--reason", default="manual", help="Reason label (default: manual)")
+    p_ls.set_defaults(func=cmd_ledger_snapshot)
+
+    p_lc = ledger_sub.add_parser("compact", help="Archive globally-read events to keep active ledger small")
+    p_lc.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_lc.add_argument("--by", default="user", help="Requester (default: user)")
+    p_lc.add_argument("--reason", default="manual", help="Reason label (default: manual)")
+    p_lc.add_argument("--force", action="store_true", help="Force a compaction run (ignore thresholds)")
+    p_lc.set_defaults(func=cmd_ledger_compact)
+
     p_daemon = sub.add_parser("daemon", help="Manage ccccd daemon")
     p_daemon.add_argument("action", choices=["start", "stop", "status"], help="Action")
     p_daemon.set_defaults(func=cmd_daemon)
+
+    p_web = sub.add_parser("web", help="Run the web control-plane port (FastAPI)")
+    p_web.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    p_web.add_argument("--port", type=int, default=8848, help="Bind port (default: 8848)")
+    p_web.add_argument("--reload", action="store_true", help="Enable autoreload (dev)")
+    p_web.add_argument("--log-level", default="info", help="Uvicorn log level (default: info)")
+    p_web.set_defaults(func=cmd_web)
 
     p_ver = sub.add_parser("version", help="Show version")
     p_ver.set_defaults(func=cmd_version)
@@ -970,7 +1237,11 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: Optional[list[str]] = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if len(argv) == 0:
+        return int(_default_entry())
     parser = build_parser()
     args = parser.parse_args(argv)
     return int(args.func(args))

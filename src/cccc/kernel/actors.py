@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from ..contracts.v1 import Actor, ActorRole
+from ..contracts.v1 import Actor, ActorRole, ActorSubmit
 from ..util.time import utc_now_iso
 from .group import Group
 
@@ -53,6 +53,7 @@ def add_actor(
     command: Optional[List[str]] = None,
     env: Optional[Dict[str, str]] = None,
     default_scope_key: str = "",
+    submit: ActorSubmit = "enter",
     enabled: bool = True,
 ) -> Dict[str, Any]:
     aid = actor_id.strip()
@@ -80,6 +81,7 @@ def add_actor(
         command=list(command or []),
         env=dict(env or {}),
         default_scope_key=default_scope_key.strip(),
+        submit=submit,
         enabled=bool(enabled),
         created_at=now,
         updated_at=now,
@@ -153,6 +155,15 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
 
     if "default_scope_key" in patch:
         item["default_scope_key"] = str(patch.get("default_scope_key") or "").strip()
+
+    if "submit" in patch:
+        submit = patch.get("submit")
+        if submit is None:
+            item["submit"] = "enter"
+        elif submit in ("enter", "newline", "none"):
+            item["submit"] = submit
+        else:
+            raise ValueError("invalid submit")
 
     if "enabled" in patch:
         item["enabled"] = bool(patch.get("enabled"))

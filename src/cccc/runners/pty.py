@@ -1,0 +1,567 @@
+from __future__ import annotations
+
+import fcntl
+import os
+import pty
+import queue
+import selectors
+import signal
+import socket
+import struct
+import subprocess
+import threading
+import time
+from collections import deque
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Dict, Iterable, Optional, Tuple
+
+import termios
+
+
+def _set_winsize(fd: int, *, cols: int, rows: int) -> None:
+    try:
+        winsize = struct.pack("HHHH", int(rows), int(cols), 0, 0)
+        fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+    except Exception:
+        pass
+
+
+def _best_effort_killpg(pid: int, sig: signal.Signals) -> None:
+    if pid <= 0:
+        return
+    try:
+        os.killpg(pid, sig)
+    except Exception:
+        try:
+            os.kill(pid, sig)
+        except Exception:
+            pass
+
+
+@dataclass
+class _PtyClient:
+    sock: socket.socket
+    writer: bool
+    outbuf: bytearray
+
+
+class PtySession:
+    def __init__(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        cwd: Path,
+        command: Iterable[str],
+        env: Dict[str, str],
+        on_exit: Optional[Callable[["PtySession"], None]] = None,
+        max_backlog_bytes: int = 2_000_000,
+        max_client_buffer_bytes: int = 8_000_000,
+        cols: int = 120,
+        rows: int = 40,
+    ) -> None:
+        self.group_id = group_id
+        self.actor_id = actor_id
+        self._on_exit = on_exit
+        self._max_backlog_bytes = int(max_backlog_bytes)
+        self._max_client_buffer_bytes = max(int(max_client_buffer_bytes), int(max_backlog_bytes))
+
+        self._selector = selectors.DefaultSelector()
+        self._lock = threading.Lock()
+        self._clients: Dict[int, _PtyClient] = {}
+        self._writer_fd: Optional[int] = None
+        self._attach_q: queue.Queue[socket.socket] = queue.Queue()
+        self._cmd_r, self._cmd_w = os.pipe()
+        os.set_blocking(self._cmd_r, False)
+        os.set_blocking(self._cmd_w, False)
+
+        self._backlog: deque[bytes] = deque()
+        self._backlog_bytes = 0
+        self._mode_tail = b""
+        self._bracketed_paste = False
+
+        master_fd, slave_fd = pty.openpty()
+        _set_winsize(master_fd, cols=cols, rows=rows)
+        os.set_blocking(master_fd, False)
+
+        cmd = [str(x) for x in command if isinstance(x, str) and str(x).strip()]
+        if not cmd:
+            cmd = ["bash"] if Path("/bin/bash").exists() else ["sh"]
+
+        proc_env = os.environ.copy()
+        proc_env.update({k: v for k, v in env.items() if isinstance(k, str) and isinstance(v, str)})
+        proc_env.setdefault("TERM", "xterm-256color")
+
+        def _preexec() -> None:
+            try:
+                os.setsid()
+            except Exception:
+                pass
+            try:
+                fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+            except Exception:
+                pass
+
+        self._proc = subprocess.Popen(
+            cmd,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
+            cwd=str(cwd),
+            env=proc_env,
+            close_fds=True,
+            preexec_fn=_preexec,
+        )
+        try:
+            os.close(slave_fd)
+        except Exception:
+            pass
+
+        self._master_fd = master_fd
+        self._running = True
+
+        self._selector.register(master_fd, selectors.EVENT_READ, data=("pty", None))
+        self._selector.register(self._cmd_r, selectors.EVENT_READ, data=("cmd", None))
+
+        self._thread = threading.Thread(target=self._loop, name=f"cccc-pty:{group_id}:{actor_id}", daemon=True)
+        self._thread.start()
+
+    @property
+    def pid(self) -> int:
+        return int(getattr(self._proc, "pid", 0) or 0)
+
+    def is_running(self) -> bool:
+        return bool(self._running) and self._proc.poll() is None
+
+    def bracketed_paste_enabled(self) -> bool:
+        with self._lock:
+            return bool(self._bracketed_paste)
+
+    def resize(self, *, cols: int, rows: int) -> None:
+        if cols <= 0 or rows <= 0:
+            return
+        _set_winsize(self._master_fd, cols=int(cols), rows=int(rows))
+        _best_effort_killpg(self.pid, signal.SIGWINCH)
+
+    def write_input(self, data: bytes) -> None:
+        if not data:
+            return
+        try:
+            os.write(self._master_fd, data)
+        except Exception:
+            pass
+
+    def stop(self) -> None:
+        self._running = False
+        _best_effort_killpg(self.pid, signal.SIGTERM)
+        deadline = time.time() + 1.0
+        while time.time() < deadline:
+            if self._proc.poll() is not None:
+                break
+            time.sleep(0.05)
+        if self._proc.poll() is None:
+            _best_effort_killpg(self.pid, signal.SIGKILL)
+        try:
+            os.close(self._master_fd)
+        except Exception:
+            pass
+
+    def attach_client(self, sock: socket.socket) -> None:
+        try:
+            self._attach_q.put_nowait(sock)
+        except Exception:
+            return
+        try:
+            os.write(self._cmd_w, b"x")
+        except Exception:
+            pass
+
+    def detach_client(self, fileno: int) -> None:
+        with self._lock:
+            client = self._clients.pop(fileno, None)
+            if self._writer_fd == fileno:
+                self._writer_fd = None
+
+        if client is not None:
+            try:
+                self._selector.unregister(client.sock)
+            except Exception:
+                pass
+            try:
+                client.sock.close()
+            except Exception:
+                pass
+
+        self._maybe_promote_writer()
+
+    def _maybe_promote_writer(self) -> None:
+        with self._lock:
+            if self._writer_fd is not None:
+                return
+            for fd, c in self._clients.items():
+                self._writer_fd = fd
+                c.writer = True
+                try:
+                    current = 0
+                    try:
+                        current = self._selector.get_key(c.sock).events
+                    except Exception:
+                        current = 0
+                    self._selector.modify(c.sock, current | selectors.EVENT_READ, data=("client", fd))
+                except Exception:
+                    pass
+                break
+
+    def _append_backlog(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        self._backlog.append(chunk)
+        self._backlog_bytes += len(chunk)
+        limit = max(0, self._max_backlog_bytes)
+        while limit and self._backlog_bytes > limit and self._backlog:
+            drop = self._backlog.popleft()
+            self._backlog_bytes -= len(drop)
+
+    def _close_all(self) -> None:
+        try:
+            self._selector.unregister(self._master_fd)
+        except Exception:
+            pass
+        try:
+            os.close(self._master_fd)
+        except Exception:
+            pass
+        try:
+            self._selector.unregister(self._cmd_r)
+        except Exception:
+            pass
+        try:
+            os.close(self._cmd_r)
+        except Exception:
+            pass
+        try:
+            os.close(self._cmd_w)
+        except Exception:
+            pass
+
+        with self._lock:
+            items = list(self._clients.items())
+            self._clients.clear()
+            self._writer_fd = None
+
+        for fileno, client in items:
+            _ = fileno
+            try:
+                self._selector.unregister(client.sock)
+            except Exception:
+                pass
+            try:
+                client.sock.close()
+            except Exception:
+                pass
+
+        try:
+            self._selector.close()
+        except Exception:
+            pass
+        while True:
+            try:
+                sock = self._attach_q.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+    def _on_pty_readable(self) -> None:
+        while True:
+            try:
+                chunk = os.read(self._master_fd, 65536)
+            except BlockingIOError:
+                return
+            except OSError:
+                self._running = False
+                return
+            if not chunk:
+                self._running = False
+                return
+
+            self._update_input_modes(chunk)
+            with self._lock:
+                self._append_backlog(chunk)
+                clients = list(self._clients.items())
+
+            for fileno, client in clients:
+                if self._max_client_buffer_bytes and (len(client.outbuf) + len(chunk) > self._max_client_buffer_bytes):
+                    self.detach_client(fileno)
+                    continue
+                client.outbuf.extend(chunk)
+                try:
+                    events = self._selector.get_key(client.sock).events
+                    self._selector.modify(client.sock, events | selectors.EVENT_WRITE, data=("client", fileno))
+                except Exception:
+                    self.detach_client(fileno)
+
+    def _update_input_modes(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        enable = b"\x1b[?2004h"
+        disable = b"\x1b[?2004l"
+        with self._lock:
+            data = (self._mode_tail or b"") + chunk
+            last_enable = data.rfind(enable)
+            last_disable = data.rfind(disable)
+            if last_enable >= 0 or last_disable >= 0:
+                self._bracketed_paste = last_enable > last_disable
+            keep = max(len(enable), len(disable)) - 1
+            self._mode_tail = data[-keep:] if keep > 0 else b""
+
+    def _on_cmd_readable(self) -> None:
+        try:
+            os.read(self._cmd_r, 65536)
+        except Exception:
+            pass
+
+        while True:
+            try:
+                sock = self._attach_q.get_nowait()
+            except queue.Empty:
+                return
+            self._attach_client_now(sock)
+
+    def _attach_client_now(self, sock: socket.socket) -> None:
+        fileno = int(sock.fileno())
+        if fileno < 0:
+            try:
+                sock.close()
+            except Exception:
+                pass
+            return
+        try:
+            sock.setblocking(False)
+        except Exception:
+            pass
+
+        with self._lock:
+            if fileno in self._clients:
+                return
+            writer = self._writer_fd is None
+            if writer:
+                self._writer_fd = fileno
+            backlog = b"".join(self._backlog) if self._backlog else b""
+            outbuf = bytearray(backlog)
+            client = _PtyClient(sock=sock, writer=writer, outbuf=outbuf)
+            self._clients[fileno] = client
+
+        events = selectors.EVENT_WRITE if outbuf else 0
+        if writer:
+            events |= selectors.EVENT_READ
+        try:
+            self._selector.register(sock, events, data=("client", fileno))
+        except Exception:
+            self.detach_client(fileno)
+
+    def _on_client_readable(self, fileno: int) -> None:
+        with self._lock:
+            client = self._clients.get(fileno)
+            is_writer = bool(client and client.writer and self._writer_fd == fileno)
+        if client is None:
+            return
+
+        try:
+            data = client.sock.recv(65536)
+        except BlockingIOError:
+            return
+        except Exception:
+            self.detach_client(fileno)
+            return
+        if not data:
+            self.detach_client(fileno)
+            return
+        if not is_writer:
+            return
+        try:
+            os.write(self._master_fd, data)
+        except Exception:
+            pass
+
+    def _on_client_writable(self, fileno: int) -> None:
+        with self._lock:
+            client = self._clients.get(fileno)
+        if client is None:
+            return
+
+        if not client.outbuf:
+            try:
+                events = self._selector.get_key(client.sock).events
+                self._selector.modify(client.sock, events & ~selectors.EVENT_WRITE, data=("client", fileno))
+            except Exception:
+                self.detach_client(fileno)
+            return
+
+        try:
+            sent = client.sock.send(client.outbuf)
+        except BlockingIOError:
+            return
+        except Exception:
+            self.detach_client(fileno)
+            return
+        if sent > 0:
+            del client.outbuf[:sent]
+
+    def _loop(self) -> None:
+        try:
+            while self._running and self._proc.poll() is None:
+                for key, mask in self._selector.select(timeout=0.1):
+                    kind, meta = key.data if isinstance(key.data, tuple) else ("", None)
+                    if kind == "pty":
+                        if mask & selectors.EVENT_READ:
+                            self._on_pty_readable()
+                        continue
+                    if kind == "cmd":
+                        if mask & selectors.EVENT_READ:
+                            self._on_cmd_readable()
+                        continue
+                    if kind == "client":
+                        fileno = int(meta or -1)
+                        if fileno < 0:
+                            continue
+                        if mask & selectors.EVENT_READ:
+                            self._on_client_readable(fileno)
+                        if mask & selectors.EVENT_WRITE:
+                            self._on_client_writable(fileno)
+        finally:
+            self._running = False
+            self._close_all()
+            if self._on_exit is not None:
+                try:
+                    self._on_exit(self)
+                except Exception:
+                    pass
+
+
+class PtySupervisor:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._sessions: Dict[Tuple[str, str], PtySession] = {}
+        self._exit_hook: Optional[Callable[[PtySession], None]] = None
+
+    def set_exit_hook(self, hook: Optional[Callable[[PtySession], None]]) -> None:
+        with self._lock:
+            self._exit_hook = hook
+
+    def _drop_if_same(self, group_id: str, actor_id: str, session: PtySession) -> None:
+        key = (group_id, actor_id)
+        with self._lock:
+            if self._sessions.get(key) is session:
+                self._sessions.pop(key, None)
+
+    def _on_session_exit(self, session: PtySession) -> None:
+        try:
+            self._drop_if_same(session.group_id, session.actor_id, session)
+        finally:
+            hook: Optional[Callable[[PtySession], None]] = None
+            with self._lock:
+                hook = self._exit_hook
+            if hook is not None:
+                try:
+                    hook(session)
+                except Exception:
+                    pass
+
+    def group_running(self, group_id: str) -> bool:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return False
+        with self._lock:
+            for (g, _), s in self._sessions.items():
+                if g == gid and s.is_running():
+                    return True
+        return False
+
+    def actor_running(self, group_id: str, actor_id: str) -> bool:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            s = self._sessions.get(key)
+        return bool(s and s.is_running())
+
+    def start_actor(self, *, group_id: str, actor_id: str, cwd: Path, command: Iterable[str], env: Dict[str, str]) -> PtySession:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            raise ValueError("missing group_id/actor_id")
+        with self._lock:
+            existing = self._sessions.get(key)
+        if existing is not None and existing.is_running():
+            return existing
+        session = PtySession(group_id=key[0], actor_id=key[1], cwd=cwd, command=command, env=env, on_exit=self._on_session_exit)
+        with self._lock:
+            self._sessions[key] = session
+        return session
+
+    def stop_actor(self, *, group_id: str, actor_id: str) -> None:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            s = self._sessions.pop(key, None)
+        if s is not None:
+            s.stop()
+
+    def stop_group(self, *, group_id: str) -> None:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return
+        with self._lock:
+            items = [(k, s) for k, s in self._sessions.items() if k[0] == gid]
+            for k, _ in items:
+                self._sessions.pop(k, None)
+        for _, s in items:
+            try:
+                s.stop()
+            except Exception:
+                pass
+
+    def stop_all(self) -> None:
+        with self._lock:
+            items = list(self._sessions.items())
+            self._sessions.clear()
+        for _, s in items:
+            try:
+                s.stop()
+            except Exception:
+                pass
+
+    def attach(self, *, group_id: str, actor_id: str, sock: socket.socket) -> None:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None or not s.is_running():
+            raise RuntimeError("actor not running")
+        s.attach_client(sock)
+
+    def bracketed_paste_enabled(self, *, group_id: str, actor_id: str) -> bool:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            s = self._sessions.get(key)
+        return bool(s and s.is_running() and s.bracketed_paste_enabled())
+
+    def resize(self, *, group_id: str, actor_id: str, cols: int, rows: int) -> None:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None:
+            return
+        s.resize(cols=int(cols), rows=int(rows))
+
+    def write_input(self, *, group_id: str, actor_id: str, data: bytes) -> None:
+        if not data:
+            return
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None or not s.is_running():
+            return
+        s.write_input(data)
+
+
+SUPERVISOR = PtySupervisor()

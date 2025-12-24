@@ -16,6 +16,14 @@ ActorAction = Literal[
     "actor.restart",
 ]
 
+GroupAction = Literal[
+    "group.start",
+    "group.stop",
+    "group.update",
+    "group.detach_scope",
+    "group.delete",
+]
+
 
 def actor_role(group: Group, actor_id: str) -> Optional[str]:
     item = find_actor(group, actor_id)
@@ -67,4 +75,16 @@ def require_inbox_permission(group: Group, *, by: str, target_actor_id: str) -> 
             return
         raise ValueError(f"permission denied: {who} cannot access inbox of {target or ''}".strip())
 
+    raise ValueError(f"unknown actor: {who}")
+
+
+def require_group_permission(group: Group, *, by: str, action: GroupAction) -> None:
+    who = (by or "").strip()
+    if not who or who == "user":
+        return
+    role = actor_role(group, who)
+    if role == "foreman":
+        return
+    if role == "peer":
+        raise ValueError(f"permission denied: {who} cannot {action}")
     raise ValueError(f"unknown actor: {who}")

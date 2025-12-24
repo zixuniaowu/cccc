@@ -23,7 +23,7 @@ def _spawn_daemon(paths: DaemonPaths) -> int:
         stdin=subprocess.DEVNULL,
         env=env,
         start_new_session=True,
-        cwd=str(Path.cwd()),
+        cwd=str(paths.home),
     )
     return int(p.pid)
 

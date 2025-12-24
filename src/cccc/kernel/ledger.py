@@ -1,11 +1,38 @@
 from __future__ import annotations
 
+import fcntl
+import hashlib
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from ..contracts.v1 import Event
+from ..contracts.v1.event import normalize_event_data
+from ..util.fs import atomic_write_text
+
+
+MAX_EVENT_BYTES = 256_000
+MAX_CHAT_TEXT_BYTES = 32_000
+
+
+def _spill_text(group_dir: Path, *, event_id: str, text: str) -> Dict[str, Any]:
+    raw = text or ""
+    b = raw.encode("utf-8", errors="replace")
+    rel = Path("state") / "ledger" / "blobs" / f"chat.{event_id}.txt"
+    abs_path = group_dir / rel
+    atomic_write_text(abs_path, raw.rstrip("\n") + "\n")
+    return {
+        "kind": "text",
+        "path": str(rel),
+        "bytes": len(b),
+        "sha256": hashlib.sha256(b).hexdigest(),
+    }
+
+
+def _lock_path(ledger_path: Path) -> Path:
+    return ledger_path.parent / "state" / "ledger" / "ledger.lock"
 
 
 def append_event(
@@ -17,12 +44,35 @@ def append_event(
     by: str,
     data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    event = Event(kind=kind, group_id=group_id, scope_key=scope_key, by=by, data=(data or {}))
+    payload = normalize_event_data(kind, data or {})
+    event = Event(kind=kind, group_id=group_id, scope_key=scope_key, by=by, data=payload)
+
+    # Hard rules: keep the ledger small and stable. Large payloads belong in files referenced from the ledger.
+    if kind == "chat.message":
+        text = event.data.get("text")
+        if isinstance(text, str):
+            b = text.encode("utf-8", errors="replace")
+            if len(b) > MAX_CHAT_TEXT_BYTES:
+                att = _spill_text(ledger_path.parent, event_id=event.id, text=text)
+                event.data["text"] = f"[cccc] (chat text stored at {att.get('path')})"
+                attachments = event.data.get("attachments")
+                if not isinstance(attachments, list):
+                    attachments = []
+                attachments.append(att)
+                event.data["attachments"] = attachments
+
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = event.model_dump()
-    with ledger_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-    return payload
+    out = event.model_dump()
+    line = json.dumps(out, ensure_ascii=False)
+    if len(line.encode("utf-8", errors="replace")) > MAX_EVENT_BYTES:
+        raise ValueError(f"ledger event too large (>{MAX_EVENT_BYTES} bytes): {kind}")
+    lock = _lock_path(ledger_path)
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("a", encoding="utf-8") as lk:
+        fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+        with ledger_path.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    return out
 
 
 def read_last_lines(path: Path, n: int) -> list[str]:
@@ -53,11 +103,46 @@ def read_last_lines(path: Path, n: int) -> list[str]:
 def follow(path: Path, *, sleep_seconds: float = 0.2) -> Iterable[str]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=True)
-    with path.open("r", encoding="utf-8", errors="replace") as f:
+    inode = -1
+    f = None
+
+    def _open() -> None:
+        nonlocal f, inode
+        if f is not None:
+            try:
+                f.close()
+            except Exception:
+                pass
+        f = path.open("r", encoding="utf-8", errors="replace")
+        try:
+            st = os.fstat(f.fileno())
+            inode = int(getattr(st, "st_ino", -1) or -1)
+        except Exception:
+            inode = -1
         f.seek(0, 2)
-        while True:
-            line = f.readline()
-            if line:
-                yield line.rstrip("\n")
+
+    _open()
+    assert f is not None
+
+    while True:
+        line = f.readline()
+        if line:
+            yield line.rstrip("\n")
+            continue
+
+        time.sleep(sleep_seconds)
+        try:
+            st = path.stat()
+            cur_inode = int(getattr(st, "st_ino", -1) or -1)
+            if inode != -1 and cur_inode != -1 and cur_inode != inode:
+                _open()
                 continue
-            time.sleep(sleep_seconds)
+            if st.st_size < f.tell():
+                _open()
+                continue
+        except Exception:
+            try:
+                path.touch(exist_ok=True)
+            except Exception:
+                pass
+            _open()

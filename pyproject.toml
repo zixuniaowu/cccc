@@ -12,11 +12,12 @@ authors = [
   { name = "ChesterRa", email = "ra@ike.ba" }
 ]
 license = { text = "Apache-2.0" }
-keywords = ["orchestrator","tmux","ai","rfd","pair","collaboration"]
+keywords = ["orchestrator","ai","rfd","pair","collaboration"]
 dependencies = [
   "PyYAML>=6.0",
-  "prompt_toolkit>=3.0.52",
+  "fastapi>=0.110",
   "pydantic>=2.0",
+  "uvicorn[standard]>=0.27",
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -46,6 +47,9 @@ ccccd = "cccc.daemon_main:main"
 [tool.setuptools]
 include-package-data = true
 package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+"cccc.ports.web" = ["dist/**"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

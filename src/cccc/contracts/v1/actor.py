@@ -8,6 +8,7 @@ from ...util.time import utc_now_iso
 
 
 ActorRole = Literal["foreman", "peer"]
+ActorSubmit = Literal["enter", "newline", "none"]
 
 
 class Actor(BaseModel):
@@ -18,9 +19,9 @@ class Actor(BaseModel):
     command: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
     default_scope_key: str = ""
+    submit: ActorSubmit = "enter"
     enabled: bool = True
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)
 
     model_config = ConfigDict(extra="forbid")
-
