@@ -440,6 +440,41 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         )
         return DaemonResponse(ok=True, result={"group_id": group.group_id, "group": group.doc, "event": ev}), False
 
+    if op == "group_settings_update":
+        group_id = str(args.get("group_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        patch = args.get("patch") if isinstance(args.get("patch"), dict) else {}
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        allowed = {"nudge_after_seconds", "self_check_every_handoffs", "system_refresh_every_self_checks"}
+        unknown = set(patch.keys()) - allowed
+        if unknown:
+            return _error("invalid_patch", "invalid patch keys", details={"unknown_keys": sorted(unknown)}), False
+        if not patch:
+            return _error("invalid_patch", "empty patch"), False
+        try:
+            require_group_permission(group, by=by, action="group.settings_update")
+            # Update delivery settings in group.yaml
+            delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
+            for k, v in patch.items():
+                delivery[k] = int(v)
+            group.doc["delivery"] = delivery
+            group.save()
+        except Exception as e:
+            return _error("group_settings_update_failed", str(e)), False
+        ev = append_event(
+            group.ledger_path,
+            kind="group.settings_update",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={"patch": dict(patch)},
+        )
+        return DaemonResponse(ok=True, result={"group_id": group.group_id, "settings": delivery, "event": ev}), False
+
     if op == "group_detach_scope":
         group_id = str(args.get("group_id") or "").strip()
         by = str(args.get("by") or "user").strip()
@@ -679,12 +714,21 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
     if op == "actor_list":
         group_id = str(args.get("group_id") or "").strip()
+        include_unread = bool(args.get("include_unread", False))
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
-        return DaemonResponse(ok=True, result={"actors": list_actors(group)}), False
+        actors = list_actors(group)
+        # Optionally include unread message count for each actor
+        if include_unread:
+            from .inbox import unread_count
+            for actor in actors:
+                aid = str(actor.get("id") or "")
+                if aid:
+                    actor["unread_count"] = unread_count(group, actor_id=aid)
+        return DaemonResponse(ok=True, result={"actors": actors}), False
 
     if op == "actor_add":
         group_id = str(args.get("group_id") or "").strip()

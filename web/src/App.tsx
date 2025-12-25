@@ -37,6 +37,7 @@ type Actor = {
   runner?: string;
   runtime?: string;
   updated_at?: string;
+  unread_count?: number; // Added for unread message count
 };
 
 type RuntimeInfo = {
@@ -207,6 +208,15 @@ export default function App() {
   const [editActorCommand, setEditActorCommand] = useState("");
   const [editActorTitle, setEditActorTitle] = useState("");
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [groupSettings, setGroupSettings] = useState<{
+    nudge_after_seconds: number;
+    self_check_every_handoffs: number;
+    system_refresh_every_self_checks: number;
+  } | null>(null);
+  const [editNudgeSeconds, setEditNudgeSeconds] = useState(300);
+  const [editSelfCheckHandoffs, setEditSelfCheckHandoffs] = useState(6);
+  const [editSystemRefresh, setEditSystemRefresh] = useState(3);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const errorTimeoutRef = useRef<number | null>(null);
 
@@ -315,6 +325,41 @@ export default function App() {
     }
   }
 
+  async function fetchSettings(groupId: string) {
+    const resp = await apiJson<{ settings: typeof groupSettings }>(`/api/v1/groups/${encodeURIComponent(groupId)}/settings`);
+    if (resp.ok && resp.result.settings) {
+      setGroupSettings(resp.result.settings);
+      setEditNudgeSeconds(resp.result.settings.nudge_after_seconds);
+      setEditSelfCheckHandoffs(resp.result.settings.self_check_every_handoffs);
+      setEditSystemRefresh(resp.result.settings.system_refresh_every_self_checks);
+    }
+  }
+
+  async function updateSettings() {
+    if (!selectedGroupId) return;
+    setBusy("settings-update");
+    try {
+      setErrorMsg("");
+      const resp = await apiJson(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/settings`, {
+        method: "PUT",
+        body: JSON.stringify({
+          nudge_after_seconds: editNudgeSeconds,
+          self_check_every_handoffs: editSelfCheckHandoffs,
+          system_refresh_every_self_checks: editSystemRefresh,
+          by: "user",
+        }),
+      });
+      if (!resp.ok) {
+        showError(`${resp.error.code}: ${resp.error.message}`);
+        return;
+      }
+      setShowSettings(false);
+      await fetchSettings(selectedGroupId);
+    } finally {
+      setBusy("");
+    }
+  }
+
   async function updateVision() {
     if (!selectedGroupId) return;
     setBusy("context-update");
@@ -360,6 +405,7 @@ export default function App() {
     setEvents([]);
     setActors([]);
     setGroupContext(null);
+    setGroupSettings(null);
     setErrorMsg("");
 
     const show = await apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(groupId)}`);
@@ -370,11 +416,12 @@ export default function App() {
     );
     if (tail.ok) setEvents(tail.result.events || []);
 
-    const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors`);
+    const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors?include_unread=true`);
     if (a.ok) setActors(a.result.actors || []);
 
-    // Fetch context
+    // Fetch context and settings
     await fetchContext(groupId);
+    await fetchSettings(groupId);
   }
 
   function connectStream(groupId: string) {
@@ -389,6 +436,10 @@ export default function App() {
       try {
         const ev = JSON.parse(String(msg.data || "{}"));
         setEvents((prev) => prev.concat([ev]));
+        // Refresh actors on new chat messages to update unread counts
+        if (ev.kind === "chat.message" || ev.kind === "chat.read") {
+          refreshActors();
+        }
       } catch {
         // ignore
       }
@@ -548,7 +599,7 @@ export default function App() {
 
   async function refreshActors() {
     if (!selectedGroupId) return;
-    const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors`);
+    const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors?include_unread=true`);
     if (a.ok) setActors(a.result.actors || []);
   }
 
@@ -969,6 +1020,17 @@ export default function App() {
                 >
                   Context
                 </button>
+                <button
+                  className={classNames(
+                    "rounded border px-3 py-1 text-sm font-medium",
+                    showSettings ? "bg-purple-600 border-purple-500 text-white" : "bg-slate-800 border-slate-700 text-slate-200"
+                  )}
+                  onClick={() => setShowSettings(true)}
+                  disabled={!selectedGroupId}
+                  title="Group automation settings"
+                >
+                  Settings
+                </button>
                 <input
                   className="w-[360px] max-w-[45vw] rounded bg-slate-900 border border-slate-800 px-2 py-1 text-sm"
                   placeholder="Set project root path…"
@@ -1008,12 +1070,30 @@ export default function App() {
                   No actors yet. Click "+ actor" to add an agent.
                 </div>
               )}
-              {actors.map((a) => (
+              {actors.map((a) => {
+                // Get presence status for this actor
+                const presence = groupContext?.presence?.[a.id];
+                const presenceStatus = presence?.status;
+                const isWorking = presenceStatus === "working";
+                const isIdle = presenceStatus === "idle";
+                const unreadCount = a.unread_count || 0;
+                
+                return (
                 <div
                   key={a.id}
                   className="flex items-center gap-2 rounded border border-slate-800 bg-slate-950/40 px-2 py-1"
                 >
-                  <div className={classNames("h-2 w-2 rounded-full", a.enabled ? "bg-emerald-400" : "bg-slate-600")} />
+                  {/* Status indicator: combines enabled + presence */}
+                  <div 
+                    className={classNames(
+                      "h-2 w-2 rounded-full",
+                      !a.enabled ? "bg-slate-600" :
+                      isWorking ? "bg-emerald-400 animate-pulse" :
+                      isIdle ? "bg-amber-400" :
+                      "bg-emerald-400"
+                    )}
+                    title={!a.enabled ? "Stopped" : isWorking ? "Working" : isIdle ? "Idle" : "Running"}
+                  />
                   <div className="text-xs font-medium">{a.id}</div>
                   <div 
                     className={classNames(
@@ -1043,12 +1123,17 @@ export default function App() {
                     </div>
                   )}
                   <button
-                    className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800/60 disabled:opacity-50"
+                    className={classNames(
+                      "text-[10px] px-2 py-0.5 rounded border disabled:opacity-50 relative",
+                      unreadCount > 0 
+                        ? "bg-rose-900/40 border-rose-800 text-rose-200 hover:bg-rose-900/60" 
+                        : "bg-slate-900 border-slate-800 hover:bg-slate-800/60"
+                    )}
                     onClick={() => openInbox(a.id)}
                     disabled={busy.startsWith("actor-") || busy.startsWith("inbox")}
-                    title="Open unread inbox for this actor"
+                    title={unreadCount > 0 ? `${unreadCount} unread messages` : "Open inbox (no unread)"}
                   >
-                    inbox
+                    inbox{unreadCount > 0 && <span className="ml-1 font-medium">({unreadCount})</span>}
                   </button>
                   {(a.runner !== "headless") && (
                     <button
@@ -1087,7 +1172,8 @@ export default function App() {
                     remove
                   </button>
                 </div>
-              ))}
+                );
+              })}
               <button
                 className="text-xs px-2 py-1 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800/60 disabled:opacity-50"
                 onClick={() => setShowAddActor((v) => !v)}
@@ -1771,6 +1857,93 @@ export default function App() {
                   title="Delete this group permanently"
                 >
                   Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-start justify-center p-6 z-50"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowSettings(false);
+          }}
+        >
+          <div className="w-full max-w-md rounded border border-slate-800 bg-slate-950/95 shadow-xl">
+            <div className="px-4 py-3 border-b border-slate-800">
+              <div className="text-sm font-semibold">Automation Settings</div>
+              <div className="text-xs text-slate-400 mt-0.5">
+                Configure automatic nudges and self-checks for agents
+              </div>
+            </div>
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">
+                  Nudge after (seconds)
+                  <span className="text-slate-500 ml-1">— remind agent when inbox has unread messages</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="60"
+                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
+                  value={editNudgeSeconds}
+                  onChange={(e) => setEditNudgeSeconds(Math.max(0, parseInt(e.target.value) || 0))}
+                  placeholder="300"
+                />
+                <div className="text-[10px] text-slate-500 mt-1">
+                  Set to 0 to disable. Default: 300 (5 minutes)
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">
+                  Self-check every N handoffs
+                  <span className="text-slate-500 ml-1">— prompt agent to reflect on progress</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
+                  value={editSelfCheckHandoffs}
+                  onChange={(e) => setEditSelfCheckHandoffs(Math.max(0, parseInt(e.target.value) || 0))}
+                  placeholder="6"
+                />
+                <div className="text-[10px] text-slate-500 mt-1">
+                  Set to 0 to disable. Default: 6 handoffs
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">
+                  System refresh every N self-checks
+                  <span className="text-slate-500 ml-1">— re-inject SYSTEM prompt</span>
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
+                  value={editSystemRefresh}
+                  onChange={(e) => setEditSystemRefresh(Math.max(0, parseInt(e.target.value) || 0))}
+                  placeholder="3"
+                />
+                <div className="text-[10px] text-slate-500 mt-1">
+                  Set to 0 to disable. Default: 3 self-checks
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button
+                  className="rounded bg-purple-600 text-white px-4 py-2 text-sm font-medium disabled:opacity-50"
+                  onClick={updateSettings}
+                  disabled={busy === "settings-update"}
+                >
+                  Save Settings
+                </button>
+                <button
+                  className="rounded bg-slate-800 border border-slate-700 px-4 py-2 text-sm font-medium"
+                  onClick={() => setShowSettings(false)}
+                >
+                  Cancel
                 </button>
               </div>
             </div>

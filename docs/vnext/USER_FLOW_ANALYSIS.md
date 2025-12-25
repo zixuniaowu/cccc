@@ -354,7 +354,7 @@ cccc_actor_remove: Remove peer
 
 **Status:**
 - [x] NUDGE implemented
-- [ ] **G8.1.1**: No UI to configure nudge interval
+- [x] Settings panel to configure nudge interval
 
 ### Step 8.2: SELF-CHECK automation
 
@@ -363,7 +363,7 @@ cccc_actor_remove: Remove peer
 
 **Status:**
 - [x] SELF-CHECK implemented
-- [ ] **G8.2.1**: No UI to configure self-check interval
+- [x] Settings panel to configure self-check interval
 
 ---
 
@@ -374,7 +374,6 @@ cccc_actor_remove: Remove peer
 | ID | Description | Effort |
 |----|-------------|--------|
 | G6.2.1 | Milestone/task editing in UI | Medium |
-| G8.1.1 | Settings panel for automation | Medium |
 
 ### P2 (Nice to have)
 
@@ -422,7 +421,7 @@ cccc_actor_remove: Remove peer
 6. ~~Add read status display~~ ✅
 7. ~~Add multi-line input~~ ✅
 8. ~~Add scroll to bottom button~~ ✅
-9. Add settings panel (automation config)
+9. ~~Add settings panel (automation config)~~ ✅
 10. Add milestone/task editing in Web UI
 11. PyPI release preparation
 

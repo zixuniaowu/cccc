@@ -21,7 +21,6 @@ Current implementation is at **backend core complete, frontend needs polish** st
 
 ### ⚠️ Frontend To Polish (P1)
 - Message search/pagination/virtual scroll (performance with many messages)
-- Settings panel
 - Milestone/task editing in Web UI
 
 ### ✅ Recently Completed
@@ -58,6 +57,9 @@ Current implementation is at **backend core complete, frontend needs polish** st
 - P1 Multi-line message input (textarea with auto-resize, Ctrl+Enter to send)
 - P1 Visual message distinction (user=green, agent=blue, system=amber)
 - P1 Scroll to bottom button (appears when scrolled up)
+- P1 Settings panel (automation config: nudge/self-check/system-refresh intervals)
+- P1 Actor unread message count display (inbox button shows count)
+- P1 Actor presence status indicator (working=pulse, idle=amber, running=green)
 
 ### 🔜 Deferred Capabilities (P2)
 - IM bridge (Telegram/Slack)

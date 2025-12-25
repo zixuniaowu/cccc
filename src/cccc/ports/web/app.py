@@ -82,6 +82,13 @@ class GroupUpdateRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class GroupSettingsRequest(BaseModel):
+    nudge_after_seconds: Optional[int] = None
+    self_check_every_handoffs: Optional[int] = None
+    system_refresh_every_self_checks: Optional[int] = None
+    by: str = Field(default="user")
+
+
 class GroupDeleteRequest(BaseModel):
     confirm: str = Field(default="")
     by: str = Field(default="user")
@@ -346,6 +353,44 @@ def create_app() -> FastAPI:
             "args": {"group_id": group_id, "ops": ops, "by": by, "dry_run": dry_run}
         })
 
+    @app.get("/api/v1/groups/{group_id}/settings")
+    async def group_settings_get(group_id: str) -> Dict[str, Any]:
+        """Get group automation settings."""
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        
+        delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
+        return {
+            "ok": True,
+            "result": {
+                "settings": {
+                    "nudge_after_seconds": int(delivery.get("nudge_after_seconds", 300)),
+                    "self_check_every_handoffs": int(delivery.get("self_check_every_handoffs", 6)),
+                    "system_refresh_every_self_checks": int(delivery.get("system_refresh_every_self_checks", 3)),
+                }
+            }
+        }
+
+    @app.put("/api/v1/groups/{group_id}/settings")
+    async def group_settings_update(group_id: str, req: GroupSettingsRequest) -> Dict[str, Any]:
+        """Update group automation settings."""
+        patch: Dict[str, Any] = {}
+        if req.nudge_after_seconds is not None:
+            patch["nudge_after_seconds"] = max(0, req.nudge_after_seconds)
+        if req.self_check_every_handoffs is not None:
+            patch["self_check_every_handoffs"] = max(0, req.self_check_every_handoffs)
+        if req.system_refresh_every_self_checks is not None:
+            patch["system_refresh_every_self_checks"] = max(0, req.system_refresh_every_self_checks)
+        
+        if not patch:
+            return {"ok": True, "result": {"message": "no changes"}}
+        
+        return _daemon({
+            "op": "group_settings_update",
+            "args": {"group_id": group_id, "patch": patch, "by": req.by}
+        })
+
     @app.post("/api/v1/groups/{group_id}/attach")
     async def group_attach(group_id: str, req: AttachRequest) -> Dict[str, Any]:
         return _daemon({"op": "attach", "args": {"path": req.path, "by": req.by, "group_id": group_id}})
@@ -414,8 +459,8 @@ def create_app() -> FastAPI:
         )
 
     @app.get("/api/v1/groups/{group_id}/actors")
-    async def actors(group_id: str) -> Dict[str, Any]:
-        return _daemon({"op": "actor_list", "args": {"group_id": group_id}})
+    async def actors(group_id: str, include_unread: bool = False) -> Dict[str, Any]:
+        return _daemon({"op": "actor_list", "args": {"group_id": group_id, "include_unread": include_unread}})
 
     @app.post("/api/v1/groups/{group_id}/actors")
     async def actor_create(group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:
