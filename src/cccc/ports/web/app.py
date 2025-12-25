@@ -38,9 +38,18 @@ class SendRequest(BaseModel):
     path: str = Field(default="")
 
 
+class ReplyRequest(BaseModel):
+    text: str
+    by: str = Field(default="user")
+    to: list[str] = Field(default_factory=list)
+    reply_to: str
+
+
 class ActorCreateRequest(BaseModel):
     actor_id: str
     role: str = Field(default="peer")
+    runner: Literal["pty", "headless"] = Field(default="pty")
+    runtime: Literal["claude", "codex", "droid", "opencode", "custom"] = Field(default="custom")
     title: str = Field(default="")
     command: Union[str, list[str]] = Field(default="")
     env: Dict[str, str] = Field(default_factory=dict)
@@ -57,11 +66,24 @@ class ActorUpdateRequest(BaseModel):
     env: Optional[Dict[str, str]] = None
     default_scope_key: Optional[str] = None
     submit: Optional[Literal["enter", "newline", "none"]] = None
+    runner: Optional[Literal["pty", "headless"]] = None
+    runtime: Optional[Literal["claude", "codex", "droid", "opencode", "custom"]] = None
     enabled: Optional[bool] = None
 
 
 class InboxReadRequest(BaseModel):
     event_id: str
+    by: str = Field(default="user")
+
+
+class GroupUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    topic: Optional[str] = None
+    by: str = Field(default="user")
+
+
+class GroupDeleteRequest(BaseModel):
+    confirm: str = Field(default="")
     by: str = Field(default="user")
 
 
@@ -216,6 +238,46 @@ def create_app() -> FastAPI:
         resp = _daemon({"op": "ping"})
         return {"ok": True, "result": {"home": str(home), "daemon": resp.get("result", {}), "version": __version__}}
 
+    @app.get("/api/v1/health")
+    async def health() -> Dict[str, Any]:
+        """Health check endpoint for monitoring."""
+        home = ensure_home()
+        daemon_resp = _daemon({"op": "ping"})
+        daemon_ok = daemon_resp.get("ok", False)
+        
+        return {
+            "ok": daemon_ok,
+            "result": {
+                "version": __version__,
+                "home": str(home),
+                "daemon": "running" if daemon_ok else "stopped",
+            }
+        }
+
+    @app.get("/api/v1/runtimes")
+    async def runtimes() -> Dict[str, Any]:
+        """List available agent runtimes on the system."""
+        from ...kernel.runtime import detect_all_runtimes
+        
+        all_runtimes = detect_all_runtimes(primary_only=False)
+        return {
+            "ok": True,
+            "result": {
+                "runtimes": [
+                    {
+                        "name": rt.name,
+                        "display_name": rt.display_name,
+                        "command": rt.command,
+                        "available": rt.available,
+                        "path": rt.path,
+                        "capabilities": rt.capabilities,
+                    }
+                    for rt in all_runtimes
+                ],
+                "available": [rt.name for rt in all_runtimes if rt.available],
+            },
+        }
+
     @app.get("/api/v1/groups")
     async def groups() -> Dict[str, Any]:
         return _daemon({"op": "groups"})
@@ -228,12 +290,73 @@ def create_app() -> FastAPI:
     async def group_show(group_id: str) -> Dict[str, Any]:
         return _daemon({"op": "group_show", "args": {"group_id": group_id}})
 
+    @app.put("/api/v1/groups/{group_id}")
+    async def group_update(group_id: str, req: GroupUpdateRequest) -> Dict[str, Any]:
+        """Update group metadata (title/topic)."""
+        patch: Dict[str, Any] = {}
+        if req.title is not None:
+            patch["title"] = req.title
+        if req.topic is not None:
+            patch["topic"] = req.topic
+        if not patch:
+            return {"ok": True, "result": {"message": "no changes"}}
+        return _daemon({"op": "group_update", "args": {"group_id": group_id, "by": req.by, "patch": patch}})
+
+    @app.delete("/api/v1/groups/{group_id}")
+    async def group_delete(group_id: str, confirm: str = "", by: str = "user") -> Dict[str, Any]:
+        """Delete a group (requires confirm=group_id)."""
+        if confirm != group_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "confirmation_required", "message": f"confirm must equal group_id: {group_id}"}
+            )
+        return _daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
+
+    @app.get("/api/v1/groups/{group_id}/context")
+    async def group_context(group_id: str) -> Dict[str, Any]:
+        """Get full group context (vision/sketch/milestones/tasks/notes/refs/presence)."""
+        return _daemon({"op": "context_get", "args": {"group_id": group_id}})
+
+    @app.post("/api/v1/groups/{group_id}/context")
+    async def group_context_sync(group_id: str, request: Request) -> Dict[str, Any]:
+        """Update group context via batch operations.
+        
+        Body: {"ops": [{"op": "vision.update", "vision": "..."}, ...], "by": "user"}
+        
+        Supported ops:
+        - vision.update: {"op": "vision.update", "vision": "..."}
+        - sketch.update: {"op": "sketch.update", "sketch": "..."}
+        - milestone.create/update/complete/remove
+        - task.create/update/delete
+        - note.add/update/remove
+        - reference.add/update/remove
+        - presence.update/clear
+        """
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail={"code": "invalid_json", "message": "invalid JSON body"})
+        
+        ops = body.get("ops") if isinstance(body.get("ops"), list) else []
+        by = str(body.get("by") or "user")
+        dry_run = bool(body.get("dry_run", False))
+        
+        return _daemon({
+            "op": "context_sync",
+            "args": {"group_id": group_id, "ops": ops, "by": by, "dry_run": dry_run}
+        })
+
     @app.post("/api/v1/groups/{group_id}/attach")
     async def group_attach(group_id: str, req: AttachRequest) -> Dict[str, Any]:
         return _daemon({"op": "attach", "args": {"path": req.path, "by": req.by, "group_id": group_id}})
 
+    @app.delete("/api/v1/groups/{group_id}/scopes/{scope_key}")
+    async def group_detach_scope(group_id: str, scope_key: str, by: str = "user") -> Dict[str, Any]:
+        """Detach a scope from a group."""
+        return _daemon({"op": "group_detach_scope", "args": {"group_id": group_id, "scope_key": scope_key, "by": by}})
+
     @app.get("/api/v1/groups/{group_id}/ledger/tail")
-    async def ledger_tail(group_id: str, lines: int = 50) -> Dict[str, Any]:
+    async def ledger_tail(group_id: str, lines: int = 50, with_read_status: bool = False) -> Dict[str, Any]:
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -244,7 +367,26 @@ def create_app() -> FastAPI:
                 events.append(json.loads(ln))
             except Exception:
                 continue
+        
+        # Optionally include read status for chat.message events
+        if with_read_status:
+            from ...kernel.inbox import get_read_status
+            for ev in events:
+                if ev.get("kind") == "chat.message" and ev.get("id"):
+                    ev["_read_status"] = get_read_status(group, str(ev["id"]))
+        
         return {"ok": True, "result": {"events": events}}
+
+    @app.get("/api/v1/groups/{group_id}/events/{event_id}/read_status")
+    async def event_read_status(group_id: str, event_id: str) -> Dict[str, Any]:
+        """Get read status for a specific event (which actors have read it)."""
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        
+        from ...kernel.inbox import get_read_status
+        status = get_read_status(group, event_id)
+        return {"ok": True, "result": {"event_id": event_id, "read_status": status}}
 
     @app.get("/api/v1/groups/{group_id}/ledger/stream")
     async def ledger_stream(group_id: str) -> StreamingResponse:
@@ -262,6 +404,15 @@ def create_app() -> FastAPI:
             }
         )
 
+    @app.post("/api/v1/groups/{group_id}/reply")
+    async def reply(group_id: str, req: ReplyRequest) -> Dict[str, Any]:
+        return _daemon(
+            {
+                "op": "reply",
+                "args": {"group_id": group_id, "text": req.text, "by": req.by, "to": list(req.to), "reply_to": req.reply_to},
+            }
+        )
+
     @app.get("/api/v1/groups/{group_id}/actors")
     async def actors(group_id: str) -> Dict[str, Any]:
         return _daemon({"op": "actor_list", "args": {"group_id": group_id}})
@@ -276,6 +427,8 @@ def create_app() -> FastAPI:
                     "group_id": group_id,
                     "actor_id": req.actor_id,
                     "role": req.role,
+                    "runner": req.runner,
+                    "runtime": req.runtime,
                     "title": req.title,
                     "command": command,
                     "env": dict(req.env),
@@ -301,6 +454,10 @@ def create_app() -> FastAPI:
             patch["default_scope_key"] = req.default_scope_key
         if req.submit is not None:
             patch["submit"] = req.submit
+        if req.runner is not None:
+            patch["runner"] = req.runner
+        if req.runtime is not None:
+            patch["runtime"] = req.runtime
         if req.enabled is not None:
             patch["enabled"] = bool(req.enabled)
         return _daemon({"op": "actor_update", "args": {"group_id": group_id, "actor_id": actor_id, "patch": patch, "by": req.by}})

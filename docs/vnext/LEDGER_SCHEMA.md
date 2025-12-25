@@ -74,11 +74,18 @@
     - `text: str`
     - `format: "plain" | "markdown"`
     - `to: list[str]`（空 = broadcast；非空 = 显式收件人）
-    - `thread: str`（预留）
-    - `refs: list[object]`（预留：证据引用）
-    - `attachments: list[object]`（预留：附件元信息）
+    - `reply_to: str | null`（回复哪条消息的 event_id）
+    - `quote_text: str | null`（被引用消息的文本片段，便于展示）
+    - `thread: str`（预留：话题/线程 ID）
+    - `refs: list[object]`（引用：文件/commit/URL）
+    - `attachments: list[object]`（附件元信息）
+    - `client_id: str | null`（客户端去重 ID，幂等）
 - `chat.read`
   - `data`: `{ "actor_id": str, "event_id": str }`
+  - 语义：actor 标记已读到指定消息（含之前所有消息）
+- `chat.reaction`（后置）
+  - `data`: `{ "event_id": str, "actor_id": str, "emoji": str }`
+  - 语义：对某条消息的快速反馈（✅/❌/👍/🤔）
 
 ## 3) Routing Semantics（`to` 语义约定）
 

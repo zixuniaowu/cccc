@@ -27,10 +27,12 @@ Developer Commands (minimal)
 - Attach scope to an existing group: `cccc attach . --group <group_id>`
 - Set active scope for a group: `cccc group use <group_id> <path>`
 - Send message: `cccc send "text" [--group <group_id>] [--to <selector>] [--path <path>]`
+- Reply to message: `cccc reply <event_id> "text" [--group <group_id>] [--to <selector>]`
 - View ledger: `cccc tail -n 50 [-f] [--group <group_id>]`
 - Actors: `cccc actor list|add|remove|set-role|start|stop|restart`
 - Inbox: `cccc inbox --actor-id <id> [--mark-read]` / `cccc read <event_id> --actor-id <id>`
 - Prompt: `cccc prompt --actor-id <id>`
+- MCP server: `cccc mcp` (stdio mode for agent runtimes)
 
 Rules (important)
 - Never commit unless explicitly instructed by the user.

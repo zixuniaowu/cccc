@@ -25,7 +25,7 @@ from .kernel.group import (
     set_active_scope,
     update_group,
 )
-from .kernel.inbox import find_event, get_cursor, set_cursor, unread_messages
+from .kernel.inbox import find_event, get_cursor, get_quote_text, set_cursor, unread_messages
 from .kernel.ledger import append_event, follow, read_last_lines
 from .kernel.ledger_retention import compact as compact_ledger
 from .kernel.ledger_retention import snapshot as snapshot_ledger
@@ -73,6 +73,10 @@ def _resolve_group_id(explicit: str) -> str:
 
 def _default_entry() -> int:
     # vNext default: `cccc` boots the local web console (FastAPI + UI under /ui).
+    # Auto-start daemon if not running
+    if not _ensure_daemon_running():
+        print("[cccc] Warning: Could not start daemon. Some features may not work.", file=sys.stderr)
+    
     from .ports.web.main import main as web_main
 
     argv: list[str] = []
@@ -434,6 +438,98 @@ def cmd_send(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_reply(args: argparse.Namespace) -> int:
+    """Reply to a message (IM-style, with quote)"""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
+    reply_to = str(args.event_id or "").strip()
+    if not reply_to:
+        _print_json({"ok": False, "error": {"code": "missing_event_id", "message": "missing event_id to reply to"}})
+        return 2
+
+    # Find the original message to get quote_text
+    original = find_event(group, reply_to)
+    if original is None:
+        _print_json({"ok": False, "error": {"code": "event_not_found", "message": f"event not found: {reply_to}"}})
+        return 2
+
+    quote_text = get_quote_text(group, reply_to, max_len=100)
+
+    to_tokens: list[str] = []
+    to_raw = getattr(args, "to", None)
+    if isinstance(to_raw, list):
+        for item in to_raw:
+            if not isinstance(item, str):
+                continue
+            parts = [p.strip() for p in item.split(",") if p.strip()]
+            to_tokens.extend(parts)
+
+    # If no recipients specified, default to original sender
+    if not to_tokens:
+        original_by = str(original.get("by") or "").strip()
+        if original_by and original_by != "user":
+            to_tokens = [original_by]
+
+    if _ensure_daemon_running():
+        resp = call_daemon(
+            {
+                "op": "reply",
+                "args": {
+                    "group_id": group_id,
+                    "text": args.text,
+                    "by": str(args.by or "user"),
+                    "reply_to": reply_to,
+                    "to": to_tokens,
+                },
+            }
+        )
+        if resp.get("ok"):
+            _print_json(resp)
+            return 0
+
+    # Fallback: local execution
+    try:
+        to = resolve_recipient_tokens(group, to_tokens)
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "invalid_recipient", "message": str(e)}})
+        return 2
+
+    scope_key = str(group.doc.get("active_scope_key") or "")
+    event = append_event(
+        group.ledger_path,
+        kind="chat.message",
+        group_id=group.group_id,
+        scope_key=scope_key,
+        by=str(args.by or "user"),
+        data=ChatMessageData(
+            text=args.text,
+            format="plain",
+            to=to,
+            reply_to=reply_to,
+            quote_text=quote_text,
+        ).model_dump(),
+    )
+    try:
+        reg = load_registry()
+        meta = reg.groups.get(group.group_id)
+        if isinstance(meta, dict):
+            ts = str(event.get("ts") or meta.get("updated_at") or "")
+            if ts:
+                meta["updated_at"] = ts
+                reg.save()
+    except Exception:
+        pass
+    _print_json({"ok": True, "result": {"event": event}})
+    return 0
+
+
 def cmd_tail(args: argparse.Namespace) -> int:
     group_id = _resolve_group_id(getattr(args, "group", ""))
     if not group_id:
@@ -514,6 +610,64 @@ def cmd_version(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_status(_: argparse.Namespace) -> int:
+    """Show overall CCCC status: daemon, groups, actors."""
+    from .kernel.runtime import detect_all_runtimes
+    
+    home = ensure_home()
+    
+    # Check daemon
+    daemon_resp = call_daemon({"op": "ping"})
+    daemon_ok = daemon_resp.get("ok", False)
+    
+    # Get groups
+    groups_resp = call_daemon({"op": "groups"}) if daemon_ok else {"ok": False}
+    groups = groups_resp.get("result", {}).get("groups", []) if groups_resp.get("ok") else []
+    
+    # Get active group
+    active = load_active()
+    active_group_id = str(active.get("active_group_id") or "").strip()
+    
+    # Get runtimes
+    runtimes = detect_all_runtimes(primary_only=True)
+    available_runtimes = [r.name for r in runtimes if r.available]
+    
+    print(f"CCCC Status")
+    print(f"===========")
+    print(f"Version:     {__version__}")
+    print(f"Home:        {home}")
+    print(f"Daemon:      {'running' if daemon_ok else 'stopped'}")
+    print(f"Runtimes:    {', '.join(available_runtimes) if available_runtimes else '(none detected)'}")
+    print()
+    
+    if not groups:
+        print("Groups:      (none)")
+    else:
+        print(f"Groups:      {len(groups)}")
+        for g in groups:
+            gid = str(g.get("group_id") or "")
+            title = str(g.get("title") or gid)
+            running = g.get("running", False)
+            active_mark = " *" if gid == active_group_id else ""
+            status = "running" if running else "stopped"
+            print(f"  - {title} ({gid}){active_mark} [{status}]")
+            
+            # Get actors for this group
+            if daemon_ok:
+                actors_resp = call_daemon({"op": "actor_list", "args": {"group_id": gid}})
+                actors = actors_resp.get("result", {}).get("actors", []) if actors_resp.get("ok") else []
+                for a in actors:
+                    aid = str(a.get("id") or "")
+                    role = str(a.get("role") or "peer")
+                    enabled = a.get("enabled", False)
+                    runtime = str(a.get("runtime") or "custom")
+                    runner = str(a.get("runner") or "pty")
+                    status = "on" if enabled else "off"
+                    print(f"      {aid} ({role}, {runtime}, {runner}) [{status}]")
+    
+    return 0
+
+
 def cmd_use(args: argparse.Namespace) -> int:
     group_id = str(args.group_id or "").strip()
     group = load_group(group_id)
@@ -566,12 +720,25 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
     title = str(args.title or "").strip()
     by = str(args.by or "user").strip()
     submit = str(args.submit or "enter").strip() or "enter"
+    runner = str(getattr(args, "runner", "") or "pty").strip() or "pty"
+    runtime = str(getattr(args, "runtime", "") or "custom").strip() or "custom"
     command: list[str] = []
     if args.command:
         try:
             command = shlex.split(str(args.command))
         except Exception:
             command = [str(args.command)]
+    
+    # Auto-set command based on runtime if not provided
+    if not command and runtime != "custom":
+        runtime_commands = {
+            "claude": ["claude"],
+            "codex": ["codex"],
+            "droid": ["droid"],
+            "opencode": ["opencode"],
+        }
+        command = runtime_commands.get(runtime, [])
+    
     env: dict[str, str] = {}
     if isinstance(args.env, list):
         for item in args.env:
@@ -601,6 +768,8 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
                     "role": role,
                     "title": title,
                     "submit": submit,
+                    "runner": runner,
+                    "runtime": runtime,
                     "by": by,
                     "command": command,
                     "env": env,
@@ -616,6 +785,10 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
         require_actor_permission(group, by=by, action="actor.add")
         if role not in ("foreman", "peer"):
             raise ValueError("invalid role")
+        if runner not in ("pty", "headless"):
+            raise ValueError("invalid runner (must be 'pty' or 'headless')")
+        if runtime not in ("claude", "codex", "droid", "opencode", "custom"):
+            raise ValueError("invalid runtime (must be 'claude', 'codex', 'droid', 'opencode', or 'custom')")
         actor = add_actor(
             group,
             actor_id=actor_id,
@@ -625,6 +798,8 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
             env=env,
             default_scope_key=default_scope_key,
             submit=submit,
+            runner=runner,  # type: ignore
+            runtime=runtime,  # type: ignore
         )
     except Exception as e:
         _print_json({"ok": False, "error": {"code": "actor_add_failed", "message": str(e)}})
@@ -830,6 +1005,10 @@ def cmd_actor_update(args: argparse.Namespace) -> int:
         patch["default_scope_key"] = scope_key
     if args.submit is not None:
         patch["submit"] = str(args.submit)
+    if getattr(args, "runner", None) is not None:
+        patch["runner"] = str(args.runner)
+    if getattr(args, "runtime", None) is not None:
+        patch["runtime"] = str(args.runtime)
     if args.enabled is not None:
         patch["enabled"] = bool(args.enabled)
 
@@ -858,6 +1037,9 @@ def cmd_inbox(args: argparse.Namespace) -> int:
     actor_id = str(args.actor_id or "").strip()
     by = str(args.by or "user").strip()
     limit = int(args.limit) if isinstance(args.limit, int) else 50
+    kind_filter = str(getattr(args, "kind_filter", "all") or "all").strip()
+    if kind_filter not in ("all", "chat", "notify"):
+        kind_filter = "all"
 
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
@@ -867,7 +1049,7 @@ def cmd_inbox(args: argparse.Namespace) -> int:
         return 2
 
     if _ensure_daemon_running():
-        resp = call_daemon({"op": "inbox_list", "args": {"group_id": group_id, "actor_id": actor_id, "by": by, "limit": limit}})
+        resp = call_daemon({"op": "inbox_list", "args": {"group_id": group_id, "actor_id": actor_id, "by": by, "limit": limit, "kind_filter": kind_filter}})
         if resp.get("ok") and not args.mark_read:
             _print_json(resp)
             return 0
@@ -894,7 +1076,7 @@ def cmd_inbox(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "permission_denied", "message": str(e)}})
         return 2
 
-    messages = unread_messages(group, actor_id=actor_id, limit=limit)
+    messages = unread_messages(group, actor_id=actor_id, limit=limit, kind_filter=kind_filter)  # type: ignore
     cur_event_id, cur_ts = get_cursor(group, actor_id)
     if args.mark_read and messages:
         last = messages[-1]
@@ -994,6 +1176,93 @@ def cmd_prompt(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Check environment and show available agent runtimes."""
+    import shutil
+    from .kernel.runtime import detect_all_runtimes, PRIMARY_RUNTIMES
+    
+    print("[DOCTOR] CCCC Environment Check")
+    print()
+    
+    # Python version
+    print(f"Python: {sys.version.split()[0]} ({sys.executable})")
+    
+    # CCCC version
+    print(f"CCCC: {__version__}")
+    
+    # CCCC_HOME
+    home = ensure_home()
+    print(f"CCCC_HOME: {home}")
+    
+    # Daemon status
+    resp = call_daemon({"op": "ping"})
+    if resp.get("ok"):
+        r = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+        print(f"Daemon: running (pid={r.get('pid')}, version={r.get('version')})")
+    else:
+        print("Daemon: not running")
+    
+    print()
+    print("Agent Runtimes:")
+    
+    # Check all runtimes
+    all_runtimes = args.all if hasattr(args, 'all') else False
+    runtimes = detect_all_runtimes(primary_only=not all_runtimes)
+    
+    available_count = 0
+    for rt in runtimes:
+        status = "OK" if rt.available else "NOT FOUND"
+        mark = "✓" if rt.available else "✗"
+        path_info = f" ({rt.path})" if rt.available else ""
+        print(f"  {mark} {rt.name}: {status}{path_info}")
+        if rt.available:
+            available_count += 1
+    
+    print()
+    if available_count == 0:
+        print("No agent runtimes detected. Install one of:")
+        print("  - Claude Code: https://claude.ai/code")
+        print("  - Codex CLI: https://github.com/openai/codex")
+        print("  - Droid: https://github.com/anthropics/droid")
+        print("  - OpenCode: https://github.com/opencode-ai/opencode")
+    else:
+        print(f"{available_count} runtime(s) available.")
+        print()
+        print("Quick start:")
+        print(f"  cccc setup --runtime {runtimes[0].name if runtimes[0].available else 'claude'}")
+        print("  cccc attach .")
+        print("  cccc actor add my-agent --runtime <name> --role foreman")
+        print("  cccc")
+    
+    return 0
+
+
+def cmd_runtime_list(args: argparse.Namespace) -> int:
+    """List available agent runtimes."""
+    from .kernel.runtime import detect_all_runtimes
+    
+    all_runtimes = args.all if hasattr(args, 'all') else False
+    runtimes = detect_all_runtimes(primary_only=not all_runtimes)
+    
+    result = {
+        "runtimes": [
+            {
+                "name": rt.name,
+                "display_name": rt.display_name,
+                "command": rt.command,
+                "available": rt.available,
+                "path": rt.path,
+                "capabilities": rt.capabilities,
+            }
+            for rt in runtimes
+        ],
+        "available": [rt.name for rt in runtimes if rt.available],
+    }
+    
+    _print_json({"ok": True, "result": result})
+    return 0
+
+
 def cmd_web(args: argparse.Namespace) -> int:
     from .ports.web.main import main as web_main
 
@@ -1007,6 +1276,199 @@ def cmd_web(args: argparse.Namespace) -> int:
     if str(args.log_level or "").strip():
         argv.extend(["--log-level", str(args.log_level)])
     return int(web_main(argv))
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from .ports.mcp.main import main as mcp_main
+
+    return int(mcp_main())
+
+
+def cmd_setup(args: argparse.Namespace) -> int:
+    """Setup CCCC for agent runtimes (install skills, configure MCP)."""
+    import shutil
+    
+    runtime = str(args.runtime or "").strip()
+    project_path = Path(args.path or ".").resolve()
+    
+    # Supported runtimes
+    SUPPORTED_RUNTIMES = ["claude", "codex", "droid", "opencode"]
+    
+    if runtime and runtime not in SUPPORTED_RUNTIMES:
+        _print_json({"ok": False, "error": {"code": "unsupported_runtime", "message": f"Unsupported runtime: {runtime}. Supported: {', '.join(SUPPORTED_RUNTIMES)}"}})
+        return 2
+    
+    results: dict[str, Any] = {"skills": {}, "mcp": {}, "notes": []}
+    
+    # Get the skill template
+    skill_src = Path(__file__).parent / "resources" / "cccc-ops.skill.md"
+    if not skill_src.exists():
+        _print_json({"ok": False, "error": {"code": "skill_not_found", "message": "cccc-ops.skill.md not found in resources"}})
+        return 2
+    
+    skill_content = skill_src.read_text(encoding="utf-8")
+    
+    # Find cccc executable path for MCP config
+    cccc_path = shutil.which("cccc") or sys.executable
+    if cccc_path == sys.executable:
+        cccc_cmd = [sys.executable, "-m", "cccc.ports.mcp.main"]
+    else:
+        cccc_cmd = ["cccc", "mcp"]
+    
+    # Runtime-specific setup
+    runtimes_to_setup = [runtime] if runtime else SUPPORTED_RUNTIMES
+    
+    for rt in runtimes_to_setup:
+        if rt == "claude":
+            # Claude Code: .claude/skills/cccc-ops/SKILL.md
+            claude_skill_dir = project_path / ".claude" / "skills" / "cccc-ops"
+            claude_skill_dir.mkdir(parents=True, exist_ok=True)
+            (claude_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+            results["skills"]["claude"] = str(claude_skill_dir / "SKILL.md")
+            
+            # Claude Code MCP: use `claude mcp add` CLI
+            try:
+                cmd_str = " ".join(cccc_cmd)
+                result = subprocess.run(
+                    ["claude", "mcp", "add", "cccc", "-s", "project", "--", *cccc_cmd],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(project_path),
+                )
+                if result.returncode == 0:
+                    results["mcp"]["claude"] = "added via CLI"
+                else:
+                    # Fallback to manual config
+                    claude_mcp_dir = project_path / ".claude"
+                    claude_mcp_dir.mkdir(parents=True, exist_ok=True)
+                    claude_mcp_path = claude_mcp_dir / "mcp.json"
+                    
+                    mcp_config = {
+                        "mcpServers": {
+                            "cccc": {
+                                "command": cccc_cmd[0],
+                                "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
+                                "env": {},
+                                "disabled": False,
+                                "autoApprove": [
+                                    "cccc_inbox_list", "cccc_inbox_mark_read", "cccc_context_get",
+                                    "cccc_group_info", "cccc_actor_list", "cccc_presence_get", "cccc_task_list",
+                                ],
+                            }
+                        }
+                    }
+                    
+                    existing = {}
+                    if claude_mcp_path.exists():
+                        try:
+                            existing = json.loads(claude_mcp_path.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
+                    
+                    if "mcpServers" not in existing:
+                        existing["mcpServers"] = {}
+                    existing["mcpServers"]["cccc"] = mcp_config["mcpServers"]["cccc"]
+                    
+                    claude_mcp_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+                    results["mcp"]["claude"] = str(claude_mcp_path)
+            except FileNotFoundError:
+                # claude CLI not found, use manual config
+                claude_mcp_dir = project_path / ".claude"
+                claude_mcp_dir.mkdir(parents=True, exist_ok=True)
+                claude_mcp_path = claude_mcp_dir / "mcp.json"
+                
+                mcp_config = {
+                    "mcpServers": {
+                        "cccc": {
+                            "command": cccc_cmd[0],
+                            "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
+                            "env": {},
+                            "disabled": False,
+                            "autoApprove": [
+                                "cccc_inbox_list", "cccc_inbox_mark_read", "cccc_context_get",
+                                "cccc_group_info", "cccc_actor_list", "cccc_presence_get", "cccc_task_list",
+                            ],
+                        }
+                    }
+                }
+                
+                existing = {}
+                if claude_mcp_path.exists():
+                    try:
+                        existing = json.loads(claude_mcp_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        pass
+                
+                if "mcpServers" not in existing:
+                    existing["mcpServers"] = {}
+                existing["mcpServers"]["cccc"] = mcp_config["mcpServers"]["cccc"]
+                
+                claude_mcp_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+                results["mcp"]["claude"] = str(claude_mcp_path)
+        
+        elif rt == "codex":
+            # Codex CLI: .codex/skills/cccc-ops/SKILL.md
+            codex_skill_dir = project_path / ".codex" / "skills" / "cccc-ops"
+            codex_skill_dir.mkdir(parents=True, exist_ok=True)
+            (codex_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+            results["skills"]["codex"] = str(codex_skill_dir / "SKILL.md")
+            
+            # Codex MCP: use `codex mcp add` CLI
+            try:
+                result = subprocess.run(
+                    ["codex", "mcp", "add", "cccc", "--", *cccc_cmd],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(project_path),
+                )
+                if result.returncode == 0:
+                    results["mcp"]["codex"] = "added via CLI"
+                else:
+                    results["notes"].append(f"codex: MCP CLI failed, please add manually: {' '.join(cccc_cmd)}")
+            except FileNotFoundError:
+                results["notes"].append(f"codex: CLI not found, please add MCP manually: {' '.join(cccc_cmd)}")
+        
+        elif rt == "droid":
+            # Droid: .droid/skills/cccc-ops/SKILL.md (assuming similar structure)
+            droid_skill_dir = project_path / ".droid" / "skills" / "cccc-ops"
+            droid_skill_dir.mkdir(parents=True, exist_ok=True)
+            (droid_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+            results["skills"]["droid"] = str(droid_skill_dir / "SKILL.md")
+            
+            # Droid MCP: use `droid mcp add` CLI
+            try:
+                result = subprocess.run(
+                    ["droid", "mcp", "add", "cccc", "--", *cccc_cmd],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(project_path),
+                )
+                if result.returncode == 0:
+                    results["mcp"]["droid"] = "added via CLI"
+                else:
+                    results["notes"].append(f"droid: MCP CLI failed, please add manually: {' '.join(cccc_cmd)}")
+            except FileNotFoundError:
+                results["notes"].append(f"droid: CLI not found, please add MCP manually: {' '.join(cccc_cmd)}")
+        
+        elif rt == "opencode":
+            # OpenCode: .opencode/skill/cccc-ops/SKILL.md
+            opencode_skill_dir = project_path / ".opencode" / "skill" / "cccc-ops"
+            opencode_skill_dir.mkdir(parents=True, exist_ok=True)
+            (opencode_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+            results["skills"]["opencode"] = str(opencode_skill_dir / "SKILL.md")
+            
+            # OpenCode: MCP requires manual config
+            results["notes"].append(
+                f"opencode: MCP requires manual configuration. Add to your opencode config:\n"
+                f'  "mcpServers": {{"cccc": {{"command": "{cccc_cmd[0]}", "args": {json.dumps(cccc_cmd[1:])}}}}}'
+            )
+    
+    # Clean up empty notes
+    if not results["notes"]:
+        del results["notes"]
+    
+    _print_json({"ok": True, "result": results})
+    return 0
 
 
 def cmd_daemon(args: argparse.Namespace) -> int:
@@ -1113,10 +1575,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_add.add_argument("actor_id", help="Actor id (e.g. peer-a, peer-b, foreman)")
     p_actor_add.add_argument("--role", choices=["peer", "foreman"], default="peer", help="Role (default: peer)")
     p_actor_add.add_argument("--title", default="", help="Display title (optional)")
-    p_actor_add.add_argument("--command", default="", help="Command to run (shell-like string; optional)")
+    p_actor_add.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode", "custom"], default="custom", help="Agent runtime (auto-sets command if not provided)")
+    p_actor_add.add_argument("--command", default="", help="Command to run (shell-like string; optional, auto-set by --runtime)")
     p_actor_add.add_argument("--env", action="append", default=[], help="Environment var (KEY=VAL), repeatable")
     p_actor_add.add_argument("--scope", default="", help="Default scope path for this actor (optional; must be attached)")
     p_actor_add.add_argument("--submit", choices=["enter", "newline", "none"], default="enter", help="Submit key (default: enter)")
+    p_actor_add.add_argument("--runner", choices=["pty", "headless"], default="pty", help="Runner type: pty (interactive) or headless (MCP-driven)")
     p_actor_add.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_add.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_add.set_defaults(func=cmd_actor_add)
@@ -1152,24 +1616,27 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_restart.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_restart.set_defaults(func=cmd_actor_restart)
 
-    p_actor_update = actor_sub.add_parser("update", help="Update an actor (title/role/command/env/scope/enabled)")
+    p_actor_update = actor_sub.add_parser("update", help="Update an actor (title/role/command/env/scope/enabled/runner/runtime)")
     p_actor_update.add_argument("actor_id", help="Actor id")
     p_actor_update.add_argument("--title", default=None, help="New title")
     p_actor_update.add_argument("--role", choices=["peer", "foreman"], default="", help="New role")
+    p_actor_update.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode", "custom"], default=None, help="New runtime")
     p_actor_update.add_argument("--command", default=None, help="Replace command (shell-like string); use empty to clear")
     p_actor_update.add_argument("--env", action="append", default=[], help="Replace env with these KEY=VAL entries (repeatable)")
     p_actor_update.add_argument("--scope", default="", help="Set default scope path (must be attached)")
     p_actor_update.add_argument("--submit", choices=["enter", "newline", "none"], default=None, help="Submit key")
+    p_actor_update.add_argument("--runner", choices=["pty", "headless"], default=None, help="Runner type: pty (interactive) or headless (MCP-driven)")
     p_actor_update.add_argument("--enabled", type=int, choices=[0, 1], default=None, help="Set enabled (1) or disabled (0)")
     p_actor_update.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_update.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_update.set_defaults(func=cmd_actor_update)
 
-    p_inbox = sub.add_parser("inbox", help="List unread chat messages for an actor (like a group-chat inbox)")
+    p_inbox = sub.add_parser("inbox", help="List unread messages for an actor (chat messages + system notifications)")
     p_inbox.add_argument("--actor-id", required=True, help="Target actor id")
     p_inbox.add_argument("--by", default="user", help="Requester (default: user)")
     p_inbox.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_inbox.add_argument("--limit", type=int, default=50, help="Max messages to return (default: 50)")
+    p_inbox.add_argument("--kind-filter", choices=["all", "chat", "notify"], default="all", help="Filter by message type: all (default), chat (messages only), notify (system notifications only)")
     p_inbox.add_argument("--mark-read", action="store_true", help="Mark returned messages as read up to the last one")
     p_inbox.set_defaults(func=cmd_inbox)
 
@@ -1197,6 +1664,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_send.add_argument("--path", default="", help="Send message under this scope (path inside repo/scope)")
     p_send.set_defaults(func=cmd_send)
+
+    p_reply = sub.add_parser("reply", help="Reply to a message (IM-style, with quote)")
+    p_reply.add_argument("event_id", help="Event ID of the message to reply to")
+    p_reply.add_argument("text", help="Reply text")
+    p_reply.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_reply.add_argument("--by", default="user", help="Sender label (default: user)")
+    p_reply.add_argument(
+        "--to",
+        action="append",
+        default=[],
+        help="Recipients (default: original sender); repeatable, comma-separated",
+    )
+    p_reply.set_defaults(func=cmd_reply)
 
     p_tail = sub.add_parser("tail", help="Tail the active group's ledger (or --group)")
     p_tail.add_argument("--group", default="", help="Target group_id (default: active group)")
@@ -1231,8 +1711,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_web.add_argument("--log-level", default="info", help="Uvicorn log level (default: info)")
     p_web.set_defaults(func=cmd_web)
 
+    p_mcp = sub.add_parser("mcp", help="Run the MCP server (stdio mode, for agent runtimes)")
+    p_mcp.set_defaults(func=cmd_mcp)
+
+    p_setup = sub.add_parser("setup", help="Setup CCCC for agent runtimes (install skills, configure MCP)")
+    p_setup.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode"], default="", help="Target runtime (default: all supported runtimes)")
+    p_setup.add_argument("--path", default=".", help="Project path (default: current directory)")
+    p_setup.set_defaults(func=cmd_setup)
+
+    p_doctor = sub.add_parser("doctor", help="Check environment and show available agent runtimes")
+    p_doctor.add_argument("--all", action="store_true", help="Show all known runtimes (not just primary ones)")
+    p_doctor.set_defaults(func=cmd_doctor)
+
+    p_runtime = sub.add_parser("runtime", help="Manage agent runtimes")
+    runtime_sub = p_runtime.add_subparsers(dest="action", required=True)
+
+    p_runtime_list = runtime_sub.add_parser("list", help="List available agent runtimes")
+    p_runtime_list.add_argument("--all", action="store_true", help="Show all known runtimes (not just primary ones)")
+    p_runtime_list.set_defaults(func=cmd_runtime_list)
+
     p_ver = sub.add_parser("version", help="Show version")
     p_ver.set_defaults(func=cmd_version)
+
+    p_status = sub.add_parser("status", help="Show overall CCCC status (daemon, groups, actors)")
+    p_status.set_defaults(func=cmd_status)
 
     return p
 

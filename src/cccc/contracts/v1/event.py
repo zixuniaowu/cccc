@@ -7,7 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ...util.time import utc_now_iso
 from .actor import Actor, ActorRole, ActorSubmit
-from .message import ChatMessageData
+from .message import ChatMessageData, ChatReactionData
+from .notify import NotifyAckData, SystemNotifyData
 
 
 EventKind = Literal[
@@ -27,6 +28,9 @@ EventKind = Literal[
     "actor.remove",
     "chat.message",
     "chat.read",
+    "chat.reaction",
+    "system.notify",
+    "system.notify_ack",
 ]
 
 
@@ -119,8 +123,10 @@ class ActorLifecycleData(BaseModel):
 
 
 class ChatReadData(BaseModel):
-    actor_id: str
-    event_id: str
+    """已读回执：actor 标记已读到某条消息"""
+
+    actor_id: str  # 谁标记的
+    event_id: str  # 已读到哪条消息（含之前所有）
 
     model_config = ConfigDict(extra="forbid")
 
@@ -155,6 +161,9 @@ _KIND_TO_MODEL = {
     "actor.remove": ActorLifecycleData,
     "chat.message": ChatMessageData,
     "chat.read": ChatReadData,
+    "chat.reaction": ChatReactionData,
+    "system.notify": SystemNotifyData,
+    "system.notify_ack": NotifyAckData,
 }
 
 

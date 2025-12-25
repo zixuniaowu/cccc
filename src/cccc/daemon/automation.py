@@ -6,13 +6,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Tuple
 
+from ..contracts.v1 import SystemNotifyData
 from ..kernel.actors import list_actors
 from ..kernel.group import Group, load_group
 from ..kernel.inbox import unread_messages
+from ..kernel.ledger import append_event
 from ..runners import pty as pty_runner
+from ..runners import headless as headless_runner
 from ..util.fs import atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
-from .delivery import inject_system_prompt, pty_submit_text
+from .delivery import inject_system_prompt
 
 
 @dataclass(frozen=True)
@@ -111,8 +114,14 @@ class AutomationManager:
                     continue
                 if not bool(actor.get("enabled", True)):
                     continue
-                if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
-                    continue
+                # 检查 actor 是否在运行（PTY 或 headless）
+                runner_kind = str(actor.get("runner") or "pty").strip()
+                if runner_kind == "headless":
+                    if not headless_runner.SUPERVISOR.actor_running(group.group_id, aid):
+                        continue
+                else:
+                    if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
+                        continue
 
                 msgs = unread_messages(group, actor_id=aid, limit=1)
                 if not msgs:
@@ -141,11 +150,23 @@ class AutomationManager:
                 _save_state(group, state)
 
         for aid, ev_ts in to_nudge:
-            msg = (
-                f"[cccc] NUDGE: unread message waiting (oldest {ev_ts}). "
-                f"Run: cccc inbox --actor-id {aid} --by {aid} --mark-read"
+            # 写入 system.notify 事件到 ledger
+            notify_data = SystemNotifyData(
+                kind="nudge",
+                priority="normal",
+                title="Unread messages waiting",
+                message=f"Oldest unread message from {ev_ts}. Use cccc_inbox_list to check.",
+                target_actor_id=aid,
+                requires_ack=False,
             )
-            pty_submit_text(group, actor_id=aid, text=msg, file_fallback=False)
+            append_event(
+                group.ledger_path,
+                kind="system.notify",
+                group_id=group.group_id,
+                scope_key="",
+                by="system",
+                data=notify_data.model_dump(),
+            )
 
     def on_delivered_message(self, group: Group, *, actor: Dict[str, Any], by: str) -> None:
         who = str(by or "").strip()
@@ -174,10 +195,39 @@ class AutomationManager:
             _save_state(group, state)
 
         if send_self_check:
-            text = (
-                "[cccc] SELF-CHECK: reply in 3 bullets — (1) what changed, (2) next step, (3) blocker/decision. "
-                f"Clear inbox if needed: cccc inbox --actor-id {aid} --by {aid} --mark-read"
+            # 写入 system.notify 事件到 ledger
+            notify_data = SystemNotifyData(
+                kind="self_check",
+                priority="normal",
+                title="Self-check requested",
+                message="Reply in 3 bullets: (1) what changed, (2) next step, (3) blocker/decision.",
+                target_actor_id=aid,
+                requires_ack=False,
             )
-            pty_submit_text(group, actor_id=aid, text=text, file_fallback=False)
+            append_event(
+                group.ledger_path,
+                kind="system.notify",
+                group_id=group.group_id,
+                scope_key="",
+                by="system",
+                data=notify_data.model_dump(),
+            )
         if send_system_refresh:
+            # 写入 system.notify 事件到 ledger（通知即将刷新 SYSTEM）
+            notify_data = SystemNotifyData(
+                kind="system_refresh",
+                priority="low",
+                title="SYSTEM prompt refreshed",
+                message="Your SYSTEM prompt has been updated.",
+                target_actor_id=aid,
+                requires_ack=False,
+            )
+            append_event(
+                group.ledger_path,
+                kind="system.notify",
+                group_id=group.group_id,
+                scope_key="",
+                by="system",
+                data=notify_data.model_dump(),
+            )
             inject_system_prompt(group, actor=actor)

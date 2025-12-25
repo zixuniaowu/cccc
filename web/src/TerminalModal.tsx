@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 
@@ -23,6 +23,17 @@ export function TerminalModal({ groupId, actorId, actorTitle, onClose }: Props) 
 
   const [status, setStatus] = useState<"connecting" | "connected" | "closed" | "error">("connecting");
   const title = useMemo(() => (actorTitle ? `${actorId} · ${actorTitle}` : actorId), [actorId, actorTitle]);
+
+  function sendInterrupt() {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    // Send Ctrl+C (ASCII 0x03)
+    ws.send(JSON.stringify({ t: "i", d: "\x03" }));
+  }
+
+  function focusTerminal() {
+    termRef.current?.focus();
+  }
 
   useEffect(() => {
     const el = containerRef.current;
@@ -148,6 +159,21 @@ export function TerminalModal({ groupId, actorId, actorTitle, onClose }: Props) 
             </div>
           </div>
           <div className="flex gap-2">
+            <button
+              className="rounded bg-rose-600 hover:bg-rose-500 text-white px-3 py-1 text-sm font-medium disabled:opacity-50"
+              onClick={sendInterrupt}
+              disabled={status !== "connected"}
+              title="Send interrupt signal (Ctrl+C)"
+            >
+              Interrupt
+            </button>
+            <button
+              className="rounded bg-slate-800 border border-slate-700 text-slate-200 px-3 py-1 text-sm font-medium"
+              onClick={focusTerminal}
+              title="Focus terminal input"
+            >
+              Focus
+            </button>
             <button
               className="rounded bg-slate-200 text-slate-950 px-3 py-1 text-sm font-medium"
               onClick={onClose}

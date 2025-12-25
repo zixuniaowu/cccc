@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from ..contracts.v1 import Actor, ActorRole, ActorSubmit
+from ..contracts.v1 import Actor, ActorRole, ActorSubmit, RunnerKind, AgentRuntime
 from ..util.time import utc_now_iso
 from .group import Group
 
@@ -55,6 +55,8 @@ def add_actor(
     default_scope_key: str = "",
     submit: ActorSubmit = "enter",
     enabled: bool = True,
+    runner: RunnerKind = "pty",
+    runtime: AgentRuntime = "custom",
 ) -> Dict[str, Any]:
     aid = actor_id.strip()
     if not aid:
@@ -83,6 +85,8 @@ def add_actor(
         default_scope_key=default_scope_key.strip(),
         submit=submit,
         enabled=bool(enabled),
+        runner=runner,
+        runtime=runtime,
         created_at=now,
         updated_at=now,
     )
@@ -167,6 +171,24 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
 
     if "enabled" in patch:
         item["enabled"] = bool(patch.get("enabled"))
+
+    if "runner" in patch:
+        runner = patch.get("runner")
+        if runner is None:
+            item["runner"] = "pty"
+        elif runner in ("pty", "headless"):
+            item["runner"] = runner
+        else:
+            raise ValueError("invalid runner (must be 'pty' or 'headless')")
+
+    if "runtime" in patch:
+        runtime = patch.get("runtime")
+        if runtime is None:
+            item["runtime"] = "custom"
+        elif runtime in ("claude", "codex", "droid", "opencode", "custom"):
+            item["runtime"] = runtime
+        else:
+            raise ValueError("invalid runtime (must be 'claude', 'codex', 'droid', 'opencode', or 'custom')")
 
     item["updated_at"] = utc_now_iso()
     group.save()

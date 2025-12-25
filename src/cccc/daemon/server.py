@@ -20,17 +20,34 @@ from ..kernel.ledger import append_event
 from ..kernel.registry import load_registry
 from ..kernel.scope import detect_scope
 from ..kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, set_actor_role, update_actor
-from ..kernel.inbox import find_event, get_cursor, is_message_for_actor, set_cursor, unread_messages
+from ..kernel.inbox import find_event, get_cursor, get_quote_text, is_message_for_actor, set_cursor, unread_messages
 from ..kernel.ledger_retention import compact as compact_ledger
 from ..kernel.ledger_retention import snapshot as snapshot_ledger
 from ..kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
+from ..runners import headless as headless_runner
 from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.time import utc_now_iso
 from .automation import AutomationManager
 from .delivery import inject_system_prompt as deliver_system_prompt
-from .delivery import pty_submit_text, render_delivery_text
+from .delivery import get_headless_targets_for_message, pty_submit_text, render_delivery_text
+from .ops.context_ops import (
+    handle_context_get,
+    handle_context_sync,
+    handle_task_list,
+    handle_presence_get,
+)
+from .ops.runner_ops import (
+    handle_headless_status,
+    handle_headless_set_status,
+    handle_headless_ack_message,
+    is_actor_running,
+    is_group_running,
+    stop_actor as runner_stop_actor,
+    stop_group as runner_stop_group,
+    stop_all as runner_stop_all,
+)
 
 
 AUTOMATION = AutomationManager()
@@ -133,6 +150,34 @@ def _remove_pty_state_if_pid(group_id: str, actor_id: str, *, pid: int) -> None:
         return
     try:
         p.unlink()
+    except Exception:
+        pass
+
+
+def _headless_state_path(group_id: str, actor_id: str) -> Path:
+    home = ensure_home()
+    return home / "groups" / str(group_id) / "state" / "runners" / "headless" / f"{actor_id}.json"
+
+
+def _write_headless_state(group_id: str, actor_id: str) -> None:
+    p = _headless_state_path(group_id, actor_id)
+    atomic_write_json(
+        p,
+        {
+            "v": 1,
+            "kind": "headless",
+            "group_id": str(group_id),
+            "actor_id": str(actor_id),
+            "started_at": utc_now_iso(),
+        },
+    )
+
+
+def _remove_headless_state(group_id: str, actor_id: str) -> None:
+    p = _headless_state_path(group_id, actor_id)
+    try:
+        if p.exists():
+            p.unlink()
     except Exception:
         pass
 
@@ -304,6 +349,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
     if op == "shutdown":
         try:
             pty_runner.SUPERVISOR.stop_all()
+            headless_runner.SUPERVISOR.stop_all()
         except Exception:
             pass
         return DaemonResponse(ok=True, result={"message": "shutting down"}), True
@@ -514,7 +560,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         try:
             require_group_permission(group, by=by, action="group.start")
             actors = list_actors(group)
-            start_specs: list[tuple[str, Path, list[str], dict[str, str], Dict[str, Any]]] = []
+            start_specs: list[tuple[str, Path, list[str], dict[str, str], Dict[str, Any], str]] = []
             for actor in actors:
                 if not isinstance(actor, dict):
                     continue
@@ -558,19 +604,31 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     )
                 cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
                 env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
-                start_specs.append((aid, cwd, list(cmd or []), dict(env or {}), dict(actor)))
+                runner_kind = str(actor.get("runner") or "pty").strip()
+                start_specs.append((aid, cwd, list(cmd or []), dict(env or {}), dict(actor), runner_kind))
 
             started: list[str] = []
-            for aid, cwd, cmd, env, actor in start_specs:
-                session = pty_runner.SUPERVISOR.start_actor(group_id=group.group_id, actor_id=aid, cwd=cwd, command=cmd, env=env)
-                try:
-                    _write_pty_state(group.group_id, aid, pid=session.pid)
-                except Exception:
-                    pass
-                try:
-                    _inject_system_prompt(group, actor)
-                except Exception:
-                    pass
+            for aid, cwd, cmd, env, actor, runner_kind in start_specs:
+                if runner_kind == "headless":
+                    headless_runner.SUPERVISOR.start_actor(
+                        group_id=group.group_id, actor_id=aid, cwd=cwd, env=env
+                    )
+                    try:
+                        _write_headless_state(group.group_id, aid)
+                    except Exception:
+                        pass
+                else:
+                    session = pty_runner.SUPERVISOR.start_actor(
+                        group_id=group.group_id, actor_id=aid, cwd=cwd, command=cmd, env=env
+                    )
+                    try:
+                        _write_pty_state(group.group_id, aid, pid=session.pid)
+                    except Exception:
+                        pass
+                    try:
+                        _inject_system_prompt(group, actor)
+                    except Exception:
+                        pass
                 started.append(aid)
             group.doc["running"] = True
             group.save()
@@ -589,12 +647,25 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("group_not_found", f"group not found: {group_id}"), False
         try:
             require_group_permission(group, by=by, action="group.stop")
+            # Stop both PTY and headless runners
             pty_runner.SUPERVISOR.stop_group(group_id=group.group_id)
+            headless_runner.SUPERVISOR.stop_group(group_id=group.group_id)
             group.doc["running"] = False
             group.save()
+            # Clean up PTY state files
             try:
                 pdir = _pty_state_path(group.group_id, "_").parent
                 for fp in pdir.glob("*.json"):
+                    try:
+                        fp.unlink()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            # Clean up headless state files
+            try:
+                hdir = _headless_state_path(group.group_id, "_").parent
+                for fp in hdir.glob("*.json"):
                     try:
                         fp.unlink()
                     except Exception:
@@ -621,6 +692,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         role = str(args.get("role") or "").strip()
         title = str(args.get("title") or "").strip()
         submit = str(args.get("submit") or "").strip()
+        runner = str(args.get("runner") or "pty").strip()
+        runtime = str(args.get("runtime") or "custom").strip()
         by = str(args.get("by") or "user").strip()
         command_raw = args.get("command")
         env_raw = args.get("env")
@@ -634,9 +707,22 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             require_actor_permission(group, by=by, action="actor.add")
             if role not in ("foreman", "peer"):
                 raise ValueError("invalid role")
+            if runner not in ("pty", "headless"):
+                raise ValueError("invalid runner (must be 'pty' or 'headless')")
+            if runtime not in ("claude", "codex", "droid", "opencode", "custom"):
+                raise ValueError("invalid runtime (must be 'claude', 'codex', 'droid', 'opencode', or 'custom')")
             command: list[str] = []
             if isinstance(command_raw, list) and all(isinstance(x, str) for x in command_raw):
                 command = [str(x) for x in command_raw if str(x).strip()]
+            # Auto-set command based on runtime if not provided
+            if not command and runtime != "custom":
+                runtime_commands = {
+                    "claude": ["claude"],
+                    "codex": ["codex"],
+                    "droid": ["droid"],
+                    "opencode": ["opencode"],
+                }
+                command = runtime_commands.get(runtime, [])
             env: Dict[str, str] = {}
             if isinstance(env_raw, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env_raw.items()):
                 env = {str(k): str(v) for k, v in env_raw.items()}
@@ -649,6 +735,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 env=env,
                 default_scope_key=default_scope_key,
                 submit=submit or "enter",
+                runner=runner,  # type: ignore
+                runtime=runtime,  # type: ignore
             )
         except Exception as e:
             return _error("actor_add_failed", str(e)), False
@@ -867,24 +955,37 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 )
             cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
             env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
-            session = pty_runner.SUPERVISOR.start_actor(
-                group_id=group.group_id, actor_id=actor_id, cwd=cwd, command=list(cmd or []), env=dict(env or {})
-            )
-            try:
-                _write_pty_state(group.group_id, actor_id, pid=session.pid)
-            except Exception:
-                pass
-            try:
-                _inject_system_prompt(group, actor)
-            except Exception:
-                pass
+            runner_kind = str(actor.get("runner") or "pty").strip()
+
+            if runner_kind == "headless":
+                # Start headless session (no PTY, MCP-driven)
+                headless_runner.SUPERVISOR.start_actor(
+                    group_id=group.group_id, actor_id=actor_id, cwd=cwd, env=dict(env or {})
+                )
+                try:
+                    _write_headless_state(group.group_id, actor_id)
+                except Exception:
+                    pass
+            else:
+                # Start PTY session (interactive terminal)
+                session = pty_runner.SUPERVISOR.start_actor(
+                    group_id=group.group_id, actor_id=actor_id, cwd=cwd, command=list(cmd or []), env=dict(env or {})
+                )
+                try:
+                    _write_pty_state(group.group_id, actor_id, pid=session.pid)
+                except Exception:
+                    pass
+                try:
+                    _inject_system_prompt(group, actor)
+                except Exception:
+                    pass
         ev = append_event(
             group.ledger_path,
             kind="actor.start",
             group_id=group.group_id,
             scope_key="",
             by=by,
-            data={"actor_id": actor_id},
+            data={"actor_id": actor_id, "runner": str(actor.get("runner") or "pty")},
         )
         return DaemonResponse(ok=True, result={"actor": actor, "event": ev}), False
 
@@ -900,8 +1001,13 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         try:
             require_actor_permission(group, by=by, action="actor.stop", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": False})
-            pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
-            _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+            runner_kind = str(actor.get("runner") or "pty").strip()
+            if runner_kind == "headless":
+                headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
+                _remove_headless_state(group.group_id, actor_id)
+            else:
+                pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
+                _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
         except Exception as e:
             return _error("actor_stop_failed", str(e)), False
         ev = append_event(
@@ -926,8 +1032,14 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         try:
             require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": True})
-            pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
-            _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+            runner_kind = str(actor.get("runner") or "pty").strip()
+            # Stop existing session
+            if runner_kind == "headless":
+                headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
+                _remove_headless_state(group.group_id, actor_id)
+            else:
+                pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
+                _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
         except Exception as e:
             return _error("actor_restart_failed", str(e)), False
         if bool(group.doc.get("running", False)):
@@ -975,24 +1087,35 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 )
             cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
             env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
-            session = pty_runner.SUPERVISOR.start_actor(
-                group_id=group.group_id, actor_id=actor_id, cwd=cwd, command=list(cmd or []), env=dict(env or {})
-            )
-            try:
-                _write_pty_state(group.group_id, actor_id, pid=session.pid)
-            except Exception:
-                pass
-            try:
-                _inject_system_prompt(group, actor)
-            except Exception:
-                pass
+            runner_kind = str(actor.get("runner") or "pty").strip()
+
+            if runner_kind == "headless":
+                headless_runner.SUPERVISOR.start_actor(
+                    group_id=group.group_id, actor_id=actor_id, cwd=cwd, env=dict(env or {})
+                )
+                try:
+                    _write_headless_state(group.group_id, actor_id)
+                except Exception:
+                    pass
+            else:
+                session = pty_runner.SUPERVISOR.start_actor(
+                    group_id=group.group_id, actor_id=actor_id, cwd=cwd, command=list(cmd or []), env=dict(env or {})
+                )
+                try:
+                    _write_pty_state(group.group_id, actor_id, pid=session.pid)
+                except Exception:
+                    pass
+                try:
+                    _inject_system_prompt(group, actor)
+                except Exception:
+                    pass
         ev = append_event(
             group.ledger_path,
             kind="actor.restart",
             group_id=group.group_id,
             scope_key="",
             by=by,
-            data={"actor_id": actor_id},
+            data={"actor_id": actor_id, "runner": str(actor.get("runner") or "pty")},
         )
         return DaemonResponse(ok=True, result={"actor": actor, "event": ev}), False
 
@@ -1025,6 +1148,9 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         by = str(args.get("by") or "user").strip()
         limit_raw = args.get("limit")
         limit = int(limit_raw) if isinstance(limit_raw, int) else 50
+        kind_filter = str(args.get("kind_filter") or "all").strip()
+        if kind_filter not in ("all", "chat", "notify"):
+            kind_filter = "all"
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
         if not actor_id:
@@ -1036,7 +1162,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             require_inbox_permission(group, by=by, target_actor_id=actor_id)
         except Exception as e:
             return _error("permission_denied", str(e)), False
-        msgs = unread_messages(group, actor_id=actor_id, limit=limit)
+        msgs = unread_messages(group, actor_id=actor_id, limit=limit, kind_filter=kind_filter)  # type: ignore
         cur_event_id, cur_ts = get_cursor(group, actor_id)
         return DaemonResponse(ok=True, result={"messages": msgs, "cursor": {"event_id": cur_event_id, "ts": cur_ts}}), False
 
@@ -1164,7 +1290,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         except Exception:
             pass
 
-        # Best-effort delivery into running actor PTYs (old cccc behavior).
+        # Best-effort delivery into running actors.
         # We only auto-deliver when recipients are explicit (to != []).
         if to:
             delivery_text = render_delivery_text(by=by, to=to, text=text)
@@ -1176,12 +1302,285 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     continue
                 if not is_message_for_actor(group, actor_id=aid, event=ev):
                     continue
-                delivered = pty_submit_text(group, actor_id=aid, text=delivery_text, file_fallback=True)
-                if delivered:
-                    try:
-                        AUTOMATION.on_delivered_message(group, actor=actor, by=by)
-                    except Exception:
-                        pass
+                # PTY runner: inject text directly
+                runner_kind = str(actor.get("runner") or "pty").strip()
+                if runner_kind != "headless":
+                    delivered = pty_submit_text(group, actor_id=aid, text=delivery_text, file_fallback=True)
+                    if delivered:
+                        try:
+                            AUTOMATION.on_delivered_message(group, actor=actor, by=by)
+                        except Exception:
+                            pass
+            # Headless runners: notify via system.notify event (daemon writes to ledger)
+            try:
+                headless_targets = get_headless_targets_for_message(group, event=ev, by=by)
+                event_id = str(ev.get("id") or "").strip()
+                for aid in headless_targets:
+                    append_event(
+                        group.ledger_path,
+                        kind="system.notify",
+                        group_id=group.group_id,
+                        scope_key="",
+                        by="system",
+                        data={
+                            "kind": "info",
+                            "priority": "high",
+                            "title": "New message",
+                            "message": f"New message from {by}. Check your inbox.",
+                            "target_actor_id": aid,
+                            "requires_ack": False,
+                            "context": {"event_id": event_id, "from": by},
+                        },
+                    )
+            except Exception:
+                pass
+        return DaemonResponse(ok=True, result={"event": ev}), False
+
+    if op == "reply":
+        group_id = str(args.get("group_id") or "").strip()
+        text = str(args.get("text") or "")
+        by = str(args.get("by") or "user")
+        reply_to = str(args.get("reply_to") or "").strip()
+        to_raw = args.get("to")
+        to_tokens: list[str] = []
+        if isinstance(to_raw, list):
+            to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
+
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not reply_to:
+            return _error("missing_reply_to", "missing reply_to event_id"), False
+
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+
+        # 查找被回复的消息
+        original = find_event(group, reply_to)
+        if original is None:
+            return _error("event_not_found", f"event not found: {reply_to}"), False
+
+        # 获取引用文本
+        quote_text = get_quote_text(group, reply_to, max_len=100)
+
+        # 如果没有指定收件人，默认回复给原消息发送者
+        if not to_tokens:
+            original_by = str(original.get("by") or "").strip()
+            if original_by and original_by != "user":
+                to_tokens = [original_by]
+
+        try:
+            to = resolve_recipient_tokens(group, to_tokens)
+        except Exception as e:
+            return _error("invalid_recipient", str(e)), False
+
+        scope_key = str(group.doc.get("active_scope_key") or "").strip()
+        ev = append_event(
+            group.ledger_path,
+            kind="chat.message",
+            group_id=group.group_id,
+            scope_key=scope_key,
+            by=by,
+            data=ChatMessageData(
+                text=text,
+                format="plain",
+                to=to,
+                reply_to=reply_to,
+                quote_text=quote_text,
+            ).model_dump(),
+        )
+
+        # 更新 group 活跃时间
+        try:
+            reg = load_registry()
+            meta = reg.groups.get(group.group_id)
+            if isinstance(meta, dict):
+                meta["updated_at"] = str(ev.get("ts") or utc_now_iso())
+                reg.save()
+        except Exception:
+            pass
+
+        # Best-effort 投递到 PTY（带回复格式）
+        if to:
+            delivery_text = render_delivery_text(
+                by=by, to=to, text=text, reply_to=reply_to, quote_text=quote_text
+            )
+            for actor in list_actors(group):
+                if not isinstance(actor, dict):
+                    continue
+                aid = str(actor.get("id") or "").strip()
+                if not aid or aid == "user" or aid == by:
+                    continue
+                if not is_message_for_actor(group, actor_id=aid, event=ev):
+                    continue
+                # PTY runner: inject text directly
+                runner_kind = str(actor.get("runner") or "pty").strip()
+                if runner_kind != "headless":
+                    delivered = pty_submit_text(group, actor_id=aid, text=delivery_text, file_fallback=True)
+                    if delivered:
+                        try:
+                            AUTOMATION.on_delivered_message(group, actor=actor, by=by)
+                        except Exception:
+                            pass
+            # Headless runners: notify via system.notify event (daemon writes to ledger)
+            try:
+                headless_targets = get_headless_targets_for_message(group, event=ev, by=by)
+                event_id = str(ev.get("id") or "").strip()
+                for aid in headless_targets:
+                    append_event(
+                        group.ledger_path,
+                        kind="system.notify",
+                        group_id=group.group_id,
+                        scope_key="",
+                        by="system",
+                        data={
+                            "kind": "info",
+                            "priority": "high",
+                            "title": "New message",
+                            "message": f"New message from {by}. Check your inbox.",
+                            "target_actor_id": aid,
+                            "requires_ack": False,
+                            "context": {"event_id": event_id, "from": by},
+                        },
+                    )
+            except Exception:
+                pass
+
+        return DaemonResponse(ok=True, result={"event": ev}), False
+
+    # ==========================================================================
+    # Context Operations (delegated to ops/context_ops.py)
+    # ==========================================================================
+
+    if op == "context_get":
+        return handle_context_get(args), False
+
+    if op == "context_sync":
+        return handle_context_sync(args), False
+
+    if op == "task_list":
+        return handle_task_list(args), False
+
+    if op == "presence_get":
+        return handle_presence_get(args), False
+
+    # ==========================================================================
+    # Headless Runner Operations (delegated to ops/runner_ops.py)
+    # ==========================================================================
+
+    if op == "headless_status":
+        return handle_headless_status(args), False
+
+    if op == "headless_set_status":
+        return handle_headless_set_status(args), False
+
+    if op == "headless_ack_message":
+        return handle_headless_ack_message(args), False
+
+    # ==========================================================================
+    # System Notification Operations
+    # ==========================================================================
+
+    if op == "system_notify":
+        group_id = str(args.get("group_id") or "").strip()
+        by = str(args.get("by") or "system").strip()
+        kind = str(args.get("kind") or "info").strip()
+        priority = str(args.get("priority") or "normal").strip()
+        title = str(args.get("title") or "").strip()
+        message = str(args.get("message") or "").strip()
+        target_actor_id = str(args.get("target_actor_id") or "").strip() or None
+        requires_ack = bool(args.get("requires_ack", False))
+        context = args.get("context") if isinstance(args.get("context"), dict) else {}
+
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+
+        # 验证 kind 和 priority
+        valid_kinds = {"nudge", "self_check", "system_refresh", "status_change", "error", "info"}
+        valid_priorities = {"low", "normal", "high", "urgent"}
+        if kind not in valid_kinds:
+            kind = "info"
+        if priority not in valid_priorities:
+            priority = "normal"
+
+        ev = append_event(
+            group.ledger_path,
+            kind="system.notify",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={
+                "kind": kind,
+                "priority": priority,
+                "title": title,
+                "message": message,
+                "target_actor_id": target_actor_id,
+                "requires_ack": requires_ack,
+                "context": context,
+            },
+        )
+
+        # Best-effort 投递到 PTY（仅 high/urgent 优先级）
+        if priority in ("high", "urgent"):
+            notify_text = f"[cccc] NOTIFY ({kind}): {title}"
+            if message:
+                notify_text += f"\n{message}"
+            for actor in list_actors(group):
+                if not isinstance(actor, dict):
+                    continue
+                aid = str(actor.get("id") or "").strip()
+                if not aid or aid == "user":
+                    continue
+                # 检查是否是目标 actor
+                if target_actor_id and aid != target_actor_id:
+                    continue
+                # 只投递给 PTY runner
+                runner_kind = str(actor.get("runner") or "pty").strip()
+                if runner_kind != "pty":
+                    continue
+                pty_submit_text(group, actor_id=aid, text=notify_text, file_fallback=False)
+
+        return DaemonResponse(ok=True, result={"event": ev}), False
+
+    if op == "notify_ack":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        notify_event_id = str(args.get("notify_event_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not actor_id:
+            return _error("missing_actor_id", "missing actor_id"), False
+        if not notify_event_id:
+            return _error("missing_notify_event_id", "missing notify_event_id"), False
+
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+
+        # 验证通知事件存在
+        notify_ev = find_event(group, notify_event_id)
+        if notify_ev is None:
+            return _error("event_not_found", f"event not found: {notify_event_id}"), False
+        if str(notify_ev.get("kind") or "") != "system.notify":
+            return _error("invalid_event_kind", "event is not a system.notify"), False
+
+        ev = append_event(
+            group.ledger_path,
+            kind="system.notify_ack",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={
+                "notify_event_id": notify_event_id,
+                "actor_id": actor_id,
+            },
+        )
+
         return DaemonResponse(ok=True, result={"event": ev}), False
 
     return _error("unknown_op", f"unknown op: {op}"), False
@@ -1221,6 +1620,13 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
     stop_event = threading.Event()
 
+    # Graceful shutdown on SIGTERM/SIGINT
+    def _signal_handler(signum: int, frame: Any) -> None:
+        stop_event.set()
+
+    signal.signal(signal.SIGTERM, _signal_handler)
+    signal.signal(signal.SIGINT, _signal_handler)
+
     def _automation_loop() -> None:
         next_compact = 0.0
         while not stop_event.is_set():
@@ -1242,12 +1648,15 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
         s.bind(str(p.sock_path))
         s.listen(50)
+        s.settimeout(1.0)  # Allow periodic check of stop_event
         _write_pid(p.pid_path)
 
         should_exit = False
-        while not should_exit:
+        while not should_exit and not stop_event.is_set():
             try:
                 conn, _ = s.accept()
+            except socket.timeout:
+                continue
             except KeyboardInterrupt:
                 break
             except Exception:
@@ -1304,9 +1713,25 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                     pass
 
     stop_event.set()
+    
+    # Graceful shutdown: stop all running actors
+    try:
+        pty_runner.SUPERVISOR.stop_all()
+    except Exception:
+        pass
+    try:
+        headless_runner.SUPERVISOR.stop_all()
+    except Exception:
+        pass
+    
     try:
         if p.sock_path.exists():
             p.sock_path.unlink()
+    except Exception:
+        pass
+    try:
+        if p.pid_path.exists():
+            p.pid_path.unlink()
     except Exception:
         pass
     return 0
