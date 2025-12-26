@@ -4,8 +4,9 @@
 
 通知类型：
 - nudge: 提醒 actor 处理未读消息
-- self_check: 触发 actor 自检
-- system_refresh: 刷新 SYSTEM prompt
+- keepalive: 提醒 actor 继续工作（检测到 Next: 声明后）
+- actor_idle: Actor 空闲通知（发给 foreman）
+- silence_check: 群聊静默通知（发给 foreman）
 - status_change: actor/group 状态变更
 - error: 系统错误通知
 """
@@ -18,8 +19,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 NotifyKind = Literal[
     "nudge",           # 提醒处理未读消息
-    "self_check",      # 触发自检
-    "system_refresh",  # 刷新 SYSTEM prompt
+    "keepalive",       # 提醒继续工作（检测到 Next: 声明后）
+    "actor_idle",      # Actor 空闲通知（发给 foreman）
+    "silence_check",   # 群聊静默通知（发给 foreman）
     "status_change",   # 状态变更通知
     "error",           # 错误通知
     "info",            # 一般信息

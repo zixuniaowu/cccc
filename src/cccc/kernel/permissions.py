@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from .actors import find_actor
+from .actors import find_actor, get_effective_role
 from .group import Group
 
 
@@ -22,15 +22,21 @@ GroupAction = Literal[
     "group.update",
     "group.detach_scope",
     "group.delete",
+    "group.set_state",
 ]
 
 
 def actor_role(group: Group, actor_id: str) -> Optional[str]:
+    """Get the effective role of an actor.
+    
+    Role is auto-determined by position:
+    - First enabled actor = foreman
+    - All others = peer
+    """
     item = find_actor(group, actor_id)
     if item is None:
         return None
-    role = item.get("role")
-    return role if isinstance(role, str) else None
+    return get_effective_role(group, actor_id)
 
 
 def require_actor_permission(
@@ -40,21 +46,56 @@ def require_actor_permission(
     action: ActorAction,
     target_actor_id: str = "",
 ) -> None:
+    """Check actor permission for an action.
+    
+    Permission matrix:
+    | Action        | user | foreman      | peer        |
+    |---------------|------|--------------|-------------|
+    | actor.list    | ✓    | ✓            | ✓           |
+    | actor.add     | ✓    | ✓            | ✗           |
+    | actor.start   | ✓    | ✓ (any)      | ✗           |
+    | actor.stop    | ✓    | ✓ (any)      | ✓ (self)    |
+    | actor.restart | ✓    | ✓ (any)      | ✓ (self)    |
+    | actor.remove  | ✓    | ✓ (self)     | ✓ (self)    |
+    | actor.update  | ✓    | ✗            | ✗           |
+    """
     who = (by or "").strip()
     target = (target_actor_id or "").strip()
 
+    # User has full access
     if not who or who == "user":
         return
 
     role = actor_role(group, who)
+    
     if role == "foreman":
-        return
-
-    if role == "peer":
-        if action in ("actor.stop", "actor.restart", "actor.start"):
+        # Foreman can: list, add, start/stop/restart any, remove self
+        if action in ("actor.list", "actor.add", "actor.start", "actor.stop", "actor.restart"):
+            return
+        if action == "actor.remove":
+            # Foreman can only remove self
             if target and target == who:
                 return
-        raise ValueError(f"permission denied: {who} cannot {action} {target or ''}".strip())
+            raise ValueError(f"permission denied: foreman can only remove self, not {target}")
+        if action == "actor.update":
+            raise ValueError("permission denied: actor.update is only available via CLI/Web UI")
+        raise ValueError(f"permission denied: {who} cannot {action}")
+
+    if role == "peer":
+        # Peer can: list, stop/restart/remove self
+        if action == "actor.list":
+            return
+        if action in ("actor.stop", "actor.restart", "actor.remove"):
+            if target and target == who:
+                return
+            raise ValueError(f"permission denied: peer can only {action} self, not {target}")
+        if action == "actor.add":
+            raise ValueError("permission denied: only foreman can add actors")
+        if action == "actor.start":
+            raise ValueError("permission denied: only foreman can start actors")
+        if action == "actor.update":
+            raise ValueError("permission denied: actor.update is only available via CLI/Web UI")
+        raise ValueError(f"permission denied: {who} cannot {action}")
 
     raise ValueError(f"unknown actor: {who}")
 

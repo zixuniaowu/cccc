@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import shutil
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -16,10 +16,17 @@ class RuntimeInfo:
     path: Optional[str]
     capabilities: str
     mcp_add_command: Optional[List[str]]  # Command to add MCP server, None if manual config required
+    # From runtime pool (if configured)
+    priority: int = 999
+    scenarios: List[str] = None  # type: ignore
+    
+    def __post_init__(self) -> None:
+        if self.scenarios is None:
+            self.scenarios = []
 
 
 # Known agent runtimes with their configurations
-KNOWN_RUNTIMES: Dict[str, Dict[str, str]] = {
+KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
     "claude": {
         "display_name": "Claude Code",
         "command": "claude",

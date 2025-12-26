@@ -19,7 +19,7 @@ from ..kernel.group import attach_scope_to_group, create_group, delete_group, de
 from ..kernel.ledger import append_event
 from ..kernel.registry import load_registry
 from ..kernel.scope import detect_scope
-from ..kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, set_actor_role, update_actor
+from ..kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, update_actor
 from ..kernel.inbox import find_event, get_cursor, get_quote_text, is_message_for_actor, set_cursor, unread_messages
 from ..kernel.ledger_retention import compact as compact_ledger
 from ..kernel.ledger_retention import snapshot as snapshot_ledger
@@ -30,8 +30,19 @@ from ..runners import headless as headless_runner
 from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.time import utc_now_iso
 from .automation import AutomationManager
-from .delivery import inject_system_prompt as deliver_system_prompt
-from .delivery import get_headless_targets_for_message, pty_submit_text, render_delivery_text
+from .delivery import (
+    inject_system_prompt as deliver_system_prompt,
+    get_headless_targets_for_message,
+    pty_submit_text,
+    render_delivery_text,
+    deliver_message_with_preamble,
+    queue_chat_message,
+    queue_system_notify,
+    flush_pending_messages,
+    tick_delivery,
+    clear_preamble_sent,
+    THROTTLE,
+)
 from .ops.context_ops import (
     handle_context_get,
     handle_context_sync,
@@ -260,10 +271,7 @@ def _maybe_autostart_running_groups() -> None:
                 _write_pty_state(group.group_id, aid, pid=session.pid)
             except Exception:
                 pass
-            try:
-                _inject_system_prompt(group, actor)
-            except Exception:
-                pass
+            # NOTE: 不在启动时注入 system prompt（lazy preamble）
 
 
 def _maybe_compact_ledgers(home: Path) -> None:
@@ -449,7 +457,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
-        allowed = {"nudge_after_seconds", "self_check_every_handoffs", "system_refresh_every_self_checks"}
+        allowed = {"nudge_after_seconds", "actor_idle_timeout_seconds", "keepalive_delay_seconds", "keepalive_max_per_actor", "silence_timeout_seconds", "min_interval_seconds"}
         unknown = set(patch.keys()) - allowed
         if unknown:
             return _error("invalid_patch", "invalid patch keys", details={"unknown_keys": sorted(unknown)}), False
@@ -660,10 +668,9 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         _write_pty_state(group.group_id, aid, pid=session.pid)
                     except Exception:
                         pass
-                    try:
-                        _inject_system_prompt(group, actor)
-                    except Exception:
-                        pass
+                    # NOTE: 不在启动时注入 system prompt
+                    # 使用 lazy preamble 机制：system prompt 在第一条用户消息时投递
+                    # 这样 agent 不会在用户还没说话时就开始行动
                 started.append(aid)
             group.doc["running"] = True
             group.save()
@@ -712,6 +719,35 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         ev = append_event(group.ledger_path, kind="group.stop", group_id=group.group_id, scope_key="", by=by, data={})
         return DaemonResponse(ok=True, result={"group_id": group.group_id, "event": ev}), False
 
+    if op == "group_set_state":
+        group_id = str(args.get("group_id") or "").strip()
+        state = str(args.get("state") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not state:
+            return _error("missing_state", "missing state"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        try:
+            require_group_permission(group, by=by, action="group.set_state")
+            from ..kernel.group import set_group_state, get_group_state
+            old_state = get_group_state(group)
+            group = set_group_state(group, state=state)
+            new_state = get_group_state(group)
+        except Exception as e:
+            return _error("group_set_state_failed", str(e)), False
+        ev = append_event(
+            group.ledger_path,
+            kind="group.set_state",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={"old_state": old_state, "new_state": new_state},
+        )
+        return DaemonResponse(ok=True, result={"group_id": group.group_id, "state": new_state, "event": ev}), False
+
     if op == "actor_list":
         group_id = str(args.get("group_id") or "").strip()
         include_unread = bool(args.get("include_unread", False))
@@ -723,7 +759,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         actors = list_actors(group)
         # Optionally include unread message count for each actor
         if include_unread:
-            from .inbox import unread_count
+            from ..kernel.inbox import unread_count
             for actor in actors:
                 aid = str(actor.get("id") or "")
                 if aid:
@@ -733,7 +769,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
     if op == "actor_add":
         group_id = str(args.get("group_id") or "").strip()
         actor_id = str(args.get("actor_id") or "").strip()
-        role = str(args.get("role") or "").strip()
         title = str(args.get("title") or "").strip()
         submit = str(args.get("submit") or "").strip()
         runner = str(args.get("runner") or "pty").strip()
@@ -749,8 +784,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("group_not_found", f"group not found: {group_id}"), False
         try:
             require_actor_permission(group, by=by, action="actor.add")
-            if role not in ("foreman", "peer"):
-                raise ValueError("invalid role")
+            # Note: role is auto-determined by position (first enabled = foreman)
             if runner not in ("pty", "headless"):
                 raise ValueError("invalid runner (must be 'pty' or 'headless')")
             if runtime not in ("claude", "codex", "droid", "opencode", "custom"):
@@ -773,7 +807,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             actor = add_actor(
                 group,
                 actor_id=actor_id,
-                role=role,
                 title=title,
                 command=command,
                 env=env,
@@ -819,33 +852,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             data={"actor_id": actor_id},
         )
         return DaemonResponse(ok=True, result={"actor_id": actor_id, "event": ev}), False
-
-    if op == "actor_set_role":
-        group_id = str(args.get("group_id") or "").strip()
-        actor_id = str(args.get("actor_id") or "").strip()
-        role = str(args.get("role") or "").strip()
-        by = str(args.get("by") or "user").strip()
-        if not group_id:
-            return _error("missing_group_id", "missing group_id"), False
-        group = load_group(group_id)
-        if group is None:
-            return _error("group_not_found", f"group not found: {group_id}"), False
-        try:
-            require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)
-            if role not in ("foreman", "peer"):
-                raise ValueError("invalid role")
-            actor = set_actor_role(group, actor_id, role)
-        except Exception as e:
-            return _error("actor_set_role_failed", str(e)), False
-        ev = append_event(
-            group.ledger_path,
-            kind="actor.set_role",
-            group_id=group.group_id,
-            scope_key="",
-            by=by,
-            data={"actor_id": actor_id, "role": role},
-        )
-        return DaemonResponse(ok=True, result={"actor": actor, "event": ev}), False
 
     if op == "actor_update":
         group_id = str(args.get("group_id") or "").strip()
@@ -923,10 +929,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         _write_pty_state(group.group_id, actor_id, pid=session.pid)
                     except Exception:
                         pass
-                    try:
-                        _inject_system_prompt(group, actor)
-                    except Exception:
-                        pass
+                    # NOTE: 不在启动时注入 system prompt（lazy preamble）
             else:
                 pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                 _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
@@ -1019,10 +1022,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     _write_pty_state(group.group_id, actor_id, pid=session.pid)
                 except Exception:
                     pass
-                try:
-                    _inject_system_prompt(group, actor)
-                except Exception:
-                    pass
+                # NOTE: 不在启动时注入 system prompt（lazy preamble）
         ev = append_event(
             group.ledger_path,
             kind="actor.start",
@@ -1084,6 +1084,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             else:
                 pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                 _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+            # Clear preamble state so system prompt will be re-injected on restart
+            clear_preamble_sent(group, actor_id)
+            # Clear throttle state for fresh start
+            THROTTLE.clear_actor(group.group_id, actor_id)
         except Exception as e:
             return _error("actor_restart_failed", str(e)), False
         if bool(group.doc.get("running", False)):
@@ -1149,10 +1153,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     _write_pty_state(group.group_id, actor_id, pid=session.pid)
                 except Exception:
                     pass
-                try:
-                    _inject_system_prompt(group, actor)
-                except Exception:
-                    pass
+                # NOTE: 不在重启时注入 system prompt（lazy preamble）
         ev = append_event(
             group.ledger_path,
             kind="actor.restart",
@@ -1337,7 +1338,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         # Best-effort delivery into running actors.
         # We only auto-deliver when recipients are explicit (to != []).
         if to:
-            delivery_text = render_delivery_text(by=by, to=to, text=text)
+            event_id = str(ev.get("id") or "").strip()
+            event_ts = str(ev.get("ts") or "").strip()
             for actor in list_actors(group):
                 if not isinstance(actor, dict):
                     continue
@@ -1346,19 +1348,21 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     continue
                 if not is_message_for_actor(group, actor_id=aid, event=ev):
                     continue
-                # PTY runner: inject text directly
+                # PTY runner: queue message for throttled delivery
                 runner_kind = str(actor.get("runner") or "pty").strip()
                 if runner_kind != "headless":
-                    delivered = pty_submit_text(group, actor_id=aid, text=delivery_text, file_fallback=True)
-                    if delivered:
-                        try:
-                            AUTOMATION.on_delivered_message(group, actor=actor, by=by)
-                        except Exception:
-                            pass
+                    queue_chat_message(
+                        group,
+                        actor_id=aid,
+                        event_id=event_id,
+                        by=by,
+                        to=to,
+                        text=text,
+                        ts=event_ts,
+                    )
             # Headless runners: notify via system.notify event (daemon writes to ledger)
             try:
                 headless_targets = get_headless_targets_for_message(group, event=ev, by=by)
-                event_id = str(ev.get("id") or "").strip()
                 for aid in headless_targets:
                     append_event(
                         group.ledger_path,
@@ -1378,6 +1382,13 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     )
             except Exception:
                 pass
+
+        # Trigger automation: auto-transition idle -> active on new message
+        try:
+            AUTOMATION.on_new_message(group)
+        except Exception:
+            pass
+
         return DaemonResponse(ok=True, result={"event": ev}), False
 
     if op == "reply":
@@ -1446,9 +1457,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
         # Best-effort 投递到 PTY（带回复格式）
         if to:
-            delivery_text = render_delivery_text(
-                by=by, to=to, text=text, reply_to=reply_to, quote_text=quote_text
-            )
+            event_id = str(ev.get("id") or "").strip()
+            event_ts = str(ev.get("ts") or "").strip()
             for actor in list_actors(group):
                 if not isinstance(actor, dict):
                     continue
@@ -1457,19 +1467,23 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     continue
                 if not is_message_for_actor(group, actor_id=aid, event=ev):
                     continue
-                # PTY runner: inject text directly
+                # PTY runner: queue message for throttled delivery
                 runner_kind = str(actor.get("runner") or "pty").strip()
                 if runner_kind != "headless":
-                    delivered = pty_submit_text(group, actor_id=aid, text=delivery_text, file_fallback=True)
-                    if delivered:
-                        try:
-                            AUTOMATION.on_delivered_message(group, actor=actor, by=by)
-                        except Exception:
-                            pass
+                    queue_chat_message(
+                        group,
+                        actor_id=aid,
+                        event_id=event_id,
+                        by=by,
+                        to=to,
+                        text=text,
+                        reply_to=reply_to,
+                        quote_text=quote_text,
+                        ts=event_ts,
+                    )
             # Headless runners: notify via system.notify event (daemon writes to ledger)
             try:
                 headless_targets = get_headless_targets_for_message(group, event=ev, by=by)
-                event_id = str(ev.get("id") or "").strip()
                 for aid in headless_targets:
                     append_event(
                         group.ledger_path,
@@ -1489,6 +1503,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     )
             except Exception:
                 pass
+
+        # Trigger automation: auto-transition idle -> active on new message
+        try:
+            AUTOMATION.on_new_message(group)
+        except Exception:
+            pass
 
         return DaemonResponse(ok=True, result={"event": ev}), False
 
@@ -1543,7 +1563,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("group_not_found", f"group not found: {group_id}"), False
 
         # 验证 kind 和 priority
-        valid_kinds = {"nudge", "self_check", "system_refresh", "status_change", "error", "info"}
+        valid_kinds = {"nudge", "keepalive", "actor_idle", "silence_check", "status_change", "error", "info"}
         valid_priorities = {"low", "normal", "high", "urgent"}
         if kind not in valid_kinds:
             kind = "info"
@@ -1569,9 +1589,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
         # Best-effort 投递到 PTY（仅 high/urgent 优先级）
         if priority in ("high", "urgent"):
-            notify_text = f"[cccc] NOTIFY ({kind}): {title}"
-            if message:
-                notify_text += f"\n{message}"
+            event_id = str(ev.get("id") or "").strip()
+            event_ts = str(ev.get("ts") or "").strip()
             for actor in list_actors(group):
                 if not isinstance(actor, dict):
                     continue
@@ -1585,7 +1604,16 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 runner_kind = str(actor.get("runner") or "pty").strip()
                 if runner_kind != "pty":
                     continue
-                pty_submit_text(group, actor_id=aid, text=notify_text, file_fallback=False)
+                # Queue for throttled delivery
+                queue_system_notify(
+                    group,
+                    actor_id=aid,
+                    event_id=event_id,
+                    notify_kind=kind,
+                    title=title,
+                    message=message,
+                    ts=event_ts,
+                )
 
         return DaemonResponse(ok=True, result={"event": ev}), False
 
@@ -1676,6 +1704,23 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         while not stop_event.is_set():
             try:
                 AUTOMATION.tick(home=p.home)
+            except Exception:
+                pass
+            # Tick delivery for all running groups (flush pending messages)
+            try:
+                base = p.home / "groups"
+                if base.exists():
+                    for gp in base.glob("*/group.yaml"):
+                        gid = gp.parent.name
+                        group = load_group(gid)
+                        if group is None:
+                            continue
+                        if not bool(group.doc.get("running", False)):
+                            continue
+                        try:
+                            tick_delivery(group)
+                        except Exception:
+                            pass
             except Exception:
                 pass
             now = time.time()

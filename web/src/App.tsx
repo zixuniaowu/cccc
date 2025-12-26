@@ -65,13 +65,35 @@ type GroupContext = {
   presence?: Record<string, { status?: string; activity?: string; updated_at?: string }>;
 };
 
-// Runtime default commands - used for template auto-fill
+// Runtime default commands from v0.3.28 agents.yaml
 const RUNTIME_DEFAULTS: Record<string, string> = {
-  claude: "claude",
-  codex: "codex",
-  droid: "droid",
+  claude: "claude --dangerously-skip-permissions",
+  codex: "codex --dangerously-bypass-approvals-and-sandbox",
+  droid: "droid --auto high",
   opencode: "opencode",
+  gemini: "gemini --yolo",
+  copilot: "copilot --allow-all-tools",
+  cursor: "cursor-agent",
+  auggie: "auggie",
+  kilocode: "kilocode",
 };
+
+// Runtime display info
+const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
+  claude: { label: "Claude Code", desc: "Anthropic's Claude - strong coding" },
+  codex: { label: "Codex CLI", desc: "OpenAI Codex - multimodal support" },
+  droid: { label: "Droid", desc: "Robust auto mode, good for long sessions" },
+  opencode: { label: "OpenCode", desc: "Solid coding CLI, no special env needed" },
+  gemini: { label: "Gemini", desc: "Google Gemini - web search, large context" },
+  copilot: { label: "GitHub Copilot", desc: "GitHub integrated, tool access" },
+  cursor: { label: "Cursor Agent", desc: "Cursor AI - editor integrated" },
+  auggie: { label: "Augment Code", desc: "Lightweight AI assistant" },
+  kilocode: { label: "KiloCode", desc: "Autonomous coding capabilities" },
+  custom: { label: "Custom", desc: "Enter your own command" },
+};
+
+type DirItem = { name: string; path: string; is_dir: boolean };
+type DirSuggestion = { name: string; path: string; icon: string };
 
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
@@ -182,9 +204,7 @@ export default function App() {
   const [showAddActor, setShowAddActor] = useState(false);
   const [newActorId, setNewActorId] = useState("");
   const [newActorRole, setNewActorRole] = useState<"peer" | "foreman">("peer");
-  const [newActorRunner, setNewActorRunner] = useState<"pty" | "headless">("pty");
   const [newActorRuntime, setNewActorRuntime] = useState<"claude" | "codex" | "droid" | "opencode" | "custom">("custom");
-  const [newActorTitle, setNewActorTitle] = useState("");
   const [newActorCommand, setNewActorCommand] = useState("");
   const [runtimes, setRuntimes] = useState<RuntimeInfo[]>([]);
   const [inboxOpen, setInboxOpen] = useState(false);
@@ -211,12 +231,29 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [groupSettings, setGroupSettings] = useState<{
     nudge_after_seconds: number;
-    self_check_every_handoffs: number;
-    system_refresh_every_self_checks: number;
+    actor_idle_timeout_seconds: number;
+    keepalive_delay_seconds: number;
+    keepalive_max_per_actor: number;
+    silence_timeout_seconds: number;
+    min_interval_seconds: number;
   } | null>(null);
   const [editNudgeSeconds, setEditNudgeSeconds] = useState(300);
-  const [editSelfCheckHandoffs, setEditSelfCheckHandoffs] = useState(6);
-  const [editSystemRefresh, setEditSystemRefresh] = useState(3);
+  const [editActorIdleSeconds, setEditActorIdleSeconds] = useState(600);
+  const [editKeepaliveSeconds, setEditKeepaliveSeconds] = useState(120);
+  const [editSilenceSeconds, setEditSilenceSeconds] = useState(600);
+  const [editDeliveryInterval, setEditDeliveryInterval] = useState(60);
+  const [showCreateGroup, setShowCreateGroup] = useState(false);
+  const [createGroupPath, setCreateGroupPath] = useState("");
+  const [createGroupName, setCreateGroupName] = useState("");
+  const [actorMenuOpen, setActorMenuOpen] = useState<string | null>(null);
+  // Directory picker state
+  const [dirItems, setDirItems] = useState<DirItem[]>([]);
+  const [dirSuggestions, setDirSuggestions] = useState<DirSuggestion[]>([]);
+  const [currentDir, setCurrentDir] = useState("");
+  const [parentDir, setParentDir] = useState<string | null>(null);
+  const [showDirBrowser, setShowDirBrowser] = useState(false);
+  const [showAdvancedActor, setShowAdvancedActor] = useState(false);
+  const [addActorError, setAddActorError] = useState("");  // Error specific to Add Actor modal
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const errorTimeoutRef = useRef<number | null>(null);
 
@@ -243,17 +280,46 @@ export default function App() {
     return actors.some((a) => a.role === "foreman");
   }, [actors]);
 
-  // Generate suggested actor ID based on runtime and role
+  // Generate suggested actor ID: agent-1, agent-2, etc.
   const suggestedActorId = useMemo(() => {
-    const prefix = newActorRole === "foreman" ? "foreman" : newActorRuntime !== "custom" ? newActorRuntime : "peer";
-    const existing = actors.map((a) => String(a.id || ""));
-    if (!existing.includes(prefix)) return prefix;
-    for (let i = 1; i <= 99; i++) {
-      const candidate = `${prefix}-${i}`;
-      if (!existing.includes(candidate)) return candidate;
+    const existing = new Set(actors.map((a) => String(a.id || "")));
+    for (let i = 1; i <= 999; i++) {
+      const candidate = `agent-${i}`;
+      if (!existing.has(candidate)) return candidate;
     }
-    return `${prefix}-${Date.now()}`;
-  }, [newActorRole, newActorRuntime, actors]);
+    return `agent-${Date.now()}`;
+  }, [actors]);
+
+  // Check if we can add an actor with current settings
+  const canAddActor = useMemo(() => {
+    if (busy === "actor-add") return false;
+    // Custom runtime requires a command
+    if (newActorRuntime === "custom" && !newActorCommand.trim()) return false;
+    // Non-custom runtime: check if it's available or has a command override
+    if (newActorRuntime !== "custom") {
+      const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
+      const available = rtInfo?.available ?? false;
+      // If runtime not available and no command override, can't add
+      if (!available && !newActorCommand.trim()) return false;
+    }
+    return true;
+  }, [busy, newActorRuntime, newActorCommand, runtimes]);
+
+  // Get reason why Add Agent button is disabled
+  const addActorDisabledReason = useMemo(() => {
+    if (busy === "actor-add") return "";
+    if (newActorRuntime === "custom" && !newActorCommand.trim()) {
+      return "Enter a command for custom runtime";
+    }
+    if (newActorRuntime !== "custom") {
+      const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
+      const available = rtInfo?.available ?? false;
+      if (!available && !newActorCommand.trim()) {
+        return `${RUNTIME_INFO[newActorRuntime]?.label || newActorRuntime} is not installed. Install it or enter a custom command.`;
+      }
+    }
+    return "";
+  }, [busy, newActorRuntime, newActorCommand, runtimes]);
 
   const termActorTitle = useMemo(() => {
     const aid = termActorId.trim();
@@ -318,6 +384,28 @@ export default function App() {
     }
   }
 
+  async function fetchDirSuggestions() {
+    const resp = await apiJson<{ suggestions: DirSuggestion[] }>("/api/v1/fs/recent");
+    if (resp.ok) {
+      setDirSuggestions(resp.result.suggestions || []);
+    }
+  }
+
+  async function fetchDirContents(path: string) {
+    setShowDirBrowser(true);
+    const resp = await apiJson<{ path: string; parent: string | null; items: DirItem[] }>(
+      `/api/v1/fs/list?path=${encodeURIComponent(path)}`
+    );
+    if (resp.ok) {
+      setDirItems(resp.result.items || []);
+      setCurrentDir(resp.result.path || path);
+      setParentDir(resp.result.parent || null);
+    } else {
+      console.error("fetchDirContents error:", resp.error);
+      showError(resp.error?.message || "Failed to list directory");
+    }
+  }
+
   async function fetchContext(groupId: string) {
     const resp = await apiJson<{ context: GroupContext }>(`/api/v1/groups/${encodeURIComponent(groupId)}/context`);
     if (resp.ok) {
@@ -330,8 +418,10 @@ export default function App() {
     if (resp.ok && resp.result.settings) {
       setGroupSettings(resp.result.settings);
       setEditNudgeSeconds(resp.result.settings.nudge_after_seconds);
-      setEditSelfCheckHandoffs(resp.result.settings.self_check_every_handoffs);
-      setEditSystemRefresh(resp.result.settings.system_refresh_every_self_checks);
+      setEditActorIdleSeconds(resp.result.settings.actor_idle_timeout_seconds);
+      setEditKeepaliveSeconds(resp.result.settings.keepalive_delay_seconds);
+      setEditSilenceSeconds(resp.result.settings.silence_timeout_seconds);
+      setEditDeliveryInterval(resp.result.settings.min_interval_seconds);
     }
   }
 
@@ -344,8 +434,10 @@ export default function App() {
         method: "PUT",
         body: JSON.stringify({
           nudge_after_seconds: editNudgeSeconds,
-          self_check_every_handoffs: editSelfCheckHandoffs,
-          system_refresh_every_self_checks: editSystemRefresh,
+          actor_idle_timeout_seconds: editActorIdleSeconds,
+          keepalive_delay_seconds: editKeepaliveSeconds,
+          silence_timeout_seconds: editSilenceSeconds,
+          min_interval_seconds: editDeliveryInterval,
           by: "user",
         }),
       });
@@ -450,6 +542,7 @@ export default function App() {
   useEffect(() => {
     refreshGroups();
     fetchRuntimes();
+    fetchDirSuggestions();
     const t = window.setInterval(refreshGroups, 5000);
     return () => window.clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -498,6 +591,20 @@ export default function App() {
     }
   }, [editActorRuntime]);
 
+  // Close actor menu when clicking outside
+  useEffect(() => {
+    if (!actorMenuOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      // Close menu if click is outside the menu
+      const target = e.target as HTMLElement;
+      if (!target.closest('[data-actor-menu]')) {
+        setActorMenuOpen(null);
+      }
+    };
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [actorMenuOpen]);
+
   async function sendMessage() {
     const txt = composerText.trim();
     if (!txt || !selectedGroupId) return;
@@ -532,7 +639,7 @@ export default function App() {
       }
       setComposerText("");
       setReplyTarget(null);
-      await loadGroup(selectedGroupId);
+      // Don't reload - SSE stream will push the new event
     } finally {
       setBusy("");
     }
@@ -573,6 +680,51 @@ export default function App() {
   }
 
   async function createGroup() {
+    // New flow: create group with path, auto-generate title from directory name
+    const path = createGroupPath.trim();
+    if (!path) return;
+    
+    // Extract directory name for default title
+    const dirName = path.split("/").filter(Boolean).pop() || "working-group";
+    const title = createGroupName.trim() || dirName;
+    
+    setBusy("create");
+    try {
+      setErrorMsg("");
+      // Create group
+      const resp = await apiJson<{ group_id: string }>("/api/v1/groups", {
+        method: "POST",
+        body: JSON.stringify({ title, topic: "", by: "user" }),
+      });
+      if (!resp.ok) {
+        showError(`${resp.error.code}: ${resp.error.message}`);
+        return;
+      }
+      
+      const groupId = resp.result.group_id;
+      
+      // Attach the path as scope
+      const attachResp = await apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/attach`, {
+        method: "POST",
+        body: JSON.stringify({ path, by: "user" }),
+      });
+      if (!attachResp.ok) {
+        showError(`Created group but failed to attach: ${attachResp.error.message}`);
+      }
+      
+      // Reset and close modal
+      setCreateGroupPath("");
+      setCreateGroupName("");
+      setShowCreateGroup(false);
+      await refreshGroups();
+      setSelectedGroupId(groupId);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  // Legacy inline create (keep for backward compat, but hidden)
+  async function createGroupLegacy() {
     const title = createTitle.trim();
     if (!title) return;
     setBusy("create");
@@ -585,7 +737,6 @@ export default function App() {
       if (resp.ok) {
         setCreateTitle("");
         await refreshGroups();
-        // Auto-select the newly created group
         if (resp.result.group_id) {
           setSelectedGroupId(resp.result.group_id);
         }
@@ -600,7 +751,9 @@ export default function App() {
   async function refreshActors() {
     if (!selectedGroupId) return;
     const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors?include_unread=true`);
-    if (a.ok) setActors(a.result.actors || []);
+    if (a.ok) {
+      setActors(a.result.actors || []);
+    }
   }
 
   async function addActor() {
@@ -608,16 +761,15 @@ export default function App() {
     const actorId = newActorId.trim() || suggestedActorId;
     if (!actorId) return;
     setBusy("actor-add");
+    setAddActorError("");  // Clear previous error
     try {
-      setErrorMsg("");
       const resp = await apiJson(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors`, {
         method: "POST",
         body: JSON.stringify({
           actor_id: actorId,
           role: newActorRole,
-          runner: newActorRunner,
+          runner: "pty",
           runtime: newActorRuntime,
-          title: newActorTitle.trim(),
           command: newActorCommand,
           env: {},
           default_scope_key: "",
@@ -625,15 +777,15 @@ export default function App() {
         }),
       });
       if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
+        setAddActorError(resp.error?.message || "Failed to add agent");
         return;
       }
       setShowAddActor(false);
       setNewActorId("");
-      setNewActorTitle("");
       setNewActorCommand("");
-      setNewActorRunner("pty");
+      setNewActorRole("peer");
       setNewActorRuntime("custom");
+      setAddActorError("");
       await refreshActors();
     } finally {
       setBusy("");
@@ -853,32 +1005,31 @@ export default function App() {
   }
 
   return (
-    <div className="h-full w-full">
-      <div className="h-full grid grid-cols-[320px_1fr]">
-        <aside className="h-full border-r border-slate-800 bg-slate-950/60">
-          <div className="p-3 border-b border-slate-800">
-            <div className="text-sm font-semibold tracking-wide">Working Groups</div>
-            <div className="mt-2 flex gap-2">
-              <input
-                className="w-full rounded bg-slate-900 border border-slate-800 px-2 py-1 text-sm"
-                placeholder="New group title…"
-                value={createTitle}
-                onChange={(e) => setCreateTitle(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") createGroup();
-                }}
-              />
+    <div className="h-full w-full bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800">
+      <div className="h-full grid grid-cols-[280px_1fr]">
+        {/* Sidebar */}
+        <aside className="h-full border-r border-slate-700/50 bg-slate-900/80 backdrop-blur flex flex-col">
+          <div className="p-4 border-b border-slate-700/50">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">🤖</span>
+                <span className="text-sm font-bold text-white tracking-wide">CCCC</span>
+              </div>
               <button
-                className="rounded bg-slate-200 text-slate-950 px-3 text-sm font-medium disabled:opacity-50"
-                onClick={createGroup}
-                disabled={!createTitle.trim() || busy === "create"}
+                className="text-xs px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 text-white font-medium hover:from-blue-500 hover:to-blue-400 shadow-lg shadow-blue-500/20 transition-all"
+                onClick={() => {
+                  setShowCreateGroup(true);
+                  fetchDirSuggestions();
+                }}
+                title="Create new working group"
               >
-                +
+                + New
               </button>
             </div>
           </div>
 
-          <div className="p-2 overflow-auto h-[calc(100%-64px)]">
+          <div className="flex-1 overflow-auto p-3">
+            <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-2 px-2">Working Groups</div>
             {groups.map((g) => {
               const gid = String(g.group_id || "");
               const active = gid === selectedGroupId;
@@ -886,422 +1037,222 @@ export default function App() {
                 <button
                   key={gid}
                   className={classNames(
-                    "w-full text-left px-3 py-2 rounded mb-1",
-                    active ? "bg-slate-800/70" : "hover:bg-slate-900/70",
+                    "w-full text-left px-3 py-2.5 rounded-lg mb-1 transition-all",
+                    active 
+                      ? "bg-gradient-to-r from-blue-600/20 to-blue-500/10 border border-blue-500/30" 
+                      : "hover:bg-slate-800/50 border border-transparent",
                   )}
                   onClick={() => setSelectedGroupId(gid)}
                 >
                   <div className="flex items-center justify-between">
-                    <div className="text-sm font-medium truncate">{g.title || gid}</div>
-                    <div className={classNames("text-[10px] px-2 py-0.5 rounded", g.running ? "bg-emerald-900/60 text-emerald-200" : "bg-slate-900 text-slate-400")}>
-                      {g.running ? "RUN" : "STOP"}
+                    <div className={classNames("text-sm font-medium truncate", active ? "text-white" : "text-slate-300")}>{g.title || gid}</div>
+                    <div className={classNames(
+                      "text-[9px] px-2 py-0.5 rounded-full font-medium",
+                      g.running ? "bg-emerald-500/20 text-emerald-400" : "bg-slate-700/50 text-slate-500"
+                    )}>
+                      {g.running ? "● RUN" : "○ STOP"}
                     </div>
                   </div>
-                  <div className="text-xs text-slate-400 truncate">{g.topic || "—"}</div>
                 </button>
               );
             })}
             {!groups.length && (
-              <div className="p-3 text-center">
+              <div className="p-6 text-center">
+                <div className="text-4xl mb-3">📁</div>
                 <div className="text-sm text-slate-400 mb-2">No working groups yet</div>
-                <div className="text-xs text-slate-500">
-                  Enter a title above and click + to create your first group
+                <div className="text-xs text-slate-500 mb-4 max-w-[200px] mx-auto">
+                  A working group is a collaboration space where multiple AI agents work together on a project.
                 </div>
+                <button
+                  className="text-sm px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 text-white font-medium hover:from-blue-500 hover:to-blue-400 shadow-lg shadow-blue-500/20"
+                  onClick={() => {
+                    setShowCreateGroup(true);
+                    fetchDirSuggestions();
+                  }}
+                >
+                  Create Your First Group
+                </button>
               </div>
             )}
           </div>
         </aside>
 
-        <main className="h-full flex flex-col">
-          <header className="border-b border-slate-800 bg-slate-950/30 px-4 py-3">
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <div className="text-sm font-semibold truncate">
-                    {groupDoc?.title || (selectedGroupId ? selectedGroupId : "—")}
-                  </div>
-                  {selectedGroupId && (
-                    <button
-                      className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-400 hover:text-slate-200"
-                      onClick={openGroupEdit}
-                      title="Edit group title/topic"
-                    >
-                      edit
-                    </button>
-                  )}
+        <main className="h-full flex flex-col bg-slate-900/50">
+          {/* Header */}
+          <header className="border-b border-slate-700/50 bg-slate-800/30 backdrop-blur px-5 py-4">
+            {/* Row 1: Group info + actions */}
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="text-base font-semibold text-white truncate">
+                  {groupDoc?.title || (selectedGroupId ? selectedGroupId : "Select a group")}
                 </div>
-                {groupDoc?.topic && (
-                  <div className="text-xs text-slate-400 truncate" title={groupDoc.topic}>
-                    {groupDoc.topic}
-                  </div>
+                {selectedGroupId && (
+                  <button
+                    className="text-xs px-2 py-1 rounded-md bg-slate-700/50 border border-slate-600/50 text-slate-400 hover:text-white hover:bg-slate-600/50 transition-colors"
+                    onClick={openGroupEdit}
+                    title="Edit group"
+                  >
+                    ✎ Edit
+                  </button>
                 )}
-                <div className="text-xs text-slate-500">
-                  {groupDoc?.scopes && groupDoc.scopes.length > 0 ? (
-                    <details className="inline">
-                      <summary className="cursor-pointer hover:text-slate-400">
-                        Scopes: {groupDoc.scopes.length} attached
-                        {projectRoot && <span className="text-slate-400"> (active: {projectRoot.split("/").pop()})</span>}
-                      </summary>
-                      <div className="mt-1 ml-2 space-y-0.5">
-                        {groupDoc.scopes.map((s, i) => {
-                          const isActive = s.scope_key === groupDoc.active_scope_key;
-                          const scopeKey = s.scope_key || "";
-                          return (
-                            <div key={scopeKey || i} className="flex items-center gap-2 text-xs group/scope">
-                              <span className={isActive ? "text-emerald-400" : "text-slate-500"}>
-                                {isActive ? "●" : "○"}
-                              </span>
-                              <span className="text-slate-400 truncate max-w-[280px]" title={s.url}>
-                                {s.label || s.url || scopeKey}
-                              </span>
-                              {!isActive && scopeKey && (
-                                <button
-                                  className="opacity-0 group-hover/scope:opacity-100 text-[9px] px-1 py-0.5 rounded bg-slate-800 text-slate-500 hover:text-rose-400 hover:bg-rose-950/30"
-                                  onClick={async (e) => {
-                                    e.preventDefault();
-                                    if (!window.confirm(`Detach scope "${s.label || s.url || scopeKey}"?`)) return;
-                                    setBusy("detach-scope");
-                                    try {
-                                      const resp = await apiJson(
-                                        `/api/v1/groups/${encodeURIComponent(selectedGroupId)}/scopes/${encodeURIComponent(scopeKey)}?by=user`,
-                                        { method: "DELETE" }
-                                      );
-                                      if (!resp.ok) {
-                                        showError(`${resp.error.code}: ${resp.error.message}`);
-                                      } else {
-                                        await loadGroup(selectedGroupId);
-                                      }
-                                    } finally {
-                                      setBusy("");
-                                    }
-                                  }}
-                                  disabled={busy === "detach-scope"}
-                                  title="Detach this scope"
-                                >
-                                  ×
-                                </button>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </details>
-                  ) : (
-                    <span>No scopes attached</span>
-                  )}
-                </div>
+                {projectRoot && (
+                  <span className="text-xs text-slate-400 truncate max-w-[200px] bg-slate-800/50 px-2 py-1 rounded" title={projectRoot}>
+                    📁 {projectRoot.split("/").pop()}
+                  </span>
+                )}
               </div>
 
               <div className="flex gap-2 items-center">
                 <button
-                  className="rounded bg-emerald-400 text-slate-950 px-3 py-1 text-sm font-semibold disabled:opacity-50"
+                  className="rounded-lg bg-gradient-to-r from-emerald-600 to-emerald-500 text-white px-4 py-1.5 text-sm font-medium disabled:opacity-50 hover:from-emerald-500 hover:to-emerald-400 shadow-lg shadow-emerald-500/20 transition-all"
                   onClick={startGroup}
-                  disabled={!selectedGroupId || busy === "group-start"}
-                  title="Start group actors"
+                  disabled={!selectedGroupId || busy === "group-start" || actors.length === 0}
+                  title="Start all actors"
                 >
-                  Start
+                  ▶ Start All
                 </button>
                 <button
-                  className="rounded bg-slate-800 border border-slate-700 px-3 py-1 text-sm font-semibold disabled:opacity-50"
+                  className="rounded-lg bg-slate-700/80 text-slate-200 px-4 py-1.5 text-sm font-medium disabled:opacity-50 hover:bg-slate-600 transition-colors"
                   onClick={stopGroup}
                   disabled={!selectedGroupId || busy === "group-stop"}
-                  title="Stop group runners"
+                  title="Stop all actors"
                 >
-                  Stop
+                  ⏹ Stop
                 </button>
+                <div className="w-px h-6 bg-slate-700/50 mx-1" />
                 <button
                   className={classNames(
-                    "rounded border px-3 py-1 text-sm font-medium",
-                    showContext ? "bg-blue-600 border-blue-500 text-white" : "bg-slate-800 border-slate-700 text-slate-200"
+                    "rounded-lg px-4 py-1.5 text-sm font-medium transition-all",
+                    showContext 
+                      ? "bg-blue-600 text-white shadow-lg shadow-blue-500/20" 
+                      : "bg-slate-700/80 text-slate-200 hover:bg-slate-600"
                   )}
                   onClick={() => setShowContext((v) => !v)}
                   disabled={!selectedGroupId}
-                  title="Toggle context panel (vision/tasks/milestones)"
+                  title="View/edit context"
                 >
-                  Context
+                  📋 Context
                 </button>
                 <button
-                  className={classNames(
-                    "rounded border px-3 py-1 text-sm font-medium",
-                    showSettings ? "bg-purple-600 border-purple-500 text-white" : "bg-slate-800 border-slate-700 text-slate-200"
-                  )}
+                  className="rounded-lg bg-slate-700/80 text-slate-200 px-3 py-1.5 text-sm font-medium hover:bg-slate-600 disabled:opacity-50 transition-colors"
                   onClick={() => setShowSettings(true)}
                   disabled={!selectedGroupId}
-                  title="Group automation settings"
+                  title="Settings"
                 >
-                  Settings
-                </button>
-                <input
-                  className="w-[360px] max-w-[45vw] rounded bg-slate-900 border border-slate-800 px-2 py-1 text-sm"
-                  placeholder="Set project root path…"
-                  value={attachPath}
-                  onChange={(e) => setAttachPath(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") attachRoot();
-                  }}
-                />
-                <button
-                  className="rounded bg-slate-200 text-slate-950 px-3 py-1 text-sm font-medium disabled:opacity-50"
-                  onClick={attachRoot}
-                  disabled={!attachPath.trim() || busy === "attach"}
-                >
-                  Attach
+                  ⚙️
                 </button>
               </div>
             </div>
 
-            {errorMsg ? (
-              <div className="mt-3 rounded border border-rose-900/70 bg-rose-950/40 px-3 py-2 text-sm text-rose-200 flex items-start justify-between gap-3">
-                <div className="min-w-0 break-words">{errorMsg}</div>
-                <button
-                  className="text-rose-200/80 hover:text-rose-100 text-sm"
-                  onClick={() => setErrorMsg("")}
-                  title="Dismiss"
-                >
-                  ×
-                </button>
+            {/* Error message */}
+            {errorMsg && (
+              <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-300 flex items-center justify-between gap-3">
+                <span>{errorMsg}</span>
+                <button className="text-rose-300 hover:text-rose-100" onClick={() => setErrorMsg("")}>×</button>
               </div>
-            ) : null}
+            )}
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <div className="text-xs text-slate-400 mr-1" title="Actors are AI agents that collaborate in this group">Actors</div>
+            {/* Row 2: Actors - simplified */}
+            {/* Actors row */}
+            <div className="mt-4 flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-medium text-slate-400 mr-1">Agents:</span>
               {actors.length === 0 && selectedGroupId && (
-                <div className="text-xs text-slate-500 italic">
-                  No actors yet. Click "+ actor" to add an agent.
-                </div>
+                <span className="text-xs text-slate-500 italic">No agents yet — add one to get started</span>
               )}
               {actors.map((a) => {
-                // Get presence status for this actor
                 const presence = groupContext?.presence?.[a.id];
-                const presenceStatus = presence?.status;
-                const isWorking = presenceStatus === "working";
-                const isIdle = presenceStatus === "idle";
+                const isWorking = presence?.status === "working";
+                const isIdle = presence?.status === "idle";
                 const unreadCount = a.unread_count || 0;
+                const isMenuOpen = actorMenuOpen === a.id;
+                const rtInfo = RUNTIME_INFO[a.runtime || "custom"];
                 
                 return (
-                <div
-                  key={a.id}
-                  className="flex items-center gap-2 rounded border border-slate-800 bg-slate-950/40 px-2 py-1"
-                >
-                  {/* Status indicator: combines enabled + presence */}
-                  <div 
-                    className={classNames(
-                      "h-2 w-2 rounded-full",
-                      !a.enabled ? "bg-slate-600" :
-                      isWorking ? "bg-emerald-400 animate-pulse" :
-                      isIdle ? "bg-amber-400" :
-                      "bg-emerald-400"
-                    )}
-                    title={!a.enabled ? "Stopped" : isWorking ? "Working" : isIdle ? "Idle" : "Running"}
-                  />
-                  <div className="text-xs font-medium">{a.id}</div>
-                  <div 
-                    className={classNames(
-                      "text-[10px] px-1 py-0.5 rounded cursor-help",
-                      a.role === "foreman" ? "bg-amber-900/40 text-amber-300" : "text-slate-400"
-                    )}
-                    title={a.role === "foreman" 
-                      ? "Foreman: Lead agent that can create/manage other peers" 
-                      : "Peer: Worker agent that executes tasks"}
-                  >
-                    {a.role || "peer"}
-                  </div>
-                  <div 
-                    className={classNames(
-                      "text-[9px] px-1 py-0.5 rounded cursor-help",
-                      a.runner === "headless" ? "bg-purple-900/40 text-purple-300" : "bg-slate-800 text-slate-400"
-                    )}
-                    title={a.runner === "headless" 
-                      ? "Headless: MCP-only mode, no terminal" 
-                      : "PTY: Interactive terminal mode"}
-                  >
-                    {a.runner || "pty"}
-                  </div>
-                  {a.runtime && a.runtime !== "custom" && (
-                    <div className="text-[9px] px-1 py-0.5 rounded bg-blue-900/40 text-blue-300">
-                      {a.runtime}
-                    </div>
-                  )}
-                  <button
-                    className={classNames(
-                      "text-[10px] px-2 py-0.5 rounded border disabled:opacity-50 relative",
-                      unreadCount > 0 
-                        ? "bg-rose-900/40 border-rose-800 text-rose-200 hover:bg-rose-900/60" 
-                        : "bg-slate-900 border-slate-800 hover:bg-slate-800/60"
-                    )}
-                    onClick={() => openInbox(a.id)}
-                    disabled={busy.startsWith("actor-") || busy.startsWith("inbox")}
-                    title={unreadCount > 0 ? `${unreadCount} unread messages` : "Open inbox (no unread)"}
-                  >
-                    inbox{unreadCount > 0 && <span className="ml-1 font-medium">({unreadCount})</span>}
-                  </button>
-                  {(a.runner !== "headless") && (
+                  <div key={a.id} className="relative" data-actor-menu>
                     <button
-                      className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800/60 disabled:opacity-50"
-                      onClick={() => setTermActorId(String(a.id || ""))}
-                      disabled={!selectedGroupId || busy.startsWith("actor-") || busy.startsWith("inbox")}
-                      title="Open web terminal"
+                      className={classNames(
+                        "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all",
+                        a.enabled 
+                          ? "border-slate-600/50 bg-slate-800/60 hover:bg-slate-700/60" 
+                          : "border-slate-700/30 bg-slate-900/40 opacity-60"
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActorMenuOpen(isMenuOpen ? null : a.id);
+                      }}
                     >
-                      term
+                      <span className={classNames(
+                        "w-2 h-2 rounded-full",
+                        !a.enabled ? "bg-slate-600" :
+                        isWorking ? "bg-emerald-400 animate-pulse" :
+                        isIdle ? "bg-amber-400" : "bg-emerald-400"
+                      )} />
+                      <span className="font-medium text-slate-200">{a.id}</span>
+                      {a.role === "foreman" && <span className="text-amber-400">★</span>}
+                      {rtInfo && <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">{rtInfo.label}</span>}
+                      {unreadCount > 0 && (
+                        <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-medium">{unreadCount}</span>
+                      )}
+                      <span className="text-slate-500 ml-0.5">▾</span>
                     </button>
-                  )}
-                  {!a.enabled && (
-                    <button
-                      className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 hover:bg-blue-950/40 hover:border-blue-900/70 disabled:opacity-50"
-                      onClick={() => openEditActor(a)}
-                      disabled={busy.startsWith("actor-")}
-                      title="Edit actor configuration (runtime/command)"
-                    >
-                      edit
-                    </button>
-                  )}
-                  <button
-                    className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800/60 disabled:opacity-50"
-                    onClick={() => toggleActorEnabled(a)}
-                    disabled={busy.startsWith("actor-")}
-                    title={a.enabled ? "Stop (disable) actor" : "Start (enable) actor"}
-                  >
-                    {a.enabled ? "stop" : "start"}
-                  </button>
-                  <button
-                    className="text-[10px] px-2 py-0.5 rounded bg-slate-900 border border-slate-800 hover:bg-rose-950/40 hover:border-rose-900/70 disabled:opacity-50"
-                    onClick={() => removeActor(a)}
-                    disabled={busy.startsWith("actor-")}
-                    title="Remove actor"
-                  >
-                    remove
-                  </button>
-                </div>
+                    
+                    {/* Actor dropdown menu */}
+                    {isMenuOpen && (
+                      <div 
+                        className="absolute top-full left-0 mt-1 w-44 rounded-lg border border-slate-600 bg-slate-800 shadow-2xl z-50 overflow-hidden"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {a.runner !== "headless" && (
+                          <button
+                            className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2 text-slate-200"
+                            onClick={() => { setTermActorId(a.id); setActorMenuOpen(null); }}
+                          >
+                            <span>💻</span> Terminal
+                          </button>
+                        )}
+                        <button
+                          className={classNames(
+                            "w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2",
+                            unreadCount > 0 ? "text-rose-300" : "text-slate-200"
+                          )}
+                          onClick={() => { openInbox(a.id); setActorMenuOpen(null); }}
+                        >
+                          <span>📥</span> Inbox {unreadCount > 0 && `(${unreadCount})`}
+                        </button>
+                        {!a.enabled && (
+                          <button
+                            className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2 text-slate-200"
+                            onClick={() => { openEditActor(a); setActorMenuOpen(null); }}
+                          >
+                            <span>✎</span> Edit
+                          </button>
+                        )}
+                        <button
+                          className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2 text-slate-200"
+                          onClick={() => { toggleActorEnabled(a); setActorMenuOpen(null); }}
+                        >
+                          <span>{a.enabled ? "⏹" : "▶"}</span> {a.enabled ? "Stop" : "Start"}
+                        </button>
+                        <div className="border-t border-slate-700" />
+                        <button
+                          className="w-full text-left px-3 py-2.5 text-xs hover:bg-rose-500/30 text-rose-400 flex items-center gap-2"
+                          onClick={() => { removeActor(a); setActorMenuOpen(null); }}
+                        >
+                          <span>🗑</span> Remove
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 );
               })}
               <button
-                className="text-xs px-2 py-1 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800/60 disabled:opacity-50"
-                onClick={() => setShowAddActor((v) => !v)}
+                className="text-xs px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 hover:bg-blue-600/30 hover:border-blue-500/50 disabled:opacity-50 transition-all font-medium"
+                onClick={() => setShowAddActor(true)}
                 disabled={!selectedGroupId}
               >
-                + actor
+                + Add Agent
               </button>
             </div>
-
-            {showAddActor ? (
-              <div className="mt-2 space-y-2">
-                <div className="text-xs text-slate-400 mb-1">
-                  Add a new actor (AI agent) to this group. 
-                  <span className="text-slate-500"> Foreman can manage peers; peers execute tasks.</span>
-                  {hasForeman && newActorRole === "foreman" && (
-                    <span className="text-amber-400 ml-2">⚠ A foreman already exists in this group.</span>
-                  )}
-                </div>
-                <div className="grid grid-cols-6 gap-2">
-                <div className="col-span-1 relative">
-                  <input
-                    className="w-full rounded bg-slate-900 border border-slate-800 px-2 py-1 text-sm"
-                    placeholder={suggestedActorId}
-                    value={newActorId}
-                    onChange={(e) => setNewActorId(e.target.value)}
-                    title="Unique identifier for this actor"
-                  />
-                  {!newActorId && (
-                    <button
-                      className="absolute right-1 top-1/2 -translate-y-1/2 text-[9px] px-1 py-0.5 rounded bg-slate-800 text-slate-400 hover:text-slate-200"
-                      onClick={() => setNewActorId(suggestedActorId)}
-                      title="Use suggested ID"
-                    >
-                      use
-                    </button>
-                  )}
-                </div>
-                <select
-                  className={classNames(
-                    "col-span-1 rounded bg-slate-900 border px-2 py-1 text-sm",
-                    hasForeman && newActorRole === "foreman" ? "border-amber-700" : "border-slate-800"
-                  )}
-                  value={newActorRole}
-                  onChange={(e) => setNewActorRole(e.target.value === "foreman" ? "foreman" : "peer")}
-                  title="Role: foreman (lead, can create peers) or peer (worker)"
-                >
-                  <option value="peer">peer (worker)</option>
-                  <option value="foreman" disabled={hasForeman}>foreman (lead){hasForeman ? " ✓" : ""}</option>
-                </select>
-                <select
-                  className="col-span-1 rounded bg-slate-900 border border-slate-800 px-2 py-1 text-sm"
-                  value={newActorRuntime}
-                  onChange={(e) => setNewActorRuntime(e.target.value as any)}
-                  title="Agent CLI runtime (auto-sets command)"
-                >
-                  {(() => {
-                    const runtimeOptions = [
-                      { value: "claude", label: "Claude Code" },
-                      { value: "codex", label: "Codex CLI" },
-                      { value: "droid", label: "Droid" },
-                      { value: "opencode", label: "OpenCode" },
-                      { value: "custom", label: "Custom" },
-                    ];
-                    return runtimeOptions.map((opt) => {
-                      const rt = runtimes.find((r) => r.name === opt.value);
-                      const available = opt.value === "custom" || (rt?.available ?? false);
-                      return (
-                        <option
-                          key={opt.value}
-                          value={opt.value}
-                          disabled={!available}
-                        >
-                          {opt.label}{!available && rt ? " (not installed)" : ""}
-                        </option>
-                      );
-                    });
-                  })()}
-                </select>
-                <select
-                  className="col-span-1 rounded bg-slate-900 border border-slate-800 px-2 py-1 text-sm"
-                  value={newActorRunner}
-                  onChange={(e) => setNewActorRunner(e.target.value === "headless" ? "headless" : "pty")}
-                  title="Runner: pty (interactive terminal) or headless (MCP-only, no terminal)"
-                >
-                  <option value="pty">PTY (terminal)</option>
-                  <option value="headless">Headless (MCP)</option>
-                </select>
-                <input
-                  className="col-span-1 rounded bg-slate-900 border border-slate-800 px-2 py-1 text-sm"
-                  placeholder="title (optional)"
-                  value={newActorTitle}
-                  onChange={(e) => setNewActorTitle(e.target.value)}
-                  title="Display name for this actor"
-                />
-                <input
-                  className="col-span-1 rounded bg-slate-900 border border-slate-800 px-2 py-1 text-sm font-mono"
-                  placeholder={newActorRuntime === "custom" ? "command (required)" : RUNTIME_DEFAULTS[newActorRuntime] || "command"}
-                  value={newActorCommand}
-                  onChange={(e) => setNewActorCommand(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addActor();
-                  }}
-                  disabled={newActorRunner === "headless"}
-                  title={newActorRuntime === "custom" ? "Enter custom command" : `Default: ${RUNTIME_DEFAULTS[newActorRuntime] || ""} (editable)`}
-                />
-                </div>
-                <div className="flex gap-2 items-center">
-                  <button
-                    className="rounded bg-slate-200 text-slate-950 px-3 py-1 text-sm font-medium disabled:opacity-50"
-                    onClick={addActor}
-                    disabled={(!newActorId.trim() && !suggestedActorId) || busy === "actor-add" || (hasForeman && newActorRole === "foreman") || (newActorRuntime === "custom" && !newActorCommand.trim() && newActorRunner !== "headless")}
-                  >
-                    Add Actor
-                  </button>
-                  <button
-                    className="rounded bg-slate-900 border border-slate-800 px-3 py-1 text-sm font-medium"
-                    onClick={() => setShowAddActor(false)}
-                  >
-                    Cancel
-                  </button>
-                  {newActorRuntime !== "custom" && newActorCommand && (
-                    <span className="text-xs text-slate-500">
-                      Using: <code className="bg-slate-800 px-1 rounded">{newActorCommand}</code>
-                    </span>
-                  )}
-                </div>
-              </div>
-            ) : null}
 
             {showContext && groupContext && (
               <div className="mt-3 border border-slate-800 rounded bg-slate-950/40 p-3">
@@ -1496,7 +1447,14 @@ export default function App() {
             onScroll={handleScroll}
           >
             <div className="space-y-2">
-              {events.map((ev, idx) => {
+              {events
+                .filter((ev) => {
+                  // Only show chat messages and system notifications
+                  // Hide internal events like group.create, group.attach, actor.add, etc.
+                  const kind = ev.kind || "";
+                  return kind === "chat.message" || kind === "system.notify";
+                })
+                .map((ev, idx) => {
                 const isMessage = ev.kind === "chat.message";
                 const isNotify = ev.kind === "system.notify";
                 const isUserMessage = isMessage && ev.by === "user";
@@ -1598,7 +1556,13 @@ export default function App() {
                 );
               })}
               <div ref={bottomRef} />
-              {!events.length && <div className="text-sm text-slate-400">No events yet.</div>}
+              {events.filter((ev) => ev.kind === "chat.message" || ev.kind === "system.notify").length === 0 && (
+                <div className="text-center py-8">
+                  <div className="text-3xl mb-2">💬</div>
+                  <div className="text-sm text-slate-400">No messages yet</div>
+                  <div className="text-xs text-slate-500 mt-1">Send a message to start the conversation</div>
+                </div>
+              )}
             </div>
             {/* Scroll to bottom button */}
             {showScrollButton && (
@@ -1753,27 +1717,27 @@ export default function App() {
 
       {inboxOpen ? (
         <div
-          className="fixed inset-0 bg-black/60 flex items-start justify-center p-6"
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center p-6 z-50"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setInboxOpen(false);
           }}
         >
-          <div className="w-full max-w-3xl rounded border border-slate-800 bg-slate-950/95 shadow-xl">
-            <div className="px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-3">
+          <div className="w-full max-w-2xl mt-16 rounded-xl border border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900 shadow-2xl">
+            <div className="px-6 py-4 border-b border-slate-700/50 flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate">Inbox · {inboxActorId}</div>
-                <div className="text-xs text-slate-400">{inboxMessages.length} unread messages</div>
+                <div className="text-lg font-semibold text-white truncate">Inbox · {inboxActorId}</div>
+                <div className="text-sm text-slate-400">{inboxMessages.length} unread messages</div>
               </div>
               <div className="flex gap-2">
                 <button
-                  className="rounded bg-slate-900 border border-slate-800 px-3 py-1 text-sm font-medium disabled:opacity-50"
+                  className="rounded-lg bg-slate-700 hover:bg-slate-600 px-4 py-2 text-sm font-medium text-slate-200 disabled:opacity-50 transition-colors"
                   onClick={markInboxAllRead}
                   disabled={!inboxMessages.length || busy.startsWith("inbox")}
                 >
                   Mark all read
                 </button>
                 <button
-                  className="rounded bg-slate-200 text-slate-950 px-3 py-1 text-sm font-medium"
+                  className="rounded-lg bg-slate-600 hover:bg-slate-500 px-4 py-2 text-sm font-medium text-white transition-colors"
                   onClick={() => setInboxOpen(false)}
                 >
                   Close
@@ -1781,22 +1745,27 @@ export default function App() {
               </div>
             </div>
 
-            <div className="max-h-[70vh] overflow-auto p-4 space-y-2">
+            <div className="max-h-[60vh] overflow-auto p-4 space-y-2">
               {inboxMessages.map((ev, idx) => (
                 <div
                   key={String(ev.id || idx)}
-                  className="rounded border border-slate-800 bg-slate-950/40 px-3 py-2"
+                  className="rounded-lg border border-slate-700/50 bg-slate-800/50 px-4 py-3"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <div className="text-xs text-slate-400 truncate" title={formatFullTime(ev.ts)}>
-                      {formatTime(ev.ts)} · {ev.kind || "chat.message"}
+                      {formatTime(ev.ts)}
                     </div>
-                    <div className="text-xs text-slate-500 truncate">{ev.by || "—"}</div>
+                    <div className="text-xs font-medium text-slate-300 truncate">{ev.by || "—"}</div>
                   </div>
-                  <div className="mt-1 text-sm whitespace-pre-wrap break-words">{formatEventLine(ev)}</div>
+                  <div className="mt-2 text-sm text-slate-200 whitespace-pre-wrap break-words">{formatEventLine(ev)}</div>
                 </div>
               ))}
-              {!inboxMessages.length ? <div className="text-sm text-slate-400">No unread messages.</div> : null}
+              {!inboxMessages.length && (
+                <div className="text-center py-8">
+                  <div className="text-3xl mb-2">📭</div>
+                  <div className="text-sm text-slate-400">No unread messages</div>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1804,51 +1773,50 @@ export default function App() {
 
       {showGroupEdit && (
         <div
-          className="fixed inset-0 bg-black/60 flex items-start justify-center p-6"
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center p-6 z-50"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setShowGroupEdit(false);
           }}
         >
-          <div className="w-full max-w-md rounded border border-slate-800 bg-slate-950/95 shadow-xl">
-            <div className="px-4 py-3 border-b border-slate-800">
-              <div className="text-sm font-semibold">Edit Working Group</div>
+          <div className="w-full max-w-md mt-16 rounded-xl border border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900 shadow-2xl">
+            <div className="px-6 py-4 border-b border-slate-700/50">
+              <div className="text-lg font-semibold text-white">Edit Group</div>
             </div>
-            <div className="p-4 space-y-3">
+            <div className="p-6 space-y-4">
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Title</label>
+                <label className="block text-xs font-medium text-slate-400 mb-2">Name</label>
                 <input
-                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
+                  className="w-full rounded-lg bg-slate-900/80 border border-slate-600/50 px-4 py-2.5 text-sm text-white focus:border-blue-500 outline-none"
                   value={editGroupTitle}
                   onChange={(e) => setEditGroupTitle(e.target.value)}
-                  placeholder="Group title"
+                  placeholder="Group name"
                 />
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Topic (optional)</label>
+                <label className="block text-xs font-medium text-slate-400 mb-2">Description (optional)</label>
                 <input
-                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
+                  className="w-full rounded-lg bg-slate-900/80 border border-slate-600/50 px-4 py-2.5 text-sm text-white focus:border-blue-500 outline-none"
                   value={editGroupTopic}
                   onChange={(e) => setEditGroupTopic(e.target.value)}
                   placeholder="What is this group working on?"
                 />
               </div>
-              <div className="flex gap-2 pt-2">
+              <div className="flex gap-3 pt-3">
                 <button
-                  className="rounded bg-slate-200 text-slate-950 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                  className="flex-1 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white px-4 py-2.5 text-sm font-semibold shadow-lg shadow-blue-500/25 disabled:opacity-50 transition-all"
                   onClick={updateGroup}
                   disabled={!editGroupTitle.trim() || busy === "group-update"}
                 >
                   Save
                 </button>
                 <button
-                  className="rounded bg-slate-800 border border-slate-700 px-4 py-2 text-sm font-medium"
+                  className="px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition-colors"
                   onClick={() => setShowGroupEdit(false)}
                 >
                   Cancel
                 </button>
-                <div className="flex-1" />
                 <button
-                  className="rounded bg-rose-900/50 border border-rose-800 text-rose-200 px-4 py-2 text-sm font-medium hover:bg-rose-900/70 disabled:opacity-50"
+                  className="px-4 py-2.5 rounded-lg bg-rose-500/20 border border-rose-500/30 text-rose-400 text-sm font-medium hover:bg-rose-500/30 disabled:opacity-50 transition-colors"
                   onClick={() => {
                     setShowGroupEdit(false);
                     deleteGroup();
@@ -1866,81 +1834,125 @@ export default function App() {
 
       {showSettings && (
         <div
-          className="fixed inset-0 bg-black/60 flex items-start justify-center p-6 z-50"
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center p-6 z-50"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setShowSettings(false);
           }}
         >
-          <div className="w-full max-w-md rounded border border-slate-800 bg-slate-950/95 shadow-xl">
-            <div className="px-4 py-3 border-b border-slate-800">
-              <div className="text-sm font-semibold">Automation Settings</div>
-              <div className="text-xs text-slate-400 mt-0.5">
-                Configure automatic nudges and self-checks for agents
+          <div className="w-full max-w-md mt-16 rounded-xl border border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900 shadow-2xl">
+            <div className="px-6 py-4 border-b border-slate-700/50">
+              <div className="text-lg font-semibold text-white">Settings</div>
+              <div className="text-sm text-slate-400 mt-1">
+                Configure automation behavior
               </div>
             </div>
-            <div className="p-4 space-y-4">
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">
-                  Nudge after (seconds)
-                  <span className="text-slate-500 ml-1">— remind agent when inbox has unread messages</span>
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="60"
-                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
-                  value={editNudgeSeconds}
-                  onChange={(e) => setEditNudgeSeconds(Math.max(0, parseInt(e.target.value) || 0))}
-                  placeholder="300"
-                />
-                <div className="text-[10px] text-slate-500 mt-1">
-                  Set to 0 to disable. Default: 300 (5 minutes)
+            <div className="p-6 space-y-5">
+              {/* Auto-nudge toggle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-slate-200">Auto-remind agents</div>
+                  <div className="text-xs text-slate-500 mt-0.5">Nudge agents when they have unread messages ({editNudgeSeconds}s)</div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">
-                  Self-check every N handoffs
-                  <span className="text-slate-500 ml-1">— prompt agent to reflect on progress</span>
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
-                  value={editSelfCheckHandoffs}
-                  onChange={(e) => setEditSelfCheckHandoffs(Math.max(0, parseInt(e.target.value) || 0))}
-                  placeholder="6"
-                />
-                <div className="text-[10px] text-slate-500 mt-1">
-                  Set to 0 to disable. Default: 6 handoffs
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">
-                  System refresh every N self-checks
-                  <span className="text-slate-500 ml-1">— re-inject SYSTEM prompt</span>
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
-                  value={editSystemRefresh}
-                  onChange={(e) => setEditSystemRefresh(Math.max(0, parseInt(e.target.value) || 0))}
-                  placeholder="3"
-                />
-                <div className="text-[10px] text-slate-500 mt-1">
-                  Set to 0 to disable. Default: 3 self-checks
-                </div>
-              </div>
-              <div className="flex gap-2 pt-2">
                 <button
-                  className="rounded bg-purple-600 text-white px-4 py-2 text-sm font-medium disabled:opacity-50"
+                  className={classNames(
+                    "w-12 h-6 rounded-full transition-colors relative",
+                    editNudgeSeconds > 0 ? "bg-blue-600" : "bg-slate-700"
+                  )}
+                  onClick={() => setEditNudgeSeconds(editNudgeSeconds > 0 ? 0 : 300)}
+                >
+                  <span className={classNames(
+                    "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                    editNudgeSeconds > 0 ? "left-7" : "left-1"
+                  )} />
+                </button>
+              </div>
+
+              {/* Actor idle detection */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-slate-200">Actor idle detection</div>
+                  <div className="text-xs text-slate-500 mt-0.5">Notify foreman when actor is idle ({editActorIdleSeconds}s)</div>
+                </div>
+                <button
+                  className={classNames(
+                    "w-12 h-6 rounded-full transition-colors relative",
+                    editActorIdleSeconds > 0 ? "bg-blue-600" : "bg-slate-700"
+                  )}
+                  onClick={() => setEditActorIdleSeconds(editActorIdleSeconds > 0 ? 0 : 600)}
+                >
+                  <span className={classNames(
+                    "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                    editActorIdleSeconds > 0 ? "left-7" : "left-1"
+                  )} />
+                </button>
+              </div>
+
+              {/* Keepalive */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-slate-200">Keepalive reminders</div>
+                  <div className="text-xs text-slate-500 mt-0.5">Remind actors to continue after Next: ({editKeepaliveSeconds}s)</div>
+                </div>
+                <button
+                  className={classNames(
+                    "w-12 h-6 rounded-full transition-colors relative",
+                    editKeepaliveSeconds > 0 ? "bg-blue-600" : "bg-slate-700"
+                  )}
+                  onClick={() => setEditKeepaliveSeconds(editKeepaliveSeconds > 0 ? 0 : 120)}
+                >
+                  <span className={classNames(
+                    "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                    editKeepaliveSeconds > 0 ? "left-7" : "left-1"
+                  )} />
+                </button>
+              </div>
+
+              {/* Silence detection */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-slate-200">Silence detection</div>
+                  <div className="text-xs text-slate-500 mt-0.5">Notify foreman when group is silent ({editSilenceSeconds}s)</div>
+                </div>
+                <button
+                  className={classNames(
+                    "w-12 h-6 rounded-full transition-colors relative",
+                    editSilenceSeconds > 0 ? "bg-blue-600" : "bg-slate-700"
+                  )}
+                  onClick={() => setEditSilenceSeconds(editSilenceSeconds > 0 ? 0 : 600)}
+                >
+                  <span className={classNames(
+                    "absolute top-1 w-4 h-4 rounded-full bg-white transition-transform",
+                    editSilenceSeconds > 0 ? "left-7" : "left-1"
+                  )} />
+                </button>
+              </div>
+
+              {/* Delivery throttle */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-slate-200">Message batching</div>
+                  <div className="text-xs text-slate-500 mt-0.5">Batch messages within window ({editDeliveryInterval}s)</div>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max="300"
+                  className="w-20 rounded-lg bg-slate-900/80 border border-slate-600/50 px-3 py-1.5 text-sm text-white text-center focus:border-blue-500 outline-none"
+                  value={editDeliveryInterval}
+                  onChange={(e) => setEditDeliveryInterval(Math.max(0, parseInt(e.target.value) || 0))}
+                />
+              </div>
+
+              <div className="flex gap-3 pt-3">
+                <button
+                  className="flex-1 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white px-4 py-2.5 text-sm font-semibold shadow-lg shadow-blue-500/25 disabled:opacity-50 transition-all"
                   onClick={updateSettings}
                   disabled={busy === "settings-update"}
                 >
-                  Save Settings
+                  Save
                 </button>
                 <button
-                  className="rounded bg-slate-800 border border-slate-700 px-4 py-2 text-sm font-medium"
+                  className="px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition-colors"
                   onClick={() => setShowSettings(false)}
                 >
                   Cancel
@@ -1958,75 +1970,390 @@ export default function App() {
             if (e.target === e.currentTarget) setEditingActor(null);
           }}
         >
-          <div className="w-full max-w-lg rounded border border-slate-800 bg-slate-950/95 shadow-xl">
-            <div className="px-4 py-3 border-b border-slate-800">
-              <div className="text-sm font-semibold">Edit Actor: {editingActor.id}</div>
-              <div className="text-xs text-slate-400 mt-0.5">
-                Change runtime or command, then start the actor with new configuration
+          <div className="w-full max-w-md mt-16 rounded-xl border border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900 shadow-2xl">
+            <div className="px-6 py-4 border-b border-slate-700/50">
+              <div className="text-lg font-semibold text-white">Switch Runtime: {editingActor.id}</div>
+              <div className="text-sm text-slate-400 mt-1">
+                Change the AI runtime for this agent
               </div>
             </div>
-            <div className="p-4 space-y-4">
+            <div className="p-6 space-y-5">
               <div>
-                <label className="block text-xs text-slate-400 mb-1">Title (display name)</label>
-                <input
-                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
-                  value={editActorTitle}
-                  onChange={(e) => setEditActorTitle(e.target.value)}
-                  placeholder="Optional display name"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-400 mb-1">Runtime</label>
+                <label className="block text-xs font-medium text-slate-400 mb-2">Runtime</label>
                 <select
-                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
+                  className="w-full rounded-lg bg-slate-900/80 border border-slate-600/50 px-4 py-2.5 text-sm text-white focus:border-blue-500 outline-none"
                   value={editActorRuntime}
                   onChange={(e) => setEditActorRuntime(e.target.value as typeof editActorRuntime)}
                 >
-                  {[
-                    { value: "claude", label: "Claude Code" },
-                    { value: "codex", label: "Codex CLI" },
-                    { value: "droid", label: "Droid" },
-                    { value: "opencode", label: "OpenCode" },
-                    { value: "custom", label: "Custom" },
-                  ].map((opt) => {
-                    const rt = runtimes.find((r) => r.name === opt.value);
-                    const available = opt.value === "custom" || (rt?.available ?? false);
+                  {(["claude", "codex", "droid", "opencode", "gemini", "copilot", "custom"] as const).map((rt) => {
+                    const info = RUNTIME_INFO[rt];
+                    const rtInfo = runtimes.find((r) => r.name === rt);
+                    const available = rt === "custom" || (rtInfo?.available ?? false);
                     return (
-                      <option key={opt.value} value={opt.value} disabled={!available}>
-                        {opt.label}{!available && rt ? " (not installed)" : ""}
+                      <option key={rt} value={rt} disabled={!available}>
+                        {info?.label || rt}{!available ? " (not installed)" : ""}
                       </option>
                     );
                   })}
                 </select>
               </div>
               <div>
-                <label className="block text-xs text-slate-400 mb-1">
-                  Command
-                  {editActorRuntime !== "custom" && (
-                    <span className="text-slate-500 ml-1">(auto-filled from runtime, editable)</span>
-                  )}
-                </label>
+                <label className="block text-xs font-medium text-slate-400 mb-2">Command</label>
                 <input
-                  className="w-full rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm font-mono"
+                  className="w-full rounded-lg bg-slate-900/80 border border-slate-600/50 px-4 py-2.5 text-sm font-mono text-white focus:border-blue-500 outline-none"
                   value={editActorCommand}
                   onChange={(e) => setEditActorCommand(e.target.value)}
-                  placeholder={editActorRuntime === "custom" ? "Enter command..." : RUNTIME_DEFAULTS[editActorRuntime] || ""}
+                  placeholder={RUNTIME_DEFAULTS[editActorRuntime] || "Enter command..."}
                 />
-                <div className="text-xs text-slate-500 mt-1">
-                  You can customize the command, e.g., add flags like <code className="bg-slate-800 px-1 rounded">--model sonnet</code>
+                <div className="text-[10px] text-slate-500 mt-1.5">
+                  Default: <code className="bg-slate-800 px-1 rounded">{RUNTIME_DEFAULTS[editActorRuntime] || "custom"}</code>
                 </div>
               </div>
-              <div className="flex gap-2 pt-2">
+              <div className="flex gap-3 pt-2">
                 <button
-                  className="rounded bg-emerald-500 text-slate-950 px-4 py-2 text-sm font-medium disabled:opacity-50"
+                  className="flex-1 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white px-4 py-2.5 text-sm font-semibold shadow-lg shadow-blue-500/25 disabled:opacity-50 transition-all"
                   onClick={updateActor}
                   disabled={busy === "actor-update" || (!editActorCommand.trim() && editActorRuntime === "custom")}
                 >
-                  Save & Close
+                  Save
                 </button>
                 <button
-                  className="rounded bg-slate-800 border border-slate-700 px-4 py-2 text-sm font-medium"
+                  className="px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition-colors"
                   onClick={() => setEditingActor(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Group Modal */}
+      {showCreateGroup && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center p-6 z-50"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowCreateGroup(false);
+          }}
+        >
+          <div className="w-full max-w-lg mt-16 rounded-xl border border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900 shadow-2xl">
+            <div className="px-6 py-4 border-b border-slate-700/50">
+              <div className="text-lg font-semibold text-white">Create Working Group</div>
+              <div className="text-sm text-slate-400 mt-1">
+                Select a project directory to start collaborating
+              </div>
+            </div>
+            <div className="p-6 space-y-5">
+              {/* Quick suggestions */}
+              {dirSuggestions.length > 0 && !createGroupPath && (
+                <div>
+                  <label className="block text-xs font-medium text-slate-400 mb-2">Quick Select</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {dirSuggestions.slice(0, 6).map((s) => (
+                      <button
+                        key={s.path}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-600/50 bg-slate-800/50 hover:bg-slate-700/50 hover:border-slate-500 transition-colors text-left"
+                        onClick={() => {
+                          setCreateGroupPath(s.path);
+                          setCreateGroupName(s.path.split("/").filter(Boolean).pop() || "");
+                          fetchDirContents(s.path);
+                        }}
+                      >
+                        <span className="text-lg">{s.icon}</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-slate-200 truncate">{s.name}</div>
+                          <div className="text-[10px] text-slate-500 truncate">{s.path}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Path input with browse */}
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-2">
+                  Project Directory
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    className="flex-1 rounded-lg bg-slate-900/80 border border-slate-600/50 px-4 py-2.5 text-sm font-mono text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
+                    value={createGroupPath}
+                    onChange={(e) => {
+                      setCreateGroupPath(e.target.value);
+                      const dirName = e.target.value.split("/").filter(Boolean).pop() || "";
+                      if (!createGroupName || createGroupName === createGroupPath.split("/").filter(Boolean).pop()) {
+                        setCreateGroupName(dirName);
+                      }
+                    }}
+                    placeholder="/path/to/your/project"
+                    autoFocus
+                  />
+                  <button
+                    className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition-colors"
+                    onClick={() => fetchDirContents(createGroupPath || "~")}
+                  >
+                    Browse
+                  </button>
+                </div>
+              </div>
+
+              {/* Directory browser */}
+              {showDirBrowser && (
+                <div className="border border-slate-600/50 rounded-lg bg-slate-900/50 max-h-48 overflow-auto">
+                  {currentDir && (
+                    <div className="px-3 py-1.5 border-b border-slate-700/30 bg-slate-800/30 text-xs text-slate-400 font-mono truncate">
+                      {currentDir}
+                    </div>
+                  )}
+                  {parentDir && (
+                    <button
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-800/50 text-left border-b border-slate-700/30"
+                      onClick={() => {
+                        fetchDirContents(parentDir);
+                        setCreateGroupPath(parentDir);
+                        setCreateGroupName(parentDir.split("/").filter(Boolean).pop() || "");
+                      }}
+                    >
+                      <span className="text-slate-400">📁</span>
+                      <span className="text-sm text-slate-400">..</span>
+                    </button>
+                  )}
+                  {dirItems.filter(d => d.is_dir).length === 0 && (
+                    <div className="px-3 py-4 text-center text-sm text-slate-500">
+                      No subdirectories
+                    </div>
+                  )}
+                  {dirItems.filter(d => d.is_dir).map((item) => (
+                    <button
+                      key={item.path}
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-slate-800/50 text-left"
+                      onClick={() => {
+                        setCreateGroupPath(item.path);
+                        setCreateGroupName(item.name);
+                        fetchDirContents(item.path);
+                      }}
+                    >
+                      <span className="text-blue-400">📁</span>
+                      <span className="text-sm text-slate-200">{item.name}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* Group name */}
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-2">
+                  Group Name
+                </label>
+                <input
+                  className="w-full rounded-lg bg-slate-900/80 border border-slate-600/50 px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-colors"
+                  value={createGroupName}
+                  onChange={(e) => setCreateGroupName(e.target.value)}
+                  placeholder="Auto-filled from directory name"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  className="flex-1 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white px-4 py-2.5 text-sm font-semibold shadow-lg shadow-blue-500/25 disabled:opacity-50 disabled:shadow-none transition-all"
+                  onClick={createGroup}
+                  disabled={!createGroupPath.trim() || busy === "create"}
+                >
+                  {busy === "create" ? "Creating..." : "Create Group"}
+                </button>
+                <button
+                  className="px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition-colors"
+                  onClick={() => {
+                    setShowCreateGroup(false);
+                    setCreateGroupPath("");
+                    setCreateGroupName("");
+                    setDirItems([]);
+                    setShowDirBrowser(false);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Actor Modal */}
+      {showAddActor && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start justify-center p-6 z-50"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setShowAddActor(false);
+          }}
+        >
+          <div className="w-full max-w-lg mt-16 rounded-xl border border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900 shadow-2xl">
+            <div className="px-6 py-4 border-b border-slate-700/50">
+              <div className="text-lg font-semibold text-white">Add AI Agent</div>
+              <div className="text-sm text-slate-400 mt-1">
+                Choose an AI runtime to add to your team
+              </div>
+            </div>
+            <div className="p-6 space-y-5">
+              {/* Error message */}
+              {addActorError && (
+                <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-300 flex items-center justify-between gap-3">
+                  <span>{addActorError}</span>
+                  <button className="text-rose-300 hover:text-rose-100" onClick={() => setAddActorError("")}>×</button>
+                </div>
+              )}
+
+              {/* Agent Name */}
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-2">
+                  Agent Name
+                  <span className="text-slate-500 ml-1">(supports 中文/日本語)</span>
+                </label>
+                <input
+                  className="w-full rounded-lg bg-slate-900/80 border border-slate-600/50 px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:border-blue-500 outline-none"
+                  value={newActorId}
+                  onChange={(e) => setNewActorId(e.target.value)}
+                  placeholder={suggestedActorId}
+                />
+                <div className="text-[10px] text-slate-500 mt-1">
+                  Leave empty to use: <code className="bg-slate-800 px-1 rounded">{suggestedActorId}</code>
+                </div>
+              </div>
+
+              {/* Runtime selection */}
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-2">AI Runtime</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(["claude", "codex", "droid", "opencode", "gemini", "copilot"] as const).map((rt) => {
+                    const info = RUNTIME_INFO[rt] || { label: rt, desc: "" };
+                    const rtInfo = runtimes.find((r) => r.name === rt);
+                    const available = rtInfo?.available ?? false;
+                    const isSelected = newActorRuntime === rt;
+                    return (
+                      <button
+                        key={rt}
+                        className={classNames(
+                          "flex flex-col items-start px-3 py-2.5 rounded-lg border text-left transition-all",
+                          isSelected
+                            ? "bg-blue-600/20 border-blue-500 ring-1 ring-blue-500"
+                            : available
+                            ? "bg-slate-800/50 border-slate-600/50 hover:border-slate-500 hover:bg-slate-700/50"
+                            : "bg-slate-900/30 border-slate-700/30 opacity-50 cursor-not-allowed"
+                        )}
+                        onClick={() => available && setNewActorRuntime(rt as typeof newActorRuntime)}
+                        disabled={!available}
+                      >
+                        <div className="flex items-center gap-2 w-full">
+                          <span className={classNames("text-sm font-medium", isSelected ? "text-blue-300" : "text-slate-200")}>
+                            {info.label}
+                          </span>
+                          {!available && <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700 text-slate-400">not installed</span>}
+                        </div>
+                        <div className="text-[10px] text-slate-500 mt-0.5 line-clamp-1">{info.desc}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button
+                  className={classNames(
+                    "mt-2 w-full px-3 py-2 rounded-lg border text-left text-sm transition-all",
+                    newActorRuntime === "custom"
+                      ? "bg-slate-700/50 border-slate-500"
+                      : "bg-slate-800/30 border-slate-700/50 hover:border-slate-600"
+                  )}
+                  onClick={() => setNewActorRuntime("custom")}
+                >
+                  <span className="text-slate-300">Custom command...</span>
+                </button>
+              </div>
+
+              {/* Role selection */}
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-2">Role</label>
+                <div className="flex gap-2">
+                  <button
+                    className={classNames(
+                      "flex-1 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all",
+                      newActorRole === "foreman"
+                        ? "bg-amber-500/20 border-amber-500 text-amber-300"
+                        : hasForeman
+                        ? "bg-slate-900/30 border-slate-700/30 text-slate-500 cursor-not-allowed"
+                        : "bg-slate-800/50 border-slate-600/50 text-slate-300 hover:border-slate-500"
+                    )}
+                    onClick={() => !hasForeman && setNewActorRole("foreman")}
+                    disabled={hasForeman}
+                  >
+                    ★ Foreman {hasForeman && "(exists)"}
+                  </button>
+                  <button
+                    className={classNames(
+                      "flex-1 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all",
+                      newActorRole === "peer"
+                        ? "bg-blue-500/20 border-blue-500 text-blue-300"
+                        : "bg-slate-800/50 border-slate-600/50 text-slate-300 hover:border-slate-500"
+                    )}
+                    onClick={() => setNewActorRole("peer")}
+                  >
+                    Peer
+                  </button>
+                </div>
+                <div className="text-[10px] text-slate-500 mt-1.5">
+                  Foreman leads the team. Peers are worker agents.
+                </div>
+              </div>
+
+              {/* Advanced options toggle */}
+              <button
+                className="flex items-center gap-2 text-xs text-slate-400 hover:text-slate-300"
+                onClick={() => setShowAdvancedActor(!showAdvancedActor)}
+              >
+                <span className={classNames("transition-transform", showAdvancedActor && "rotate-90")}>▶</span>
+                Advanced options
+              </button>
+
+              {showAdvancedActor && (
+                <div className="space-y-4 pl-4 border-l-2 border-slate-700/50">
+                  {/* Command override */}
+                  <div>
+                    <label className="block text-xs font-medium text-slate-400 mb-2">Command Override</label>
+                    <input
+                      className="w-full rounded-lg bg-slate-900/80 border border-slate-600/50 px-3 py-2 text-sm font-mono text-white placeholder-slate-500 focus:border-blue-500 outline-none"
+                      value={newActorCommand}
+                      onChange={(e) => setNewActorCommand(e.target.value)}
+                      placeholder={RUNTIME_DEFAULTS[newActorRuntime] || "Enter command..."}
+                    />
+                    <div className="text-[10px] text-slate-500 mt-1">
+                      Default: <code className="bg-slate-800 px-1 rounded">{RUNTIME_DEFAULTS[newActorRuntime] || "custom"}</code>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-2">
+                <div className="flex-1">
+                  <button
+                    className="w-full rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white px-4 py-2.5 text-sm font-semibold shadow-lg shadow-blue-500/25 disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed transition-all"
+                    onClick={addActor}
+                    disabled={!canAddActor}
+                  >
+                    {busy === "actor-add" ? "Adding..." : "Add Agent"}
+                  </button>
+                  {addActorDisabledReason && (
+                    <div className="text-[10px] text-amber-400 mt-1.5">{addActorDisabledReason}</div>
+                  )}
+                </div>
+                <button
+                  className="px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition-colors"
+                  onClick={() => {
+                    setShowAddActor(false);
+                    setNewActorId("");
+                    setNewActorCommand("");
+                    setNewActorRole("peer");
+                    setShowAdvancedActor(false);
+                    setAddActorError("");
+                  }}
                 >
                   Cancel
                 </button>

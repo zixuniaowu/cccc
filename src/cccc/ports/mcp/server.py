@@ -15,6 +15,7 @@ cccc.* namespace (collaboration control plane):
 - cccc_actor_start: Start actor
 - cccc_actor_stop: Stop actor
 - cccc_runtime_list: List available agent runtimes
+- cccc_project_info: Get PROJECT.md content (project goals/constraints)
 
 context.* namespace (state sync):
 - cccc_context_get: Get full context
@@ -141,17 +142,16 @@ def actor_list(*, group_id: str) -> Dict[str, Any]:
 
 
 def actor_add(
-    *, group_id: str, by: str, actor_id: str, role: str = "peer",
+    *, group_id: str, by: str, actor_id: str,
     runtime: str = "custom", runner: str = "pty", title: str = "",
     command: Optional[List[str]] = None, env: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
-    """Add a new actor (foreman only)"""
+    """Add a new actor (foreman only). Role is auto-determined by position."""
     return _call_daemon_or_raise({
         "op": "actor_add",
         "args": {
             "group_id": group_id,
             "actor_id": actor_id,
-            "role": role,
             "runtime": runtime,
             "runner": runner,
             "title": title,
@@ -163,7 +163,7 @@ def actor_add(
 
 
 def actor_remove(*, group_id: str, by: str, actor_id: str) -> Dict[str, Any]:
-    """Remove an actor (foreman only)"""
+    """Remove an actor. Foreman/peer can only remove themselves."""
     return _call_daemon_or_raise({
         "op": "actor_remove",
         "args": {"group_id": group_id, "actor_id": actor_id, "by": by},
@@ -171,7 +171,7 @@ def actor_remove(*, group_id: str, by: str, actor_id: str) -> Dict[str, Any]:
 
 
 def actor_start(*, group_id: str, by: str, actor_id: str) -> Dict[str, Any]:
-    """Start an actor (set enabled=true)"""
+    """Start an actor (set enabled=true). Foreman can start any; peer cannot start."""
     return _call_daemon_or_raise({
         "op": "actor_start",
         "args": {"group_id": group_id, "actor_id": actor_id, "by": by},
@@ -179,9 +179,17 @@ def actor_start(*, group_id: str, by: str, actor_id: str) -> Dict[str, Any]:
 
 
 def actor_stop(*, group_id: str, by: str, actor_id: str) -> Dict[str, Any]:
-    """Stop an actor (set enabled=false)"""
+    """Stop an actor (set enabled=false). Foreman can stop any; peer can only stop self."""
     return _call_daemon_or_raise({
         "op": "actor_stop",
+        "args": {"group_id": group_id, "actor_id": actor_id, "by": by},
+    })
+
+
+def actor_restart(*, group_id: str, by: str, actor_id: str) -> Dict[str, Any]:
+    """Restart an actor (stop + start, clears context). Foreman can restart any; peer can only restart self."""
+    return _call_daemon_or_raise({
+        "op": "actor_restart",
         "args": {"group_id": group_id, "actor_id": actor_id, "by": by},
     })
 
@@ -189,8 +197,11 @@ def actor_stop(*, group_id: str, by: str, actor_id: str) -> Dict[str, Any]:
 def runtime_list() -> Dict[str, Any]:
     """List available agent runtimes on the system"""
     from ...kernel.runtime import detect_all_runtimes
+    from ...kernel.settings import get_runtime_pool
     
     runtimes = detect_all_runtimes(primary_only=False)
+    pool = get_runtime_pool()
+    
     return {
         "runtimes": [
             {
@@ -204,7 +215,90 @@ def runtime_list() -> Dict[str, Any]:
             for rt in runtimes
         ],
         "available": [rt.name for rt in runtimes if rt.available],
+        "pool": [
+            {
+                "runtime": e.runtime,
+                "priority": e.priority,
+                "scenarios": e.scenarios,
+                "notes": e.notes,
+            }
+            for e in pool
+        ],
     }
+
+
+def group_set_state(*, group_id: str, by: str, state: str) -> Dict[str, Any]:
+    """Set group state (active/idle/paused)"""
+    return _call_daemon_or_raise({
+        "op": "group_set_state",
+        "args": {"group_id": group_id, "state": state, "by": by},
+    })
+
+
+def project_info(*, group_id: str) -> Dict[str, Any]:
+    """Get PROJECT.md content for the group's active scope"""
+    from pathlib import Path
+    from ...kernel.group import load_group
+    
+    group = load_group(group_id)
+    if group is None:
+        raise MCPError(code="group_not_found", message=f"group not found: {group_id}")
+    
+    # Get active scope's project root
+    scopes = group.doc.get("scopes") if isinstance(group.doc.get("scopes"), list) else []
+    active_scope_key = str(group.doc.get("active_scope_key") or "")
+    
+    project_root: Optional[str] = None
+    for sc in scopes:
+        if not isinstance(sc, dict):
+            continue
+        sk = str(sc.get("scope_key") or "")
+        if sk == active_scope_key:
+            project_root = str(sc.get("url") or "")
+            break
+    
+    if not project_root:
+        # Fallback: try first scope
+        if scopes and isinstance(scopes[0], dict):
+            project_root = str(scopes[0].get("url") or "")
+    
+    if not project_root:
+        return {
+            "found": False,
+            "path": None,
+            "content": None,
+            "error": "No scope attached to group. Use 'cccc attach <path>' first.",
+        }
+    
+    # Look for PROJECT.md in project root
+    project_md_path = Path(project_root) / "PROJECT.md"
+    if not project_md_path.exists():
+        # Also try lowercase
+        project_md_path_lower = Path(project_root) / "project.md"
+        if project_md_path_lower.exists():
+            project_md_path = project_md_path_lower
+        else:
+            return {
+                "found": False,
+                "path": str(project_md_path),
+                "content": None,
+                "error": f"PROJECT.md not found at {project_md_path}",
+            }
+    
+    try:
+        content = project_md_path.read_text(encoding="utf-8", errors="replace")
+        return {
+            "found": True,
+            "path": str(project_md_path),
+            "content": content,
+        }
+    except Exception as e:
+        return {
+            "found": False,
+            "path": str(project_md_path),
+            "content": None,
+            "error": f"Failed to read PROJECT.md: {e}",
+        }
 
 
 # =============================================================================
@@ -514,14 +608,13 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_actor_add",
-        "description": "Add a new actor to the group. Only foreman can create peers. Use cccc_runtime_list first to see available runtimes.",
+        "description": "Add a new actor to the group. Only foreman can add actors. Role is auto-determined: first enabled actor = foreman, rest = peer. Use cccc_runtime_list first to see available runtimes.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "group_id": {"type": "string", "description": "Working group ID"},
-                "by": {"type": "string", "description": "Your actor ID (must be foreman to create peers)"},
+                "by": {"type": "string", "description": "Your actor ID (must be foreman)"},
                 "actor_id": {"type": "string", "description": "New actor ID (e.g. peer-impl, peer-test)"},
-                "role": {"type": "string", "enum": ["peer", "foreman"], "description": "Role (usually peer)", "default": "peer"},
                 "runtime": {
                     "type": "string",
                     "enum": ["claude", "codex", "droid", "opencode", "custom"],
@@ -543,25 +636,25 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_actor_remove",
-        "description": "Remove an actor from the group. Only foreman can remove peers.",
+        "description": "Remove an actor from the group. Foreman and peer can only remove themselves. To remove a peer: tell them to finish up and call this on themselves.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "group_id": {"type": "string", "description": "Working group ID"},
-                "by": {"type": "string", "description": "Your actor ID (must be foreman)"},
-                "actor_id": {"type": "string", "description": "Actor ID to remove"},
+                "by": {"type": "string", "description": "Your actor ID"},
+                "actor_id": {"type": "string", "description": "Actor ID to remove (must be yourself)"},
             },
             "required": ["group_id", "by", "actor_id"],
         },
     },
     {
         "name": "cccc_actor_start",
-        "description": "Start an actor (set enabled=true). Foreman can start any peer; peers can only start themselves.",
+        "description": "Start an actor (set enabled=true). Only foreman can start actors.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "group_id": {"type": "string", "description": "Working group ID"},
-                "by": {"type": "string", "description": "Your actor ID"},
+                "by": {"type": "string", "description": "Your actor ID (must be foreman)"},
                 "actor_id": {"type": "string", "description": "Actor ID to start"},
             },
             "required": ["group_id", "by", "actor_id"],
@@ -569,7 +662,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_actor_stop",
-        "description": "Stop an actor (set enabled=false). Foreman can stop any peer; peers can only stop themselves.",
+        "description": "Stop an actor (set enabled=false). Foreman can stop any actor; peer can only stop themselves.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -581,12 +674,51 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "cccc_actor_restart",
+        "description": "Restart an actor (stop + start, clears context). Foreman can restart any actor; peer can only restart themselves. Useful when context is too long or state is confused.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Working group ID"},
+                "by": {"type": "string", "description": "Your actor ID"},
+                "actor_id": {"type": "string", "description": "Actor ID to restart"},
+            },
+            "required": ["group_id", "by", "actor_id"],
+        },
+    },
+    {
         "name": "cccc_runtime_list",
         "description": "List available agent runtimes on the system. Call before cccc_actor_add to see which runtimes can be used.",
         "inputSchema": {
             "type": "object",
             "properties": {},
             "required": [],
+        },
+    },
+    {
+        "name": "cccc_group_set_state",
+        "description": "Set group state to control automation behavior. States: active (normal operation), idle (task complete, automation disabled), paused (user paused). Foreman should set to 'idle' when task is complete.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Working group ID"},
+                "by": {"type": "string", "description": "Your actor ID"},
+                "state": {
+                    "type": "string",
+                    "enum": ["active", "idle", "paused"],
+                    "description": "New state: active (work in progress), idle (task complete), paused (user paused)",
+                },
+            },
+            "required": ["group_id", "by", "state"],
+        },
+    },
+    {
+        "name": "cccc_project_info",
+        "description": "Get PROJECT.md content from the group's active scope. Use this to understand project goals, constraints, and context. Call at session start or when you need to align with project vision.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"group_id": {"type": "string", "description": "Working group ID"}},
+            "required": ["group_id"],
         },
     },
     # context.* namespace - state sync
@@ -922,7 +1054,7 @@ MCP_TOOLS = [
                 "actor_id": {"type": "string", "description": "Your actor ID (sender)"},
                 "kind": {
                     "type": "string",
-                    "enum": ["nudge", "self_check", "system_refresh", "status_change", "error", "info"],
+                    "enum": ["nudge", "keepalive", "actor_idle", "silence_check", "status_change", "error", "info"],
                     "description": "Notification type",
                 },
                 "title": {"type": "string", "description": "Notification title"},
@@ -1011,7 +1143,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             group_id=str(arguments.get("group_id") or ""),
             by=str(arguments.get("by") or ""),
             actor_id=str(arguments.get("actor_id") or ""),
-            role=str(arguments.get("role") or "peer"),
+            # Note: role is auto-determined by position
             runtime=str(arguments.get("runtime") or "custom"),
             runner=str(arguments.get("runner") or "pty"),
             title=str(arguments.get("title") or ""),
@@ -1040,8 +1172,25 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             actor_id=str(arguments.get("actor_id") or ""),
         )
 
+    if name == "cccc_actor_restart":
+        return actor_restart(
+            group_id=str(arguments.get("group_id") or ""),
+            by=str(arguments.get("by") or ""),
+            actor_id=str(arguments.get("actor_id") or ""),
+        )
+
     if name == "cccc_runtime_list":
         return runtime_list()
+
+    if name == "cccc_group_set_state":
+        return group_set_state(
+            group_id=str(arguments.get("group_id") or ""),
+            by=str(arguments.get("by") or ""),
+            state=str(arguments.get("state") or ""),
+        )
+
+    if name == "cccc_project_info":
+        return project_info(group_id=str(arguments.get("group_id") or ""))
 
     # context.* namespace
     if name == "cccc_context_get":

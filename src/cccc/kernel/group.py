@@ -78,6 +78,7 @@ def create_group(reg: Registry, *, title: str, topic: str = "") -> Group:
         "created_at": now,
         "updated_at": now,
         "running": False,
+        "state": "active",  # active / idle / paused
         "active_scope_key": "",
         "scopes": [],
         "actors": [],
@@ -217,6 +218,7 @@ def ensure_group_for_scope(reg: Registry, scope: ScopeIdentity) -> Group:
         "created_at": now,
         "updated_at": now,
         "running": False,
+        "state": "active",  # active / idle / paused
         "active_scope_key": "",
         "scopes": [],
         "actors": [],
@@ -317,3 +319,34 @@ def delete_group(reg: Registry, *, group_id: str) -> None:
         if v == gid:
             reg.defaults.pop(k, None)
     reg.save()
+
+
+def get_group_state(group: Group) -> str:
+    """Get the current group state (active/idle/paused)."""
+    state = str(group.doc.get("state") or "active").strip()
+    if state not in ("active", "idle", "paused"):
+        return "active"
+    return state
+
+
+def set_group_state(group: Group, *, state: str) -> Group:
+    """Set the group state.
+    
+    States:
+    - active: Normal operation, all automation enabled
+    - idle: Task completed, automation disabled, actors stay running but don't work proactively
+    - paused: User paused, all automation disabled
+    
+    State transitions:
+    - active -> idle: Foreman judges task complete
+    - idle -> active: New message or task arrives
+    - active -> paused: User manually pauses
+    - paused -> active: User manually resumes
+    """
+    s = state.strip().lower()
+    if s not in ("active", "idle", "paused"):
+        raise ValueError(f"invalid state: {state} (must be active/idle/paused)")
+    
+    group.doc["state"] = s
+    group.save()
+    return group

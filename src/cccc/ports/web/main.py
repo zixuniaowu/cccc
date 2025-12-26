@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
-import time
 from typing import Optional
 
 import uvicorn
@@ -12,26 +10,10 @@ import uvicorn
 from ...daemon.server import call_daemon
 
 
-def _ensure_daemon_running() -> bool:
+def _check_daemon_running() -> bool:
+    """Check if daemon is running (don't start it)."""
     resp = call_daemon({"op": "ping"})
-    if resp.get("ok"):
-        return True
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "cccc.daemon_main", "start"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            env=os.environ.copy(),
-        )
-    except Exception:
-        return False
-    for _ in range(30):
-        time.sleep(0.05)
-        resp = call_daemon({"op": "ping"})
-        if resp.get("ok"):
-            return True
-    return False
+    return resp.get("ok", False)
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -42,19 +24,29 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--log-level", default="info", help="Uvicorn log level (default: info)")
     args = parser.parse_args(argv)
 
-    if not _ensure_daemon_running():
-        print("error: ccccd daemon failed to start", file=sys.stderr)
+    # Check daemon is running (don't auto-start)
+    if not _check_daemon_running():
+        print("error: daemon is not running. Start it with: cccc daemon start", file=sys.stderr)
+        print("  or use: cccc (to start both daemon and web together)", file=sys.stderr)
         return 1
 
-    uvicorn.run(
-        "cccc.ports.web.app:create_app",
-        factory=True,
-        host=str(args.host),
-        port=int(args.port),
-        log_level=str(args.log_level),
-        reload=bool(args.reload),
-    )
+    try:
+        uvicorn.run(
+            "cccc.ports.web.app:create_app",
+            factory=True,
+            host=str(args.host),
+            port=int(args.port),
+            log_level=str(args.log_level),
+            reload=bool(args.reload),
+        )
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 if __name__ == "__main__":

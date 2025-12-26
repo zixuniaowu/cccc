@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 
 from ..util.fs import atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
-from .actors import find_actor
+from .actors import find_actor, get_effective_role
 from .group import Group
 
 
@@ -95,10 +95,8 @@ def _message_targets(event: Dict[str, Any]) -> List[str]:
 
 
 def _actor_role(group: Group, actor_id: str) -> str:
-    """获取 actor 的角色"""
-    item = find_actor(group, actor_id)
-    role = item.get("role") if isinstance(item, dict) else ""
-    return role if isinstance(role, str) else ""
+    """获取 actor 的有效角色（基于位置自动判断）"""
+    return get_effective_role(group, actor_id)
 
 
 def is_message_for_actor(group: Group, *, actor_id: str, event: Dict[str, Any]) -> bool:
@@ -275,4 +273,107 @@ def get_read_status(group: Group, event_id: str) -> Dict[str, bool]:
             result[actor_id] = False
 
     return result
+
+
+def search_messages(
+    group: Group,
+    *,
+    query: str = "",
+    kind_filter: MessageKindFilter = "all",
+    by_filter: str = "",
+    before_id: str = "",
+    after_id: str = "",
+    limit: int = 50,
+) -> Tuple[List[Dict[str, Any]], bool]:
+    """Search and paginate messages in the ledger.
+    
+    Args:
+        group: Working group
+        query: Text search query (case-insensitive substring match)
+        kind_filter: Filter by message type (all/chat/notify)
+        by_filter: Filter by sender (actor_id or "user")
+        before_id: Return messages before this event_id (for backward pagination)
+        after_id: Return messages after this event_id (for forward pagination)
+        limit: Maximum number of messages to return
+    
+    Returns:
+        Tuple of (messages, has_more)
+    """
+    # Determine allowed kinds
+    if kind_filter == "chat":
+        allowed_kinds = {"chat.message"}
+    elif kind_filter == "notify":
+        allowed_kinds = {"system.notify"}
+    else:
+        allowed_kinds = {"chat.message", "system.notify"}
+    
+    query_lower = query.lower().strip() if query else ""
+    by_filter = by_filter.strip()
+    
+    # Collect all matching events
+    all_events: List[Dict[str, Any]] = []
+    for ev in iter_events(group.ledger_path):
+        ev_kind = str(ev.get("kind") or "")
+        if ev_kind not in allowed_kinds:
+            continue
+        
+        # Filter by sender
+        if by_filter:
+            ev_by = str(ev.get("by") or "")
+            if ev_by != by_filter:
+                continue
+        
+        # Text search
+        if query_lower:
+            data = ev.get("data")
+            if isinstance(data, dict):
+                text = str(data.get("text") or "").lower()
+                title = str(data.get("title") or "").lower()
+                message = str(data.get("message") or "").lower()
+                if query_lower not in text and query_lower not in title and query_lower not in message:
+                    continue
+            else:
+                continue
+        
+        all_events.append(ev)
+    
+    # Handle pagination
+    if before_id:
+        # Find the index of before_id and return events before it
+        idx = -1
+        for i, ev in enumerate(all_events):
+            if str(ev.get("id") or "") == before_id:
+                idx = i
+                break
+        if idx > 0:
+            start = max(0, idx - limit)
+            result = all_events[start:idx]
+            has_more = start > 0
+            return result, has_more
+        return [], False
+    
+    if after_id:
+        # Find the index of after_id and return events after it
+        idx = -1
+        for i, ev in enumerate(all_events):
+            if str(ev.get("id") or "") == after_id:
+                idx = i
+                break
+        if idx >= 0 and idx < len(all_events) - 1:
+            start = idx + 1
+            end = min(len(all_events), start + limit)
+            result = all_events[start:end]
+            has_more = end < len(all_events)
+            return result, has_more
+        return [], False
+    
+    # Default: return last N messages
+    if len(all_events) > limit:
+        result = all_events[-limit:]
+        has_more = True
+    else:
+        result = all_events
+        has_more = False
+    
+    return result, has_more
 

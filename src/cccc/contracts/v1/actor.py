@@ -7,16 +7,24 @@ from pydantic import BaseModel, ConfigDict, Field
 from ...util.time import utc_now_iso
 
 
+# ActorRole is now determined automatically by position in the actors list
+# First enabled actor = foreman, rest = peer
+# Kept for type hints and backward compatibility
 ActorRole = Literal["foreman", "peer"]
 ActorSubmit = Literal["enter", "newline", "none"]
 RunnerKind = Literal["pty", "headless"]
 AgentRuntime = Literal["claude", "codex", "droid", "opencode", "custom"]
 
+# Group state controls automation behavior
+GroupState = Literal["active", "idle", "paused"]
+
 
 class Actor(BaseModel):
     v: int = 1
     id: str
-    role: ActorRole
+    # role is now auto-determined by position, but kept for backward compat
+    # First enabled actor in list = foreman, rest = peer
+    role: Optional[ActorRole] = None  # Deprecated: ignored, auto-determined
     title: str = ""
     command: List[str] = Field(default_factory=list)
     env: Dict[str, str] = Field(default_factory=dict)
@@ -28,7 +36,7 @@ class Actor(BaseModel):
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")  # Changed to ignore for backward compat
 
 
 class HeadlessState(BaseModel):

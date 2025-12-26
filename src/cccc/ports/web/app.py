@@ -47,7 +47,7 @@ class ReplyRequest(BaseModel):
 
 class ActorCreateRequest(BaseModel):
     actor_id: str
-    role: str = Field(default="peer")
+    # Note: role is auto-determined by position (first enabled = foreman)
     runner: Literal["pty", "headless"] = Field(default="pty")
     runtime: Literal["claude", "codex", "droid", "opencode", "custom"] = Field(default="custom")
     title: str = Field(default="")
@@ -60,7 +60,7 @@ class ActorCreateRequest(BaseModel):
 
 class ActorUpdateRequest(BaseModel):
     by: str = Field(default="user")
-    role: Optional[str] = None
+    # Note: role is ignored - auto-determined by position
     title: Optional[str] = None
     command: Optional[Union[str, list[str]]] = None
     env: Optional[Dict[str, str]] = None
@@ -84,8 +84,11 @@ class GroupUpdateRequest(BaseModel):
 
 class GroupSettingsRequest(BaseModel):
     nudge_after_seconds: Optional[int] = None
-    self_check_every_handoffs: Optional[int] = None
-    system_refresh_every_self_checks: Optional[int] = None
+    actor_idle_timeout_seconds: Optional[int] = None
+    keepalive_delay_seconds: Optional[int] = None
+    keepalive_max_per_actor: Optional[int] = None
+    silence_timeout_seconds: Optional[int] = None
+    min_interval_seconds: Optional[int] = None  # delivery throttle
     by: str = Field(default="user")
 
 
@@ -285,6 +288,68 @@ def create_app() -> FastAPI:
             },
         }
 
+    @app.get("/api/v1/fs/list")
+    async def fs_list(path: str = "~", show_hidden: bool = False) -> Dict[str, Any]:
+        """List directory contents for path picker UI."""
+        try:
+            target = Path(path).expanduser().resolve()
+            if not target.exists():
+                return {"ok": False, "error": {"code": "NOT_FOUND", "message": f"Path not found: {path}"}}
+            if not target.is_dir():
+                return {"ok": False, "error": {"code": "NOT_DIR", "message": f"Not a directory: {path}"}}
+            
+            items = []
+            try:
+                for entry in sorted(target.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+                    if not show_hidden and entry.name.startswith("."):
+                        continue
+                    items.append({
+                        "name": entry.name,
+                        "path": str(entry),
+                        "is_dir": entry.is_dir(),
+                    })
+            except PermissionError:
+                return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": f"Cannot read: {path}"}}
+            
+            return {
+                "ok": True,
+                "result": {
+                    "path": str(target),
+                    "parent": str(target.parent) if target.parent != target else None,
+                    "items": items[:100],  # Limit to 100 items
+                },
+            }
+        except Exception as e:
+            return {"ok": False, "error": {"code": "ERROR", "message": str(e)}}
+
+    @app.get("/api/v1/fs/recent")
+    async def fs_recent() -> Dict[str, Any]:
+        """Get recent/common directories for quick selection."""
+        home = Path.home()
+        suggestions = []
+        
+        # Home directory
+        suggestions.append({"name": "Home", "path": str(home), "icon": "🏠"})
+        
+        # Common dev directories
+        for name in ["dev", "projects", "code", "src", "workspace", "repos", "github", "work"]:
+            p = home / name
+            if p.exists() and p.is_dir():
+                suggestions.append({"name": name.title(), "path": str(p), "icon": "📁"})
+        
+        # Desktop and Documents
+        for name, icon in [("Desktop", "🖥️"), ("Documents", "📄"), ("Downloads", "⬇️")]:
+            p = home / name
+            if p.exists() and p.is_dir():
+                suggestions.append({"name": name, "path": str(p), "icon": icon})
+        
+        # Current working directory
+        cwd = Path.cwd()
+        if cwd != home:
+            suggestions.append({"name": "Current Dir", "path": str(cwd), "icon": "📍"})
+        
+        return {"ok": True, "result": {"suggestions": suggestions[:10]}}
+
     @app.get("/api/v1/groups")
     async def groups() -> Dict[str, Any]:
         return _daemon({"op": "groups"})
@@ -360,14 +425,18 @@ def create_app() -> FastAPI:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
         
+        automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
         delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
         return {
             "ok": True,
             "result": {
                 "settings": {
-                    "nudge_after_seconds": int(delivery.get("nudge_after_seconds", 300)),
-                    "self_check_every_handoffs": int(delivery.get("self_check_every_handoffs", 6)),
-                    "system_refresh_every_self_checks": int(delivery.get("system_refresh_every_self_checks", 3)),
+                    "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
+                    "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
+                    "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
+                    "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
+                    "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
+                    "min_interval_seconds": int(delivery.get("min_interval_seconds", 60)),
                 }
             }
         }
@@ -378,10 +447,16 @@ def create_app() -> FastAPI:
         patch: Dict[str, Any] = {}
         if req.nudge_after_seconds is not None:
             patch["nudge_after_seconds"] = max(0, req.nudge_after_seconds)
-        if req.self_check_every_handoffs is not None:
-            patch["self_check_every_handoffs"] = max(0, req.self_check_every_handoffs)
-        if req.system_refresh_every_self_checks is not None:
-            patch["system_refresh_every_self_checks"] = max(0, req.system_refresh_every_self_checks)
+        if req.actor_idle_timeout_seconds is not None:
+            patch["actor_idle_timeout_seconds"] = max(0, req.actor_idle_timeout_seconds)
+        if req.keepalive_delay_seconds is not None:
+            patch["keepalive_delay_seconds"] = max(0, req.keepalive_delay_seconds)
+        if req.keepalive_max_per_actor is not None:
+            patch["keepalive_max_per_actor"] = max(0, req.keepalive_max_per_actor)
+        if req.silence_timeout_seconds is not None:
+            patch["silence_timeout_seconds"] = max(0, req.silence_timeout_seconds)
+        if req.min_interval_seconds is not None:
+            patch["min_interval_seconds"] = max(0, req.min_interval_seconds)
         
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}
@@ -421,6 +496,65 @@ def create_app() -> FastAPI:
                     ev["_read_status"] = get_read_status(group, str(ev["id"]))
         
         return {"ok": True, "result": {"events": events}}
+
+    @app.get("/api/v1/groups/{group_id}/ledger/search")
+    async def ledger_search(
+        group_id: str,
+        q: str = "",
+        kind: str = "all",
+        by: str = "",
+        before: str = "",
+        after: str = "",
+        limit: int = 50,
+        with_read_status: bool = False,
+    ) -> Dict[str, Any]:
+        """Search and paginate messages in the ledger.
+        
+        Query params:
+        - q: Text search query (case-insensitive substring match)
+        - kind: Filter by message type (all/chat/notify)
+        - by: Filter by sender (actor_id or "user")
+        - before: Return messages before this event_id (backward pagination)
+        - after: Return messages after this event_id (forward pagination)
+        - limit: Maximum number of messages to return (default 50, max 200)
+        - with_read_status: Include read status for each message
+        """
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        
+        from ...kernel.inbox import search_messages, get_read_status
+        
+        # Validate and clamp limit
+        limit = max(1, min(200, limit))
+        
+        # Validate kind filter
+        kind_filter = kind if kind in ("all", "chat", "notify") else "all"
+        
+        events, has_more = search_messages(
+            group,
+            query=q,
+            kind_filter=kind_filter,  # type: ignore
+            by_filter=by,
+            before_id=before,
+            after_id=after,
+            limit=limit,
+        )
+        
+        # Optionally include read status
+        if with_read_status:
+            for ev in events:
+                if ev.get("kind") == "chat.message" and ev.get("id"):
+                    ev["_read_status"] = get_read_status(group, str(ev["id"]))
+        
+        return {
+            "ok": True,
+            "result": {
+                "events": events,
+                "has_more": has_more,
+                "count": len(events),
+            }
+        }
 
     @app.get("/api/v1/groups/{group_id}/events/{event_id}/read_status")
     async def event_read_status(group_id: str, event_id: str) -> Dict[str, Any]:
@@ -471,7 +605,7 @@ def create_app() -> FastAPI:
                 "args": {
                     "group_id": group_id,
                     "actor_id": req.actor_id,
-                    "role": req.role,
+                    # Note: role is auto-determined by position
                     "runner": req.runner,
                     "runtime": req.runtime,
                     "title": req.title,
@@ -487,8 +621,7 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/groups/{group_id}/actors/{actor_id}")
     async def actor_update(group_id: str, actor_id: str, req: ActorUpdateRequest) -> Dict[str, Any]:
         patch: Dict[str, Any] = {}
-        if req.role is not None:
-            patch["role"] = req.role
+        # Note: role is ignored - auto-determined by position
         if req.title is not None:
             patch["title"] = req.title
         if req.command is not None:
@@ -645,5 +778,10 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/groups/{group_id}/stop")
     async def group_stop(group_id: str, by: str = "user") -> Dict[str, Any]:
         return _daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
+
+    @app.post("/api/v1/groups/{group_id}/state")
+    async def group_set_state(group_id: str, state: str, by: str = "user") -> Dict[str, Any]:
+        """Set group state (active/idle/paused) to control automation behavior."""
+        return _daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
 
     return app

@@ -14,7 +14,7 @@ from . import __version__
 from .contracts.v1 import ChatMessageData
 from .daemon.server import call_daemon
 from .kernel.active import load_active, set_active_group_id
-from .kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, set_actor_role, update_actor
+from .kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, update_actor
 from .kernel.group import (
     attach_scope_to_group,
     create_group,
@@ -71,14 +71,114 @@ def _resolve_group_id(explicit: str) -> str:
     return str(active.get("active_group_id") or "").strip()
 
 
+def _is_first_run() -> bool:
+    """Check if this is the first time running CCCC."""
+    home = ensure_home()
+    marker = home / ".initialized"
+    if marker.exists():
+        return False
+    # Create marker file
+    try:
+        marker.write_text(__version__)
+    except Exception:
+        pass
+    return True
+
+
+def _show_welcome() -> None:
+    """Show welcome message for first-time users."""
+    print()
+    print("=" * 60)
+    print("  Welcome to CCCC - Collaborative Code Coordination Center")
+    print("=" * 60)
+    print()
+    print("Quick Start:")
+    print("  1. Create a working group:  cccc attach .")
+    print("  2. Add an agent:            cccc actor add my-agent --runtime claude")
+    print("  3. Start the group:         cccc group start")
+    print("  4. Open Web UI:             http://127.0.0.1:8848")
+    print()
+    print("Useful Commands:")
+    print("  cccc status      - Show daemon, groups, and actors")
+    print("  cccc doctor      - Check environment and available runtimes")
+    print("  cccc setup       - Configure MCP for agent runtimes")
+    print()
+    print("Documentation: https://github.com/ChesterRa/cccc")
+    print("=" * 60)
+    print()
+
+
 def _default_entry() -> int:
-    # vNext default: `cccc` boots the local web console (FastAPI + UI under /ui).
-    # Auto-start daemon if not running
-    if not _ensure_daemon_running():
-        print("[cccc] Warning: Could not start daemon. Some features may not work.", file=sys.stderr)
+    """Default entry: start daemon + web together, stop both on Ctrl+C."""
+    import atexit
+    import signal
+    import subprocess
+    import threading
     
     from .ports.web.main import main as web_main
-
+    
+    # Show welcome message on first run
+    if _is_first_run():
+        _show_welcome()
+    
+    daemon_process = None
+    
+    def _start_daemon() -> bool:
+        nonlocal daemon_process
+        # Check if already running
+        resp = call_daemon({"op": "ping"})
+        if resp.get("ok"):
+            return True
+        
+        # Start daemon as subprocess
+        try:
+            daemon_process = subprocess.Popen(
+                [sys.executable, "-m", "cccc.daemon_main", "run"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                env=os.environ.copy(),
+            )
+        except Exception as e:
+            print(f"[cccc] Failed to start daemon: {e}", file=sys.stderr)
+            return False
+        
+        # Wait for daemon to be ready
+        for _ in range(50):
+            time.sleep(0.1)
+            resp = call_daemon({"op": "ping"})
+            if resp.get("ok"):
+                return True
+        
+        print("[cccc] Daemon failed to start in time", file=sys.stderr)
+        return False
+    
+    def _stop_daemon() -> None:
+        nonlocal daemon_process
+        # Send shutdown command
+        try:
+            call_daemon({"op": "shutdown"}, timeout_s=2.0)
+        except Exception:
+            pass
+        
+        # Wait for process to exit
+        if daemon_process is not None:
+            try:
+                daemon_process.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                daemon_process.kill()
+            daemon_process = None
+    
+    # Start daemon
+    print("[cccc] Starting daemon...", file=sys.stderr)
+    if not _start_daemon():
+        print("[cccc] Error: Could not start daemon", file=sys.stderr)
+        return 1
+    print("[cccc] Daemon started", file=sys.stderr)
+    
+    # Register cleanup
+    atexit.register(_stop_daemon)
+    
+    # Build web args from environment
     argv: list[str] = []
     host = str(os.environ.get("CCCC_WEB_HOST") or "").strip()
     if host:
@@ -91,7 +191,28 @@ def _default_entry() -> int:
     log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip()
     if log_level:
         argv.extend(["--log-level", log_level])
-    return int(web_main(argv))
+    
+    # Run web (blocking)
+    try:
+        # Web main now just checks daemon, doesn't start it
+        # We need to run uvicorn directly here
+        import uvicorn
+        print("[cccc] Starting web server...", file=sys.stderr)
+        uvicorn.run(
+            "cccc.ports.web.app:create_app",
+            factory=True,
+            host=host or "127.0.0.1",
+            port=int(port) if port else 8848,
+            log_level=log_level or "info",
+            reload=bool(os.environ.get("CCCC_WEB_RELOAD")),
+        )
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        print("\n[cccc] Shutting down...", file=sys.stderr)
+        _stop_daemon()
+    
+    return 0
 
 
 def cmd_attach(args: argparse.Namespace) -> int:
@@ -337,6 +458,23 @@ def cmd_group_stop(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
         return 2
     resp = call_daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_group_set_state(args: argparse.Namespace) -> int:
+    """Set group state (active/idle/paused)."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    state = str(args.state or "").strip()
+    by = str(args.by or "user").strip()
+
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
+        return 2
+    resp = call_daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 
@@ -716,7 +854,6 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
         return 2
 
     actor_id = str(args.actor_id or "").strip()
-    role = str(args.role or "peer").strip()
     title = str(args.title or "").strip()
     by = str(args.by or "user").strip()
     submit = str(args.submit or "enter").strip() or "enter"
@@ -765,7 +902,6 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
                 "args": {
                     "group_id": group_id,
                     "actor_id": actor_id,
-                    "role": role,
                     "title": title,
                     "submit": submit,
                     "runner": runner,
@@ -783,8 +919,7 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
 
     try:
         require_actor_permission(group, by=by, action="actor.add")
-        if role not in ("foreman", "peer"):
-            raise ValueError("invalid role")
+        # Note: role is auto-determined by position (first enabled = foreman)
         if runner not in ("pty", "headless"):
             raise ValueError("invalid runner (must be 'pty' or 'headless')")
         if runtime not in ("claude", "codex", "droid", "opencode", "custom"):
@@ -792,7 +927,6 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
         actor = add_actor(
             group,
             actor_id=actor_id,
-            role=role,
             title=title,
             command=command,
             env=env,
@@ -835,38 +969,6 @@ def cmd_actor_remove(args: argparse.Namespace) -> int:
         return 2
     ev = append_event(group.ledger_path, kind="actor.remove", group_id=group.group_id, scope_key="", by=by, data={"actor_id": actor_id})
     _print_json({"ok": True, "result": {"actor_id": actor_id, "event": ev}})
-    return 0
-
-
-def cmd_actor_set_role(args: argparse.Namespace) -> int:
-    group_id = _resolve_group_id(getattr(args, "group", ""))
-    if not group_id:
-        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
-        return 2
-    actor_id = str(args.actor_id or "").strip()
-    role = str(args.role or "").strip()
-    by = str(args.by or "user").strip()
-
-    if _ensure_daemon_running():
-        resp = call_daemon({"op": "actor_set_role", "args": {"group_id": group_id, "actor_id": actor_id, "role": role, "by": by}})
-        if resp.get("ok"):
-            _print_json(resp)
-            return 0
-
-    group = load_group(group_id)
-    if group is None:
-        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
-        return 2
-    try:
-        require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)
-        if role not in ("foreman", "peer"):
-            raise ValueError("invalid role")
-        actor = set_actor_role(group, actor_id, role)
-    except Exception as e:
-        _print_json({"ok": False, "error": {"code": "actor_set_role_failed", "message": str(e)}})
-        return 2
-    ev = append_event(group.ledger_path, kind="actor.set_role", group_id=group.group_id, scope_key="", by=by, data={"actor_id": actor_id, "role": role})
-    _print_json({"ok": True, "result": {"actor": actor, "event": ev}})
     return 0
 
 
@@ -1554,6 +1656,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_group_stop.add_argument("--by", default="user", help="Requester (default: user)")
     p_group_stop.set_defaults(func=cmd_group_stop)
 
+    p_group_set_state = group_sub.add_parser("set-state", help="Set group state (active/idle/paused)")
+    p_group_set_state.add_argument("state", choices=["active", "idle", "paused"], help="New state")
+    p_group_set_state.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_group_set_state.add_argument("--by", default="user", help="Requester (default: user)")
+    p_group_set_state.set_defaults(func=cmd_group_set_state)
+
     p_groups = sub.add_parser("groups", help="List known working groups")
     p_groups.set_defaults(func=cmd_groups)
 
@@ -1571,9 +1679,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_list.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_list.set_defaults(func=cmd_actor_list)
 
-    p_actor_add = actor_sub.add_parser("add", help="Add an actor (max 1 foreman per group)")
-    p_actor_add.add_argument("actor_id", help="Actor id (e.g. peer-a, peer-b, foreman)")
-    p_actor_add.add_argument("--role", choices=["peer", "foreman"], default="peer", help="Role (default: peer)")
+    p_actor_add = actor_sub.add_parser("add", help="Add an actor (first actor = foreman, rest = peer)")
+    p_actor_add.add_argument("actor_id", help="Actor id (e.g. peer-a, peer-b)")
     p_actor_add.add_argument("--title", default="", help="Display title (optional)")
     p_actor_add.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode", "custom"], default="custom", help="Agent runtime (auto-sets command if not provided)")
     p_actor_add.add_argument("--command", default="", help="Command to run (shell-like string; optional, auto-set by --runtime)")
@@ -1590,13 +1697,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_rm.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_rm.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_rm.set_defaults(func=cmd_actor_remove)
-
-    p_actor_role = actor_sub.add_parser("set-role", help="Change an actor role (max 1 foreman per group)")
-    p_actor_role.add_argument("actor_id", help="Actor id")
-    p_actor_role.add_argument("role", choices=["peer", "foreman"], help="New role")
-    p_actor_role.add_argument("--by", default="user", help="Requester (default: user)")
-    p_actor_role.add_argument("--group", default="", help="Target group_id (default: active group)")
-    p_actor_role.set_defaults(func=cmd_actor_set_role)
 
     p_actor_start = actor_sub.add_parser("start", help="Set actor enabled=true (desired run-state)")
     p_actor_start.add_argument("actor_id", help="Actor id")
@@ -1616,10 +1716,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_restart.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_restart.set_defaults(func=cmd_actor_restart)
 
-    p_actor_update = actor_sub.add_parser("update", help="Update an actor (title/role/command/env/scope/enabled/runner/runtime)")
+    p_actor_update = actor_sub.add_parser("update", help="Update an actor (title/command/env/scope/enabled/runner/runtime)")
     p_actor_update.add_argument("actor_id", help="Actor id")
     p_actor_update.add_argument("--title", default=None, help="New title")
-    p_actor_update.add_argument("--role", choices=["peer", "foreman"], default="", help="New role")
     p_actor_update.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode", "custom"], default=None, help="New runtime")
     p_actor_update.add_argument("--command", default=None, help="Replace command (shell-like string); use empty to clear")
     p_actor_update.add_argument("--env", action="append", default=[], help="Replace env with these KEY=VAL entries (repeatable)")
@@ -1704,7 +1803,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_daemon.add_argument("action", choices=["start", "stop", "status"], help="Action")
     p_daemon.set_defaults(func=cmd_daemon)
 
-    p_web = sub.add_parser("web", help="Run the web control-plane port (FastAPI)")
+    p_web = sub.add_parser("web", help="Run web server only (requires daemon to be running)")
     p_web.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_web.add_argument("--port", type=int, default=8848, help="Bind port (default: 8848)")
     p_web.add_argument("--reload", action="store_true", help="Enable autoreload (dev)")

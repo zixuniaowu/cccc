@@ -7,7 +7,70 @@ from ..contracts.v1 import Actor, ActorRole, ActorSubmit, RunnerKind, AgentRunti
 from ..util.time import utc_now_iso
 from .group import Group
 
-_ACTOR_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# Actor ID naming rules:
+# - Length: 1-32 characters
+# - Allowed: Unicode letters, numbers, CJK characters, hyphen (-), underscore (_)
+# - First char: must be letter, number, or CJK character (not - or _)
+# - Forbidden: spaces, dots, @, /, \, and other special symbols
+# Pattern breakdown:
+#   [\w\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af] - first char: word char or CJK
+#   [\w\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af_-]{0,31} - rest: same + hyphen/underscore
+_ACTOR_ID_RE = re.compile(
+    r"^[\w\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]"
+    r"[\w\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af_-]{0,31}$"
+)
+
+# Reserved IDs that cannot be used as actor names
+_RESERVED_IDS = frozenset({
+    "user", "all", "system", "foreman", "peers", "admin", "root", "cccc",
+    "@all", "@peers", "@foreman", "@user",
+})
+
+
+def validate_actor_id(actor_id: str) -> str:
+    """Validate and normalize actor ID. Returns normalized ID or raises ValueError."""
+    aid = actor_id.strip()
+    
+    if not aid:
+        raise ValueError("名前を入力してください / Please enter a name")
+    
+    if len(aid) > 32:
+        raise ValueError("名前は32文字以内にしてください / Name must be 32 characters or less")
+    
+    if " " in aid or "\t" in aid or "\n" in aid:
+        raise ValueError("名前にスペースは使えません / Name cannot contain spaces")
+    
+    if "." in aid:
+        raise ValueError("名前にドット(.)は使えません / Name cannot contain dots")
+    
+    if "@" in aid:
+        raise ValueError("名前に@は使えません / Name cannot contain @")
+    
+    if "/" in aid or "\\" in aid:
+        raise ValueError("名前にスラッシュは使えません / Name cannot contain slashes")
+    
+    if not _ACTOR_ID_RE.match(aid):
+        raise ValueError(
+            "名前は文字・数字・ハイフン・アンダースコアのみ使用できます / "
+            "Name can only contain letters, numbers, hyphens, and underscores"
+        )
+    
+    if aid.casefold() in _RESERVED_IDS or aid in _RESERVED_IDS:
+        raise ValueError(f"'{aid}' は予約語です。別の名前を使ってください / '{aid}' is reserved, please use another name")
+    
+    return aid
+
+
+def generate_actor_id(group: Group, prefix: str = "agent") -> str:
+    """Generate a unique actor ID like agent-1, agent-2, etc."""
+    existing = {str(a.get("id", "")) for a in list_actors(group)}
+    for i in range(1, 1000):
+        candidate = f"{prefix}-{i}"
+        if candidate not in existing:
+            return candidate
+    # Fallback (should never happen)
+    import uuid
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
 def _ensure_actor_list(group: Group) -> List[Dict[str, Any]]:
@@ -37,10 +100,54 @@ def find_actor(group: Group, actor_id: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def get_effective_role(group: Group, actor_id: str) -> ActorRole:
+    """Get the effective role of an actor based on position.
+    
+    Role is automatically determined:
+    - First enabled actor in the list = foreman
+    - All other actors = peer
+    
+    This ensures every group always has a foreman (if it has any actors).
+    """
+    wanted = actor_id.strip()
+    if not wanted:
+        return "peer"
+    
+    actors = list_actors(group)
+    for actor in actors:
+        if not isinstance(actor, dict):
+            continue
+        # Skip disabled actors when determining foreman
+        if not bool(actor.get("enabled", True)):
+            continue
+        aid = str(actor.get("id") or "").strip()
+        if not aid:
+            continue
+        # First enabled actor is foreman
+        if aid == wanted:
+            return "foreman"
+        else:
+            # We found the first enabled actor and it's not the wanted one
+            # So the wanted one must be a peer
+            break
+    
+    return "peer"
+
+
 def find_foreman(group: Group) -> Optional[Dict[str, Any]]:
-    for item in list_actors(group):
-        if item.get("role") == "foreman":
-            return item
+    """Find the current foreman (first enabled actor).
+    
+    Note: This is now based on position, not stored role.
+    """
+    actors = list_actors(group)
+    for actor in actors:
+        if not isinstance(actor, dict):
+            continue
+        if not bool(actor.get("enabled", True)):
+            continue
+        aid = str(actor.get("id") or "").strip()
+        if aid:
+            return actor
     return None
 
 
@@ -48,7 +155,6 @@ def add_actor(
     group: Group,
     *,
     actor_id: str,
-    role: ActorRole,
     title: str = "",
     command: Optional[List[str]] = None,
     env: Optional[Dict[str, str]] = None,
@@ -58,28 +164,24 @@ def add_actor(
     runner: RunnerKind = "pty",
     runtime: AgentRuntime = "custom",
 ) -> Dict[str, Any]:
-    aid = actor_id.strip()
-    if not aid:
-        raise ValueError("missing actor id")
-    if not _ACTOR_ID_RE.match(aid):
-        raise ValueError("invalid actor id (use a simple token; use title for display)")
-    if aid.casefold() == "user":
-        raise ValueError("reserved actor id: user")
+    """Add a new actor to the group.
+    
+    Role is automatically determined by position:
+    - If this is the first enabled actor, it becomes foreman
+    - Otherwise, it's a peer
+    """
+    # Validate actor ID using new rules (supports Unicode)
+    aid = validate_actor_id(actor_id)
 
     existing = find_actor(group, aid)
     if existing is not None:
-        raise ValueError(f"actor already exists: {aid}")
-
-    if role == "foreman":
-        foreman = find_foreman(group)
-        if foreman is not None:
-            raise ValueError(f"foreman already exists: {foreman.get('id')}")
+        raise ValueError(f"この名前は既に使われています / Name already exists: {aid}")
 
     now = utc_now_iso()
     actor = Actor(
         id=aid,
-        role=role,
-        title=title.strip(),
+        role=None,  # Role is auto-determined, not stored
+        title=title.strip() if title else "",
         command=list(command or []),
         env=dict(env or {}),
         default_scope_key=default_scope_key.strip(),
@@ -90,9 +192,13 @@ def add_actor(
         created_at=now,
         updated_at=now,
     )
-    _ensure_actor_list(group).append(actor.model_dump())
+    _ensure_actor_list(group).append(actor.model_dump(exclude_none=True))
     group.save()
-    return actor.model_dump()
+    
+    # Return with effective role included
+    result = actor.model_dump(exclude_none=True)
+    result["role"] = get_effective_role(group, aid)
+    return result
 
 
 def remove_actor(group: Group, actor_id: str) -> None:
@@ -108,20 +214,43 @@ def remove_actor(group: Group, actor_id: str) -> None:
     group.save()
 
 
-def set_actor_role(group: Group, actor_id: str, role: ActorRole) -> Dict[str, Any]:
-    item = find_actor(group, actor_id)
-    if item is None:
-        raise ValueError(f"actor not found: {actor_id.strip()}")
-
-    if role == "foreman":
-        foreman = find_foreman(group)
-        if foreman is not None and foreman.get("id") != item.get("id"):
-            raise ValueError(f"foreman already exists: {foreman.get('id')}")
-
-    item["role"] = role
-    item["updated_at"] = utc_now_iso()
+def reorder_actors(group: Group, actor_ids: List[str]) -> List[Dict[str, Any]]:
+    """Reorder actors. The first actor becomes foreman.
+    
+    Args:
+        actor_ids: List of actor IDs in desired order
+        
+    Returns:
+        Reordered actor list with effective roles
+    """
+    actors = list_actors(group)
+    id_to_actor = {str(a.get("id")): a for a in actors}
+    
+    # Validate all IDs exist
+    for aid in actor_ids:
+        if aid not in id_to_actor:
+            raise ValueError(f"actor not found: {aid}")
+    
+    # Check no duplicates
+    if len(actor_ids) != len(set(actor_ids)):
+        raise ValueError("duplicate actor IDs in list")
+    
+    # Check all actors are included
+    if set(actor_ids) != set(id_to_actor.keys()):
+        raise ValueError("actor_ids must include all actors")
+    
+    # Reorder
+    new_actors = [id_to_actor[aid] for aid in actor_ids]
+    group.doc["actors"] = new_actors
     group.save()
-    return dict(item)
+    
+    # Return with effective roles
+    result = []
+    for actor in new_actors:
+        a = dict(actor)
+        a["role"] = get_effective_role(group, str(actor.get("id") or ""))
+        result.append(a)
+    return result
 
 
 def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str, Any]:
@@ -129,11 +258,9 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
     if item is None:
         raise ValueError(f"actor not found: {actor_id.strip()}")
 
+    # Note: 'role' in patch is ignored - role is auto-determined by position
     if "role" in patch:
-        role = patch.get("role")
-        if role not in ("foreman", "peer"):
-            raise ValueError("invalid role")
-        set_actor_role(group, actor_id, role)  # validates foreman uniqueness
+        pass  # Silently ignore for backward compatibility
 
     if "title" in patch:
         title = str(patch.get("title") or "").strip()
@@ -192,7 +319,11 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
 
     item["updated_at"] = utc_now_iso()
     group.save()
-    return dict(item)
+    
+    # Return with effective role
+    result = dict(item)
+    result["role"] = get_effective_role(group, actor_id)
+    return result
 
 
 def resolve_recipient_tokens(group: Group, tokens: List[str]) -> List[str]:
