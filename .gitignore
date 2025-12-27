@@ -25,3 +25,7 @@
 
 # Local dev environments
 /venv-publish/
+
+# Legacy and internal docs (not for public repo)
+/docs/vnext/
+/old_v0.3.28/

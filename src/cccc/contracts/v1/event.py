@@ -81,6 +81,8 @@ class GroupStartData(BaseModel):
 
 
 class GroupStopData(BaseModel):
+    stopped: List[str] = Field(default_factory=list)
+
     model_config = ConfigDict(extra="forbid")
 
 
@@ -118,6 +120,7 @@ class ActorSetRoleData(BaseModel):
 
 class ActorLifecycleData(BaseModel):
     actor_id: str
+    runner: Optional[str] = None  # pty or headless
 
     model_config = ConfigDict(extra="forbid")
 

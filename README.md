@@ -8,8 +8,8 @@ CCCC is a multi-agent collaboration delivery kernel that enables multiple agent 
 - **Actor**: An agent session (PTY or headless mode)
 - **Ledger**: Event stream (append-only), records all messages and events
 - **Scope**: Project root directory, determines actor's working directory
-- **Foreman**: Lead agent that can create and manage other peers
-- **Peer**: Worker agent that executes tasks
+- **Foreman**: First enabled actor automatically becomes foreman (can manage other peers)
+- **Peer**: Other actors are peers (execute tasks)
 
 ## Quick Start
 
@@ -31,9 +31,9 @@ cccc setup --runtime claude  # or codex, droid, opencode
 # Start daemon
 cccc daemon start
 
-# Add actors
-cccc actor add foreman --role foreman --runtime claude
-cccc actor add peer-a --role peer --runtime codex
+# Add actors (first actor becomes foreman automatically)
+cccc actor add main-agent --runtime claude
+cccc actor add peer-agent --runtime codex
 
 # Start group (starts all actors)
 cccc group start
@@ -43,6 +43,14 @@ cccc
 ```
 
 Open `http://127.0.0.1:8848/ui/`
+
+## Actor Role (Auto-determined)
+
+Role is automatically determined by position in the actor list:
+- **First enabled actor** = Foreman (can manage other actors)
+- **All other actors** = Peer
+
+No manual role assignment needed. To change foreman, disable the current first actor or remove it.
 
 ## Supported Agent Runtimes
 
@@ -58,14 +66,15 @@ Open `http://127.0.0.1:8848/ui/`
 
 ```bash
 # Using runtime presets (auto-sets command)
-cccc actor add foreman --role foreman --runtime claude
-cccc actor add impl --role peer --runtime codex
+# First actor becomes foreman automatically
+cccc actor add main-agent --runtime claude
+cccc actor add impl-agent --runtime codex
 
 # Custom command
-cccc actor add custom-agent --role peer --command "aider --model gpt-4"
+cccc actor add custom-agent --command "aider --model gpt-4"
 
 # Headless actor (MCP-only, no PTY)
-cccc actor add api-agent --role peer --runner headless
+cccc actor add api-agent --runner headless
 ```
 
 ## Auto Setup
@@ -88,10 +97,12 @@ cccc setup --runtime opencode
 ### cccc.* (Collaboration)
 - `cccc_inbox_list` / `cccc_inbox_mark_read`: Message inbox
 - `cccc_message_send` / `cccc_message_reply`: Send/reply messages
-- `cccc_group_info` / `cccc_actor_list`: Get info
+- `cccc_group_info` / `cccc_group_set_state`: Group info and state control
+- `cccc_actor_list`: List actors
 - `cccc_actor_add` / `cccc_actor_remove`: Manage actors (foreman only)
 - `cccc_actor_start` / `cccc_actor_stop`: Actor lifecycle
 - `cccc_runtime_list`: List available runtimes
+- `cccc_project_info`: Get PROJECT.md content
 
 ### context.* (State Sync)
 - `cccc_context_get` / `cccc_context_sync`: Get/sync context
@@ -120,10 +131,11 @@ cccc groups                      # List all groups
 cccc group create --title "xxx"  # Create group
 cccc group start                 # Start group
 cccc group stop                  # Stop group
+cccc group set-state <state>     # Set state: active|idle|paused
 
 # Actor management
 cccc actor list                  # List actors
-cccc actor add <id> --role peer --runtime claude
+cccc actor add <id> --runtime claude  # First actor = foreman
 cccc actor start <id>            # Start actor
 cccc actor stop <id>             # Stop actor
 

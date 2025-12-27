@@ -1,102 +1,166 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { apiJson } from "./api";
 import { TerminalModal } from "./TerminalModal";
-
-type GroupMeta = {
-  group_id: string;
-  title?: string;
-  topic?: string;
-  updated_at?: string;
-  created_at?: string;
-  running?: boolean;
-};
-
-type GroupDoc = {
-  group_id: string;
-  title?: string;
-  topic?: string;
-  active_scope_key?: string;
-  scopes?: Array<{ scope_key?: string; url?: string; label?: string }>;
-};
-
-type LedgerEvent = {
-  id?: string;
-  ts?: string;
-  kind?: string;
-  by?: string;
-  data?: any;
-  _read_status?: Record<string, boolean>; // actor_id -> has_read
-};
-
-type Actor = {
-  id: string;
-  role?: string;
-  title?: string;
-  enabled?: boolean;
-  command?: string[];
-  runner?: string;
-  runtime?: string;
-  updated_at?: string;
-  unread_count?: number; // Added for unread message count
-};
-
-type RuntimeInfo = {
-  name: string;
-  display_name: string;
-  command: string;
-  available: boolean;
-  path?: string;
-  capabilities: string;
-};
-
-type ReplyTarget = {
-  eventId: string;
-  by: string;
-  text: string;
-} | null;
-
-type GroupContext = {
-  vision?: string;
-  sketch?: string;
-  milestones?: Array<{ id: string; title: string; status?: string; due?: string }>;
-  tasks?: Array<{ id: string; title: string; status?: string; assignee?: string; milestone_id?: string }>;
-  notes?: Array<{ id: string; title: string; content?: string }>;
-  references?: Array<{ id: string; url: string; title?: string }>;
-  presence?: Record<string, { status?: string; activity?: string; updated_at?: string }>;
-};
-
-// Runtime default commands from v0.3.28 agents.yaml
-const RUNTIME_DEFAULTS: Record<string, string> = {
-  claude: "claude --dangerously-skip-permissions",
-  codex: "codex --dangerously-bypass-approvals-and-sandbox",
-  droid: "droid --auto high",
-  opencode: "opencode",
-  gemini: "gemini --yolo",
-  copilot: "copilot --allow-all-tools",
-  cursor: "cursor-agent",
-  auggie: "auggie",
-  kilocode: "kilocode",
-};
-
-// Runtime display info
-const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
-  claude: { label: "Claude Code", desc: "Anthropic's Claude - strong coding" },
-  codex: { label: "Codex CLI", desc: "OpenAI Codex - multimodal support" },
-  droid: { label: "Droid", desc: "Robust auto mode, good for long sessions" },
-  opencode: { label: "OpenCode", desc: "Solid coding CLI, no special env needed" },
-  gemini: { label: "Gemini", desc: "Google Gemini - web search, large context" },
-  copilot: { label: "GitHub Copilot", desc: "GitHub integrated, tool access" },
-  cursor: { label: "Cursor Agent", desc: "Cursor AI - editor integrated" },
-  auggie: { label: "Augment Code", desc: "Lightweight AI assistant" },
-  kilocode: { label: "KiloCode", desc: "Autonomous coding capabilities" },
-  custom: { label: "Custom", desc: "Enter your own command" },
-};
-
-type DirItem = { name: string; path: string; is_dir: boolean };
-type DirSuggestion = { name: string; path: string; icon: string };
+import {
+  GroupMeta,
+  GroupDoc,
+  LedgerEvent,
+  Actor,
+  RuntimeInfo,
+  ReplyTarget,
+  GroupContext,
+  GroupSettings,
+  DirItem,
+  DirSuggestion,
+  RUNTIME_DEFAULTS,
+  RUNTIME_INFO,
+} from "./types";
 
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
+}
+
+// ActorChip component with dropdown menu using Portal
+function ActorChip({
+  actor,
+  isWorking,
+  isIdle,
+  unreadCount,
+  isMenuOpen,
+  rtInfo,
+  onToggleMenu,
+  onTerminal,
+  onInbox,
+  onEdit,
+  onToggleEnabled,
+  onRemove,
+}: {
+  actor: Actor;
+  isWorking: boolean;
+  isIdle: boolean;
+  unreadCount: number;
+  isMenuOpen: boolean;
+  rtInfo: { label: string; desc: string } | undefined;
+  onToggleMenu: () => void;
+  onTerminal: () => void;
+  onInbox: () => void;
+  onEdit: () => void;
+  onToggleEnabled: () => void;
+  onRemove: () => void;
+}) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
+  
+  // Use 'running' for actual process status, fallback to 'enabled' for backward compat
+  const isRunning = actor.running ?? actor.enabled ?? false;
+
+  // Calculate menu position when opened
+  useEffect(() => {
+    if (isMenuOpen && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      setMenuStyle({
+        position: 'fixed',
+        top: rect.bottom + 4,
+        left: rect.left,
+        zIndex: 99999,
+      });
+    }
+  }, [isMenuOpen]);
+
+  const menuContent = (
+    <div
+      style={menuStyle}
+      className="w-44 rounded-lg border border-slate-600 shadow-2xl overflow-hidden"
+      data-actor-menu
+    >
+      <div className="bg-slate-800">
+        {actor.runner !== "headless" && isRunning && (
+          <button
+            className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2 text-slate-200"
+            onClick={onTerminal}
+          >
+            <span>💻</span> Terminal
+          </button>
+        )}
+        <button
+          className={classNames(
+            "w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2",
+            unreadCount > 0 ? "text-rose-300" : "text-slate-200"
+          )}
+          onClick={onInbox}
+        >
+          <span>📥</span> Inbox {unreadCount > 0 && `(${unreadCount})`}
+        </button>
+        {!isRunning && (
+          <button
+            className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2 text-slate-200"
+            onClick={onEdit}
+          >
+            <span>✏️</span> Edit
+          </button>
+        )}
+        <button
+          className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2 text-slate-200"
+          onClick={onToggleEnabled}
+        >
+          <span>{isRunning ? "⏹" : "▶"}</span> {isRunning ? "Quit" : "Launch"}
+        </button>
+        <div className="border-t border-slate-700" />
+        <button
+          className="w-full text-left px-3 py-2.5 text-xs hover:bg-rose-500/30 text-rose-400 flex items-center gap-2"
+          onClick={onRemove}
+        >
+          <span>🗑</span> Remove
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="relative" data-actor-menu>
+      <button
+        ref={buttonRef}
+        className={classNames(
+          "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all",
+          isRunning
+            ? "border-slate-600/50 bg-slate-800/60 hover:bg-slate-700/60"
+            : "border-slate-700/30 bg-slate-900/40 text-slate-400"
+        )}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleMenu();
+        }}
+      >
+        <span
+          className={classNames(
+            "w-2 h-2 rounded-full",
+            !isRunning
+              ? "bg-slate-600"
+              : isWorking
+              ? "bg-emerald-400 animate-pulse"
+              : isIdle
+              ? "bg-amber-400"
+              : "bg-emerald-400"
+          )}
+        />
+        <span className={classNames("font-medium", isRunning ? "text-slate-200" : "text-slate-400")}>
+          {actor.id}
+        </span>
+        {actor.role === "foreman" && <span className="text-amber-400">★</span>}
+        {rtInfo && (
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">{rtInfo.label}</span>
+        )}
+        {unreadCount > 0 && (
+          <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-medium">
+            {unreadCount}
+          </span>
+        )}
+        <span className="text-slate-500 ml-0.5">▾</span>
+      </button>
+      {isMenuOpen && createPortal(menuContent, document.body)}
+    </div>
+  );
 }
 
 // Format ISO timestamp to friendly relative/absolute time
@@ -151,13 +215,9 @@ function formatFullTime(isoStr: string | undefined): string {
 
 function formatEventLine(ev: LedgerEvent): string {
   if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
-    const by = String(ev.by || ev.data.by || "unknown");
-    const to = Array.isArray(ev.data.to)
-      ? ev.data.to.map((x: any) => String(x || "").trim()).filter((x: string) => x.length > 0)
-      : [];
+    // 只显示消息文本，发送者和收件人已经在头部显示了
     const text = String(ev.data.text || "");
-    const arrow = to.length ? ` → ${to.join(", ")}` : "";
-    return `${by}${arrow}: ${text}`;
+    return text;
   }
   if (ev.kind === "system.notify" && ev.data && typeof ev.data === "object") {
     const kind = String(ev.data.kind || "info");
@@ -223,20 +283,14 @@ export default function App() {
   const [editSketchText, setEditSketchText] = useState("");
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
+  const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
   const [editingActor, setEditingActor] = useState<Actor | null>(null);
   const [editActorRuntime, setEditActorRuntime] = useState<"claude" | "codex" | "droid" | "opencode" | "custom">("custom");
   const [editActorCommand, setEditActorCommand] = useState("");
   const [editActorTitle, setEditActorTitle] = useState("");
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [groupSettings, setGroupSettings] = useState<{
-    nudge_after_seconds: number;
-    actor_idle_timeout_seconds: number;
-    keepalive_delay_seconds: number;
-    keepalive_max_per_actor: number;
-    silence_timeout_seconds: number;
-    min_interval_seconds: number;
-  } | null>(null);
+  const [groupSettings, setGroupSettings] = useState<GroupSettings | null>(null);
   const [editNudgeSeconds, setEditNudgeSeconds] = useState(300);
   const [editActorIdleSeconds, setEditActorIdleSeconds] = useState(600);
   const [editKeepaliveSeconds, setEditKeepaliveSeconds] = useState(120);
@@ -414,7 +468,7 @@ export default function App() {
   }
 
   async function fetchSettings(groupId: string) {
-    const resp = await apiJson<{ settings: typeof groupSettings }>(`/api/v1/groups/${encodeURIComponent(groupId)}/settings`);
+    const resp = await apiJson<{ settings: GroupSettings }>(`/api/v1/groups/${encodeURIComponent(groupId)}/settings`);
     if (resp.ok && resp.result.settings) {
       setGroupSettings(resp.result.settings);
       setEditNudgeSeconds(resp.result.settings.nudge_after_seconds);
@@ -561,7 +615,11 @@ export default function App() {
   }, [selectedGroupId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
+    // Small delay to ensure DOM is rendered before scrolling
+    const timer = setTimeout(() => {
+      bottomRef.current?.scrollIntoView({ block: "end" });
+    }, 50);
+    return () => clearTimeout(timer);
   }, [events.length]);
 
   // Handle scroll to detect if user scrolled up
@@ -796,11 +854,13 @@ export default function App() {
     if (!selectedGroupId) return;
     const actorId = String(actor.id || "").trim();
     if (!actorId) return;
-    setBusy(`actor-${actor.enabled ? "stop" : "start"}:${actorId}`);
+    // Use 'running' for actual process status, fallback to 'enabled'
+    const isRunning = actor.running ?? actor.enabled ?? false;
+    setBusy(`actor-${isRunning ? "stop" : "start"}:${actorId}`);
     try {
       setErrorMsg("");
-      const path = actor.enabled ? "stop" : "start";
-      const resp = await apiJson(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors/${encodeURIComponent(actorId)}/${path}`, {
+      const action = isRunning ? "stop" : "start";
+      const resp = await apiJson(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors/${encodeURIComponent(actorId)}/${action}`, {
         method: "POST",
       });
       if (!resp.ok) {
@@ -808,7 +868,6 @@ export default function App() {
         return;
       }
       await refreshActors();
-      await loadGroup(selectedGroupId);
     } finally {
       setBusy("");
     }
@@ -837,8 +896,9 @@ export default function App() {
   }
 
   function openEditActor(actor: Actor) {
-    // Only allow editing stopped actors
-    if (actor.enabled) {
+    // Only allow editing stopped actors (check running status, not enabled)
+    const isRunning = actor.running ?? actor.enabled ?? false;
+    if (isRunning) {
       showError("Stop the actor before editing. Use stop → edit → start workflow.");
       return;
     }
@@ -888,7 +948,8 @@ export default function App() {
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
       }
-      await refreshGroups();
+      // Only refresh actors, not groups (to avoid focus jump)
+      await refreshActors();
     } finally {
       setBusy("");
     }
@@ -904,7 +965,8 @@ export default function App() {
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
       }
-      await refreshGroups();
+      // Only refresh actors, not groups (to avoid focus jump)
+      await refreshActors();
     } finally {
       setBusy("");
     }
@@ -952,8 +1014,13 @@ export default function App() {
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
       }
+      // Clear all state for the deleted group
       setSelectedGroupId("");
       setGroupDoc(null);
+      setEvents([]);
+      setActors([]);
+      setGroupContext(null);
+      setGroupSettings(null);
       await refreshGroups();
     } finally {
       setBusy("");
@@ -1077,9 +1144,9 @@ export default function App() {
           </div>
         </aside>
 
-        <main className="h-full flex flex-col bg-slate-900/50">
+        <main className="h-full flex flex-col bg-slate-900/50 overflow-hidden">
           {/* Header */}
-          <header className="border-b border-slate-700/50 bg-slate-800/30 backdrop-blur px-5 py-4">
+          <header className="flex-shrink-0 border-b border-slate-700/50 bg-slate-800/30 backdrop-blur px-5 py-4">
             {/* Row 1: Group info + actions */}
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
@@ -1107,17 +1174,17 @@ export default function App() {
                   className="rounded-lg bg-gradient-to-r from-emerald-600 to-emerald-500 text-white px-4 py-1.5 text-sm font-medium disabled:opacity-50 hover:from-emerald-500 hover:to-emerald-400 shadow-lg shadow-emerald-500/20 transition-all"
                   onClick={startGroup}
                   disabled={!selectedGroupId || busy === "group-start" || actors.length === 0}
-                  title="Start all actors"
+                  title="Launch all agent processes"
                 >
-                  ▶ Start All
+                  ▶ Launch All
                 </button>
                 <button
                   className="rounded-lg bg-slate-700/80 text-slate-200 px-4 py-1.5 text-sm font-medium disabled:opacity-50 hover:bg-slate-600 transition-colors"
                   onClick={stopGroup}
                   disabled={!selectedGroupId || busy === "group-stop"}
-                  title="Stop all actors"
+                  title="Quit all agent processes"
                 >
-                  ⏹ Stop
+                  ⏹ Quit All
                 </button>
                 <div className="w-px h-6 bg-slate-700/50 mx-1" />
                 <button
@@ -1152,7 +1219,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Row 2: Actors - simplified */}
             {/* Actors row */}
             <div className="mt-4 flex items-center gap-2 flex-wrap">
               <span className="text-xs font-medium text-slate-400 mr-1">Agents:</span>
@@ -1168,86 +1234,30 @@ export default function App() {
                 const rtInfo = RUNTIME_INFO[a.runtime || "custom"];
                 
                 return (
-                  <div key={a.id} className="relative" data-actor-menu>
-                    <button
-                      className={classNames(
-                        "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all",
-                        a.enabled 
-                          ? "border-slate-600/50 bg-slate-800/60 hover:bg-slate-700/60" 
-                          : "border-slate-700/30 bg-slate-900/40 opacity-60"
-                      )}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setActorMenuOpen(isMenuOpen ? null : a.id);
-                      }}
-                    >
-                      <span className={classNames(
-                        "w-2 h-2 rounded-full",
-                        !a.enabled ? "bg-slate-600" :
-                        isWorking ? "bg-emerald-400 animate-pulse" :
-                        isIdle ? "bg-amber-400" : "bg-emerald-400"
-                      )} />
-                      <span className="font-medium text-slate-200">{a.id}</span>
-                      {a.role === "foreman" && <span className="text-amber-400">★</span>}
-                      {rtInfo && <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">{rtInfo.label}</span>}
-                      {unreadCount > 0 && (
-                        <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-medium">{unreadCount}</span>
-                      )}
-                      <span className="text-slate-500 ml-0.5">▾</span>
-                    </button>
-                    
-                    {/* Actor dropdown menu */}
-                    {isMenuOpen && (
-                      <div 
-                        className="absolute top-full left-0 mt-1 w-44 rounded-lg border border-slate-600 bg-slate-800 shadow-2xl z-50 overflow-hidden"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {a.runner !== "headless" && (
-                          <button
-                            className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2 text-slate-200"
-                            onClick={() => { setTermActorId(a.id); setActorMenuOpen(null); }}
-                          >
-                            <span>💻</span> Terminal
-                          </button>
-                        )}
-                        <button
-                          className={classNames(
-                            "w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2",
-                            unreadCount > 0 ? "text-rose-300" : "text-slate-200"
-                          )}
-                          onClick={() => { openInbox(a.id); setActorMenuOpen(null); }}
-                        >
-                          <span>📥</span> Inbox {unreadCount > 0 && `(${unreadCount})`}
-                        </button>
-                        {!a.enabled && (
-                          <button
-                            className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2 text-slate-200"
-                            onClick={() => { openEditActor(a); setActorMenuOpen(null); }}
-                          >
-                            <span>✎</span> Edit
-                          </button>
-                        )}
-                        <button
-                          className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-700 flex items-center gap-2 text-slate-200"
-                          onClick={() => { toggleActorEnabled(a); setActorMenuOpen(null); }}
-                        >
-                          <span>{a.enabled ? "⏹" : "▶"}</span> {a.enabled ? "Stop" : "Start"}
-                        </button>
-                        <div className="border-t border-slate-700" />
-                        <button
-                          className="w-full text-left px-3 py-2.5 text-xs hover:bg-rose-500/30 text-rose-400 flex items-center gap-2"
-                          onClick={() => { removeActor(a); setActorMenuOpen(null); }}
-                        >
-                          <span>🗑</span> Remove
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                  <ActorChip
+                    key={a.id}
+                    actor={a}
+                    isWorking={isWorking}
+                    isIdle={isIdle}
+                    unreadCount={unreadCount}
+                    isMenuOpen={isMenuOpen}
+                    rtInfo={rtInfo}
+                    onToggleMenu={() => setActorMenuOpen(isMenuOpen ? null : a.id)}
+                    onTerminal={() => { setTermActorId(a.id); setActorMenuOpen(null); }}
+                    onInbox={() => { openInbox(a.id); setActorMenuOpen(null); }}
+                    onEdit={() => { openEditActor(a); setActorMenuOpen(null); }}
+                    onToggleEnabled={() => { toggleActorEnabled(a); setActorMenuOpen(null); }}
+                    onRemove={() => { removeActor(a); setActorMenuOpen(null); }}
+                  />
                 );
               })}
               <button
                 className="text-xs px-3 py-1.5 rounded-lg bg-blue-600/20 border border-blue-500/30 text-blue-400 hover:bg-blue-600/30 hover:border-blue-500/50 disabled:opacity-50 transition-all font-medium"
-                onClick={() => setShowAddActor(true)}
+                onClick={() => {
+                  // First agent must be foreman
+                  setNewActorRole(hasForeman ? "peer" : "foreman");
+                  setShowAddActor(true);
+                }}
                 disabled={!selectedGroupId}
               >
                 + Add Agent
@@ -1443,16 +1453,16 @@ export default function App() {
 
           <section 
             ref={eventContainerRef}
-            className="flex-1 overflow-auto px-4 py-3 relative"
+            className="flex-1 min-h-0 overflow-auto px-4 py-3 relative"
             onScroll={handleScroll}
           >
             <div className="space-y-2">
               {events
                 .filter((ev) => {
-                  // Only show chat messages and system notifications
-                  // Hide internal events like group.create, group.attach, actor.add, etc.
+                  // Only show chat messages in the main conversation view
+                  // System notifications are too noisy - they go to actor inbox instead
                   const kind = ev.kind || "";
-                  return kind === "chat.message" || kind === "system.notify";
+                  return kind === "chat.message";
                 })
                 .map((ev, idx) => {
                 const isMessage = ev.kind === "chat.message";
@@ -1556,7 +1566,7 @@ export default function App() {
                 );
               })}
               <div ref={bottomRef} />
-              {events.filter((ev) => ev.kind === "chat.message" || ev.kind === "system.notify").length === 0 && (
+              {events.filter((ev) => ev.kind === "chat.message").length === 0 && (
                 <div className="text-center py-8">
                   <div className="text-3xl mb-2">💬</div>
                   <div className="text-sm text-slate-400">No messages yet</div>
@@ -1578,7 +1588,7 @@ export default function App() {
             )}
           </section>
 
-          <footer className="border-t border-slate-800 bg-slate-950/30 px-4 py-3">
+          <footer className="flex-shrink-0 border-t border-slate-800 bg-slate-950/30 px-4 py-3">
             {replyTarget && (
               <div className="mb-2 flex items-center gap-2 text-xs text-slate-400 bg-slate-900/50 rounded px-2 py-1.5">
                 <span className="text-slate-500">Replying to</span>
@@ -1595,7 +1605,7 @@ export default function App() {
             )}
             <div className="mb-2 flex flex-wrap items-center gap-2">
               <div className="text-xs text-slate-400 mr-1">To</div>
-              {["@all", "@foreman", "user", ...actors.map((a) => String(a.id || ""))].map((tok) => {
+              {["@all", "@foreman", "@peers", "user", ...actors.map((a) => String(a.id || ""))].map((tok) => {
                 const t = tok.trim();
                 if (!t) return null;
                 const active = toTokens.includes(t);
@@ -1616,21 +1626,16 @@ export default function App() {
                   </button>
                 );
               })}
-              <button
-                className="text-[11px] px-2 py-1 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800/60 disabled:opacity-50"
-                onClick={() => setToText("")}
-                disabled={!toTokens.length || busy === "send"}
-                title="Clear recipients"
-              >
-                clear
-              </button>
-              <div className="flex-1" />
-              <input
-                className="w-[280px] max-w-[45vw] rounded bg-slate-900 border border-slate-800 px-3 py-2 text-sm"
-                placeholder="To (optional, comma-separated)…"
-                value={toText}
-                onChange={(e) => setToText(e.target.value)}
-              />
+              {toTokens.length > 0 && (
+                <button
+                  className="text-[11px] px-2 py-1 rounded bg-slate-900 border border-slate-800 hover:bg-slate-800/60 disabled:opacity-50"
+                  onClick={() => setToText("")}
+                  disabled={busy === "send"}
+                  title="Clear recipients"
+                >
+                  clear
+                </button>
+              )}
             </div>
 
             <div className="flex gap-2 relative items-end">
@@ -1655,6 +1660,7 @@ export default function App() {
                     if ((lastAt === 0 || val[lastAt - 1] === " " || val[lastAt - 1] === "\n") && !afterAt.includes(" ") && !afterAt.includes("\n")) {
                       setMentionFilter(afterAt);
                       setShowMentionMenu(true);
+                      setMentionSelectedIndex(0);  // Reset selection on filter change
                     } else {
                       setShowMentionMenu(false);
                     }
@@ -1663,6 +1669,43 @@ export default function App() {
                   }
                 }}
                 onKeyDown={(e) => {
+                  if (showMentionMenu && mentionSuggestions.length > 0) {
+                    const maxIndex = Math.min(mentionSuggestions.length, 8) - 1;
+                    if (e.key === "ArrowDown") {
+                      e.preventDefault();
+                      setMentionSelectedIndex((prev) => (prev >= maxIndex ? 0 : prev + 1));
+                      return;
+                    }
+                    if (e.key === "ArrowUp") {
+                      e.preventDefault();
+                      setMentionSelectedIndex((prev) => (prev <= 0 ? maxIndex : prev - 1));
+                      return;
+                    }
+                    if (e.key === "Enter" || e.key === "Tab") {
+                      e.preventDefault();
+                      const selected = mentionSuggestions[mentionSelectedIndex];
+                      if (selected) {
+                        const lastAt = composerText.lastIndexOf("@");
+                        if (lastAt >= 0) {
+                          const before = composerText.slice(0, lastAt);
+                          setComposerText(before + selected + " ");
+                        }
+                        // Also add to recipients (To field)
+                        if (selected && !toTokens.includes(selected)) {
+                          setToText((prev) => (prev ? prev + ", " + selected : selected));
+                        }
+                        setShowMentionMenu(false);
+                        setMentionSelectedIndex(0);
+                      }
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      setShowMentionMenu(false);
+                      setMentionSelectedIndex(0);
+                      return;
+                    }
+                  }
                   if (e.key === "Enter" && !showMentionMenu) {
                     // Ctrl+Enter or Cmd+Enter to send
                     if (e.ctrlKey || e.metaKey) {
@@ -1682,10 +1725,13 @@ export default function App() {
               />
               {showMentionMenu && mentionSuggestions.length > 0 && (
                 <div className="absolute bottom-full left-0 mb-1 w-48 max-h-40 overflow-auto rounded border border-slate-700 bg-slate-900 shadow-lg z-10">
-                  {mentionSuggestions.slice(0, 8).map((s) => (
+                  {mentionSuggestions.slice(0, 8).map((s, idx) => (
                     <button
                       key={s}
-                      className="w-full text-left px-3 py-1.5 text-sm hover:bg-slate-800 text-slate-200"
+                      className={classNames(
+                        "w-full text-left px-3 py-1.5 text-sm text-slate-200",
+                        idx === mentionSelectedIndex ? "bg-slate-700" : "hover:bg-slate-800"
+                      )}
                       onMouseDown={(e) => {
                         e.preventDefault();
                         // Replace the @... with the selected mention
@@ -1694,9 +1740,15 @@ export default function App() {
                           const before = composerText.slice(0, lastAt);
                           setComposerText(before + s + " ");
                         }
+                        // Also add to recipients (To field)
+                        if (s && !toTokens.includes(s)) {
+                          setToText((prev) => (prev ? prev + ", " + s : s));
+                        }
                         setShowMentionMenu(false);
+                        setMentionSelectedIndex(0);
                         composerRef.current?.focus();
                       }}
+                      onMouseEnter={() => setMentionSelectedIndex(idx)}
                     >
                       {s}
                     </button>
@@ -2292,15 +2344,18 @@ export default function App() {
                       "flex-1 px-4 py-2.5 rounded-lg border text-sm font-medium transition-all",
                       newActorRole === "peer"
                         ? "bg-blue-500/20 border-blue-500 text-blue-300"
+                        : !hasForeman
+                        ? "bg-slate-900/30 border-slate-700/30 text-slate-500 cursor-not-allowed"
                         : "bg-slate-800/50 border-slate-600/50 text-slate-300 hover:border-slate-500"
                     )}
-                    onClick={() => setNewActorRole("peer")}
+                    onClick={() => hasForeman && setNewActorRole("peer")}
+                    disabled={!hasForeman}
                   >
-                    Peer
+                    Peer {!hasForeman && "(need foreman first)"}
                   </button>
                 </div>
                 <div className="text-[10px] text-slate-500 mt-1.5">
-                  Foreman leads the team. Peers are worker agents.
+                  {hasForeman ? "Foreman leads the team. Peers are worker agents." : "First agent must be the foreman (team leader)."}
                 </div>
               </div>
 

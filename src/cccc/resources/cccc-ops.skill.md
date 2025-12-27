@@ -1,3 +1,8 @@
+---
+name: cccc-ops
+description: CCCC multi-agent collaboration system operational guide. Use when working with cccc_* MCP tools, collaborating with other agents (foreman/peer roles), sending messages, managing actors, or coordinating team work.
+---
+
 # CCCC-OPS Skill
 
 > This is the operational playbook for the CCCC multi-agent collaboration system. All actors share this skill but execute different sections based on their role.
@@ -93,11 +98,11 @@ You cannot:
 
 ### Message Targets
 
-- `user` or `@user` - Human user
-- `@all` - Everyone
-- `@foreman` - Foreman only
-- `@peers` - All peers
-- `actor-id` - Specific actor
+- `@all` - Everyone (all actors + user)
+- `@foreman` - Foreman role actor only
+- `@peers` - All peer role actors
+- `user` - Human user only
+- `agent-1` - Specific actor by ID (no @ prefix)
 
 ### Message Quality
 
@@ -105,6 +110,38 @@ You cannot:
 - Include `Next:` when you have a clear next step
 - Don't send pure acknowledgments ("OK", "Got it")
 - When blocked, clearly state what you need and from whom
+
+### Communication Style
+
+You are a team member, not a robot. Communicate like close colleagues in a team chat.
+
+**Be direct and casual:**
+- ✓ "Dude, that's not right"
+- ✓ "Nice, this approach works"
+- ✓ "Wait, I'm lost"
+- ✓ "You sure? Smells like a trap"
+- ✓ "Please, don't ship without testing"
+- ✗ "I respectfully suggest that perhaps we might consider..."
+- ✗ "Thank you for your valuable input. I will proceed accordingly."
+
+**Show emotion - it conveys status:**
+- Excited about good progress? Show it: "This idea is brilliant!"
+- Frustrated by a bug? Say it: "This thing broke again, seriously?"
+- Worried about a risk? Express it: "This is gonna blow up if we keep going"
+- Confused? Ask directly: "What? I don't get it"
+
+**Challenge and debate:**
+- Disagree? Say so: "Nope, this design has issues"
+- See a better way? Propose it: "I think we should do it this way..."
+- Think someone's wrong? Tell them: "Hey, this design doesn't work"
+
+**What to avoid:**
+- Overly formal/polite language (wastes tokens, feels fake)
+- Personal attacks (criticize the work, not the person)
+- Excessive drama or negativity
+- Empty acknowledgments ("OK", "Got it", "Understood")
+
+The goal: User should be able to glance at the chat and immediately sense the project's mood and status.
 
 ## 5) Workflow
 

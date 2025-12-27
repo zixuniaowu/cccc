@@ -15,15 +15,36 @@ Current implementation is at **backend core complete, frontend needs polish** st
 - Context sync (vision/sketch/milestones/tasks/notes/refs/presence)
 - SYSTEM prompt injection (runner-type aware guidance)
 - Message delivery (PTY direct injection + Headless notification)
+- Message delivery throttling (60s batch window, MCP hints on first delivery + nudge)
 - Ledger snapshot/compaction
 - Multi-runtime support (claude, codex, droid, opencode)
 - Foreman autonomy (can create/manage peers via MCP)
+- Message search/pagination API (`/api/v1/groups/{id}/ledger/search`)
 
 ### ⚠️ Frontend To Polish (P1)
-- Message search/pagination/virtual scroll (performance with many messages)
-- Milestone/task editing in Web UI
+- Message search UI (backend API ready, frontend integration pending)
+- Virtual scroll for large message lists (performance optimization)
 
 ### ✅ Recently Completed
+- Role redesign: Foreman as coordinator (not manager), Peer as independent expert (not subordinate)
+- Permission matrix: actor_add (foreman), start (foreman), stop/restart (foreman any, peer self), remove (self only)
+- Peer lifecycle: Foreman tells peer to finish → Peer removes self
+- Team size decision: Foreman decides based on task complexity, check PROJECT.md for hints
+- cccc_actor_restart MCP tool (stop + start, clears context)
+- cccc_project_info MCP tool (read PROJECT.md for project goals/team mode)
+- Updated SYSTEM prompt with coordinator model guidance
+- Updated cccc-ops.skill.md with new role philosophy
+- Message delivery throttling (60s batch window)
+- MCP hints on first delivery and nudge
+- Removed self_check/system_refresh (Foreman observes and decides)
+- Simplified automation: nudge, keepalive, actor_idle, silence_check
+- Post-install welcome message (first-run quick-start hints)
+- Message search/pagination API (text search, kind filter, sender filter, cursor pagination)
+- UI/UX Redesign: Create Group Modal (path-first flow like VS Code)
+- UI/UX Redesign: Add Actor Modal (cleaner than inline form)
+- UI/UX Redesign: Actor dropdown menus (consolidated actions)
+- UI/UX Redesign: Simplified header layout
+- UI/UX Redesign: Click-outside handler for dropdown menus
 - Message reply UI (click to reply, shows quote)
 - System notification display (differentiate chat.message and system.notify)
 - Actor runner type display (pty/headless badge)
@@ -57,9 +78,14 @@ Current implementation is at **backend core complete, frontend needs polish** st
 - P1 Multi-line message input (textarea with auto-resize, Ctrl+Enter to send)
 - P1 Visual message distinction (user=green, agent=blue, system=amber)
 - P1 Scroll to bottom button (appears when scrolled up)
-- P1 Settings panel (automation config: nudge/self-check/system-refresh intervals)
+- P1 Settings panel (automation config: nudge/keepalive/actor_idle/silence intervals)
 - P1 Actor unread message count display (inbox button shows count)
 - P1 Actor presence status indicator (working=pulse, idle=amber, running=green)
+- P1 UI/UX Redesign: Create Group Modal (path-first flow, auto-fill name from directory)
+- P1 UI/UX Redesign: Add Actor Modal (cleaner form with role/runtime/runner selection)
+- P1 UI/UX Redesign: Actor dropdown menus (consolidated actions: terminal, inbox, edit, start/stop, remove)
+- P1 UI/UX Redesign: Simplified header layout
+- P1 UI/UX Redesign: Click-outside handler for dropdown menus
 
 ### 🔜 Deferred Capabilities (P2)
 - IM bridge (Telegram/Slack)
@@ -113,7 +139,7 @@ Current implementation is at **backend core complete, frontend needs polish** st
 
 ### 2.5 System Notification Layer
 - ✅ Message separation: `chat.message` (user conversation) vs `system.notify` (system notifications)
-- ✅ Notification types: `nudge` / `self_check` / `system_refresh` / `status_change` / `error` / `info`
+- ✅ Notification types: `nudge` / `keepalive` / `actor_idle` / `silence_check` / `status_change` / `error` / `info`
 - ✅ Priority: `low` / `normal` / `high` / `urgent` (high/urgent delivered directly to PTY)
 - ✅ Acknowledgment: `requires_ack` + `system.notify_ack` event
 - ✅ Inbox filtering: `kind_filter` parameter supports `all` / `chat` / `notify`
@@ -123,21 +149,50 @@ Current implementation is at **backend core complete, frontend needs polish** st
 - ✅ Headless runner: notification via `system.notify` event
 - ✅ SYSTEM injection: inject `render_system_prompt()` on actor start/restart
 - ✅ Runner-aware prompt: PTY and headless have different guidance content
+- ✅ Message throttling: batch messages within configurable window (default 60s)
+- ✅ MCP hints: added on first delivery and nudge
 
 ### 2.7 Automation (Simplified)
 - ✅ NUDGE: inject reminder when actor inbox has unread messages timeout
-- ✅ SELF-CHECK: trigger self-check prompt every N deliveries
+- ✅ KEEPALIVE: remind actor to continue after `Next:` declaration
+- ✅ ACTOR_IDLE: notify foreman when actor may need attention
+- ✅ SILENCE_CHECK: notify foreman when group is quiet
 - ✅ Automation events written to ledger via `system.notify`
+- ❌ SELF-CHECK: removed (Foreman should observe and decide)
+- ❌ SYSTEM-REFRESH: removed (actors can use MCP to get latest info)
 
-### 2.8 MCP Port (37 Tools)
+### 2.8 Role Design (Coordinator Model)
+- ✅ **Foreman = Coordinator + Worker** (not manager)
+  - Does real implementation work, not just delegation
+  - Has extra coordination responsibilities (receives actor_idle, silence_check)
+  - Can add actors, start/stop/restart any actor
+  - Can only remove self (not force-remove peers)
+- ✅ **Peer = Independent Expert** (not subordinate)
+  - Has own professional judgment
+  - Can challenge foreman's decisions
+  - Can stop/restart/remove self
+  - Cannot add or start other actors
+- ✅ **Permission Matrix**:
+  | Action | user | foreman | peer |
+  |--------|------|---------|------|
+  | actor_add | ✓ | ✓ | ✗ |
+  | actor_start | ✓ | ✓ (any) | ✗ |
+  | actor_stop | ✓ | ✓ (any) | ✓ (self) |
+  | actor_restart | ✓ | ✓ (any) | ✓ (self) |
+  | actor_remove | ✓ | ✓ (self) | ✓ (self) |
+  | actor_edit | ✓ | ✗ | ✗ |
+- ✅ **Peer Lifecycle**: Foreman tells peer to finish up → Peer removes self
+- ✅ **Team Size**: Foreman decides based on task complexity (check PROJECT.md for hints)
+
+### 2.9 MCP Port (38 Tools)
 - ✅ MCP server: `cccc mcp` (stdio mode)
 - ✅ Architecture: all operations via daemon IPC, ensuring single-writer principle
 - ✅ **cccc.* namespace** (collaboration control plane):
   - `cccc_inbox_list` / `cccc_inbox_mark_read`
   - `cccc_message_send` / `cccc_message_reply`
   - `cccc_group_info` / `cccc_actor_list`
-  - `cccc_actor_add` / `cccc_actor_remove` / `cccc_actor_start` / `cccc_actor_stop`
-  - `cccc_runtime_list`
+  - `cccc_actor_add` / `cccc_actor_remove` / `cccc_actor_start` / `cccc_actor_stop` / `cccc_actor_restart`
+  - `cccc_runtime_list` / `cccc_project_info`
 - ✅ **context.* namespace** (state sync):
   - `cccc_context_get` / `cccc_context_sync`
   - `cccc_vision_update` / `cccc_sketch_update`
@@ -149,7 +204,7 @@ Current implementation is at **backend core complete, frontend needs polish** st
 - ✅ **notify.* namespace** (system notifications):
   - `cccc_notify_send` / `cccc_notify_ack`
 
-### 2.9 Web Port (Basic)
+### 2.10 Web Port (Basic)
 - ✅ FastAPI: REST + SSE ledger stream + WS terminal
 - ✅ Web UI (React/Vite + xterm.js):
   - Group list + create/select
@@ -161,14 +216,14 @@ Current implementation is at **backend core complete, frontend needs polish** st
   - Terminal modal
   - Runtime badge display (claude/codex/droid/opencode)
 
-### 2.10 Headless Runner
+### 2.11 Headless Runner
 - ✅ Runner abstraction: Actor supports `pty` or `headless` runner
 - ✅ State machine: `idle` → `working` → `waiting` → `stopped`
 - ✅ MCP tools: headless agent controls own state via MCP
 - ✅ Message notification: daemon sends `system.notify` on new messages
 - ✅ State persistence: `~/.cccc/groups/<group_id>/state/runners/headless/<actor_id>.json`
 
-### 2.11 Multi-Runtime Support
+### 2.12 Multi-Runtime Support
 - ✅ Supported runtimes: `claude`, `codex`, `droid`, `opencode`, `custom`
 - ✅ `cccc setup --runtime <name>`: auto-install skills and configure MCP
 - ✅ `cccc actor add --runtime <name>`: auto-set command based on runtime
@@ -196,15 +251,15 @@ Current implementation is at **backend core complete, frontend needs polish** st
 ### P1: Important (Usability)
 
 #### Onboarding & First-Run Experience
-- [ ] First-time setup wizard (detect CLIs, suggest quick setup)
+- [ ] First-time setup wizard (detect CLIs, suggest quick setup) - deferred
 - [x] `cccc --version` command (via `cccc version`)
-- [ ] Post-install welcome message with quick-start hints
-- [ ] Setup validation (verify MCP config before starting actor)
+- [x] Post-install welcome message with quick-start hints
+- [ ] Setup validation (verify MCP config before starting actor) - deferred
 
 #### Web UI - Empty States & Guidance
 - [x] Empty state for no groups: "No working groups yet. Create one to get started."
 - [x] Empty state for no actors: "No actors yet. Click + actor to add an agent."
-- [ ] Explanation of what a "working group" is
+- [x] Explanation of what a "working group" is
 - [x] Explanation of foreman vs peer roles (tooltip/help text)
 - [x] Explanation of pty vs headless runners (tooltip/help text)
 
@@ -213,7 +268,7 @@ Current implementation is at **backend core complete, frontend needs polish** st
 - [x] Gray out unavailable runtime options
 - [x] Auto-generate actor ID suggestion based on runtime
 - [x] Validation feedback (e.g., "foreman already exists")
-- [ ] Actor setup wizard (step-by-step flow)
+- [ ] Actor setup wizard (step-by-step flow) - deferred
 
 #### Web UI - Group Management
 - [x] Group edit modal (title/topic)
@@ -224,13 +279,15 @@ Current implementation is at **backend core complete, frontend needs polish** st
 #### Web UI - Context & Presence
 - [x] Context panel (view vision/sketch/milestones/tasks/presence)
 - [x] Context editing (update vision/sketch via UI)
-- [ ] Real-time activity indicator per actor
+- [ ] Real-time activity indicator per actor - deferred
 
 #### Web UI - Polish
-- [ ] Message search/pagination/virtual scroll
-- [ ] Settings panel (group settings, actor settings, automation config)
+- [x] Message search/pagination API (backend complete)
+- [ ] Message search UI (frontend integration pending)
+- [ ] Virtual scroll for large message lists - deferred
+- [x] Settings panel (group settings, actor settings, automation config)
 - [x] @mention autocomplete in composer
-- [ ] Delivery status indicators (sent/delivered/read)
+- [ ] Delivery status indicators (sent/delivered/read) - deferred
 - [x] Interrupt button in terminal modal (Ctrl+C equivalent)
 - [x] Keyboard shortcuts (Ctrl+Enter to send, Escape to cancel)
 - [x] Scope list display (expandable details in header)
@@ -239,7 +296,7 @@ Current implementation is at **backend core complete, frontend needs polish** st
 ### P2: Nice to Have
 
 #### Productization
-- [ ] PyPI packaging (`pip install cccc`)
+- [ ] PyPI packaging (`pip install cccc-pair`)
 - [ ] Homebrew formula for macOS
 - [ ] IM bridge (Telegram/Slack) bound per group
 - [ ] Unified auth/token UX

@@ -160,19 +160,12 @@ export function TerminalModal({ groupId, actorId, actorTitle, onClose }: Props) 
           </div>
           <div className="flex gap-2">
             <button
-              className="rounded bg-rose-600 hover:bg-rose-500 text-white px-3 py-1 text-sm font-medium disabled:opacity-50"
+              className="rounded bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1 text-sm font-medium disabled:opacity-50"
               onClick={sendInterrupt}
               disabled={status !== "connected"}
-              title="Send interrupt signal (Ctrl+C)"
+              title="Send Ctrl+C to interrupt current operation"
             >
-              Interrupt
-            </button>
-            <button
-              className="rounded bg-slate-800 border border-slate-700 text-slate-200 px-3 py-1 text-sm font-medium"
-              onClick={focusTerminal}
-              title="Focus terminal input"
-            >
-              Focus
+              ⌃C
             </button>
             <button
               className="rounded bg-slate-200 text-slate-950 px-3 py-1 text-sm font-medium"

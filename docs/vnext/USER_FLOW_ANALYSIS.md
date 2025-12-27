@@ -79,8 +79,10 @@ cccc setup --runtime opencode # Configure MCP for OpenCode
 ### Step 3.1: Create working group
 
 **Web UI:**
-- Type title in sidebar input, click "+"
-- Group is created and selected
+- Click "+ New" button in sidebar
+- Modal opens with path input (required) and name input (auto-filled from directory)
+- Enter project directory path, name auto-fills
+- Click "Create Group"
 
 **CLI:**
 ```bash
@@ -91,7 +93,8 @@ cccc attach .  # Attach current directory
 **Status:**
 - [x] Group creation works (Web + CLI)
 - [x] Empty state guidance in Web UI
-- [ ] **G3.1.1**: No topic field in quick-create (only in edit modal)
+- [x] Create Group Modal with path-first flow (like VS Code)
+- [x] Auto-fill group name from directory name
 
 ### Step 3.2: Edit working group
 
@@ -129,9 +132,11 @@ cccc attach /path/to/project --group <group_id>
 ### Step 4.1: Add actor
 
 **Web UI:**
-- Click "+ actor" button
-- Fill form: ID, role, runtime, runner, title
+- Click "+ Add Actor" button in header
+- Modal opens with role, runtime, runner, ID, command, and title fields
+- Role selection: Foreman (★) or Peer
 - Runtime dropdown shows availability (grays out unavailable)
+- Runner selection: PTY (Terminal) or Headless (MCP)
 - Actor ID auto-suggested based on runtime
 - Command auto-filled based on runtime (editable)
 
@@ -143,7 +148,7 @@ cccc actor add custom --role peer --command "aider"
 ```
 
 **Status:**
-- [x] Actor add form with all fields
+- [x] Add Actor Modal with all fields
 - [x] Runtime availability detection
 - [x] Actor ID auto-suggestion
 - [x] Foreman uniqueness validation
@@ -153,8 +158,9 @@ cccc actor add custom --role peer --command "aider"
 ### Step 4.2: Start/stop actors
 
 **Web UI:**
-- Click "start" or "stop" button on actor badge
-- Click "Start" button in header to start all actors
+- Click actor badge to open dropdown menu
+- Select "Start" or "Stop" from menu
+- Or click "Start" button in header to start all actors
 
 **CLI:**
 ```bash
@@ -165,9 +171,10 @@ cccc group stop   # Stop all actors
 ```
 
 **Status:**
-- [x] Individual actor start/stop
+- [x] Individual actor start/stop via dropdown menu
 - [x] Group start/stop
 - [x] Status badge (enabled/disabled)
+- [x] Actor dropdown menu with consolidated actions
 
 ### Step 4.3: Edit actor (换班)
 
@@ -373,7 +380,8 @@ cccc_actor_remove: Remove peer
 
 | ID | Description | Effort |
 |----|-------------|--------|
-| G6.2.1 | Milestone/task editing in UI | Medium |
+| G5.3.1 | Message search | Medium |
+| G5.3.2 | Virtual scroll for large histories | Medium |
 
 ### P2 (Nice to have)
 
@@ -381,8 +389,6 @@ cccc_actor_remove: Remove peer
 |----|-------------|--------|
 | G1.1.1 | PyPI release | Medium |
 | G2.1.1 | First-time setup wizard | Large |
-| G5.3.1 | Message search | Medium |
-| G5.3.2 | Virtual scroll for large histories | Medium |
 
 ---
 
@@ -398,10 +404,12 @@ cccc_actor_remove: Remove peer
 
 1. ~~**No scope list display**~~ - ✅ Implemented (expandable details)
 2. ~~**No scope detach**~~ - ✅ Implemented (hover to show × button)
-3. **No group creation modal** - Only inline input (no topic field) - *Decided: not needed*
+3. ~~**No group creation modal**~~ - ✅ Implemented (path-first flow like VS Code)
 4. ~~**No actor edit**~~ - ✅ Implemented (stop → edit → start workflow)
-5. **No settings panel** - Automation config, etc.
+5. ~~**No settings panel**~~ - ✅ Implemented (automation config)
 6. ~~**No keyboard shortcuts**~~ - ✅ Implemented (Ctrl+Enter, Escape)
+7. ~~**Add Actor inline form cluttered**~~ - ✅ Converted to modal
+8. ~~**Actor buttons cluttered**~~ - ✅ Converted to dropdown menus
 
 ### Backend Gaps
 
@@ -422,6 +430,9 @@ cccc_actor_remove: Remove peer
 7. ~~Add multi-line input~~ ✅
 8. ~~Add scroll to bottom button~~ ✅
 9. ~~Add settings panel (automation config)~~ ✅
-10. Add milestone/task editing in Web UI
-11. PyPI release preparation
+10. ~~UI/UX Redesign: Create Group Modal~~ ✅
+11. ~~UI/UX Redesign: Add Actor Modal~~ ✅
+12. ~~UI/UX Redesign: Actor dropdown menus~~ ✅
+13. Add message search/pagination
+14. PyPI release preparation
 

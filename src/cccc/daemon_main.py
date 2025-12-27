@@ -48,6 +48,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         if resp.get("ok"):
             print("ccccd: already running")
             return 0
+        # Clean up stale socket/pid if daemon is not actually running
+        pid = read_pid(paths)
+        if pid > 0:
+            try:
+                os.kill(pid, 0)  # Check if process exists
+            except OSError:
+                # Process doesn't exist, clean up stale files
+                print("ccccd: cleaning up stale state from crashed daemon")
+                try:
+                    paths.sock_path.unlink(missing_ok=True)
+                    paths.pid_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
         pid = _spawn_daemon(paths)
         print(f"ccccd: started pid={pid}")
         return 0

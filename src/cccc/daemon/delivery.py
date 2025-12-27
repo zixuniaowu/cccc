@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -346,18 +347,30 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
     """向 PTY 投递消息文本。
     
     投递策略：
-    1. 单行消息：直接发送 + 回车
-    2. 多行消息：使用 bracketed paste 序列包裹
+    1. 先发送禁用 bracketed paste 模式的转义序列
+    2. 发送文本内容
+    3. 延迟后发送回车键
+    
+    关键发现：
+    - 原子发送（payload + submit 一起）从未成功过
+    - 延迟发送有一定成功率
+    - 问题可能是 CLI 应用的 readline 处理时序问题
     """
+    import logging
+    logger = logging.getLogger("cccc.delivery")
+    
     gid = str(group.group_id or "").strip()
     aid = str(actor_id or "").strip()
     if not gid or not aid:
+        logger.warning(f"[pty_submit_text] Missing gid={gid} or aid={aid}")
         return False
     if not pty_runner.SUPERVISOR.actor_running(gid, aid):
+        logger.warning(f"[pty_submit_text] Actor not running: {gid}/{aid}")
         return False
 
     raw = (text or "").rstrip("\n")
     if not raw:
+        logger.warning(f"[pty_submit_text] Empty text for {gid}/{aid}")
         return False
 
     multiline = ("\n" in raw) or ("\r" in raw)
@@ -373,12 +386,36 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
 
     payload = raw.encode("utf-8", errors="replace")
     
-    if multiline:
-        # 对于多行消息，使用 bracketed paste
-        payload = b"\x1b[200~" + payload + b"\x1b[201~"
+    logger.info(f"[pty_submit_text] Sending to {gid}/{aid}: multiline={multiline}, mode={mode}, len={len(payload)}")
     
-    payload += submit
-    pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=payload)
+    # 策略：先禁用 bracketed paste 模式，然后发送文本，最后延迟发送回车
+    # 禁用 bracketed paste 模式的转义序列: \x1b[?2004l
+    disable_bracketed_paste = b"\x1b[?2004l"
+    
+    if multiline:
+        # 多行消息：使用 bracketed paste 包裹
+        text_payload = b"\x1b[200~" + payload + b"\x1b[201~"
+    else:
+        # 单行消息：直接发送
+        text_payload = payload
+    
+    # 第一步：发送禁用 bracketed paste + 文本内容
+    pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=disable_bracketed_paste + text_payload)
+    logger.info(f"[pty_submit_text] Sent text payload, scheduling delayed submit")
+    
+    # 第二步：延迟发送回车（给 CLI 应用时间处理输入）
+    if submit:
+        def delayed_submit():
+            time.sleep(1.5)  # 1.5秒延迟，用户反馈这个延迟有一定成功率
+            if pty_runner.SUPERVISOR.actor_running(gid, aid):
+                pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=submit)
+                logger.info(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
+            else:
+                logger.warning(f"[pty_submit_text] Actor no longer running for delayed submit: {gid}/{aid}")
+        
+        submit_thread = threading.Thread(target=delayed_submit, daemon=True)
+        submit_thread.start()
+    
     return True
 
 
@@ -506,20 +543,30 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
     has_nudge = any(m.kind == "system.notify" and m.notify_kind == "nudge" for m in messages)
     add_hint = is_first or has_nudge
     
-    # Check if preamble needs to be sent
-    if not is_preamble_sent(group, aid):
+    # Build the full delivery text
+    parts: List[str] = []
+    
+    # Check if preamble needs to be sent - prepend to message
+    preamble_already_sent = is_preamble_sent(group, aid)
+    if not preamble_already_sent:
         try:
             prompt = render_system_prompt(group=group, actor=actor)
             if prompt and prompt.strip():
-                pty_submit_text(group, actor_id=aid, text=prompt, file_fallback=True)
-                mark_preamble_sent(group, aid)
+                parts.append(prompt.strip())
         except Exception:
             pass
     
-    # Render and deliver batched messages
-    text = render_batched_messages(messages, add_hint=add_hint)
-    if text:
-        pty_submit_text(group, actor_id=aid, text=text)
+    # Render batched messages
+    message_text = render_batched_messages(messages, add_hint=add_hint)
+    if message_text:
+        parts.append(message_text)
+    
+    # Combine and send as single delivery
+    if parts:
+        full_text = "\n\n".join(parts)
+        result = pty_submit_text(group, actor_id=aid, text=full_text)
+        if result and not preamble_already_sent:
+            mark_preamble_sent(group, aid)
     
     if is_first:
         THROTTLE.mark_hint_sent(gid, aid)
@@ -535,12 +582,11 @@ def tick_delivery(group: Group) -> None:
         aid = str(actor.get("id") or "").strip()
         if not aid:
             continue
-        if not bool(actor.get("enabled", True)):
-            continue
         # Only for PTY runners
         runner_kind = str(actor.get("runner") or "pty").strip()
         if runner_kind != "pty":
             continue
+        # Check if actor process is actually running
         if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
             continue
         

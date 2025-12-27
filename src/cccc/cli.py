@@ -110,18 +110,19 @@ def _show_welcome() -> None:
 
 def _default_entry() -> int:
     """Default entry: start daemon + web together, stop both on Ctrl+C."""
-    import atexit
     import signal
-    import subprocess
     import threading
     
-    from .ports.web.main import main as web_main
+    from .paths import ensure_home
     
     # Show welcome message on first run
     if _is_first_run():
         _show_welcome()
     
     daemon_process = None
+    shutdown_requested = False
+    home = ensure_home()
+    log_path = home / "daemon" / "ccccd.log"
     
     def _start_daemon() -> bool:
         nonlocal daemon_process
@@ -130,12 +131,23 @@ def _default_entry() -> int:
         if resp.get("ok"):
             return True
         
-        # Start daemon as subprocess
+        # Clean up stale socket/pid files
+        sock_path = home / "daemon" / "ccccd.sock"
+        pid_path = home / "daemon" / "ccccd.pid"
+        try:
+            sock_path.unlink(missing_ok=True)
+            pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        
+        # Start daemon as subprocess, capture output to log file
+        (home / "daemon").mkdir(parents=True, exist_ok=True)
+        log_file = log_path.open("a", encoding="utf-8")
         try:
             daemon_process = subprocess.Popen(
                 [sys.executable, "-m", "cccc.daemon_main", "run"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=log_file,
                 env=os.environ.copy(),
             )
         except Exception as e:
@@ -145,6 +157,17 @@ def _default_entry() -> int:
         # Wait for daemon to be ready
         for _ in range(50):
             time.sleep(0.1)
+            # Check if daemon crashed
+            if daemon_process.poll() is not None:
+                print(f"[cccc] Daemon crashed! Check log: {log_path}", file=sys.stderr)
+                # Show last 20 lines of log
+                try:
+                    lines = log_path.read_text().strip().split("\n")[-20:]
+                    for line in lines:
+                        print(f"  {line}", file=sys.stderr)
+                except Exception:
+                    pass
+                return False
             resp = call_daemon({"op": "ping"})
             if resp.get("ok"):
                 return True
@@ -152,8 +175,28 @@ def _default_entry() -> int:
         print("[cccc] Daemon failed to start in time", file=sys.stderr)
         return False
     
+    def _monitor_daemon() -> None:
+        """Background thread to monitor daemon and report crashes."""
+        nonlocal daemon_process, shutdown_requested
+        while not shutdown_requested and daemon_process is not None:
+            ret = daemon_process.poll()
+            if ret is not None and not shutdown_requested:
+                print(f"\n[cccc] Daemon crashed (exit code {ret})! Check log: {log_path}", file=sys.stderr)
+                try:
+                    lines = log_path.read_text().strip().split("\n")[-15:]
+                    for line in lines:
+                        print(f"  {line}", file=sys.stderr)
+                except Exception:
+                    pass
+                break
+            time.sleep(1.0)
+    
     def _stop_daemon() -> None:
-        nonlocal daemon_process
+        nonlocal daemon_process, shutdown_requested
+        if shutdown_requested:
+            return
+        shutdown_requested = True
+        
         # Send shutdown command
         try:
             call_daemon({"op": "shutdown"}, timeout_s=2.0)
@@ -168,6 +211,11 @@ def _default_entry() -> int:
                 daemon_process.kill()
             daemon_process = None
     
+    def _signal_handler(signum: int, frame: Any) -> None:
+        print("\n[cccc] Shutting down...", file=sys.stderr)
+        _stop_daemon()
+        sys.exit(0)
+    
     # Start daemon
     print("[cccc] Starting daemon...", file=sys.stderr)
     if not _start_daemon():
@@ -175,42 +223,38 @@ def _default_entry() -> int:
         return 1
     print("[cccc] Daemon started", file=sys.stderr)
     
-    # Register cleanup
-    atexit.register(_stop_daemon)
+    # Start daemon monitor thread
+    monitor_thread = threading.Thread(target=_monitor_daemon, daemon=True)
+    monitor_thread.start()
+    
+    # Register signal handlers for clean shutdown
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
     
     # Build web args from environment
-    argv: list[str] = []
-    host = str(os.environ.get("CCCC_WEB_HOST") or "").strip()
-    if host:
-        argv.extend(["--host", host])
-    port = str(os.environ.get("CCCC_WEB_PORT") or "").strip()
-    if port:
-        argv.extend(["--port", port])
-    if str(os.environ.get("CCCC_WEB_RELOAD") or "").strip():
-        argv.append("--reload")
-    log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip()
-    if log_level:
-        argv.extend(["--log-level", log_level])
+    host = str(os.environ.get("CCCC_WEB_HOST") or "").strip() or "127.0.0.1"
+    port = int(os.environ.get("CCCC_WEB_PORT") or 8848)
+    log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip() or "info"
+    reload_mode = bool(os.environ.get("CCCC_WEB_RELOAD"))
     
     # Run web (blocking)
     try:
-        # Web main now just checks daemon, doesn't start it
-        # We need to run uvicorn directly here
         import uvicorn
         print("[cccc] Starting web server...", file=sys.stderr)
         uvicorn.run(
             "cccc.ports.web.app:create_app",
             factory=True,
-            host=host or "127.0.0.1",
-            port=int(port) if port else 8848,
-            log_level=log_level or "info",
-            reload=bool(os.environ.get("CCCC_WEB_RELOAD")),
+            host=host,
+            port=port,
+            log_level=log_level,
+            reload=reload_mode,
         )
-    except (KeyboardInterrupt, SystemExit):
+    except SystemExit:
         pass
     finally:
-        print("\n[cccc] Shutting down...", file=sys.stderr)
-        _stop_daemon()
+        if not shutdown_requested:
+            print("\n[cccc] Shutting down...", file=sys.stderr)
+            _stop_daemon()
     
     return 0
 
@@ -1531,8 +1575,8 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 results["notes"].append(f"codex: CLI not found, please add MCP manually: {' '.join(cccc_cmd)}")
         
         elif rt == "droid":
-            # Droid: .droid/skills/cccc-ops/SKILL.md (assuming similar structure)
-            droid_skill_dir = project_path / ".droid" / "skills" / "cccc-ops"
+            # Droid (Factory): .factory/skills/cccc-ops/SKILL.md
+            droid_skill_dir = project_path / ".factory" / "skills" / "cccc-ops"
             droid_skill_dir.mkdir(parents=True, exist_ok=True)
             (droid_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
             results["skills"]["droid"] = str(droid_skill_dir / "SKILL.md")
@@ -1553,17 +1597,36 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 results["notes"].append(f"droid: CLI not found, please add MCP manually: {' '.join(cccc_cmd)}")
         
         elif rt == "opencode":
-            # OpenCode: .opencode/skill/cccc-ops/SKILL.md
-            opencode_skill_dir = project_path / ".opencode" / "skill" / "cccc-ops"
+            # OpenCode: .opencode/skills/cccc-ops/SKILL.md
+            opencode_skill_dir = project_path / ".opencode" / "skills" / "cccc-ops"
             opencode_skill_dir.mkdir(parents=True, exist_ok=True)
             (opencode_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
             results["skills"]["opencode"] = str(opencode_skill_dir / "SKILL.md")
             
-            # OpenCode: MCP requires manual config
-            results["notes"].append(
-                f"opencode: MCP requires manual configuration. Add to your opencode config:\n"
-                f'  "mcpServers": {{"cccc": {{"command": "{cccc_cmd[0]}", "args": {json.dumps(cccc_cmd[1:])}}}}}'
-            )
+            # OpenCode: MCP config in opencode.json
+            opencode_config_path = project_path / "opencode.json"
+            mcp_config = {
+                "mcpServers": {
+                    "cccc": {
+                        "command": cccc_cmd[0],
+                        "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
+                    }
+                }
+            }
+            
+            existing = {}
+            if opencode_config_path.exists():
+                try:
+                    existing = json.loads(opencode_config_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            
+            if "mcpServers" not in existing:
+                existing["mcpServers"] = {}
+            existing["mcpServers"]["cccc"] = mcp_config["mcpServers"]["cccc"]
+            
+            opencode_config_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+            results["mcp"]["opencode"] = str(opencode_config_path)
     
     # Clean up empty notes
     if not results["notes"]:
