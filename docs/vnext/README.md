@@ -9,6 +9,7 @@
 3) `docs/vnext/LEDGER_SCHEMA.md`：事实流（ledger）v1 的最小字段与事件类型约定
 4) `docs/vnext/AGENT_GUIDANCE.md`：在拿不到 system prompt 常驻权限时，如何让 agents 稳定理解角色/边界/规程（含 skills 共享目录的取舍）
 5) `docs/vnext/IM_MESSAGING.md`：IM 风格消息机制设计（回复、已读、投递）
+6) `docs/vnext/IM_BRIDGE.md`：IM 桥接设计（Telegram/Slack/Discord 接入）
 
 约定：
 - **单一事实源**：`CCCC_HOME/groups/<group_id>/ledger.jsonl` 是 group 的共享事实流（append-only）。

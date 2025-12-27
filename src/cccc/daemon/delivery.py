@@ -5,11 +5,17 @@ This module handles:
 2. Message Throttling: Batches messages within a time window to prevent message bombing
 3. MCP Hints: Adds MCP usage hints on first delivery and nudge
 4. Delivery Formatting: Renders messages in IM-style format for PTY injection
+5. State-aware Delivery: Respects group state (active/idle/paused)
 
 Key design decisions:
 - delivery_min_interval_seconds: Minimum interval between deliveries (default 60s)
 - Messages within the window are batched and delivered together
 - MCP hints are added on first delivery and nudge only
+
+Group State Behavior:
+- active: All messages delivered normally
+- idle: chat.message delivered (auto-transitions to active), system.notify blocked
+- paused: All PTY delivery blocked (messages accumulate in inbox only)
 """
 from __future__ import annotations
 
@@ -22,7 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ..kernel.actors import find_actor, list_actors
-from ..kernel.group import Group
+from ..kernel.group import Group, get_group_state, set_group_state
 from ..kernel.inbox import is_message_for_actor
 from ..kernel.system_prompt import render_system_prompt
 from ..paths import ensure_home
@@ -47,6 +53,49 @@ def _get_delivery_config(group: Group) -> Dict[str, Any]:
     return {
         "min_interval_seconds": int(delivery.get("min_interval_seconds", DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS)),
     }
+
+
+# ============================================================================
+# State-aware Delivery Helpers
+# ============================================================================
+
+
+def should_deliver_message(group: Group, kind: str) -> bool:
+    """Check if a message should be delivered based on group state.
+    
+    Args:
+        group: The group to check
+        kind: Message kind ("chat.message" or "system.notify")
+    
+    Returns:
+        True if the message should be delivered to PTY, False if it should only go to inbox
+    
+    State behavior:
+        - active: All messages delivered
+        - idle: chat.message delivered (triggers auto-transition to active), system.notify blocked
+        - paused: All messages blocked (inbox only)
+    """
+    state = get_group_state(group)
+    
+    if state == "paused":
+        # Paused: block all PTY delivery
+        return False
+    
+    if state == "idle":
+        # Idle: only chat.message allowed (system.notify blocked)
+        if kind == "chat.message":
+            # Auto-transition to active when chat message arrives
+            try:
+                set_group_state(group, state="active")
+            except Exception:
+                pass
+            return True
+        else:
+            # system.notify blocked in idle state
+            return False
+    
+    # Active: all messages delivered
+    return True
 
 
 # ============================================================================
@@ -518,6 +567,11 @@ def queue_system_notify(
 def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
     """Flush pending messages for an actor if ready.
     
+    Respects group state:
+    - active: All messages delivered
+    - idle: chat.message delivered (auto-transitions to active), system.notify blocked
+    - paused: All messages blocked (stay in queue for later)
+    
     Returns True if messages were delivered.
     """
     gid = group.group_id
@@ -533,6 +587,37 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
     if not messages:
         return False
     
+    # Filter messages based on group state
+    deliverable: List[PendingMessage] = []
+    requeue: List[PendingMessage] = []
+    
+    for msg in messages:
+        if should_deliver_message(group, msg.kind):
+            deliverable.append(msg)
+        else:
+            # Message blocked by state - requeue for later
+            requeue.append(msg)
+    
+    # Requeue blocked messages
+    for msg in requeue:
+        THROTTLE.queue_message(
+            gid, aid,
+            event_id=msg.event_id,
+            by=msg.by,
+            to=msg.to,
+            text=msg.text,
+            reply_to=msg.reply_to,
+            quote_text=msg.quote_text,
+            ts=msg.ts,
+            kind=msg.kind,
+            notify_kind=msg.notify_kind,
+            notify_title=msg.notify_title,
+            notify_message=msg.notify_message,
+        )
+    
+    if not deliverable:
+        return False
+    
     actor = find_actor(group, aid)
     if not isinstance(actor, dict):
         return False
@@ -540,7 +625,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
     # Check if we should add MCP hint
     # Add hint on first delivery or if any message is a nudge
     is_first = THROTTLE.is_first_delivery(gid, aid)
-    has_nudge = any(m.kind == "system.notify" and m.notify_kind == "nudge" for m in messages)
+    has_nudge = any(m.kind == "system.notify" and m.notify_kind == "nudge" for m in deliverable)
     add_hint = is_first or has_nudge
     
     # Build the full delivery text
@@ -557,7 +642,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
             pass
     
     # Render batched messages
-    message_text = render_batched_messages(messages, add_hint=add_hint)
+    message_text = render_batched_messages(deliverable, add_hint=add_hint)
     if message_text:
         parts.append(message_text)
     

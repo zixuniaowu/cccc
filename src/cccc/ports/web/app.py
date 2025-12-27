@@ -89,6 +89,7 @@ class GroupSettingsRequest(BaseModel):
     keepalive_max_per_actor: Optional[int] = None
     silence_timeout_seconds: Optional[int] = None
     min_interval_seconds: Optional[int] = None  # delivery throttle
+    standup_interval_seconds: Optional[int] = None  # periodic review interval
     by: str = Field(default="user")
 
 
@@ -437,6 +438,7 @@ def create_app() -> FastAPI:
                     "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
                     "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
                     "min_interval_seconds": int(delivery.get("min_interval_seconds", 60)),
+                    "standup_interval_seconds": int(automation.get("standup_interval_seconds", 900)),
                 }
             }
         }
@@ -457,6 +459,8 @@ def create_app() -> FastAPI:
             patch["silence_timeout_seconds"] = max(0, req.silence_timeout_seconds)
         if req.min_interval_seconds is not None:
             patch["min_interval_seconds"] = max(0, req.min_interval_seconds)
+        if req.standup_interval_seconds is not None:
+            patch["standup_interval_seconds"] = max(0, req.standup_interval_seconds)
         
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}

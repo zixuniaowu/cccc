@@ -2,11 +2,7 @@
 
 Automation levels:
 1. Message-level: nudge (unread timeout)
-2. Session-level: actor idle detection, keepalive, group silence detection
-
-Removed mechanisms (per design decision):
-- self_check: Foreman should observe and decide when to prompt actors
-- system_refresh: Not needed, actors can use MCP to get latest info
+2. Session-level: actor idle detection, keepalive, group silence detection, standup
 
 All automation respects group state:
 - active: All automation enabled
@@ -43,6 +39,7 @@ class AutomationConfig:
     keepalive_delay_seconds: int      # Send keepalive after Next: declaration
     keepalive_max_per_actor: int      # Max consecutive keepalives per actor
     silence_timeout_seconds: int      # Check group if silent for this long
+    standup_interval_seconds: int     # Periodic standup reminder for foreman (0 to disable)
 
 
 def _cfg(group: Group) -> AutomationConfig:
@@ -65,6 +62,7 @@ def _cfg(group: Group) -> AutomationConfig:
         keepalive_delay_seconds=_int("keepalive_delay_seconds", 120),
         keepalive_max_per_actor=_int("keepalive_max_per_actor", 3),
         silence_timeout_seconds=_int("silence_timeout_seconds", 600),
+        standup_interval_seconds=_int("standup_interval_seconds", 900),  # Default 15 minutes
     )
 
 
@@ -204,6 +202,7 @@ class AutomationManager:
         self._check_actor_idle(group, cfg, now)
         self._check_keepalive(group, cfg, now)
         self._check_silence(group, cfg, now)
+        self._check_standup(group, cfg, now)
 
     def _check_nudge(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
         """Check for actors with old unread messages and send nudge."""
@@ -476,10 +475,98 @@ class AutomationManager:
             data=notify_data.model_dump(),
         )
 
+    def _check_standup(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
+        """Check if it's time for a periodic standup meeting.
+        
+        Standup is a team review mechanism where foreman gathers peers to:
+        1. Update progress in context
+        2. Reflect on approach - is it correct? any blind spots?
+        3. Share ideas and concerns
+        4. Collectively decide on adjustments
+        """
+        if cfg.standup_interval_seconds <= 0:
+            return
+        
+        # Find foreman - standup is only sent to foreman
+        foreman = find_foreman(group)
+        if foreman is None:
+            return
+        foreman_id = str(foreman.get("id") or "").strip()
+        if not foreman_id:
+            return
+        
+        # Check if foreman is running
+        runner_kind = str(foreman.get("runner") or "pty").strip()
+        if runner_kind == "headless":
+            if not headless_runner.SUPERVISOR.actor_running(group.group_id, foreman_id):
+                return
+        else:
+            if not pty_runner.SUPERVISOR.actor_running(group.group_id, foreman_id):
+                return
+
+        with self._lock:
+            state = _load_state(group)
+            last_standup = state.get("last_standup_at")
+            
+            if last_standup:
+                last_standup_dt = parse_utc_iso(str(last_standup))
+                if last_standup_dt is not None:
+                    elapsed = (now - last_standup_dt).total_seconds()
+                    if elapsed < float(cfg.standup_interval_seconds):
+                        return
+            
+            state["last_standup_at"] = utc_now_iso()
+            _save_state(group, state)
+
+        # Calculate minutes since last standup for the message
+        interval_minutes = cfg.standup_interval_seconds // 60
+
+        standup_message = f"""{interval_minutes} minutes have passed. Time for a team review.
+
+Foreman, please initiate a stand-up with @peers:
+
+1. ASK PEERS TO REFLECT (not just report):
+   - Update your progress in context (use cccc_task_update)
+   - Step back and think: Is our approach correct? Any blind spots?
+   - Any better ideas or alternative approaches?
+   - What concerns or risks do you see?
+
+2. COLLECT & SYNTHESIZE:
+   - Gather insights from all peers
+   - Look for patterns, conflicts, or new opportunities
+   - Peers are collaborators, not subordinates - value their perspectives
+
+3. DECIDE TOGETHER:
+   - Adjust direction if needed based on collective wisdom
+   - Update vision/sketch to reflect new understanding
+   - Reallocate work if better approaches emerge
+
+Example: "@peers Stand-up time. Please: 1) Update your task progress, 2) Share any concerns about our current approach, 3) Suggest improvements if you see any.\""""
+
+        notify_data = SystemNotifyData(
+            kind="standup",
+            priority="normal",
+            title="Stand-up Meeting",
+            message=standup_message,
+            target_actor_id=foreman_id,
+            requires_ack=False,
+        )
+        append_event(
+            group.ledger_path,
+            kind="system.notify",
+            group_id=group.group_id,
+            scope_key="",
+            by="system",
+            data=notify_data.model_dump(),
+        )
+
     def on_new_message(self, group: Group) -> None:
-        """Called when a new message arrives. Auto-transitions idle -> active."""
-        state = get_group_state(group)
-        if state == "idle":
-            # Auto-transition to active on new message
-            from ..kernel.group import set_group_state
-            set_group_state(group, state="active")
+        """Called when a new message arrives.
+        
+        Note: Auto-transition from idle -> active is now handled in delivery.py
+        at the point of actual PTY delivery. This ensures the transition only
+        happens when a message is actually delivered, not just queued.
+        """
+        # State transition is handled in delivery.should_deliver_message()
+        pass
+

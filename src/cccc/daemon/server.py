@@ -649,7 +649,13 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
-        allowed = {"nudge_after_seconds", "actor_idle_timeout_seconds", "keepalive_delay_seconds", "keepalive_max_per_actor", "silence_timeout_seconds", "min_interval_seconds"}
+        
+        # Define allowed keys and their target sections
+        delivery_keys = {"min_interval_seconds"}
+        automation_keys = {"nudge_after_seconds", "actor_idle_timeout_seconds", "keepalive_delay_seconds", 
+                          "keepalive_max_per_actor", "silence_timeout_seconds", "standup_interval_seconds"}
+        allowed = delivery_keys | automation_keys
+        
         unknown = set(patch.keys()) - allowed
         if unknown:
             return _error("invalid_patch", "invalid patch keys", details={"unknown_keys": sorted(unknown)}), False
@@ -657,14 +663,32 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("invalid_patch", "empty patch"), False
         try:
             require_group_permission(group, by=by, action="group.settings_update")
-            # Update delivery settings in group.yaml
-            delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
-            for k, v in patch.items():
-                delivery[k] = int(v)
-            group.doc["delivery"] = delivery
+            
+            # Update delivery settings
+            delivery_patch = {k: v for k, v in patch.items() if k in delivery_keys}
+            if delivery_patch:
+                delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
+                for k, v in delivery_patch.items():
+                    delivery[k] = int(v)
+                group.doc["delivery"] = delivery
+            
+            # Update automation settings
+            automation_patch = {k: v for k, v in patch.items() if k in automation_keys}
+            if automation_patch:
+                automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
+                for k, v in automation_patch.items():
+                    automation[k] = int(v)
+                group.doc["automation"] = automation
+            
             group.save()
         except Exception as e:
             return _error("group_settings_update_failed", str(e)), False
+        
+        # Return combined settings
+        combined_settings = {}
+        combined_settings.update(group.doc.get("delivery") or {})
+        combined_settings.update(group.doc.get("automation") or {})
+        
         ev = append_event(
             group.ledger_path,
             kind="group.settings_update",
@@ -673,7 +697,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             by=by,
             data={"patch": dict(patch)},
         )
-        return DaemonResponse(ok=True, result={"group_id": group.group_id, "settings": delivery, "event": ev}), False
+        return DaemonResponse(ok=True, result={"group_id": group.group_id, "settings": combined_settings, "event": ev}), False
 
     if op == "group_detach_scope":
         group_id = str(args.get("group_id") or "").strip()
@@ -771,6 +795,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             running = pty_runner.SUPERVISOR.group_running(gid) if gid else False
             item = dict(g)
             item["running"] = bool(running)
+            # Load full group doc to get state
+            if gid:
+                full_group = load_group(gid)
+                if full_group is not None:
+                    item["state"] = full_group.doc.get("state", "active")
             out.append(item)
         return DaemonResponse(ok=True, result={"groups": out}), False
 

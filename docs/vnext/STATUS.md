@@ -87,8 +87,11 @@ Current implementation is at **backend core complete, frontend needs polish** st
 - P1 UI/UX Redesign: Simplified header layout
 - P1 UI/UX Redesign: Click-outside handler for dropdown menus
 
+### 🔜 Next Up (P1.5)
+- IM Bridge (Telegram/Slack/Discord) - Design complete, implementation pending
+  - See `docs/vnext/IM_BRIDGE.md` for full design
+
 ### 🔜 Deferred Capabilities (P2)
-- IM bridge (Telegram/Slack)
 - RFD/decision/approval mechanism
 - Multi-scope/multi-repo collaboration
 
@@ -295,10 +298,19 @@ Current implementation is at **backend core complete, frontend needs polish** st
 
 ### P2: Nice to Have
 
+#### IM Bridge (Design Complete)
+- [x] Design document: `docs/vnext/IM_BRIDGE.md`
+- [ ] Core framework: `src/cccc/ports/im/bridge.py`
+- [ ] Command parser: `src/cccc/ports/im/commands.py`
+- [ ] Telegram adapter: `src/cccc/ports/im/adapters/telegram.py`
+- [ ] Slack adapter: `src/cccc/ports/im/adapters/slack.py`
+- [ ] Discord adapter: `src/cccc/ports/im/adapters/discord.py`
+- [ ] CLI: `cccc im set/start/stop/status`
+
 #### Productization
 - [ ] PyPI packaging (`pip install cccc-pair`)
 - [ ] Homebrew formula for macOS
-- [ ] IM bridge (Telegram/Slack) bound per group
+- [ ] IM bridge CLI commands (`cccc im set/start/stop/status`)
 - [ ] Unified auth/token UX
 
 #### Advanced Features
