@@ -101,3 +101,24 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   kilocode: { label: "KiloCode", desc: "Autonomous coding capabilities" },
   custom: { label: "Custom", desc: "Enter your own command" },
 };
+
+// Runtime colors for visual distinction
+// Colors chosen for: brand association, accessibility, visual harmony
+export const RUNTIME_COLORS: Record<string, { bg: string; text: string; border: string; dot: string }> = {
+  claude: { bg: "bg-orange-900/30", text: "text-orange-300", border: "border-orange-600/50", dot: "bg-orange-400" },
+  codex: { bg: "bg-emerald-900/30", text: "text-emerald-300", border: "border-emerald-600/50", dot: "bg-emerald-400" },
+  droid: { bg: "bg-violet-900/30", text: "text-violet-300", border: "border-violet-600/50", dot: "bg-violet-400" },
+  opencode: { bg: "bg-cyan-900/30", text: "text-cyan-300", border: "border-cyan-600/50", dot: "bg-cyan-400" },
+  gemini: { bg: "bg-blue-900/30", text: "text-blue-300", border: "border-blue-600/50", dot: "bg-blue-400" },
+  copilot: { bg: "bg-slate-800/50", text: "text-slate-300", border: "border-slate-500/50", dot: "bg-slate-400" },
+  cursor: { bg: "bg-pink-900/30", text: "text-pink-300", border: "border-pink-600/50", dot: "bg-pink-400" },
+  auggie: { bg: "bg-amber-900/30", text: "text-amber-300", border: "border-amber-600/50", dot: "bg-amber-400" },
+  kilocode: { bg: "bg-lime-900/30", text: "text-lime-300", border: "border-lime-600/50", dot: "bg-lime-400" },
+  custom: { bg: "bg-gray-800/50", text: "text-gray-300", border: "border-gray-600/50", dot: "bg-gray-400" },
+  user: { bg: "bg-sky-900/30", text: "text-sky-300", border: "border-sky-600/50", dot: "bg-sky-400" },
+};
+
+// Helper to get runtime color, with fallback
+export function getRuntimeColor(runtime?: string) {
+  return RUNTIME_COLORS[runtime || "custom"] || RUNTIME_COLORS.custom;
+}

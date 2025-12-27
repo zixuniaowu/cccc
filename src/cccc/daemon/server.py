@@ -1021,8 +1021,14 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             # Note: role is auto-determined by position (first enabled = foreman)
             if runner not in ("pty", "headless"):
                 raise ValueError("invalid runner (must be 'pty' or 'headless')")
-            if runtime not in ("claude", "codex", "droid", "opencode", "custom"):
-                raise ValueError("invalid runtime (must be 'claude', 'codex', 'droid', 'opencode', or 'custom')")
+            if runtime not in ("claude", "codex", "droid", "opencode", "gemini", "copilot", "cursor", "auggie", "kilocode", "custom"):
+                raise ValueError("invalid runtime")
+            
+            # Auto-generate actor_id if not provided (use runtime as prefix)
+            if not actor_id:
+                from ..kernel.actors import generate_actor_id
+                actor_id = generate_actor_id(group, runtime=runtime)
+            
             command: list[str] = []
             if isinstance(command_raw, list) and all(isinstance(x, str) for x in command_raw):
                 command = [str(x) for x in command_raw if str(x).strip()]
@@ -1033,6 +1039,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     "codex": ["codex"],
                     "droid": ["droid"],
                     "opencode": ["opencode"],
+                    "gemini": ["gemini"],
+                    "copilot": ["copilot"],
+                    "cursor": ["cursor-agent"],
+                    "auggie": ["auggie"],
+                    "kilocode": ["kilocode"],
                 }
                 command = runtime_commands.get(runtime, [])
             env: Dict[str, str] = {}

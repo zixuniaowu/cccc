@@ -15,6 +15,8 @@ import {
   DirSuggestion,
   RUNTIME_DEFAULTS,
   RUNTIME_INFO,
+  RUNTIME_COLORS,
+  getRuntimeColor,
 } from "./types";
 
 function classNames(...xs: Array<string | false | null | undefined>) {
@@ -124,7 +126,7 @@ function ActorChip({
         className={classNames(
           "flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-all",
           isRunning
-            ? "border-slate-600/50 bg-slate-800/60 hover:bg-slate-700/60"
+            ? `${getRuntimeColor(actor.runtime).border} ${getRuntimeColor(actor.runtime).bg} hover:brightness-110`
             : "border-slate-700/30 bg-slate-900/40 text-slate-400"
         )}
         onClick={(e) => {
@@ -138,18 +140,23 @@ function ActorChip({
             !isRunning
               ? "bg-slate-600"
               : isWorking
-              ? "bg-emerald-400 animate-pulse"
+              ? `${getRuntimeColor(actor.runtime).dot} animate-pulse`
               : isIdle
               ? "bg-amber-400"
-              : "bg-emerald-400"
+              : getRuntimeColor(actor.runtime).dot
           )}
         />
-        <span className={classNames("font-medium", isRunning ? "text-slate-200" : "text-slate-400")}>
+        <span className={classNames("font-medium", isRunning ? getRuntimeColor(actor.runtime).text : "text-slate-400")}>
           {actor.id}
         </span>
-        {actor.role === "foreman" && <span className="text-amber-400">★</span>}
+        {actor.role === "foreman" && (
+          <span className="text-[9px] px-1 py-0.5 rounded bg-amber-900/50 text-amber-300 font-medium">foreman</span>
+        )}
         {rtInfo && (
-          <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-700/50 text-slate-400">{rtInfo.label}</span>
+          <span className={classNames(
+            "text-[9px] px-1.5 py-0.5 rounded",
+            isRunning ? `${getRuntimeColor(actor.runtime).bg} ${getRuntimeColor(actor.runtime).text}` : "bg-slate-700/50 text-slate-400"
+          )}>{rtInfo.label}</span>
         )}
         {unreadCount > 0 && (
           <span className="bg-rose-500 text-white text-[9px] px-1.5 py-0.5 rounded-full font-medium">
@@ -1474,12 +1481,15 @@ export default function App() {
                 const readStatus = ev._read_status;
                 const recipients = ev.data?.to as string[] | undefined;
                 
-                // Get message style based on sender
+                // Get sender's runtime for color
+                const senderActor = actors.find(a => a.id === ev.by);
+                const senderRuntime = isUserMessage ? "user" : (senderActor?.runtime || "custom");
+                const senderColor = getRuntimeColor(senderRuntime);
+                
+                // Get message style based on sender's runtime
                 const getMessageStyle = () => {
-                  if (isUserMessage) return "border-emerald-900/50 bg-emerald-950/20";
-                  if (isAgentMessage) return "border-blue-900/50 bg-blue-950/20";
                   if (isNotify) return "border-amber-900/50 bg-amber-950/20";
-                  return getEventKindStyle(ev.kind || "");
+                  return `${senderColor.border} ${senderColor.bg}`;
                 };
                 
                 return (
@@ -1496,7 +1506,7 @@ export default function App() {
                         {isMessage && (
                           <span className={classNames(
                             "text-[10px] px-1.5 py-0.5 rounded font-medium",
-                            isUserMessage ? "bg-emerald-900/60 text-emerald-200" : "bg-blue-900/60 text-blue-200"
+                            senderColor.bg, senderColor.text
                           )}>
                             {ev.by || "unknown"}
                           </span>

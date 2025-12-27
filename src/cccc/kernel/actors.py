@@ -61,8 +61,16 @@ def validate_actor_id(actor_id: str) -> str:
     return aid
 
 
-def generate_actor_id(group: Group, prefix: str = "agent") -> str:
-    """Generate a unique actor ID like agent-1, agent-2, etc."""
+def generate_actor_id(group: Group, prefix: str = "agent", runtime: str = "") -> str:
+    """Generate a unique actor ID.
+    
+    If runtime is provided, uses runtime as prefix (e.g., claude-1, codex-1).
+    Otherwise uses the provided prefix (default: agent-1, agent-2).
+    """
+    # Use runtime as prefix if provided and valid
+    if runtime and runtime != "custom":
+        prefix = runtime
+    
     existing = {str(a.get("id", "")) for a in list_actors(group)}
     for i in range(1, 1000):
         candidate = f"{prefix}-{i}"
@@ -312,10 +320,10 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
         runtime = patch.get("runtime")
         if runtime is None:
             item["runtime"] = "custom"
-        elif runtime in ("claude", "codex", "droid", "opencode", "custom"):
+        elif runtime in ("claude", "codex", "droid", "opencode", "gemini", "copilot", "cursor", "auggie", "kilocode", "custom"):
             item["runtime"] = runtime
         else:
-            raise ValueError("invalid runtime (must be 'claude', 'codex', 'droid', 'opencode', or 'custom')")
+            raise ValueError("invalid runtime")
 
     item["updated_at"] = utc_now_iso()
     group.save()
