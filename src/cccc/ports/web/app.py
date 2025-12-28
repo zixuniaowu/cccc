@@ -788,4 +788,212 @@ def create_app() -> FastAPI:
         """Set group state (active/idle/paused) to control automation behavior."""
         return _daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
 
+    # =========================================================================
+    # IM Bridge API
+    # =========================================================================
+
+    class IMSetRequest(BaseModel):
+        group_id: str
+        platform: Literal["telegram", "slack", "discord"]
+        # Legacy single token field (backward compat for telegram/discord)
+        token_env: str = ""
+        token: str = ""
+        # Dual token fields for Slack
+        bot_token_env: str = ""  # xoxb- for outbound (Web API)
+        app_token_env: str = ""  # xapp- for inbound (Socket Mode)
+
+    class IMActionRequest(BaseModel):
+        group_id: str
+
+    @app.get("/api/im/status")
+    async def im_status(group_id: str) -> Dict[str, Any]:
+        """Get IM bridge status for a group."""
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        im_config = group.doc.get("im", {})
+        platform = im_config.get("platform") if im_config else None
+
+        # Check if running
+        pid_path = group.path / "state" / "im_bridge.pid"
+        pid = None
+        running = False
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                os.kill(pid, 0)  # Check if process exists
+                running = True
+            except (ValueError, ProcessLookupError, PermissionError):
+                pid = None
+
+        # Get subscriber count
+        subscribers_path = group.path / "state" / "im_subscribers.json"
+        subscriber_count = 0
+        if subscribers_path.exists():
+            try:
+                subs = json.loads(subscribers_path.read_text(encoding="utf-8"))
+                subscriber_count = sum(1 for s in subs.values() if isinstance(s, dict) and s.get("subscribed"))
+            except Exception:
+                pass
+
+        return {
+            "ok": True,
+            "result": {
+                "group_id": group_id,
+                "configured": bool(im_config),
+                "platform": platform,
+                "running": running,
+                "pid": pid,
+                "subscribers": subscriber_count,
+            }
+        }
+
+    @app.get("/api/im/config")
+    async def im_config(group_id: str) -> Dict[str, Any]:
+        """Get IM bridge configuration for a group."""
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        im_cfg = group.doc.get("im")
+        return {"ok": True, "result": {"group_id": group_id, "im": im_cfg}}
+
+    @app.post("/api/im/set")
+    async def im_set(req: IMSetRequest) -> Dict[str, Any]:
+        """Set IM bridge configuration for a group."""
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        # Build IM config
+        im_cfg: Dict[str, Any] = {"platform": req.platform}
+        
+        # Handle Slack dual tokens
+        if req.platform == "slack":
+            if req.bot_token_env:
+                im_cfg["bot_token_env"] = req.bot_token_env
+            if req.app_token_env:
+                im_cfg["app_token_env"] = req.app_token_env
+            # Fallback: if only token_env provided, treat as bot_token_env
+            if req.token_env and not req.bot_token_env:
+                im_cfg["bot_token_env"] = req.token_env
+        else:
+            # Telegram/Discord: single token
+            if req.bot_token_env:
+                im_cfg["token_env"] = req.bot_token_env
+            elif req.token_env:
+                im_cfg["token_env"] = req.token_env
+        
+        if req.token:
+            im_cfg["token"] = req.token
+
+        # Update group doc and save
+        group.doc["im"] = im_cfg
+        group.save()
+
+        return {"ok": True, "result": {"group_id": req.group_id, "im": im_cfg}}
+
+    @app.post("/api/im/unset")
+    async def im_unset(req: IMActionRequest) -> Dict[str, Any]:
+        """Remove IM bridge configuration from a group."""
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        if "im" in group.doc:
+            del group.doc["im"]
+            group.save()
+
+        return {"ok": True, "result": {"group_id": req.group_id, "im": None}}
+
+    @app.post("/api/im/start")
+    async def im_start(req: IMActionRequest) -> Dict[str, Any]:
+        """Start IM bridge for a group."""
+        import subprocess
+
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        # Check if already running
+        pid_path = group.path / "state" / "im_bridge.pid"
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                os.kill(pid, 0)
+                return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass
+
+        # Check IM config
+        im_cfg = group.doc.get("im", {})
+        if not im_cfg:
+            return {"ok": False, "error": {"code": "no_im_config", "message": "no IM configuration"}}
+
+        platform = im_cfg.get("platform", "telegram")
+
+        # Prepare environment
+        env = os.environ.copy()
+        token_env = im_cfg.get("token_env")
+        token = im_cfg.get("token")
+        if token and token_env:
+            env[token_env] = token
+        elif token:
+            default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
+            env[default_env.get(platform, "BOT_TOKEN")] = token
+
+        # Start bridge as subprocess
+        state_dir = group.path / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        log_path = state_dir / "im_bridge.log"
+
+        try:
+            import sys
+            log_file = log_path.open("a", encoding="utf-8")
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "cccc.ports.im.bridge", req.group_id, platform],
+                env=env,
+                stdout=log_file,
+                stderr=log_file,
+                start_new_session=True,
+            )
+            pid_path.write_text(str(proc.pid), encoding="utf-8")
+
+            return {"ok": True, "result": {"group_id": req.group_id, "platform": platform, "pid": proc.pid}}
+        except Exception as e:
+            return {"ok": False, "error": {"code": "start_failed", "message": str(e)}}
+
+    @app.post("/api/im/stop")
+    async def im_stop(req: IMActionRequest) -> Dict[str, Any]:
+        """Stop IM bridge for a group."""
+        import signal as sig
+
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        stopped = 0
+        pid_path = group.path / "state" / "im_bridge.pid"
+
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                try:
+                    os.killpg(os.getpgid(pid), sig.SIGTERM)
+                except Exception:
+                    try:
+                        os.kill(pid, sig.SIGTERM)
+                    except Exception:
+                        pass
+                stopped += 1
+            except Exception:
+                pass
+            try:
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        return {"ok": True, "result": {"group_id": req.group_id, "stopped": stopped}}
+
     return app

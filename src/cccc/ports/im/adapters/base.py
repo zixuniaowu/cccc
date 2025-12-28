@@ -1,0 +1,119 @@
+"""
+Base class for IM platform adapters.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from typing import Any, Callable, Dict, List, Optional
+
+
+class IMAdapter(ABC):
+    """
+    Abstract base class for IM platform adapters.
+
+    Each adapter handles:
+    - Connecting to the platform
+    - Receiving messages (inbound)
+    - Sending messages (outbound)
+    - Platform-specific formatting
+    """
+
+    @abstractmethod
+    def connect(self) -> bool:
+        """
+        Initialize connection to the platform.
+        Returns True if successful.
+        """
+        pass
+
+    @abstractmethod
+    def disconnect(self) -> None:
+        """Disconnect from the platform."""
+        pass
+
+    @abstractmethod
+    def poll(self) -> List[Dict[str, Any]]:
+        """
+        Poll for new messages.
+
+        Returns list of message dicts with at least:
+        - chat_id: int
+        - text: str
+        - from_user: str (username or display name)
+        - message_id: int (platform message ID)
+        """
+        pass
+
+    @abstractmethod
+    def send_message(self, chat_id: int, text: str) -> bool:
+        """
+        Send a message to a chat.
+        Returns True if successful.
+        """
+        pass
+
+    @abstractmethod
+    def get_chat_title(self, chat_id: int) -> str:
+        """Get the title/name of a chat."""
+        pass
+
+    def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
+        """
+        Format an outbound message for display.
+
+        Default implementation - adapters can override for platform-specific formatting.
+        """
+        if is_system:
+            return f"[SYSTEM] {text}"
+
+        if to and "user" not in to:
+            # Agent to agent message
+            to_str = ", ".join(to)
+            return f"[{by} → {to_str}] {text}"
+        else:
+            # Agent to user message
+            return f"[{by}] {text}"
+
+    def summarize(self, text: str, max_chars: int = 900, max_lines: int = 8) -> str:
+        """
+        Summarize text for IM display.
+
+        - Normalize newlines
+        - Collapse multiple blank lines
+        - Limit lines and characters
+        """
+        if not text:
+            return ""
+
+        # Normalize
+        t = text.replace("\r\n", "\n").replace("\r", "\n").replace("\t", "  ")
+        lines = [ln.rstrip() for ln in t.split("\n")]
+
+        # Strip leading/trailing empty lines
+        while lines and not lines[0].strip():
+            lines.pop(0)
+        while lines and not lines[-1].strip():
+            lines.pop()
+
+        # Collapse multiple blank lines
+        kept = []
+        empty_count = 0
+        for ln in lines:
+            if not ln.strip():
+                empty_count += 1
+                if empty_count <= 1:
+                    kept.append("")
+            else:
+                empty_count = 0
+                kept.append(ln)
+
+        # Limit lines
+        kept = kept[:max_lines]
+        out = "\n".join(kept).strip()
+
+        # Limit characters
+        if len(out) > max_chars:
+            out = out[: max(0, max_chars - 1)] + "…"
+
+        return out

@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
-import { GroupSettings, Theme } from "../types";
-import { ThemeToggle } from "./ThemeToggle";
+import { GroupSettings, IMStatus } from "../types";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -8,10 +7,11 @@ interface SettingsModalProps {
   settings: GroupSettings | null;
   onUpdateSettings: (settings: Partial<GroupSettings>) => Promise<void>;
   busy: boolean;
-  theme: Theme;
-  onThemeChange: (theme: Theme) => void;
   isDark: boolean;
+  groupId?: string;
 }
+
+type TabId = "timing" | "im";
 
 export function SettingsModal({
   isOpen,
@@ -19,16 +19,25 @@ export function SettingsModal({
   settings,
   onUpdateSettings,
   busy,
-  theme,
-  onThemeChange,
   isDark,
+  groupId,
 }: SettingsModalProps) {
+  const [activeTab, setActiveTab] = useState<TabId>("timing");
+  
+  // Timing settings state
   const [nudgeSeconds, setNudgeSeconds] = useState(300);
   const [idleSeconds, setIdleSeconds] = useState(600);
   const [keepaliveSeconds, setKeepaliveSeconds] = useState(120);
   const [silenceSeconds, setSilenceSeconds] = useState(600);
   const [deliveryInterval, setDeliveryInterval] = useState(60);
   const [standupInterval, setStandupInterval] = useState(900);
+
+  // IM Bridge state
+  const [imStatus, setImStatus] = useState<IMStatus | null>(null);
+  const [imPlatform, setImPlatform] = useState<"telegram" | "slack" | "discord">("telegram");
+  const [imBotTokenEnv, setImBotTokenEnv] = useState("");
+  const [imAppTokenEnv, setImAppTokenEnv] = useState(""); // Slack only
+  const [imBusy, setImBusy] = useState(false);
 
   // Sync state when modal opens
   useEffect(() => {
@@ -42,6 +51,39 @@ export function SettingsModal({
     }
   }, [isOpen, settings]);
 
+  // Load IM config when modal opens
+  useEffect(() => {
+    if (isOpen && groupId) {
+      loadIMStatus();
+    }
+  }, [isOpen, groupId]);
+
+  const loadIMStatus = async () => {
+    if (!groupId) return;
+    try {
+      const resp = await fetch(`/api/im/status?group_id=${encodeURIComponent(groupId)}`);
+      const data = await resp.json();
+      if (data.ok) {
+        setImStatus(data.result);
+        if (data.result.platform) {
+          setImPlatform(data.result.platform);
+        }
+      }
+      // Also load config
+      const configResp = await fetch(`/api/im/config?group_id=${encodeURIComponent(groupId)}`);
+      const configData = await configResp.json();
+      if (configData.ok && configData.result.im) {
+        const im = configData.result.im;
+        if (im.platform) setImPlatform(im.platform);
+        if (im.bot_token_env) setImBotTokenEnv(im.bot_token_env);
+        else if (im.token_env) setImBotTokenEnv(im.token_env); // backward compat
+        if (im.app_token_env) setImAppTokenEnv(im.app_token_env);
+      }
+    } catch (e) {
+      console.error("Failed to load IM status:", e);
+    }
+  };
+
   if (!isOpen) return null;
 
   const handleSaveSettings = async () => {
@@ -53,6 +95,117 @@ export function SettingsModal({
       min_interval_seconds: deliveryInterval,
       standup_interval_seconds: standupInterval,
     });
+  };
+
+  const handleSaveIMConfig = async () => {
+    if (!groupId) return;
+    setImBusy(true);
+    try {
+      const resp = await fetch("/api/im/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          group_id: groupId,
+          platform: imPlatform,
+          bot_token_env: imBotTokenEnv,
+          app_token_env: imPlatform === "slack" ? imAppTokenEnv : undefined,
+        }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        await loadIMStatus();
+      }
+    } catch (e) {
+      console.error("Failed to save IM config:", e);
+    } finally {
+      setImBusy(false);
+    }
+  };
+
+  const handleRemoveIMConfig = async () => {
+    if (!groupId) return;
+    setImBusy(true);
+    try {
+      const resp = await fetch("/api/im/unset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ group_id: groupId }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        setImBotTokenEnv("");
+        setImAppTokenEnv("");
+        await loadIMStatus();
+      }
+    } catch (e) {
+      console.error("Failed to remove IM config:", e);
+    } finally {
+      setImBusy(false);
+    }
+  };
+
+  const handleStartBridge = async () => {
+    if (!groupId) return;
+    setImBusy(true);
+    try {
+      const resp = await fetch("/api/im/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ group_id: groupId }),
+      });
+      await resp.json();
+      await loadIMStatus();
+    } catch (e) {
+      console.error("Failed to start bridge:", e);
+    } finally {
+      setImBusy(false);
+    }
+  };
+
+  const handleStopBridge = async () => {
+    if (!groupId) return;
+    setImBusy(true);
+    try {
+      const resp = await fetch("/api/im/stop", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ group_id: groupId }),
+      });
+      await resp.json();
+      await loadIMStatus();
+    } catch (e) {
+      console.error("Failed to stop bridge:", e);
+    } finally {
+      setImBusy(false);
+    }
+  };
+
+  const tabs: { id: TabId; label: string }[] = [
+    { id: "timing", label: "Timing" },
+    { id: "im", label: "IM Bridge" },
+  ];
+
+  // Token field labels based on platform
+  const getBotTokenLabel = () => {
+    switch (imPlatform) {
+      case "telegram": return "Bot Token";
+      case "slack": return "Bot Token (xoxb-)";
+      case "discord": return "Bot Token";
+    }
+  };
+
+  const getBotTokenPlaceholder = () => {
+    switch (imPlatform) {
+      case "telegram": return "TELEGRAM_BOT_TOKEN";
+      case "slack": return "SLACK_BOT_TOKEN";
+      case "discord": return "DISCORD_BOT_TOKEN";
+    }
+  };
+
+  const canSaveIM = () => {
+    if (!imBotTokenEnv) return false;
+    if (imPlatform === "slack" && !imAppTokenEnv) return false;
+    return true;
   };
 
   return (
@@ -93,116 +246,294 @@ export function SettingsModal({
           </button>
         </div>
 
+        {/* Tabs */}
+        <div className={`flex border-b ${isDark ? "border-slate-800" : "border-gray-200"}`}>
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2.5 text-sm font-medium transition-colors ${
+                activeTab === tab.id
+                  ? isDark
+                    ? "text-emerald-400 border-b-2 border-emerald-400"
+                    : "text-emerald-600 border-b-2 border-emerald-600"
+                  : isDark
+                    ? "text-slate-400 hover:text-slate-200"
+                    : "text-gray-500 hover:text-gray-700"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-5 space-y-6">
-          {/* Appearance */}
-          <div className="space-y-3">
-            <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Appearance</h3>
-            <div>
-              <label className={`block text-xs mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Theme</label>
-              <ThemeToggle theme={theme} onThemeChange={onThemeChange} isDark={isDark} />
-            </div>
-          </div>
-
-          {/* Group Timing Settings */}
-          <div className="space-y-3">
-            <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Group Timing</h3>
-            <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              These settings apply to the current working group.
-            </p>
-            
-            <div className="grid grid-cols-2 gap-3">
+          {/* Timing Tab */}
+          {activeTab === "timing" && (
+            <div className="space-y-4">
               <div>
-                <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Nudge After (sec)</label>
-                <input
-                  type="number"
-                  value={nudgeSeconds}
-                  onChange={(e) => setNudgeSeconds(Number(e.target.value))}
-                  className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
-                    isDark 
-                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
-                      : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                />
-              </div>
-              <div>
-                <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Actor Idle (sec)</label>
-                <input
-                  type="number"
-                  value={idleSeconds}
-                  onChange={(e) => setIdleSeconds(Number(e.target.value))}
-                  className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
-                    isDark 
-                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
-                      : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                />
-              </div>
-              <div>
-                <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Keepalive (sec)</label>
-                <input
-                  type="number"
-                  value={keepaliveSeconds}
-                  onChange={(e) => setKeepaliveSeconds(Number(e.target.value))}
-                  className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
-                    isDark 
-                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
-                      : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                />
-              </div>
-              <div>
-                <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Silence (sec)</label>
-                <input
-                  type="number"
-                  value={silenceSeconds}
-                  onChange={(e) => setSilenceSeconds(Number(e.target.value))}
-                  className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
-                    isDark 
-                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
-                      : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                />
-              </div>
-              <div>
-                <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Delivery Interval (sec)</label>
-                <input
-                  type="number"
-                  value={deliveryInterval}
-                  onChange={(e) => setDeliveryInterval(Number(e.target.value))}
-                  className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
-                    isDark 
-                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
-                      : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                />
-              </div>
-              <div>
-                <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Standup Interval (sec)</label>
-                <input
-                  type="number"
-                  value={standupInterval}
-                  onChange={(e) => setStandupInterval(Number(e.target.value))}
-                  className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
-                    isDark 
-                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
-                      : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                />
-                <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                  Periodic review reminder (default 900 = 15 min)
+                <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Group Timing</h3>
+                <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  These settings apply to the current working group.
                 </p>
               </div>
-            </div>
+              
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Nudge After (sec)</label>
+                  <input
+                    type="number"
+                    value={nudgeSeconds}
+                    onChange={(e) => setNudgeSeconds(Number(e.target.value))}
+                    className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
+                      isDark 
+                        ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
+                        : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Actor Idle (sec)</label>
+                  <input
+                    type="number"
+                    value={idleSeconds}
+                    onChange={(e) => setIdleSeconds(Number(e.target.value))}
+                    className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
+                      isDark 
+                        ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
+                        : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Keepalive (sec)</label>
+                  <input
+                    type="number"
+                    value={keepaliveSeconds}
+                    onChange={(e) => setKeepaliveSeconds(Number(e.target.value))}
+                    className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
+                      isDark 
+                        ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
+                        : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Silence (sec)</label>
+                  <input
+                    type="number"
+                    value={silenceSeconds}
+                    onChange={(e) => setSilenceSeconds(Number(e.target.value))}
+                    className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
+                      isDark 
+                        ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
+                        : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Delivery Interval (sec)</label>
+                  <input
+                    type="number"
+                    value={deliveryInterval}
+                    onChange={(e) => setDeliveryInterval(Number(e.target.value))}
+                    className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
+                      isDark 
+                        ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
+                        : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                    }`}
+                  />
+                </div>
+                <div>
+                  <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Standup Interval (sec)</label>
+                  <input
+                    type="number"
+                    value={standupInterval}
+                    onChange={(e) => setStandupInterval(Number(e.target.value))}
+                    className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
+                      isDark 
+                        ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
+                        : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                    }`}
+                  />
+                  <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    Periodic review reminder (default 900 = 15 min)
+                  </p>
+                </div>
+              </div>
 
-            <button
-              onClick={handleSaveSettings}
-              disabled={busy}
-              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors font-medium"
-            >
-              {busy ? "Saving..." : "Save Timing Settings"}
-            </button>
-          </div>
+              <button
+                onClick={handleSaveSettings}
+                disabled={busy}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors font-medium"
+              >
+                {busy ? "Saving..." : "Save Timing Settings"}
+              </button>
+            </div>
+          )}
+
+          {/* IM Bridge Tab */}
+          {activeTab === "im" && (
+            <div className="space-y-4">
+              <div>
+                <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>IM Bridge</h3>
+                <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  Connect this group to Telegram, Slack, or Discord.
+                </p>
+              </div>
+
+              {/* Status */}
+              {imStatus && (
+                <div className={`p-3 rounded-lg ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${imStatus.running ? "bg-emerald-500" : "bg-gray-400"}`} />
+                    <span className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                      {imStatus.running ? "Running" : "Stopped"}
+                    </span>
+                    {imStatus.running && imStatus.pid && (
+                      <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                        (PID: {imStatus.pid})
+                      </span>
+                    )}
+                  </div>
+                  {imStatus.configured && (
+                    <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                      Platform: {imStatus.platform} • Subscribers: {imStatus.subscribers}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Configuration */}
+              <div className="space-y-3">
+                <div>
+                  <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Platform</label>
+                  <select
+                    value={imPlatform}
+                    onChange={(e) => setImPlatform(e.target.value as "telegram" | "slack" | "discord")}
+                    className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
+                      isDark 
+                        ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
+                        : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                    }`}
+                  >
+                    <option value="telegram">Telegram</option>
+                    <option value="slack">Slack</option>
+                    <option value="discord">Discord</option>
+                  </select>
+                </div>
+
+                {/* Bot Token (all platforms) */}
+                <div>
+                  <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                    {getBotTokenLabel()} Environment Variable
+                  </label>
+                  <input
+                    type="text"
+                    value={imBotTokenEnv}
+                    onChange={(e) => setImBotTokenEnv(e.target.value)}
+                    placeholder={getBotTokenPlaceholder()}
+                    className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
+                      isDark 
+                        ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500 placeholder:text-slate-600" 
+                        : "bg-white border-gray-300 text-gray-900 focus:border-blue-500 placeholder:text-gray-400"
+                    }`}
+                  />
+                  <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    {imPlatform === "slack" ? "Required for outbound messages" : "Required for bot authentication"}
+                  </p>
+                </div>
+
+                {/* App Token (Slack only) */}
+                {imPlatform === "slack" && (
+                  <div>
+                    <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                      App Token (xapp-) Environment Variable
+                    </label>
+                    <input
+                      type="text"
+                      value={imAppTokenEnv}
+                      onChange={(e) => setImAppTokenEnv(e.target.value)}
+                      placeholder="SLACK_APP_TOKEN"
+                      className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
+                        isDark 
+                          ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500 placeholder:text-slate-600" 
+                          : "bg-white border-gray-300 text-gray-900 focus:border-blue-500 placeholder:text-gray-400"
+                      }`}
+                    />
+                    <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                      Required for inbound messages (Socket Mode)
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleSaveIMConfig}
+                  disabled={imBusy || !canSaveIM()}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors font-medium"
+                >
+                  {imBusy ? "Saving..." : "Save Config"}
+                </button>
+
+                {imStatus?.configured && (
+                  <>
+                    {imStatus.running ? (
+                      <button
+                        onClick={handleStopBridge}
+                        disabled={imBusy}
+                        className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium ${
+                          isDark
+                            ? "bg-red-900/50 hover:bg-red-800/50 text-red-300"
+                            : "bg-red-100 hover:bg-red-200 text-red-700"
+                        } disabled:opacity-50`}
+                      >
+                        Stop Bridge
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleStartBridge}
+                        disabled={imBusy}
+                        className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium ${
+                          isDark
+                            ? "bg-blue-900/50 hover:bg-blue-800/50 text-blue-300"
+                            : "bg-blue-100 hover:bg-blue-200 text-blue-700"
+                        } disabled:opacity-50`}
+                      >
+                        Start Bridge
+                      </button>
+                    )}
+
+                    <button
+                      onClick={handleRemoveIMConfig}
+                      disabled={imBusy}
+                      className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium ${
+                        isDark
+                          ? "bg-slate-800 hover:bg-slate-700 text-slate-300"
+                          : "bg-gray-200 hover:bg-gray-300 text-gray-700"
+                      } disabled:opacity-50`}
+                    >
+                      Remove Config
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* Help */}
+              <div className={`text-xs space-y-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                <p>To use IM Bridge:</p>
+                <ol className="list-decimal list-inside space-y-0.5 ml-2">
+                  <li>Create a bot on your IM platform</li>
+                  <li>Set the token(s) as environment variable(s)</li>
+                  <li>Save the config and start the bridge</li>
+                  <li>In your IM chat, send /subscribe to receive messages</li>
+                </ol>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

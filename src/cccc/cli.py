@@ -1664,6 +1664,373 @@ def cmd_daemon(args: argparse.Namespace) -> int:
     return 2
 
 
+# =============================================================================
+# IM Bridge Commands
+# =============================================================================
+
+
+def cmd_im_set(args: argparse.Namespace) -> int:
+    """Set IM bridge configuration for a group."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    platform = str(args.platform or "").strip().lower()
+    if platform not in ("telegram", "slack", "discord"):
+        _print_json({"ok": False, "error": {"code": "invalid_platform", "message": "platform must be telegram, slack, or discord"}})
+        return 2
+
+    # Get token fields
+    bot_token_env = str(getattr(args, "bot_token_env", "") or "").strip()
+    app_token_env = str(getattr(args, "app_token_env", "") or "").strip()
+    token_env = str(args.token_env or "").strip()
+    token = str(args.token or "").strip()
+
+    # Backward compat: if only token_env provided, use as bot_token_env
+    if token_env and not bot_token_env:
+        bot_token_env = token_env
+
+    # Interactive mode if no token provided
+    if not bot_token_env and not token:
+        try:
+            if platform == "slack":
+                print(f"Slack requires two tokens:")
+                print(f"  1. Bot Token (xoxb-) for outbound messages")
+                print(f"  2. App Token (xapp-) for inbound messages (Socket Mode)")
+                print()
+                print("Enter Bot Token env var name (e.g., SLACK_BOT_TOKEN):")
+                bot_input = input("> ").strip()
+                if not bot_input:
+                    _print_json({"ok": False, "error": {"code": "no_token", "message": "no bot token provided"}})
+                    return 2
+                bot_token_env = bot_input
+                print("Enter App Token env var name (e.g., SLACK_APP_TOKEN):")
+                app_input = input("> ").strip()
+                if app_input:
+                    app_token_env = app_input
+            else:
+                print(f"Enter token or environment variable name for {platform}:")
+                user_input = input("> ").strip()
+                if not user_input:
+                    _print_json({"ok": False, "error": {"code": "no_token", "message": "no token provided"}})
+                    return 2
+                # Heuristic: if it looks like an env var name (all caps, underscores), treat as token_env
+                if user_input.isupper() or "_" in user_input and not ":" in user_input:
+                    bot_token_env = user_input
+                else:
+                    token = user_input
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 1
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
+    # Update group.yaml with IM config
+    im_config: dict[str, Any] = {"platform": platform}
+    
+    if platform == "slack":
+        # Slack uses dual tokens
+        if bot_token_env:
+            im_config["bot_token_env"] = bot_token_env
+        if app_token_env:
+            im_config["app_token_env"] = app_token_env
+    else:
+        # Telegram/Discord use single token
+        if bot_token_env:
+            im_config["token_env"] = bot_token_env
+    
+    if token:
+        im_config["token"] = token
+
+    # Update group doc and save
+    group.doc["im"] = im_config
+    group.save()
+
+    _print_json({"ok": True, "result": {"group_id": group_id, "im": im_config}})
+    return 0
+
+
+def cmd_im_unset(args: argparse.Namespace) -> int:
+    """Remove IM bridge configuration from a group."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
+    if "im" in group.doc:
+        del group.doc["im"]
+        group.save()
+
+    _print_json({"ok": True, "result": {"group_id": group_id, "im": None}})
+    return 0
+
+
+def cmd_im_config(args: argparse.Namespace) -> int:
+    """Show IM bridge configuration for a group."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
+    im_config = group.doc.get("im")
+    _print_json({"ok": True, "result": {"group_id": group_id, "im": im_config}})
+    return 0
+
+
+def _im_find_bridge_pid(group: Any) -> Optional[int]:
+    """Find running bridge PID for a group."""
+    pid_path = group.path / "state" / "im_bridge.pid"
+    if not pid_path.exists():
+        return None
+    try:
+        pid = int(pid_path.read_text(encoding="utf-8").strip())
+        # Check if process is alive
+        os.kill(pid, 0)
+        return pid
+    except (ValueError, ProcessLookupError, PermissionError):
+        return None
+
+
+def _im_find_bridge_pids_by_script(group_id: str) -> list[int]:
+    """Find all bridge processes for a group by scanning /proc."""
+    pids: list[int] = []
+    proc = Path("/proc")
+    try:
+        for d in proc.iterdir():
+            if not d.is_dir() or not d.name.isdigit():
+                continue
+            pid = int(d.name)
+            try:
+                cmdline = (d / "cmdline").read_bytes().decode("utf-8", "ignore")
+                # Look for our bridge module with this group_id
+                if "cccc.ports.im.bridge" in cmdline and group_id in cmdline:
+                    pids.append(pid)
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return pids
+
+
+def cmd_im_start(args: argparse.Namespace) -> int:
+    """Start IM bridge for a group."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
+    # Check if already running
+    existing_pid = _im_find_bridge_pid(group)
+    if existing_pid:
+        _print_json({"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={existing_pid})"}})
+        return 2
+
+    # Check IM config
+    im_config = group.doc.get("im", {})
+    if not im_config:
+        _print_json({"ok": False, "error": {"code": "no_im_config", "message": "no IM configuration. Run: cccc im set <platform>"}})
+        return 2
+
+    platform = im_config.get("platform", "telegram")
+
+    # Prepare environment
+    env = os.environ.copy()
+    token_env = im_config.get("token_env")
+    token = im_config.get("token")
+    if token and token_env:
+        env[token_env] = token
+    elif token:
+        # Set default env var based on platform
+        default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
+        env[default_env.get(platform, "BOT_TOKEN")] = token
+
+    # Start bridge as subprocess
+    state_dir = group.path / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    log_path = state_dir / "im_bridge.log"
+
+    try:
+        log_file = log_path.open("a", encoding="utf-8")
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "cccc.ports.im.bridge", group_id, platform],
+            env=env,
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+        )
+        # Write PID file
+        pid_path = state_dir / "im_bridge.pid"
+        pid_path.write_text(str(proc.pid), encoding="utf-8")
+
+        _print_json({"ok": True, "result": {"group_id": group_id, "platform": platform, "pid": proc.pid, "log": str(log_path)}})
+        return 0
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "start_failed", "message": str(e)}})
+        return 2
+
+
+def cmd_im_stop(args: argparse.Namespace) -> int:
+    """Stop IM bridge for a group."""
+    import signal as sig
+
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
+    stopped = 0
+    pid_path = group.path / "state" / "im_bridge.pid"
+
+    # Stop by PID file
+    if pid_path.exists():
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+            try:
+                os.killpg(os.getpgid(pid), sig.SIGTERM)
+            except Exception:
+                try:
+                    os.kill(pid, sig.SIGTERM)
+                except Exception:
+                    pass
+            stopped += 1
+        except Exception:
+            pass
+        try:
+            pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # Also scan for any orphan processes
+    orphan_pids = _im_find_bridge_pids_by_script(group_id)
+    for pid in orphan_pids:
+        try:
+            os.killpg(os.getpgid(pid), sig.SIGTERM)
+        except Exception:
+            try:
+                os.kill(pid, sig.SIGTERM)
+            except Exception:
+                pass
+        stopped += 1
+
+    _print_json({"ok": True, "result": {"group_id": group_id, "stopped": stopped}})
+    return 0
+
+
+def cmd_im_status(args: argparse.Namespace) -> int:
+    """Show IM bridge status for a group."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
+    im_config = group.doc.get("im", {})
+    platform = im_config.get("platform") if im_config else None
+
+    # Check if running
+    pid = _im_find_bridge_pid(group)
+    running = pid is not None
+
+    # Get subscriber count
+    subscribers_path = group.path / "state" / "im_subscribers.json"
+    subscriber_count = 0
+    if subscribers_path.exists():
+        try:
+            subs = json.loads(subscribers_path.read_text(encoding="utf-8"))
+            subscriber_count = sum(1 for s in subs.values() if isinstance(s, dict) and s.get("subscribed"))
+        except Exception:
+            pass
+
+    result = {
+        "group_id": group_id,
+        "configured": bool(im_config),
+        "platform": platform,
+        "running": running,
+        "pid": pid,
+        "subscribers": subscriber_count,
+    }
+
+    _print_json({"ok": True, "result": result})
+    return 0
+
+
+def cmd_im_logs(args: argparse.Namespace) -> int:
+    """Show IM bridge logs for a group."""
+    from collections import deque
+
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    group = load_group(group_id)
+    if group is None:
+        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
+        return 2
+
+    log_path = group.path / "state" / "im_bridge.log"
+    if not log_path.exists():
+        print(f"[IM] Log file not found: {log_path}")
+        return 1
+
+    lines = int(args.lines) if hasattr(args, "lines") and args.lines else 50
+    follow = bool(args.follow) if hasattr(args, "follow") else False
+
+    try:
+        if follow:
+            print(f"[IM] Tailing {log_path} (Ctrl-C to stop)...")
+            with open(log_path, "r", encoding="utf-8") as f:
+                # Show last N lines first
+                dq = deque(f, maxlen=lines)
+                for ln in dq:
+                    print(ln.rstrip())
+                # Then follow
+                while True:
+                    ln = f.readline()
+                    if not ln:
+                        time.sleep(0.5)
+                        continue
+                    print(ln.rstrip())
+        else:
+            # Print last N lines
+            with open(log_path, "r", encoding="utf-8") as f:
+                dq = deque(f, maxlen=lines)
+                for ln in dq:
+                    print(ln.rstrip())
+    except KeyboardInterrupt:
+        print()
+
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="cccc", description="CCCC vNext (working group + scopes)")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1865,6 +2232,45 @@ def build_parser() -> argparse.ArgumentParser:
     p_daemon = sub.add_parser("daemon", help="Manage ccccd daemon")
     p_daemon.add_argument("action", choices=["start", "stop", "status"], help="Action")
     p_daemon.set_defaults(func=cmd_daemon)
+
+    # IM Bridge commands
+    p_im = sub.add_parser("im", help="Manage IM bridge (Telegram/Slack/Discord)")
+    im_sub = p_im.add_subparsers(dest="action", required=True)
+
+    p_im_set = im_sub.add_parser("set", help="Set IM bridge configuration")
+    p_im_set.add_argument("platform", choices=["telegram", "slack", "discord"], help="IM platform")
+    p_im_set.add_argument("--token-env", default="", help="Environment variable name for token (telegram/discord)")
+    p_im_set.add_argument("--bot-token-env", default="", help="Bot token env var (Slack: xoxb- for outbound)")
+    p_im_set.add_argument("--app-token-env", default="", help="App token env var (Slack: xapp- for inbound Socket Mode)")
+    p_im_set.add_argument("--token", default="", help="Token value directly (not recommended, use env vars)")
+    p_im_set.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_set.set_defaults(func=cmd_im_set)
+
+    p_im_unset = im_sub.add_parser("unset", help="Remove IM bridge configuration")
+    p_im_unset.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_unset.set_defaults(func=cmd_im_unset)
+
+    p_im_config = im_sub.add_parser("config", help="Show IM bridge configuration")
+    p_im_config.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_config.set_defaults(func=cmd_im_config)
+
+    p_im_start = im_sub.add_parser("start", help="Start IM bridge")
+    p_im_start.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_start.set_defaults(func=cmd_im_start)
+
+    p_im_stop = im_sub.add_parser("stop", help="Stop IM bridge")
+    p_im_stop.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_stop.set_defaults(func=cmd_im_stop)
+
+    p_im_status = im_sub.add_parser("status", help="Show IM bridge status")
+    p_im_status.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_status.set_defaults(func=cmd_im_status)
+
+    p_im_logs = im_sub.add_parser("logs", help="Show IM bridge logs")
+    p_im_logs.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_im_logs.add_argument("-n", "--lines", type=int, default=50, help="Number of lines to show (default: 50)")
+    p_im_logs.add_argument("-f", "--follow", action="store_true", help="Follow log output (like tail -f)")
+    p_im_logs.set_defaults(func=cmd_im_logs)
 
     p_web = sub.add_parser("web", help="Run web server only (requires daemon to be running)")
     p_web.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")

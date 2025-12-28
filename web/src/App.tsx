@@ -1120,22 +1120,6 @@ export default function App() {
                 )}
                 <div className={`w-px h-6 mx-1 hidden sm:block ${isDark ? "bg-slate-700/50" : "bg-gray-300"}`} />
                 <button
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50 transition-all min-h-[44px] ${
-                    isDark 
-                      ? "bg-blue-600/20 border border-blue-500/30 text-blue-400 hover:bg-blue-600/30"
-                      : "bg-blue-50 border border-blue-200 text-blue-600 hover:bg-blue-100"
-                  }`}
-                  onClick={() => {
-                    setNewActorRole(hasForeman ? "peer" : "foreman");
-                    setShowAddActor(true);
-                  }}
-                  disabled={!selectedGroupId}
-                  title="Add agent"
-                  aria-label="Add new agent"
-                >
-                  ➕
-                </button>
-                <button
                   className={`rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] ${
                     isDark 
                       ? "bg-slate-700/80 text-slate-200 hover:bg-slate-600"
@@ -1191,6 +1175,11 @@ export default function App() {
               onTabChange={handleTabChange}
               unreadChatCount={0}
               isDark={isDark}
+              onAddAgent={() => {
+                setNewActorRole(hasForeman ? "peer" : "foreman");
+                setShowAddActor(true);
+              }}
+              canAddAgent={!!selectedGroupId}
             />
           )}
 
@@ -1322,7 +1311,7 @@ export default function App() {
                 </section>
 
                 {/* Composer */}
-                <footer className={`flex-shrink-0 border-t px-4 py-3 safe-area-inset-bottom ${
+                <footer className={`flex-shrink-0 border-t px-4 pt-3 pb-4 safe-area-inset-bottom ${
                   isDark ? "border-slate-800 bg-slate-950/30" : "border-gray-200 bg-gray-50"
                 }`}>
                   {replyTarget && (
@@ -1572,9 +1561,8 @@ export default function App() {
         settings={groupSettings}
         onUpdateSettings={updateSettings}
         busy={busy.startsWith("settings")}
-        theme={theme}
-        onThemeChange={setTheme}
         isDark={isDark}
+        groupId={selectedGroupId}
       />
 
       {/* Inbox Modal */}

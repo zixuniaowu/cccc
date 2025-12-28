@@ -410,7 +410,7 @@ select,
 
 /* Safe area insets for mobile */
 .safe-area-inset-bottom {
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
 }
 
 .safe-area-inset-top {

@@ -11,9 +11,11 @@ interface TabBarProps {
   onTabChange: (tab: string) => void;
   unreadChatCount: number;
   isDark: boolean;
+  onAddAgent?: () => void;
+  canAddAgent?: boolean;
 }
 
-export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark }: TabBarProps) {
+export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark, onAddAgent, canAddAgent = true }: TabBarProps) {
   const tabBarRef = useRef<HTMLDivElement>(null);
   const activeTabRef = useRef<HTMLButtonElement>(null);
 
@@ -119,6 +121,24 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
           </button>
         );
       })}
+
+      {/* Add Agent Button - Like Chrome's new tab button */}
+      {onAddAgent && (
+        <button
+          onClick={onAddAgent}
+          disabled={!canAddAgent}
+          className={classNames(
+            "flex items-center justify-center w-9 h-9 rounded-lg text-lg transition-all flex-shrink-0 disabled:opacity-40",
+            isDark 
+              ? "text-slate-500 hover:text-emerald-400 hover:bg-slate-800/70 border border-dashed border-slate-700 hover:border-emerald-500/50"
+              : "text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 border border-dashed border-gray-300 hover:border-emerald-400"
+          )}
+          title="Add new agent"
+          aria-label="Add new agent"
+        >
+          +
+        </button>
+      )}
     </div>
   );
 }

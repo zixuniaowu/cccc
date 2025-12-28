@@ -79,6 +79,25 @@ export type GroupSettings = {
   standup_interval_seconds: number;
 };
 
+export type IMConfig = {
+  platform?: "telegram" | "slack" | "discord";
+  // Legacy single token field (backward compat)
+  token_env?: string;
+  token?: string;
+  // Dual token fields for Slack (bot_token for outbound, app_token for inbound)
+  bot_token_env?: string;
+  app_token_env?: string;
+};
+
+export type IMStatus = {
+  group_id: string;
+  configured: boolean;
+  platform?: string;
+  running: boolean;
+  pid?: number;
+  subscribers: number;
+};
+
 export type DirItem = { name: string; path: string; is_dir: boolean };
 export type DirSuggestion = { name: string; path: string; icon: string };
 

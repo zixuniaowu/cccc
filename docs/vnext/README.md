@@ -1,17 +1,78 @@
-# CCCC vNext Docs (Start Here)
+# CCCC vNext Documentation
 
-本目录用于固化 vNext 的**形态/边界/契约**与**当前实现状态**，确保重启会话后能快速恢复上下文。
+> CCCC = Collaborative Code Coordination Center
+> 
+> 一个全局的 AI Agent 协作中枢：单一 daemon 管理多个工作组，Web/CLI/IM 作为入口。
 
-推荐阅读顺序：
+## 快速开始
 
-1) `docs/vnext/CCCC_NEXT_GLOBAL_DAEMON.md`：总体形态与架构边界（全局 daemon、working groups、scopes、ports）
-2) `docs/vnext/STATUS.md`：当前实现进度与缺口（Living Doc）
-3) `docs/vnext/LEDGER_SCHEMA.md`：事实流（ledger）v1 的最小字段与事件类型约定
-4) `docs/vnext/AGENT_GUIDANCE.md`：在拿不到 system prompt 常驻权限时，如何让 agents 稳定理解角色/边界/规程（含 skills 共享目录的取舍）
-5) `docs/vnext/IM_MESSAGING.md`：IM 风格消息机制设计（回复、已读、投递）
-6) `docs/vnext/IM_BRIDGE.md`：IM 桥接设计（Telegram/Slack/Discord 接入）
+```bash
+# 安装
+pip install -e .
 
-约定：
-- **单一事实源**：`CCCC_HOME/groups/<group_id>/ledger.jsonl` 是 group 的共享事实流（append-only）。
-- **文档不重复**：长规程/Playbook 只维护一处（参见 `AGENT_GUIDANCE.md` 的“不要三套文案各写一遍”）。
+# 启动（daemon + web）
+cccc
 
+# 打开 Web UI
+open http://127.0.0.1:8848/ui/
+
+# 或使用 CLI
+cccc attach .                    # 创建/绑定工作组
+cccc actor add agent-1 --runtime claude  # 添加 agent
+cccc group start                 # 启动所有 agents
+cccc send "Hello" --to @all      # 发送消息
+```
+
+## 文档结构
+
+| 文档 | 内容 |
+|------|------|
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | 架构设计、核心概念、目录结构、Ledger Schema |
+| [STATUS.md](./STATUS.md) | 当前实现状态、路线图、待办事项 |
+| [FEATURES.md](./FEATURES.md) | 功能详解：IM Bridge、消息机制、Agent 指导 |
+| [archive/](./archive/) | 历史设计文档（供参考） |
+
+## 核心概念
+
+### Working Group（工作组）
+- 像 IM 群聊，但具备执行/交付能力
+- 每个 group 有一个 append-only ledger（事实流）
+- 可绑定多个 Scope（项目目录）
+
+### Actor（执行者）
+- **Foreman**: 协调者 + 执行者（第一个启用的 actor 自动成为 foreman）
+- **Peer**: 独立专家（其他 actors）
+- 支持 PTY（终端）和 Headless（纯 MCP）两种 runner
+
+### Ledger（账本）
+- 单一事实源：`~/.cccc/groups/<group_id>/ledger.jsonl`
+- 所有消息、事件、决策都记录在此
+- 支持 snapshot/compaction
+
+## 目录布局
+
+```
+~/.cccc/                          # CCCC_HOME
+├── registry.json                 # 工作组索引
+├── daemon/                       # daemon 运行时
+│   ├── ccccd.sock               # IPC socket
+│   └── ccccd.log
+└── groups/<group_id>/
+    ├── group.yaml               # 元数据
+    ├── ledger.jsonl             # 事实流
+    ├── context/                 # 上下文（vision/sketch/tasks）
+    └── state/                   # 运行时状态
+```
+
+## 技术栈
+
+- **Kernel/Daemon**: Python + Pydantic
+- **Web Port**: FastAPI + Uvicorn
+- **Web UI**: React + TypeScript + Vite + Tailwind + xterm.js
+- **MCP**: stdio mode, JSON-RPC (38 tools)
+
+## 相关链接
+
+- 源码：`src/cccc/`
+- 老版本参考：`old_v0.3.28/`
+- AGENTS.md：开发规范
