@@ -18,8 +18,8 @@ from .base import IMAdapter
 
 # Discord limits
 DISCORD_MAX_MESSAGE_LENGTH = 2000
-DEFAULT_MAX_CHARS = 1500
-DEFAULT_MAX_LINES = 12
+DEFAULT_MAX_CHARS = 2000
+DEFAULT_MAX_LINES = 64
 
 
 class DiscordAdapter(IMAdapter):
@@ -28,6 +28,8 @@ class DiscordAdapter(IMAdapter):
 
     Runs the async event loop in a background thread.
     """
+
+    platform = "discord"
 
     def __init__(
         self,
@@ -120,9 +122,27 @@ class DiscordAdapter(IMAdapter):
             if not text:
                 return
 
+            chat_type = "private" if getattr(message, "guild", None) is None else "channel"
+
+            directed = False
+            if chat_type == "private":
+                directed = True
+            elif self._client.user:
+                try:
+                    directed = any(
+                        getattr(u, "id", None) == getattr(self._client.user, "id", None)
+                        for u in (getattr(message, "mentions", None) or [])
+                    )
+                except Exception:
+                    directed = False
+
+            # In non-private channels, require an explicit bot mention to route messages.
+            if not directed:
+                return
+
             # Strip self-mention from beginning
             if self._client.user:
-                text = re.sub(rf"^\s*<@!?{self._client.user.id}>\s*", "", text)
+                text = re.sub(rf"^\s*(?:<@!?{self._client.user.id}>\s*)+", "", text)
 
             chat_id = str(message.channel.id)
             chat_title = getattr(message.channel, "name", None) or chat_id
@@ -133,6 +153,8 @@ class DiscordAdapter(IMAdapter):
                 self._message_queue.append({
                     "chat_id": chat_id,
                     "chat_title": chat_title,
+                    "chat_type": chat_type,
+                    "routed": bool(directed),
                     "text": text.strip(),
                     "from_user": from_user,
                     "message_id": str(message.id),

@@ -22,14 +22,16 @@ from .base import IMAdapter
 
 # Slack limits
 SLACK_MAX_MESSAGE_LENGTH = 4000  # Slack blocks limit, text limit is higher but 4000 is safe
-DEFAULT_MAX_CHARS = 900
-DEFAULT_MAX_LINES = 8
+DEFAULT_MAX_CHARS = 4000
+DEFAULT_MAX_LINES = 64
 
 
 class SlackAdapter(IMAdapter):
     """
     Slack adapter using Socket Mode for inbound and Web API for outbound.
     """
+
+    platform = "slack"
 
     def __init__(
         self,
@@ -149,19 +151,35 @@ class SlackAdapter(IMAdapter):
 
             text = event.get("text", "")
             channel = event.get("channel", "")
+            channel_type = str(event.get("channel_type") or "").strip().lower()
 
             if not text or not channel:
                 return
 
-            # Strip self-mention from beginning
+            chat_type = "private" if channel_type in ("im", "mpim") else "channel"
+            if not channel_type:
+                # Fallback: Slack channel IDs are prefixed by type: D=im, C=public channel, G=private channel/mpim.
+                chat_type = "private" if str(channel).startswith("D") else "channel"
+
+            mentioned = False
             if self._bot_user_id:
-                text = re.sub(rf"^\s*<@{re.escape(self._bot_user_id)}>\s*", "", text)
+                mentioned = f"<@{self._bot_user_id}>" in text
+
+            # In non-private channels, require an explicit bot mention to route messages.
+            if chat_type != "private" and not mentioned:
+                return
+
+            # Strip self-mention from beginning (keeps in-text mentions intact)
+            if self._bot_user_id:
+                text = re.sub(rf"^\s*(?:<@{re.escape(self._bot_user_id)}>\s*)+", "", text)
 
             # Queue the message
             with self._queue_lock:
                 self._message_queue.append({
                     "chat_id": channel,
                     "chat_title": channel,  # Will be resolved later if needed
+                    "chat_type": chat_type,
+                    "routed": bool(chat_type == "private" or mentioned),
                     "text": text.strip(),
                     "from_user": user,
                     "message_id": event.get("ts", ""),

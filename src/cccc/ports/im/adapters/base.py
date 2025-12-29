@@ -19,6 +19,8 @@ class IMAdapter(ABC):
     - Platform-specific formatting
     """
 
+    platform: str = "unknown"
+
     @abstractmethod
     def connect(self) -> bool:
         """

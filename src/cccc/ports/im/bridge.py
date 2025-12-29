@@ -316,10 +316,21 @@ class IMBridge:
                 self._handle_quit(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.HELP:
                 self._handle_help(chat_id, thread_id=thread_id)
+            elif parsed.type == CommandType.SEND:
+                self._handle_message(chat_id, parsed.text, parsed.mentions, from_user, thread_id=thread_id)
             elif parsed.type == CommandType.MESSAGE:
-                # In group chats, avoid forwarding all plain text into CCCC.
-                # Use /send to explicitly route content into the group.
-                if chat_type and chat_type not in ("private",) and not text.lstrip().startswith("/"):
+                routed = bool(msg.get("routed") or False)
+
+                # Unknown slash commands should not be forwarded as chat content.
+                # (Telegram groups may contain unrelated /commands; we only reply when routed/private.)
+                if text.lstrip().startswith("/"):
+                    if routed or chat_type in ("private",):
+                        self.adapter.send_message(chat_id, "❓ Unknown command. Use /help.", thread_id=thread_id)
+                    continue
+
+                # In non-private chats/channels, avoid forwarding all chatter into CCCC.
+                # Telegram: use /send. Slack/Discord: mention the bot (adapter sets routed=True).
+                if chat_type and chat_type not in ("private",) and not routed:
                     continue
                 self._handle_message(chat_id, parsed.text, parsed.mentions, from_user, thread_id=thread_id)
 
@@ -405,11 +416,18 @@ class IMBridge:
         """Handle /subscribe command."""
         sub = self.subscribers.subscribe(chat_id, chat_title, thread_id=thread_id)
         verbose_str = "on" if sub.verbose else "off"
+        platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
+        if platform == "telegram":
+            tip = "Group tip: use /send <message> to talk to agents."
+        elif platform in ("slack", "discord"):
+            tip = "Channel tip: mention the bot (e.g. @bot hello) to talk to agents."
+        else:
+            tip = "Tip: use /send <message> to talk to agents."
         self.adapter.send_message(
             chat_id,
             f"✅ Subscribed to {self.group.doc.get('title', self.group.group_id)}\n"
             f"Verbose mode: {verbose_str}\n"
-            f"Group tip: use /send <message> to talk to agents.\n"
+            f"{tip}\n"
             f"Use /help for commands.",
             thread_id=thread_id,
         )
@@ -521,7 +539,8 @@ class IMBridge:
 
     def _handle_help(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /help command."""
-        self.adapter.send_message(chat_id, format_help(), thread_id=thread_id)
+        platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
+        self.adapter.send_message(chat_id, format_help(platform=platform), thread_id=thread_id)
 
     def _handle_message(
         self,

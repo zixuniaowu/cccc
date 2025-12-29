@@ -2,6 +2,7 @@
 IM command parser for CCCC.
 
 Parses commands from IM messages:
+- /send
 - /subscribe, /unsubscribe
 - /verbose
 - /status, /context
@@ -23,6 +24,9 @@ class CommandType(str, Enum):
     # Subscription
     SUBSCRIBE = "subscribe"
     UNSUBSCRIBE = "unsubscribe"
+
+    # Messaging
+    SEND = "send"
 
     # Display control
     VERBOSE = "verbose"
@@ -130,6 +134,7 @@ def _map_command(cmd_name: str) -> CommandType:
         "sub": CommandType.SUBSCRIBE,
         "unsubscribe": CommandType.UNSUBSCRIBE,
         "unsub": CommandType.UNSUBSCRIBE,
+        "send": CommandType.SEND,
         "verbose": CommandType.VERBOSE,
         "v": CommandType.VERBOSE,
         "status": CommandType.STATUS,
@@ -148,20 +153,22 @@ def _map_command(cmd_name: str) -> CommandType:
     return mapping.get(cmd_name, CommandType.MESSAGE)
 
 
-def format_help() -> str:
+def format_help(platform: str = "telegram") -> str:
     """Generate help text for IM commands."""
-    return """CCCC Commands:
+    platform = (platform or "").strip().lower()
+
+    base = """CCCC Commands:
+
+📬 Subscription:
+  /subscribe - start receiving messages
+  /unsubscribe - stop receiving messages
 
 📨 Messages:
   /send <message> - send to all agents
   /send @<actor> <message> - send to a specific actor
   /send @all <message> - send to all actors
   /send @foreman <message> - send to foreman
-  (In a private chat with the bot, plain messages may also work.)
-
-📬 Subscription:
-  /subscribe - start receiving messages
-  /unsubscribe - stop receiving messages
+  /send @peers <message> - send to non-foreman agents
 
 👁 Display:
   /verbose - toggle verbose mode (show agent-to-agent messages)
@@ -178,6 +185,28 @@ def format_help() -> str:
 
 ❓ Help:
   /help - show this help"""
+
+    if platform == "telegram":
+        return (
+            base
+            + """
+
+Telegram notes:
+  - In group chats, only /send (and the commands above) are handled. Plain chat is ignored.
+  - In a private chat with the bot, plain messages may also work."""
+        )
+
+    if platform in ("slack", "discord"):
+        return (
+            base
+            + f"""
+
+{platform.title()} notes:
+  - In channels, mention the bot to route a message, e.g. @bot /send hello or @bot hello
+  - Commands must come after the mention (so they don't trigger platform slash-commands)."""
+        )
+
+    return base
 
 
 def format_status(

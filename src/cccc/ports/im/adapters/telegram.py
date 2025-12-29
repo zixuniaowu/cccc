@@ -25,8 +25,8 @@ from .base import IMAdapter
 
 # Telegram API limits
 TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-DEFAULT_MAX_CHARS = 900
-DEFAULT_MAX_LINES = 8
+DEFAULT_MAX_CHARS = 4096
+DEFAULT_MAX_LINES = 64
 
 
 class RateLimiter:
@@ -71,6 +71,8 @@ class TelegramAdapter(IMAdapter):
     """
     Telegram Bot API adapter using long-poll getUpdates.
     """
+
+    platform = "telegram"
 
     def __init__(
         self,
