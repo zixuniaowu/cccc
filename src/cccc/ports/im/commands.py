@@ -113,7 +113,12 @@ def _extract_mentions(text: str) -> List[str]:
         # Skip if it looks like a bot name (ends with Bot/bot)
         if m.lower().endswith("bot"):
             continue
-        mentions.append(m.lower())
+        ml = m.lower()
+        # Preserve special selectors used by CCCC delivery.
+        if ml in ("all", "peers", "foreman", "user"):
+            mentions.append(f"@{ml}")
+        else:
+            mentions.append(ml)
 
     return mentions
 
@@ -148,10 +153,11 @@ def format_help() -> str:
     return """CCCC Commands:
 
 📨 Messages:
-  Just type to send to all agents
-  @<actor> message - send to specific actor
-  @all message - send to all actors
-  @foreman message - send to foreman
+  /send <message> - send to all agents
+  /send @<actor> <message> - send to a specific actor
+  /send @all <message> - send to all actors
+  /send @foreman <message> - send to foreman
+  (In a private chat with the bot, plain messages may also work.)
 
 📬 Subscription:
   /subscribe - start receiving messages
@@ -193,7 +199,7 @@ def format_status(
             actor_id = actor.get("id", "?")
             role = actor.get("role", "peer")
             is_running = actor.get("running", False)
-            runtime = actor.get("runtime", "custom")
+            runtime = actor.get("runtime", "codex")
             status_icon = "🟢" if is_running else "⚪"
             role_icon = "👑" if role == "foreman" else "👤"
             lines.append(f"  {status_icon} {role_icon} {actor_id} ({runtime})")

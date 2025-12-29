@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shlex
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Literal, Optional, Union
@@ -18,6 +19,7 @@ from ...daemon.server import call_daemon
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
 from ...paths import ensure_home
+from ...util.fs import atomic_write_text
 
 
 class CreateGroupRequest(BaseModel):
@@ -49,7 +51,13 @@ class ActorCreateRequest(BaseModel):
     actor_id: str
     # Note: role is auto-determined by position (first enabled = foreman)
     runner: Literal["pty", "headless"] = Field(default="pty")
-    runtime: Literal["claude", "codex", "droid", "opencode", "custom"] = Field(default="custom")
+    runtime: Literal[
+        "claude",
+        "codex",
+        "droid",
+        "opencode",
+        "copilot",
+    ] = Field(default="codex")
     title: str = Field(default="")
     command: Union[str, list[str]] = Field(default="")
     env: Dict[str, str] = Field(default_factory=dict)
@@ -67,12 +75,24 @@ class ActorUpdateRequest(BaseModel):
     default_scope_key: Optional[str] = None
     submit: Optional[Literal["enter", "newline", "none"]] = None
     runner: Optional[Literal["pty", "headless"]] = None
-    runtime: Optional[Literal["claude", "codex", "droid", "opencode", "custom"]] = None
+    runtime: Optional[
+        Literal[
+            "claude",
+            "codex",
+            "droid",
+            "opencode",
+            "copilot",
+        ]
+    ] = None
     enabled: Optional[bool] = None
 
 
 class InboxReadRequest(BaseModel):
     event_id: str
+    by: str = Field(default="user")
+
+class ProjectMdUpdateRequest(BaseModel):
+    content: str = Field(default="")
     by: str = Field(default="user")
 
 
@@ -96,6 +116,26 @@ class GroupSettingsRequest(BaseModel):
 class GroupDeleteRequest(BaseModel):
     confirm: str = Field(default="")
     by: str = Field(default="user")
+
+
+class IMSetRequest(BaseModel):
+    group_id: str
+    platform: Literal["telegram", "slack", "discord"]
+    # Legacy single token field (backward compat for telegram/discord)
+    token_env: str = ""
+    token: str = ""
+    # Dual token fields for Slack
+    bot_token_env: str = ""  # xoxb- for outbound (Web API)
+    app_token_env: str = ""  # xapp- for inbound (Socket Mode)
+
+
+class IMActionRequest(BaseModel):
+    group_id: str
+
+
+def _is_env_var_name(value: str) -> bool:
+    # Shell-friendly env var name (portable).
+    return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]*", (value or "").strip()))
 
 
 def _normalize_command(cmd: Union[str, list[str], None]) -> Optional[list[str]]:
@@ -232,6 +272,15 @@ def create_app() -> FastAPI:
         if blocked is not None:
             return blocked
         return await call_next(request)
+
+    @app.middleware("http")
+    async def _ui_cache_control(request: Request, call_next):  # type: ignore[no-untyped-def]
+        resp = await call_next(request)
+        # Avoid "why didn't my UI update?" confusion during local development.
+        # Vite config uses stable filenames, so we force revalidation.
+        if str(request.url.path or "").startswith("/ui"):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> str:
@@ -389,6 +438,90 @@ def create_app() -> FastAPI:
     async def group_context(group_id: str) -> Dict[str, Any]:
         """Get full group context (vision/sketch/milestones/tasks/notes/refs/presence)."""
         return _daemon({"op": "context_get", "args": {"group_id": group_id}})
+
+    @app.get("/api/v1/groups/{group_id}/project_md")
+    async def project_md_get(group_id: str) -> Dict[str, Any]:
+        """Get PROJECT.md content for the group's active scope root (repo root)."""
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        scopes = group.doc.get("scopes") if isinstance(group.doc.get("scopes"), list) else []
+        active_scope_key = str(group.doc.get("active_scope_key") or "")
+
+        project_root: Optional[str] = None
+        for sc in scopes:
+            if not isinstance(sc, dict):
+                continue
+            sk = str(sc.get("scope_key") or "")
+            if sk == active_scope_key:
+                project_root = str(sc.get("url") or "")
+                break
+        if not project_root:
+            if scopes and isinstance(scopes[0], dict):
+                project_root = str(scopes[0].get("url") or "")
+        if not project_root:
+            return {"ok": True, "result": {"found": False, "path": None, "content": None, "error": "No scope attached to group. Use 'cccc attach <path>' first."}}
+
+        root = Path(project_root).expanduser()
+        if not root.exists() or not root.is_dir():
+            return {"ok": True, "result": {"found": False, "path": str(root / "PROJECT.md"), "content": None, "error": f"Project root does not exist: {root}"}}
+
+        project_md_path = root / "PROJECT.md"
+        if not project_md_path.exists():
+            project_md_path_lower = root / "project.md"
+            if project_md_path_lower.exists():
+                project_md_path = project_md_path_lower
+            else:
+                return {"ok": True, "result": {"found": False, "path": str(project_md_path), "content": None, "error": f"PROJECT.md not found at {project_md_path}"}}
+
+        try:
+            content = project_md_path.read_text(encoding="utf-8", errors="replace")
+            return {"ok": True, "result": {"found": True, "path": str(project_md_path), "content": content}}
+        except Exception as e:
+            return {"ok": True, "result": {"found": False, "path": str(project_md_path), "content": None, "error": f"Failed to read PROJECT.md: {e}"}}
+
+    @app.put("/api/v1/groups/{group_id}/project_md")
+    async def project_md_put(group_id: str, req: ProjectMdUpdateRequest) -> Dict[str, Any]:
+        """Create or update PROJECT.md in the group's active scope root (repo root)."""
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        scopes = group.doc.get("scopes") if isinstance(group.doc.get("scopes"), list) else []
+        active_scope_key = str(group.doc.get("active_scope_key") or "")
+
+        project_root: Optional[str] = None
+        for sc in scopes:
+            if not isinstance(sc, dict):
+                continue
+            sk = str(sc.get("scope_key") or "")
+            if sk == active_scope_key:
+                project_root = str(sc.get("url") or "")
+                break
+        if not project_root:
+            if scopes and isinstance(scopes[0], dict):
+                project_root = str(scopes[0].get("url") or "")
+        if not project_root:
+            return {"ok": False, "error": {"code": "NO_SCOPE", "message": "No scope attached to group. Use 'cccc attach <path>' first."}}
+
+        root = Path(project_root).expanduser()
+        if not root.exists() or not root.is_dir():
+            return {"ok": False, "error": {"code": "INVALID_SCOPE", "message": f"Project root does not exist: {root}"}}
+
+        # Write to existing file if present; otherwise create PROJECT.md.
+        project_md_path = root / "PROJECT.md"
+        if not project_md_path.exists():
+            project_md_path_lower = root / "project.md"
+            if project_md_path_lower.exists():
+                project_md_path = project_md_path_lower
+
+        try:
+            atomic_write_text(project_md_path, str(req.content or ""), encoding="utf-8")
+            content = project_md_path.read_text(encoding="utf-8", errors="replace")
+            return {"ok": True, "result": {"found": True, "path": str(project_md_path), "content": content}}
+        except Exception as e:
+            return {"ok": False, "error": {"code": "WRITE_FAILED", "message": f"Failed to write PROJECT.md: {e}"}}
 
     @app.post("/api/v1/groups/{group_id}/context")
     async def group_context_sync(group_id: str, request: Request) -> Dict[str, Any]:
@@ -792,19 +925,6 @@ def create_app() -> FastAPI:
     # IM Bridge API
     # =========================================================================
 
-    class IMSetRequest(BaseModel):
-        group_id: str
-        platform: Literal["telegram", "slack", "discord"]
-        # Legacy single token field (backward compat for telegram/discord)
-        token_env: str = ""
-        token: str = ""
-        # Dual token fields for Slack
-        bot_token_env: str = ""  # xoxb- for outbound (Web API)
-        app_token_env: str = ""  # xapp- for inbound (Socket Mode)
-
-    class IMActionRequest(BaseModel):
-        group_id: str
-
     @app.get("/api/im/status")
     async def im_status(group_id: str) -> Dict[str, Any]:
         """Get IM bridge status for a group."""
@@ -822,8 +942,18 @@ def create_app() -> FastAPI:
         if pid_path.exists():
             try:
                 pid = int(pid_path.read_text(encoding="utf-8").strip())
-                os.kill(pid, 0)  # Check if process exists
-                running = True
+                # Reap if this process started the bridge and it already exited.
+                try:
+                    waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+                    if waited_pid == pid:
+                        pid = None
+                        pid_path.unlink(missing_ok=True)
+                    else:
+                        os.kill(pid, 0)  # Check if process exists
+                        running = True
+                except (AttributeError, ChildProcessError):
+                    os.kill(pid, 0)  # Check if process exists
+                    running = True
             except (ValueError, ProcessLookupError, PermissionError):
                 pid = None
 
@@ -866,27 +996,44 @@ def create_app() -> FastAPI:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
 
-        # Build IM config
+        # Build IM config.
+        # Note: Web UI historically used bot_token_env/app_token_env as a single input.
+        # We accept either an env var name (e.g. TELEGRAM_BOT_TOKEN) or a raw token value.
         im_cfg: Dict[str, Any] = {"platform": req.platform}
-        
-        # Handle Slack dual tokens
-        if req.platform == "slack":
-            if req.bot_token_env:
-                im_cfg["bot_token_env"] = req.bot_token_env
-            if req.app_token_env:
-                im_cfg["app_token_env"] = req.app_token_env
-            # Fallback: if only token_env provided, treat as bot_token_env
-            if req.token_env and not req.bot_token_env:
-                im_cfg["bot_token_env"] = req.token_env
+
+        platform = str(req.platform or "").strip().lower()
+        token_hint = str(req.bot_token_env or req.token_env or "").strip()
+
+        if platform == "slack":
+            if token_hint:
+                if _is_env_var_name(token_hint):
+                    im_cfg["bot_token_env"] = token_hint
+                else:
+                    im_cfg["bot_token"] = token_hint
+
+            app_hint = str(req.app_token_env or "").strip()
+            if app_hint:
+                if _is_env_var_name(app_hint):
+                    im_cfg["app_token_env"] = app_hint
+                else:
+                    im_cfg["app_token"] = app_hint
+
+            # Backward compat: if only token_env provided, treat as bot_token_env.
+            if req.token_env and not req.bot_token_env and _is_env_var_name(req.token_env):
+                im_cfg.setdefault("bot_token_env", str(req.token_env).strip())
+
+            if req.token:
+                im_cfg.setdefault("bot_token", str(req.token).strip())
         else:
-            # Telegram/Discord: single token
-            if req.bot_token_env:
-                im_cfg["token_env"] = req.bot_token_env
-            elif req.token_env:
-                im_cfg["token_env"] = req.token_env
-        
-        if req.token:
-            im_cfg["token"] = req.token
+            # Telegram/Discord: single token.
+            if token_hint:
+                if _is_env_var_name(token_hint):
+                    im_cfg["token_env"] = token_hint
+                else:
+                    im_cfg["token"] = token_hint
+
+            if req.token:
+                im_cfg["token"] = str(req.token).strip()
 
         # Update group doc and save
         group.doc["im"] = im_cfg
@@ -921,8 +1068,17 @@ def create_app() -> FastAPI:
         if pid_path.exists():
             try:
                 pid = int(pid_path.read_text(encoding="utf-8").strip())
-                os.kill(pid, 0)
-                return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
+                # If it's our child and already exited, reap and allow restart.
+                try:
+                    waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+                    if waited_pid == pid:
+                        pid_path.unlink(missing_ok=True)
+                    else:
+                        os.kill(pid, 0)
+                        return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
+                except (AttributeError, ChildProcessError):
+                    os.kill(pid, 0)
+                    return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
             except (ValueError, ProcessLookupError, PermissionError):
                 pass
 
@@ -958,8 +1114,23 @@ def create_app() -> FastAPI:
                 stderr=log_file,
                 start_new_session=True,
             )
-            pid_path.write_text(str(proc.pid), encoding="utf-8")
+            # If the process exits immediately (common for missing token/deps), report failure.
+            await asyncio.sleep(0.25)
+            exit_code = proc.poll()
+            if exit_code is not None:
+                try:
+                    proc.wait(timeout=0.1)
+                except Exception:
+                    pass
+                return {
+                    "ok": False,
+                    "error": {
+                        "code": "bridge_exited",
+                        "message": f"bridge exited early (code={exit_code}). Check log: {log_path}",
+                    },
+                }
 
+            pid_path.write_text(str(proc.pid), encoding="utf-8")
             return {"ok": True, "result": {"group_id": req.group_id, "platform": platform, "pid": proc.pid}}
         except Exception as e:
             return {"ok": False, "error": {"code": "start_failed", "message": str(e)}}

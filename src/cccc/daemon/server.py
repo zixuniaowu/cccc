@@ -111,7 +111,7 @@ def _ensure_mcp_installed(runtime: str, cwd: Path) -> bool:
     Returns True if MCP was installed or already exists, False on error.
     """
     if runtime not in ("claude", "codex", "droid"):
-        return True  # Skip for unsupported runtimes
+        return True  # Manual MCP config (or unsupported): skip
     
     # Check if already installed
     if _is_mcp_installed(runtime):
@@ -182,11 +182,12 @@ def _ensure_skill_installed(runtime: str, cwd: Path) -> bool:
     - claude: <project>/.claude/skills/cccc-ops/SKILL.md
     - codex: <project>/.codex/skills/cccc-ops/SKILL.md
     - droid: <project>/.factory/skills/cccc-ops/SKILL.md
-    - opencode: <project>/.opencode/skill/cccc-ops/SKILL.md
+    - opencode: <project>/.opencode/skills/cccc-ops/SKILL.md
+    - copilot: <project>/.github/skills/cccc-ops/SKILL.md
     
     Returns True if skill was installed or already exists, False on error.
     """
-    if runtime not in ("claude", "codex", "droid", "opencode"):
+    if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
         return True  # Skip for unsupported runtimes
     
     skill_content = _get_skill_content()
@@ -204,8 +205,13 @@ def _ensure_skill_installed(runtime: str, cwd: Path) -> bool:
             # Droid: project-level skills in .factory/skills/<skill-name>/SKILL.md
             skill_dir = cwd / ".factory" / "skills" / "cccc-ops"
         elif runtime == "opencode":
-            # OpenCode: project-level skills in .opencode/skill/<skill-name>/SKILL.md
-            skill_dir = cwd / ".opencode" / "skill" / "cccc-ops"
+            # OpenCode: project-level skills in .opencode/skills/<skill-name>/SKILL.md
+            preferred = cwd / ".opencode" / "skills" / "cccc-ops"
+            legacy = cwd / ".opencode" / "skill" / "cccc-ops"
+            skill_dir = legacy if (legacy / "SKILL.md").exists() else preferred
+        elif runtime == "copilot":
+            # Copilot: project-level skills in .github/skills/<skill-name>/SKILL.md
+            skill_dir = cwd / ".github" / "skills" / "cccc-ops"
         else:
             return True
         
@@ -880,7 +886,22 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     pass
                 
                 # Ensure MCP is installed for the runtime BEFORE starting the actor
-                runtime = str(actor.get("runtime") or "custom").strip()
+                runtime = str(actor.get("runtime") or "codex").strip()
+                if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
+                    return (
+                        _error(
+                            "unsupported_runtime",
+                            f"unsupported runtime: {runtime}",
+                            details={
+                                "group_id": group.group_id,
+                                "actor_id": aid,
+                                "runtime": runtime,
+                                "supported": ["claude", "codex", "droid", "opencode", "copilot"],
+                                "hint": "Change the actor runtime to a supported one.",
+                            },
+                        ),
+                        False,
+                    )
                 _ensure_mcp_installed(runtime, cwd)
                 _ensure_skill_installed(runtime, cwd)
                 
@@ -1035,7 +1056,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         title = str(args.get("title") or "").strip()
         submit = str(args.get("submit") or "").strip()
         runner = str(args.get("runner") or "pty").strip()
-        runtime = str(args.get("runtime") or "custom").strip()
+        runtime = str(args.get("runtime") or "codex").strip()
         by = str(args.get("by") or "user").strip()
         command_raw = args.get("command")
         env_raw = args.get("env")
@@ -1050,7 +1071,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             # Note: role is auto-determined by position (first enabled = foreman)
             if runner not in ("pty", "headless"):
                 raise ValueError("invalid runner (must be 'pty' or 'headless')")
-            if runtime not in ("claude", "codex", "droid", "opencode", "gemini", "copilot", "cursor", "auggie", "kilocode", "custom"):
+            if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
                 raise ValueError("invalid runtime")
             
             # Auto-generate actor_id if not provided (use runtime as prefix)
@@ -1062,19 +1083,9 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if isinstance(command_raw, list) and all(isinstance(x, str) for x in command_raw):
                 command = [str(x) for x in command_raw if str(x).strip()]
             # Auto-set command based on runtime if not provided
-            if not command and runtime != "custom":
-                runtime_commands = {
-                    "claude": ["claude"],
-                    "codex": ["codex"],
-                    "droid": ["droid"],
-                    "opencode": ["opencode"],
-                    "gemini": ["gemini"],
-                    "copilot": ["copilot"],
-                    "cursor": ["cursor-agent"],
-                    "auggie": ["auggie"],
-                    "kilocode": ["kilocode"],
-                }
-                command = runtime_commands.get(runtime, [])
+            if not command:
+                from ..kernel.runtime import get_runtime_command_with_flags
+                command = get_runtime_command_with_flags(runtime)
             env: Dict[str, str] = {}
             if isinstance(env_raw, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env_raw.items()):
                 env = {str(k): str(v) for k, v in env_raw.items()}
@@ -1099,6 +1110,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             by=by,
             data={"actor": actor},
         )
+        # New actors should not inherit historical unread messages.
+        # Initialize their read cursor to "now" (the actor.add event) so inbox starts empty.
+        try:
+            set_cursor(group, actor_id, event_id=str(ev.get("id") or ""), ts=str(ev.get("ts") or ""))
+        except Exception:
+            pass
         return DaemonResponse(ok=True, result={"actor": actor, "event": ev}), False
 
     if op == "actor_remove":
@@ -1280,7 +1297,22 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         runner_kind = str(actor.get("runner") or "pty").strip()
 
         # Ensure MCP is installed for the runtime BEFORE starting the actor
-        runtime = str(actor.get("runtime") or "custom").strip()
+        runtime = str(actor.get("runtime") or "codex").strip()
+        if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
+            return (
+                _error(
+                    "unsupported_runtime",
+                    f"unsupported runtime: {runtime}",
+                    details={
+                        "group_id": group.group_id,
+                        "actor_id": actor_id,
+                        "runtime": runtime,
+                        "supported": ["claude", "codex", "droid", "opencode", "copilot"],
+                        "hint": "Change the actor runtime to a supported one.",
+                    },
+                ),
+                False,
+            )
         _ensure_mcp_installed(runtime, cwd)
         _ensure_skill_installed(runtime, cwd)
 
@@ -1517,6 +1549,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         ev = find_event(group, event_id)
         if ev is None:
             return _error("event_not_found", f"event not found: {event_id}"), False
+        if str(ev.get("kind") or "") not in ("chat.message", "system.notify"):
+            return _error("invalid_event_kind", "event kind must be chat.message or system.notify"), False
+        if not is_message_for_actor(group, actor_id=actor_id, event=ev):
+            return _error("event_not_for_actor", f"event is not addressed to actor: {actor_id}"), False
         ts = str(ev.get("ts") or "")
         cursor = set_cursor(group, actor_id, event_id=event_id, ts=ts)
         read_ev = append_event(
@@ -1563,8 +1599,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         return DaemonResponse(ok=True, result=res), False
 
     if op == "send":
-        import sys
-        
         group_id = str(args.get("group_id") or "").strip()
         text = str(args.get("text") or "")
         by = str(args.get("by") or "user")
@@ -1572,9 +1606,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         to_tokens: list[str] = []
         if isinstance(to_raw, list):
             to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
-        
-        print(f"[send] to_raw={to_raw!r}, to_tokens={to_tokens!r}", file=sys.stderr, flush=True)
-        
+
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
         group = load_group(group_id)
@@ -1583,7 +1615,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
         try:
             to = resolve_recipient_tokens(group, to_tokens)
-            print(f"[send] resolved to={to!r}", file=sys.stderr, flush=True)
         except Exception as e:
             return _error("invalid_recipient", str(e)), False
 
@@ -1608,7 +1639,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                             mention_tokens.append(m)
                     try:
                         to = resolve_recipient_tokens(group, mention_tokens)
-                        print(f"[send] auto-extracted mentions: {mention_tokens!r} -> to={to!r}", file=sys.stderr, flush=True)
                     except Exception:
                         pass  # Ignore invalid mentions
 
@@ -1654,7 +1684,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         # Best-effort delivery into running actors.
         # If no explicit recipients, deliver to all actors (@all behavior)
         effective_to = to if to else ["@all"]
-        print(f"[send] effective_to={effective_to!r}", file=sys.stderr, flush=True)
         event_id = str(ev.get("id") or "").strip()
         event_ts = str(ev.get("ts") or "").strip()
         for actor in list_actors(group):
@@ -1759,8 +1788,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         # 如果没有指定收件人，默认回复给原消息发送者
         if not to_tokens:
             original_by = str(original.get("by") or "").strip()
-            if original_by and original_by != "user":
-                to_tokens = [original_by]
+            if original_by:
+                to_tokens = ["user"] if original_by == "user" else [original_by]
 
         try:
             to = resolve_recipient_tokens(group, to_tokens)
@@ -1793,54 +1822,61 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         except Exception:
             pass
 
-        # Best-effort 投递到 PTY（带回复格式）
-        if to:
-            event_id = str(ev.get("id") or "").strip()
-            event_ts = str(ev.get("ts") or "").strip()
-            for actor in list_actors(group):
-                if not isinstance(actor, dict):
-                    continue
-                aid = str(actor.get("id") or "").strip()
-                if not aid or aid == "user" or aid == by:
-                    continue
-                if not is_message_for_actor(group, actor_id=aid, event=ev):
-                    continue
-                # PTY runner: queue message for throttled delivery
-                runner_kind = str(actor.get("runner") or "pty").strip()
-                if runner_kind != "headless":
-                    queue_chat_message(
-                        group,
-                        actor_id=aid,
-                        event_id=event_id,
-                        by=by,
-                        to=to,
-                        text=text,
-                        reply_to=reply_to,
-                        quote_text=quote_text,
-                        ts=event_ts,
-                    )
-            # Headless runners: notify via system.notify event (daemon writes to ledger)
-            try:
-                headless_targets = get_headless_targets_for_message(group, event=ev, by=by)
-                for aid in headless_targets:
-                    append_event(
-                        group.ledger_path,
-                        kind="system.notify",
-                        group_id=group.group_id,
-                        scope_key="",
-                        by="system",
-                        data={
-                            "kind": "info",
-                            "priority": "high",
-                            "title": "New message",
-                            "message": f"New message from {by}. Check your inbox.",
-                            "target_actor_id": aid,
-                            "requires_ack": False,
-                            "context": {"event_id": event_id, "from": by},
-                        },
-                    )
-            except Exception:
-                pass
+        # Best-effort delivery into running actors.
+        # If no explicit recipients, deliver to all actors (@all behavior).
+        effective_to = to if to else ["@all"]
+        ev_with_effective_to = dict(ev)
+        ev_with_effective_to["data"] = dict(ev.get("data") or {})
+        ev_with_effective_to["data"]["to"] = effective_to
+
+        event_id = str(ev.get("id") or "").strip()
+        event_ts = str(ev.get("ts") or "").strip()
+
+        for actor in list_actors(group):
+            if not isinstance(actor, dict):
+                continue
+            aid = str(actor.get("id") or "").strip()
+            if not aid or aid == "user" or aid == by:
+                continue
+            if not is_message_for_actor(group, actor_id=aid, event=ev_with_effective_to):
+                continue
+            # PTY runner: queue message for throttled delivery
+            runner_kind = str(actor.get("runner") or "pty").strip()
+            if runner_kind != "headless":
+                queue_chat_message(
+                    group,
+                    actor_id=aid,
+                    event_id=event_id,
+                    by=by,
+                    to=effective_to,
+                    text=text,
+                    reply_to=reply_to,
+                    quote_text=quote_text,
+                    ts=event_ts,
+                )
+
+        # Headless runners: notify via system.notify event (daemon writes to ledger)
+        try:
+            headless_targets = get_headless_targets_for_message(group, event=ev_with_effective_to, by=by)
+            for aid in headless_targets:
+                append_event(
+                    group.ledger_path,
+                    kind="system.notify",
+                    group_id=group.group_id,
+                    scope_key="",
+                    by="system",
+                    data={
+                        "kind": "info",
+                        "priority": "high",
+                        "title": "New message",
+                        "message": f"New message from {by}. Check your inbox.",
+                        "target_actor_id": aid,
+                        "requires_ack": False,
+                        "context": {"event_id": event_id, "from": by},
+                    },
+                )
+        except Exception:
+            pass
 
         # Trigger automation: auto-transition idle -> active on new message
         try:

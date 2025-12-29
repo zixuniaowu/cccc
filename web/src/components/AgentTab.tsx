@@ -45,7 +45,7 @@ export function AgentTab({
   const isRunning = actor.running ?? actor.enabled ?? false;
   const isHeadless = actor.runner === "headless";
   const color = getRuntimeColor(actor.runtime, isDark);
-  const rtInfo = RUNTIME_INFO[actor.runtime || "custom"];
+  const rtInfo = (actor.runtime && RUNTIME_INFO[actor.runtime]) ? RUNTIME_INFO[actor.runtime] : RUNTIME_INFO.codex;
   const unreadCount = actor.unread_count ?? 0;
 
   // Send interrupt (Ctrl+C)
@@ -145,6 +145,12 @@ export function AgentTab({
     const term = terminalRef.current;
     const disposable = term.onData((data) => {
       if (ws.readyState === WebSocket.OPEN) {
+        // xterm.js may emit terminal replies (not user keystrokes), e.g. device attributes.
+        // Some runtimes (notably droid) can echo these back as literal text (seen as "1;2c").
+        if (actor.runtime === "droid") {
+          const isDeviceAttributesReply = /^\x1b\[(?:\?|>)(?:\d+)(?:;\d+)*c$/.test(data);
+          if (isDeviceAttributesReply) return;
+        }
         ws.send(JSON.stringify({ t: "i", d: data }));
       }
     });

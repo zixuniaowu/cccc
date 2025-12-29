@@ -30,61 +30,37 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
     "claude": {
         "display_name": "Claude Code",
         "command": "claude",
-        "capabilities": "Strong coding; MCP support; no built-in web browsing",
+        "capabilities": "Strong coding; MCP+skills; MCP setup: auto",
         "mcp_add_pattern": "claude mcp add {name} -s project -- {cmd}",
     },
     "codex": {
         "display_name": "Codex CLI",
         "command": "codex",
-        "capabilities": "Strong coding; multimodal input; sandbox support",
+        "capabilities": "Strong coding; MCP+skills; MCP setup: auto",
         "mcp_add_pattern": "codex mcp add {name} -- {cmd}",
     },
     "droid": {
         "display_name": "Droid CLI",
         "command": "droid",
-        "capabilities": "Strong coding; robust auto mode; good long sessions",
+        "capabilities": "Strong coding; MCP+skills; MCP setup: auto",
         "mcp_add_pattern": "droid mcp add {name} -- {cmd}",
     },
     "opencode": {
         "display_name": "OpenCode",
         "command": "opencode",
-        "capabilities": "Solid coding CLI; steady long sessions",
+        "capabilities": "Solid coding CLI; MCP+skills; MCP setup: manual",
         "mcp_add_pattern": None,  # Requires manual config
-    },
-    "gemini": {
-        "display_name": "Gemini CLI",
-        "command": "gemini",
-        "capabilities": "Strong coding; web searching; large context; image support",
-        "mcp_add_pattern": None,
     },
     "copilot": {
         "display_name": "GitHub Copilot CLI",
         "command": "copilot",
-        "capabilities": "GitHub Copilot CLI with tool access; integrated with GitHub",
-        "mcp_add_pattern": None,
-    },
-    "cursor": {
-        "display_name": "Cursor Agent",
-        "command": "cursor-agent",
-        "capabilities": "Cursor AI agent; strong coding; editor-integrated",
-        "mcp_add_pattern": None,
-    },
-    "auggie": {
-        "display_name": "Augment Code",
-        "command": "auggie",
-        "capabilities": "Augment Code AI assistant; solid coding support",
-        "mcp_add_pattern": None,
-    },
-    "kilocode": {
-        "display_name": "KiloCode",
-        "command": "kilocode",
-        "capabilities": "AI-powered coding assistant with autonomous capabilities",
+        "capabilities": "Copilot CLI; MCP+skills; MCP setup: manual",
         "mcp_add_pattern": None,
     },
 }
 
-# Primary supported runtimes (with full MCP integration)
-PRIMARY_RUNTIMES = ["claude", "codex", "droid", "opencode"]
+# Primary supported runtimes (auto MCP installation)
+PRIMARY_RUNTIMES = ["claude", "codex", "droid"]
 
 
 def detect_runtime(name: str) -> RuntimeInfo:
@@ -126,8 +102,8 @@ def detect_all_runtimes(primary_only: bool = True) -> List[RuntimeInfo]:
     """Detect all known runtimes on the system.
     
     Args:
-        primary_only: If True, only check primary supported runtimes (claude, codex, droid, opencode).
-                     If False, check all known runtimes.
+        primary_only: If True, only check auto-setup runtimes (claude, codex, droid).
+                     If False, check all supported runtimes (including manual MCP ones).
     
     Returns:
         List of RuntimeInfo for each runtime.
@@ -156,13 +132,9 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
     """Get the command with recommended flags for autonomous operation."""
     commands = {
         "claude": ["claude", "--dangerously-skip-permissions"],
-        "codex": ["codex", "--dangerously-bypass-approvals-and-sandbox"],
+        "codex": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--search"],
         "droid": ["droid", "--auto", "high"],
         "opencode": ["opencode"],
-        "gemini": ["gemini", "--yolo"],
-        "copilot": ["copilot", "--allow-all-tools"],
-        "cursor": ["cursor-agent"],
-        "auggie": ["auggie"],
-        "kilocode": ["kilocode", "--auto"],
+        "copilot": ["copilot", "--allow-all-tools", "--allow-all-paths"],
     }
     return commands.get(name, [name])

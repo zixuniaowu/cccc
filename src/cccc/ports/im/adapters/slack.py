@@ -197,12 +197,13 @@ class SlackAdapter(IMAdapter):
 
         return messages
 
-    def send_message(self, chat_id: int, text: str) -> bool:
+    def send_message(self, chat_id: str, text: str, thread_id: Optional[int] = None) -> bool:
         """
         Send a message to a Slack channel.
 
         chat_id is actually a channel ID string in Slack.
         """
+        _ = thread_id  # Slack threads not wired yet (future work).
         if not self._connected or not self._web_client:
             return False
 
@@ -231,7 +232,7 @@ class SlackAdapter(IMAdapter):
 
         return summarized
 
-    def get_chat_title(self, chat_id: int) -> str:
+    def get_chat_title(self, chat_id: str) -> str:
         """Get channel name via API."""
         if not self._web_client:
             return str(chat_id)

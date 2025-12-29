@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import sys
 import time
@@ -38,6 +39,10 @@ from .subscribers import SubscriberManager
 
 def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _is_env_var_name(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]*", (value or "").strip()))
 
 
 def _acquire_singleton_lock(lock_path: Path) -> Optional[Any]:
@@ -274,10 +279,15 @@ class IMBridge:
         messages = self.adapter.poll()
 
         for msg in messages:
-            chat_id = msg.get("chat_id", 0)
-            text = msg.get("text", "")
-            chat_title = msg.get("chat_title", "")
-            from_user = msg.get("from_user", "user")
+            chat_id = str(msg.get("chat_id") or "").strip()
+            text = str(msg.get("text") or "")
+            chat_title = str(msg.get("chat_title") or "")
+            from_user = str(msg.get("from_user") or "user")
+            chat_type = str(msg.get("chat_type") or "").strip().lower()
+            try:
+                thread_id = int(msg.get("thread_id") or 0)
+            except Exception:
+                thread_id = 0
 
             if not text:
                 continue
@@ -287,27 +297,31 @@ class IMBridge:
 
             # Handle commands
             if parsed.type == CommandType.SUBSCRIBE:
-                self._handle_subscribe(chat_id, chat_title)
+                self._handle_subscribe(chat_id, chat_title, thread_id=thread_id)
             elif parsed.type == CommandType.UNSUBSCRIBE:
-                self._handle_unsubscribe(chat_id)
+                self._handle_unsubscribe(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.VERBOSE:
-                self._handle_verbose(chat_id)
+                self._handle_verbose(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.STATUS:
-                self._handle_status(chat_id)
+                self._handle_status(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.CONTEXT:
-                self._handle_context(chat_id)
+                self._handle_context(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.PAUSE:
-                self._handle_pause(chat_id)
+                self._handle_pause(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.RESUME:
-                self._handle_resume(chat_id)
+                self._handle_resume(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.LAUNCH:
-                self._handle_launch(chat_id)
+                self._handle_launch(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.QUIT:
-                self._handle_quit(chat_id)
+                self._handle_quit(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.HELP:
-                self._handle_help(chat_id)
+                self._handle_help(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.MESSAGE:
-                self._handle_message(chat_id, parsed.text, parsed.mentions, from_user)
+                # In group chats, avoid forwarding all plain text into CCCC.
+                # Use /send to explicitly route content into the group.
+                if chat_type and chat_type not in ("private",) and not text.lstrip().startswith("/"):
+                    continue
+                self._handle_message(chat_id, parsed.text, parsed.mentions, from_user, thread_id=thread_id)
 
     def _process_outbound(self) -> None:
         """Process outbound events from ledger."""
@@ -342,10 +356,10 @@ class IMBridge:
             return
 
         # Forward to subscribed chats
-        subscribed_chats = self.subscribers.get_subscribed_chats()
+        subscribed = self.subscribers.get_subscribed_targets()
 
-        for chat_id in subscribed_chats:
-            verbose = self.subscribers.is_verbose(chat_id)
+        for sub in subscribed:
+            verbose = bool(sub.verbose)
 
             # Filter based on verbose setting
             if not self._should_forward(event, verbose):
@@ -355,7 +369,7 @@ class IMBridge:
             formatted = self.adapter.format_outbound(by, to, text, is_system)
 
             # Send
-            self.adapter.send_message(chat_id, formatted)
+            self.adapter.send_message(sub.chat_id, formatted, thread_id=sub.thread_id)
 
     def _should_forward(self, event: Dict[str, Any], verbose: bool) -> bool:
         """Determine if event should be forwarded based on verbose setting."""
@@ -387,43 +401,45 @@ class IMBridge:
     # Command Handlers
     # =========================================================================
 
-    def _handle_subscribe(self, chat_id: int, chat_title: str) -> None:
+    def _handle_subscribe(self, chat_id: str, chat_title: str, thread_id: int = 0) -> None:
         """Handle /subscribe command."""
-        sub = self.subscribers.subscribe(chat_id, chat_title)
+        sub = self.subscribers.subscribe(chat_id, chat_title, thread_id=thread_id)
         verbose_str = "on" if sub.verbose else "off"
         self.adapter.send_message(
             chat_id,
             f"✅ Subscribed to {self.group.doc.get('title', self.group.group_id)}\n"
             f"Verbose mode: {verbose_str}\n"
+            f"Group tip: use /send <message> to talk to agents.\n"
             f"Use /help for commands.",
+            thread_id=thread_id,
         )
-        self._log(f"[subscribe] chat={chat_id} title={chat_title}")
+        self._log(f"[subscribe] chat={chat_id} thread={thread_id} title={chat_title}")
 
-    def _handle_unsubscribe(self, chat_id: int) -> None:
+    def _handle_unsubscribe(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /unsubscribe command."""
-        was_subscribed = self.subscribers.unsubscribe(chat_id)
+        was_subscribed = self.subscribers.unsubscribe(chat_id, thread_id=thread_id)
         if was_subscribed:
-            self.adapter.send_message(chat_id, "👋 Unsubscribed. You will no longer receive messages.")
+            self.adapter.send_message(chat_id, "👋 Unsubscribed. You will no longer receive messages.", thread_id=thread_id)
         else:
-            self.adapter.send_message(chat_id, "ℹ️ You were not subscribed.")
-        self._log(f"[unsubscribe] chat={chat_id}")
+            self.adapter.send_message(chat_id, "ℹ️ You were not subscribed.", thread_id=thread_id)
+        self._log(f"[unsubscribe] chat={chat_id} thread={thread_id}")
 
-    def _handle_verbose(self, chat_id: int) -> None:
+    def _handle_verbose(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /verbose command (toggle)."""
-        new_value = self.subscribers.toggle_verbose(chat_id)
+        new_value = self.subscribers.toggle_verbose(chat_id, thread_id=thread_id)
         if new_value is None:
-            self.adapter.send_message(chat_id, "ℹ️ Please /subscribe first.")
+            self.adapter.send_message(chat_id, "ℹ️ Please /subscribe first.", thread_id=thread_id)
         else:
             status = "ON - showing all messages" if new_value else "OFF - showing only messages to you"
-            self.adapter.send_message(chat_id, f"👁 Verbose mode: {status}")
-        self._log(f"[verbose] chat={chat_id} new_value={new_value}")
+            self.adapter.send_message(chat_id, f"👁 Verbose mode: {status}", thread_id=thread_id)
+        self._log(f"[verbose] chat={chat_id} thread={thread_id} new_value={new_value}")
 
-    def _handle_status(self, chat_id: int) -> None:
+    def _handle_status(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /status command."""
         # Get group info
         resp = self._daemon({"op": "group_show", "args": {"group_id": self.group.group_id}})
         if not resp.get("ok"):
-            self.adapter.send_message(chat_id, "❌ Failed to get status")
+            self.adapter.send_message(chat_id, "❌ Failed to get status", thread_id=thread_id)
             return
 
         group_data = resp.get("result", {}).get("group", {})
@@ -438,81 +454,82 @@ class IMBridge:
             actors = actors_resp.get("result", {}).get("actors", [])
 
         status_text = format_status(group_title, group_state, running, actors)
-        self.adapter.send_message(chat_id, status_text)
+        self.adapter.send_message(chat_id, status_text, thread_id=thread_id)
 
-    def _handle_context(self, chat_id: int) -> None:
+    def _handle_context(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /context command."""
         resp = self._daemon({"op": "context_get", "args": {"group_id": self.group.group_id}})
         if not resp.get("ok"):
-            self.adapter.send_message(chat_id, "❌ Failed to get context")
+            self.adapter.send_message(chat_id, "❌ Failed to get context", thread_id=thread_id)
             return
 
         context = resp.get("result", {})
         context_text = format_context(context)
-        self.adapter.send_message(chat_id, context_text)
+        self.adapter.send_message(chat_id, context_text, thread_id=thread_id)
 
-    def _handle_pause(self, chat_id: int) -> None:
+    def _handle_pause(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /pause command."""
         resp = self._daemon({
             "op": "group_set_state",
             "args": {"group_id": self.group.group_id, "state": "paused", "by": "user"},
         })
         if resp.get("ok"):
-            self.adapter.send_message(chat_id, "⏸ Group paused. Message delivery stopped.")
+            self.adapter.send_message(chat_id, "⏸ Group paused. Message delivery stopped.", thread_id=thread_id)
         else:
             error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to pause: {error}")
-        self._log(f"[pause] chat={chat_id} ok={resp.get('ok')}")
+            self.adapter.send_message(chat_id, f"❌ Failed to pause: {error}", thread_id=thread_id)
+        self._log(f"[pause] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
-    def _handle_resume(self, chat_id: int) -> None:
+    def _handle_resume(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /resume command."""
         resp = self._daemon({
             "op": "group_set_state",
             "args": {"group_id": self.group.group_id, "state": "active", "by": "user"},
         })
         if resp.get("ok"):
-            self.adapter.send_message(chat_id, "▶️ Group resumed. Message delivery active.")
+            self.adapter.send_message(chat_id, "▶️ Group resumed. Message delivery active.", thread_id=thread_id)
         else:
             error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to resume: {error}")
-        self._log(f"[resume] chat={chat_id} ok={resp.get('ok')}")
+            self.adapter.send_message(chat_id, f"❌ Failed to resume: {error}", thread_id=thread_id)
+        self._log(f"[resume] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
-    def _handle_launch(self, chat_id: int) -> None:
+    def _handle_launch(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /launch command."""
         resp = self._daemon({
             "op": "group_start",
             "args": {"group_id": self.group.group_id, "by": "user"},
         })
         if resp.get("ok"):
-            self.adapter.send_message(chat_id, "🚀 Launching all agents...")
+            self.adapter.send_message(chat_id, "🚀 Launching all agents...", thread_id=thread_id)
         else:
             error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to launch: {error}")
-        self._log(f"[launch] chat={chat_id} ok={resp.get('ok')}")
+            self.adapter.send_message(chat_id, f"❌ Failed to launch: {error}", thread_id=thread_id)
+        self._log(f"[launch] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
-    def _handle_quit(self, chat_id: int) -> None:
+    def _handle_quit(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /quit command."""
         resp = self._daemon({
             "op": "group_stop",
             "args": {"group_id": self.group.group_id, "by": "user"},
         })
         if resp.get("ok"):
-            self.adapter.send_message(chat_id, "🛑 Stopping all agents...")
+            self.adapter.send_message(chat_id, "🛑 Stopping all agents...", thread_id=thread_id)
         else:
             error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to quit: {error}")
-        self._log(f"[quit] chat={chat_id} ok={resp.get('ok')}")
+            self.adapter.send_message(chat_id, f"❌ Failed to quit: {error}", thread_id=thread_id)
+        self._log(f"[quit] chat={chat_id} thread={thread_id} ok={resp.get('ok')}")
 
-    def _handle_help(self, chat_id: int) -> None:
+    def _handle_help(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /help command."""
-        self.adapter.send_message(chat_id, format_help())
+        self.adapter.send_message(chat_id, format_help(), thread_id=thread_id)
 
     def _handle_message(
         self,
-        chat_id: int,
+        chat_id: str,
         text: str,
         mentions: List[str],
         from_user: str,
+        thread_id: int = 0,
     ) -> None:
         """Handle regular message (send to agents)."""
         if not text.strip():
@@ -537,10 +554,10 @@ class IMBridge:
 
         if not resp.get("ok"):
             error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to send: {error}")
-            self._log(f"[message] chat={chat_id} error={error}")
+            self.adapter.send_message(chat_id, f"❌ Failed to send: {error}", thread_id=thread_id)
+            self._log(f"[message] chat={chat_id} thread={thread_id} error={error}")
         else:
-            self._log(f"[message] chat={chat_id} to={to} len={len(text)}")
+            self._log(f"[message] chat={chat_id} thread={thread_id} to={to} len={len(text)}")
 
 
 def start_bridge(group_id: str, platform: str = "telegram") -> None:
@@ -573,17 +590,24 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
 
     if platform.lower() == "slack":
         # Slack requires bot_token (xoxb-) for outbound, app_token (xapp-) for inbound
-        bot_token_env = im_config.get("bot_token_env")
+        bot_token_env_raw = str(im_config.get("bot_token_env") or "").strip()
+        bot_token_env = bot_token_env_raw if _is_env_var_name(bot_token_env_raw) else ""
         if bot_token_env:
             bot_token = os.environ.get(bot_token_env, "").strip()
         if not bot_token:
-            bot_token = im_config.get("bot_token", "").strip()
+            bot_token = str(im_config.get("bot_token") or "").strip()
+        if not bot_token and bot_token_env_raw and not bot_token_env:
+            # Common misconfig: raw token pasted into *_env field.
+            bot_token = bot_token_env_raw
         
-        app_token_env = im_config.get("app_token_env")
+        app_token_env_raw = str(im_config.get("app_token_env") or "").strip()
+        app_token_env = app_token_env_raw if _is_env_var_name(app_token_env_raw) else ""
         if app_token_env:
             app_token = os.environ.get(app_token_env, "").strip()
         if not app_token:
-            app_token = im_config.get("app_token", "").strip()
+            app_token = str(im_config.get("app_token") or "").strip()
+        if not app_token and app_token_env_raw and not app_token_env:
+            app_token = app_token_env_raw
         
         if not bot_token:
             print(f"[error] No bot token configured for Slack")
@@ -596,11 +620,15 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
             print("[warn] No app token configured - inbound messages disabled")
     else:
         # Telegram/Discord: single token
-        token_env = im_config.get("token_env") or im_config.get("bot_token_env")
+        token_env_raw = str(im_config.get("token_env") or im_config.get("bot_token_env") or "").strip()
+        token_env = token_env_raw if _is_env_var_name(token_env_raw) else ""
         if token_env:
             bot_token = os.environ.get(token_env, "").strip()
         if not bot_token:
-            bot_token = im_config.get("token", "").strip()
+            bot_token = str(im_config.get("token") or "").strip()
+        if not bot_token and token_env_raw and not token_env:
+            # Common misconfig: raw token pasted into *_env field.
+            bot_token = token_env_raw
 
         if not bot_token:
             print(f"[error] No token configured for {platform}")

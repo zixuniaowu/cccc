@@ -17,17 +17,19 @@ class Subscriber:
 
     def __init__(
         self,
-        chat_id: int,
+        chat_id: str,
         subscribed: bool = True,
         verbose: bool = True,
         subscribed_at: Optional[str] = None,
         chat_title: str = "",
+        thread_id: int = 0,
     ):
-        self.chat_id = chat_id
+        self.chat_id = str(chat_id)
         self.subscribed = subscribed
         self.verbose = verbose  # Default True: show all messages including agent-to-agent
         self.subscribed_at = subscribed_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.chat_title = chat_title
+        self.thread_id = int(thread_id or 0)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -35,16 +37,18 @@ class Subscriber:
             "verbose": self.verbose,
             "subscribed_at": self.subscribed_at,
             "chat_title": self.chat_title,
+            "thread_id": self.thread_id,
         }
 
     @classmethod
-    def from_dict(cls, chat_id: int, data: Dict[str, Any]) -> "Subscriber":
+    def from_dict(cls, chat_id: str, data: Dict[str, Any]) -> "Subscriber":
         return cls(
             chat_id=chat_id,
             subscribed=bool(data.get("subscribed", True)),
             verbose=bool(data.get("verbose", True)),
             subscribed_at=data.get("subscribed_at"),
             chat_title=str(data.get("chat_title", "")),
+            thread_id=int(data.get("thread_id") or 0),
         )
 
 
@@ -54,8 +58,13 @@ class SubscriberManager:
     def __init__(self, state_dir: Path):
         self.state_dir = state_dir
         self.subscribers_path = state_dir / "im_subscribers.json"
-        self._subscribers: Dict[int, Subscriber] = {}
+        self._subscribers: Dict[str, Subscriber] = {}
         self._load()
+
+    def _key(self, chat_id: str, thread_id: int = 0) -> str:
+        cid = str(chat_id)
+        tid = int(thread_id or 0)
+        return f"{cid}:{tid}" if tid > 0 else cid
 
     def _load(self) -> None:
         """Load subscribers from disk."""
@@ -66,79 +75,106 @@ class SubscriberManager:
         try:
             data = json.loads(self.subscribers_path.read_text(encoding="utf-8"))
             self._subscribers = {}
-            for chat_id_str, sub_data in data.items():
-                try:
-                    chat_id = int(chat_id_str)
-                    self._subscribers[chat_id] = Subscriber.from_dict(chat_id, sub_data)
-                except (ValueError, TypeError):
+            for raw_key, sub_data in data.items():
+                if not isinstance(raw_key, str):
                     continue
+                key = raw_key.strip()
+                if not key:
+                    continue
+
+                # Support both legacy keys ("<chat_id>") and topic keys ("<chat_id>:<thread_id>").
+                chat_id = key
+                thread_id = 0
+                if ":" in key:
+                    head, tail = key.rsplit(":", 1)
+                    try:
+                        thread_id = int(tail)
+                        chat_id = head
+                    except Exception:
+                        chat_id = key
+                        thread_id = 0
+
+                if not isinstance(sub_data, dict):
+                    continue
+
+                # If thread_id was encoded in the key, prefer it (but still allow stored thread_id field).
+                stored_thread_id = int(sub_data.get("thread_id") or 0)
+                effective_thread_id = thread_id or stored_thread_id
+
+                sub = Subscriber.from_dict(chat_id, sub_data)
+                sub.thread_id = effective_thread_id
+                self._subscribers[self._key(sub.chat_id, sub.thread_id)] = sub
         except Exception:
             self._subscribers = {}
 
     def _save(self) -> None:
         """Save subscribers to disk."""
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        data = {str(chat_id): sub.to_dict() for chat_id, sub in self._subscribers.items()}
+        data = {key: sub.to_dict() for key, sub in self._subscribers.items()}
         tmp = self.subscribers_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self.subscribers_path)
 
-    def subscribe(self, chat_id: int, chat_title: str = "") -> Subscriber:
+    def subscribe(self, chat_id: str, chat_title: str = "", thread_id: int = 0) -> Subscriber:
         """Subscribe a chat. Returns the subscriber."""
-        if chat_id in self._subscribers:
-            sub = self._subscribers[chat_id]
+        key = self._key(chat_id, thread_id)
+        if key in self._subscribers:
+            sub = self._subscribers[key]
             sub.subscribed = True
             if chat_title:
                 sub.chat_title = chat_title
         else:
-            sub = Subscriber(chat_id=chat_id, chat_title=chat_title)
-            self._subscribers[chat_id] = sub
+            sub = Subscriber(chat_id=str(chat_id), chat_title=chat_title, thread_id=thread_id)
+            self._subscribers[key] = sub
         self._save()
         return sub
 
-    def unsubscribe(self, chat_id: int) -> bool:
+    def unsubscribe(self, chat_id: str, thread_id: int = 0) -> bool:
         """Unsubscribe a chat. Returns True if was subscribed."""
-        if chat_id in self._subscribers:
-            self._subscribers[chat_id].subscribed = False
+        key = self._key(chat_id, thread_id)
+        if key in self._subscribers:
+            self._subscribers[key].subscribed = False
             self._save()
             return True
         return False
 
-    def set_verbose(self, chat_id: int, verbose: bool) -> bool:
+    def set_verbose(self, chat_id: str, verbose: bool, thread_id: int = 0) -> bool:
         """Set verbose mode for a chat. Returns True if chat exists."""
-        if chat_id in self._subscribers:
-            self._subscribers[chat_id].verbose = verbose
+        key = self._key(chat_id, thread_id)
+        if key in self._subscribers:
+            self._subscribers[key].verbose = verbose
             self._save()
             return True
         return False
 
-    def toggle_verbose(self, chat_id: int) -> Optional[bool]:
+    def toggle_verbose(self, chat_id: str, thread_id: int = 0) -> Optional[bool]:
         """Toggle verbose mode. Returns new value or None if not subscribed."""
-        if chat_id in self._subscribers:
-            sub = self._subscribers[chat_id]
+        key = self._key(chat_id, thread_id)
+        if key in self._subscribers:
+            sub = self._subscribers[key]
             sub.verbose = not sub.verbose
             self._save()
             return sub.verbose
         return None
 
-    def is_subscribed(self, chat_id: int) -> bool:
+    def is_subscribed(self, chat_id: str, thread_id: int = 0) -> bool:
         """Check if a chat is subscribed."""
-        sub = self._subscribers.get(chat_id)
+        sub = self._subscribers.get(self._key(chat_id, thread_id))
         return sub is not None and sub.subscribed
 
-    def is_verbose(self, chat_id: int) -> bool:
+    def is_verbose(self, chat_id: str, thread_id: int = 0) -> bool:
         """Check if a chat has verbose mode enabled."""
-        sub = self._subscribers.get(chat_id)
+        sub = self._subscribers.get(self._key(chat_id, thread_id))
         return sub is not None and sub.verbose
 
-    def get_subscriber(self, chat_id: int) -> Optional[Subscriber]:
+    def get_subscriber(self, chat_id: str, thread_id: int = 0) -> Optional[Subscriber]:
         """Get subscriber info."""
-        return self._subscribers.get(chat_id)
+        return self._subscribers.get(self._key(chat_id, thread_id))
 
-    def get_subscribed_chats(self) -> List[int]:
-        """Get list of subscribed chat IDs."""
-        return [chat_id for chat_id, sub in self._subscribers.items() if sub.subscribed]
+    def get_subscribed_targets(self) -> List[Subscriber]:
+        """Get list of subscribed chat targets."""
+        return [sub for sub in self._subscribers.values() if sub.subscribed]
 
     def count(self) -> int:
         """Count subscribed chats."""
-        return len(self.get_subscribed_chats())
+        return len(self.get_subscribed_targets())

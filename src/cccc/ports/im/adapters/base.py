@@ -38,7 +38,7 @@ class IMAdapter(ABC):
         Poll for new messages.
 
         Returns list of message dicts with at least:
-        - chat_id: int
+        - chat_id: str
         - text: str
         - from_user: str (username or display name)
         - message_id: int (platform message ID)
@@ -46,7 +46,7 @@ class IMAdapter(ABC):
         pass
 
     @abstractmethod
-    def send_message(self, chat_id: int, text: str) -> bool:
+    def send_message(self, chat_id: str, text: str, thread_id: Optional[int] = None) -> bool:
         """
         Send a message to a chat.
         Returns True if successful.
@@ -54,7 +54,7 @@ class IMAdapter(ABC):
         pass
 
     @abstractmethod
-    def get_chat_title(self, chat_id: int) -> str:
+    def get_chat_title(self, chat_id: str) -> str:
         """Get the title/name of a chat."""
         pass
 

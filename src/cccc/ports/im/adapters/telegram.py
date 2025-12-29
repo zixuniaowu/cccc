@@ -40,10 +40,10 @@ class RateLimiter:
 
     def __init__(self, max_per_second: float = 1.0):
         self.min_interval = 1.0 / max_per_second
-        self.last_send: Dict[int, float] = {}  # chat_id -> timestamp
+        self.last_send: Dict[str, float] = {}  # chat_id -> timestamp
         self.lock = threading.Lock()
 
-    def acquire(self, chat_id: int) -> float:
+    def acquire(self, chat_id: str) -> float:
         """
         Check if we can send to this chat.
         Returns wait time in seconds (0 if can send immediately).
@@ -59,7 +59,7 @@ class RateLimiter:
             else:
                 return self.min_interval - elapsed
 
-    def wait_and_acquire(self, chat_id: int) -> None:
+    def wait_and_acquire(self, chat_id: str) -> None:
         """Wait if needed, then acquire."""
         wait_time = self.acquire(chat_id)
         if wait_time > 0:
@@ -88,6 +88,7 @@ class TelegramAdapter(IMAdapter):
         self._rate_limiter = RateLimiter(max_per_second=1.0)
         self._connected = False
         self._bot_info: Optional[Dict[str, Any]] = None
+        self._bot_username = ""
 
     def _log(self, msg: str) -> None:
         """Append to log file if configured."""
@@ -142,6 +143,7 @@ class TelegramAdapter(IMAdapter):
             self._bot_info = resp.get("result", {})
             self._connected = True
             bot_username = self._bot_info.get("username", "unknown")
+            self._bot_username = str(bot_username or "").strip()
             self._log(f"[connect] Connected as @{bot_username}")
             return True
         else:
@@ -193,14 +195,22 @@ class TelegramAdapter(IMAdapter):
                     chat = msg.get("chat", {})
                     chat_id = int(chat.get("id", 0))
                     chat_title = chat.get("title") or chat.get("first_name") or str(chat_id)
+                    chat_type = str(chat.get("type") or "").strip()
+                    thread_id = 0
+                    try:
+                        thread_id = int(msg.get("message_thread_id") or 0)
+                    except Exception:
+                        thread_id = 0
 
                     # Extract sender info
                     from_user = msg.get("from", {})
                     username = from_user.get("username") or from_user.get("first_name") or "user"
 
                     messages.append({
-                        "chat_id": chat_id,
+                        "chat_id": str(chat_id),
                         "chat_title": chat_title,
+                        "chat_type": chat_type,
+                        "thread_id": thread_id,
                         "text": text,
                         "from_user": username,
                         "message_id": msg.get("message_id", 0),
@@ -212,7 +222,7 @@ class TelegramAdapter(IMAdapter):
 
         return messages
 
-    def send_message(self, chat_id: int, text: str) -> bool:
+    def send_message(self, chat_id: str, text: str, thread_id: Optional[int] = None) -> bool:
         """
         Send a message to a chat.
 
@@ -228,10 +238,10 @@ class TelegramAdapter(IMAdapter):
         safe_text = self._compose_safe(text)
 
         # Rate limit
-        self._rate_limiter.wait_and_acquire(chat_id)
+        self._rate_limiter.wait_and_acquire(str(chat_id))
 
         # Send with retry
-        return self._send_with_retry(chat_id, safe_text)
+        return self._send_with_retry(str(chat_id), safe_text, thread_id=thread_id)
 
     def _compose_safe(self, text: str) -> str:
         """Ensure message fits within Telegram limits."""
@@ -244,15 +254,24 @@ class TelegramAdapter(IMAdapter):
 
         return summarized
 
-    def _send_with_retry(self, chat_id: int, text: str, retries: int = 1) -> bool:
+    def _send_with_retry(self, chat_id: str, text: str, thread_id: Optional[int] = None, retries: int = 1) -> bool:
         """Send message with retry on failure."""
+        params: Dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+            "disable_web_page_preview": True,
+        }
+        if thread_id:
+            try:
+                tid = int(thread_id)
+            except Exception:
+                tid = 0
+            if tid > 0:
+                params["message_thread_id"] = tid
+
         resp = self._api(
             "sendMessage",
-            {
-                "chat_id": chat_id,
-                "text": text,
-                "disable_web_page_preview": True,
-            },
+            params,
             timeout=15,
         )
 
@@ -262,14 +281,18 @@ class TelegramAdapter(IMAdapter):
         # Retry once
         if retries > 0:
             time.sleep(1.0)
-            return self._send_with_retry(chat_id, text, retries - 1)
+            return self._send_with_retry(chat_id, text, thread_id=thread_id, retries=retries - 1)
 
         self._log(f"[send] Failed to chat {chat_id}: {resp.get('error', 'unknown')}")
         return False
 
-    def get_chat_title(self, chat_id: int) -> str:
+    def get_chat_title(self, chat_id: str) -> str:
         """Get chat title via API."""
-        resp = self._api("getChat", {"chat_id": chat_id}, timeout=10)
+        try:
+            cid = int(chat_id)
+        except Exception:
+            cid = chat_id
+        resp = self._api("getChat", {"chat_id": cid}, timeout=10)
         if resp.get("ok"):
             chat = resp.get("result", {})
             return chat.get("title") or chat.get("first_name") or str(chat_id)

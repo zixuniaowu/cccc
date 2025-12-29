@@ -811,7 +811,7 @@ def cmd_status(_: argparse.Namespace) -> int:
     active_group_id = str(active.get("active_group_id") or "").strip()
     
     # Get runtimes
-    runtimes = detect_all_runtimes(primary_only=True)
+    runtimes = detect_all_runtimes(primary_only=False)
     available_runtimes = [r.name for r in runtimes if r.available]
     
     print(f"CCCC Status")
@@ -842,7 +842,7 @@ def cmd_status(_: argparse.Namespace) -> int:
                     aid = str(a.get("id") or "")
                     role = str(a.get("role") or "peer")
                     enabled = a.get("enabled", False)
-                    runtime = str(a.get("runtime") or "custom")
+                    runtime = str(a.get("runtime") or "codex")
                     runner = str(a.get("runner") or "pty")
                     status = "on" if enabled else "off"
                     print(f"      {aid} ({role}, {runtime}, {runner}) [{status}]")
@@ -902,7 +902,7 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
     by = str(args.by or "user").strip()
     submit = str(args.submit or "enter").strip() or "enter"
     runner = str(getattr(args, "runner", "") or "pty").strip() or "pty"
-    runtime = str(getattr(args, "runtime", "") or "custom").strip() or "custom"
+    runtime = str(getattr(args, "runtime", "") or "codex").strip() or "codex"
     command: list[str] = []
     if args.command:
         try:
@@ -911,12 +911,13 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
             command = [str(args.command)]
     
     # Auto-set command based on runtime if not provided
-    if not command and runtime != "custom":
+    if not command:
         runtime_commands = {
             "claude": ["claude"],
             "codex": ["codex"],
             "droid": ["droid"],
             "opencode": ["opencode"],
+            "copilot": ["copilot"],
         }
         command = runtime_commands.get(runtime, [])
     
@@ -966,8 +967,8 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
         # Note: role is auto-determined by position (first enabled = foreman)
         if runner not in ("pty", "headless"):
             raise ValueError("invalid runner (must be 'pty' or 'headless')")
-        if runtime not in ("claude", "codex", "droid", "opencode", "custom"):
-            raise ValueError("invalid runtime (must be 'claude', 'codex', 'droid', 'opencode', or 'custom')")
+        if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
+            raise ValueError("invalid runtime")
         actor = add_actor(
             group,
             actor_id=actor_id,
@@ -1432,13 +1433,16 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
 def cmd_setup(args: argparse.Namespace) -> int:
     """Setup CCCC for agent runtimes (install skills, configure MCP)."""
+    import os
     import shutil
     
     runtime = str(args.runtime or "").strip()
     project_path = Path(args.path or ".").resolve()
     
     # Supported runtimes
-    SUPPORTED_RUNTIMES = ["claude", "codex", "droid", "opencode"]
+    # - claude/codex/droid: MCP setup can be automated via their CLIs
+    # - opencode/copilot: MCP setup is manual (cccc only prints guidance)
+    SUPPORTED_RUNTIMES = ["claude", "codex", "droid", "opencode", "copilot"]
     
     if runtime and runtime not in SUPPORTED_RUNTIMES:
         _print_json({"ok": False, "error": {"code": "unsupported_runtime", "message": f"Unsupported runtime: {runtime}. Supported: {', '.join(SUPPORTED_RUNTIMES)}"}})
@@ -1603,30 +1607,55 @@ def cmd_setup(args: argparse.Namespace) -> int:
             (opencode_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
             results["skills"]["opencode"] = str(opencode_skill_dir / "SKILL.md")
             
-            # OpenCode: MCP config in opencode.json
-            opencode_config_path = project_path / "opencode.json"
+            # OpenCode: MCP config is manual.
+            xdg_config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+            opencode_config_path = xdg_config_home / "opencode" / "opencode.json"
+            mcp_config = {
+                "mcp": {
+                    "cccc": {
+                        "type": "local",
+                        "command": [cccc_cmd[0], *cccc_cmd[1:]] if len(cccc_cmd) > 1 else [cccc_cmd[0]],
+                        "environment": {},
+                    }
+                }
+            }
+
+            results["mcp"]["opencode"] = {
+                "mode": "manual",
+                "file": str(opencode_config_path),
+                "snippet": mcp_config,
+            }
+            results["notes"].append(
+                f"opencode: MCP is manual. Add `mcp.cccc` to {opencode_config_path} with the provided snippet."
+            )
+
+        elif rt == "copilot":
+            # Copilot: .github/skills/<skill-name>/SKILL.md
+            copilot_skill_dir = project_path / ".github" / "skills" / "cccc-ops"
+            copilot_skill_dir.mkdir(parents=True, exist_ok=True)
+            (copilot_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
+            results["skills"]["copilot"] = str(copilot_skill_dir / "SKILL.md")
+
+            copilot_config_path = Path.home() / ".copilot" / "mcp-config.json"
             mcp_config = {
                 "mcpServers": {
                     "cccc": {
                         "command": cccc_cmd[0],
                         "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
+                        "tools": ["*"],
                     }
                 }
             }
-            
-            existing = {}
-            if opencode_config_path.exists():
-                try:
-                    existing = json.loads(opencode_config_path.read_text(encoding="utf-8"))
-                except Exception:
-                    pass
-            
-            if "mcpServers" not in existing:
-                existing["mcpServers"] = {}
-            existing["mcpServers"]["cccc"] = mcp_config["mcpServers"]["cccc"]
-            
-            opencode_config_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-            results["mcp"]["opencode"] = str(opencode_config_path)
+            results["mcp"]["copilot"] = {
+                "mode": "manual",
+                "file": str(copilot_config_path),
+                "snippet": mcp_config,
+                "hint": f"Add mcpServers.cccc to {copilot_config_path} (or run: copilot --additional-mcp-config @<file>)",
+            }
+            results["notes"].append(
+                f"copilot: MCP is manual. Add `mcpServers.cccc` to {copilot_config_path} "
+                f"(or run Copilot with `--additional-mcp-config @<file>`)."
+            )
     
     # Clean up empty notes
     if not results["notes"]:
@@ -2112,7 +2141,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_add = actor_sub.add_parser("add", help="Add an actor (first actor = foreman, rest = peer)")
     p_actor_add.add_argument("actor_id", help="Actor id (e.g. peer-a, peer-b)")
     p_actor_add.add_argument("--title", default="", help="Display title (optional)")
-    p_actor_add.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode", "custom"], default="custom", help="Agent runtime (auto-sets command if not provided)")
+    p_actor_add.add_argument(
+        "--runtime",
+        choices=["claude", "codex", "droid", "opencode", "copilot"],
+        default="codex",
+        help="Agent runtime (auto-sets command if not provided)",
+    )
     p_actor_add.add_argument("--command", default="", help="Command to run (shell-like string; optional, auto-set by --runtime)")
     p_actor_add.add_argument("--env", action="append", default=[], help="Environment var (KEY=VAL), repeatable")
     p_actor_add.add_argument("--scope", default="", help="Default scope path for this actor (optional; must be attached)")
@@ -2149,7 +2183,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_update = actor_sub.add_parser("update", help="Update an actor (title/command/env/scope/enabled/runner/runtime)")
     p_actor_update.add_argument("actor_id", help="Actor id")
     p_actor_update.add_argument("--title", default=None, help="New title")
-    p_actor_update.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode", "custom"], default=None, help="New runtime")
+    p_actor_update.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode", "copilot"], default=None, help="New runtime")
     p_actor_update.add_argument("--command", default=None, help="Replace command (shell-like string); use empty to clear")
     p_actor_update.add_argument("--env", action="append", default=[], help="Replace env with these KEY=VAL entries (repeatable)")
     p_actor_update.add_argument("--scope", default="", help="Set default scope path (must be attached)")
@@ -2283,7 +2317,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp.set_defaults(func=cmd_mcp)
 
     p_setup = sub.add_parser("setup", help="Setup CCCC for agent runtimes (install skills, configure MCP)")
-    p_setup.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode"], default="", help="Target runtime (default: all supported runtimes)")
+    p_setup.add_argument(
+        "--runtime",
+        choices=["claude", "codex", "droid", "opencode", "copilot"],
+        default="",
+        help="Target runtime (default: all supported runtimes)",
+    )
     p_setup.add_argument("--path", default=".", help="Project path (default: current directory)")
     p_setup.set_defaults(func=cmd_setup)
 

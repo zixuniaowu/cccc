@@ -124,8 +124,8 @@ class DiscordAdapter(IMAdapter):
             if self._client.user:
                 text = re.sub(rf"^\s*<@!?{self._client.user.id}>\s*", "", text)
 
-            chat_id = message.channel.id
-            chat_title = getattr(message.channel, "name", None) or str(chat_id)
+            chat_id = str(message.channel.id)
+            chat_title = getattr(message.channel, "name", None) or chat_id
             from_user = message.author.name or str(message.author.id)
 
             # Queue the message
@@ -135,7 +135,7 @@ class DiscordAdapter(IMAdapter):
                     "chat_title": chat_title,
                     "text": text.strip(),
                     "from_user": from_user,
-                    "message_id": message.id,
+                    "message_id": str(message.id),
                 })
 
             self._log(f"[inbound] channel={chat_id} user={from_user} text={text[:50]}...")
@@ -173,10 +173,11 @@ class DiscordAdapter(IMAdapter):
 
         return messages
 
-    def send_message(self, chat_id: int, text: str) -> bool:
+    def send_message(self, chat_id: str, text: str, thread_id: Optional[int] = None) -> bool:
         """
         Send a message to a Discord channel.
         """
+        _ = thread_id  # Discord threads are not wired yet (future work).
         if not self._connected or not self._client or not self._loop:
             return False
 
@@ -189,7 +190,11 @@ class DiscordAdapter(IMAdapter):
         try:
             # Get channel and send
             async def do_send():
-                channel = self._client.get_channel(chat_id)
+                try:
+                    cid = int(chat_id)
+                except Exception:
+                    cid = None
+                channel = self._client.get_channel(cid) if cid is not None else None
                 if channel:
                     await channel.send(safe_text)
                     return True
@@ -212,13 +217,17 @@ class DiscordAdapter(IMAdapter):
 
         return summarized
 
-    def get_chat_title(self, chat_id: int) -> str:
+    def get_chat_title(self, chat_id: str) -> str:
         """Get channel name."""
         if not self._client:
             return str(chat_id)
 
         try:
-            channel = self._client.get_channel(chat_id)
+            try:
+                cid = int(chat_id)
+            except Exception:
+                cid = None
+            channel = self._client.get_channel(cid) if cid is not None else None
             if channel:
                 return getattr(channel, "name", str(chat_id))
         except Exception:

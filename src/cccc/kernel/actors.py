@@ -68,7 +68,7 @@ def generate_actor_id(group: Group, prefix: str = "agent", runtime: str = "") ->
     Otherwise uses the provided prefix (default: agent-1, agent-2).
     """
     # Use runtime as prefix if provided and valid
-    if runtime and runtime != "custom":
+    if runtime:
         prefix = runtime
     
     existing = {str(a.get("id", "")) for a in list_actors(group)}
@@ -170,7 +170,7 @@ def add_actor(
     submit: ActorSubmit = "enter",
     enabled: bool = True,
     runner: RunnerKind = "pty",
-    runtime: AgentRuntime = "custom",
+    runtime: AgentRuntime = "codex",
 ) -> Dict[str, Any]:
     """Add a new actor to the group.
     
@@ -319,8 +319,8 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
     if "runtime" in patch:
         runtime = patch.get("runtime")
         if runtime is None:
-            item["runtime"] = "custom"
-        elif runtime in ("claude", "codex", "droid", "opencode", "gemini", "copilot", "cursor", "auggie", "kilocode", "custom"):
+            item["runtime"] = "codex"
+        elif runtime in ("claude", "codex", "droid", "opencode", "copilot"):
             item["runtime"] = runtime
         else:
             raise ValueError("invalid runtime")

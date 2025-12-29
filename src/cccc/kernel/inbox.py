@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
 
 from ..util.fs import atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
-from .actors import find_actor, get_effective_role
+from .actors import find_actor, get_effective_role, list_actors
 from .group import Group
 
 
@@ -254,6 +254,9 @@ def get_read_status(group: Group, event_id: str) -> Dict[str, bool]:
     if ev is None:
         return {}
 
+    if str(ev.get("kind") or "") != "chat.message":
+        return {}
+
     ev_ts = str(ev.get("ts") or "")
     ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
     if ev_dt is None:
@@ -262,15 +265,26 @@ def get_read_status(group: Group, event_id: str) -> Dict[str, bool]:
     cursors = load_cursors(group)
     result: Dict[str, bool] = {}
 
-    for actor_id, cur in cursors.items():
-        if not isinstance(cur, dict):
+    by = str(ev.get("by") or "").strip()
+
+    for actor in list_actors(group):
+        if not isinstance(actor, dict):
             continue
-        cur_ts = str(cur.get("ts") or "")
+        actor_id = str(actor.get("id") or "").strip()
+        if not actor_id or actor_id == "user" or actor_id == by:
+            continue
+        created_ts = str(actor.get("created_at") or "").strip()
+        created_dt = parse_utc_iso(created_ts) if created_ts else None
+        if created_dt is not None and created_dt > ev_dt:
+            # Actor did not exist yet at the time of this message.
+            continue
+        if not is_message_for_actor(group, actor_id=actor_id, event=ev):
+            continue
+
+        cur = cursors.get(actor_id)
+        cur_ts = str(cur.get("ts") or "") if isinstance(cur, dict) else ""
         cur_dt = parse_utc_iso(cur_ts) if cur_ts else None
-        if cur_dt is not None and cur_dt >= ev_dt:
-            result[actor_id] = True
-        else:
-            result[actor_id] = False
+        result[actor_id] = bool(cur_dt is not None and cur_dt >= ev_dt)
 
     return result
 
@@ -376,4 +390,3 @@ def search_messages(
         has_more = False
     
     return result, has_more
-

@@ -143,7 +143,7 @@ def actor_list(*, group_id: str) -> Dict[str, Any]:
 
 def actor_add(
     *, group_id: str, by: str, actor_id: str,
-    runtime: str = "custom", runner: str = "pty", title: str = "",
+    runtime: str = "codex", runner: str = "pty", title: str = "",
     command: Optional[List[str]] = None, env: Optional[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """Add a new actor (foreman only). Role is auto-determined by position."""
@@ -617,9 +617,9 @@ MCP_TOOLS = [
                 "actor_id": {"type": "string", "description": "New actor ID (e.g. peer-impl, peer-test)"},
                 "runtime": {
                     "type": "string",
-                    "enum": ["claude", "codex", "droid", "opencode", "custom"],
+                    "enum": ["claude", "codex", "droid", "opencode", "copilot"],
                     "description": "Agent runtime (auto-sets command)",
-                    "default": "custom",
+                    "default": "codex",
                 },
                 "runner": {
                     "type": "string",
@@ -1144,7 +1144,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             by=str(arguments.get("by") or ""),
             actor_id=str(arguments.get("actor_id") or ""),
             # Note: role is auto-determined by position
-            runtime=str(arguments.get("runtime") or "custom"),
+            runtime=str(arguments.get("runtime") or "codex"),
             runner=str(arguments.get("runner") or "pty"),
             title=str(arguments.get("title") or ""),
             command=list(cmd_raw) if isinstance(cmd_raw, list) else None,

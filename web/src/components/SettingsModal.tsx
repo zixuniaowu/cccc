@@ -75,9 +75,8 @@ export function SettingsModal({
       if (configData.ok && configData.result.im) {
         const im = configData.result.im;
         if (im.platform) setImPlatform(im.platform);
-        if (im.bot_token_env) setImBotTokenEnv(im.bot_token_env);
-        else if (im.token_env) setImBotTokenEnv(im.token_env); // backward compat
-        if (im.app_token_env) setImAppTokenEnv(im.app_token_env);
+        setImBotTokenEnv(im.bot_token_env || im.token_env || im.bot_token || im.token || "");
+        setImAppTokenEnv(im.app_token_env || im.app_token || "");
       }
     } catch (e) {
       console.error("Failed to load IM status:", e);
@@ -188,17 +187,17 @@ export function SettingsModal({
   // Token field labels based on platform
   const getBotTokenLabel = () => {
     switch (imPlatform) {
-      case "telegram": return "Bot Token";
-      case "slack": return "Bot Token (xoxb-)";
-      case "discord": return "Bot Token";
+      case "telegram": return "Bot Token (token or env var)";
+      case "slack": return "Bot Token (xoxb- or env var)";
+      case "discord": return "Bot Token (token or env var)";
     }
   };
 
   const getBotTokenPlaceholder = () => {
     switch (imPlatform) {
-      case "telegram": return "TELEGRAM_BOT_TOKEN";
-      case "slack": return "SLACK_BOT_TOKEN";
-      case "discord": return "DISCORD_BOT_TOKEN";
+      case "telegram": return "TELEGRAM_BOT_TOKEN (or 123456:ABC...)";
+      case "slack": return "SLACK_BOT_TOKEN (or xoxb-...)";
+      case "discord": return "DISCORD_BOT_TOKEN (or <token>)";
     }
   };
 
@@ -427,7 +426,7 @@ export function SettingsModal({
                 {/* Bot Token (all platforms) */}
                 <div>
                   <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                    {getBotTokenLabel()} Environment Variable
+                    {getBotTokenLabel()}
                   </label>
                   <input
                     type="text"
@@ -441,7 +440,9 @@ export function SettingsModal({
                     }`}
                   />
                   <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                    {imPlatform === "slack" ? "Required for outbound messages" : "Required for bot authentication"}
+                    {imPlatform === "slack"
+                      ? "Paste xoxb-… token or an env var name; required for outbound messages."
+                      : "Paste the bot token or an env var name; required for bot authentication."}
                   </p>
                 </div>
 
@@ -449,13 +450,13 @@ export function SettingsModal({
                 {imPlatform === "slack" && (
                   <div>
                     <label className={`block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                      App Token (xapp-) Environment Variable
+                      App Token (xapp- or env var)
                     </label>
                     <input
                       type="text"
                       value={imAppTokenEnv}
                       onChange={(e) => setImAppTokenEnv(e.target.value)}
-                      placeholder="SLACK_APP_TOKEN"
+                      placeholder="SLACK_APP_TOKEN (or xapp-...)"
                       className={`w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
                         isDark 
                           ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500 placeholder:text-slate-600" 
@@ -463,7 +464,7 @@ export function SettingsModal({
                       }`}
                     />
                     <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                      Required for inbound messages (Socket Mode)
+                      Optional; needed for inbound messages (Socket Mode).
                     </p>
                   </div>
                 )}

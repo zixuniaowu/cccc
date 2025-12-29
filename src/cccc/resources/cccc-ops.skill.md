@@ -44,7 +44,7 @@ When you're the only actor, decide based on task complexity:
 
 ```
 1. cccc_runtime_list → See available runtimes
-2. cccc_actor_add → Create peer (runtime: claude/codex/droid/opencode)
+2. cccc_actor_add → Create peer (runtime: claude/codex/droid/opencode/copilot)
 3. cccc_actor_start → Start the peer
 4. cccc_message_send → Send task instructions
 ```

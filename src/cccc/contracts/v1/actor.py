@@ -13,7 +13,13 @@ from ...util.time import utc_now_iso
 ActorRole = Literal["foreman", "peer"]
 ActorSubmit = Literal["enter", "newline", "none"]
 RunnerKind = Literal["pty", "headless"]
-AgentRuntime = Literal["claude", "codex", "droid", "opencode", "custom"]
+AgentRuntime = Literal[
+    "claude",
+    "codex",
+    "droid",
+    "opencode",
+    "copilot",
+]
 
 # Group state controls automation behavior
 GroupState = Literal["active", "idle", "paused"]
@@ -32,7 +38,7 @@ class Actor(BaseModel):
     submit: ActorSubmit = "enter"
     enabled: bool = True
     runner: RunnerKind = "pty"  # "pty" for interactive, "headless" for MCP-driven
-    runtime: AgentRuntime = "custom"  # Agent CLI runtime (claude, codex, droid, opencode, custom)
+    runtime: AgentRuntime = "codex"  # Agent CLI runtime
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)
 

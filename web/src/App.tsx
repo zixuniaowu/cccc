@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback, lazy, Suspense } from "react";
 import { apiJson } from "./api";
 import { TabBar } from "./components/TabBar";
-import { AgentTab } from "./components/AgentTab";
 import { ContextModal } from "./components/ContextModal";
 import { SettingsModal } from "./components/SettingsModal";
+import { SearchModal } from "./components/SearchModal";
 import { ThemeToggleCompact } from "./components/ThemeToggle";
 import { useTheme } from "./hooks/useTheme";
 import {
@@ -24,6 +24,33 @@ import {
 
 function classNames(...xs: Array<string | false | null | undefined>) {
   return xs.filter(Boolean).join(" ");
+}
+
+const SUPPORTED_RUNTIMES = ["claude", "codex", "droid", "opencode", "copilot"] as const;
+type SupportedRuntime = typeof SUPPORTED_RUNTIMES[number];
+
+const COPILOT_MCP_CONFIG_SNIPPET = JSON.stringify(
+  {
+    mcpServers: {
+      cccc: { command: "cccc", args: ["mcp"], tools: ["*"] },
+    },
+  },
+  null,
+  2
+);
+
+const OPENCODE_MCP_CONFIG_SNIPPET = JSON.stringify(
+  {
+    mcp: {
+      cccc: { type: "local", command: ["cccc", "mcp"] },
+    },
+  },
+  null,
+  2
+);
+
+function isSupportedRuntime(rt: string): rt is SupportedRuntime {
+  return (SUPPORTED_RUNTIMES as readonly string[]).includes(rt);
 }
 
 // Format ISO timestamp to friendly relative/absolute time
@@ -80,6 +107,48 @@ function formatEventLine(ev: LedgerEvent): string {
   return `${k}${by}`;
 }
 
+function getRecipientActorIdsForEvent(ev: LedgerEvent, actors: Actor[]): string[] {
+  if (!actors.length) return [];
+  const actorIds = actors.map((a) => String(a.id || "")).filter((id) => id);
+  const actorIdSet = new Set(actorIds);
+
+  const toRaw = (ev.data && typeof ev.data === "object" && Array.isArray((ev.data as any).to))
+    ? (ev.data as any).to
+    : [];
+  const tokens = (toRaw as unknown[])
+    .map((x) => String(x || "").trim())
+    .filter((s) => s.length > 0);
+  const tokenSet = new Set(tokens);
+
+  const by = String(ev.by || "").trim();
+
+  // Empty 'to' means broadcast for visibility; effective delivery is all actors (except sender).
+  if (tokenSet.size === 0 || tokenSet.has("@all")) {
+    return actorIds.filter((id) => id !== by);
+  }
+
+  const out = new Set<string>();
+  for (const t of tokenSet) {
+    if (t === "user" || t === "@user") continue;
+    if (t === "@peers") {
+      for (const a of actors) {
+        if (a.role === "peer") out.add(String(a.id));
+      }
+      continue;
+    }
+    if (t === "@foreman") {
+      for (const a of actors) {
+        if (a.role === "foreman") out.add(String(a.id));
+      }
+      continue;
+    }
+    if (actorIdSet.has(t)) out.add(t);
+  }
+
+  out.delete(by);
+  return Array.from(out);
+}
+
 function getProjectRoot(group: GroupDoc | null): string {
   if (!group) return "";
   const key = String(group.active_scope_key || "");
@@ -120,6 +189,9 @@ function getGroupStatusLight(running: boolean, state?: string): { label: string;
   }
 }
 
+const LazyAgentTab = lazy(() => import("./components/AgentTab").then((m) => ({ default: m.AgentTab })));
+const MAX_UI_EVENTS = 800;
+
 export default function App() {
   // Theme
   const { theme, setTheme, isDark } = useTheme();
@@ -142,15 +214,33 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
+  const [isSmallScreen, setIsSmallScreen] = useState(false);
+
+  // Responsive hint for mobile-first copy (align with Tailwind `sm` breakpoint).
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const update = () => setIsSmallScreen(mq.matches);
+    update();
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", update);
+      return () => mq.removeEventListener("change", update);
+    }
+    // Safari < 14
+    mq.addListener(update);
+    return () => mq.removeListener(update);
+  }, []);
 
   // Modal state
   const [showContextModal, setShowContextModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showSearchModal, setShowSearchModal] = useState(false);
   const [showAddActor, setShowAddActor] = useState(false);
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showGroupEdit, setShowGroupEdit] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [editingActor, setEditingActor] = useState<Actor | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Composer state
   const [composerText, setComposerText] = useState("");
@@ -163,13 +253,13 @@ export default function App() {
   // Add actor form state
   const [newActorId, setNewActorId] = useState("");
   const [newActorRole, setNewActorRole] = useState<"peer" | "foreman">("peer");
-  const [newActorRuntime, setNewActorRuntime] = useState<"claude" | "codex" | "droid" | "opencode" | "gemini" | "copilot" | "cursor" | "auggie" | "kilocode" | "custom">("custom");
+  const [newActorRuntime, setNewActorRuntime] = useState<SupportedRuntime>("codex");
   const [newActorCommand, setNewActorCommand] = useState("");
   const [showAdvancedActor, setShowAdvancedActor] = useState(false);
   const [addActorError, setAddActorError] = useState("");
 
   // Edit actor form state
-  const [editActorRuntime, setEditActorRuntime] = useState<typeof newActorRuntime>("custom");
+  const [editActorRuntime, setEditActorRuntime] = useState<SupportedRuntime>("codex");
   const [editActorCommand, setEditActorCommand] = useState("");
   const [editActorTitle, setEditActorTitle] = useState("");
 
@@ -197,6 +287,9 @@ export default function App() {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const eventContainerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const activeTabRef = useRef<string>("chat");
+  const chatAtBottomRef = useRef<boolean>(true);
+  const actorsRef = useRef<Actor[]>([]);
 
   // Swipe gesture state
   const touchStartX = useRef<number>(0);
@@ -215,38 +308,36 @@ export default function App() {
   // Computed values
   const projectRoot = useMemo(() => getProjectRoot(groupDoc), [groupDoc]);
   const hasForeman = useMemo(() => actors.some((a) => a.role === "foreman"), [actors]);
+  const selectedGroupMeta = useMemo(
+    () => groups.find((g) => String(g.group_id || "") === selectedGroupId) || null,
+    [groups, selectedGroupId]
+  );
+  const selectedGroupRunning = selectedGroupMeta?.running ?? false;
 
   const suggestedActorId = useMemo(() => {
+    const prefix = newActorRuntime;
     const existing = new Set(actors.map((a) => String(a.id || "")));
     for (let i = 1; i <= 999; i++) {
-      const candidate = `agent-${i}`;
+      const candidate = `${prefix}-${i}`;
       if (!existing.has(candidate)) return candidate;
     }
-    return `agent-${Date.now()}`;
-  }, [actors]);
+    return `${prefix}-${Date.now()}`;
+  }, [actors, newActorRuntime]);
 
   const canAddActor = useMemo(() => {
     if (busy === "actor-add") return false;
-    if (newActorRuntime === "custom" && !newActorCommand.trim()) return false;
-    if (newActorRuntime !== "custom") {
-      const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
-      const available = rtInfo?.available ?? false;
-      if (!available && !newActorCommand.trim()) return false;
-    }
+    const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
+    const available = rtInfo?.available ?? false;
+    if (!available && !newActorCommand.trim()) return false;
     return true;
   }, [busy, newActorRuntime, newActorCommand, runtimes]);
 
   const addActorDisabledReason = useMemo(() => {
     if (busy === "actor-add") return "";
-    if (newActorRuntime === "custom" && !newActorCommand.trim()) {
-      return "Enter a command for custom runtime";
-    }
-    if (newActorRuntime !== "custom") {
-      const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
-      const available = rtInfo?.available ?? false;
-      if (!available && !newActorCommand.trim()) {
-        return `${RUNTIME_INFO[newActorRuntime]?.label || newActorRuntime} is not installed. Install it or enter a custom command.`;
-      }
+    const rtInfo = runtimes.find((r) => r.name === newActorRuntime);
+    const available = rtInfo?.available ?? false;
+    if (!available && !newActorCommand.trim()) {
+      return `${RUNTIME_INFO[newActorRuntime]?.label || newActorRuntime} is not installed. Install it, or set a command override.`;
     }
     return "";
   }, [busy, newActorRuntime, newActorCommand, runtimes]);
@@ -284,12 +375,10 @@ export default function App() {
     const resp = await apiJson<{ runtimes: RuntimeInfo[]; available: string[] }>("/api/v1/runtimes");
     if (resp.ok) {
       setRuntimes(resp.result.runtimes || []);
-      const available = resp.result.runtimes?.filter((r) => r.available) || [];
-      if (available.length > 0 && newActorRuntime === "custom") {
-        const first = available[0];
-        if (["claude", "codex", "droid", "opencode", "gemini", "copilot", "cursor", "auggie", "kilocode"].includes(first.name)) {
-          setNewActorRuntime(first.name as typeof newActorRuntime);
-        }
+      const availableNames = (resp.result.runtimes || []).filter((r) => r.available).map((r) => r.name);
+      if (availableNames.length > 0 && !availableNames.includes(newActorRuntime)) {
+        const pick = SUPPORTED_RUNTIMES.find((rt) => availableNames.includes(rt));
+        if (pick) setNewActorRuntime(pick);
       }
     }
   }
@@ -357,8 +446,63 @@ export default function App() {
       const msg = e as MessageEvent;
       try {
         const ev = JSON.parse(String(msg.data || "{}"));
-        setEvents((prev) => prev.concat([ev]));
-        if (ev.kind === "chat.message" || ev.kind === "chat.read") {
+
+        // Real-time read status: apply chat.read without requiring a full refresh.
+        if (ev && typeof ev === "object" && ev.kind === "chat.read") {
+          const actorId = String(ev.data?.actor_id || "");
+          const eventId = String(ev.data?.event_id || "");
+
+          if (actorId && eventId) {
+            setEvents((prev) => {
+              const idx = prev.findIndex((x) => x.kind === "chat.message" && String(x.id || "") === eventId);
+              if (idx < 0) return prev;
+
+              const next = prev.slice();
+              for (let i = 0; i <= idx; i++) {
+                const m = next[i];
+                if (!m || m.kind !== "chat.message") continue;
+
+                const recipients = getRecipientActorIdsForEvent(m, actorsRef.current);
+                if (!recipients.includes(actorId)) continue;
+
+                const rs: Record<string, boolean> = (m._read_status && typeof m._read_status === "object") ? { ...m._read_status } : {};
+                if (rs[actorId] === true) continue;
+                rs[actorId] = true;
+                next[i] = { ...m, _read_status: rs };
+              }
+              return next;
+            });
+          }
+
+          refreshActors();
+          return;
+        }
+
+        // Initialize read-status keys for new messages so "○/✓" can update live.
+        if (ev && typeof ev === "object" && ev.kind === "chat.message" && !ev._read_status) {
+          const recipients = getRecipientActorIdsForEvent(ev, actorsRef.current);
+          if (recipients.length > 0) {
+            const rs: Record<string, boolean> = {};
+            for (const id of recipients) rs[id] = false;
+            ev._read_status = rs;
+          }
+        }
+
+        setEvents((prev) => {
+          const next = prev.concat([ev]);
+          return next.length > MAX_UI_EVENTS ? next.slice(next.length - MAX_UI_EVENTS) : next;
+        });
+        if (ev && typeof ev === "object" && ev.kind === "chat.message") {
+          const by = String(ev.by || "");
+          if (by && by !== "user") {
+            const chatActive = activeTabRef.current === "chat";
+            const atBottom = chatAtBottomRef.current;
+            if (!chatActive || !atBottom) {
+              setChatUnreadCount((c) => c + 1);
+            }
+          }
+        }
+        if (ev.kind === "chat.message") {
           refreshActors();
         }
       } catch { /* ignore */ }
@@ -396,12 +540,18 @@ export default function App() {
       const to = toTokens;
       let resp;
       if (replyTarget) {
+        const replyBy = String(replyTarget.by || "").trim();
+        const replyFallbackTo =
+          replyBy && replyBy !== "user" && replyBy !== "unknown"
+            ? [replyBy]
+            : ["@all"];
+        const replyTo = to.length ? to : replyFallbackTo;
         resp = await apiJson(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/reply`, {
           method: "POST",
           body: JSON.stringify({
             text: txt,
             by: "user",
-            to: to.length ? to : [replyTarget.by],
+            to: replyTo,
             reply_to: replyTarget.eventId,
           }),
         });
@@ -435,8 +585,7 @@ export default function App() {
   // Actor functions
   async function addActor() {
     if (!selectedGroupId) return;
-    const actorId = newActorId.trim() || suggestedActorId;
-    if (!actorId) return;
+    const actorId = newActorId.trim();
     setBusy("actor-add");
     setAddActorError("");
     try {
@@ -459,9 +608,9 @@ export default function App() {
       }
       setShowAddActor(false);
       setNewActorId("");
-      setNewActorCommand("");
+      setNewActorCommand(RUNTIME_DEFAULTS.codex || "");
       setNewActorRole("peer");
-      setNewActorRuntime("custom");
+      setNewActorRuntime("codex");
       setAddActorError("");
       await refreshActors();
     } finally {
@@ -522,7 +671,8 @@ export default function App() {
       return;
     }
     setEditingActor(actor);
-    const rt = actor.runtime as typeof editActorRuntime || "custom";
+    const rtRaw = String(actor.runtime || "").trim();
+    const rt: SupportedRuntime = isSupportedRuntime(rtRaw) ? rtRaw : "codex";
     setEditActorRuntime(rt);
     const cmd = Array.isArray(actor.command) ? actor.command.join(" ") : "";
     setEditActorCommand(cmd || RUNTIME_DEFAULTS[rt] || "");
@@ -789,6 +939,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const update = () => setIsSmallScreen(mq.matches);
+    update();
+    try {
+      mq.addEventListener("change", update);
+      return () => mq.removeEventListener("change", update);
+    } catch {
+      // Safari / older browsers
+      // eslint-disable-next-line deprecation/deprecation
+      mq.addListener(update);
+      // eslint-disable-next-line deprecation/deprecation
+      return () => mq.removeListener(update);
+    }
+  }, []);
+
+  useEffect(() => {
     if (!selectedGroupId) return;
     loadGroup(selectedGroupId);
     connectStream(selectedGroupId);
@@ -801,20 +967,55 @@ export default function App() {
   }, [selectedGroupId]);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      bottomRef.current?.scrollIntoView({ block: "end" });
+    activeTabRef.current = activeTab;
+    if (activeTab === "chat") {
+      setChatUnreadCount(0);
+      const timer = window.setTimeout(() => {
+        bottomRef.current?.scrollIntoView({ block: "end" });
+        chatAtBottomRef.current = true;
+        setShowScrollButton(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    actorsRef.current = actors;
+  }, [actors]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      if (activeTabRef.current !== "chat") return;
+      const container = eventContainerRef.current;
+      if (!container) return;
+
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+      chatAtBottomRef.current = isNearBottom;
+
+      const last = events.length ? events[events.length - 1] : null;
+      const lastIsOwn = !!last && last.kind === "chat.message" && last.by === "user";
+
+      if (isNearBottom || lastIsOwn) {
+        bottomRef.current?.scrollIntoView({ block: "end" });
+        chatAtBottomRef.current = true;
+        setShowScrollButton(false);
+        setChatUnreadCount(0);
+      } else {
+        setShowScrollButton(true);
+      }
     }, 50);
-    return () => clearTimeout(timer);
+    return () => window.clearTimeout(timer);
   }, [events.length]);
 
   useEffect(() => {
-    if (newActorRuntime !== "custom" && RUNTIME_DEFAULTS[newActorRuntime]) {
+    if (RUNTIME_DEFAULTS[newActorRuntime]) {
       setNewActorCommand(RUNTIME_DEFAULTS[newActorRuntime]);
     }
   }, [newActorRuntime]);
 
   useEffect(() => {
-    if (editActorRuntime !== "custom" && RUNTIME_DEFAULTS[editActorRuntime]) {
+    if (RUNTIME_DEFAULTS[editActorRuntime]) {
       setEditActorCommand(RUNTIME_DEFAULTS[editActorRuntime]);
     }
   }, [editActorRuntime]);
@@ -824,12 +1025,17 @@ export default function App() {
     const container = eventContainerRef.current;
     if (!container) return;
     const { scrollTop, scrollHeight, clientHeight } = container;
-    const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+    const isNearBottom = scrollHeight - scrollTop - clientHeight < 200;
+    chatAtBottomRef.current = isNearBottom;
     setShowScrollButton(!isNearBottom);
+    if (isNearBottom) setChatUnreadCount(0);
   };
 
   const scrollToBottom = () => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    chatAtBottomRef.current = true;
+    setShowScrollButton(false);
+    setChatUnreadCount(0);
   };
 
   // Swipe gesture handlers for mobile tab switching
@@ -1028,8 +1234,8 @@ export default function App() {
                 {/* Group status badge */}
                 {selectedGroupId && groupDoc && (() => {
                   const status = isDark 
-                    ? getGroupStatus(groups.find(g => g.group_id === selectedGroupId)?.running ?? false, groupDoc.state)
-                    : getGroupStatusLight(groups.find(g => g.group_id === selectedGroupId)?.running ?? false, groupDoc.state);
+                    ? getGroupStatus(selectedGroupRunning, groupDoc.state)
+                    : getGroupStatusLight(selectedGroupRunning, groupDoc.state);
                   return (
                     <span className={classNames("text-[10px] px-2 py-0.5 rounded-full font-medium hidden sm:inline-block", status.colorClass)}>
                       {status.label}
@@ -1062,6 +1268,17 @@ export default function App() {
               {/* Right: action buttons */}
               <div className="flex gap-2 items-center">
                 <ThemeToggleCompact theme={theme} onThemeChange={setTheme} isDark={isDark} />
+                <button
+                  className={classNames(
+                    "sm:hidden flex items-center justify-center w-9 h-9 rounded-lg transition-colors min-h-[44px] min-w-[44px]",
+                    isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-300" : "bg-gray-100 hover:bg-gray-200 text-gray-600"
+                  )}
+                  onClick={() => setMobileMenuOpen(true)}
+                  title="Menu"
+                  aria-label="Open menu"
+                >
+                  <span className="text-xl leading-none" aria-hidden="true">⋯</span>
+                </button>
                 <button
                   className={`rounded-lg text-white px-3 py-1.5 text-sm font-medium disabled:opacity-50 shadow-lg transition-all hidden sm:flex items-center min-h-[44px] ${
                     isDark 
@@ -1120,7 +1337,20 @@ export default function App() {
                 )}
                 <div className={`w-px h-6 mx-1 hidden sm:block ${isDark ? "bg-slate-700/50" : "bg-gray-300"}`} />
                 <button
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] ${
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors hidden sm:flex items-center min-h-[44px] ${
+                    isDark 
+                      ? "bg-slate-700/80 text-slate-200 hover:bg-slate-600"
+                      : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  }`}
+                  onClick={() => setShowSearchModal(true)}
+                  disabled={!selectedGroupId}
+                  title="Search messages"
+                  aria-label="Search messages"
+                >
+                  🔍
+                </button>
+                <button
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors hidden sm:flex items-center min-h-[44px] ${
                     isDark 
                       ? "bg-slate-700/80 text-slate-200 hover:bg-slate-600"
                       : "bg-gray-200 text-gray-700 hover:bg-gray-300"
@@ -1133,7 +1363,7 @@ export default function App() {
                   📋
                 </button>
                 <button
-                  className={`rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] ${
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium disabled:opacity-50 transition-colors hidden sm:flex items-center min-h-[44px] ${
                     isDark 
                       ? "bg-slate-700/80 text-slate-200 hover:bg-slate-600"
                       : "bg-gray-200 text-gray-700 hover:bg-gray-300"
@@ -1173,7 +1403,7 @@ export default function App() {
               actors={actors}
               activeTab={activeTab}
               onTabChange={handleTabChange}
-              unreadChatCount={0}
+              unreadChatCount={chatUnreadCount}
               isDark={isDark}
               onAddAgent={() => {
                 setNewActorRole(hasForeman ? "peer" : "foreman");
@@ -1210,8 +1440,14 @@ export default function App() {
                         const quoteText = ev.data?.quote_text;
                         const readStatus = ev._read_status;
                         const recipients = ev.data?.to as string[] | undefined;
+                        const visibleReadStatusEntries = readStatus
+                          ? actors
+                              .map((a) => String(a.id || ""))
+                              .filter((id) => id && Object.prototype.hasOwnProperty.call(readStatus, id))
+                              .map((id) => [id, !!readStatus[id]] as const)
+                          : [];
                         const senderActor = actors.find((a) => a.id === ev.by);
-                        const senderRuntime = isUserMessage ? "user" : (senderActor?.runtime || "custom");
+                        const senderRuntime = isUserMessage ? "user" : (senderActor?.runtime || "codex");
                         const senderColor = getRuntimeColor(senderRuntime, isDark);
 
                         return (
@@ -1264,9 +1500,9 @@ export default function App() {
                             <div className={`mt-1 text-sm whitespace-pre-wrap break-words ${isDark ? "text-slate-200" : "text-gray-800"}`}>
                               {formatEventLine(ev)}
                             </div>
-                            {readStatus && Object.keys(readStatus).length > 0 && (
+                            {visibleReadStatusEntries.length > 0 && (
                               <div className="mt-1.5 flex items-center gap-1.5 text-[10px]">
-                                {Object.entries(readStatus).map(([actorId, hasRead]) => (
+                                {visibleReadStatusEntries.map(([actorId, hasRead]) => (
                                   <span
                                     key={actorId}
                                     className={classNames(
@@ -1294,7 +1530,7 @@ export default function App() {
                   </div>
                   {showScrollButton && (
                     <button
-                      className={`absolute bottom-4 right-4 rounded-full border p-2 shadow-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center ${
+                      className={`absolute bottom-4 right-4 rounded-full border p-2 shadow-lg transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center relative ${
                         isDark 
                           ? "bg-slate-800 border-slate-700 hover:bg-slate-700"
                           : "bg-white border-gray-300 hover:bg-gray-50"
@@ -1303,6 +1539,14 @@ export default function App() {
                       title="Scroll to bottom"
                       aria-label="Scroll to bottom"
                     >
+                      {chatUnreadCount > 0 && (
+                        <span
+                          className="absolute -top-1 -right-1 bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-medium min-w-[18px] text-center"
+                          aria-label={`${chatUnreadCount} new messages`}
+                        >
+                          {chatUnreadCount > 99 ? "99+" : chatUnreadCount}
+                        </span>
+                      )}
                       <svg className={`w-4 h-4 ${isDark ? "text-slate-300" : "text-gray-600"}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
                       </svg>
@@ -1331,35 +1575,39 @@ export default function App() {
                       </button>
                     </div>
                   )}
-                  <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <div className={`text-xs mr-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>To</div>
-                    {["@all", "@foreman", "@peers", "user", ...actors.map((a) => String(a.id || ""))].map((tok) => {
-                      const t = tok.trim();
-                      if (!t) return null;
-                      const active = toTokens.includes(t);
-                      return (
-                        <button
-                          key={t}
-                          className={classNames(
-                            "text-[11px] px-2 py-1.5 rounded border min-h-[32px] transition-colors",
-                            active
-                              ? "bg-emerald-500 text-white border-emerald-400"
-                              : isDark 
-                                ? "bg-slate-950/40 text-slate-200 border-slate-800 hover:bg-slate-800/40"
-                                : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
-                          )}
-                          onClick={() => toggleRecipient(t)}
-                          disabled={!selectedGroupId || busy === "send"}
-                          title={active ? "Remove recipient" : "Add recipient"}
-                          aria-pressed={active}
-                        >
-                          {t}
-                        </button>
-                      );
-                    })}
+                  <div className="mb-2 flex items-center gap-2">
+                    <div className={`text-xs flex-shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`}>To</div>
+                    <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide sm:overflow-visible">
+                      <div className="flex items-center gap-2 flex-nowrap sm:flex-wrap">
+                        {["@all", "@foreman", "@peers", "user", ...actors.map((a) => String(a.id || ""))].map((tok) => {
+                          const t = tok.trim();
+                          if (!t) return null;
+                          const active = toTokens.includes(t);
+                          return (
+                            <button
+                              key={t}
+                              className={classNames(
+                                "flex-shrink-0 whitespace-nowrap text-[11px] px-2 py-1.5 rounded border min-h-[32px] transition-colors",
+                                active
+                                  ? "bg-emerald-500 text-white border-emerald-400"
+                                  : isDark 
+                                    ? "bg-slate-950/40 text-slate-200 border-slate-800 hover:bg-slate-800/40"
+                                    : "bg-white text-gray-700 border-gray-300 hover:bg-gray-50"
+                              )}
+                              onClick={() => toggleRecipient(t)}
+                              disabled={!selectedGroupId || busy === "send"}
+                              title={active ? "Remove recipient" : "Add recipient"}
+                              aria-pressed={active}
+                            >
+                              {t}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
                     {toTokens.length > 0 && (
                       <button
-                        className={`text-[11px] px-2 py-1.5 rounded border disabled:opacity-50 min-h-[32px] transition-colors ${
+                        className={`flex-shrink-0 text-[11px] px-2 py-1.5 rounded border disabled:opacity-50 min-h-[32px] transition-colors ${
                           isDark 
                             ? "bg-slate-900 border-slate-800 hover:bg-slate-800/60 text-slate-300"
                             : "bg-gray-100 border-gray-200 hover:bg-gray-200 text-gray-600"
@@ -1379,8 +1627,8 @@ export default function App() {
                         isDark 
                           ? "bg-slate-900 border-slate-800 text-slate-200 placeholder-slate-500"
                           : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
-                      }`}
-                      placeholder="Message… (type @ to mention, Ctrl+Enter to send)"
+                        }`}
+                      placeholder={isSmallScreen ? "Message…" : "Message… (type @ to mention, Ctrl/⌘+Enter to send)"}
                       rows={1}
                       value={composerText}
                       onChange={(e) => {
@@ -1507,33 +1755,41 @@ export default function App() {
               </>
             ) : currentActor ? (
               /* Agent Tab Content */
-              <AgentTab
-                actor={currentActor}
-                groupId={selectedGroupId}
-                isVisible={true}
-                onQuit={() => toggleActorEnabled(currentActor)}
-                onLaunch={() => toggleActorEnabled(currentActor)}
-                onRelaunch={async () => {
-                  if (!selectedGroupId) return;
-                  setBusy(`actor-relaunch:${currentActor.id}`);
-                  try {
-                    const resp = await apiJson(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors/${encodeURIComponent(currentActor.id)}/restart?by=user`, {
-                      method: "POST",
-                    });
-                    if (!resp.ok) {
-                      showError(`${resp.error.code}: ${resp.error.message}`);
+              <Suspense
+                fallback={
+                  <div className={`flex-1 flex items-center justify-center ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                    Loading agent…
+                  </div>
+                }
+              >
+                <LazyAgentTab
+                  actor={currentActor}
+                  groupId={selectedGroupId}
+                  isVisible={true}
+                  onQuit={() => toggleActorEnabled(currentActor)}
+                  onLaunch={() => toggleActorEnabled(currentActor)}
+                  onRelaunch={async () => {
+                    if (!selectedGroupId) return;
+                    setBusy(`actor-relaunch:${currentActor.id}`);
+                    try {
+                      const resp = await apiJson(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors/${encodeURIComponent(currentActor.id)}/restart?by=user`, {
+                        method: "POST",
+                      });
+                      if (!resp.ok) {
+                        showError(`${resp.error.code}: ${resp.error.message}`);
+                      }
+                      await refreshActors();
+                    } finally {
+                      setBusy("");
                     }
-                    await refreshActors();
-                  } finally {
-                    setBusy("");
-                  }
-                }}
-                onEdit={() => openEditActor(currentActor)}
-                onRemove={() => removeActor(currentActor)}
-                onInbox={() => openInbox(currentActor.id)}
-                busy={busy}
-                isDark={isDark}
-              />
+                  }}
+                  onEdit={() => openEditActor(currentActor)}
+                  onRemove={() => removeActor(currentActor)}
+                  onInbox={() => openInbox(currentActor.id)}
+                  busy={busy}
+                  isDark={isDark}
+                />
+              </Suspense>
             ) : (
               <div className="flex-1 flex items-center justify-center text-slate-500">
                 Agent not found
@@ -1543,11 +1799,208 @@ export default function App() {
         </main>
       </div>
 
+      {/* Mobile menu (single entry point for actions) */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 sm:hidden animate-fade-in">
+          <div
+            className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"}
+            onClick={() => setMobileMenuOpen(false)}
+            aria-hidden="true"
+          />
+
+          <div
+            className={classNames(
+              "absolute bottom-0 left-0 right-0 rounded-t-2xl border shadow-2xl animate-slide-up",
+              isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
+            )}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Menu"
+          >
+            <div className={classNames("px-4 pt-4 pb-3 border-b flex items-center justify-between gap-3", isDark ? "border-slate-800" : "border-gray-200")}>
+              <div className="min-w-0">
+                <div className={classNames("text-sm font-semibold truncate", isDark ? "text-slate-100" : "text-gray-900")}>
+                  {groupDoc?.title || (selectedGroupId ? selectedGroupId : "Menu")}
+                </div>
+                {selectedGroupId && groupDoc && (
+                  <div className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-500")}>
+                    {(isDark ? getGroupStatus(selectedGroupRunning, groupDoc.state) : getGroupStatusLight(selectedGroupRunning, groupDoc.state)).label}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setMobileMenuOpen(false)}
+                className={classNames(
+                  "text-xl leading-none min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors",
+                  isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                )}
+                aria-label="Close menu"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="p-4 space-y-2 safe-area-inset-bottom">
+              {!selectedGroupId && (
+                <div className={classNames("text-sm px-1 pb-2", isDark ? "text-slate-400" : "text-gray-500")}>
+                  Select a group to enable actions.
+                </div>
+              )}
+
+              <button
+                className={classNames(
+                  "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:opacity-50",
+                  isDark ? "bg-slate-800/60 hover:bg-slate-800 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                )}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setShowSearchModal(true);
+                }}
+                disabled={!selectedGroupId}
+              >
+                <span aria-hidden="true">🔍</span>
+                <span>Search Messages</span>
+              </button>
+
+              <div className={classNames("h-px my-2", isDark ? "bg-slate-800" : "bg-gray-200")} />
+
+              <button
+                className={classNames(
+                  "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:opacity-50",
+                  isDark ? "bg-slate-800/60 hover:bg-slate-800 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                )}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setShowContextModal(true);
+                }}
+                disabled={!selectedGroupId}
+              >
+                <span aria-hidden="true">📋</span>
+                <span>Context</span>
+              </button>
+
+              <button
+                className={classNames(
+                  "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:opacity-50",
+                  isDark ? "bg-slate-800/60 hover:bg-slate-800 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                )}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setShowSettingsModal(true);
+                }}
+                disabled={!selectedGroupId}
+              >
+                <span aria-hidden="true">⚙️</span>
+                <span>Settings</span>
+              </button>
+
+              <button
+                className={classNames(
+                  "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:opacity-50",
+                  isDark ? "bg-slate-800/60 hover:bg-slate-800 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                )}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  openGroupEdit();
+                }}
+                disabled={!selectedGroupId}
+              >
+                <span aria-hidden="true">✎</span>
+                <span>Edit Group</span>
+              </button>
+
+              <div className={classNames("h-px my-2", isDark ? "bg-slate-800" : "bg-gray-200")} />
+
+              <button
+                className={classNames(
+                  "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:opacity-50",
+                  isDark
+                    ? "bg-emerald-600/20 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-600/30"
+                    : "bg-emerald-50 border border-emerald-200 text-emerald-700 hover:bg-emerald-100"
+                )}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  void startGroup();
+                }}
+                disabled={!selectedGroupId || busy === "group-start" || actors.length === 0}
+              >
+                <span aria-hidden="true">▶</span>
+                <span>Launch All</span>
+              </button>
+
+              <button
+                className={classNames(
+                  "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:opacity-50",
+                  isDark ? "bg-slate-800/60 hover:bg-slate-800 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                )}
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  void stopGroup();
+                }}
+                disabled={!selectedGroupId || busy === "group-stop"}
+              >
+                <span aria-hidden="true">⏹</span>
+                <span>Quit All</span>
+              </button>
+
+              {groupDoc?.state === "paused" ? (
+                <button
+                  className={classNames(
+                    "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:opacity-50",
+                    isDark
+                      ? "bg-amber-600/20 border border-amber-500/30 text-amber-300 hover:bg-amber-600/30"
+                      : "bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100"
+                  )}
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    void setGroupState("active");
+                  }}
+                  disabled={!selectedGroupId || busy === "group-state"}
+                >
+                  <span aria-hidden="true">▶</span>
+                  <span>Resume Delivery</span>
+                </button>
+              ) : (
+                <button
+                  className={classNames(
+                    "w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors min-h-[44px] disabled:opacity-50",
+                    isDark ? "bg-slate-800/60 hover:bg-slate-800 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
+                  )}
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    void setGroupState("paused");
+                  }}
+                  disabled={!selectedGroupId || busy === "group-state"}
+                >
+                  <span aria-hidden="true">⏸</span>
+                  <span>Pause Delivery</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
 
       {/* Modals */}
+      <SearchModal
+        isOpen={showSearchModal}
+        onClose={() => setShowSearchModal(false)}
+        groupId={selectedGroupId}
+        actors={actors}
+        isDark={isDark}
+        onReply={(ev) => {
+          startReply(ev);
+          setActiveTab("chat");
+          setShowSearchModal(false);
+          window.setTimeout(() => composerRef.current?.focus(), 0);
+        }}
+      />
+
       <ContextModal
         isOpen={showContextModal}
         onClose={() => setShowContextModal(false)}
+        groupId={selectedGroupId}
         context={groupContext}
         onUpdateVision={updateVision}
         onUpdateSketch={updateSketch}
@@ -1763,12 +2216,12 @@ export default function App() {
                       : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
                   }`}
                   value={editActorRuntime}
-                  onChange={(e) => setEditActorRuntime(e.target.value as typeof editActorRuntime)}
+                  onChange={(e) => setEditActorRuntime(e.target.value as SupportedRuntime)}
                 >
-                  {(["claude", "codex", "droid", "opencode", "gemini", "copilot", "custom"] as const).map((rt) => {
+                  {SUPPORTED_RUNTIMES.map((rt) => {
                     const info = RUNTIME_INFO[rt];
                     const rtInfo = runtimes.find((r) => r.name === rt);
-                    const available = rt === "custom" || (rtInfo?.available ?? false);
+                    const available = rtInfo?.available ?? false;
                     return (
                       <option key={rt} value={rt} disabled={!available}>
                         {info?.label || rt}{!available ? " (not installed)" : ""}
@@ -1776,6 +2229,35 @@ export default function App() {
                     );
                   })}
                 </select>
+                {(editActorRuntime === "opencode" || editActorRuntime === "copilot") && (
+                  <div className={`mt-2 rounded-lg border px-3 py-2 text-[11px] ${
+                    isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
+                  }`}>
+                    <div className="font-medium">Manual MCP install required</div>
+                    {editActorRuntime === "opencode" ? (
+                      <>
+                        <div className="mt-1">
+                          1) Create/edit{" "}
+                          <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.config/opencode/opencode.json</code>
+                        </div>
+                        <div className="mt-1">2) Add this MCP server config:</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mt-1">
+                          1) Create/edit <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.copilot/mcp-config.json</code>
+                        </div>
+                        <div className="mt-1">2) Add this MCP server config (or pass it via <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>--additional-mcp-config</code>):</div>
+                      </>
+                    )}
+                    <pre className={`mt-1.5 p-2 rounded overflow-x-auto whitespace-pre ${isDark ? "bg-amber-900/20 text-amber-100" : "bg-amber-50 text-amber-900"}`}>
+                      <code>{editActorRuntime === "opencode" ? OPENCODE_MCP_CONFIG_SNIPPET : COPILOT_MCP_CONFIG_SNIPPET}</code>
+                    </pre>
+                    <div className={`mt-1 text-[10px] ${isDark ? "text-amber-200/80" : "text-amber-800/80"}`}>
+                      Skills are auto-installed by CCCC when you start this agent.
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Command</label>
@@ -1790,14 +2272,14 @@ export default function App() {
                   placeholder={RUNTIME_DEFAULTS[editActorRuntime] || "Enter command..."}
                 />
                 <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                  Default: <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{RUNTIME_DEFAULTS[editActorRuntime] || "custom"}</code>
+                  Default: <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{RUNTIME_DEFAULTS[editActorRuntime] || ""}</code>
                 </div>
               </div>
               <div className="flex gap-3 pt-2">
                 <button
                   className="flex-1 rounded-lg bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 text-sm font-semibold shadow-lg disabled:opacity-50 transition-all min-h-[44px]"
                   onClick={updateActor}
-                  disabled={busy === "actor-update" || (!editActorCommand.trim() && editActorRuntime === "custom")}
+                  disabled={busy === "actor-update" || !editActorCommand.trim()}
                 >
                   Save
                 </button>
@@ -2046,7 +2528,7 @@ export default function App() {
               <div>
                 <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>AI Runtime</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {(["claude", "codex", "droid", "opencode", "gemini", "copilot"] as const).map((rt) => {
+                  {SUPPORTED_RUNTIMES.map((rt) => {
                     const info = RUNTIME_INFO[rt] || { label: rt, desc: "" };
                     const rtInfo = runtimes.find((r) => r.name === rt);
                     const available = rtInfo?.available ?? false;
@@ -2082,22 +2564,42 @@ export default function App() {
                             </span>
                           )}
                         </div>
-                        <div className={`text-[10px] mt-0.5 line-clamp-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{info.desc}</div>
+                        {info.desc ? (
+                          <div className={`text-[10px] mt-0.5 line-clamp-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{info.desc}</div>
+                        ) : null}
                       </button>
                     );
                   })}
                 </div>
-                <button
-                  className={classNames(
-                    "mt-2 w-full px-3 py-2 rounded-lg border text-left text-sm transition-all min-h-[44px]",
-                    newActorRuntime === "custom"
-                      ? isDark ? "bg-slate-700/50 border-slate-500" : "bg-blue-50 border-blue-300"
-                      : isDark ? "bg-slate-800/30 border-slate-700/50 hover:border-slate-600" : "bg-gray-50 border-gray-200 hover:border-gray-300"
-                  )}
-                  onClick={() => setNewActorRuntime("custom")}
-                >
-                  <span className={isDark ? "text-slate-300" : "text-gray-600"}>Custom command...</span>
-                </button>
+                {(newActorRuntime === "opencode" || newActorRuntime === "copilot") && (
+                  <div className={`mt-2 rounded-lg border px-3 py-2 text-[11px] ${
+                    isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
+                  }`}>
+                    <div className="font-medium">Manual MCP install required</div>
+                    {newActorRuntime === "opencode" ? (
+                      <>
+                        <div className="mt-1">
+                          1) Create/edit{" "}
+                          <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.config/opencode/opencode.json</code>
+                        </div>
+                        <div className="mt-1">2) Add this MCP server config:</div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="mt-1">
+                          1) Create/edit <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.copilot/mcp-config.json</code>
+                        </div>
+                        <div className="mt-1">2) Add this MCP server config (or pass it via <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>--additional-mcp-config</code>):</div>
+                      </>
+                    )}
+                    <pre className={`mt-1.5 p-2 rounded overflow-x-auto whitespace-pre ${isDark ? "bg-amber-900/20 text-amber-100" : "bg-amber-50 text-amber-900"}`}>
+                      <code>{newActorRuntime === "opencode" ? OPENCODE_MCP_CONFIG_SNIPPET : COPILOT_MCP_CONFIG_SNIPPET}</code>
+                    </pre>
+                    <div className={`mt-1 text-[10px] ${isDark ? "text-amber-200/80" : "text-amber-800/80"}`}>
+                      Skills are auto-installed by CCCC when you start this agent.
+                    </div>
+                  </div>
+                )}
               </div>
               <div>
                 <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Role</label>
@@ -2157,7 +2659,7 @@ export default function App() {
                       placeholder={RUNTIME_DEFAULTS[newActorRuntime] || "Enter command..."}
                     />
                     <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                      Default: <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{RUNTIME_DEFAULTS[newActorRuntime] || "custom"}</code>
+                      Default: <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{RUNTIME_DEFAULTS[newActorRuntime] || ""}</code>
                     </div>
                   </div>
                 </div>

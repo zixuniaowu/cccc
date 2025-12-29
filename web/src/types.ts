@@ -69,6 +69,13 @@ export type GroupContext = {
   presence?: Record<string, { status?: string; activity?: string; updated_at?: string }>;
 };
 
+export type ProjectMdInfo = {
+  found: boolean;
+  path?: string | null;
+  content?: string | null;
+  error?: string | null;
+};
+
 export type GroupSettings = {
   nudge_after_seconds: number;
   actor_idle_timeout_seconds: number;
@@ -104,27 +111,18 @@ export type DirSuggestion = { name: string; path: string; icon: string };
 // Runtime configuration
 export const RUNTIME_DEFAULTS: Record<string, string> = {
   claude: "claude --dangerously-skip-permissions",
-  codex: "codex --dangerously-bypass-approvals-and-sandbox",
+  codex: "codex --dangerously-bypass-approvals-and-sandbox --search",
   droid: "droid --auto high",
   opencode: "opencode",
-  gemini: "gemini --yolo",
-  copilot: "copilot --allow-all-tools",
-  cursor: "cursor-agent",
-  auggie: "auggie",
-  kilocode: "kilocode",
+  copilot: "copilot --allow-all-tools --allow-all-paths",
 };
 
 export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
-  claude: { label: "Claude Code", desc: "Anthropic's Claude - strong coding" },
-  codex: { label: "Codex CLI", desc: "OpenAI Codex - multimodal support" },
-  droid: { label: "Droid", desc: "Robust auto mode, good for long sessions" },
-  opencode: { label: "OpenCode", desc: "Solid coding CLI, no special env needed" },
-  gemini: { label: "Gemini", desc: "Google Gemini - web search, large context" },
-  copilot: { label: "GitHub Copilot", desc: "GitHub integrated, tool access" },
-  cursor: { label: "Cursor Agent", desc: "Cursor AI - editor integrated" },
-  auggie: { label: "Augment Code", desc: "Lightweight AI assistant" },
-  kilocode: { label: "KiloCode", desc: "Autonomous coding capabilities" },
-  custom: { label: "Custom", desc: "Enter your own command" },
+  claude: { label: "Claude Code", desc: "" },
+  codex: { label: "Codex CLI", desc: "" },
+  droid: { label: "Droid", desc: "" },
+  opencode: { label: "OpenCode", desc: "Manual MCP installation needed" },
+  copilot: { label: "GitHub Copilot", desc: "Manual MCP installation needed" },
 };
 
 // Runtime colors for visual distinction
@@ -158,28 +156,8 @@ export const RUNTIME_COLORS: Record<string, {
     bg: "bg-cyan-900/30", text: "text-cyan-300", border: "border-cyan-600/50", dot: "bg-cyan-400",
     bgLight: "bg-cyan-50", textLight: "text-cyan-700", borderLight: "border-cyan-300", dotLight: "bg-cyan-500"
   },
-  gemini: { 
-    bg: "bg-blue-900/30", text: "text-blue-300", border: "border-blue-600/50", dot: "bg-blue-400",
-    bgLight: "bg-blue-50", textLight: "text-blue-700", borderLight: "border-blue-300", dotLight: "bg-blue-500"
-  },
   copilot: { 
     bg: "bg-slate-800/50", text: "text-slate-300", border: "border-slate-500/50", dot: "bg-slate-400",
-    bgLight: "bg-gray-100", textLight: "text-gray-700", borderLight: "border-gray-300", dotLight: "bg-gray-500"
-  },
-  cursor: { 
-    bg: "bg-pink-900/30", text: "text-pink-300", border: "border-pink-600/50", dot: "bg-pink-400",
-    bgLight: "bg-pink-50", textLight: "text-pink-700", borderLight: "border-pink-300", dotLight: "bg-pink-500"
-  },
-  auggie: { 
-    bg: "bg-amber-900/30", text: "text-amber-300", border: "border-amber-600/50", dot: "bg-amber-400",
-    bgLight: "bg-amber-50", textLight: "text-amber-700", borderLight: "border-amber-300", dotLight: "bg-amber-500"
-  },
-  kilocode: { 
-    bg: "bg-lime-900/30", text: "text-lime-300", border: "border-lime-600/50", dot: "bg-lime-400",
-    bgLight: "bg-lime-50", textLight: "text-lime-700", borderLight: "border-lime-300", dotLight: "bg-lime-500"
-  },
-  custom: { 
-    bg: "bg-gray-800/50", text: "text-gray-300", border: "border-gray-600/50", dot: "bg-gray-400",
     bgLight: "bg-gray-100", textLight: "text-gray-700", borderLight: "border-gray-300", dotLight: "bg-gray-500"
   },
   user: { 
@@ -190,7 +168,7 @@ export const RUNTIME_COLORS: Record<string, {
 
 // Helper to get runtime color, with fallback
 export function getRuntimeColor(runtime?: string, isDark: boolean = true) {
-  const colors = RUNTIME_COLORS[runtime || "custom"] || RUNTIME_COLORS.custom;
+  const colors = RUNTIME_COLORS[runtime || "codex"] || RUNTIME_COLORS.codex;
   if (isDark) {
     return {
       bg: colors.bg,
