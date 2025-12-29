@@ -57,6 +57,8 @@
 | PyPI 发布 | `pip install cccc-pair` |
 | RFD/决策机制 | 审批流程 |
 | 多 scope 协作 | 跨仓库协作 |
+| 跨 group 消息投递 | 跨 group 路由、权限与隔离 |
+| 跨 group 附件/文件 | 复制 blobs 到目标 group 并重写引用（不默认落 repo） |
 
 ## 技术栈
 

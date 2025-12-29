@@ -96,6 +96,13 @@ You cannot:
 
 ## 4) Communication
 
+### Critical Rule: Use MCP for Messages
+
+Anything you print to the runtime terminal (stdout/stderr) is **not** a CCCC message and may never be seen by the user or other actors.
+
+- Use `cccc_message_send` / `cccc_message_reply` for all communication you want others to see.
+- Use `cccc_inbox_list` to read, then `cccc_inbox_mark_read` to clear items you handled.
+
 ### Message Targets
 
 - `@all` - Everyone (all actors + user)

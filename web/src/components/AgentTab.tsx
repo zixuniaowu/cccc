@@ -42,6 +42,25 @@ export function AgentTab({
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
 
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    const t = (text || "").toString();
+    if (!t) return false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(t);
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      window.prompt("Copy to clipboard:", t);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const isRunning = actor.running ?? actor.enabled ?? false;
   const isHeadless = actor.runner === "headless";
   const color = getRuntimeColor(actor.runtime, isDark);
@@ -78,6 +97,39 @@ export function AgentTab({
     
     term.loadAddon(fitAddon);
     term.open(termRef.current);
+
+    const copySelection = async (): Promise<boolean> => {
+      try {
+        const sel = term.getSelection ? term.getSelection() : "";
+        if (!sel) return false;
+        return await copyToClipboard(sel);
+      } catch {
+        return false;
+      }
+    };
+
+    // High-ROI copy UX:
+    // - If text is selected, Ctrl/Cmd+C copies (instead of sending SIGINT to the runtime)
+    // - Right-click copies selection (common web terminal behavior)
+    term.attachCustomKeyEventHandler((ev) => {
+      const key = (ev.key || "").toLowerCase();
+      const isCopy = (ev.ctrlKey || ev.metaKey) && !ev.shiftKey && key === "c";
+      const isCopyShift = (ev.ctrlKey || ev.metaKey) && ev.shiftKey && key === "c";
+      if (isCopy || isCopyShift) {
+        if (term.hasSelection?.()) {
+          void copySelection();
+          return false; // prevent ^C from reaching the runtime
+        }
+      }
+      return true;
+    });
+
+    const onContextMenu = (ev: MouseEvent) => {
+      if (!term.hasSelection?.()) return;
+      ev.preventDefault();
+      void copySelection();
+    };
+    term.element?.addEventListener("contextmenu", onContextMenu);
     
     terminalRef.current = term;
     fitAddonRef.current = fitAddon;
@@ -86,6 +138,7 @@ export function AgentTab({
     setTimeout(() => fitAddon.fit(), 0);
 
     return () => {
+      term.element?.removeEventListener("contextmenu", onContextMenu);
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;

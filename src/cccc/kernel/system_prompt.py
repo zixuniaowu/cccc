@@ -78,6 +78,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "⚠️ IMPORTANT: Always use MCP tools for messaging:",
         "  - cccc_message_send(to, text) → send message",
         "  - cccc_message_reply(event_id, text) → reply to message",
+        "  - Terminal output (stdout/stderr) is NOT delivered as a chat message; users may never see it",
         "  - Do NOT use bash/shell commands for cccc operations",
         "",
         "Quick start:",

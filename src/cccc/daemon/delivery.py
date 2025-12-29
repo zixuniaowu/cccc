@@ -3,14 +3,14 @@
 This module handles:
 1. Lazy Preamble: System prompt is delivered with the first message, not at actor startup
 2. Message Throttling: Batches messages within a time window to prevent message bombing
-3. MCP Hints: Adds MCP usage hints on first delivery and nudge
+3. MCP Reminders: Periodically reminds actors to use MCP tools for messaging
 4. Delivery Formatting: Renders messages in IM-style format for PTY injection
 5. State-aware Delivery: Respects group state (active/idle/paused)
 
 Key design decisions:
 - delivery_min_interval_seconds: Minimum interval between deliveries (default 60s)
 - Messages within the window are batched and delivered together
-- MCP hints are added on first delivery and nudge only
+- Reminders are injected every N chat messages (per actor) to reduce "stdout-only" replies
 
 Group State Behavior:
 - active: All messages delivered normally
@@ -182,7 +182,7 @@ class ActorDeliveryState:
     """Delivery state for a single actor."""
     last_delivery_at: Optional[datetime] = None
     pending_messages: List[PendingMessage] = field(default_factory=list)
-    hint_sent: bool = False  # Whether MCP hint has been sent
+    delivered_chat_count: int = 0  # Count of delivered chat.message (per actor, in-memory)
 
 
 class DeliveryThrottle:
@@ -191,7 +191,7 @@ class DeliveryThrottle:
     Key behavior:
     - Messages are queued and delivered in batches
     - Minimum interval between deliveries is configurable (default 60s)
-    - MCP hints are added on first delivery and nudge
+    - A periodic reminder can be injected by the delivery layer
     """
     
     def __init__(self) -> None:
@@ -261,18 +261,21 @@ class DeliveryThrottle:
             state.pending_messages = []
             state.last_delivery_at = datetime.now(timezone.utc)
             return messages
-    
-    def is_first_delivery(self, group_id: str, actor_id: str) -> bool:
-        """Check if this is the first delivery for an actor."""
+
+    def get_delivered_chat_count(self, group_id: str, actor_id: str) -> int:
+        """Get delivered chat.message count for an actor (in-memory)."""
         with self._lock:
             state = self._get_state(group_id, actor_id)
-            return not state.hint_sent
-    
-    def mark_hint_sent(self, group_id: str, actor_id: str) -> None:
-        """Mark that MCP hint has been sent."""
+            return int(state.delivered_chat_count or 0)
+
+    def add_delivered_chat_count(self, group_id: str, actor_id: str, delta: int) -> None:
+        """Add delivered chat.message count for an actor (in-memory)."""
+        d = int(delta or 0)
+        if d <= 0:
+            return
         with self._lock:
             state = self._get_state(group_id, actor_id)
-            state.hint_sent = True
+            state.delivered_chat_count = int(state.delivered_chat_count or 0) + d
     
     def has_pending(self, group_id: str, actor_id: str) -> bool:
         """Check if actor has pending messages."""
@@ -294,6 +297,12 @@ THROTTLE = DeliveryThrottle()
 # ============================================================================
 # Message Rendering
 # ============================================================================
+
+REMINDER_EVERY_N_MESSAGES = 6
+MCP_REMINDER_LINE = (
+    "[cccc] Reminder: communicate via MCP (cccc_message_send / cccc_message_reply); terminal output isn't delivered. "
+    "See cccc-ops skill."
+)
 
 
 def render_single_message(msg: PendingMessage) -> str:
@@ -322,44 +331,21 @@ def render_single_message(msg: PendingMessage) -> str:
     return f"{head}:\n{body}" if "\n" in body else f"{head}: {body}"
 
 
-def render_batched_messages(messages: List[PendingMessage], *, add_hint: bool = False) -> str:
+def render_batched_messages(messages: List[PendingMessage], *, reminder_after_index: Optional[int] = None) -> str:
     """Render multiple messages as a batch for PTY delivery."""
     if not messages:
         return ""
-    
-    if len(messages) == 1:
-        # Single message
-        text = render_single_message(messages[0])
-    else:
-        # Multiple messages - batch format
-        lines = [f"[cccc] {len(messages)} new messages:"]
-        lines.append("")
-        for i, msg in enumerate(messages, 1):
-            ts_short = msg.ts[11:19] if len(msg.ts) >= 19 else msg.ts  # Extract HH:MM:SS
-            if msg.kind == "system.notify":
-                lines.append(f"[{i}] {ts_short} SYSTEM ({msg.notify_kind}):")
-                lines.append(f"    {msg.notify_title}")
-                if msg.notify_message:
-                    # Indent message lines
-                    for line in msg.notify_message.split("\n")[:2]:  # Max 2 lines
-                        lines.append(f"    {line}")
-            else:
-                who = str(msg.by or "user").strip() or "user"
-                targets = ", ".join([str(x).strip() for x in (msg.to or []) if str(x).strip()]) or "@all"
-                lines.append(f"[{i}] {ts_short} {who} → {targets}:")
-                # Show first 2 lines of message body
-                body_lines = (msg.text or "").strip().split("\n")[:2]
-                for line in body_lines:
-                    preview = line[:80] + "..." if len(line) > 80 else line
-                    lines.append(f"    {preview}")
-            lines.append("")
-        text = "\n".join(lines).rstrip()
-    
-    # Add MCP hint if requested
-    if add_hint:
-        text += "\n\n---\n💡 Use cccc_inbox_list() to see full inbox. Mark read with cccc_inbox_mark_read()."
-    
-    return text
+
+    blocks: List[str] = []
+    if len(messages) > 1:
+        blocks.append(f"[cccc] {len(messages)} new messages:")
+
+    for i, msg in enumerate(messages, 1):
+        blocks.append(render_single_message(msg))
+        if reminder_after_index is not None and reminder_after_index == i:
+            blocks.append(MCP_REMINDER_LINE)
+
+    return "\n\n".join([b for b in blocks if b]).rstrip()
 
 
 # ============================================================================
@@ -508,7 +494,14 @@ def deliver_message_with_preamble(
             pass
     
     # 投递用户消息
-    return pty_submit_text(group, actor_id=aid, text=message_text)
+    delivered_before = THROTTLE.get_delivered_chat_count(group.group_id, aid)
+    out = (message_text or "").rstrip("\n")
+    if out and (delivered_before + 1) % REMINDER_EVERY_N_MESSAGES == 0:
+        out = out + "\n\n" + MCP_REMINDER_LINE
+    result = pty_submit_text(group, actor_id=aid, text=out)
+    if result:
+        THROTTLE.add_delivered_chat_count(group.group_id, aid, 1)
+    return result
 
 
 def queue_chat_message(
@@ -621,12 +614,19 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
     actor = find_actor(group, aid)
     if not isinstance(actor, dict):
         return False
-    
-    # Check if we should add MCP hint
-    # Add hint on first delivery or if any message is a nudge
-    is_first = THROTTLE.is_first_delivery(gid, aid)
-    has_nudge = any(m.kind == "system.notify" and m.notify_kind == "nudge" for m in deliverable)
-    add_hint = is_first or has_nudge
+
+    delivered_before = THROTTLE.get_delivered_chat_count(gid, aid)
+    chat_total = sum(1 for m in deliverable if m.kind == "chat.message")
+    reminder_after_index: Optional[int] = None
+    if chat_total > 0:
+        seen = 0
+        for i, m in enumerate(deliverable, 1):
+            if m.kind != "chat.message":
+                continue
+            seen += 1
+            if (delivered_before + seen) % REMINDER_EVERY_N_MESSAGES == 0:
+                reminder_after_index = i
+                break
     
     # Build the full delivery text
     parts: List[str] = []
@@ -642,21 +642,21 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
             pass
     
     # Render batched messages
-    message_text = render_batched_messages(deliverable, add_hint=add_hint)
+    message_text = render_batched_messages(deliverable, reminder_after_index=reminder_after_index)
     if message_text:
         parts.append(message_text)
     
     # Combine and send as single delivery
+    delivered = False
     if parts:
         full_text = "\n\n".join(parts)
-        result = pty_submit_text(group, actor_id=aid, text=full_text)
-        if result and not preamble_already_sent:
-            mark_preamble_sent(group, aid)
+        delivered = bool(pty_submit_text(group, actor_id=aid, text=full_text))
+        if delivered:
+            if not preamble_already_sent:
+                mark_preamble_sent(group, aid)
+            THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
     
-    if is_first:
-        THROTTLE.mark_hint_sent(gid, aid)
-    
-    return True
+    return delivered
 
 
 def tick_delivery(group: Group) -> None:
