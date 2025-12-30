@@ -488,8 +488,8 @@ def deliver_message_with_preamble(
         try:
             prompt = render_system_prompt(group=group, actor=actor)
             if prompt and prompt.strip():
-                pty_submit_text(group, actor_id=aid, text=prompt, file_fallback=True)
-                mark_preamble_sent(group, aid)
+                if pty_submit_text(group, actor_id=aid, text=prompt, file_fallback=True):
+                    mark_preamble_sent(group, aid)
         except Exception:
             pass
     

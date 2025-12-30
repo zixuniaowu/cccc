@@ -700,6 +700,7 @@ def _maybe_autostart_running_groups() -> None:
                 continue
             if not bool(actor.get("enabled", True)):
                 continue
+            runner_kind = str(actor.get("runner") or "pty").strip()
             scope_key = str(actor.get("default_scope_key") or group_scope_key).strip()
             url = _find_scope_url(group, scope_key)
             if not url:
@@ -709,13 +710,34 @@ def _maybe_autostart_running_groups() -> None:
                 continue
             cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
             env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
-            session = pty_runner.SUPERVISOR.start_actor(
-                group_id=group.group_id, actor_id=aid, cwd=cwd, command=list(cmd or []), env=_prepare_pty_env(env)
-            )
-            try:
-                _write_pty_state(group.group_id, aid, pid=session.pid)
-            except Exception:
-                pass
+
+            runtime = str(actor.get("runtime") or "codex").strip()
+            if runtime not in SUPPORTED_RUNTIMES:
+                continue
+            if runtime == "custom" and runner_kind != "headless" and not cmd:
+                continue
+            _ensure_mcp_installed(runtime, cwd)
+
+            if runner_kind == "headless":
+                headless_runner.SUPERVISOR.start_actor(
+                    group_id=group.group_id, actor_id=aid, cwd=cwd, env=dict(env or {})
+                )
+                try:
+                    _write_headless_state(group.group_id, aid)
+                except Exception:
+                    pass
+            else:
+                session = pty_runner.SUPERVISOR.start_actor(
+                    group_id=group.group_id, actor_id=aid, cwd=cwd, command=list(cmd or []), env=_prepare_pty_env(env)
+                )
+                try:
+                    _write_pty_state(group.group_id, aid, pid=session.pid)
+                except Exception:
+                    pass
+
+            # Ensure fresh sessions always receive the lazy preamble on first delivery
+            clear_preamble_sent(group, aid)
+            THROTTLE.clear_actor(group.group_id, aid)
             # NOTE: 不在启动时注入 system prompt（lazy preamble）
 
 
