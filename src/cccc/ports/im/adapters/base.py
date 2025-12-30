@@ -5,6 +5,7 @@ Base class for IM platform adapters.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 
@@ -76,6 +77,26 @@ class IMAdapter(ABC):
         else:
             # Agent to user message
             return f"[{by}] {text}"
+
+    def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
+        """Download an inbound attachment to bytes (platform-specific)."""
+        raise NotImplementedError
+
+    def send_file(
+        self,
+        chat_id: str,
+        *,
+        file_path: Path,
+        filename: str,
+        caption: str = "",
+        thread_id: Optional[int] = None,
+    ) -> bool:
+        """Send a file to a chat (platform-specific)."""
+        _ = thread_id
+        _ = caption
+        _ = filename
+        _ = file_path
+        return False
 
     def summarize(self, text: str, max_chars: int = 900, max_lines: int = 8) -> str:
         """

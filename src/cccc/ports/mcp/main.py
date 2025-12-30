@@ -61,6 +61,9 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
             "protocolVersion": "2024-11-05",
             "capabilities": {
                 "tools": {},
+                # Some MCP clients probe these even if unused; return empty lists below.
+                "resources": {},
+                "prompts": {},
             },
             "serverInfo": {
                 "name": "cccc-mcp",
@@ -68,12 +71,26 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
             },
         })
 
-    if method == "notifications/initialized":
+    if method.startswith("notifications/"):
         # 通知，不需要响应
         return {}
 
     if method == "tools/list":
         return _make_response(req_id, {"tools": MCP_TOOLS})
+
+    # Optional MCP surfaces (return empty to avoid noisy "Method not found" in some runtimes)
+    if method == "resources/list":
+        return _make_response(req_id, {"resources": []})
+
+    if method == "prompts/list":
+        return _make_response(req_id, {"prompts": []})
+
+    # Common no-op requests some clients send
+    if method == "ping":
+        return _make_response(req_id, {})
+
+    if method == "logging/setLevel":
+        return _make_response(req_id, {})
 
     if method == "tools/call":
         tool_name = str(params.get("name") or "")

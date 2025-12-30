@@ -15,6 +15,7 @@ import os
 import re
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -156,6 +157,25 @@ class SlackAdapter(IMAdapter):
             if not text or not channel:
                 return
 
+            attachments: List[Dict[str, Any]] = []
+            try:
+                files = event.get("files")
+                if isinstance(files, list):
+                    for f in files:
+                        if not isinstance(f, dict):
+                            continue
+                        attachments.append({
+                            "provider": "slack",
+                            "kind": "file",
+                            "id": str(f.get("id") or ""),
+                            "file_name": str(f.get("name") or "file"),
+                            "mime_type": str(f.get("mimetype") or ""),
+                            "bytes": int(f.get("size") or 0),
+                            "url": str(f.get("url_private_download") or f.get("url_private") or ""),
+                        })
+            except Exception:
+                attachments = []
+
             chat_type = "private" if channel_type in ("im", "mpim") else "channel"
             if not channel_type:
                 # Fallback: Slack channel IDs are prefixed by type: D=im, C=public channel, G=private channel/mpim.
@@ -181,6 +201,7 @@ class SlackAdapter(IMAdapter):
                     "chat_type": chat_type,
                     "routed": bool(chat_type == "private" or mentioned),
                     "text": text.strip(),
+                    "attachments": attachments,
                     "from_user": user,
                     "message_id": event.get("ts", ""),
                 })
@@ -239,6 +260,50 @@ class SlackAdapter(IMAdapter):
             return True
         except Exception as e:
             self._log(f"[error] send_message to {chat_id}: {e}")
+            return False
+
+    def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
+        url = str(attachment.get("url") or "").strip()
+        if not url:
+            raise ValueError("missing slack attachment url")
+        req = urllib.request.Request(url, method="GET")
+        req.add_header("Authorization", f"Bearer {self.bot_token}")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+
+    def send_file(
+        self,
+        chat_id: str,
+        *,
+        file_path: Path,
+        filename: str,
+        caption: str = "",
+        thread_id: Optional[int] = None,
+    ) -> bool:
+        _ = thread_id  # Slack threads not wired yet (future work).
+        if not self._connected or not self._web_client:
+            return False
+
+        try:
+            with file_path.open("rb") as f:
+                if hasattr(self._web_client, "files_upload_v2"):
+                    self._web_client.files_upload_v2(
+                        channel=str(chat_id),
+                        file=f,
+                        filename=str(filename or file_path.name or "file"),
+                        initial_comment=str(caption or ""),
+                    )
+                else:
+                    # Backward-compat for older slack_sdk.
+                    self._web_client.files_upload(
+                        channels=str(chat_id),
+                        file=f,
+                        filename=str(filename or file_path.name or "file"),
+                        initial_comment=str(caption or ""),
+                    )
+            return True
+        except Exception as e:
+            self._log(f"[error] send_file to {chat_id}: {e}")
             return False
 
     def _compose_safe(self, text: str) -> str:

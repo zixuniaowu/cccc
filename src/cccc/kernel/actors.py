@@ -282,6 +282,12 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             item["command"] = cmd
         else:
             raise ValueError("invalid command")
+        if (
+            str(item.get("runtime") or "").strip() == "custom"
+            and str(item.get("runner") or "pty").strip() != "headless"
+            and not item.get("command")
+        ):
+            raise ValueError("custom runtime requires a command (PTY runner)")
 
     if "env" in patch:
         env = patch.get("env")
@@ -320,10 +326,16 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
         runtime = patch.get("runtime")
         if runtime is None:
             item["runtime"] = "codex"
-        elif runtime in ("claude", "codex", "droid", "opencode", "copilot"):
+        elif runtime in ("amp", "auggie", "claude", "codex", "cursor", "droid", "neovate", "gemini", "kilocode", "opencode", "copilot", "custom"):
             item["runtime"] = runtime
         else:
             raise ValueError("invalid runtime")
+        if (
+            str(item.get("runtime") or "").strip() == "custom"
+            and str(item.get("runner") or "pty").strip() != "headless"
+            and not item.get("command")
+        ):
+            raise ValueError("custom runtime requires a command (PTY runner)")
 
     item["updated_at"] = utc_now_iso()
     group.save()

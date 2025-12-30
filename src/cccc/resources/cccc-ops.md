@@ -39,7 +39,7 @@ When you're the only actor, decide based on task complexity:
 
 ```
 1. cccc_runtime_list → See available runtimes
-2. cccc_actor_add → Create peer (runtime: claude/codex/droid/opencode/copilot)
+2. cccc_actor_add → Create peer (runtime: pick one from cccc_runtime_list)
 3. cccc_actor_start → Start the peer
 4. cccc_message_send → Send task instructions
 ```
@@ -176,6 +176,13 @@ Foreman should set to `idle` when task is complete.
 - `cccc_inbox_mark_read` - Mark as read
 - `cccc_message_send` - Send message
 - `cccc_message_reply` - Reply to message
+- `cccc_file_send` - Send a local file as an attachment
+
+### Files / Attachments
+Files sent from Web/IM are stored in the group blob store under `CCCC_HOME/groups/<group_id>/state/blobs/`.
+
+- Inbox events may include `data.attachments[]` with `path` like `state/blobs/<sha256>_<name>`.
+- Use `cccc_blob_path` to resolve that `path` to an absolute filesystem path.
 
 ### Context
 - `cccc_project_info` - Get PROJECT.md

@@ -11,7 +11,8 @@ interface SettingsModalProps {
   groupId?: string;
 }
 
-type TabId = "timing" | "im";
+// Note: "remote" is informational only (no settings persisted yet).
+type TabId = "timing" | "im" | "remote";
 
 export function SettingsModal({
   isOpen,
@@ -182,6 +183,7 @@ export function SettingsModal({
   const tabs: { id: TabId; label: string }[] = [
     { id: "timing", label: "Timing" },
     { id: "im", label: "IM Bridge" },
+    { id: "remote", label: "Remote Access" },
   ];
 
   // Token field labels based on platform
@@ -532,6 +534,61 @@ export function SettingsModal({
                   <li>Save the config and start the bridge</li>
                   <li>In your IM chat, send /subscribe to receive messages</li>
                 </ol>
+              </div>
+            </div>
+          )}
+
+          {/* Remote Access Tab */}
+          {activeTab === "remote" && (
+            <div className="space-y-4">
+              <div>
+                <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Remote Access (Phone)</h3>
+                <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  Recommended for “anywhere access”: use Cloudflare Tunnel or Tailscale. CCCC does not manage these for you yet—this is a setup guide.
+                </p>
+                <div className={`mt-2 rounded-lg border px-3 py-2 text-[11px] ${
+                  isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}>
+                  <div className="font-medium">Security note</div>
+                  <div className="mt-1">
+                    Treat the Web UI as <span className="font-medium">high privilege</span> (it can control agents and access project files). Do not expose it to the public internet without access control (e.g., Cloudflare Access).
+                  </div>
+                </div>
+              </div>
+
+              <div className={`rounded-lg border p-3 ${isDark ? "border-slate-800 bg-slate-950/30" : "border-gray-200 bg-gray-50"}`}>
+                <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Cloudflare Tunnel (recommended)</div>
+                <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+                  Easiest for phone access: no VPN app required. Pair with Cloudflare Zero Trust Access for login protection.
+                </div>
+
+                <div className={`mt-3 text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Quick (temporary URL)</div>
+                <pre className={`mt-1.5 p-2 rounded overflow-x-auto whitespace-pre text-[11px] ${isDark ? "bg-slate-900 text-slate-200" : "bg-white text-gray-800 border border-gray-200"}`}>
+                  <code>{`# Install cloudflared first, then:\ncloudflared tunnel --url http://127.0.0.1:8848\n# It will print a https://....trycloudflare.com URL`}</code>
+                </pre>
+
+                <div className={`mt-3 text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Stable (your domain)</div>
+                <pre className={`mt-1.5 p-2 rounded overflow-x-auto whitespace-pre text-[11px] ${isDark ? "bg-slate-900 text-slate-200" : "bg-white text-gray-800 border border-gray-200"}`}>
+                  <code>{`# 1) Authenticate\ncloudflared tunnel login\n\n# 2) Create a named tunnel\ncloudflared tunnel create cccc\n\n# 3) Route DNS (replace with your hostname)\ncloudflared tunnel route dns cccc cccc.example.com\n\n# 4) Create ~/.cloudflared/config.yml (example):\n# tunnel: <TUNNEL-UUID>\n# credentials-file: /home/<you>/.cloudflared/<TUNNEL-UUID>.json\n# ingress:\n#   - hostname: cccc.example.com\n#     service: http://127.0.0.1:8848\n#   - service: http_status:404\n\n# 5) Run\ncloudflared tunnel run cccc`}</code>
+                </pre>
+
+                <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+                  Tip: In Cloudflare Zero Trust → Access → Applications, create a “Self-hosted” app for your hostname to require login.
+                </div>
+              </div>
+
+              <div className={`rounded-lg border p-3 ${isDark ? "border-slate-800 bg-slate-950/30" : "border-gray-200 bg-gray-50"}`}>
+                <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Tailscale (VPN)</div>
+                <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+                  Strong option if you’re okay installing Tailscale on your phone. You can keep CCCC bound to a private interface.
+                </div>
+                <pre className={`mt-2 p-2 rounded overflow-x-auto whitespace-pre text-[11px] ${isDark ? "bg-slate-900 text-slate-200" : "bg-white text-gray-800 border border-gray-200"}`}>
+                  <code>{`# 1) Install Tailscale on the server + phone, then on the server:\ntailscale up\n\n# 2) Get your tailnet IP\nTAILSCALE_IP=$(tailscale ip -4)\n\n# 3) Bind Web UI to that IP (so it's only reachable via tailnet)\nCCCC_WEB_HOST=$TAILSCALE_IP CCCC_WEB_PORT=8848 cccc\n\n# 4) On phone browser:\n# http://<TAILSCALE_IP>:8848/ui/`}</code>
+                </pre>
+              </div>
+
+              <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                Phone tip: On iOS/Android you can “Add to Home Screen” for an app-like launcher (PWA-style).
               </div>
             </div>
           )}

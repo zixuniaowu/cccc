@@ -11,6 +11,7 @@ Handles:
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import signal
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...daemon.server import call_daemon
+from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import Group, load_group
 from ...paths import ensure_home
 from .adapters.base import IMAdapter
@@ -219,6 +221,36 @@ class IMBridge:
 
         self._running = False
         self._last_outbound_check = 0.0
+        # Best-effort inbound dedupe to prevent double-processing when platforms
+        # retry delivery or emit multiple events for the same message (e.g., edits).
+        self._seen_inbound: Dict[str, float] = {}
+
+    def _should_process_inbound(self, *, chat_id: str, thread_id: int, message_id: str) -> bool:
+        """
+        Return True if this inbound message should be processed.
+
+        Uses a small in-memory cache keyed by (chat_id, thread_id, message_id).
+        """
+        mid = str(message_id or "").strip()
+        if not mid:
+            return True
+
+        now = time.time()
+        key = f"{chat_id}:{int(thread_id or 0)}:{mid}"
+
+        if key in self._seen_inbound:
+            return False
+
+        self._seen_inbound[key] = now
+
+        # Opportunistic pruning (keep memory bounded without extra deps).
+        if len(self._seen_inbound) > 2048:
+            cutoff = now - 3600.0  # 1h
+            self._seen_inbound = {k: ts for k, ts in self._seen_inbound.items() if ts >= cutoff}
+            if len(self._seen_inbound) > 4096:
+                self._seen_inbound.clear()
+
+        return True
 
     def _log(self, msg: str) -> None:
         """Log message."""
@@ -288,8 +320,11 @@ class IMBridge:
                 thread_id = int(msg.get("thread_id") or 0)
             except Exception:
                 thread_id = 0
+            message_id = str(msg.get("message_id") or "").strip()
 
             if not text:
+                continue
+            if not self._should_process_inbound(chat_id=chat_id, thread_id=thread_id, message_id=message_id):
                 continue
 
             # Parse command
@@ -317,7 +352,8 @@ class IMBridge:
             elif parsed.type == CommandType.HELP:
                 self._handle_help(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.SEND:
-                self._handle_message(chat_id, parsed.text, parsed.mentions, from_user, thread_id=thread_id)
+                attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
+                self._handle_message(chat_id, parsed, from_user, attachments=attachments, thread_id=thread_id)
             elif parsed.type == CommandType.MESSAGE:
                 routed = bool(msg.get("routed") or False)
 
@@ -328,11 +364,9 @@ class IMBridge:
                         self.adapter.send_message(chat_id, "❓ Unknown command. Use /help.", thread_id=thread_id)
                     continue
 
-                # In non-private chats/channels, avoid forwarding all chatter into CCCC.
-                # Telegram: use /send. Slack/Discord: mention the bot (adapter sets routed=True).
-                if chat_type and chat_type not in ("private",) and not routed:
-                    continue
-                self._handle_message(chat_id, parsed.text, parsed.mentions, from_user, thread_id=thread_id)
+                # All non-command messages are ignored (even in DM) to enforce explicit routing.
+                _ = routed
+                continue
 
     def _process_outbound(self) -> None:
         """Process outbound events from ledger."""
@@ -362,8 +396,9 @@ class IMBridge:
         data = event.get("data", {})
         text = data.get("text", "")
         to = data.get("to", [])
+        attachments = data.get("attachments", [])
 
-        if not text:
+        if not text and not attachments:
             return
 
         # Forward to subscribed chats
@@ -376,11 +411,54 @@ class IMBridge:
             if not self._should_forward(event, verbose):
                 continue
 
-            # Format message
-            formatted = self.adapter.format_outbound(by, to, text, is_system)
+            # Format message (may be empty for file-only events)
+            formatted = self.adapter.format_outbound(by, to, text, is_system) if text else ""
 
-            # Send
-            self.adapter.send_message(sub.chat_id, formatted, thread_id=sub.thread_id)
+            # Try file delivery first (if any attachments)
+            sent_any_file = False
+            file_cfg = (self.group.doc.get("im") or {}) if isinstance(self.group.doc.get("im"), dict) else {}
+            files_cfg = file_cfg.get("files") if isinstance(file_cfg.get("files"), dict) else {}
+            files_enabled = bool(files_cfg.get("enabled", True))
+            platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
+            default_max_mb = 20 if platform == "telegram" else 10 if platform == "discord" else 20
+            try:
+                max_mb = int(files_cfg.get("max_mb") or default_max_mb)
+            except Exception:
+                max_mb = default_max_mb
+            max_bytes = max(0, max_mb) * 1024 * 1024
+
+            if files_enabled and isinstance(attachments, list):
+                for i, a in enumerate(attachments):
+                    if not isinstance(a, dict):
+                        continue
+                    rel_path = str(a.get("path") or "").strip()
+                    if not rel_path:
+                        continue
+                    # Only handle blobs (state/blobs/*).
+                    try:
+                        abs_path = resolve_blob_attachment_path(self.group, rel_path=rel_path)
+                    except Exception:
+                        continue
+                    try:
+                        size = int(abs_path.stat().st_size)
+                    except Exception:
+                        size = 0
+                    if max_bytes and size > max_bytes:
+                        # Skip oversized files (no fallback).
+                        continue
+                    title = str(a.get("title") or abs_path.name or "file")
+                    cap = formatted if (i == 0 and formatted) else ""
+                    ok = False
+                    try:
+                        ok = bool(self.adapter.send_file(sub.chat_id, file_path=abs_path, filename=title, caption=cap, thread_id=sub.thread_id))
+                    except Exception:
+                        ok = False
+                    if ok:
+                        sent_any_file = True
+
+            # If we didn't send any files, or if there's text with no files, send message.
+            if formatted and not sent_any_file:
+                self.adapter.send_message(sub.chat_id, formatted, thread_id=sub.thread_id)
 
     def _should_forward(self, event: Dict[str, Any], verbose: bool) -> bool:
         """Determine if event should be forwarded based on verbose setting."""
@@ -418,9 +496,9 @@ class IMBridge:
         verbose_str = "on" if sub.verbose else "off"
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
         if platform == "telegram":
-            tip = "Group tip: use /send <message> to talk to agents."
+            tip = "Tip: use /send <message> to talk to agents (plain chat is ignored)."
         elif platform in ("slack", "discord"):
-            tip = "Channel tip: mention the bot (e.g. @bot hello) to talk to agents."
+            tip = "Channel tip: mention the bot and use /send (e.g. @bot /send hello)."
         else:
             tip = "Tip: use /send <message> to talk to agents."
         self.adapter.send_message(
@@ -545,38 +623,109 @@ class IMBridge:
     def _handle_message(
         self,
         chat_id: str,
-        text: str,
-        mentions: List[str],
+        parsed: ParsedCommand,
         from_user: str,
+        *,
+        attachments: List[Dict[str, Any]],
         thread_id: int = 0,
     ) -> None:
-        """Handle regular message (send to agents)."""
-        if not text.strip():
+        """Handle /send message (explicit routing)."""
+        _ = from_user
+
+        # Parse recipients from leading args (supports multiple @targets, comma-separated).
+        to: List[str] = []
+        args = list(parsed.args or [])
+        while args:
+            head = str(args[0] or "").strip()
+            if not head:
+                args.pop(0)
+                continue
+            if head.startswith("@") or head in ("user",):
+                args.pop(0)
+                for tok in head.split(","):
+                    t = tok.strip()
+                    if t:
+                        to.append(t)
+                continue
+            break
+        msg_text = " ".join([str(x) for x in args]).strip()
+
+        # File settings
+        im_cfg = self.group.doc.get("im") if isinstance(self.group.doc.get("im"), dict) else {}
+        files_cfg = im_cfg.get("files") if isinstance(im_cfg.get("files"), dict) else {}
+        files_enabled = bool(files_cfg.get("enabled", True))
+        platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
+        default_max_mb = 20 if platform == "telegram" else 10 if platform == "discord" else 20
+        try:
+            max_mb = int(files_cfg.get("max_mb") or default_max_mb)
+        except Exception:
+            max_mb = default_max_mb
+        max_bytes = max(0, max_mb) * 1024 * 1024
+
+        stored_attachments: List[Dict[str, Any]] = []
+        if files_enabled and attachments:
+            for a in attachments:
+                if not isinstance(a, dict):
+                    continue
+                try:
+                    size = int(a.get("bytes") or 0)
+                except Exception:
+                    size = 0
+                if max_bytes and size and size > max_bytes:
+                    self.adapter.send_message(chat_id, f"⚠️ Ignored: file too large (> {max_mb}MB).", thread_id=thread_id)
+                    continue
+                try:
+                    raw = self.adapter.download_attachment(a)
+                except Exception as e:
+                    self.adapter.send_message(chat_id, f"❌ Failed to download attachment: {e}", thread_id=thread_id)
+                    continue
+                if max_bytes and len(raw) > max_bytes:
+                    self.adapter.send_message(chat_id, f"⚠️ Ignored: file too large (> {max_mb}MB).", thread_id=thread_id)
+                    continue
+                stored_attachments.append(
+                    store_blob_bytes(
+                        self.group,
+                        data=raw,
+                        filename=str(a.get("file_name") or a.get("filename") or "file"),
+                        mime_type=str(a.get("mime_type") or a.get("content_type") or ""),
+                        kind=str(a.get("kind") or "file"),
+                    )
+                )
+
+        if not msg_text and stored_attachments:
+            if len(stored_attachments) == 1:
+                msg_text = f"[file] {stored_attachments[0].get('title') or 'file'}"
+            else:
+                msg_text = f"[files] {len(stored_attachments)} attachments"
+
+        if not msg_text and not stored_attachments:
+            # Explicit /send but empty.
             return
 
-        # Build recipient list from mentions
-        to: List[str] = []
-        if mentions:
-            to = mentions
-
-        # Send via daemon
         resp = self._daemon({
             "op": "send",
             "args": {
                 "group_id": self.group.group_id,
-                "text": text,
+                "text": msg_text,
                 "by": "user",
                 "to": to,
                 "path": "",
+                "attachments": stored_attachments,
             },
         })
 
         if not resp.get("ok"):
-            error = resp.get("error", {}).get("message", "unknown error")
-            self.adapter.send_message(chat_id, f"❌ Failed to send: {error}", thread_id=thread_id)
-            self._log(f"[message] chat={chat_id} thread={thread_id} error={error}")
+            err = resp.get("error") if isinstance(resp.get("error"), dict) else {}
+            code = str(err.get("code") or "").strip()
+            message = str(err.get("message") or "unknown error")
+            suffix = " (bridge stopped)" if code == "group_not_found" else ""
+            self.adapter.send_message(chat_id, f"❌ Failed to send: {message}{suffix}", thread_id=thread_id)
+            self._log(f"[message] chat={chat_id} thread={thread_id} error={code}:{message}")
+            if code == "group_not_found":
+                # Fatal misconfig: prevent spamming and competing bot pollers.
+                self.stop()
         else:
-            self._log(f"[message] chat={chat_id} thread={thread_id} to={to} len={len(text)}")
+            self._log(f"[message] chat={chat_id} thread={thread_id} to={to} len={len(msg_text)} files={len(stored_attachments)}")
 
 
 def start_bridge(group_id: str, platform: str = "telegram") -> None:
@@ -661,10 +810,31 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
     lock_path = state_dir / "im_bridge.lock"
     pid_path = state_dir / "im_bridge.pid"
 
+    # Acquire global singleton lock per bot token to avoid multiple groups (or
+    # multiple processes) polling the same IM bot token (Telegram getUpdates, etc.).
+    token_material = f"{platform.lower()}|{bot_token or ''}|{app_token or ''}"
+    token_fingerprint = hashlib.sha256(token_material.encode("utf-8")).hexdigest()[:12]
+    token_lock_path = ensure_home() / "locks" / f"im_bridge_{platform.lower()}_{token_fingerprint}.lock"
+    token_lock_file = _acquire_singleton_lock(token_lock_path)
+    if token_lock_file is None:
+        other_pid = ""
+        try:
+            other_pid = token_lock_path.read_text(encoding="utf-8").strip().splitlines()[0]
+        except Exception:
+            other_pid = ""
+        pid_hint = f" (pid={other_pid})" if other_pid else ""
+        print(f"[error] Another {platform} bridge is already running for this bot token{pid_hint}")
+        print("Stop it before starting a new bridge, or use a different bot token.")
+        sys.exit(1)
+
     # Acquire singleton lock
-    lock_file = _acquire_singleton_lock(lock_path)
-    if lock_file is None:
+    group_lock_file = _acquire_singleton_lock(lock_path)
+    if group_lock_file is None:
         print("[error] Another bridge instance is already running")
+        try:
+            token_lock_file.close()
+        except Exception:
+            pass
         sys.exit(1)
 
     # Write PID file
@@ -713,7 +883,11 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         except Exception:
             pass
         try:
-            lock_file.close()
+            group_lock_file.close()
+        except Exception:
+            pass
+        try:
+            token_lock_file.close()
         except Exception:
             pass
 

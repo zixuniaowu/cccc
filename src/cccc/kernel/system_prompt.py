@@ -12,7 +12,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     Design principles:
     - Minimal: Only session-specific context (identity, group, scopes)
     - No tool docs: Agent sees MCP tools automatically
-    - Skills document (auto-loaded) provides workflow guidance
+    - Ops playbook lives in MCP: see cccc_help
     """
     group_id = str(group.group_id or "").strip()
     actor_id = str(actor.get("id") or "").strip()

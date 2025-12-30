@@ -20,6 +20,7 @@ from ..kernel.ledger import append_event
 from ..kernel.registry import load_registry
 from ..kernel.scope import detect_scope
 from ..kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, update_actor, get_effective_role
+from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.inbox import find_event, get_cursor, get_quote_text, is_message_for_actor, set_cursor, unread_messages
 from ..kernel.ledger_retention import compact as compact_ledger
 from ..kernel.ledger_retention import snapshot as snapshot_ledger
@@ -63,6 +64,24 @@ from .ops.runner_ops import (
 import subprocess
 
 
+SUPPORTED_RUNTIMES = (
+    "amp",
+    "auggie",
+    "claude",
+    "codex",
+    "cursor",
+    "droid",
+    "gemini",
+    "kilocode",
+    "neovate",
+    "opencode",
+    "copilot",
+    "custom",
+)
+
+AUTO_MCP_RUNTIMES = ("claude", "codex", "droid", "amp", "auggie", "neovate", "gemini")
+
+
 def _is_mcp_installed(runtime: str) -> bool:
     """Check if cccc MCP server is already installed for the runtime."""
     try:
@@ -91,8 +110,50 @@ def _is_mcp_installed(runtime: str) -> bool:
                 timeout=10,
             )
             return result.returncode == 0 and "cccc" in (result.stdout or "")
+
+        elif runtime == "amp":
+            settings_path = Path.home() / ".config" / "amp" / "settings.json"
+            if not settings_path.exists():
+                return False
+            doc = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
+            if not isinstance(doc, dict):
+                return False
+            servers = doc.get("amp.mcpServers")
+            return isinstance(servers, dict) and "cccc" in servers
+        
+        elif runtime == "auggie":
+            settings_path = Path.home() / ".augment" / "settings.json"
+            if not settings_path.exists():
+                return False
+            doc = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
+            if not isinstance(doc, dict):
+                return False
+            servers = doc.get("mcpServers")
+            return isinstance(servers, dict) and "cccc" in servers
+
+        elif runtime == "neovate":
+            config_path = Path.home() / ".neovate" / "config.json"
+            if not config_path.exists():
+                return False
+            doc = json.loads(config_path.read_text(encoding="utf-8") or "{}")
+            if not isinstance(doc, dict):
+                return False
+            servers = doc.get("mcpServers")
+            return isinstance(servers, dict) and "cccc" in servers
+        
+        elif runtime == "gemini":
+            settings_path = Path.home() / ".gemini" / "settings.json"
+            if not settings_path.exists():
+                return False
+            doc = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
+            if not isinstance(doc, dict):
+                return False
+            servers = doc.get("mcpServers")
+            return isinstance(servers, dict) and "cccc" in servers
     
     except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    except Exception:
         pass
     
     return False
@@ -104,13 +165,17 @@ def _ensure_mcp_installed(runtime: str, cwd: Path) -> bool:
     Uses CLI commands to install MCP at user level:
     - claude: claude mcp add -s user cccc -- cccc mcp
     - codex: codex mcp add cccc -- cccc mcp (always user level)
-    - droid: droid mcp add cccc cccc mcp (always user level)
+    - droid: droid mcp add cccc -- cccc mcp (always user level)
+    - amp: amp mcp add cccc cccc mcp (user config)
+    - auggie: auggie mcp add cccc -- cccc mcp (user config)
+    - neovate: neovate mcp add -g cccc cccc mcp (global config)
+    - gemini: gemini mcp add -s user cccc cccc mcp (user config)
     
     Checks if already installed first to avoid unnecessary subprocess calls.
     
     Returns True if MCP was installed or already exists, False on error.
     """
-    if runtime not in ("claude", "codex", "droid"):
+    if runtime not in AUTO_MCP_RUNTIMES:
         return True  # Manual MCP config (or unsupported): skip
     
     # Check if already installed
@@ -143,7 +208,51 @@ def _ensure_mcp_installed(runtime: str, cwd: Path) -> bool:
         elif runtime == "droid":
             # Droid: user level
             result = subprocess.run(
-                ["droid", "mcp", "add", "cccc", "cccc", "mcp"],
+                ["droid", "mcp", "add", "cccc", "--", "cccc", "mcp"],
+                capture_output=True,
+                text=True,
+                cwd=str(cwd),
+                timeout=30,
+            )
+            return result.returncode == 0
+
+        elif runtime == "amp":
+            # Amp: user config (~/.config/amp/settings.json)
+            result = subprocess.run(
+                ["amp", "mcp", "add", "cccc", "cccc", "mcp"],
+                capture_output=True,
+                text=True,
+                cwd=str(cwd),
+                timeout=30,
+            )
+            return result.returncode == 0
+        
+        elif runtime == "auggie":
+            # Auggie: user config (~/.augment/settings.json)
+            result = subprocess.run(
+                ["auggie", "mcp", "add", "cccc", "--", "cccc", "mcp"],
+                capture_output=True,
+                text=True,
+                cwd=str(cwd),
+                timeout=30,
+            )
+            return result.returncode == 0
+
+        elif runtime == "neovate":
+            # Neovate Code: global config (~/.neovate/config.json)
+            result = subprocess.run(
+                ["neovate", "mcp", "add", "-g", "cccc", "cccc", "mcp"],
+                capture_output=True,
+                text=True,
+                cwd=str(cwd),
+                timeout=30,
+            )
+            return result.returncode == 0
+        
+        elif runtime == "gemini":
+            # Gemini CLI: user scope (~/.gemini/settings.json)
+            result = subprocess.run(
+                ["gemini", "mcp", "add", "-s", "user", "cccc", "cccc", "mcp"],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -250,6 +359,218 @@ def _best_effort_killpg(pid: int, sig: signal.Signals) -> None:
             os.kill(pid, sig)
         except Exception:
             pass
+
+
+def _proc_cccc_home(pid: int) -> Optional[Path]:
+    """
+    Best-effort: read CCCC_HOME for a pid (Linux /proc only).
+    Returns resolved home path, or None if unavailable.
+    """
+    try:
+        env_path = Path("/proc") / str(pid) / "environ"
+        raw = env_path.read_bytes()
+    except Exception:
+        return None
+    cccc_home = None
+    try:
+        for item in raw.split(b"\x00"):
+            if item.startswith(b"CCCC_HOME="):
+                cccc_home = item.split(b"=", 1)[1].decode("utf-8", "ignore").strip()
+                break
+    except Exception:
+        cccc_home = None
+    if cccc_home:
+        try:
+            return Path(cccc_home).expanduser().resolve()
+        except Exception:
+            return None
+    # If env var isn't present, it defaults to ~/.cccc.
+    try:
+        return (Path.home() / ".cccc").resolve()
+    except Exception:
+        return None
+
+
+def _stop_im_bridges_for_group(home: Path, *, group_id: str) -> int:
+    """Stop IM bridge processes for a specific group_id. Returns number of pids signaled."""
+    gid = str(group_id or "").strip()
+    if not gid:
+        return 0
+
+    killed: set[int] = set()
+
+    # Stop by pid file first (fast path).
+    pid_path = home / "groups" / gid / "state" / "im_bridge.pid"
+    if pid_path.exists():
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+            if pid > 0:
+                _best_effort_killpg(pid, signal.SIGTERM)
+                killed.add(pid)
+        except Exception:
+            pass
+        try:
+            pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    # Also scan for orphan processes (pid file may be missing/stale).
+    proc = Path("/proc")
+    if proc.exists():
+        for d in proc.iterdir():
+            if not d.is_dir() or not d.name.isdigit():
+                continue
+            pid = int(d.name)
+            if pid in killed:
+                continue
+            try:
+                cmdline = (d / "cmdline").read_bytes().decode("utf-8", "ignore")
+            except Exception:
+                continue
+            if "cccc.ports.im.bridge" not in cmdline or gid not in cmdline:
+                continue
+            ph = _proc_cccc_home(pid)
+            if ph is None:
+                continue
+            try:
+                if ph != home.resolve():
+                    continue
+            except Exception:
+                continue
+            _best_effort_killpg(pid, signal.SIGTERM)
+            killed.add(pid)
+
+    return len(killed)
+
+
+def _stop_all_im_bridges(home: Path) -> int:
+    """Stop all IM bridge processes for this CCCC_HOME. Returns number of pids signaled."""
+    killed: set[int] = set()
+
+    # Stop by pid files under this home.
+    base = home / "groups"
+    if base.exists():
+        for pid_path in base.glob("*/state/im_bridge.pid"):
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                if pid > 0:
+                    _best_effort_killpg(pid, signal.SIGTERM)
+                    killed.add(pid)
+            except Exception:
+                pass
+            try:
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+    # Scan /proc for any remaining bridge processes bound to this home.
+    proc = Path("/proc")
+    if proc.exists():
+        for d in proc.iterdir():
+            if not d.is_dir() or not d.name.isdigit():
+                continue
+            pid = int(d.name)
+            if pid in killed:
+                continue
+            try:
+                cmdline = (d / "cmdline").read_bytes().decode("utf-8", "ignore")
+            except Exception:
+                continue
+            if "cccc.ports.im.bridge" not in cmdline:
+                continue
+            ph = _proc_cccc_home(pid)
+            if ph is None:
+                continue
+            try:
+                if ph != home.resolve():
+                    continue
+            except Exception:
+                continue
+            _best_effort_killpg(pid, signal.SIGTERM)
+            killed.add(pid)
+
+    return len(killed)
+
+
+def _cleanup_invalid_im_bridges(home: Path) -> Dict[str, int]:
+    """
+    Cleanup stale/broken IM bridge state for this CCCC_HOME.
+
+    We only remove/stop things that are clearly invalid:
+    - Stale pidfiles (pid not alive)
+    - Running bridge processes whose group.yaml no longer exists
+    """
+    killed = 0
+    stale_pidfiles = 0
+
+    base = home / "groups"
+    if base.exists():
+        for pid_path in base.glob("*/state/im_bridge.pid"):
+            gid = pid_path.parent.parent.name
+            group_yaml = base / gid / "group.yaml"
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+            except Exception:
+                pid = 0
+
+            if pid <= 0 or not _pid_alive(pid):
+                stale_pidfiles += 1
+                try:
+                    pid_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                continue
+
+            if not group_yaml.exists():
+                _best_effort_killpg(pid, signal.SIGTERM)
+                killed += 1
+                try:
+                    pid_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    # Also scan /proc for orphan bridge processes (pidfile may be missing).
+    proc = Path("/proc")
+    if proc.exists():
+        for d in proc.iterdir():
+            if not d.is_dir() or not d.name.isdigit():
+                continue
+            pid = int(d.name)
+            try:
+                cmdline = (d / "cmdline").read_bytes().decode("utf-8", "ignore")
+            except Exception:
+                continue
+            if "cccc.ports.im.bridge" not in cmdline:
+                continue
+
+            # Only touch processes that belong to this CCCC_HOME.
+            ph = _proc_cccc_home(pid)
+            if ph is None:
+                continue
+            try:
+                if ph != home.resolve():
+                    continue
+            except Exception:
+                continue
+
+            # Parse group_id from argv.
+            argv = [a for a in cmdline.split("\x00") if a]
+            try:
+                i = argv.index("cccc.ports.im.bridge")
+            except ValueError:
+                continue
+            if i + 1 >= len(argv):
+                continue
+            gid = str(argv[i + 1] or "").strip()
+            if not gid.startswith("g_"):
+                continue
+
+            group_yaml = home / "groups" / gid / "group.yaml"
+            if not group_yaml.exists():
+                _best_effort_killpg(pid, signal.SIGTERM)
+                killed += 1
+
+    return {"killed": killed, "stale_pidfiles": stale_pidfiles}
 
 
 def _pty_state_path(group_id: str, actor_id: str) -> Path:
@@ -471,6 +792,38 @@ def _find_scope_url(group: Any, scope_key: str) -> str:
     return ""
 
 
+def _normalize_attachments(group: Any, raw: Any) -> list[dict[str, Any]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("attachments must be a list")
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ValueError("invalid attachment (must be object)")
+        rel_path = str(item.get("path") or "").strip()
+        if not rel_path:
+            raise ValueError("attachment missing path")
+        abs_path = resolve_blob_attachment_path(group, rel_path=rel_path)
+        if not abs_path.exists() or not abs_path.is_file():
+            raise ValueError(f"attachment not found: {rel_path}")
+        try:
+            size = int(abs_path.stat().st_size)
+        except Exception:
+            size = int(item.get("bytes") or 0)
+        out.append(
+            {
+                "kind": str(item.get("kind") or "file"),
+                "path": rel_path,
+                "title": str(item.get("title") or ""),
+                "mime_type": str(item.get("mime_type") or ""),
+                "bytes": size,
+                "sha256": str(item.get("sha256") or ""),
+            }
+        )
+    return out
+
+
 def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
     op = str(req.op or "").strip()
     args = req.args or {}
@@ -479,6 +832,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         return DaemonResponse(ok=True, result={"version": __version__, "pid": os.getpid(), "ts": utc_now_iso()}), False
 
     if op == "shutdown":
+        try:
+            _stop_all_im_bridges(ensure_home())
+        except Exception:
+            pass
         try:
             pty_runner.SUPERVISOR.stop_all()
             headless_runner.SUPERVISOR.stop_all()
@@ -668,6 +1025,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("group_not_found", f"group not found: {group_id}"), False
         try:
             require_group_permission(group, by=by, action="group.delete")
+            _stop_im_bridges_for_group(ensure_home(), group_id=group_id)
             pty_runner.SUPERVISOR.stop_group(group_id=group_id)
             reg = load_registry()
             delete_group(reg, group_id=group_id)
@@ -724,7 +1082,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if not isinstance(g, dict):
                 continue
             gid = str(g.get("group_id") or "").strip()
-            running = pty_runner.SUPERVISOR.group_running(gid) if gid else False
+            running = (
+                (pty_runner.SUPERVISOR.group_running(gid) if gid else False)
+                or (headless_runner.SUPERVISOR.group_running(gid) if gid else False)
+            )
             item = dict(g)
             item["running"] = bool(running)
             # Load full group doc to get state
@@ -813,7 +1174,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 
                 # Ensure MCP is installed for the runtime BEFORE starting the actor
                 runtime = str(actor.get("runtime") or "codex").strip()
-                if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
+                if runtime not in SUPPORTED_RUNTIMES:
                     return (
                         _error(
                             "unsupported_runtime",
@@ -822,8 +1183,22 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                                 "group_id": group.group_id,
                                 "actor_id": aid,
                                 "runtime": runtime,
-                                "supported": ["claude", "codex", "droid", "opencode", "copilot"],
+                                "supported": list(SUPPORTED_RUNTIMES),
                                 "hint": "Change the actor runtime to a supported one.",
+                            },
+                        ),
+                        False,
+                    )
+                if runtime == "custom" and runner_kind != "headless" and not cmd:
+                    return (
+                        _error(
+                            "missing_command",
+                            "custom runtime requires a command (PTY runner)",
+                            details={
+                                "group_id": group.group_id,
+                                "actor_id": aid,
+                                "runtime": runtime,
+                                "hint": "Set actor.command (or switch runner to headless).",
                             },
                         ),
                         False,
@@ -855,6 +1230,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 started.append(aid)
         except Exception as e:
             return _error("group_start_failed", str(e)), False
+        if started:
+            try:
+                group.doc["running"] = True
+                group.save()
+            except Exception:
+                pass
         ev = append_event(group.ledger_path, kind="group.start", group_id=group.group_id, scope_key="", by=by, data={"started": started})
         return DaemonResponse(ok=True, result={"group_id": group.group_id, "started": started, "event": ev}), False
 
@@ -911,6 +1292,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 pass
         except Exception as e:
             return _error("group_stop_failed", str(e)), False
+        try:
+            group.doc["running"] = False
+            group.save()
+        except Exception:
+            pass
         ev = append_event(group.ledger_path, kind="group.stop", group_id=group.group_id, scope_key="", by=by, data={"stopped": stopped})
         return DaemonResponse(ok=True, result={"group_id": group.group_id, "stopped": stopped, "event": ev}), False
 
@@ -996,7 +1382,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             # Note: role is auto-determined by position (first enabled = foreman)
             if runner not in ("pty", "headless"):
                 raise ValueError("invalid runner (must be 'pty' or 'headless')")
-            if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
+            if runtime not in SUPPORTED_RUNTIMES:
                 raise ValueError("invalid runtime")
             
             # Auto-generate actor_id if not provided (use runtime as prefix)
@@ -1011,6 +1397,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if not command:
                 from ..kernel.runtime import get_runtime_command_with_flags
                 command = get_runtime_command_with_flags(runtime)
+            if runtime == "custom" and runner != "headless" and not command:
+                raise ValueError("custom runtime requires a command (PTY runner)")
             env: Dict[str, str] = {}
             if isinstance(env_raw, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env_raw.items()):
                 env = {str(k): str(v) for k, v in env_raw.items()}
@@ -1223,7 +1611,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
         # Ensure MCP is installed for the runtime BEFORE starting the actor
         runtime = str(actor.get("runtime") or "codex").strip()
-        if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
+        if runtime not in SUPPORTED_RUNTIMES:
             return (
                 _error(
                     "unsupported_runtime",
@@ -1232,8 +1620,22 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         "group_id": group.group_id,
                         "actor_id": actor_id,
                         "runtime": runtime,
-                        "supported": ["claude", "codex", "droid", "opencode", "copilot"],
+                        "supported": list(SUPPORTED_RUNTIMES),
                         "hint": "Change the actor runtime to a supported one.",
+                    },
+                ),
+                False,
+            )
+        if runtime == "custom" and runner_kind != "headless" and not cmd:
+            return (
+                _error(
+                    "missing_command",
+                    "custom runtime requires a command (PTY runner)",
+                    details={
+                        "group_id": group.group_id,
+                        "actor_id": actor_id,
+                        "runtime": runtime,
+                        "hint": "Set actor.command (or switch runner to headless).",
                     },
                 ),
                 False,
@@ -1263,6 +1665,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         clear_preamble_sent(group, actor_id)
         # Clear throttle state for fresh start
         THROTTLE.clear_actor(group.group_id, actor_id)
+
+        try:
+            group.doc["running"] = True
+            group.save()
+        except Exception:
+            pass
         
         ev = append_event(
             group.ledger_path,
@@ -1295,6 +1703,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
         except Exception as e:
             return _error("actor_stop_failed", str(e)), False
+        try:
+            any_enabled = any(
+                bool(a.get("enabled", True))
+                for a in list_actors(group)
+                if isinstance(a, dict) and str(a.get("id") or "").strip()
+            )
+            if not any_enabled:
+                group.doc["running"] = False
+                group.save()
+        except Exception:
+            pass
         ev = append_event(
             group.ledger_path,
             kind="actor.stop",
@@ -1587,13 +2006,18 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             scope_key = str(group.doc.get("active_scope_key") or "").strip()
         if not scope_key:
             scope_key = ""
+
+        try:
+            attachments = _normalize_attachments(group, args.get("attachments"))
+        except Exception as e:
+            return _error("invalid_attachments", str(e)), False
         ev = append_event(
             group.ledger_path,
             kind="chat.message",
             group_id=group.group_id,
             scope_key=scope_key,
             by=by,
-            data=ChatMessageData(text=text, format="plain", to=to).model_dump(),
+            data=ChatMessageData(text=text, format="plain", to=to, attachments=attachments).model_dump(),
         )
         # Keep group ordering IM-like by bumping the group's last activity timestamp.
         try:
@@ -1610,6 +2034,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         effective_to = to if to else ["@all"]
         event_id = str(ev.get("id") or "").strip()
         event_ts = str(ev.get("ts") or "").strip()
+        delivery_text = text
+        if attachments:
+            lines = ["[cccc] Attachments:"]
+            for a in attachments[:8]:
+                title = str(a.get("title") or a.get("path") or "file").strip()
+                b = int(a.get("bytes") or 0)
+                p = str(a.get("path") or "").strip()
+                lines.append(f"- {title} ({b} bytes) [{p}]")
+            if len(attachments) > 8:
+                lines.append(f"- … ({len(attachments) - 8} more)")
+            delivery_text = (delivery_text.rstrip("\n") + "\n\n" + "\n".join(lines)).strip()
         for actor in list_actors(group):
             if not isinstance(actor, dict):
                 continue
@@ -1631,7 +2066,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     event_id=event_id,
                     by=by,
                     to=effective_to,
-                    text=text,
+                    text=delivery_text,
                     ts=event_ts,
                 )
         # Headless runners: notify via system.notify event (daemon writes to ledger)
@@ -1721,6 +2156,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("invalid_recipient", str(e)), False
 
         scope_key = str(group.doc.get("active_scope_key") or "").strip()
+        try:
+            attachments = _normalize_attachments(group, args.get("attachments"))
+        except Exception as e:
+            return _error("invalid_attachments", str(e)), False
         ev = append_event(
             group.ledger_path,
             kind="chat.message",
@@ -1733,6 +2172,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 to=to,
                 reply_to=reply_to,
                 quote_text=quote_text,
+                attachments=attachments,
             ).model_dump(),
         )
 
@@ -1755,6 +2195,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
         event_id = str(ev.get("id") or "").strip()
         event_ts = str(ev.get("ts") or "").strip()
+        delivery_text = text
+        if attachments:
+            lines = ["[cccc] Attachments:"]
+            for a in attachments[:8]:
+                title = str(a.get("title") or a.get("path") or "file").strip()
+                b = int(a.get("bytes") or 0)
+                p = str(a.get("path") or "").strip()
+                lines.append(f"- {title} ({b} bytes) [{p}]")
+            if len(attachments) > 8:
+                lines.append(f"- … ({len(attachments) - 8} more)")
+            delivery_text = (delivery_text.rstrip("\n") + "\n\n" + "\n".join(lines)).strip()
 
         for actor in list_actors(group):
             if not isinstance(actor, dict):
@@ -1773,7 +2224,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     event_id=event_id,
                     by=by,
                     to=effective_to,
-                    text=text,
+                    text=delivery_text,
                     reply_to=reply_to,
                     quote_text=quote_text,
                     ts=event_ts,
@@ -1875,7 +2326,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("group_not_found", f"group not found: {group_id}"), False
 
         # 验证 kind 和 priority
-        valid_kinds = {"nudge", "keepalive", "actor_idle", "silence_check", "status_change", "error", "info"}
+        valid_kinds = {"nudge", "keepalive", "actor_idle", "silence_check", "standup", "status_change", "error", "info"}
         valid_priorities = {"low", "normal", "high", "urgent"}
         if kind not in valid_kinds:
             kind = "info"
@@ -1975,6 +2426,14 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     _remove_stale_socket(p.sock_path)
     if p.sock_path.exists() and _is_socket_alive(p.sock_path):
         return 0
+
+    # Cleanup stale IM bridge state from previous runs/crashes.
+    try:
+        res = _cleanup_invalid_im_bridges(p.home)
+        if res.get("killed") or res.get("stale_pidfiles"):
+            print(f"[im] cleanup: killed={res.get('killed')} stale_pidfiles={res.get('stale_pidfiles')}", file=sys.stderr)
+    except Exception:
+        pass
 
     # Best-effort cleanup of orphaned PTY actor processes from a previous daemon crash.
     try:
@@ -2122,6 +2581,10 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     stop_event.set()
     
     # Graceful shutdown: stop all running actors
+    try:
+        _stop_all_im_bridges(p.home)
+    except Exception:
+        pass
     try:
         pty_runner.SUPERVISOR.stop_all()
     except Exception:

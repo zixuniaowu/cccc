@@ -14,11 +14,18 @@ ActorRole = Literal["foreman", "peer"]
 ActorSubmit = Literal["enter", "newline", "none"]
 RunnerKind = Literal["pty", "headless"]
 AgentRuntime = Literal[
+    "amp",
+    "auggie",
     "claude",
     "codex",
+    "cursor",
     "droid",
+    "gemini",
+    "kilocode",
+    "neovate",
     "opencode",
     "copilot",
+    "custom",
 ]
 
 # Group state controls automation behavior

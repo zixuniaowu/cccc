@@ -7,6 +7,7 @@
 - keepalive: 提醒 actor 继续工作（检测到 Next: 声明后）
 - actor_idle: Actor 空闲通知（发给 foreman）
 - silence_check: 群聊静默通知（发给 foreman）
+- standup: 周期性 stand-up 提醒（发给 foreman）
 - status_change: actor/group 状态变更
 - error: 系统错误通知
 """
@@ -22,6 +23,7 @@ NotifyKind = Literal[
     "keepalive",       # 提醒继续工作（检测到 Next: 声明后）
     "actor_idle",      # Actor 空闲通知（发给 foreman）
     "silence_check",   # 群聊静默通知（发给 foreman）
+    "standup",         # 周期性 stand-up 提醒（发给 foreman）
     "status_change",   # 状态变更通知
     "error",           # 错误通知
     "info",            # 一般信息

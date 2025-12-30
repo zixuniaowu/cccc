@@ -63,10 +63,52 @@ DEFAULT_RUNTIME_POOL: List[RuntimePoolEntry] = [
         notes="Robust auto mode; good for long tasks",
     ),
     RuntimePoolEntry(
-        runtime="opencode",
+        runtime="amp",
         priority=4,
+        scenarios=["coding", "review", "general"],
+        notes="Amp CLI; MCP support",
+    ),
+    RuntimePoolEntry(
+        runtime="neovate",
+        priority=5,
+        scenarios=["coding", "general"],
+        notes="Neovate Code; MCP support",
+    ),
+    RuntimePoolEntry(
+        runtime="opencode",
+        priority=6,
         scenarios=["coding"],
         notes="Solid coding CLI; steady long sessions",
+    ),
+    RuntimePoolEntry(
+        runtime="copilot",
+        priority=7,
+        scenarios=["coding", "general"],
+        notes="GitHub Copilot CLI; MCP support",
+    ),
+    RuntimePoolEntry(
+        runtime="gemini",
+        priority=8,
+        scenarios=["coding", "general"],
+        notes="Gemini CLI; MCP support",
+    ),
+    RuntimePoolEntry(
+        runtime="auggie",
+        priority=9,
+        scenarios=["coding", "general"],
+        notes="Auggie (Augment CLI); MCP support",
+    ),
+    RuntimePoolEntry(
+        runtime="cursor",
+        priority=10,
+        scenarios=["coding", "general"],
+        notes="Cursor CLI (cursor-agent); MCP support",
+    ),
+    RuntimePoolEntry(
+        runtime="kilocode",
+        priority=11,
+        scenarios=["coding", "general"],
+        notes="Kilo Code CLI; MCP support",
     ),
 ]
 

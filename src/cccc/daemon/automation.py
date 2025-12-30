@@ -24,6 +24,7 @@ from ..kernel.inbox import unread_messages, iter_events
 from ..kernel.ledger import append_event
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
+from .delivery import flush_pending_messages, queue_system_notify
 from ..util.fs import atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
 
@@ -153,6 +154,34 @@ def _actor_declared_next(group: Group, actor_id: str) -> Optional[Tuple[str, dat
     return last_next
 
 
+def _queue_notify_to_pty(
+    group: Group,
+    *,
+    actor_id: str,
+    runner_kind: str,
+    ev: Dict[str, Any],
+    notify: SystemNotifyData,
+) -> None:
+    if runner_kind != "pty":
+        return
+    if not pty_runner.SUPERVISOR.actor_running(group.group_id, actor_id):
+        return
+    event_id = str(ev.get("id") or "").strip()
+    if not event_id:
+        return
+    event_ts = str(ev.get("ts") or "").strip()
+    queue_system_notify(
+        group,
+        actor_id=actor_id,
+        event_id=event_id,
+        notify_kind=str(notify.kind),
+        title=str(notify.title),
+        message=str(notify.message),
+        ts=event_ts,
+    )
+    flush_pending_messages(group, actor_id=actor_id)
+
+
 class AutomationManager:
     """Manages automation for all groups.
     
@@ -179,7 +208,10 @@ class AutomationManager:
             group = load_group(gid)
             if group is None:
                 continue
-            if not bool(group.doc.get("running", False)):
+            if not (
+                pty_runner.SUPERVISOR.group_running(gid)
+                or headless_runner.SUPERVISOR.group_running(gid)
+            ):
                 continue
             # Check group state - skip automation if not active
             state = get_group_state(group)
@@ -209,7 +241,7 @@ class AutomationManager:
         if cfg.nudge_after_seconds <= 0:
             return
 
-        to_nudge: List[Tuple[str, str]] = []  # (actor_id, oldest_event_ts)
+        to_nudge: List[Tuple[str, str, str]] = []  # (actor_id, oldest_event_ts, runner_kind)
 
         with self._lock:
             state = _load_state(group)
@@ -251,12 +283,12 @@ class AutomationManager:
                     continue
                 st["last_nudge_event_id"] = ev_id
                 st["last_nudge_at"] = utc_now_iso()
-                to_nudge.append((aid, ev_ts))
+                to_nudge.append((aid, ev_ts, runner_kind))
 
             if to_nudge:
                 _save_state(group, state)
 
-        for aid, ev_ts in to_nudge:
+        for aid, ev_ts, runner_kind in to_nudge:
             notify_data = SystemNotifyData(
                 kind="nudge",
                 priority="normal",
@@ -265,7 +297,7 @@ class AutomationManager:
                 target_actor_id=aid,
                 requires_ack=False,
             )
-            append_event(
+            ev = append_event(
                 group.ledger_path,
                 kind="system.notify",
                 group_id=group.group_id,
@@ -273,6 +305,7 @@ class AutomationManager:
                 by="system",
                 data=notify_data.model_dump(),
             )
+            _queue_notify_to_pty(group, actor_id=aid, runner_kind=runner_kind, ev=ev, notify=notify_data)
 
     def _check_actor_idle(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
         """Check for idle actors and notify foreman."""
@@ -341,7 +374,7 @@ class AutomationManager:
                 target_actor_id=foreman_id,
                 requires_ack=False,
             )
-            append_event(
+            ev = append_event(
                 group.ledger_path,
                 kind="system.notify",
                 group_id=group.group_id,
@@ -349,13 +382,15 @@ class AutomationManager:
                 by="system",
                 data=notify_data.model_dump(),
             )
+            foreman_runner_kind = str(foreman.get("runner") or "pty").strip()
+            _queue_notify_to_pty(group, actor_id=foreman_id, runner_kind=foreman_runner_kind, ev=ev, notify=notify_data)
 
     def _check_keepalive(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
         """Check for actors that declared Next: and send keepalive if needed."""
         if cfg.keepalive_delay_seconds <= 0:
             return
 
-        to_keepalive: List[Tuple[str, str]] = []  # (actor_id, next_text)
+        to_keepalive: List[Tuple[str, str, str]] = []  # (actor_id, next_text, runner_kind)
 
         with self._lock:
             state = _load_state(group)
@@ -404,12 +439,12 @@ class AutomationManager:
                 
                 st["keepalive_count"] = keepalive_count + 1
                 st["last_keepalive_at"] = utc_now_iso()
-                to_keepalive.append((aid, next_text))
+                to_keepalive.append((aid, next_text, runner_kind))
 
             if to_keepalive:
                 _save_state(group, state)
 
-        for aid, next_text in to_keepalive:
+        for aid, next_text, runner_kind in to_keepalive:
             notify_data = SystemNotifyData(
                 kind="keepalive",
                 priority="normal",
@@ -418,7 +453,7 @@ class AutomationManager:
                 target_actor_id=aid,
                 requires_ack=False,
             )
-            append_event(
+            ev = append_event(
                 group.ledger_path,
                 kind="system.notify",
                 group_id=group.group_id,
@@ -426,6 +461,7 @@ class AutomationManager:
                 by="system",
                 data=notify_data.model_dump(),
             )
+            _queue_notify_to_pty(group, actor_id=aid, runner_kind=runner_kind, ev=ev, notify=notify_data)
 
     def _check_silence(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
         """Check if group has been silent and notify foreman."""
@@ -466,7 +502,7 @@ class AutomationManager:
             target_actor_id=foreman_id,
             requires_ack=False,
         )
-        append_event(
+        ev = append_event(
             group.ledger_path,
             kind="system.notify",
             group_id=group.group_id,
@@ -474,6 +510,8 @@ class AutomationManager:
             by="system",
             data=notify_data.model_dump(),
         )
+        foreman_runner_kind = str(foreman.get("runner") or "pty").strip()
+        _queue_notify_to_pty(group, actor_id=foreman_id, runner_kind=foreman_runner_kind, ev=ev, notify=notify_data)
 
     def _check_standup(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
         """Check if it's time for a periodic standup meeting.
@@ -551,7 +589,7 @@ Example: "@peers Stand-up time. Please: 1) Update your task progress, 2) Share a
             target_actor_id=foreman_id,
             requires_ack=False,
         )
-        append_event(
+        ev = append_event(
             group.ledger_path,
             kind="system.notify",
             group_id=group.group_id,
@@ -559,6 +597,7 @@ Example: "@peers Stand-up time. Please: 1) Update your task progress, 2) Share a
             by="system",
             data=notify_data.model_dump(),
         )
+        _queue_notify_to_pty(group, actor_id=foreman_id, runner_kind=runner_kind, ev=ev, notify=notify_data)
 
     def on_new_message(self, group: Group) -> None:
         """Called when a new message arrives.
@@ -569,4 +608,3 @@ Example: "@peers Stand-up time. Please: 1) Update your task progress, 2) Share a
         """
         # State transition is handled in delivery.should_deliver_message()
         pass
-

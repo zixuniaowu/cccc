@@ -912,14 +912,14 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
     
     # Auto-set command based on runtime if not provided
     if not command:
-        runtime_commands = {
-            "claude": ["claude"],
-            "codex": ["codex"],
-            "droid": ["droid"],
-            "opencode": ["opencode"],
-            "copilot": ["copilot"],
-        }
-        command = runtime_commands.get(runtime, [])
+        from .kernel.runtime import get_runtime_command_with_flags
+        command = get_runtime_command_with_flags(runtime)
+    if runtime == "custom" and runner != "headless" and not command:
+        _print_json({
+            "ok": False,
+            "error": {"code": "missing_command", "message": "custom runtime requires a command (PTY runner)"},
+        })
+        return 2
     
     env: dict[str, str] = {}
     if isinstance(args.env, list):
@@ -967,8 +967,10 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
         # Note: role is auto-determined by position (first enabled = foreman)
         if runner not in ("pty", "headless"):
             raise ValueError("invalid runner (must be 'pty' or 'headless')")
-        if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
+        if runtime not in ("amp", "auggie", "claude", "codex", "cursor", "droid", "neovate", "gemini", "kilocode", "opencode", "copilot", "custom"):
             raise ValueError("invalid runtime")
+        if runtime == "custom" and runner != "headless" and not command:
+            raise ValueError("custom runtime requires a command (PTY runner)")
         actor = add_actor(
             group,
             actor_id=actor_id,
@@ -1440,9 +1442,23 @@ def cmd_setup(args: argparse.Namespace) -> int:
     project_path = Path(args.path or ".").resolve()
 
     # Supported runtimes
-    # - claude/codex/droid: MCP setup can be automated via their CLIs
-    # - opencode/copilot: MCP setup is manual (cccc prints guidance)
-    SUPPORTED_RUNTIMES = ["claude", "codex", "droid", "opencode", "copilot"]
+    # - claude/codex/droid/amp/auggie/neovate/gemini: MCP setup can be automated via their CLIs
+    # - cursor/kilocode/opencode/copilot: MCP setup is manual (cccc prints config guidance)
+    # - custom: user-provided runtime; MCP setup is manual (generic guidance only)
+    SUPPORTED_RUNTIMES = [
+        "claude",
+        "codex",
+        "droid",
+        "amp",
+        "auggie",
+        "neovate",
+        "gemini",
+        "cursor",
+        "kilocode",
+        "opencode",
+        "copilot",
+        "custom",
+    ]
 
     if runtime and runtime not in SUPPORTED_RUNTIMES:
         _print_json({
@@ -1524,6 +1540,120 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 results["mcp"]["droid"] = {"mode": "manual", "command": _cmd_line(cmd)}
                 results["notes"].append("droid: CLI not found; run the command shown in result.mcp.droid.command")
 
+        elif rt == "amp":
+            cmd = ["amp", "mcp", "add", "cccc", *cccc_cmd]
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(project_path),
+                )
+                if result.returncode == 0:
+                    results["mcp"]["amp"] = {"mode": "auto", "status": "added"}
+                else:
+                    results["mcp"]["amp"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                    results["notes"].append("amp: MCP CLI failed; run the command shown in result.mcp.amp.command")
+            except FileNotFoundError:
+                results["mcp"]["amp"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                results["notes"].append("amp: CLI not found; run the command shown in result.mcp.amp.command")
+
+        elif rt == "auggie":
+            cmd = ["auggie", "mcp", "add", "cccc", "--", *cccc_cmd]
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(project_path),
+                )
+                if result.returncode == 0:
+                    results["mcp"]["auggie"] = {"mode": "auto", "status": "added"}
+                else:
+                    results["mcp"]["auggie"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                    results["notes"].append("auggie: MCP CLI failed; run the command shown in result.mcp.auggie.command")
+            except FileNotFoundError:
+                results["mcp"]["auggie"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                results["notes"].append("auggie: CLI not found; run the command shown in result.mcp.auggie.command")
+
+        elif rt == "neovate":
+            cmd = ["neovate", "mcp", "add", "-g", "cccc", *cccc_cmd]
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(project_path),
+                )
+                if result.returncode == 0:
+                    results["mcp"]["neovate"] = {"mode": "auto", "status": "added"}
+                else:
+                    results["mcp"]["neovate"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                    results["notes"].append("neovate: MCP CLI failed; run the command shown in result.mcp.neovate.command")
+            except FileNotFoundError:
+                results["mcp"]["neovate"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                results["notes"].append("neovate: CLI not found; run the command shown in result.mcp.neovate.command")
+
+        elif rt == "gemini":
+            cmd = ["gemini", "mcp", "add", "-s", "user", "cccc", *cccc_cmd]
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(project_path),
+                )
+                if result.returncode == 0:
+                    results["mcp"]["gemini"] = {"mode": "auto", "status": "added"}
+                else:
+                    results["mcp"]["gemini"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                    results["notes"].append("gemini: MCP CLI failed; run the command shown in result.mcp.gemini.command")
+            except FileNotFoundError:
+                results["mcp"]["gemini"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                results["notes"].append("gemini: CLI not found; run the command shown in result.mcp.gemini.command")
+
+        elif rt == "cursor":
+            cursor_config_path = Path.home() / ".cursor" / "mcp.json"
+            mcp_config = {
+                "mcpServers": {
+                    "cccc": {
+                        "command": cccc_cmd[0],
+                        "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
+                    }
+                }
+            }
+            results["mcp"]["cursor"] = {
+                "mode": "manual",
+                "file": str(cursor_config_path),
+                "snippet": mcp_config,
+                "hint": "Create ~/.cursor/mcp.json (or .cursor/mcp.json in the project) and add mcpServers.cccc with the provided snippet.",
+            }
+            results["notes"].append(
+                "cursor: MCP config is manual. Create ~/.cursor/mcp.json (or .cursor/mcp.json in the project) "
+                "and add `mcpServers.cccc` with the provided snippet."
+            )
+
+        elif rt == "kilocode":
+            kilocode_config_path = project_path / ".kilocode" / "mcp.json"
+            mcp_config = {
+                "mcpServers": {
+                    "cccc": {
+                        "command": cccc_cmd[0],
+                        "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
+                    }
+                }
+            }
+            results["mcp"]["kilocode"] = {
+                "mode": "manual",
+                "file": str(kilocode_config_path),
+                "snippet": mcp_config,
+                "hint": "Create <project>/.kilocode/mcp.json and add mcpServers.cccc with the provided snippet.",
+            }
+            results["notes"].append(
+                "kilocode: MCP config is manual. Create <project>/.kilocode/mcp.json and add `mcpServers.cccc` "
+                "with the provided snippet."
+            )
+
         elif rt == "opencode":
             # OpenCode: MCP config is manual.
             xdg_config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
@@ -1567,6 +1697,15 @@ def cmd_setup(args: argparse.Namespace) -> int:
             results["notes"].append(
                 f"copilot: MCP is manual. Add `mcpServers.cccc` to {copilot_config_path} "
                 f"(or run Copilot with `--additional-mcp-config @<file>`)."
+            )
+
+        elif rt == "custom":
+            results["mcp"]["custom"] = {
+                "mode": "manual",
+                "hint": f"Add an MCP stdio server named 'cccc' that runs: {_cmd_line(cccc_cmd)}",
+            }
+            results["notes"].append(
+                "custom: MCP setup depends on your runtime. Add an MCP stdio server named 'cccc' that runs the command in result.mcp.custom.hint."
             )
 
     # Clean up empty notes
@@ -1672,6 +1811,9 @@ def cmd_im_set(args: argparse.Namespace) -> int:
 
     # Update group.yaml with IM config
     im_config: dict[str, Any] = {"platform": platform}
+    # Default file transfer settings (can be customized in group.yaml).
+    default_max_mb = 20 if platform in ("telegram", "slack") else 10
+    im_config["files"] = {"enabled": True, "max_mb": default_max_mb}
     
     if platform == "slack":
         # Slack uses dual tokens
@@ -1767,6 +1909,10 @@ def _im_find_bridge_pids_by_script(group_id: str) -> list[int]:
     return pids
 
 
+def _im_group_dir(group_id: str) -> Path:
+    return ensure_home() / "groups" / group_id
+
+
 def cmd_im_start(args: argparse.Namespace) -> int:
     """Start IM bridge for a group."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
@@ -1783,6 +1929,10 @@ def cmd_im_start(args: argparse.Namespace) -> int:
     existing_pid = _im_find_bridge_pid(group)
     if existing_pid:
         _print_json({"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={existing_pid})"}})
+        return 2
+    orphan_pids = _im_find_bridge_pids_by_script(group_id)
+    if orphan_pids:
+        _print_json({"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={orphan_pids[0]})"}})
         return 2
 
     # Check IM config
@@ -1809,6 +1959,7 @@ def cmd_im_start(args: argparse.Namespace) -> int:
     state_dir.mkdir(parents=True, exist_ok=True)
     log_path = state_dir / "im_bridge.log"
 
+    log_file = None
     try:
         log_file = log_path.open("a", encoding="utf-8")
         proc = subprocess.Popen(
@@ -1818,13 +1969,36 @@ def cmd_im_start(args: argparse.Namespace) -> int:
             stderr=log_file,
             start_new_session=True,
         )
-        # Write PID file
+        # Give the bridge a moment to acquire locks / validate tokens.
+        time.sleep(0.25)
+        rc = proc.poll()
+        try:
+            log_file.close()
+        except Exception:
+            pass
+
+        if rc is not None:
+            _print_json({
+                "ok": False,
+                "error": {
+                    "code": "start_failed",
+                    "message": f"bridge exited immediately (code={rc}). See log: {log_path}",
+                },
+            })
+            return 2
+
+        # Write PID file only after we know it stayed up.
         pid_path = state_dir / "im_bridge.pid"
         pid_path.write_text(str(proc.pid), encoding="utf-8")
 
         _print_json({"ok": True, "result": {"group_id": group_id, "platform": platform, "pid": proc.pid, "log": str(log_path)}})
         return 0
     except Exception as e:
+        try:
+            if log_file:
+                log_file.close()
+        except Exception:
+            pass
         _print_json({"ok": False, "error": {"code": "start_failed", "message": str(e)}})
         return 2
 
@@ -1838,26 +2012,25 @@ def cmd_im_stop(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
         return 2
 
-    group = load_group(group_id)
-    if group is None:
-        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
-        return 2
-
     stopped = 0
-    pid_path = group.path / "state" / "im_bridge.pid"
+    group_dir = _im_group_dir(group_id)
+    pid_path = group_dir / "state" / "im_bridge.pid"
+    killed: set[int] = set()
 
     # Stop by PID file
     if pid_path.exists():
         try:
             pid = int(pid_path.read_text(encoding="utf-8").strip())
-            try:
-                os.killpg(os.getpgid(pid), sig.SIGTERM)
-            except Exception:
+            if pid not in killed:
                 try:
-                    os.kill(pid, sig.SIGTERM)
+                    os.killpg(os.getpgid(pid), sig.SIGTERM)
                 except Exception:
-                    pass
-            stopped += 1
+                    try:
+                        os.kill(pid, sig.SIGTERM)
+                    except Exception:
+                        pass
+                killed.add(pid)
+                stopped += 1
         except Exception:
             pass
         try:
@@ -1868,6 +2041,8 @@ def cmd_im_stop(args: argparse.Namespace) -> int:
     # Also scan for any orphan processes
     orphan_pids = _im_find_bridge_pids_by_script(group_id)
     for pid in orphan_pids:
+        if pid in killed:
+            continue
         try:
             os.killpg(os.getpgid(pid), sig.SIGTERM)
         except Exception:
@@ -1875,6 +2050,7 @@ def cmd_im_stop(args: argparse.Namespace) -> int:
                 os.kill(pid, sig.SIGTERM)
             except Exception:
                 pass
+        killed.add(pid)
         stopped += 1
 
     _print_json({"ok": True, "result": {"group_id": group_id, "stopped": stopped}})
@@ -1887,21 +2063,22 @@ def cmd_im_status(args: argparse.Namespace) -> int:
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
         return 2
-
     group = load_group(group_id)
-    if group is None:
-        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
-        return 2
+    group_exists = group is not None
 
-    im_config = group.doc.get("im", {})
+    im_config = group.doc.get("im", {}) if group_exists else {}
     platform = im_config.get("platform") if im_config else None
 
     # Check if running
-    pid = _im_find_bridge_pid(group)
+    pid = _im_find_bridge_pid(group) if group_exists else None
+    if pid is None:
+        orphan_pids = _im_find_bridge_pids_by_script(group_id)
+        if orphan_pids:
+            pid = orphan_pids[0]
     running = pid is not None
 
     # Get subscriber count
-    subscribers_path = group.path / "state" / "im_subscribers.json"
+    subscribers_path = _im_group_dir(group_id) / "state" / "im_subscribers.json"
     subscriber_count = 0
     if subscribers_path.exists():
         try:
@@ -1912,6 +2089,7 @@ def cmd_im_status(args: argparse.Namespace) -> int:
 
     result = {
         "group_id": group_id,
+        "group_exists": group_exists,
         "configured": bool(im_config),
         "platform": platform,
         "running": running,
@@ -1932,12 +2110,7 @@ def cmd_im_logs(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
         return 2
 
-    group = load_group(group_id)
-    if group is None:
-        _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
-        return 2
-
-    log_path = group.path / "state" / "im_bridge.log"
+    log_path = _im_group_dir(group_id) / "state" / "im_bridge.log"
     if not log_path.exists():
         print(f"[IM] Log file not found: {log_path}")
         return 1
@@ -2055,7 +2228,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_add.add_argument("--title", default="", help="Display title (optional)")
     p_actor_add.add_argument(
         "--runtime",
-        choices=["claude", "codex", "droid", "opencode", "copilot"],
+        choices=["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "cursor", "kilocode", "opencode", "copilot", "custom"],
         default="codex",
         help="Agent runtime (auto-sets command if not provided)",
     )
@@ -2095,7 +2268,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_update = actor_sub.add_parser("update", help="Update an actor (title/command/env/scope/enabled/runner/runtime)")
     p_actor_update.add_argument("actor_id", help="Actor id")
     p_actor_update.add_argument("--title", default=None, help="New title")
-    p_actor_update.add_argument("--runtime", choices=["claude", "codex", "droid", "opencode", "copilot"], default=None, help="New runtime")
+    p_actor_update.add_argument("--runtime", choices=["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "cursor", "kilocode", "opencode", "copilot", "custom"], default=None, help="New runtime")
     p_actor_update.add_argument("--command", default=None, help="Replace command (shell-like string); use empty to clear")
     p_actor_update.add_argument("--env", action="append", default=[], help="Replace env with these KEY=VAL entries (repeatable)")
     p_actor_update.add_argument("--scope", default="", help="Set default scope path (must be attached)")
@@ -2231,7 +2404,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup = sub.add_parser("setup", help="Setup MCP for agent runtimes (configure MCP, print guidance)")
     p_setup.add_argument(
         "--runtime",
-        choices=["claude", "codex", "droid", "opencode", "copilot"],
+        choices=["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "cursor", "kilocode", "opencode", "copilot", "custom"],
         default="",
         help="Target runtime (default: all supported runtimes)",
     )

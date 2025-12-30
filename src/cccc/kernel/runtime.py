@@ -27,6 +27,18 @@ class RuntimeInfo:
 
 # Known agent runtimes with their configurations
 KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
+    "amp": {
+        "display_name": "Amp",
+        "command": "amp",
+        "capabilities": "MCP; MCP setup: auto",
+        "mcp_add_pattern": "amp mcp add {name} {cmd}",
+    },
+    "auggie": {
+        "display_name": "Auggie (Augment)",
+        "command": "auggie",
+        "capabilities": "MCP; MCP setup: auto",
+        "mcp_add_pattern": "auggie mcp add {name} -- {cmd}",
+    },
     "claude": {
         "display_name": "Claude Code",
         "command": "claude",
@@ -39,11 +51,35 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "codex mcp add {name} -- {cmd}",
     },
+    "cursor": {
+        "display_name": "Cursor CLI",
+        "command": "cursor-agent",
+        "capabilities": "MCP; MCP setup: manual",
+        "mcp_add_pattern": None,
+    },
     "droid": {
         "display_name": "Droid CLI",
         "command": "droid",
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "droid mcp add {name} -- {cmd}",
+    },
+    "gemini": {
+        "display_name": "Gemini CLI",
+        "command": "gemini",
+        "capabilities": "MCP; MCP setup: auto",
+        "mcp_add_pattern": "gemini mcp add -s user {name} {cmd}",
+    },
+    "kilocode": {
+        "display_name": "Kilo Code CLI",
+        "command": "kilocode",
+        "capabilities": "MCP; MCP setup: manual",
+        "mcp_add_pattern": None,
+    },
+    "neovate": {
+        "display_name": "Neovate Code",
+        "command": "neovate",
+        "capabilities": "MCP; MCP setup: auto",
+        "mcp_add_pattern": "neovate mcp add -g {name} {cmd}",
     },
     "opencode": {
         "display_name": "OpenCode",
@@ -57,10 +93,16 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: manual",
         "mcp_add_pattern": None,
     },
+    "custom": {
+        "display_name": "Custom Runtime",
+        "command": "custom",
+        "capabilities": "MCP; MCP setup: manual",
+        "mcp_add_pattern": None,
+    },
 }
 
 # Primary supported runtimes (auto MCP installation)
-PRIMARY_RUNTIMES = ["claude", "codex", "droid"]
+PRIMARY_RUNTIMES = ["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini"]
 
 
 def detect_runtime(name: str) -> RuntimeInfo:
@@ -77,6 +119,18 @@ def detect_runtime(name: str) -> RuntimeInfo:
             mcp_add_command=None,
         )
     
+    # Custom is "supported", but not auto-detectable as installed (user provides the actual command line).
+    if name == "custom":
+        return RuntimeInfo(
+            name=name,
+            display_name=config["display_name"],
+            command=config["command"],
+            available=False,
+            path=None,
+            capabilities=config["capabilities"],
+            mcp_add_command=None,
+        )
+
     command = config["command"]
     path = shutil.which(command)
     available = path is not None
@@ -102,7 +156,7 @@ def detect_all_runtimes(primary_only: bool = True) -> List[RuntimeInfo]:
     """Detect all known runtimes on the system.
     
     Args:
-        primary_only: If True, only check auto-setup runtimes (claude, codex, droid).
+        primary_only: If True, only check auto-setup runtimes (claude, codex, droid, amp, auggie, neovate, gemini).
                      If False, check all supported runtimes (including manual MCP ones).
     
     Returns:
@@ -122,6 +176,8 @@ def get_runtime_command(name: str) -> List[str]:
     
     Returns the command as a list suitable for subprocess.
     """
+    if name == "custom":
+        return []
     config = KNOWN_RUNTIMES.get(name)
     if not config:
         return [name]
@@ -131,10 +187,17 @@ def get_runtime_command(name: str) -> List[str]:
 def get_runtime_command_with_flags(name: str) -> List[str]:
     """Get the command with recommended flags for autonomous operation."""
     commands = {
+        "amp": ["amp"],
+        "auggie": ["auggie"],
         "claude": ["claude", "--dangerously-skip-permissions"],
         "codex": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--search"],
+        "cursor": ["cursor-agent"],
         "droid": ["droid", "--auto", "high"],
+        "gemini": ["gemini"],
+        "kilocode": ["kilocode"],
+        "neovate": ["neovate"],
         "opencode": ["opencode"],
         "copilot": ["copilot", "--allow-all-tools", "--allow-all-paths"],
+        "custom": [],
     }
     return commands.get(name, [name])

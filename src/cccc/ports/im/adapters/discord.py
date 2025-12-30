@@ -11,6 +11,7 @@ import json
 import re
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -122,6 +123,23 @@ class DiscordAdapter(IMAdapter):
             if not text:
                 return
 
+            attachments: List[Dict[str, Any]] = []
+            try:
+                for a in (getattr(message, "attachments", None) or []):
+                    url = str(getattr(a, "url", "") or "").strip()
+                    if not url:
+                        continue
+                    attachments.append({
+                        "provider": "discord",
+                        "kind": "file",
+                        "url": url,
+                        "file_name": str(getattr(a, "filename", "") or "file"),
+                        "mime_type": str(getattr(a, "content_type", "") or ""),
+                        "bytes": int(getattr(a, "size", 0) or 0),
+                    })
+            except Exception:
+                attachments = []
+
             chat_type = "private" if getattr(message, "guild", None) is None else "channel"
 
             directed = False
@@ -156,6 +174,7 @@ class DiscordAdapter(IMAdapter):
                     "chat_type": chat_type,
                     "routed": bool(directed),
                     "text": text.strip(),
+                    "attachments": attachments,
                     "from_user": from_user,
                     "message_id": str(message.id),
                 })
@@ -228,6 +247,57 @@ class DiscordAdapter(IMAdapter):
             return future.result(timeout=10)
         except Exception as e:
             self._log(f"[error] send_message to {chat_id}: {e}")
+            return False
+
+    def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
+        url = str(attachment.get("url") or "").strip()
+        if not url:
+            raise ValueError("missing discord attachment url")
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+
+    def send_file(
+        self,
+        chat_id: str,
+        *,
+        file_path: Path,
+        filename: str,
+        caption: str = "",
+        thread_id: Optional[int] = None,
+    ) -> bool:
+        _ = thread_id  # Discord threads are not wired yet (future work).
+        if not self._connected or not self._client or not self._loop:
+            return False
+
+        safe_text = self._compose_safe(caption) if caption else ""
+
+        try:
+            import discord
+        except Exception:
+            return False
+
+        try:
+            async def do_send():
+                try:
+                    cid = int(chat_id)
+                except Exception:
+                    cid = None
+                channel = self._client.get_channel(cid) if cid is not None else None
+                if not channel:
+                    self._log(f"[warn] Channel {chat_id} not found")
+                    return False
+                try:
+                    f = discord.File(fp=str(file_path), filename=str(filename or file_path.name or "file"))
+                except Exception:
+                    f = discord.File(fp=str(file_path))
+                await channel.send(content=safe_text or None, file=f)
+                return True
+
+            future = asyncio.run_coroutine_threadsafe(do_send(), self._loop)
+            return future.result(timeout=30)
+        except Exception as e:
+            self._log(f"[error] send_file to {chat_id}: {e}")
             return False
 
     def _compose_safe(self, text: str) -> str:

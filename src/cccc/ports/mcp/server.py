@@ -9,6 +9,8 @@ cccc.* namespace (collaboration control plane):
 - cccc_inbox_mark_read: Mark messages as read
 - cccc_message_send: Send message
 - cccc_message_reply: Reply to message
+- cccc_file_send: Send a local file as an attachment
+- cccc_blob_path: Resolve attachment blob path
 - cccc_group_info: Get group info
 - cccc_actor_list: Get actor list
 - cccc_actor_add: Add new actor (foreman only)
@@ -42,10 +44,13 @@ All operations go through daemon IPC to ensure single-writer principle.
 
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...daemon.server import call_daemon
+from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
+from ...kernel.group import load_group
 
 
 class MCPError(Exception):
@@ -148,6 +153,72 @@ def message_reply(
     return _call_daemon_or_raise({
         "op": "reply",
         "args": {"group_id": group_id, "text": text, "by": actor_id, "reply_to": reply_to, "to": to or []},
+    })
+
+
+def blob_path(*, group_id: str, rel_path: str) -> Dict[str, Any]:
+    """Resolve a blob attachment path to an absolute filesystem path."""
+    group = load_group(str(group_id or "").strip())
+    if group is None:
+        raise MCPError(code="group_not_found", message=f"group not found: {group_id}")
+    abs_path = resolve_blob_attachment_path(group, rel_path=str(rel_path or "").strip())
+    return {"path": str(abs_path)}
+
+
+def file_send(
+    *,
+    group_id: str,
+    actor_id: str,
+    path: str,
+    text: str = "",
+    to: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Send a local file as a chat.message attachment.
+
+    Security: only files under the group's active scope root are allowed.
+    """
+    gid = str(group_id or "").strip()
+    group = load_group(gid)
+    if group is None:
+        raise MCPError(code="group_not_found", message=f"group not found: {group_id}")
+
+    scope_key = str(group.doc.get("active_scope_key") or "").strip()
+    if not scope_key:
+        raise MCPError(code="missing_scope", message="group has no active scope")
+    scopes = group.doc.get("scopes")
+    scope_url = ""
+    if isinstance(scopes, list):
+        for sc in scopes:
+            if isinstance(sc, dict) and str(sc.get("scope_key") or "").strip() == scope_key:
+                scope_url = str(sc.get("url") or "").strip()
+                break
+    if not scope_url:
+        raise MCPError(code="missing_scope", message="active scope url not found")
+
+    root = Path(scope_url).expanduser().resolve()
+    src = Path(str(path or "").strip())
+    if not src.is_absolute():
+        src = (root / src).resolve()
+    else:
+        src = src.expanduser().resolve()
+
+    root_str = str(root)
+    if str(src) != root_str and not str(src).startswith(root_str + "/"):
+        raise MCPError(code="invalid_path", message="path must be under the group's active scope root")
+    if not src.exists() or not src.is_file():
+        raise MCPError(code="not_found", message=f"file not found: {src}")
+
+    try:
+        raw = src.read_bytes()
+    except Exception as e:
+        raise MCPError(code="read_failed", message=str(e))
+
+    mt, _ = mimetypes.guess_type(src.name)
+    att = store_blob_bytes(group, data=raw, filename=src.name, mime_type=str(mt or ""))
+    msg = str(text or "").strip() or f"[file] {att.get('title') or src.name}"
+    return _call_daemon_or_raise({
+        "op": "send",
+        "args": {"group_id": gid, "text": msg, "by": actor_id, "to": to or [], "path": "", "attachments": [att]},
     })
 
 
@@ -619,6 +690,33 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "cccc_file_send",
+        "description": "Send a local file (under the group's active scope root) as a chat attachment.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Working group ID"},
+                "actor_id": {"type": "string", "description": "Your actor ID (sender)"},
+                "path": {"type": "string", "description": "File path (relative to active scope root, or absolute under it)"},
+                "text": {"type": "string", "description": "Optional message text (caption)"},
+                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (same as cccc_message_send)"},
+            },
+            "required": ["group_id", "actor_id", "path"],
+        },
+    },
+    {
+        "name": "cccc_blob_path",
+        "description": "Resolve an attachment blob path (e.g. state/blobs/<sha>_<name>) to an absolute filesystem path.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {"type": "string", "description": "Working group ID"},
+                "rel_path": {"type": "string", "description": "Relative attachment path from events (state/blobs/...)"},
+            },
+            "required": ["group_id", "rel_path"],
+        },
+    },
+    {
         "name": "cccc_group_info",
         "description": "Get working group information (title, scopes, actors, etc.).",
         "inputSchema": {
@@ -647,7 +745,20 @@ MCP_TOOLS = [
                 "actor_id": {"type": "string", "description": "New actor ID (e.g. peer-impl, peer-test)"},
                 "runtime": {
                     "type": "string",
-                    "enum": ["claude", "codex", "droid", "opencode", "copilot"],
+                    "enum": [
+                        "claude",
+                        "codex",
+                        "droid",
+                        "amp",
+                        "auggie",
+                        "neovate",
+                        "gemini",
+                        "cursor",
+                        "kilocode",
+                        "opencode",
+                        "copilot",
+                        "custom",
+                    ],
                     "description": "Agent runtime (auto-sets command)",
                     "default": "codex",
                 },
@@ -1164,6 +1275,22 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             reply_to=str(arguments.get("reply_to") or ""),
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else None,
+        )
+
+    if name == "cccc_file_send":
+        to_raw = arguments.get("to")
+        return file_send(
+            group_id=str(arguments.get("group_id") or ""),
+            actor_id=str(arguments.get("actor_id") or ""),
+            path=str(arguments.get("path") or ""),
+            text=str(arguments.get("text") or ""),
+            to=list(to_raw) if isinstance(to_raw, list) else [],
+        )
+
+    if name == "cccc_blob_path":
+        return blob_path(
+            group_id=str(arguments.get("group_id") or ""),
+            rel_path=str(arguments.get("rel_path") or ""),
         )
 
     if name == "cccc_group_info":

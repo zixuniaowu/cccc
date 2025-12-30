@@ -26,7 +26,7 @@ cccc doctor
 cccc attach .
 
 # Setup MCP for your agent runtime
-cccc setup --runtime claude  # or codex, droid, opencode
+cccc setup --runtime claude  # or codex, droid, amp, auggie, neovate, gemini, cursor, kilocode, opencode, copilot
 
 # Start daemon
 cccc daemon start
@@ -56,11 +56,18 @@ No manual role assignment needed. To change foreman, disable the current first a
 
 | Runtime | Command | Description |
 |---------|---------|-------------|
+| Amp | `amp` | Sourcegraph Amp CLI |
+| Auggie (Augment) | `auggie` | Augment CLI |
 | Claude Code | `claude` | Anthropic official CLI |
 | Codex CLI | `codex` | OpenAI Codex CLI |
+| Cursor CLI | `cursor-agent` | Cursor CLI (cursor-agent) |
 | Droid | `droid` | Droid agent CLI |
+| Neovate Code | `neovate` | Neovate Code agent CLI |
+| Gemini CLI | `gemini` | Google Gemini CLI |
+| Kilo Code CLI | `kilocode` | Kilo Code CLI |
 | OpenCode | `opencode` | Open source agent CLI |
 | GitHub Copilot CLI | `copilot` | GitHub Copilot agent CLI |
+| Custom | *(user-defined)* | Any MCP-capable runtime CLI |
 
 ### Adding Actors
 
@@ -81,16 +88,24 @@ cccc actor add api-agent --runner headless
 
 `cccc setup` helps configure MCP for supported runtimes.
 
-- `claude` / `codex` / `droid`: tries to add MCP server via runtime CLI
-- `opencode` / `copilot`: prints manual MCP configuration guidance
+- `claude` / `codex` / `droid` / `amp` / `auggie` / `neovate` / `gemini`: tries to add MCP server via runtime CLI
+- `cursor` / `kilocode` / `opencode` / `copilot`: prints manual MCP configuration guidance
+- `custom`: prints generic MCP guidance (you must configure your runtime)
 
 ```bash
 # Setup for specific runtime
 cccc setup --runtime claude
 cccc setup --runtime codex
 cccc setup --runtime droid
+cccc setup --runtime amp
+cccc setup --runtime auggie
+cccc setup --runtime neovate
+cccc setup --runtime gemini
+cccc setup --runtime cursor
+cccc setup --runtime kilocode
 cccc setup --runtime opencode
 cccc setup --runtime copilot
+cccc setup --runtime custom
 ```
 
 ## MCP Tools (41 tools, 4 namespaces)

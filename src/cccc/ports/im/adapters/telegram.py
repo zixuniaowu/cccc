@@ -15,6 +15,7 @@ import os
 import re
 import threading
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -171,7 +172,9 @@ class TelegramAdapter(IMAdapter):
             {
                 "offset": self._offset,
                 "timeout": 25,
-                "allowed_updates": ["message", "edited_message", "channel_post"],
+                # We intentionally ignore edited messages to avoid double-processing commands
+                # and accidental duplicate deliveries when a user edits a message.
+                "allowed_updates": ["message", "channel_post"],
             },
             timeout=35,
         )
@@ -183,10 +186,41 @@ class TelegramAdapter(IMAdapter):
                     update_id = int(update.get("update_id", 0))
                     self._offset = max(self._offset, update_id + 1)
 
-                    # Extract message from update
-                    msg = update.get("message") or update.get("edited_message") or update.get("channel_post")
+                    # Extract message from update (ignore edited_message to avoid double-processing).
+                    msg = update.get("message") or update.get("channel_post")
                     if not msg:
                         continue
+
+                    # Extract attachments (document/photo/etc.). Text/caption is still required for routing.
+                    attachments: List[Dict[str, Any]] = []
+                    try:
+                        if isinstance(msg.get("document"), dict):
+                            doc = msg["document"]
+                            attachments.append({
+                                "provider": "telegram",
+                                "kind": "file",
+                                "file_id": str(doc.get("file_id") or ""),
+                                "file_unique_id": str(doc.get("file_unique_id") or ""),
+                                "file_name": str(doc.get("file_name") or "file"),
+                                "mime_type": str(doc.get("mime_type") or ""),
+                                "bytes": int(doc.get("file_size") or 0),
+                            })
+                        elif isinstance(msg.get("photo"), list) and msg.get("photo"):
+                            # Use largest size (last item).
+                            photo = msg.get("photo")[-1]
+                            if isinstance(photo, dict):
+                                fid = str(photo.get("file_id") or "")
+                                attachments.append({
+                                    "provider": "telegram",
+                                    "kind": "image",
+                                    "file_id": fid,
+                                    "file_unique_id": str(photo.get("file_unique_id") or ""),
+                                    "file_name": f"photo_{fid}.jpg" if fid else "photo.jpg",
+                                    "mime_type": "image/jpeg",
+                                    "bytes": int(photo.get("file_size") or 0),
+                                })
+                    except Exception:
+                        attachments = []
 
                     # Extract text
                     text = msg.get("text") or msg.get("caption") or ""
@@ -214,6 +248,7 @@ class TelegramAdapter(IMAdapter):
                         "chat_type": chat_type,
                         "thread_id": thread_id,
                         "text": text,
+                        "attachments": attachments,
                         "from_user": username,
                         "message_id": msg.get("message_id", 0),
                         "update_id": update_id,
@@ -223,6 +258,92 @@ class TelegramAdapter(IMAdapter):
                     continue
 
         return messages
+
+    def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
+        file_id = str(attachment.get("file_id") or "").strip()
+        if not file_id:
+            raise ValueError("missing telegram file_id")
+
+        meta = self._api("getFile", {"file_id": file_id}, timeout=15)
+        if not meta.get("ok"):
+            raise ValueError(f"getFile failed: {meta.get('error')}")
+        result = meta.get("result") if isinstance(meta.get("result"), dict) else {}
+        file_path = str(result.get("file_path") or "").strip()
+        if not file_path:
+            raise ValueError("missing telegram file_path")
+
+        url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read()
+
+    def send_file(
+        self,
+        chat_id: str,
+        *,
+        file_path: Path,
+        filename: str,
+        caption: str = "",
+        thread_id: Optional[int] = None,
+    ) -> bool:
+        if not self._connected:
+            return False
+
+        # Telegram caption length is limited; we keep it short.
+        safe_caption = self._compose_safe(caption) if caption else ""
+
+        # Rate limit
+        self._rate_limiter.wait_and_acquire(str(chat_id))
+
+        boundary = "----cccc" + uuid.uuid4().hex
+        url = f"https://api.telegram.org/bot{self.token}/sendDocument"
+
+        try:
+            raw = file_path.read_bytes()
+        except Exception as e:
+            self._log(f"[send_file] read failed: {e}")
+            return False
+
+        fields: List[Tuple[str, str]] = [("chat_id", str(chat_id))]
+        if safe_caption:
+            fields.append(("caption", safe_caption))
+        if thread_id:
+            try:
+                tid = int(thread_id)
+            except Exception:
+                tid = 0
+            if tid > 0:
+                fields.append(("message_thread_id", str(tid)))
+
+        body = b""
+        for k, v in fields:
+            body += (
+                f"--{boundary}\r\n"
+                f'Content-Disposition: form-data; name="{k}"\r\n\r\n'
+                f"{v}\r\n"
+            ).encode("utf-8")
+
+        safe_fn = (filename or file_path.name or "file").replace("\\", "_").replace("/", "_")
+        body += (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="document"; filename="{safe_fn}"\r\n'
+            f"Content-Type: application/octet-stream\r\n\r\n"
+        ).encode("utf-8")
+        body += raw
+        body += f"\r\n--{boundary}--\r\n".encode("utf-8")
+
+        req = urllib.request.Request(url, data=body, method="POST")
+        req.add_header("Content-Type", f"multipart/form-data; boundary={boundary}")
+        req.add_header("Accept", "application/json")
+
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read().decode("utf-8", errors="replace")
+                out = json.loads(data)
+                return bool(out.get("ok"))
+        except Exception as e:
+            self._log(f"[send_file] failed: {e}")
+            return False
 
     def send_message(self, chat_id: str, text: str, thread_id: Optional[int] = None) -> bool:
         """

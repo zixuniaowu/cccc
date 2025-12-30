@@ -31,6 +31,7 @@
 - Context 面板
 - Settings 面板
 - IM Bridge 配置 UI
+- 远程访问配置说明（Cloudflare Tunnel / Tailscale）
 - 主题系统（Light/Dark/System）
 - 移动端适配
 
@@ -59,6 +60,15 @@
 | 多 scope 协作 | 跨仓库协作 |
 | 跨 group 消息投递 | 跨 group 路由、权限与隔离 |
 | 跨 group 附件/文件 | 复制 blobs 到目标 group 并重写引用（不默认落 repo） |
+| 远程访问安全护栏 | `cccc doctor`/Web UI 检测风险暴露（未加鉴权时提示/阻止） |
+| 远程访问分享 | `CCCC_PUBLIC_URL` + 分享链接/二维码（面向 Cloudflare Tunnel） |
+
+## 待完成 (P3 / memo)
+
+| 项目 | 说明 |
+|------|------|
+| Tunnel 可观测 | `cccc tunnel status/logs`（薄封装 cloudflared，状态落 CCCC_HOME） |
+| 手机端 App | Capacitor 将 Web UI 打包为 iOS/Android（先做壳 + 深链/扫码/分享，推送后置） |
 
 ## 技术栈
 

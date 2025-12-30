@@ -8,14 +8,15 @@ import shlex
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Literal, Optional, Union
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ... import __version__
 from ...daemon.server import call_daemon
+from ...kernel.blobs import store_blob_bytes, resolve_blob_attachment_path
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
 from ...paths import ensure_home
@@ -45,6 +46,10 @@ class ReplyRequest(BaseModel):
     by: str = Field(default="user")
     to: list[str] = Field(default_factory=list)
     reply_to: str
+
+
+WEB_MAX_FILE_MB = 20
+WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024
 
 
 class ActorCreateRequest(BaseModel):
@@ -291,6 +296,18 @@ def create_app() -> FastAPI:
             "<p>This is a minimal control-plane port. UI will live under <code>/ui</code> later.</p>"
             "<p>Try <code>/api/v1/ping</code> and <code>/api/v1/groups</code>.</p>"
         )
+
+    @app.get("/favicon.ico")
+    async def favicon_ico() -> Any:
+        if dist_dir is not None and (dist_dir / "favicon.ico").exists():
+            return FileResponse(dist_dir / "favicon.ico")
+        raise HTTPException(status_code=404)
+
+    @app.get("/favicon.png")
+    async def favicon_png() -> Any:
+        if dist_dir is not None and (dist_dir / "favicon.png").exists():
+            return FileResponse(dist_dir / "favicon.png")
+        raise HTTPException(status_code=404)
 
     @app.get("/api/v1/ping")
     async def ping() -> Dict[str, Any]:
@@ -728,6 +745,130 @@ def create_app() -> FastAPI:
                 "args": {"group_id": group_id, "text": req.text, "by": req.by, "to": list(req.to), "reply_to": req.reply_to},
             }
         )
+
+    @app.post("/api/v1/groups/{group_id}/send_upload")
+    async def send_upload(
+        group_id: str,
+        by: str = Form("user"),
+        text: str = Form(""),
+        to_json: str = Form("[]"),
+        path: str = Form(""),
+        files: list[UploadFile] = File(default_factory=list),
+    ) -> Dict[str, Any]:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        try:
+            parsed_to = json.loads(to_json or "[]")
+        except Exception:
+            parsed_to = []
+        to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
+
+        attachments: list[dict[str, Any]] = []
+        for f in files or []:
+            raw = await f.read()
+            if len(raw) > WEB_MAX_FILE_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"code": "file_too_large", "message": f"file too large (> {WEB_MAX_FILE_MB}MB)"},
+                )
+            attachments.append(
+                store_blob_bytes(
+                    group,
+                    data=raw,
+                    filename=str(getattr(f, "filename", "") or "file"),
+                    mime_type=str(getattr(f, "content_type", "") or ""),
+                )
+            )
+
+        msg_text = str(text or "").strip()
+        if not msg_text and attachments:
+            if len(attachments) == 1:
+                msg_text = f"[file] {attachments[0].get('title') or 'file'}"
+            else:
+                msg_text = f"[files] {len(attachments)} attachments"
+
+        return _daemon(
+            {
+                "op": "send",
+                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "path": path, "attachments": attachments},
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/reply_upload")
+    async def reply_upload(
+        group_id: str,
+        by: str = Form("user"),
+        text: str = Form(""),
+        to_json: str = Form("[]"),
+        reply_to: str = Form(""),
+        files: list[UploadFile] = File(default_factory=list),
+    ) -> Dict[str, Any]:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        try:
+            parsed_to = json.loads(to_json or "[]")
+        except Exception:
+            parsed_to = []
+        to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
+
+        attachments: list[dict[str, Any]] = []
+        for f in files or []:
+            raw = await f.read()
+            if len(raw) > WEB_MAX_FILE_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail={"code": "file_too_large", "message": f"file too large (> {WEB_MAX_FILE_MB}MB)"},
+                )
+            attachments.append(
+                store_blob_bytes(
+                    group,
+                    data=raw,
+                    filename=str(getattr(f, "filename", "") or "file"),
+                    mime_type=str(getattr(f, "content_type", "") or ""),
+                )
+            )
+
+        msg_text = str(text or "").strip()
+        if not msg_text and attachments:
+            if len(attachments) == 1:
+                msg_text = f"[file] {attachments[0].get('title') or 'file'}"
+            else:
+                msg_text = f"[files] {len(attachments)} attachments"
+
+        return _daemon(
+            {
+                "op": "reply",
+                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "reply_to": reply_to, "attachments": attachments},
+            }
+        )
+
+    @app.get("/api/v1/groups/{group_id}/blobs/{blob_name}")
+    async def blob_download(group_id: str, blob_name: str) -> FileResponse:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        name = str(blob_name or "").strip()
+        if not name or "/" in name or "\\" in name or ".." in name:
+            raise HTTPException(status_code=400, detail={"code": "invalid_blob", "message": "invalid blob name"})
+
+        rel = f"state/blobs/{name}"
+        try:
+            abs_path = resolve_blob_attachment_path(group, rel_path=rel)
+        except Exception:
+            raise HTTPException(status_code=400, detail={"code": "invalid_blob", "message": "invalid blob name"})
+
+        if not abs_path.exists() or not abs_path.is_file():
+            raise HTTPException(status_code=404, detail={"code": "not_found", "message": "blob not found"})
+
+        download_name = name
+        if len(name) > 64 and "_" in name:
+            # blob name format: <sha256>_<filename>
+            download_name = name.split("_", 1)[1] or name
+        return FileResponse(path=abs_path, filename=download_name)
 
     @app.get("/api/v1/groups/{group_id}/actors")
     async def actors(group_id: str, include_unread: bool = False) -> Dict[str, Any]:
