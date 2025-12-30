@@ -73,7 +73,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     lines.extend([
         "",
         "---",
-        "You have cccc_* MCP tools. See cccc-ops skill for workflow guidance.",
+        "You have cccc_* MCP tools. Read the cccc_help tool description for the CCCC ops playbook.",
         "",
         "⚠️ IMPORTANT: Always use MCP tools for messaging:",
         "  - cccc_message_send(to, text) → send message",
@@ -82,6 +82,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "  - Do NOT use bash/shell commands for cccc operations",
         "",
         "Quick start:",
+        "0. cccc_help → read the CCCC ops playbook (authoritative)",
         "1. cccc_project_info → understand project goals",
         "2. cccc_context_get → sync state", 
         "3. cccc_inbox_list → check messages",

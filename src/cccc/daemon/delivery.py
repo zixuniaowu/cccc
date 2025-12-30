@@ -301,7 +301,7 @@ THROTTLE = DeliveryThrottle()
 REMINDER_EVERY_N_MESSAGES = 6
 MCP_REMINDER_LINE = (
     "[cccc] Reminder: communicate via MCP (cccc_message_send / cccc_message_reply); terminal output isn't delivered. "
-    "See cccc-ops skill."
+    "See cccc_help."
 )
 
 

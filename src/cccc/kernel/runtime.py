@@ -30,31 +30,31 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
     "claude": {
         "display_name": "Claude Code",
         "command": "claude",
-        "capabilities": "Strong coding; MCP+skills; MCP setup: auto",
-        "mcp_add_pattern": "claude mcp add {name} -s project -- {cmd}",
+        "capabilities": "MCP; MCP setup: auto",
+        "mcp_add_pattern": "claude mcp add -s user {name} -- {cmd}",
     },
     "codex": {
         "display_name": "Codex CLI",
         "command": "codex",
-        "capabilities": "Strong coding; MCP+skills; MCP setup: auto",
+        "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "codex mcp add {name} -- {cmd}",
     },
     "droid": {
         "display_name": "Droid CLI",
         "command": "droid",
-        "capabilities": "Strong coding; MCP+skills; MCP setup: auto",
+        "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "droid mcp add {name} -- {cmd}",
     },
     "opencode": {
         "display_name": "OpenCode",
         "command": "opencode",
-        "capabilities": "Solid coding CLI; MCP+skills; MCP setup: manual",
+        "capabilities": "MCP; MCP setup: manual",
         "mcp_add_pattern": None,  # Requires manual config
     },
     "copilot": {
         "display_name": "GitHub Copilot CLI",
         "command": "copilot",
-        "capabilities": "Copilot CLI; MCP+skills; MCP setup: manual",
+        "capabilities": "MCP; MCP setup: manual",
         "mcp_add_pattern": None,
     },
 }

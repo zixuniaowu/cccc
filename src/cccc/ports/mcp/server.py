@@ -4,6 +4,7 @@ CCCC MCP Server — IM-style Agent Collaboration Tools
 Core tools exposed to agents:
 
 cccc.* namespace (collaboration control plane):
+- cccc_help: CCCC operational playbook (embedded in tool description)
 - cccc_inbox_list: Get unread messages (supports kind_filter)
 - cccc_inbox_mark_read: Mark messages as read
 - cccc_message_send: Send message
@@ -41,6 +42,7 @@ All operations go through daemon IPC to ensure single-writer principle.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...daemon.server import call_daemon
@@ -69,6 +71,29 @@ def _call_daemon_or_raise(req: Dict[str, Any]) -> Dict[str, Any]:
             )
         raise MCPError(code="daemon_error", message=str(err))
     return resp.get("result") if isinstance(resp.get("result"), dict) else {}
+
+
+def _load_ops_playbook() -> str:
+    """Load the CCCC ops playbook text for cccc_help."""
+    try:
+        import importlib.resources
+
+        files = importlib.resources.files("cccc.resources")
+        return (files / "cccc-ops.md").read_text(encoding="utf-8")
+    except Exception:
+        try:
+            p = Path(__file__).resolve().parents[2] / "resources" / "cccc-ops.md"
+            return p.read_text(encoding="utf-8")
+        except Exception:
+            return ""
+
+
+_CCCC_HELP_TEXT = _load_ops_playbook().strip()
+_CCCC_HELP_DESCRIPTION = (
+    "CCCC Help — Ops Playbook (authoritative)\n\n"
+    "This tool's description intentionally embeds the full CCCC operational playbook so it stays in context.\n\n"
+    + (_CCCC_HELP_TEXT if _CCCC_HELP_TEXT else "(missing playbook: cccc-ops.md)")
+)
 
 
 # =============================================================================
@@ -527,6 +552,11 @@ def notify_ack(*, group_id: str, actor_id: str, notify_event_id: str) -> Dict[st
 
 MCP_TOOLS = [
     # cccc.* namespace - collaboration
+    {
+        "name": "cccc_help",
+        "description": _CCCC_HELP_DESCRIPTION,
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    },
     {
         "name": "cccc_inbox_list",
         "description": "Get your unread messages. Returns messages in chronological order. Supports filtering by type.",
@@ -1096,6 +1126,12 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     """Handle MCP tool call"""
 
     # cccc.* namespace
+    if name == "cccc_help":
+        return {
+            "markdown": _load_ops_playbook(),
+            "source": "cccc.resources/cccc-ops.md",
+        }
+
     if name == "cccc_inbox_list":
         return inbox_list(
             group_id=str(arguments.get("group_id") or ""),

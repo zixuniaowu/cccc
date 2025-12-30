@@ -1,11 +1,6 @@
----
-name: cccc-ops
-description: CCCC multi-agent collaboration system operational guide. Use when working with cccc_* MCP tools, collaborating with other agents (foreman/peer roles), sending messages, managing actors, or coordinating team work.
----
+# CCCC Ops Playbook
 
-# CCCC-OPS Skill
-
-> This is the operational playbook for the CCCC multi-agent collaboration system. All actors share this skill but execute different sections based on their role.
+This is the operational playbook for the CCCC multi-agent collaboration system.
 
 ## 0) Core Philosophy
 

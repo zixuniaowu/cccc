@@ -69,7 +69,7 @@ cccc send "Hello" --to @all      # 发送消息
 - **Kernel/Daemon**: Python + Pydantic
 - **Web Port**: FastAPI + Uvicorn
 - **Web UI**: React + TypeScript + Vite + Tailwind + xterm.js
-- **MCP**: stdio mode, JSON-RPC (38 tools)
+- **MCP**: stdio mode, JSON-RPC (41 tools)
 
 ## 相关链接
 

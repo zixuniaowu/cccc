@@ -60,7 +60,7 @@ No manual role assignment needed. To change foreman, disable the current first a
 | Codex CLI | `codex` | OpenAI Codex CLI |
 | Droid | `droid` | Droid agent CLI |
 | OpenCode | `opencode` | Open source agent CLI |
-| Custom | any | Any shell command |
+| GitHub Copilot CLI | `copilot` | GitHub Copilot agent CLI |
 
 ### Adding Actors
 
@@ -70,8 +70,8 @@ No manual role assignment needed. To change foreman, disable the current first a
 cccc actor add main-agent --runtime claude
 cccc actor add impl-agent --runtime codex
 
-# Custom command
-cccc actor add custom-agent --command "aider --model gpt-4"
+# Optional: override command (advanced)
+cccc actor add impl-agent --runtime codex --command "codex --dangerously-bypass-approvals-and-sandbox --search"
 
 # Headless actor (MCP-only, no PTY)
 cccc actor add api-agent --runner headless
@@ -79,10 +79,10 @@ cccc actor add api-agent --runner headless
 
 ## Auto Setup
 
-`cccc setup` command automatically:
+`cccc setup` helps configure MCP for supported runtimes.
 
-1. **Installs Skills**: Creates `cccc-ops` skill in project
-2. **Configures MCP**: Generates MCP configuration
+- `claude` / `codex` / `droid`: tries to add MCP server via runtime CLI
+- `opencode` / `copilot`: prints manual MCP configuration guidance
 
 ```bash
 # Setup for specific runtime
@@ -90,11 +90,13 @@ cccc setup --runtime claude
 cccc setup --runtime codex
 cccc setup --runtime droid
 cccc setup --runtime opencode
+cccc setup --runtime copilot
 ```
 
-## MCP Tools (37 tools, 4 namespaces)
+## MCP Tools (41 tools, 4 namespaces)
 
 ### cccc.* (Collaboration)
+- `cccc_help`: CCCC ops playbook (embedded in MCP tool description)
 - `cccc_inbox_list` / `cccc_inbox_mark_read`: Message inbox
 - `cccc_message_send` / `cccc_message_reply`: Send/reply messages
 - `cccc_group_info` / `cccc_group_set_state`: Group info and state control
@@ -149,7 +151,7 @@ cccc tail -n 50                  # View ledger
 cccc daemon start|stop|status    # Manage daemon
 cccc web                         # Start Web console
 cccc mcp                         # Start MCP server (stdio)
-cccc setup --runtime <name>      # Setup skills and MCP
+cccc setup --runtime <name>      # Setup MCP / print guidance
 cccc version                     # Show version
 ```
 

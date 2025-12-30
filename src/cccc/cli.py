@@ -1378,7 +1378,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print("Quick start:")
         print(f"  cccc setup --runtime {runtimes[0].name if runtimes[0].available else 'claude'}")
         print("  cccc attach .")
-        print("  cccc actor add my-agent --runtime <name> --role foreman")
+        print("  cccc actor add my-agent --runtime <name>")
         print("  cccc")
     
     return 0
@@ -1432,181 +1432,99 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
 
 def cmd_setup(args: argparse.Namespace) -> int:
-    """Setup CCCC for agent runtimes (install skills, configure MCP)."""
+    """Setup CCCC MCP for agent runtimes (configure MCP, print guidance)."""
     import os
     import shutil
-    
+
     runtime = str(args.runtime or "").strip()
     project_path = Path(args.path or ".").resolve()
-    
+
     # Supported runtimes
     # - claude/codex/droid: MCP setup can be automated via their CLIs
-    # - opencode/copilot: MCP setup is manual (cccc only prints guidance)
+    # - opencode/copilot: MCP setup is manual (cccc prints guidance)
     SUPPORTED_RUNTIMES = ["claude", "codex", "droid", "opencode", "copilot"]
-    
+
     if runtime and runtime not in SUPPORTED_RUNTIMES:
-        _print_json({"ok": False, "error": {"code": "unsupported_runtime", "message": f"Unsupported runtime: {runtime}. Supported: {', '.join(SUPPORTED_RUNTIMES)}"}})
+        _print_json({
+            "ok": False,
+            "error": {
+                "code": "unsupported_runtime",
+                "message": f"Unsupported runtime: {runtime}. Supported: {', '.join(SUPPORTED_RUNTIMES)}",
+            },
+        })
         return 2
-    
-    results: dict[str, Any] = {"skills": {}, "mcp": {}, "notes": []}
-    
-    # Get the skill template
-    skill_src = Path(__file__).parent / "resources" / "cccc-ops.skill.md"
-    if not skill_src.exists():
-        _print_json({"ok": False, "error": {"code": "skill_not_found", "message": "cccc-ops.skill.md not found in resources"}})
-        return 2
-    
-    skill_content = skill_src.read_text(encoding="utf-8")
-    
+
+    results: dict[str, Any] = {"mcp": {}, "notes": []}
+
     # Find cccc executable path for MCP config
     cccc_path = shutil.which("cccc") or sys.executable
     if cccc_path == sys.executable:
         cccc_cmd = [sys.executable, "-m", "cccc.ports.mcp.main"]
     else:
         cccc_cmd = ["cccc", "mcp"]
-    
+
+    def _cmd_line(parts: list[str]) -> str:
+        return " ".join(shlex.quote(p) for p in parts)
+
     # Runtime-specific setup
     runtimes_to_setup = [runtime] if runtime else SUPPORTED_RUNTIMES
-    
+
     for rt in runtimes_to_setup:
         if rt == "claude":
-            # Claude Code: .claude/skills/cccc-ops/SKILL.md
-            claude_skill_dir = project_path / ".claude" / "skills" / "cccc-ops"
-            claude_skill_dir.mkdir(parents=True, exist_ok=True)
-            (claude_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
-            results["skills"]["claude"] = str(claude_skill_dir / "SKILL.md")
-            
-            # Claude Code MCP: use `claude mcp add` CLI
+            cmd = ["claude", "mcp", "add", "-s", "user", "cccc", "--", *cccc_cmd]
             try:
-                cmd_str = " ".join(cccc_cmd)
                 result = subprocess.run(
-                    ["claude", "mcp", "add", "cccc", "-s", "project", "--", *cccc_cmd],
+                    cmd,
                     capture_output=True,
                     text=True,
                     cwd=str(project_path),
                 )
                 if result.returncode == 0:
-                    results["mcp"]["claude"] = "added via CLI"
+                    results["mcp"]["claude"] = {"mode": "auto", "status": "added"}
                 else:
-                    # Fallback to manual config
-                    claude_mcp_dir = project_path / ".claude"
-                    claude_mcp_dir.mkdir(parents=True, exist_ok=True)
-                    claude_mcp_path = claude_mcp_dir / "mcp.json"
-                    
-                    mcp_config = {
-                        "mcpServers": {
-                            "cccc": {
-                                "command": cccc_cmd[0],
-                                "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
-                                "env": {},
-                                "disabled": False,
-                                "autoApprove": [
-                                    "cccc_inbox_list", "cccc_inbox_mark_read", "cccc_context_get",
-                                    "cccc_group_info", "cccc_actor_list", "cccc_presence_get", "cccc_task_list",
-                                ],
-                            }
-                        }
-                    }
-                    
-                    existing = {}
-                    if claude_mcp_path.exists():
-                        try:
-                            existing = json.loads(claude_mcp_path.read_text(encoding="utf-8"))
-                        except Exception:
-                            pass
-                    
-                    if "mcpServers" not in existing:
-                        existing["mcpServers"] = {}
-                    existing["mcpServers"]["cccc"] = mcp_config["mcpServers"]["cccc"]
-                    
-                    claude_mcp_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-                    results["mcp"]["claude"] = str(claude_mcp_path)
+                    results["mcp"]["claude"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                    results["notes"].append("claude: MCP CLI failed; run the command shown in result.mcp.claude.command")
             except FileNotFoundError:
-                # claude CLI not found, use manual config
-                claude_mcp_dir = project_path / ".claude"
-                claude_mcp_dir.mkdir(parents=True, exist_ok=True)
-                claude_mcp_path = claude_mcp_dir / "mcp.json"
-                
-                mcp_config = {
-                    "mcpServers": {
-                        "cccc": {
-                            "command": cccc_cmd[0],
-                            "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
-                            "env": {},
-                            "disabled": False,
-                            "autoApprove": [
-                                "cccc_inbox_list", "cccc_inbox_mark_read", "cccc_context_get",
-                                "cccc_group_info", "cccc_actor_list", "cccc_presence_get", "cccc_task_list",
-                            ],
-                        }
-                    }
-                }
-                
-                existing = {}
-                if claude_mcp_path.exists():
-                    try:
-                        existing = json.loads(claude_mcp_path.read_text(encoding="utf-8"))
-                    except Exception:
-                        pass
-                
-                if "mcpServers" not in existing:
-                    existing["mcpServers"] = {}
-                existing["mcpServers"]["cccc"] = mcp_config["mcpServers"]["cccc"]
-                
-                claude_mcp_path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-                results["mcp"]["claude"] = str(claude_mcp_path)
-        
+                results["mcp"]["claude"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                results["notes"].append("claude: CLI not found; run the command shown in result.mcp.claude.command")
+
         elif rt == "codex":
-            # Codex CLI: .codex/skills/cccc-ops/SKILL.md
-            codex_skill_dir = project_path / ".codex" / "skills" / "cccc-ops"
-            codex_skill_dir.mkdir(parents=True, exist_ok=True)
-            (codex_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
-            results["skills"]["codex"] = str(codex_skill_dir / "SKILL.md")
-            
-            # Codex MCP: use `codex mcp add` CLI
+            cmd = ["codex", "mcp", "add", "cccc", "--", *cccc_cmd]
             try:
                 result = subprocess.run(
-                    ["codex", "mcp", "add", "cccc", "--", *cccc_cmd],
+                    cmd,
                     capture_output=True,
                     text=True,
                     cwd=str(project_path),
                 )
                 if result.returncode == 0:
-                    results["mcp"]["codex"] = "added via CLI"
+                    results["mcp"]["codex"] = {"mode": "auto", "status": "added"}
                 else:
-                    results["notes"].append(f"codex: MCP CLI failed, please add manually: {' '.join(cccc_cmd)}")
+                    results["mcp"]["codex"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                    results["notes"].append("codex: MCP CLI failed; run the command shown in result.mcp.codex.command")
             except FileNotFoundError:
-                results["notes"].append(f"codex: CLI not found, please add MCP manually: {' '.join(cccc_cmd)}")
-        
+                results["mcp"]["codex"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                results["notes"].append("codex: CLI not found; run the command shown in result.mcp.codex.command")
+
         elif rt == "droid":
-            # Droid (Factory): .factory/skills/cccc-ops/SKILL.md
-            droid_skill_dir = project_path / ".factory" / "skills" / "cccc-ops"
-            droid_skill_dir.mkdir(parents=True, exist_ok=True)
-            (droid_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
-            results["skills"]["droid"] = str(droid_skill_dir / "SKILL.md")
-            
-            # Droid MCP: use `droid mcp add` CLI
+            cmd = ["droid", "mcp", "add", "cccc", "--", *cccc_cmd]
             try:
                 result = subprocess.run(
-                    ["droid", "mcp", "add", "cccc", "--", *cccc_cmd],
+                    cmd,
                     capture_output=True,
                     text=True,
                     cwd=str(project_path),
                 )
                 if result.returncode == 0:
-                    results["mcp"]["droid"] = "added via CLI"
+                    results["mcp"]["droid"] = {"mode": "auto", "status": "added"}
                 else:
-                    results["notes"].append(f"droid: MCP CLI failed, please add manually: {' '.join(cccc_cmd)}")
+                    results["mcp"]["droid"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                    results["notes"].append("droid: MCP CLI failed; run the command shown in result.mcp.droid.command")
             except FileNotFoundError:
-                results["notes"].append(f"droid: CLI not found, please add MCP manually: {' '.join(cccc_cmd)}")
-        
+                results["mcp"]["droid"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                results["notes"].append("droid: CLI not found; run the command shown in result.mcp.droid.command")
+
         elif rt == "opencode":
-            # OpenCode: .opencode/skills/cccc-ops/SKILL.md
-            opencode_skill_dir = project_path / ".opencode" / "skills" / "cccc-ops"
-            opencode_skill_dir.mkdir(parents=True, exist_ok=True)
-            (opencode_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
-            results["skills"]["opencode"] = str(opencode_skill_dir / "SKILL.md")
-            
             # OpenCode: MCP config is manual.
             xdg_config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
             opencode_config_path = xdg_config_home / "opencode" / "opencode.json"
@@ -1630,12 +1548,6 @@ def cmd_setup(args: argparse.Namespace) -> int:
             )
 
         elif rt == "copilot":
-            # Copilot: .github/skills/<skill-name>/SKILL.md
-            copilot_skill_dir = project_path / ".github" / "skills" / "cccc-ops"
-            copilot_skill_dir.mkdir(parents=True, exist_ok=True)
-            (copilot_skill_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
-            results["skills"]["copilot"] = str(copilot_skill_dir / "SKILL.md")
-
             copilot_config_path = Path.home() / ".copilot" / "mcp-config.json"
             mcp_config = {
                 "mcpServers": {
@@ -1656,11 +1568,11 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 f"copilot: MCP is manual. Add `mcpServers.cccc` to {copilot_config_path} "
                 f"(or run Copilot with `--additional-mcp-config @<file>`)."
             )
-    
+
     # Clean up empty notes
     if not results["notes"]:
         del results["notes"]
-    
+
     _print_json({"ok": True, "result": results})
     return 0
 
@@ -2316,7 +2228,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_mcp = sub.add_parser("mcp", help="Run the MCP server (stdio mode, for agent runtimes)")
     p_mcp.set_defaults(func=cmd_mcp)
 
-    p_setup = sub.add_parser("setup", help="Setup CCCC for agent runtimes (install skills, configure MCP)")
+    p_setup = sub.add_parser("setup", help="Setup MCP for agent runtimes (configure MCP, print guidance)")
     p_setup.add_argument(
         "--runtime",
         choices=["claude", "codex", "droid", "opencode", "copilot"],

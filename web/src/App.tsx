@@ -2254,7 +2254,7 @@ export default function App() {
                       <code>{editActorRuntime === "opencode" ? OPENCODE_MCP_CONFIG_SNIPPET : COPILOT_MCP_CONFIG_SNIPPET}</code>
                     </pre>
                     <div className={`mt-1 text-[10px] ${isDark ? "text-amber-200/80" : "text-amber-800/80"}`}>
-                      Skills are auto-installed by CCCC when you start this agent.
+                      Restart the runtime after updating this config.
                     </div>
                   </div>
                 )}
@@ -2596,7 +2596,7 @@ export default function App() {
                       <code>{newActorRuntime === "opencode" ? OPENCODE_MCP_CONFIG_SNIPPET : COPILOT_MCP_CONFIG_SNIPPET}</code>
                     </pre>
                     <div className={`mt-1 text-[10px] ${isDark ? "text-amber-200/80" : "text-amber-800/80"}`}>
-                      Skills are auto-installed by CCCC when you start this agent.
+                      Restart the runtime after updating this config.
                     </div>
                   </div>
                 )}

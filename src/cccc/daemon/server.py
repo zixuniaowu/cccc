@@ -157,80 +157,6 @@ def _ensure_mcp_installed(runtime: str, cwd: Path) -> bool:
     return False
 
 
-def _get_skill_content() -> str:
-    """Get the cccc-ops skill content from package resources."""
-    import importlib.resources
-    try:
-        # Python 3.9+
-        files = importlib.resources.files("cccc.resources")
-        return (files / "cccc-ops.skill.md").read_text(encoding="utf-8")
-    except Exception:
-        # Fallback: try to read from source directory
-        try:
-            skill_path = Path(__file__).parent.parent / "resources" / "cccc-ops.skill.md"
-            if skill_path.exists():
-                return skill_path.read_text(encoding="utf-8")
-        except Exception:
-            pass
-    return ""
-
-
-def _ensure_skill_installed(runtime: str, cwd: Path) -> bool:
-    """Ensure cccc skill file is installed for the given runtime.
-    
-    Skills provide guidance documents for agents. All installed at project level:
-    - claude: <project>/.claude/skills/cccc-ops/SKILL.md
-    - codex: <project>/.codex/skills/cccc-ops/SKILL.md
-    - droid: <project>/.factory/skills/cccc-ops/SKILL.md
-    - opencode: <project>/.opencode/skills/cccc-ops/SKILL.md
-    - copilot: <project>/.github/skills/cccc-ops/SKILL.md
-    
-    Returns True if skill was installed or already exists, False on error.
-    """
-    if runtime not in ("claude", "codex", "droid", "opencode", "copilot"):
-        return True  # Skip for unsupported runtimes
-    
-    skill_content = _get_skill_content()
-    if not skill_content:
-        return False
-    
-    try:
-        if runtime == "claude":
-            # Claude: project-level skills in .claude/skills/<skill-name>/SKILL.md
-            skill_dir = cwd / ".claude" / "skills" / "cccc-ops"
-        elif runtime == "codex":
-            # Codex: project-level skills in .codex/skills/<skill-name>/SKILL.md
-            skill_dir = cwd / ".codex" / "skills" / "cccc-ops"
-        elif runtime == "droid":
-            # Droid: project-level skills in .factory/skills/<skill-name>/SKILL.md
-            skill_dir = cwd / ".factory" / "skills" / "cccc-ops"
-        elif runtime == "opencode":
-            # OpenCode: project-level skills in .opencode/skills/<skill-name>/SKILL.md
-            preferred = cwd / ".opencode" / "skills" / "cccc-ops"
-            legacy = cwd / ".opencode" / "skill" / "cccc-ops"
-            skill_dir = legacy if (legacy / "SKILL.md").exists() else preferred
-        elif runtime == "copilot":
-            # Copilot: project-level skills in .github/skills/<skill-name>/SKILL.md
-            skill_dir = cwd / ".github" / "skills" / "cccc-ops"
-        else:
-            return True
-        
-        skill_path = skill_dir / "SKILL.md"
-        
-        if skill_path.exists():
-            existing = skill_path.read_text(encoding="utf-8")
-            if existing == skill_content:
-                return True
-        skill_dir.mkdir(parents=True, exist_ok=True)
-        skill_path.write_text(skill_content, encoding="utf-8")
-        return True
-    
-    except Exception:
-        pass
-    
-    return False
-
-
 def _prepare_pty_env(env: Dict[str, Any]) -> Dict[str, str]:
     """Prepare environment variables for PTY session.
     
@@ -903,7 +829,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         False,
                     )
                 _ensure_mcp_installed(runtime, cwd)
-                _ensure_skill_installed(runtime, cwd)
                 
                 if runner_kind == "headless":
                     headless_runner.SUPERVISOR.start_actor(
@@ -1314,7 +1239,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 False,
             )
         _ensure_mcp_installed(runtime, cwd)
-        _ensure_skill_installed(runtime, cwd)
 
         if runner_kind == "headless":
             # Start headless session (no PTY, MCP-driven)
