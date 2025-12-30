@@ -19,7 +19,7 @@ from ..kernel.group import attach_scope_to_group, create_group, delete_group, de
 from ..kernel.ledger import append_event
 from ..kernel.registry import load_registry
 from ..kernel.scope import detect_scope
-from ..kernel.actors import add_actor, list_actors, remove_actor, resolve_recipient_tokens, update_actor, get_effective_role
+from ..kernel.actors import add_actor, find_actor, list_actors, remove_actor, resolve_recipient_tokens, update_actor, get_effective_role
 from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.inbox import find_event, get_cursor, get_quote_text, is_message_for_actor, set_cursor, unread_messages
 from ..kernel.ledger_retention import compact as compact_ledger
@@ -1966,7 +1966,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
     if op == "send":
         group_id = str(args.get("group_id") or "").strip()
         text = str(args.get("text") or "")
-        by = str(args.get("by") or "user")
+        by = str(args.get("by") or "user").strip()
         to_raw = args.get("to")
         to_tokens: list[str] = []
         if isinstance(to_raw, list):
@@ -1977,6 +1977,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
+
+        # If group is idle, wake it on "human" messages (non-actor sender).
+        # This keeps idle stable against agent chatter / throttled deliveries.
+        try:
+            from ..kernel.group import get_group_state, set_group_state
+            if get_group_state(group) == "idle":
+                is_actor_sender = isinstance(find_actor(group, by), dict)
+                if by and by != "system" and not is_actor_sender:
+                    group = set_group_state(group, state="active")
+        except Exception:
+            pass
 
         try:
             to = resolve_recipient_tokens(group, to_tokens)
@@ -2142,7 +2153,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
     if op == "reply":
         group_id = str(args.get("group_id") or "").strip()
         text = str(args.get("text") or "")
-        by = str(args.get("by") or "user")
+        by = str(args.get("by") or "user").strip()
         reply_to = str(args.get("reply_to") or "").strip()
         to_raw = args.get("to")
         to_tokens: list[str] = []
@@ -2157,6 +2168,16 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
+
+        # If group is idle, wake it on "human" replies (non-actor sender).
+        try:
+            from ..kernel.group import get_group_state, set_group_state
+            if get_group_state(group) == "idle":
+                is_actor_sender = isinstance(find_actor(group, by), dict)
+                if by and by != "system" and not is_actor_sender:
+                    group = set_group_state(group, state="active")
+        except Exception:
+            pass
 
         # 查找被回复的消息
         original = find_event(group, reply_to)

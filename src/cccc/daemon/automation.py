@@ -602,9 +602,7 @@ Example: "@peers Stand-up time. Please: 1) Update your task progress, 2) Share a
     def on_new_message(self, group: Group) -> None:
         """Called when a new message arrives.
         
-        Note: Auto-transition from idle -> active is now handled in delivery.py
-        at the point of actual PTY delivery. This ensures the transition only
-        happens when a message is actually delivered, not just queued.
+        Note: Auto-transition from idle -> active is handled by the daemon
+        message-ingest path (send/reply) for human-originated messages.
         """
-        # State transition is handled in delivery.should_deliver_message()
         pass

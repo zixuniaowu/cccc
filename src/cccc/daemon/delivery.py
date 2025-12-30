@@ -72,7 +72,7 @@ def should_deliver_message(group: Group, kind: str) -> bool:
     
     State behavior:
         - active: All messages delivered
-        - idle: chat.message delivered (triggers auto-transition to active), system.notify blocked
+        - idle: chat.message delivered, system.notify blocked (no auto state transition here)
         - paused: All messages blocked (inbox only)
     """
     state = get_group_state(group)
@@ -82,17 +82,13 @@ def should_deliver_message(group: Group, kind: str) -> bool:
         return False
     
     if state == "idle":
-        # Idle: only chat.message allowed (system.notify blocked)
-        if kind == "chat.message":
-            # Auto-transition to active when chat message arrives
-            try:
-                set_group_state(group, state="active")
-            except Exception:
-                pass
-            return True
-        else:
-            # system.notify blocked in idle state
-            return False
+        # Idle: only chat.message allowed (system.notify blocked).
+        #
+        # IMPORTANT: Do NOT auto-transition to active here. Waking an idle group is
+        # handled at message-ingest time (e.g. user sends a new message), otherwise
+        # agent-to-agent chatter or delayed/throttled deliveries can accidentally
+        # flip idle -> active and re-enable automation.
+        return kind == "chat.message"
     
     # Active: all messages delivered
     return True
@@ -382,9 +378,8 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
     """向 PTY 投递消息文本。
     
     投递策略：
-    1. 先发送禁用 bracketed paste 模式的转义序列
-    2. 发送文本内容
-    3. 延迟后发送回车键
+    1. 发送文本内容（优先用 bracketed paste wrapper，模拟“粘贴”输入）
+    2. 延迟后发送回车键
     
     关键发现：
     - 原子发送（payload + submit 一起）从未成功过
@@ -423,19 +418,23 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
     
     logger.info(f"[pty_submit_text] Sending to {gid}/{aid}: multiline={multiline}, mode={mode}, len={len(payload)}")
     
-    # 策略：先禁用 bracketed paste 模式，然后发送文本，最后延迟发送回车
-    # 禁用 bracketed paste 模式的转义序列: \x1b[?2004l
-    disable_bracketed_paste = b"\x1b[?2004l"
-    
-    if multiline:
-        # 多行消息：使用 bracketed paste 包裹
+    # NOTE: bracketed paste 模式是“程序输出 -> 终端模拟器”的协商；这里是“向程序 stdin 写入”，
+    # 不应发送 \x1b[?2004h/\x1b[?2004l 这类输出控制序列作为输入（会变成脏输入，可能导致 CLI 偶发丢输入/乱序）。
+    bracketed = False
+    try:
+        bracketed = bool(pty_runner.SUPERVISOR.bracketed_paste_enabled(group_id=gid, actor_id=aid))
+    except Exception:
+        bracketed = False
+
+    # 尽量把整段消息当作一次“粘贴”输入（允许包含换行），减少 readline/快捷键干扰。
+    # 仅在目标进程已启用 bracketed paste 时使用 wrapper，否则会变成原始 ESC 序列输入。
+    if bracketed:
         text_payload = b"\x1b[200~" + payload + b"\x1b[201~"
     else:
-        # 单行消息：直接发送
         text_payload = payload
     
-    # 第一步：发送禁用 bracketed paste + 文本内容
-    pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=disable_bracketed_paste + text_payload)
+    # 第一步：发送文本内容
+    pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=text_payload)
     logger.info(f"[pty_submit_text] Sent text payload, scheduling delayed submit")
     
     # 第二步：延迟发送回车（给 CLI 应用时间处理输入）
