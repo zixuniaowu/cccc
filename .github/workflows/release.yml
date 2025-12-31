@@ -49,7 +49,7 @@ jobs:
                   in_project = (line == "[project]")
                   continue
                 if in_project:
-                  m = re.match(r"^version\\s*=\\s*['\\\"]([^'\\\"]+)['\\\"]\\s*(?:#.*)?$", line)
+                  m = re.match(r"^version\s*=\s*['\"]([^'\"]+)['\"]\s*(?:#.*)?$", line)
                   if m:
                     return m.group(1)
             return ""
