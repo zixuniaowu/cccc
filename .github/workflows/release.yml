@@ -36,7 +36,23 @@ jobs:
           import os
           import re
           import sys
-          import tomllib
+
+          def _read_pyproject_version(path: str = "pyproject.toml") -> str:
+            # Keep this check dependency-free and compatible with older Python versions.
+            in_project = False
+            with open(path, "r", encoding="utf-8") as f:
+              for raw in f:
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                  continue
+                if line.startswith("[") and line.endswith("]"):
+                  in_project = (line == "[project]")
+                  continue
+                if in_project:
+                  m = re.match(r"^version\\s*=\\s*['\\\"]([^'\\\"]+)['\\\"]\\s*(?:#.*)?$", line)
+                  if m:
+                    return m.group(1)
+            return ""
 
           tag = os.environ.get("GITHUB_REF_NAME", "")
           if not tag.startswith("v"):
@@ -64,8 +80,7 @@ jobs:
           if expected is None:
             raise SystemExit(f"unsupported tag format: {tag!r}")
 
-          pyproject = tomllib.loads(open("pyproject.toml", "rb").read())
-          version = pyproject.get("project", {}).get("version", "")
+          version = _read_pyproject_version()
           if version != expected:
             raise SystemExit(f"tag/version mismatch: tag={tag!r} -> expected {expected!r}, pyproject.toml has {version!r}")
 
