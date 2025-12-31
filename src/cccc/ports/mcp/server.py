@@ -5,8 +5,10 @@ Core tools exposed to agents:
 
 cccc.* namespace (collaboration control plane):
 - cccc_help: CCCC operational playbook (embedded in tool description)
+- cccc_bootstrap: One-call session bootstrap (group+project+context+inbox)
 - cccc_inbox_list: Get unread messages (supports kind_filter)
 - cccc_inbox_mark_read: Mark messages as read
+- cccc_inbox_mark_all_read: Mark all current unread messages as read
 - cccc_message_send: Send message
 - cccc_message_reply: Reply to message
 - cccc_file_send: Send a local file as an attachment
@@ -45,6 +47,7 @@ All operations go through daemon IPC to ensure single-writer principle.
 from __future__ import annotations
 
 import mimetypes
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -61,6 +64,68 @@ class MCPError(Exception):
         self.code = code
         self.message = message
         self.details = details or {}
+
+
+def _env_str(name: str) -> str:
+    v = os.environ.get(name)
+    return str(v).strip() if v is not None else ""
+
+
+def _resolve_group_id(arguments: Dict[str, Any]) -> str:
+    """Resolve group_id from env or tool arguments (env wins)."""
+    env_gid = _env_str("CCCC_GROUP_ID")
+    arg_gid = str(arguments.get("group_id") or "").strip()
+    gid = env_gid or arg_gid
+    if not gid:
+        raise MCPError(code="missing_group_id", message="missing group_id (set CCCC_GROUP_ID env or pass group_id)")
+    if env_gid and arg_gid and arg_gid != env_gid:
+        raise MCPError(
+            code="group_id_mismatch",
+            message="group_id mismatch (tool args must match CCCC_GROUP_ID)",
+            details={"env": env_gid, "arg": arg_gid},
+        )
+    return gid
+
+
+def _validate_self_actor_id(actor_id: str) -> str:
+    aid = str(actor_id or "").strip()
+    if not aid:
+        raise MCPError(code="missing_actor_id", message="missing actor_id")
+    if aid == "user":
+        raise MCPError(code="invalid_actor_id", message="actor_id 'user' is reserved; agents must not act as user")
+    return aid
+
+
+def _resolve_self_actor_id(arguments: Dict[str, Any]) -> str:
+    """Resolve the caller actor_id from env or tool arguments (env wins)."""
+    env_aid = _env_str("CCCC_ACTOR_ID")
+    arg_aid = str(arguments.get("actor_id") or "").strip()
+    aid = env_aid or arg_aid
+    if not aid:
+        raise MCPError(code="missing_actor_id", message="missing actor_id (set CCCC_ACTOR_ID env or pass actor_id)")
+    if env_aid and arg_aid and arg_aid != env_aid:
+        raise MCPError(
+            code="actor_id_mismatch",
+            message="actor_id mismatch (tool args must match CCCC_ACTOR_ID)",
+            details={"env": env_aid, "arg": arg_aid},
+        )
+    return _validate_self_actor_id(aid)
+
+
+def _resolve_by_actor_id(arguments: Dict[str, Any]) -> str:
+    """Resolve the caller 'by' actor id from env or tool arguments (env wins)."""
+    env_aid = _env_str("CCCC_ACTOR_ID")
+    arg_by = str(arguments.get("by") or "").strip()
+    aid = env_aid or arg_by
+    if not aid:
+        raise MCPError(code="missing_actor_id", message="missing actor id (set CCCC_ACTOR_ID env or pass by)")
+    if env_aid and arg_by and arg_by != env_aid:
+        raise MCPError(
+            code="actor_id_mismatch",
+            message="by mismatch (tool args must match CCCC_ACTOR_ID)",
+            details={"env": env_aid, "arg": arg_by},
+        )
+    return _validate_self_actor_id(aid)
 
 
 def _call_daemon_or_raise(req: Dict[str, Any]) -> Dict[str, Any]:
@@ -124,6 +189,52 @@ def inbox_mark_read(*, group_id: str, actor_id: str, event_id: str) -> Dict[str,
         "op": "inbox_mark_read",
         "args": {"group_id": group_id, "actor_id": actor_id, "event_id": event_id, "by": actor_id},
     })
+
+
+def inbox_mark_all_read(*, group_id: str, actor_id: str, kind_filter: str = "all") -> Dict[str, Any]:
+    """Mark all currently-unread messages as read (safe: only up to current latest unread)."""
+    return _call_daemon_or_raise({
+        "op": "inbox_mark_all_read",
+        "args": {"group_id": group_id, "actor_id": actor_id, "kind_filter": kind_filter, "by": actor_id},
+    })
+
+
+def bootstrap(*, group_id: str, actor_id: str, inbox_limit: int = 50, inbox_kind_filter: str = "all") -> Dict[str, Any]:
+    """One-call session bootstrap for agents.
+
+    Returns:
+    - group: group metadata
+    - actors: actor list (roles + runtime)
+    - project: PROJECT.md info
+    - context: group context
+    - inbox: unread messages
+    """
+    gi = group_info(group_id=group_id)
+    group = gi.get("group") if isinstance(gi, dict) else None
+
+    al = actor_list(group_id=group_id)
+    actors = al.get("actors") if isinstance(al, dict) else None
+
+    project = project_info(group_id=group_id)
+    context = context_get(group_id=group_id)
+    inbox = inbox_list(group_id=group_id, actor_id=actor_id, limit=int(inbox_limit or 50), kind_filter=inbox_kind_filter)
+
+    last_event_id = ""
+    try:
+        msgs = inbox.get("messages") if isinstance(inbox, dict) else None
+        if isinstance(msgs, list) and msgs:
+            last_event_id = str((msgs[-1] if isinstance(msgs[-1], dict) else {}).get("id") or "").strip()
+    except Exception:
+        last_event_id = ""
+
+    return {
+        "group": group,
+        "actors": actors,
+        "project": project,
+        "context": context,
+        "inbox": inbox,
+        "suggested_mark_read_event_id": last_event_id,
+    }
 
 
 # =============================================================================
@@ -226,15 +337,69 @@ def file_send(
 # Group/Actor Info Tools
 # =============================================================================
 
+def _sanitize_group_doc_for_agent(doc: Any) -> Dict[str, Any]:
+    """Return a minimal, non-secret group view for agents.
+
+    This intentionally excludes sensitive fields such as IM tokens and actor env.
+    """
+    if not isinstance(doc, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for k in ("group_id", "title", "topic", "created_at", "updated_at", "running", "state", "active_scope_key"):
+        if k in doc:
+            out[k] = doc.get(k)
+    scopes = doc.get("scopes")
+    if isinstance(scopes, list):
+        safe_scopes: list[dict[str, Any]] = []
+        for sc in scopes:
+            if not isinstance(sc, dict):
+                continue
+            safe_scopes.append({
+                "scope_key": sc.get("scope_key"),
+                "url": sc.get("url"),
+                "label": sc.get("label"),
+                "git_remote": sc.get("git_remote"),
+            })
+        out["scopes"] = safe_scopes
+    return out
+
+
+def _sanitize_actors_for_agent(raw: Any) -> List[Dict[str, Any]]:
+    """Return a minimal actor view for agents (no env/command)."""
+    if not isinstance(raw, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for a in raw:
+        if not isinstance(a, dict):
+            continue
+        out.append({
+            "id": a.get("id"),
+            "role": a.get("role"),
+            "title": a.get("title"),
+            "enabled": a.get("enabled"),
+            "running": a.get("running"),
+            "runner": a.get("runner"),
+            "runtime": a.get("runtime"),
+            "submit": a.get("submit"),
+            "unread_count": a.get("unread_count"),
+            "updated_at": a.get("updated_at"),
+            "created_at": a.get("created_at"),
+        })
+    return out
+
 
 def group_info(*, group_id: str) -> Dict[str, Any]:
     """Get group information"""
-    return _call_daemon_or_raise({"op": "group_show", "args": {"group_id": group_id}})
+    res = _call_daemon_or_raise({"op": "group_show", "args": {"group_id": group_id}})
+    doc = res.get("group") if isinstance(res, dict) else None
+    return {"group": _sanitize_group_doc_for_agent(doc)}
 
 
 def actor_list(*, group_id: str) -> Dict[str, Any]:
     """Get actor list"""
-    return _call_daemon_or_raise({"op": "actor_list", "args": {"group_id": group_id}})
+    res = _call_daemon_or_raise({"op": "actor_list", "args": {"group_id": group_id, "include_unread": True}})
+    actors = res.get("actors") if isinstance(res, dict) else None
+    return {"actors": _sanitize_actors_for_agent(actors)}
 
 
 def actor_add(
@@ -628,121 +793,163 @@ MCP_TOOLS = [
         "description": _CCCC_HELP_DESCRIPTION,
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     },
+	    {
+	        "name": "cccc_bootstrap",
+        "description": (
+            "One-call session bootstrap. Use at session start to reduce tool calls.\n\n"
+            "Returns: group info + actor list + PROJECT.md + context + your unread inbox.\n"
+            "Also returns suggested_mark_read_event_id (use with cccc_inbox_mark_read)."
+        ),
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "inbox_limit": {"type": "integer", "description": "Max unread messages to return (default 50)", "default": 50},
+	                "inbox_kind_filter": {
+	                    "type": "string",
+	                    "enum": ["all", "chat", "notify"],
+	                    "description": "Unread message filter",
+	                    "default": "all",
+	                },
+	            },
+	            "required": [],
+	        },
+	    },
     {
         "name": "cccc_inbox_list",
         "description": "Get your unread messages. Returns messages in chronological order. Supports filtering by type.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID"},
-                "limit": {"type": "integer", "description": "Max messages to return (default 50)", "default": 50},
-                "kind_filter": {
-                    "type": "string",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "limit": {"type": "integer", "description": "Max messages to return (default 50)", "default": 50},
+	                "kind_filter": {
+	                    "type": "string",
                     "enum": ["all", "chat", "notify"],
                     "description": "Filter by type: all=everything, chat=messages only, notify=system notifications only",
                     "default": "all",
-                },
-            },
-            "required": ["group_id", "actor_id"],
-        },
-    },
+	                },
+	            },
+	            "required": [],
+	        },
+	    },
     {
         "name": "cccc_inbox_mark_read",
         "description": "Mark messages as read up to specified event (inclusive). Call after processing messages.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID"},
-                "event_id": {"type": "string", "description": "Event ID to mark as read up to"},
-            },
-            "required": ["group_id", "actor_id", "event_id"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "event_id": {"type": "string", "description": "Event ID to mark as read up to"},
+	            },
+	            "required": ["event_id"],
+	        },
+	    },
+    {
+        "name": "cccc_inbox_mark_all_read",
+        "description": "Mark all currently-unread messages as read (safe: only up to current latest unread).",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "kind_filter": {
+	                    "type": "string",
+	                    "enum": ["all", "chat", "notify"],
+                    "description": "Unread filter to clear (default all)",
+	                    "default": "all",
+	                },
+	            },
+	            "required": [],
+	        },
+	    },
     {
         "name": "cccc_message_send",
         "description": "Send a message to other actors or user.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID (sender)"},
-                "text": {"type": "string", "description": "Message content"},
-                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients. Options: user, @all, @peers, @foreman, or specific actor_id. Empty=broadcast."},
-            },
-            "required": ["group_id", "actor_id", "text"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (sender, optional if CCCC_ACTOR_ID is set)"},
+	                "text": {"type": "string", "description": "Message content"},
+	                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients. Options: user, @all, @peers, @foreman, or specific actor_id. Empty=broadcast."},
+	            },
+	            "required": ["text"],
+	        },
+	    },
     {
         "name": "cccc_message_reply",
         "description": "Reply to a message. Automatically quotes the original message.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID (sender)"},
-                "reply_to": {"type": "string", "description": "Event ID of message to reply to"},
-                "text": {"type": "string", "description": "Reply content"},
-                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (optional, defaults to original sender)"},
-            },
-            "required": ["group_id", "actor_id", "reply_to", "text"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (sender, optional if CCCC_ACTOR_ID is set)"},
+	                "event_id": {"type": "string", "description": "Event ID of message to reply to"},
+	                "reply_to": {"type": "string", "description": "Deprecated alias for event_id"},
+	                "text": {"type": "string", "description": "Reply content"},
+	                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (optional, defaults to original sender)"},
+	            },
+	            "required": ["event_id", "text"],
+	        },
+	    },
     {
         "name": "cccc_file_send",
         "description": "Send a local file (under the group's active scope root) as a chat attachment.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID (sender)"},
-                "path": {"type": "string", "description": "File path (relative to active scope root, or absolute under it)"},
-                "text": {"type": "string", "description": "Optional message text (caption)"},
-                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (same as cccc_message_send)"},
-            },
-            "required": ["group_id", "actor_id", "path"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (sender, optional if CCCC_ACTOR_ID is set)"},
+	                "path": {"type": "string", "description": "File path (relative to active scope root, or absolute under it)"},
+	                "text": {"type": "string", "description": "Optional message text (caption)"},
+	                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (same as cccc_message_send)"},
+	            },
+	            "required": ["path"],
+	        },
+	    },
     {
         "name": "cccc_blob_path",
         "description": "Resolve an attachment blob path (e.g. state/blobs/<sha>_<name>) to an absolute filesystem path.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "rel_path": {"type": "string", "description": "Relative attachment path from events (state/blobs/...)"},
-            },
-            "required": ["group_id", "rel_path"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "rel_path": {"type": "string", "description": "Relative attachment path from events (state/blobs/...)"},
+	            },
+	            "required": ["rel_path"],
+	        },
+	    },
     {
         "name": "cccc_group_info",
         "description": "Get working group information (title, scopes, actors, etc.).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"group_id": {"type": "string", "description": "Working group ID"}},
-            "required": ["group_id"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {"group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"}},
+	            "required": [],
+	        },
+	    },
     {
         "name": "cccc_actor_list",
         "description": "Get list of all actors in the group.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"group_id": {"type": "string", "description": "Working group ID"}},
-            "required": ["group_id"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {"group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"}},
+	            "required": [],
+	        },
+	    },
     {
         "name": "cccc_actor_add",
         "description": "Add a new actor to the group. Only foreman can add actors. Role is auto-determined: first enabled actor = foreman, rest = peer. Use cccc_runtime_list first to see available runtimes.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "by": {"type": "string", "description": "Your actor ID (must be foreman)"},
-                "actor_id": {"type": "string", "description": "New actor ID (e.g. peer-impl, peer-test)"},
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "by": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "actor_id": {"type": "string", "description": "New actor ID (e.g. peer-impl, peer-test)"},
                 "runtime": {
                     "type": "string",
                     "enum": [
@@ -770,63 +977,63 @@ MCP_TOOLS = [
                 },
                 "title": {"type": "string", "description": "Display title (optional)"},
                 "command": {"type": "array", "items": {"type": "string"}, "description": "Command (optional, auto-set by runtime)"},
-                "env": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Environment variables"},
-            },
-            "required": ["group_id", "by", "actor_id"],
-        },
-    },
+	                "env": {"type": "object", "additionalProperties": {"type": "string"}, "description": "Environment variables"},
+	            },
+	            "required": ["actor_id"],
+	        },
+	    },
     {
         "name": "cccc_actor_remove",
         "description": "Remove an actor from the group. Foreman and peer can only remove themselves. To remove a peer: tell them to finish up and call this on themselves.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "by": {"type": "string", "description": "Your actor ID"},
-                "actor_id": {"type": "string", "description": "Actor ID to remove (must be yourself)"},
-            },
-            "required": ["group_id", "by", "actor_id"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "by": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Actor ID to remove (optional; defaults to yourself)"},
+	            },
+	            "required": [],
+	        },
+	    },
     {
         "name": "cccc_actor_start",
         "description": "Start an actor (set enabled=true). Only foreman can start actors.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "by": {"type": "string", "description": "Your actor ID (must be foreman)"},
-                "actor_id": {"type": "string", "description": "Actor ID to start"},
-            },
-            "required": ["group_id", "by", "actor_id"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "by": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Actor ID to start"},
+	            },
+	            "required": ["actor_id"],
+	        },
+	    },
     {
         "name": "cccc_actor_stop",
         "description": "Stop an actor (set enabled=false). Foreman can stop any actor; peer can only stop themselves.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "by": {"type": "string", "description": "Your actor ID"},
-                "actor_id": {"type": "string", "description": "Actor ID to stop"},
-            },
-            "required": ["group_id", "by", "actor_id"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "by": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Actor ID to stop"},
+	            },
+	            "required": ["actor_id"],
+	        },
+	    },
     {
         "name": "cccc_actor_restart",
         "description": "Restart an actor (stop + start, clears context). Foreman can restart any actor; peer can only restart themselves. Useful when context is too long or state is confused.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "by": {"type": "string", "description": "Your actor ID"},
-                "actor_id": {"type": "string", "description": "Actor ID to restart"},
-            },
-            "required": ["group_id", "by", "actor_id"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "by": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Actor ID to restart"},
+	            },
+	            "required": ["actor_id"],
+	        },
+	    },
     {
         "name": "cccc_runtime_list",
         "description": "List available agent runtimes on the system. Call before cccc_actor_add to see which runtimes can be used.",
@@ -839,364 +1046,364 @@ MCP_TOOLS = [
     {
         "name": "cccc_group_set_state",
         "description": "Set group state to control automation behavior. States: active (normal operation), idle (task complete, automation disabled), paused (user paused). Foreman should set to 'idle' when task is complete.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "by": {"type": "string", "description": "Your actor ID"},
-                "state": {
-                    "type": "string",
-                    "enum": ["active", "idle", "paused"],
-                    "description": "New state: active (work in progress), idle (task complete), paused (user paused)",
-                },
-            },
-            "required": ["group_id", "by", "state"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "by": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "state": {
+	                    "type": "string",
+	                    "enum": ["active", "idle", "paused"],
+	                    "description": "New state: active (work in progress), idle (task complete), paused (user paused)",
+	                },
+	            },
+	            "required": ["state"],
+	        },
+	    },
     {
         "name": "cccc_project_info",
         "description": "Get PROJECT.md content from the group's active scope. Use this to understand project goals, constraints, and context. Call at session start or when you need to align with project vision.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"group_id": {"type": "string", "description": "Working group ID"}},
-            "required": ["group_id"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {"group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"}},
+	            "required": [],
+	        },
+	    },
     # context.* namespace - state sync
     {
         "name": "cccc_context_get",
         "description": "Get full group context (vision/sketch/milestones/tasks/notes/references/presence). Call at session start.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"group_id": {"type": "string", "description": "Working group ID"}},
-            "required": ["group_id"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {"group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"}},
+	            "required": [],
+	        },
+	    },
     {
         "name": "cccc_context_sync",
         "description": "Batch sync context operations. Supported ops: vision.update, sketch.update, milestone.*, task.*, note.*, reference.*, presence.*",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "ops": {"type": "array", "items": {"type": "object"}, "description": "List of operations, each is {op: string, ...params}"},
-                "dry_run": {"type": "boolean", "description": "Validate only without executing", "default": False},
-            },
-            "required": ["group_id", "ops"],
-        },
-    },
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "ops": {"type": "array", "items": {"type": "object"}, "description": "List of operations, each is {op: string, ...params}"},
+	                "dry_run": {"type": "boolean", "description": "Validate only without executing", "default": False},
+	            },
+	            "required": ["ops"],
+	        },
+	    },
     {
         "name": "cccc_vision_update",
         "description": "Update project vision (one-sentence north star goal).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "vision": {"type": "string", "description": "Project vision"},
-            },
-            "required": ["group_id", "vision"],
-        },
-    },
-    {
-        "name": "cccc_sketch_update",
-        "description": "Update execution sketch (static architecture/strategy, no TODOs/progress).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "sketch": {"type": "string", "description": "Execution sketch (markdown)"},
-            },
-            "required": ["group_id", "sketch"],
-        },
-    },
-    {
-        "name": "cccc_milestone_create",
-        "description": "Create a milestone (coarse-grained phase, 2-6 total).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "name": {"type": "string", "description": "Milestone name"},
-                "description": {"type": "string", "description": "Detailed description"},
-                "status": {"type": "string", "enum": ["pending", "active", "done"], "description": "Status (default pending)", "default": "pending"},
-            },
-            "required": ["group_id", "name", "description"],
-        },
-    },
-    {
-        "name": "cccc_milestone_update",
-        "description": "Update a milestone.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "milestone_id": {"type": "string", "description": "Milestone ID (M1, M2...)"},
-                "name": {"type": "string", "description": "New name"},
-                "description": {"type": "string", "description": "New description"},
-                "status": {"type": "string", "enum": ["pending", "active", "done"], "description": "New status"},
-            },
-            "required": ["group_id", "milestone_id"],
-        },
-    },
-    {
-        "name": "cccc_milestone_complete",
-        "description": "Complete a milestone and record outcomes.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "milestone_id": {"type": "string", "description": "Milestone ID"},
-                "outcomes": {"type": "string", "description": "Outcomes summary"},
-            },
-            "required": ["group_id", "milestone_id", "outcomes"],
-        },
-    },
-    {
-        "name": "cccc_milestone_remove",
-        "description": "Remove a milestone.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "milestone_id": {"type": "string", "description": "Milestone ID"},
-            },
-            "required": ["group_id", "milestone_id"],
-        },
-    },
-    {
-        "name": "cccc_task_list",
-        "description": "List all tasks or get single task details.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "task_id": {"type": "string", "description": "Task ID (optional, omit to list all)"},
-            },
-            "required": ["group_id"],
-        },
-    },
-    {
-        "name": "cccc_task_create",
-        "description": "Create a task (deliverable work item with 3-7 steps).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "name": {"type": "string", "description": "Task name"},
-                "goal": {"type": "string", "description": "Completion criteria"},
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "vision": {"type": "string", "description": "Project vision"},
+	            },
+	            "required": ["vision"],
+	        },
+	    },
+	    {
+	        "name": "cccc_sketch_update",
+	        "description": "Update execution sketch (static architecture/strategy, no TODOs/progress).",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "sketch": {"type": "string", "description": "Execution sketch (markdown)"},
+	            },
+	            "required": ["sketch"],
+	        },
+	    },
+	    {
+	        "name": "cccc_milestone_create",
+	        "description": "Create a milestone (coarse-grained phase, 2-6 total).",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "name": {"type": "string", "description": "Milestone name"},
+	                "description": {"type": "string", "description": "Detailed description"},
+	                "status": {"type": "string", "enum": ["pending", "active", "done"], "description": "Status (default pending)", "default": "pending"},
+	            },
+	            "required": ["name", "description"],
+	        },
+	    },
+	    {
+	        "name": "cccc_milestone_update",
+	        "description": "Update a milestone.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "milestone_id": {"type": "string", "description": "Milestone ID (M1, M2...)"},
+	                "name": {"type": "string", "description": "New name"},
+	                "description": {"type": "string", "description": "New description"},
+	                "status": {"type": "string", "enum": ["pending", "active", "done"], "description": "New status"},
+	            },
+	            "required": ["milestone_id"],
+	        },
+	    },
+	    {
+	        "name": "cccc_milestone_complete",
+	        "description": "Complete a milestone and record outcomes.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "milestone_id": {"type": "string", "description": "Milestone ID"},
+	                "outcomes": {"type": "string", "description": "Outcomes summary"},
+	            },
+	            "required": ["milestone_id", "outcomes"],
+	        },
+	    },
+	    {
+	        "name": "cccc_milestone_remove",
+	        "description": "Remove a milestone.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "milestone_id": {"type": "string", "description": "Milestone ID"},
+	            },
+	            "required": ["milestone_id"],
+	        },
+	    },
+	    {
+	        "name": "cccc_task_list",
+	        "description": "List all tasks or get single task details.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "task_id": {"type": "string", "description": "Task ID (optional, omit to list all)"},
+	            },
+	            "required": [],
+	        },
+	    },
+	    {
+	        "name": "cccc_task_create",
+	        "description": "Create a task (deliverable work item with 3-7 steps).",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "name": {"type": "string", "description": "Task name"},
+	                "goal": {"type": "string", "description": "Completion criteria"},
                 "steps": {
                     "type": "array",
                     "items": {"type": "object", "properties": {"name": {"type": "string"}, "acceptance": {"type": "string"}}, "required": ["name", "acceptance"]},
                     "description": "Step list (3-7 steps)",
                 },
-                "milestone_id": {"type": "string", "description": "Associated milestone ID"},
-                "assignee": {"type": "string", "description": "Assignee actor ID"},
-            },
-            "required": ["group_id", "name", "goal", "steps"],
-        },
-    },
-    {
-        "name": "cccc_task_update",
-        "description": "Update task status or step progress.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "task_id": {"type": "string", "description": "Task ID (T001, T002...)"},
+	                "milestone_id": {"type": "string", "description": "Associated milestone ID"},
+	                "assignee": {"type": "string", "description": "Assignee actor ID"},
+	            },
+	            "required": ["name", "goal", "steps"],
+	        },
+	    },
+	    {
+	        "name": "cccc_task_update",
+	        "description": "Update task status or step progress.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "task_id": {"type": "string", "description": "Task ID (T001, T002...)"},
                 "status": {"type": "string", "enum": ["planned", "active", "done"], "description": "Task status"},
                 "name": {"type": "string", "description": "New name"},
                 "goal": {"type": "string", "description": "New completion criteria"},
                 "assignee": {"type": "string", "description": "New assignee"},
                 "milestone_id": {"type": "string", "description": "New associated milestone"},
                 "step_id": {"type": "string", "description": "Step ID to update (S1, S2...)"},
-                "step_status": {"type": "string", "enum": ["pending", "in_progress", "done"], "description": "New step status"},
-            },
-            "required": ["group_id", "task_id"],
-        },
-    },
-    {
-        "name": "cccc_task_delete",
-        "description": "Delete a task.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "task_id": {"type": "string", "description": "Task ID"},
-            },
-            "required": ["group_id", "task_id"],
-        },
-    },
-    {
-        "name": "cccc_note_add",
-        "description": "Add a note (lessons, discoveries, warnings). TTL controls retention.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "content": {"type": "string", "description": "Note content"},
-                "ttl": {"type": "integer", "description": "TTL rounds (10=short, 30=normal, 100=long)", "default": 30, "minimum": 10, "maximum": 100},
-            },
-            "required": ["group_id", "content"],
-        },
-    },
-    {
-        "name": "cccc_note_update",
-        "description": "Update note content or TTL.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "note_id": {"type": "string", "description": "Note ID (N001, N002...)"},
-                "content": {"type": "string", "description": "New content"},
-                "ttl": {"type": "integer", "description": "New TTL", "minimum": 0, "maximum": 100},
-            },
-            "required": ["group_id", "note_id"],
-        },
-    },
-    {
-        "name": "cccc_note_remove",
-        "description": "Remove a note.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "note_id": {"type": "string", "description": "Note ID"},
-            },
-            "required": ["group_id", "note_id"],
-        },
-    },
-    {
-        "name": "cccc_reference_add",
-        "description": "Add a reference (useful file/URL). TTL controls retention.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "url": {"type": "string", "description": "File path or URL"},
-                "note": {"type": "string", "description": "Why this is useful"},
-                "ttl": {"type": "integer", "description": "TTL rounds (10=short, 30=normal, 100=long)", "default": 30, "minimum": 10, "maximum": 100},
-            },
-            "required": ["group_id", "url", "note"],
-        },
-    },
-    {
-        "name": "cccc_reference_update",
-        "description": "Update a reference.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "reference_id": {"type": "string", "description": "Reference ID (R001, R002...)"},
-                "url": {"type": "string", "description": "New URL"},
-                "note": {"type": "string", "description": "New note"},
-                "ttl": {"type": "integer", "description": "New TTL", "minimum": 0, "maximum": 100},
-            },
-            "required": ["group_id", "reference_id"],
-        },
-    },
-    {
-        "name": "cccc_reference_remove",
-        "description": "Remove a reference.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "reference_id": {"type": "string", "description": "Reference ID"},
-            },
-            "required": ["group_id", "reference_id"],
-        },
-    },
-    {
-        "name": "cccc_presence_get",
-        "description": "Get presence status of all agents.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {"group_id": {"type": "string", "description": "Working group ID"}},
-            "required": ["group_id"],
-        },
-    },
-    {
-        "name": "cccc_presence_update",
-        "description": "Update your presence status (what you're doing/thinking).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "agent_id": {"type": "string", "description": "Your agent ID"},
-                "status": {"type": "string", "description": "Status description (1-2 sentences)"},
-            },
-            "required": ["group_id", "agent_id", "status"],
-        },
-    },
-    {
-        "name": "cccc_presence_clear",
-        "description": "Clear your presence status.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "agent_id": {"type": "string", "description": "Your agent ID"},
-            },
-            "required": ["group_id", "agent_id"],
-        },
-    },
+	                "step_status": {"type": "string", "enum": ["pending", "in_progress", "done"], "description": "New step status"},
+	            },
+	            "required": ["task_id"],
+	        },
+	    },
+	    {
+	        "name": "cccc_task_delete",
+	        "description": "Delete a task.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "task_id": {"type": "string", "description": "Task ID"},
+	            },
+	            "required": ["task_id"],
+	        },
+	    },
+	    {
+	        "name": "cccc_note_add",
+	        "description": "Add a note (lessons, discoveries, warnings). TTL controls retention.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "content": {"type": "string", "description": "Note content"},
+	                "ttl": {"type": "integer", "description": "TTL rounds (10=short, 30=normal, 100=long)", "default": 30, "minimum": 10, "maximum": 100},
+	            },
+	            "required": ["content"],
+	        },
+	    },
+	    {
+	        "name": "cccc_note_update",
+	        "description": "Update note content or TTL.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "note_id": {"type": "string", "description": "Note ID (N001, N002...)"},
+	                "content": {"type": "string", "description": "New content"},
+	                "ttl": {"type": "integer", "description": "New TTL", "minimum": 0, "maximum": 100},
+	            },
+	            "required": ["note_id"],
+	        },
+	    },
+	    {
+	        "name": "cccc_note_remove",
+	        "description": "Remove a note.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "note_id": {"type": "string", "description": "Note ID"},
+	            },
+	            "required": ["note_id"],
+	        },
+	    },
+	    {
+	        "name": "cccc_reference_add",
+	        "description": "Add a reference (useful file/URL). TTL controls retention.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "url": {"type": "string", "description": "File path or URL"},
+	                "note": {"type": "string", "description": "Why this is useful"},
+	                "ttl": {"type": "integer", "description": "TTL rounds (10=short, 30=normal, 100=long)", "default": 30, "minimum": 10, "maximum": 100},
+	            },
+	            "required": ["url", "note"],
+	        },
+	    },
+	    {
+	        "name": "cccc_reference_update",
+	        "description": "Update a reference.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "reference_id": {"type": "string", "description": "Reference ID (R001, R002...)"},
+	                "url": {"type": "string", "description": "New URL"},
+	                "note": {"type": "string", "description": "New note"},
+	                "ttl": {"type": "integer", "description": "New TTL", "minimum": 0, "maximum": 100},
+	            },
+	            "required": ["reference_id"],
+	        },
+	    },
+	    {
+	        "name": "cccc_reference_remove",
+	        "description": "Remove a reference.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "reference_id": {"type": "string", "description": "Reference ID"},
+	            },
+	            "required": ["reference_id"],
+	        },
+	    },
+	    {
+	        "name": "cccc_presence_get",
+	        "description": "Get presence status of all agents.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {"group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"}},
+	            "required": [],
+	        },
+	    },
+	    {
+	        "name": "cccc_presence_update",
+	        "description": "Update your presence status (what you're doing/thinking).",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "agent_id": {"type": "string", "description": "Your agent ID (optional; defaults to yourself)"},
+	                "status": {"type": "string", "description": "Status description (1-2 sentences)"},
+	            },
+	            "required": ["status"],
+	        },
+	    },
+	    {
+	        "name": "cccc_presence_clear",
+	        "description": "Clear your presence status.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "agent_id": {"type": "string", "description": "Your agent ID (optional; defaults to yourself)"},
+	            },
+	            "required": [],
+	        },
+	    },
     # headless.* namespace - headless runner control (for MCP-driven agents)
-    {
-        "name": "cccc_headless_status",
-        "description": "Get headless session status. Only for runner=headless actors.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID"},
-            },
-            "required": ["group_id", "actor_id"],
-        },
-    },
-    {
-        "name": "cccc_headless_set_status",
-        "description": "Update headless session status. Report your current work state.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID"},
-                "status": {
-                    "type": "string",
-                    "enum": ["idle", "working", "waiting", "stopped"],
-                    "description": "Status: idle=waiting for tasks, working=executing, waiting=blocked on decision, stopped=terminated",
-                },
-                "task_id": {"type": "string", "description": "Current task ID (optional)"},
-            },
-            "required": ["group_id", "actor_id", "status"],
-        },
-    },
-    {
-        "name": "cccc_headless_ack_message",
-        "description": "Acknowledge a processed message. For headless loop message confirmation.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID"},
-                "message_id": {"type": "string", "description": "Processed message event_id"},
-            },
-            "required": ["group_id", "actor_id", "message_id"],
-        },
-    },
+	    {
+	        "name": "cccc_headless_status",
+	        "description": "Get headless session status. Only for runner=headless actors.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	            },
+	            "required": [],
+	        },
+	    },
+	    {
+	        "name": "cccc_headless_set_status",
+	        "description": "Update headless session status. Report your current work state.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "status": {
+	                    "type": "string",
+	                    "enum": ["idle", "working", "waiting", "stopped"],
+	                    "description": "Status: idle=waiting for tasks, working=executing, waiting=blocked on decision, stopped=terminated",
+	                },
+	                "task_id": {"type": "string", "description": "Current task ID (optional)"},
+	            },
+	            "required": ["status"],
+	        },
+	    },
+	    {
+	        "name": "cccc_headless_ack_message",
+	        "description": "Acknowledge a processed message. For headless loop message confirmation.",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "message_id": {"type": "string", "description": "Processed message event_id"},
+	            },
+	            "required": ["message_id"],
+	        },
+	    },
     # notify.* namespace - system notifications
-    {
-        "name": "cccc_notify_send",
-        "description": "Send system notification (for system-level agent communication, won't pollute chat log).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID (sender)"},
-                "kind": {
-                    "type": "string",
-                    "enum": ["nudge", "keepalive", "actor_idle", "silence_check", "status_change", "error", "info"],
-                    "description": "Notification type",
+	    {
+	        "name": "cccc_notify_send",
+	        "description": "Send system notification (for system-level agent communication, won't pollute chat log).",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (sender, optional if CCCC_ACTOR_ID is set)"},
+	                "kind": {
+	                    "type": "string",
+	                    "enum": ["nudge", "keepalive", "actor_idle", "silence_check", "status_change", "error", "info"],
+	                    "description": "Notification type",
                 },
                 "title": {"type": "string", "description": "Notification title"},
                 "message": {"type": "string", "description": "Notification content"},
@@ -1206,25 +1413,25 @@ MCP_TOOLS = [
                     "enum": ["low", "normal", "high", "urgent"],
                     "description": "Priority (high/urgent delivered directly to PTY)",
                     "default": "normal",
-                },
-                "requires_ack": {"type": "boolean", "description": "Whether acknowledgment is required", "default": False},
-            },
-            "required": ["group_id", "actor_id", "kind", "title", "message"],
-        },
-    },
-    {
-        "name": "cccc_notify_ack",
-        "description": "Acknowledge system notification (only when requires_ack=true).",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "group_id": {"type": "string", "description": "Working group ID"},
-                "actor_id": {"type": "string", "description": "Your actor ID"},
-                "notify_event_id": {"type": "string", "description": "Notification event_id to acknowledge"},
-            },
-            "required": ["group_id", "actor_id", "notify_event_id"],
-        },
-    },
+	                },
+	                "requires_ack": {"type": "boolean", "description": "Whether acknowledgment is required", "default": False},
+	            },
+	            "required": ["kind", "title", "message"],
+	        },
+	    },
+	    {
+	        "name": "cccc_notify_ack",
+	        "description": "Acknowledge system notification (only when requires_ack=true).",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "notify_event_id": {"type": "string", "description": "Notification event_id to acknowledge"},
+	            },
+	            "required": ["notify_event_id"],
+	        },
+	    },
 ]
 
 
@@ -1244,67 +1451,102 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     if name == "cccc_inbox_list":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         return inbox_list(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            actor_id=aid,
             limit=int(arguments.get("limit") or 50),
             kind_filter=str(arguments.get("kind_filter") or "all"),
         )
 
+    if name == "cccc_bootstrap":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return bootstrap(
+            group_id=gid,
+            actor_id=aid,
+            inbox_limit=int(arguments.get("inbox_limit") or 50),
+            inbox_kind_filter=str(arguments.get("inbox_kind_filter") or "all"),
+        )
+
     if name == "cccc_inbox_mark_read":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         return inbox_mark_read(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            actor_id=aid,
             event_id=str(arguments.get("event_id") or ""),
         )
 
+    if name == "cccc_inbox_mark_all_read":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return inbox_mark_all_read(
+            group_id=gid,
+            actor_id=aid,
+            kind_filter=str(arguments.get("kind_filter") or "all"),
+        )
+
     if name == "cccc_message_send":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
         return message_send(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            actor_id=aid,
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else [],
         )
 
     if name == "cccc_message_reply":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
+        reply_to = str(arguments.get("event_id") or arguments.get("reply_to") or "").strip()
         return message_reply(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
-            reply_to=str(arguments.get("reply_to") or ""),
+            group_id=gid,
+            actor_id=aid,
+            reply_to=reply_to,
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else None,
         )
 
     if name == "cccc_file_send":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         to_raw = arguments.get("to")
         return file_send(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            actor_id=aid,
             path=str(arguments.get("path") or ""),
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else [],
         )
 
     if name == "cccc_blob_path":
+        gid = _resolve_group_id(arguments)
         return blob_path(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             rel_path=str(arguments.get("rel_path") or ""),
         )
 
     if name == "cccc_group_info":
-        return group_info(group_id=str(arguments.get("group_id") or ""))
+        gid = _resolve_group_id(arguments)
+        return group_info(group_id=gid)
 
     if name == "cccc_actor_list":
-        return actor_list(group_id=str(arguments.get("group_id") or ""))
+        gid = _resolve_group_id(arguments)
+        return actor_list(group_id=gid)
 
     if name == "cccc_actor_add":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_by_actor_id(arguments)
         cmd_raw = arguments.get("command")
         env_raw = arguments.get("env")
         return actor_add(
-            group_id=str(arguments.get("group_id") or ""),
-            by=str(arguments.get("by") or ""),
+            group_id=gid,
+            by=by,
             actor_id=str(arguments.get("actor_id") or ""),
             # Note: role is auto-determined by position
             runtime=str(arguments.get("runtime") or "codex"),
@@ -1315,30 +1557,39 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if name == "cccc_actor_remove":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_by_actor_id(arguments)
+        target = str(arguments.get("actor_id") or "").strip() or by
         return actor_remove(
-            group_id=str(arguments.get("group_id") or ""),
-            by=str(arguments.get("by") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            by=by,
+            actor_id=target,
         )
 
     if name == "cccc_actor_start":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_by_actor_id(arguments)
         return actor_start(
-            group_id=str(arguments.get("group_id") or ""),
-            by=str(arguments.get("by") or ""),
+            group_id=gid,
+            by=by,
             actor_id=str(arguments.get("actor_id") or ""),
         )
 
     if name == "cccc_actor_stop":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_by_actor_id(arguments)
         return actor_stop(
-            group_id=str(arguments.get("group_id") or ""),
-            by=str(arguments.get("by") or ""),
+            group_id=gid,
+            by=by,
             actor_id=str(arguments.get("actor_id") or ""),
         )
 
     if name == "cccc_actor_restart":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_by_actor_id(arguments)
         return actor_restart(
-            group_id=str(arguments.get("group_id") or ""),
-            by=str(arguments.get("by") or ""),
+            group_id=gid,
+            by=by,
             actor_id=str(arguments.get("actor_id") or ""),
         )
 
@@ -1346,50 +1597,59 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return runtime_list()
 
     if name == "cccc_group_set_state":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_by_actor_id(arguments)
         return group_set_state(
-            group_id=str(arguments.get("group_id") or ""),
-            by=str(arguments.get("by") or ""),
+            group_id=gid,
+            by=by,
             state=str(arguments.get("state") or ""),
         )
 
     if name == "cccc_project_info":
-        return project_info(group_id=str(arguments.get("group_id") or ""))
+        gid = _resolve_group_id(arguments)
+        return project_info(group_id=gid)
 
     # context.* namespace
     if name == "cccc_context_get":
-        return context_get(group_id=str(arguments.get("group_id") or ""))
+        gid = _resolve_group_id(arguments)
+        return context_get(group_id=gid)
 
     if name == "cccc_context_sync":
+        gid = _resolve_group_id(arguments)
         ops_raw = arguments.get("ops")
         return context_sync(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             ops=list(ops_raw) if isinstance(ops_raw, list) else [],
             dry_run=bool(arguments.get("dry_run")),
         )
 
     if name == "cccc_vision_update":
+        gid = _resolve_group_id(arguments)
         return vision_update(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             vision=str(arguments.get("vision") or ""),
         )
 
     if name == "cccc_sketch_update":
+        gid = _resolve_group_id(arguments)
         return sketch_update(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             sketch=str(arguments.get("sketch") or ""),
         )
 
     if name == "cccc_milestone_create":
+        gid = _resolve_group_id(arguments)
         return milestone_create(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             name=str(arguments.get("name") or ""),
             description=str(arguments.get("description") or ""),
             status=str(arguments.get("status") or "pending"),
         )
 
     if name == "cccc_milestone_update":
+        gid = _resolve_group_id(arguments)
         return milestone_update(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             milestone_id=str(arguments.get("milestone_id") or ""),
             name=arguments.get("name"),
             description=arguments.get("description"),
@@ -1397,28 +1657,32 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if name == "cccc_milestone_complete":
+        gid = _resolve_group_id(arguments)
         return milestone_complete(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             milestone_id=str(arguments.get("milestone_id") or ""),
             outcomes=str(arguments.get("outcomes") or ""),
         )
 
     if name == "cccc_milestone_remove":
+        gid = _resolve_group_id(arguments)
         return milestone_remove(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             milestone_id=str(arguments.get("milestone_id") or ""),
         )
 
     if name == "cccc_task_list":
+        gid = _resolve_group_id(arguments)
         return task_list(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             task_id=arguments.get("task_id"),
         )
 
     if name == "cccc_task_create":
+        gid = _resolve_group_id(arguments)
         steps_raw = arguments.get("steps")
         return task_create(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             name=str(arguments.get("name") or ""),
             goal=str(arguments.get("goal") or ""),
             steps=list(steps_raw) if isinstance(steps_raw, list) else [],
@@ -1427,8 +1691,9 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if name == "cccc_task_update":
+        gid = _resolve_group_id(arguments)
         return task_update(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             task_id=str(arguments.get("task_id") or ""),
             status=arguments.get("status"),
             name=arguments.get("name"),
@@ -1440,43 +1705,49 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if name == "cccc_task_delete":
+        gid = _resolve_group_id(arguments)
         return task_delete(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             task_id=str(arguments.get("task_id") or ""),
         )
 
     if name == "cccc_note_add":
+        gid = _resolve_group_id(arguments)
         return note_add(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             content=str(arguments.get("content") or ""),
             ttl=int(arguments.get("ttl") or 30),
         )
 
     if name == "cccc_note_update":
+        gid = _resolve_group_id(arguments)
         return note_update(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             note_id=str(arguments.get("note_id") or ""),
             content=arguments.get("content"),
             ttl=int(arguments["ttl"]) if "ttl" in arguments else None,
         )
 
     if name == "cccc_note_remove":
+        gid = _resolve_group_id(arguments)
         return note_remove(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             note_id=str(arguments.get("note_id") or ""),
         )
 
     if name == "cccc_reference_add":
+        gid = _resolve_group_id(arguments)
         return reference_add(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             url=str(arguments.get("url") or ""),
             note=str(arguments.get("note") or ""),
             ttl=int(arguments.get("ttl") or 30),
         )
 
     if name == "cccc_reference_update":
+        gid = _resolve_group_id(arguments)
         return reference_update(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             reference_id=str(arguments.get("reference_id") or ""),
             url=arguments.get("url"),
             note=arguments.get("note"),
@@ -1484,54 +1755,70 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if name == "cccc_reference_remove":
+        gid = _resolve_group_id(arguments)
         return reference_remove(
-            group_id=str(arguments.get("group_id") or ""),
+            group_id=gid,
             reference_id=str(arguments.get("reference_id") or ""),
         )
 
     if name == "cccc_presence_get":
-        return presence_get(group_id=str(arguments.get("group_id") or ""))
+        gid = _resolve_group_id(arguments)
+        return presence_get(group_id=gid)
 
     if name == "cccc_presence_update":
+        gid = _resolve_group_id(arguments)
+        self_aid = _resolve_self_actor_id(arguments)
+        agent_id = str(arguments.get("agent_id") or "").strip() or self_aid
         return presence_update(
-            group_id=str(arguments.get("group_id") or ""),
-            agent_id=str(arguments.get("agent_id") or ""),
+            group_id=gid,
+            agent_id=agent_id,
             status=str(arguments.get("status") or ""),
         )
 
     if name == "cccc_presence_clear":
+        gid = _resolve_group_id(arguments)
+        self_aid = _resolve_self_actor_id(arguments)
+        agent_id = str(arguments.get("agent_id") or "").strip() or self_aid
         return presence_clear(
-            group_id=str(arguments.get("group_id") or ""),
-            agent_id=str(arguments.get("agent_id") or ""),
+            group_id=gid,
+            agent_id=agent_id,
         )
 
     # headless.* namespace - headless runner control
     if name == "cccc_headless_status":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         return headless_status(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            actor_id=aid,
         )
 
     if name == "cccc_headless_set_status":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         return headless_set_status(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            actor_id=aid,
             status=str(arguments.get("status") or ""),
             task_id=arguments.get("task_id"),
         )
 
     if name == "cccc_headless_ack_message":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         return headless_ack_message(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            actor_id=aid,
             message_id=str(arguments.get("message_id") or ""),
         )
 
     # notify.* namespace - system notifications
     if name == "cccc_notify_send":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         return notify_send(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            actor_id=aid,
             kind=str(arguments.get("kind") or "info"),
             title=str(arguments.get("title") or ""),
             message=str(arguments.get("message") or ""),
@@ -1541,9 +1828,11 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         )
 
     if name == "cccc_notify_ack":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
         return notify_ack(
-            group_id=str(arguments.get("group_id") or ""),
-            actor_id=str(arguments.get("actor_id") or ""),
+            group_id=gid,
+            actor_id=aid,
             notify_event_id=str(arguments.get("notify_event_id") or ""),
         )
 

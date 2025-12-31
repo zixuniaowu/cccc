@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import copy
 import os
 import socket
 import sys
@@ -21,7 +22,7 @@ from ..kernel.registry import load_registry
 from ..kernel.scope import detect_scope
 from ..kernel.actors import add_actor, find_actor, list_actors, remove_actor, resolve_recipient_tokens, update_actor, get_effective_role
 from ..kernel.blobs import resolve_blob_attachment_path
-from ..kernel.inbox import find_event, get_cursor, get_quote_text, is_message_for_actor, set_cursor, unread_messages
+from ..kernel.inbox import find_event, get_cursor, get_quote_text, is_message_for_actor, latest_unread_event, set_cursor, unread_messages
 from ..kernel.ledger_retention import compact as compact_ledger
 from ..kernel.ledger_retention import snapshot as snapshot_ledger
 from ..kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
@@ -292,6 +293,17 @@ def _prepare_pty_env(env: Dict[str, Any]) -> Dict[str, str]:
         pass
     
     return result
+
+
+def _inject_actor_context_env(env: Dict[str, Any], *, group_id: str, actor_id: str) -> Dict[str, Any]:
+    """Inject per-actor context for MCP servers/tools into the actor process env.
+
+    This is runtime-only (not persisted to group docs).
+    """
+    out: Dict[str, Any] = dict(env or {})
+    out["CCCC_GROUP_ID"] = str(group_id or "").strip()
+    out["CCCC_ACTOR_ID"] = str(actor_id or "").strip()
+    return out
 
 
 AUTOMATION = AutomationManager()
@@ -720,7 +732,10 @@ def _maybe_autostart_running_groups() -> None:
 
             if runner_kind == "headless":
                 headless_runner.SUPERVISOR.start_actor(
-                    group_id=group.group_id, actor_id=aid, cwd=cwd, env=dict(env or {})
+                    group_id=group.group_id,
+                    actor_id=aid,
+                    cwd=cwd,
+                    env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
                 )
                 try:
                     _write_headless_state(group.group_id, aid)
@@ -728,7 +743,11 @@ def _maybe_autostart_running_groups() -> None:
                     pass
             else:
                 session = pty_runner.SUPERVISOR.start_actor(
-                    group_id=group.group_id, actor_id=aid, cwd=cwd, command=list(cmd or []), env=_prepare_pty_env(env)
+                    group_id=group.group_id,
+                    actor_id=aid,
+                    cwd=cwd,
+                    command=list(cmd or []),
+                    env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
                 )
                 try:
                     _write_pty_state(group.group_id, aid, pid=session.pid)
@@ -796,6 +815,26 @@ def _send_json(conn: socket.socket, obj: Dict[str, Any]) -> None:
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
+
+
+def _redact_group_doc(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Redact secrets from group.yaml before returning to clients.
+
+    The group doc may contain IM tokens; those should never be exposed via generic
+    metadata APIs (Web UI and agents use dedicated endpoints/tools instead).
+    """
+    try:
+        out = copy.deepcopy(doc)
+    except Exception:
+        out = dict(doc or {})
+
+    im = out.get("im")
+    if isinstance(im, dict):
+        # Remove raw token values (keep env var names and platform).
+        im.pop("token", None)
+        im.pop("bot_token", None)
+        im.pop("app_token", None)
+    return out
 
 
 def _find_scope_url(group: Any, scope_key: str) -> str:
@@ -918,7 +957,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
-        return DaemonResponse(ok=True, result={"group": group.doc}), False
+        return DaemonResponse(ok=True, result={"group": _redact_group_doc(group.doc)}), False
 
     if op == "group_update":
         group_id = str(args.get("group_id") or "").strip()
@@ -949,7 +988,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             by=by,
             data={"patch": dict(patch)},
         )
-        return DaemonResponse(ok=True, result={"group_id": group.group_id, "group": group.doc, "event": ev}), False
+        return DaemonResponse(ok=True, result={"group_id": group.group_id, "group": _redact_group_doc(group.doc), "event": ev}), False
 
     if op == "group_settings_update":
         group_id = str(args.get("group_id") or "").strip()
@@ -1237,7 +1276,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         pass
                 else:
                     session = pty_runner.SUPERVISOR.start_actor(
-                        group_id=group.group_id, actor_id=aid, cwd=cwd, command=cmd, env=_prepare_pty_env(env)
+                        group_id=group.group_id,
+                        actor_id=aid,
+                        cwd=cwd,
+                        command=cmd,
+                        env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
                     )
                     try:
                         _write_pty_state(group.group_id, aid, pid=session.pid)
@@ -1339,6 +1382,18 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             old_state = get_group_state(group)
             group = set_group_state(group, state=state)
             new_state = get_group_state(group)
+            if old_state in ("idle", "paused") and new_state == "active":
+                try:
+                    AUTOMATION.on_resume(group)
+                except Exception:
+                    pass
+                try:
+                    THROTTLE.clear_pending_system_notifies(
+                        group.group_id,
+                        notify_kinds={"nudge", "keepalive", "actor_idle", "silence_check", "standup"},
+                    )
+                except Exception:
+                    pass
         except Exception as e:
             return _error("group_set_state_failed", str(e)), False
         ev = append_event(
@@ -1407,6 +1462,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if runtime not in SUPPORTED_RUNTIMES:
                 raise ValueError("invalid runtime")
             
+            # Foreman safety policy (agent-driven actor.add):
+            # Foreman may only create peers by strict-cloning their own runtime config.
+            # This keeps behavior predictable and avoids agents arbitrarily selecting runtimes/commands.
+            foreman_cfg: Optional[Dict[str, Any]] = None
+            if by and by != "user":
+                try:
+                    if get_effective_role(group, by) == "foreman":
+                        foreman_cfg = find_actor(group, by)
+                except Exception:
+                    foreman_cfg = None
+
             # Auto-generate actor_id if not provided (use runtime as prefix)
             if not actor_id:
                 from ..kernel.actors import generate_actor_id
@@ -1415,15 +1481,47 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             command: list[str] = []
             if isinstance(command_raw, list) and all(isinstance(x, str) for x in command_raw):
                 command = [str(x) for x in command_raw if str(x).strip()]
-            # Auto-set command based on runtime if not provided
-            if not command:
-                from ..kernel.runtime import get_runtime_command_with_flags
-                command = get_runtime_command_with_flags(runtime)
-            if runtime == "custom" and runner != "headless" and not command:
-                raise ValueError("custom runtime requires a command (PTY runner)")
+            from ..kernel.runtime import get_runtime_command_with_flags
+
             env: Dict[str, str] = {}
             if isinstance(env_raw, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in env_raw.items()):
                 env = {str(k): str(v) for k, v in env_raw.items()}
+
+            # If foreman is creating a peer, enforce strict clone of runtime/runner/command/env.
+            if isinstance(foreman_cfg, dict) and foreman_cfg.get("id") == by:
+                foreman_runtime = str(foreman_cfg.get("runtime") or "").strip()
+                foreman_runner = str(foreman_cfg.get("runner") or "pty").strip() or "pty"
+                foreman_command_raw = foreman_cfg.get("command") if isinstance(foreman_cfg.get("command"), list) else []
+                foreman_command = [str(x) for x in foreman_command_raw if isinstance(x, str) and str(x).strip()]
+                foreman_env_raw = foreman_cfg.get("env") if isinstance(foreman_cfg.get("env"), dict) else {}
+                foreman_env = {str(k): str(v) for k, v in foreman_env_raw.items() if isinstance(k, str) and isinstance(v, str)}
+
+                if not foreman_runtime:
+                    raise ValueError("foreman config missing runtime")
+                if runtime != foreman_runtime:
+                    raise ValueError(f"foreman can only add actors with the same runtime as itself (expected: {foreman_runtime})")
+                if runner != foreman_runner:
+                    raise ValueError(f"foreman can only add actors with the same runner as itself (expected: {foreman_runner})")
+
+                # Command: treat empty list as omitted (clone foreman).
+                if not command:
+                    command = list(foreman_command) if foreman_command else get_runtime_command_with_flags(runtime)
+                else:
+                    if command != foreman_command:
+                        raise ValueError("foreman can only add actors by strict-cloning command (runtime/runner/command/env must match foreman)")
+
+                # Env: treat empty dict as omitted (clone foreman).
+                if not env:
+                    env = dict(foreman_env)
+                if env != foreman_env:
+                    raise ValueError("foreman can only add actors by strict-cloning env (runtime/runner/command/env must match foreman)")
+            else:
+                # Auto-set command based on runtime if not provided
+                if not command:
+                    command = get_runtime_command_with_flags(runtime)
+
+            if runtime == "custom" and runner != "headless" and not command:
+                raise ValueError("custom runtime requires a command (PTY runner)")
             actor = add_actor(
                 group,
                 actor_id=actor_id,
@@ -1549,7 +1647,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
                     env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
                     session = pty_runner.SUPERVISOR.start_actor(
-                        group_id=group.group_id, actor_id=actor_id, cwd=cwd, command=list(cmd or []), env=_prepare_pty_env(env)
+                        group_id=group.group_id,
+                        actor_id=actor_id,
+                        cwd=cwd,
+                        command=list(cmd or []),
+                        env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
                     )
                     try:
                         _write_pty_state(group.group_id, actor_id, pid=session.pid)
@@ -1667,7 +1769,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         if runner_kind == "headless":
             # Start headless session (no PTY, MCP-driven)
             headless_runner.SUPERVISOR.start_actor(
-                group_id=group.group_id, actor_id=actor_id, cwd=cwd, env=dict(env or {})
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
             )
             try:
                 _write_headless_state(group.group_id, actor_id)
@@ -1676,7 +1781,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         else:
             # Start PTY session (interactive terminal)
             session = pty_runner.SUPERVISOR.start_actor(
-                group_id=group.group_id, actor_id=actor_id, cwd=cwd, command=list(cmd or []), env=_prepare_pty_env(env)
+                group_id=group.group_id,
+                actor_id=actor_id,
+                cwd=cwd,
+                command=list(cmd or []),
+                env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
             )
             try:
                 _write_pty_state(group.group_id, actor_id, pid=session.pid)
@@ -1821,7 +1930,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
             if runner_kind == "headless":
                 headless_runner.SUPERVISOR.start_actor(
-                    group_id=group.group_id, actor_id=actor_id, cwd=cwd, env=dict(env or {})
+                    group_id=group.group_id,
+                    actor_id=actor_id,
+                    cwd=cwd,
+                    env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
                 )
                 try:
                     _write_headless_state(group.group_id, actor_id)
@@ -1829,7 +1941,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     pass
             else:
                 session = pty_runner.SUPERVISOR.start_actor(
-                    group_id=group.group_id, actor_id=actor_id, cwd=cwd, command=list(cmd or []), env=_prepare_pty_env(env)
+                    group_id=group.group_id,
+                    actor_id=actor_id,
+                    cwd=cwd,
+                    command=list(cmd or []),
+                    env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
                 )
                 try:
                     _write_pty_state(group.group_id, actor_id, pid=session.pid)
@@ -1930,6 +2046,47 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         )
         return DaemonResponse(ok=True, result={"cursor": cursor, "event": read_ev}), False
 
+    if op == "inbox_mark_all_read":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        kind_filter = str(args.get("kind_filter") or "all").strip()
+        if kind_filter not in ("all", "chat", "notify"):
+            kind_filter = "all"
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not actor_id:
+            return _error("missing_actor_id", "missing actor_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        try:
+            require_inbox_permission(group, by=by, target_actor_id=actor_id)
+        except Exception as e:
+            return _error("permission_denied", str(e)), False
+
+        last = latest_unread_event(group, actor_id=actor_id, kind_filter=kind_filter)  # type: ignore
+        if last is None:
+            cur_event_id, cur_ts = get_cursor(group, actor_id)
+            return DaemonResponse(ok=True, result={"cursor": {"event_id": cur_event_id, "ts": cur_ts}, "event": None}), False
+
+        event_id = str(last.get("id") or "").strip()
+        ts = str(last.get("ts") or "").strip()
+        if not event_id or not ts:
+            cur_event_id, cur_ts = get_cursor(group, actor_id)
+            return DaemonResponse(ok=True, result={"cursor": {"event_id": cur_event_id, "ts": cur_ts}, "event": None}), False
+
+        cursor = set_cursor(group, actor_id, event_id=event_id, ts=ts)
+        read_ev = append_event(
+            group.ledger_path,
+            kind="chat.read",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={"actor_id": actor_id, "event_id": event_id},
+        )
+        return DaemonResponse(ok=True, result={"cursor": cursor, "event": read_ev}), False
+
     if op == "ledger_snapshot":
         group_id = str(args.get("group_id") or "").strip()
         by = str(args.get("by") or "user").strip()
@@ -1986,6 +2143,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 is_actor_sender = isinstance(find_actor(group, by), dict)
                 if by and by != "system" and not is_actor_sender:
                     group = set_group_state(group, state="active")
+                    try:
+                        AUTOMATION.on_resume(group)
+                    except Exception:
+                        pass
+                    try:
+                        THROTTLE.clear_pending_system_notifies(
+                            group.group_id,
+                            notify_kinds={"nudge", "keepalive", "actor_idle", "silence_check", "standup"},
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
 
@@ -2176,6 +2344,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 is_actor_sender = isinstance(find_actor(group, by), dict)
                 if by and by != "system" and not is_actor_sender:
                     group = set_group_state(group, state="active")
+                    try:
+                        AUTOMATION.on_resume(group)
+                    except Exception:
+                        pass
+                    try:
+                        THROTTLE.clear_pending_system_notifies(
+                            group.group_id,
+                            notify_kinds={"nudge", "keepalive", "actor_idle", "silence_check", "standup"},
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
 

@@ -198,6 +198,31 @@ class AutomationManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
 
+    def on_resume(self, group: Group) -> None:
+        """Reset automation timers on resume (idle/paused -> active).
+
+        Design: we do not "catch up" on missed reminders; all timing starts from resume.
+        """
+        now = utc_now_iso()
+        with self._lock:
+            state = _load_state(group)
+            state["resume_at"] = now
+            state["last_silence_notify_at"] = now
+            state["last_standup_at"] = now
+            for actor in list_actors(group):
+                if not isinstance(actor, dict):
+                    continue
+                aid = str(actor.get("id") or "").strip()
+                if not aid:
+                    continue
+                st = _actor_state(state, aid)
+                st["last_idle_notify_at"] = now
+                st["keepalive_count"] = 0
+                st["last_keepalive_at"] = now
+                st["last_nudge_event_id"] = ""
+                st["last_nudge_at"] = now
+            _save_state(group, state)
+
     def tick(self, *, home: Path) -> None:
         """Called periodically by daemon to check all groups."""
         base = home / "groups"
@@ -241,10 +266,12 @@ class AutomationManager:
         if cfg.nudge_after_seconds <= 0:
             return
 
+        resume_dt: Optional[datetime] = None
         to_nudge: List[Tuple[str, str, str]] = []  # (actor_id, oldest_event_ts, runner_kind)
 
         with self._lock:
             state = _load_state(group)
+            resume_dt = parse_utc_iso(str(state.get("resume_at") or "")) if state.get("resume_at") else None
             for actor in list_actors(group):
                 if not isinstance(actor, dict):
                     continue
@@ -274,6 +301,8 @@ class AutomationManager:
                 dt = parse_utc_iso(ev_ts)
                 if dt is None:
                     continue
+                if resume_dt is not None and dt < resume_dt:
+                    dt = resume_dt
                 age_s = (now - dt).total_seconds()
                 if age_s < float(cfg.nudge_after_seconds):
                     continue
@@ -390,10 +419,12 @@ class AutomationManager:
         if cfg.keepalive_delay_seconds <= 0:
             return
 
+        resume_dt: Optional[datetime] = None
         to_keepalive: List[Tuple[str, str, str]] = []  # (actor_id, next_text, runner_kind)
 
         with self._lock:
             state = _load_state(group)
+            resume_dt = parse_utc_iso(str(state.get("resume_at") or "")) if state.get("resume_at") else None
             for actor in list_actors(group):
                 if not isinstance(actor, dict):
                     continue
@@ -416,6 +447,8 @@ class AutomationManager:
                 if next_info is None:
                     continue
                 next_text, next_ts = next_info
+                if resume_dt is not None and next_ts < resume_dt:
+                    next_ts = resume_dt
                 
                 # Check if enough time has passed
                 elapsed = (now - next_ts).total_seconds()

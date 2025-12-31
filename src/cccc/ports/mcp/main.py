@@ -16,6 +16,7 @@ import json
 import sys
 from typing import Any, Dict, List, Optional
 
+from ... import __version__
 from .server import MCP_TOOLS, MCPError, handle_tool_call
 
 
@@ -67,7 +68,7 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
             },
             "serverInfo": {
                 "name": "cccc-mcp",
-                "version": "0.4.0",
+                "version": __version__,
             },
         })
 

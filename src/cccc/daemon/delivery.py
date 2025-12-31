@@ -285,6 +285,36 @@ class DeliveryThrottle:
             if group_id in self._states and actor_id in self._states[group_id]:
                 del self._states[group_id][actor_id]
 
+    def clear_pending_system_notifies(self, group_id: str, *, notify_kinds: Optional[set[str]] = None) -> int:
+        """Remove pending system.notify messages for a group.
+
+        Used to prevent "catch-up" notification bursts when resuming from
+        idle/paused.
+        """
+        gid = str(group_id or "").strip()
+        if not gid:
+            return 0
+        with self._lock:
+            actors = self._states.get(gid)
+            if not isinstance(actors, dict) or not actors:
+                return 0
+            removed = 0
+            for st in actors.values():
+                before = len(st.pending_messages)
+                if not before:
+                    continue
+                kept: list[PendingMessage] = []
+                for msg in st.pending_messages:
+                    if msg.kind != "system.notify":
+                        kept.append(msg)
+                        continue
+                    if notify_kinds is not None and msg.notify_kind not in notify_kinds:
+                        kept.append(msg)
+                        continue
+                st.pending_messages = kept
+                removed += before - len(kept)
+            return removed
+
 
 # Global throttle instance
 THROTTLE = DeliveryThrottle()
@@ -294,7 +324,7 @@ THROTTLE = DeliveryThrottle()
 # Message Rendering
 # ============================================================================
 
-REMINDER_EVERY_N_MESSAGES = 6
+REMINDER_EVERY_N_MESSAGES = 3
 MCP_REMINDER_LINE = (
     "[cccc] Reminder: communicate via MCP (cccc_message_send / cccc_message_reply); terminal output isn't delivered. "
     "See cccc_help."

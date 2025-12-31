@@ -60,13 +60,53 @@ export type ReplyTarget = {
 } | null;
 
 export type GroupContext = {
-  vision?: string;
-  sketch?: string;
-  milestones?: Array<{ id: string; title: string; status?: string; due?: string }>;
-  tasks?: Array<{ id: string; title: string; status?: string; assignee?: string; milestone_id?: string }>;
-  notes?: Array<{ id: string; title: string; content?: string }>;
-  references?: Array<{ id: string; url: string; title?: string }>;
-  presence?: Record<string, { status?: string; activity?: string; updated_at?: string }>;
+  version?: string;
+  vision?: string | null;
+  sketch?: string | null;
+  milestones?: Array<{
+    id: string;
+    name: string;
+    description?: string | null;
+    status?: string | null;
+    started?: string | null;
+    completed?: string | null;
+    outcomes?: string | null;
+  }>;
+  notes?: Array<{
+    id: string;
+    content: string;
+    ttl?: number;
+    expiring?: boolean;
+  }>;
+  references?: Array<{
+    id: string;
+    url: string;
+    note?: string | null;
+    ttl?: number;
+    expiring?: boolean;
+  }>;
+  tasks_summary?: {
+    total: number;
+    done: number;
+    active: number;
+    planned: number;
+  };
+  active_task?: {
+    id: string;
+    name: string;
+    goal?: string | null;
+    status?: string | null;
+    milestone?: string | null;
+    assignee?: string | null;
+    created_at?: string | null;
+    updated_at?: string | null;
+    steps?: Array<{ id: string; name: string; acceptance?: string | null; status?: string | null }>;
+    current_step?: string | null;
+    progress?: number | null;
+  } | null;
+  presence?: {
+    agents?: Array<{ id: string; status?: string | null; updated_at?: string | null }>;
+  };
 };
 
 export type ProjectMdInfo = {

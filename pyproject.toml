@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cccc-pair"
-version = "0.4.0a0"
+version = "0.4.0rc1"
 description = "Global multi-agent delivery kernel with working groups, scopes, and an append-only collaboration ledger"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
 authors = [
   { name = "ChesterRa", email = "ra@ike.ba" }
 ]
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 keywords = ["orchestrator","ai","rfd","pair","collaboration"]
 dependencies = [
   "PyYAML>=6.0",
@@ -20,9 +20,8 @@ dependencies = [
   "uvicorn[standard]>=0.27",
 ]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",

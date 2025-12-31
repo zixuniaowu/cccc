@@ -220,6 +220,45 @@ def unread_count(group: Group, *, actor_id: str, kind_filter: MessageKindFilter 
     return count
 
 
+def latest_unread_event(
+    group: Group,
+    *,
+    actor_id: str,
+    kind_filter: MessageKindFilter = "all",
+) -> Optional[Dict[str, Any]]:
+    """Get the latest unread event for an actor (or None if none).
+
+    This is used for safe bulk-clear flows (mark-all-read): advance the cursor
+    only up to the latest currently-unread message, without requiring clients
+    to enumerate every event_id.
+    """
+    _, cursor_ts = get_cursor(group, actor_id)
+    cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
+
+    if kind_filter == "chat":
+        allowed_kinds = {"chat.message"}
+    elif kind_filter == "notify":
+        allowed_kinds = {"system.notify"}
+    else:
+        allowed_kinds = {"chat.message", "system.notify"}
+
+    last: Optional[Dict[str, Any]] = None
+    for ev in iter_events(group.ledger_path):
+        ev_kind = str(ev.get("kind") or "")
+        if ev_kind not in allowed_kinds:
+            continue
+        if ev_kind == "chat.message" and str(ev.get("by") or "") == actor_id:
+            continue
+        if not is_message_for_actor(group, actor_id=actor_id, event=ev):
+            continue
+        if cursor_dt is not None:
+            ev_dt = parse_utc_iso(str(ev.get("ts") or ""))
+            if ev_dt is not None and ev_dt <= cursor_dt:
+                continue
+        last = ev
+    return last
+
+
 def find_event(group: Group, event_id: str) -> Optional[Dict[str, Any]]:
     """根据 event_id 查找事件"""
     wanted = event_id.strip()

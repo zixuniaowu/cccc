@@ -90,6 +90,9 @@ export function AgentTab({
       fontSize: 13,
       fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, monospace',
       theme: getTerminalTheme(isDark),
+      // Bigger scrollback improves history browsing without going "infinite" and hurting perf.
+      // 8k lines is a good default for multi-agent (memory scales with #opened terminals).
+      scrollback: 8000,
       allowProposedApi: true,
     });
 

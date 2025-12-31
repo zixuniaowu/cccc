@@ -27,5 +27,10 @@
 /venv-publish/
 
 # Legacy and internal docs (not for public repo)
-/docs/vnext/
+/docs/vnext/*
+!/docs/vnext/README.md
+!/docs/vnext/STATUS.md
+!/docs/vnext/ARCHITECTURE.md
+!/docs/vnext/FEATURES.md
+!/docs/vnext/RELEASE.md
 /old_v0.3.28/

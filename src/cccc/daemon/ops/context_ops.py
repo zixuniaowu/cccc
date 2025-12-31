@@ -23,6 +23,7 @@ from ...kernel.context import (
     Note,
     Reference,
 )
+from ...kernel.ledger import append_event
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -153,6 +154,7 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
 def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
     """批量同步上下文操作"""
     group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "system").strip() or "system"
     ops = args.get("ops") or []
     dry_run = bool(args.get("dry_run", False))
 
@@ -457,11 +459,28 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if task_id in tasks_by_id:
                     storage.save_task(tasks_by_id[task_id])
 
+        version = storage.compute_version()
+
+        # Emit a lightweight ledger signal so UIs can refresh context state.
+        if not dry_run and changes:
+            try:
+                append_event(
+                    storage.group.ledger_path,
+                    kind="context.sync",
+                    group_id=group_id,
+                    scope_key="",
+                    by=by,
+                    data={"version": version, "changes": changes},
+                )
+            except Exception:
+                # Best-effort only: context changes already persisted to files.
+                pass
+
         result = {
             "success": True,
             "dry_run": dry_run,
             "changes": changes,
-            "version": storage.compute_version(),
+            "version": version,
         }
         return DaemonResponse(ok=True, result=result)
 

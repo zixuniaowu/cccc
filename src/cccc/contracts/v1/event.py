@@ -26,6 +26,7 @@ EventKind = Literal[
     "actor.stop",
     "actor.restart",
     "actor.remove",
+    "context.sync",
     "chat.message",
     "chat.read",
     "chat.reaction",
@@ -125,6 +126,13 @@ class ActorLifecycleData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ContextSyncData(BaseModel):
+    version: str = ""
+    changes: List[Dict[str, Any]] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class ChatReadData(BaseModel):
     """已读回执：actor 标记已读到某条消息"""
 
@@ -162,6 +170,7 @@ _KIND_TO_MODEL = {
     "actor.stop": ActorLifecycleData,
     "actor.restart": ActorLifecycleData,
     "actor.remove": ActorLifecycleData,
+    "context.sync": ContextSyncData,
     "chat.message": ChatMessageData,
     "chat.read": ChatReadData,
     "chat.reaction": ChatReactionData,

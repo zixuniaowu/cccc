@@ -30,6 +30,7 @@ cccc send "Hello" --to @all      # 发送消息
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | 架构设计、核心概念、目录结构、Ledger Schema |
 | [STATUS.md](./STATUS.md) | 当前实现状态、路线图、待办事项 |
 | [FEATURES.md](./FEATURES.md) | 功能详解：IM Bridge、消息机制、Agent 指导 |
+| [RELEASE.md](./RELEASE.md) | 发布流程、tag/version 约定、TestPyPI 安装 RC |
 | [archive/](./archive/) | 历史设计文档（供参考） |
 
 ## 核心概念
@@ -74,5 +75,5 @@ cccc send "Hello" --to @all      # 发送消息
 ## 相关链接
 
 - 源码：`src/cccc/`
-- 老版本参考：`old_v0.3.28/`
+- 老版本（v0.3.x tmux 版）：https://github.com/ChesterRa/cccc-tmux
 - AGENTS.md：开发规范

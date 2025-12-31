@@ -18,19 +18,117 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build Web UI (bundled)
+        run: |
+          npm ci --prefix web
+          npm -C web run build
+
+      - name: Verify tag matches package version
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import sys
+          import tomllib
+
+          tag = os.environ.get("GITHUB_REF_NAME", "")
+          if not tag.startswith("v"):
+            raise SystemExit(f"expected tag like v0.4.0 or v0.4.0-rc1, got: {tag!r}")
+
+          tag_body = tag[1:]
+          expected = None
+
+          m = re.fullmatch(r"(\d+\.\d+\.\d+)", tag_body)
+          if m:
+            expected = m.group(1)
+
+          if expected is None:
+            m = re.fullmatch(r"(\d+\.\d+\.\d+)-(alpha|beta|rc)(\d+)", tag_body)
+            if m:
+              base, phase, num = m.group(1), m.group(2), m.group(3)
+              phase_map = {"alpha": "a", "beta": "b", "rc": "rc"}
+              expected = f"{base}{phase_map[phase]}{num}"
+
+          if expected is None:
+            m = re.fullmatch(r"(\d+\.\d+\.\d+)(a|b|rc)(\d+)", tag_body)
+            if m:
+              expected = f"{m.group(1)}{m.group(2)}{m.group(3)}"
+
+          if expected is None:
+            raise SystemExit(f"unsupported tag format: {tag!r}")
+
+          pyproject = tomllib.loads(open("pyproject.toml", "rb").read())
+          version = pyproject.get("project", {}).get("version", "")
+          if version != expected:
+            raise SystemExit(f"tag/version mismatch: tag={tag!r} -> expected {expected!r}, pyproject.toml has {version!r}")
+
+          print(f"OK: tag {tag!r} matches pyproject.toml version {version!r}")
+          PY
+
       - name: Install build deps
         run: |
           python -m pip install -U pip build twine
 
       - name: Build
         run: |
+          python -m compileall -q src/cccc
           python -m build
+          python -m twine check dist/*
+
+      - name: Smoke test wheel
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          cccc version
+          python - <<'PY'
+          import importlib.resources as ir
+          import json
+          import subprocess
+
+          web_index = ir.files("cccc.ports.web").joinpath("dist/index.html")
+          ops = ir.files("cccc.resources").joinpath("cccc-ops.md")
+
+          assert web_index.is_file(), f"missing bundled web UI: {web_index}"
+          assert ops.is_file(), f"missing bundled ops playbook: {ops}"
+
+          proc = subprocess.Popen(
+              ["cccc", "mcp"],
+              stdin=subprocess.PIPE,
+              stdout=subprocess.PIPE,
+              stderr=subprocess.PIPE,
+              text=True,
+          )
+          assert proc.stdin is not None
+          assert proc.stdout is not None
+
+          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}) + "\n")
+          proc.stdin.flush()
+          init_resp = json.loads(proc.stdout.readline().strip())
+          assert init_resp.get("id") == 1
+          assert init_resp.get("result", {}).get("serverInfo", {}).get("name") == "cccc-mcp"
+
+          proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}) + "\n")
+          proc.stdin.flush()
+          tools_resp = json.loads(proc.stdout.readline().strip())
+          assert tools_resp.get("id") == 2
+          assert isinstance(tools_resp.get("result", {}).get("tools"), list)
+
+          proc.terminate()
+
+          print("OK: bundled web UI + ops playbook + MCP handshake")
+          PY
 
       - name: Determine repository
         id: repo
         run: |
           TAG="${GITHUB_REF_NAME}"
-          if [[ "${TAG}" == *"-rc"* || "${TAG}" == *"-alpha"* || "${TAG}" == *"-beta"* ]]; then
+          if [[ "${TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[0-9]+|(a|b|rc)[0-9]+)$ ]]; then
             echo "name=testpypi" >> $GITHUB_OUTPUT
             echo "url=https://test.pypi.org/legacy/" >> $GITHUB_OUTPUT
             echo "token=${{ secrets.TEST_PYPI_API_TOKEN }}" >> $GITHUB_OUTPUT

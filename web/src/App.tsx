@@ -201,6 +201,8 @@ function getGroupStatusLight(running: boolean, state?: string): { label: string;
 
 const LazyAgentTab = lazy(() => import("./components/AgentTab").then((m) => ({ default: m.AgentTab })));
 const MAX_UI_EVENTS = 800;
+const WEB_MAX_FILE_MB = 20;
+const WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024;
 
 export default function App() {
   // Theme
@@ -223,6 +225,7 @@ export default function App() {
   const [busy, setBusy] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [termEpochByActor, setTermEpochByActor] = useState<Record<string, number>>({});
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const [isSmallScreen, setIsSmallScreen] = useState(false);
@@ -260,6 +263,8 @@ export default function App() {
   const [showMentionMenu, setShowMentionMenu] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = useState(0);
+  const [dropOverlayOpen, setDropOverlayOpen] = useState(false);
+  const [messageMetaEventId, setMessageMetaEventId] = useState<string | null>(null);
 
   // Add actor form state
   const [newActorId, setNewActorId] = useState("");
@@ -300,8 +305,11 @@ export default function App() {
   const eventContainerRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<string>("chat");
+  const selectedGroupIdRef = useRef<string>("");
   const chatAtBottomRef = useRef<boolean>(true);
   const actorsRef = useRef<Actor[]>([]);
+  const dragDepthRef = useRef<number>(0);
+  const contextRefreshTimerRef = useRef<number | null>(null);
 
   // Swipe gesture state
   const touchStartX = useRef<number>(0);
@@ -316,6 +324,38 @@ export default function App() {
       errorTimeoutRef.current = null;
     }, 8000);
   }, []);
+
+  const appendComposerFiles = useCallback(
+    (incoming: File[]) => {
+      const files = Array.from(incoming || []);
+      if (files.length === 0) return;
+
+      const tooLarge = files.filter((f) => f.size > WEB_MAX_FILE_BYTES);
+      const ok = files.filter((f) => f.size <= WEB_MAX_FILE_BYTES);
+
+      if (tooLarge.length > 0) {
+        const names = tooLarge.slice(0, 3).map((f) => f.name || "file");
+        const more = tooLarge.length > 3 ? ` (+${tooLarge.length - 3} more)` : "";
+        showError(`File too large (> ${WEB_MAX_FILE_MB}MB): ${names.join(", ")}${more}`);
+      }
+
+      if (ok.length === 0) return;
+
+      const keyOf = (f: File) => `${f.name}:${f.size}:${f.lastModified}`;
+      setComposerFiles((prev) => {
+        const next = prev.slice();
+        const seen = new Set(next.map(keyOf));
+        for (const f of ok) {
+          const k = keyOf(f);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          next.push(f);
+        }
+        return next;
+      });
+    },
+    [showError]
+  );
 
   // Computed values
   const projectRoot = useMemo(() => getProjectRoot(groupDoc), [groupDoc]);
@@ -359,11 +399,22 @@ export default function App() {
   }, [busy, newActorRuntime, newActorCommand, runtimes]);
 
   const toTokens = useMemo(() => {
-    return toText.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
+    const raw = toText.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
+    // 'user' is a system recipient token for agents; Web users shouldn't target it.
+    const filtered = raw.filter((t) => t !== "user" && t !== "@user");
+    // Deduplicate while preserving order.
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const t of filtered) {
+      if (seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+    }
+    return out;
   }, [toText]);
 
   const mentionSuggestions = useMemo(() => {
-    const base = ["@all", "@foreman", "@peers", "user"];
+    const base = ["@all", "@foreman", "@peers"];
     const actorIds = actors.map((a) => String(a.id || "")).filter((id) => id);
     const all = [...base, ...actorIds];
     if (!mentionFilter) return all;
@@ -380,9 +431,16 @@ export default function App() {
   async function refreshGroups() {
     const resp = await apiJson<{ groups: GroupMeta[] }>("/api/v1/groups");
     if (resp.ok) {
-      setGroups(resp.result.groups || []);
-      if (!selectedGroupId && resp.result.groups?.length) {
-        setSelectedGroupId(String(resp.result.groups[0].group_id || ""));
+      const next = resp.result.groups || [];
+      setGroups(next);
+
+      // Don't override user's selection on periodic refresh. Only auto-select when:
+      // - nothing selected yet, or
+      // - the selected group no longer exists (deleted elsewhere).
+      const cur = selectedGroupIdRef.current;
+      const curExists = !!cur && next.some((g) => String(g.group_id || "") === cur);
+      if (!curExists && next.length > 0) {
+        setSelectedGroupId(String(next[0].group_id || ""));
       }
     }
   }
@@ -419,8 +477,9 @@ export default function App() {
   }
 
   async function fetchContext(groupId: string) {
-    const resp = await apiJson<{ context: GroupContext }>(`/api/v1/groups/${encodeURIComponent(groupId)}/context`);
-    if (resp.ok) setGroupContext(resp.result.context || null);
+    const resp = await apiJson<GroupContext>(`/api/v1/groups/${encodeURIComponent(groupId)}/context`);
+    if (resp.ok && resp.result && typeof resp.result === "object") setGroupContext(resp.result);
+    else setGroupContext(null);
   }
 
   async function fetchSettings(groupId: string) {
@@ -443,7 +502,7 @@ export default function App() {
     const tail = await apiJson<{ events: LedgerEvent[] }>(
       `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?lines=120&with_read_status=true`
     );
-    if (tail.ok) setEvents(tail.result.events || []);
+    if (tail.ok) setEvents((tail.result.events || []).filter((ev) => ev && (ev as any).kind !== "context.sync"));
 
     const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors?include_unread=true`);
     if (a.ok) setActors(a.result.actors || []);
@@ -462,6 +521,15 @@ export default function App() {
       const msg = e as MessageEvent;
       try {
         const ev = JSON.parse(String(msg.data || "{}"));
+
+        if (ev && typeof ev === "object" && ev.kind === "context.sync") {
+          if (contextRefreshTimerRef.current) window.clearTimeout(contextRefreshTimerRef.current);
+          contextRefreshTimerRef.current = window.setTimeout(() => {
+            contextRefreshTimerRef.current = null;
+            void fetchContext(groupId);
+          }, 150);
+          return;
+        }
 
         // Real-time read status: apply chat.read without requiring a full refresh.
         if (ev && typeof ev === "object" && ev.kind === "chat.read") {
@@ -757,6 +825,7 @@ export default function App() {
         return;
       }
       await refreshActors();
+      await refreshGroups();
     } finally {
       setBusy("");
     }
@@ -773,6 +842,7 @@ export default function App() {
         return;
       }
       await refreshActors();
+      await refreshGroups();
     } finally {
       setBusy("");
     }
@@ -909,16 +979,22 @@ export default function App() {
   async function setGroupState(state: "active" | "idle" | "paused") {
     if (!selectedGroupId) return;
     setBusy("group-state");
+    const beforeScrollTop = eventContainerRef.current?.scrollTop ?? null;
     try {
       const resp = await apiJson(
         `/api/v1/groups/${encodeURIComponent(selectedGroupId)}/state?state=${encodeURIComponent(state)}&by=user`,
         { method: "POST" }
       );
       if (!resp.ok) showError(`${resp.error.code}: ${resp.error.message}`);
-      // Refresh groupDoc to update UI state
-      await loadGroup(selectedGroupId);
+      else {
+        setGroupDoc((prev) => prev ? { ...prev, state } : prev);
+        await refreshGroups();
+      }
     } finally {
       setBusy("");
+      if (beforeScrollTop !== null && eventContainerRef.current) {
+        eventContainerRef.current.scrollTop = beforeScrollTop;
+      }
     }
   }
 
@@ -994,6 +1070,13 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    selectedGroupIdRef.current = selectedGroupId;
+    if (contextRefreshTimerRef.current) {
+      window.clearTimeout(contextRefreshTimerRef.current);
+      contextRefreshTimerRef.current = null;
+    }
+    dragDepthRef.current = 0;
+    setDropOverlayOpen(false);
     if (!selectedGroupId) return;
     loadGroup(selectedGroupId);
     connectStream(selectedGroupId);
@@ -1004,6 +1087,64 @@ export default function App() {
       }
     };
   }, [selectedGroupId]);
+
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) => {
+      const dt = e.dataTransfer;
+      if (!dt) return false;
+      try {
+        if (dt.types && Array.from(dt.types).includes("Files")) return true;
+        if (dt.items && Array.from(dt.items).some((it) => it.kind === "file")) return true;
+      } catch {
+        // ignore
+      }
+      return dt.files && dt.files.length > 0;
+    };
+
+    const onDragEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepthRef.current += 1;
+      setDropOverlayOpen(true);
+    };
+
+    const onDragOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+    };
+
+    const onDragLeave = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0) setDropOverlayOpen(false);
+    };
+
+    const onDrop = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepthRef.current = 0;
+      setDropOverlayOpen(false);
+
+      const files = Array.from(e.dataTransfer?.files || []);
+      if (files.length === 0) return;
+      if (!selectedGroupId) {
+        showError("Select a group to attach files.");
+        return;
+      }
+      appendComposerFiles(files);
+    };
+
+    window.addEventListener("dragenter", onDragEnter, true);
+    window.addEventListener("dragover", onDragOver, true);
+    window.addEventListener("dragleave", onDragLeave, true);
+    window.addEventListener("drop", onDrop, true);
+    return () => {
+      window.removeEventListener("dragenter", onDragEnter, true);
+      window.removeEventListener("dragover", onDragOver, true);
+      window.removeEventListener("dragleave", onDragLeave, true);
+      window.removeEventListener("drop", onDrop, true);
+    };
+  }, [appendComposerFiles, selectedGroupId, showError]);
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -1113,6 +1254,40 @@ export default function App() {
     return actors.find((a) => a.id === activeTab) || null;
   }, [activeTab, actors]);
 
+  const messageMetaEvent = useMemo(() => {
+    if (!messageMetaEventId) return null;
+    return events.find((x) => x.kind === "chat.message" && String(x.id || "") === messageMetaEventId) || null;
+  }, [events, messageMetaEventId]);
+
+  const messageMeta = useMemo(() => {
+    if (!messageMetaEvent) return null;
+    const toRaw = (messageMetaEvent.data && typeof messageMetaEvent.data === "object" && Array.isArray((messageMetaEvent.data as any).to))
+      ? (messageMetaEvent.data as any).to
+      : [];
+    const toTokens = (toRaw as unknown[])
+      .map((x) => String(x || "").trim())
+      .filter((s) => s.length > 0);
+    const toLabel = toTokens.length > 0 ? toTokens.join(", ") : "@all";
+
+    const rs = (messageMetaEvent._read_status && typeof messageMetaEvent._read_status === "object")
+      ? messageMetaEvent._read_status
+      : null;
+    const recipientIds = rs ? Object.keys(rs) : getRecipientActorIdsForEvent(messageMetaEvent, actors);
+    const recipientIdSet = new Set(recipientIds);
+    const entries = actors
+      .map((a) => String(a.id || ""))
+      .filter((id) => id && recipientIdSet.has(id))
+      .map((id) => [id, !!(rs && rs[id])] as const);
+
+    return { toLabel, entries };
+  }, [actors, messageMetaEvent]);
+
+  useEffect(() => {
+    if (!messageMetaEventId) return;
+    if (messageMetaEvent) return;
+    setMessageMetaEventId(null);
+  }, [messageMetaEvent, messageMetaEventId]);
+
   // Open group edit modal
   function openGroupEdit() {
     if (!groupDoc) return;
@@ -1138,7 +1313,7 @@ export default function App() {
           <div className={`p-4 border-b ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <img src="/ui/logo.png" alt="CCCC Logo" className="w-8 h-8 object-contain" />
+                <img src="/ui/logo.svg" alt="CCCC Logo" className="w-8 h-8 object-contain" />
                 <span className={`text-lg font-bold tracking-tight ${isDark ? "text-white" : "text-gray-900"}`}>CCCC</span>
               </div>
               <div className="flex items-center gap-2">
@@ -1300,7 +1475,10 @@ export default function App() {
               {/* Desktop Actions - subtle */}
               <div className="hidden sm:flex items-center gap-1.5 mr-2">
                 <button
-                  onClick={() => setShowContextModal(true)}
+                  onClick={() => {
+                    if (selectedGroupId) void fetchContext(selectedGroupId);
+                    setShowContextModal(true);
+                  }}
                   disabled={!selectedGroupId}
                   className={`p-2 rounded-xl transition-colors ${isDark ? "text-slate-400 hover:text-white hover:bg-slate-800" : "text-gray-400 hover:text-gray-900 hover:bg-gray-100"
                     }`}
@@ -1465,6 +1643,9 @@ export default function App() {
                           .filter((id) => id && Object.prototype.hasOwnProperty.call(readStatus, id))
                           .map((id) => [id, !!readStatus[id]] as const)
                         : [];
+                      const toLabel = recipients && recipients.length > 0 ? recipients.join(", ") : "@all";
+                      const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
+                      const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
 
                       const senderActor = actors.find((a) => a.id === ev.by);
                       // Use consistent colors for names/avatars
@@ -1589,18 +1770,67 @@ export default function App() {
 
                             </div>
 
-                            {/* Footer Actions (Reply, Read status) */}
-                            <div className="flex items-center gap-2 mt-1 px-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button
-                                className={`text-[10px] hover:underline ${isDark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"}`}
-                                onClick={() => startReply(ev)}
-                              >
-                                Reply
-                              </button>
-                              {recipients && recipients.length > 0 && (
-                                <span className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-                                  to {recipients.join(", ")}
+                            {/* Message meta (always visible): to + per-recipient read status */}
+                            <div
+                              className={classNames(
+                                "flex items-center justify-between gap-3 mt-1 px-1 text-[10px] transition-opacity",
+                                "opacity-70 group-hover:opacity-100",
+                                isDark ? "text-slate-500" : "text-gray-500"
+                              )}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <button
+                                  type="button"
+                                  className={classNames(
+                                    "touch-target-sm px-1 rounded hover:underline transition-colors",
+                                    isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                                  )}
+                                  onClick={() => startReply(ev)}
+                                >
+                                  Reply
+                                </button>
+                                <span className="min-w-0 truncate" title={`to ${toLabel}`}>
+                                  to {toLabel}
                                 </span>
+                              </div>
+
+                              {visibleReadStatusEntries.length > 0 && (
+                                <button
+                                  type="button"
+                                  className={classNames(
+                                    "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
+                                    isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
+                                  )}
+                                  onClick={() => {
+                                    if (!ev.id) return;
+                                    setMessageMetaEventId(String(ev.id));
+                                  }}
+                                  aria-label="Show recipient status"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    {readPreviewEntries.map(([id, cleared]) => (
+                                      <span key={id} className="inline-flex items-center gap-1 min-w-0">
+                                        <span className="truncate max-w-[10ch]">{id}</span>
+                                        <span
+                                          className={classNames(
+                                            "text-[10px] font-semibold tracking-tight",
+                                            cleared
+                                              ? (isDark ? "text-emerald-400" : "text-emerald-600")
+                                              : (isDark ? "text-slate-500" : "text-gray-500")
+                                          )}
+                                          aria-label={cleared ? "read" : "pending"}
+                                        >
+                                          {cleared ? "✓✓" : "✓"}
+                                        </span>
+                                      </span>
+                                    ))}
+                                    {readPreviewOverflow > 0 && (
+                                      <span className={classNames("text-[10px]", isDark ? "text-slate-500" : "text-gray-500")}>
+                                        +{readPreviewOverflow}
+                                      </span>
+                                    )}
+                                  </div>
+                                </button>
                               )}
                             </div>
                           </div>
@@ -1645,7 +1875,6 @@ export default function App() {
                 </section>
 
                 {/* Composer */}
-                {/* Composer */}
                 <footer className={`flex-shrink-0 border-t px-4 py-3 safe-area-inset-bottom ${isDark ? "border-slate-800 bg-slate-950/80 backdrop-blur" : "border-gray-200 bg-white/80 backdrop-blur"
                   }`}>
                   {replyTarget && (
@@ -1669,7 +1898,7 @@ export default function App() {
                     <div className={`text-xs font-medium flex-shrink-0 ${isDark ? "text-slate-500" : "text-gray-400"}`}>To</div>
                     <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide sm:overflow-visible">
                       <div className="flex items-center gap-1.5 flex-nowrap sm:flex-wrap">
-                        {["@all", "@foreman", "@peers", "user", ...actors.map((a) => String(a.id || ""))].map((tok) => {
+                        {["@all", "@foreman", "@peers", ...actors.map((a) => String(a.id || ""))].map((tok) => {
                           const t = tok.trim();
                           if (!t) return null;
                           const active = toTokens.includes(t);
@@ -1742,9 +1971,8 @@ export default function App() {
                       className="hidden"
                       onChange={(e) => {
                         const files = Array.from(e.target.files || []);
-                        if (files.length > 0) {
-                          setComposerFiles(files);
-                        }
+                        if (files.length > 0) appendComposerFiles(files);
+                        e.target.value = "";
                       }}
                     />
                     <button
@@ -1905,6 +2133,7 @@ export default function App() {
                 }
               >
                 <LazyAgentTab
+                  key={`${selectedGroupId}:${currentActor.id}:${termEpochByActor[currentActor.id] || 0}`}
                   actor={currentActor}
                   groupId={selectedGroupId}
                   isVisible={true}
@@ -1921,6 +2150,10 @@ export default function App() {
                         showError(`${resp.error.code}: ${resp.error.message}`);
                       }
                       await refreshActors();
+                      setTermEpochByActor((prev) => ({
+                        ...prev,
+                        [currentActor.id]: (prev[currentActor.id] || 0) + 1,
+                      }));
                     } finally {
                       setBusy("");
                     }
@@ -2022,6 +2255,7 @@ export default function App() {
                   )}
                   onClick={() => {
                     setMobileMenuOpen(false);
+                    if (selectedGroupId) void fetchContext(selectedGroupId);
                     setShowContextModal(true);
                   }}
                   disabled={!selectedGroupId}
@@ -2180,6 +2414,93 @@ export default function App() {
         isDark={isDark}
         groupId={selectedGroupId}
       />
+
+      {/* Message Recipients (mobile: bottom sheet, desktop: modal) */}
+      {messageMeta && (
+        <div
+          className={classNames(
+            "fixed inset-0 z-50 flex animate-fade-in",
+            isSmallScreen ? "items-end justify-center" : "items-center justify-center p-4"
+          )}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Recipient status"
+        >
+          <div
+            className={classNames("absolute inset-0", isDark ? "bg-black/60" : "bg-black/40")}
+            onClick={() => setMessageMetaEventId(null)}
+            aria-hidden="true"
+          />
+          <div
+            className={classNames(
+              "relative w-full border shadow-2xl",
+              isSmallScreen ? "rounded-t-2xl max-h-[80vh] animate-slide-up safe-area-inset-bottom" : "max-w-md rounded-2xl animate-scale-in",
+              isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-200 text-gray-900"
+            )}
+          >
+            <div className={classNames(
+              "px-5 py-4 border-b flex items-center justify-between gap-3",
+              isDark ? "border-slate-800" : "border-gray-200"
+            )}>
+              <div className="min-w-0">
+                <div className={classNames("text-sm font-semibold truncate", isDark ? "text-slate-100" : "text-gray-900")}>
+                  Recipients
+                </div>
+                <div className={classNames("text-[11px] truncate", isDark ? "text-slate-500" : "text-gray-500")} title={`to ${messageMeta.toLabel}`}>
+                  to {messageMeta.toLabel}
+                </div>
+              </div>
+              <button
+                type="button"
+                className={classNames(
+                  "touch-target-sm min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg",
+                  isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-700 hover:bg-gray-100"
+                )}
+                onClick={() => setMessageMetaEventId(null)}
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="p-4 sm:p-5 overflow-auto max-h-[70vh]">
+              {messageMeta.entries.length > 0 ? (
+                <div className={classNames(
+                  "rounded-xl border divide-y",
+                  isDark ? "border-slate-800 divide-slate-800 bg-slate-950/40" : "border-gray-200 divide-gray-200 bg-gray-50"
+                )}>
+                  {messageMeta.entries.map(([id, cleared]) => (
+                    <div key={id} className="flex items-center justify-between gap-3 px-4 py-3">
+                      <div className={classNames("text-sm font-medium truncate", isDark ? "text-slate-200" : "text-gray-800")}>
+                        {id}
+                      </div>
+                      <div
+                        className={classNames(
+                          "text-sm font-semibold tracking-tight",
+                          cleared
+                            ? (isDark ? "text-emerald-400" : "text-emerald-600")
+                            : (isDark ? "text-slate-500" : "text-gray-500")
+                        )}
+                        aria-label={cleared ? "read" : "pending"}
+                      >
+                        {cleared ? "✓✓" : "✓"}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={classNames("text-sm py-6 text-center", isDark ? "text-slate-400" : "text-gray-500")}>
+                  No recipient tracking for this message.
+                </div>
+              )}
+
+              <div className={classNames("text-[11px] mt-3", isDark ? "text-slate-500" : "text-gray-500")}>
+                Legend: ✓ pending · ✓✓ read
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Inbox Modal */}
       {
@@ -2898,6 +3219,36 @@ export default function App() {
           </div>
         )
       }
+      {dropOverlayOpen && (
+        <div className="fixed inset-0 z-[60]">
+          <div
+            className={classNames(
+              "absolute inset-0 backdrop-blur-sm",
+              isDark ? "bg-black/60" : "bg-black/40"
+            )}
+            aria-hidden="true"
+          />
+          <div className="absolute inset-0 flex items-center justify-center p-6">
+            <div
+              className={classNames(
+                "w-full max-w-sm rounded-2xl border px-6 py-5 text-center shadow-2xl",
+                isDark ? "bg-slate-900/90 border-slate-700 text-slate-100" : "bg-white/90 border-gray-200 text-gray-900"
+              )}
+              role="dialog"
+              aria-label="Drop files to attach"
+            >
+              <div className="text-3xl mb-2">📎</div>
+              <div className="text-sm font-semibold">Drop files to attach</div>
+              <div className={classNames("text-xs mt-1", isDark ? "text-slate-400" : "text-gray-500")}>
+                Added to the composer. Click Send when ready.
+              </div>
+              <div className={classNames("text-[11px] mt-3", isDark ? "text-slate-500" : "text-gray-500")}>
+                Max {WEB_MAX_FILE_MB}MB per file.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div >
   );
 }

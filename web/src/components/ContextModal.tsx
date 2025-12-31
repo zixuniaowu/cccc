@@ -390,21 +390,40 @@ export function ContextModal({
             {context?.milestones && context.milestones.length > 0 ? (
               <div className="space-y-2">
                 {context.milestones.map((m) => (
-                  <div key={m.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg ${
+                  <div key={m.id} className={`px-3 py-2 rounded-lg space-y-1 ${
                     isDark ? "bg-slate-800/50" : "bg-gray-50"
                   }`}>
-                    <span className={classNames(
-                      "text-xs px-2 py-0.5 rounded",
-                      m.status === "done" 
-                        ? "bg-emerald-900/50 text-emerald-300 dark:bg-emerald-900/50 dark:text-emerald-300" 
-                        : m.status === "in_progress" 
-                          ? "bg-blue-900/50 text-blue-300 dark:bg-blue-900/50 dark:text-blue-300" 
-                          : isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-600"
-                    )}>
-                      {m.status || "pending"}
-                    </span>
-                    <span className={`text-sm ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.title}</span>
-                    {m.due && <span className={`text-xs ml-auto ${isDark ? "text-slate-500" : "text-gray-500"}`}>{m.due}</span>}
+                    <div className="flex items-start gap-2">
+                      <span className={classNames(
+                        "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0",
+                        isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"
+                      )}>
+                        {m.id}
+                      </span>
+                      <span className={`text-sm font-medium min-w-0 truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.name}</span>
+                      <span className={classNames(
+                        "text-[11px] px-2 py-0.5 rounded flex-shrink-0 ml-auto",
+                        m.status === "done"
+                          ? isDark ? "bg-emerald-900/50 text-emerald-300" : "bg-emerald-100 text-emerald-700"
+                          : m.status === "active"
+                            ? isDark ? "bg-blue-900/50 text-blue-300" : "bg-blue-100 text-blue-700"
+                            : isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-600"
+                      )}>
+                        {m.status || "pending"}
+                      </span>
+                    </div>
+                    {(m.started || m.completed) && (
+                      <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                        {m.started ? `started ${m.started}` : ""}
+                        {m.started && m.completed ? " · " : ""}
+                        {m.completed ? `completed ${m.completed}` : ""}
+                      </div>
+                    )}
+                    {m.description && (
+                      <div className={`text-xs whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                        {m.description}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -420,34 +439,80 @@ export function ContextModal({
           {/* Tasks */}
           <div>
             <h3 className={`text-sm font-medium mb-2 ${isDark ? "text-slate-300" : "text-gray-700"}`}>Tasks</h3>
-            {context?.tasks && context.tasks.length > 0 ? (
+            {context?.tasks_summary ? (
               <div className="space-y-2">
-                {context.tasks.map((t) => (
-                  <div key={t.id} className={`flex items-center gap-3 px-3 py-2 rounded-lg ${
-                    isDark ? "bg-slate-800/50" : "bg-gray-50"
-                  }`}>
-                    <span className={classNames(
-                      "text-xs px-2 py-0.5 rounded",
-                      t.status === "done" 
-                        ? "bg-emerald-900/50 text-emerald-300" 
-                        : t.status === "in_progress" 
-                          ? "bg-blue-900/50 text-blue-300" 
-                          : isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-600"
-                    )}>
-                      {t.status || "pending"}
-                    </span>
-                    <span className={`text-sm ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.title}</span>
-                    {t.assignee && (
-                      <span className={`text-xs ml-auto ${isDark ? "text-slate-500" : "text-gray-500"}`}>→ {t.assignee}</span>
+                <div className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"}`}>
+                  total {context.tasks_summary.total} · active {context.tasks_summary.active} · planned {context.tasks_summary.planned} · done {context.tasks_summary.done}
+                </div>
+
+                {context.active_task ? (
+                  <div className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                    <div className="flex items-start gap-2">
+                      <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                        {context.active_task.id}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+                          {context.active_task.name}
+                        </div>
+                        {context.active_task.goal && (
+                          <div className={`text-xs mt-0.5 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                            {context.active_task.goal}
+                          </div>
+                        )}
+                      </div>
+                      <span className={classNames(
+                        "text-[11px] px-2 py-0.5 rounded flex-shrink-0",
+                        context.active_task.status === "done"
+                          ? isDark ? "bg-emerald-900/50 text-emerald-300" : "bg-emerald-100 text-emerald-700"
+                          : context.active_task.status === "active"
+                            ? isDark ? "bg-blue-900/50 text-blue-300" : "bg-blue-100 text-blue-700"
+                            : isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-600"
+                      )}>
+                        {context.active_task.status || "planned"}
+                      </span>
+                    </div>
+                    {(context.active_task.assignee || context.active_task.milestone) && (
+                      <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                        {context.active_task.milestone ? `milestone ${context.active_task.milestone}` : ""}
+                        {context.active_task.milestone && context.active_task.assignee ? " · " : ""}
+                        {context.active_task.assignee ? `assignee ${context.active_task.assignee}` : ""}
+                      </div>
+                    )}
+                    {Array.isArray(context.active_task.steps) && context.active_task.steps.length > 0 && (
+                      <div className="mt-2 space-y-1">
+                        {context.active_task.steps.map((s) => (
+                          <div key={s.id} className="flex items-start gap-2">
+                            <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                              {s.id}
+                            </span>
+                            <div className={`text-xs flex-1 ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                              {s.name}
+                              {s.acceptance ? (
+                                <div className={classNames("mt-0.5 whitespace-pre-wrap", isDark ? "text-slate-500" : "text-gray-500")}>
+                                  {s.acceptance}
+                                </div>
+                              ) : null}
+                            </div>
+                            <span className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>{s.status || ""}</span>
+                          </div>
+                        ))}
+                      </div>
                     )}
                   </div>
-                ))}
+                ) : (
+                  <div className={`px-3 py-2 rounded-lg text-sm italic ${
+                    isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
+                  }`}>
+                    No active task
+                  </div>
+                )}
               </div>
             ) : (
               <div className={`px-3 py-2 rounded-lg text-sm italic ${
                 isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
               }`}>
-                No tasks
+                No task summary
               </div>
             )}
           </div>
@@ -459,12 +524,20 @@ export function ContextModal({
               <div className="space-y-2">
                 {context.notes.map((n) => (
                   <div key={n.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                    <div className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{n.title}</div>
-                    {n.content && (
-                      <div className={`text-xs mt-1 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                        {n.content.slice(0, 200)}{n.content.length > 200 ? "..." : ""}
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                        {n.id}
+                      </span>
+                      {typeof n.ttl === "number" && (
+                        <span className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>ttl {n.ttl}</span>
+                      )}
+                      {n.expiring ? (
+                        <span className={`text-[11px] ${isDark ? "text-amber-300" : "text-amber-600"}`}>expiring</span>
+                      ) : null}
+                    </div>
+                    <div className={`text-xs mt-1 whitespace-pre-wrap ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                      {n.content}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -495,9 +568,14 @@ export function ContextModal({
                         className={`text-sm truncate hover:underline ${isDark ? "text-blue-400" : "text-blue-600"}`}
                         title={r.url}
                       >
-                        {r.title || r.url}
+                        {r.url}
                       </a>
                     </div>
+                    {r.note ? (
+                      <div className={`text-xs mt-1 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                        {r.note}
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
@@ -506,6 +584,38 @@ export function ContextModal({
                 isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
               }`}>
                 No references
+              </div>
+            )}
+          </div>
+
+          {/* Presence */}
+          <div>
+            <h3 className={`text-sm font-medium mb-2 ${isDark ? "text-slate-300" : "text-gray-700"}`}>Presence</h3>
+            {context?.presence?.agents && context.presence.agents.length > 0 ? (
+              <div className="space-y-2">
+                {context.presence.agents.map((a) => (
+                  <div key={a.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{a.id}</span>
+                      {a.updated_at ? (
+                        <span className={`text-[11px] ml-auto ${isDark ? "text-slate-500" : "text-gray-500"}`}>{a.updated_at}</span>
+                      ) : null}
+                    </div>
+                    {a.status ? (
+                      <div className={`text-xs mt-1 whitespace-pre-wrap ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                        {a.status}
+                      </div>
+                    ) : (
+                      <div className={`text-xs mt-1 italic ${isDark ? "text-slate-500" : "text-gray-500"}`}>No status</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className={`px-3 py-2 rounded-lg text-sm italic ${
+                isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
+              }`}>
+                No presence
               </div>
             )}
           </div>
