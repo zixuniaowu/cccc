@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cccc-pair"
-version = "0.4.0rc2"
+version = "0.4.0rc3"
 description = "Global multi-agent delivery kernel with working groups, scopes, and an append-only collaboration ledger"
 readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.9"
@@ -17,6 +17,7 @@ dependencies = [
   "PyYAML>=6.0,<7.0",
   "fastapi>=0.110,<1.0",
   "pydantic>=2.0,<3.0",
+  "python-multipart>=0.0.7,<1.0",
   "uvicorn[standard]>=0.27,<1.0",
 ]
 classifiers = [

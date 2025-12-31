@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-> Status: **0.4.0rc2** (Release Candidate). Expect breaking changes while we harden UX and contracts.
+> Status: **0.4.0rc3** (Release Candidate). Expect breaking changes while we harden UX and contracts.
 
 CCCC is a **local-first, global multi-agent delivery kernel**:
 
@@ -86,12 +86,12 @@ Runtime layout (default):
 
 ### Install 0.4.x RC from TestPyPI (recommended today)
 
-RC tags (e.g. `v0.4.0-rc2`) are published to **TestPyPI**. Use TestPyPI as the primary index, and PyPI as a fallback for dependencies:
+RC tags (e.g. `v0.4.0-rc3`) are published to **TestPyPI**. Use TestPyPI as the primary index, and PyPI as a fallback for dependencies:
 
 ```bash
 python -m pip install --index-url https://test.pypi.org/simple \
   --extra-index-url https://pypi.org/simple \
-  cccc-pair==0.4.0rc2
+  cccc-pair==0.4.0rc3
 ```
 
 Note: at the moment, the latest stable on PyPI is still the legacy v0.3.x line. Use the command above to install 0.4.x RCs.
