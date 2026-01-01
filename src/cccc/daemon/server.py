@@ -758,6 +758,20 @@ def _maybe_autostart_running_groups() -> None:
             clear_preamble_sent(group, aid)
             THROTTLE.clear_actor(group.group_id, aid)
             # NOTE: 不在启动时注入 system prompt（lazy preamble）
+        # Daemon restart should behave like a resume: do not "catch up" on reminders.
+        try:
+            from ..kernel.group import get_group_state
+
+            if (
+                get_group_state(group) == "active"
+                and (
+                    pty_runner.SUPERVISOR.group_running(group.group_id)
+                    or headless_runner.SUPERVISOR.group_running(group.group_id)
+                )
+            ):
+                AUTOMATION.on_resume(group)
+        except Exception:
+            pass
 
 
 def _maybe_compact_ledgers(home: Path) -> None:

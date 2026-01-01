@@ -144,13 +144,14 @@ class PtySession:
         _set_winsize(self._master_fd, cols=int(cols), rows=int(rows))
         _best_effort_killpg(self.pid, signal.SIGWINCH)
 
-    def write_input(self, data: bytes) -> None:
+    def write_input(self, data: bytes) -> bool:
         if not data:
-            return
+            return True
         try:
             os.write(self._master_fd, data)
+            return True
         except Exception:
-            pass
+            return False
 
     def stop(self) -> None:
         self._running = False
@@ -553,15 +554,15 @@ class PtySupervisor:
             return
         s.resize(cols=int(cols), rows=int(rows))
 
-    def write_input(self, *, group_id: str, actor_id: str, data: bytes) -> None:
+    def write_input(self, *, group_id: str, actor_id: str, data: bytes) -> bool:
         if not data:
-            return
+            return True
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         with self._lock:
             s = self._sessions.get(key)
         if s is None or not s.is_running():
-            return
-        s.write_input(data)
+            return False
+        return bool(s.write_input(data))
 
 
 SUPERVISOR = PtySupervisor()

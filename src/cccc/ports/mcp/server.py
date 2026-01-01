@@ -868,7 +868,7 @@ MCP_TOOLS = [
 	    },
     {
         "name": "cccc_message_send",
-        "description": "Send a message to other actors or user.",
+        "description": "Send a chat message (the only visible communication channel; terminal output is not delivered).",
 	        "inputSchema": {
 	            "type": "object",
 	            "properties": {
@@ -882,7 +882,7 @@ MCP_TOOLS = [
 	    },
     {
         "name": "cccc_message_reply",
-        "description": "Reply to a message. Automatically quotes the original message.",
+        "description": "Reply to a message via chat (the only visible communication channel). Automatically quotes the original message.",
 	        "inputSchema": {
 	            "type": "object",
 	            "properties": {

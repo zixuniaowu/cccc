@@ -558,7 +558,7 @@ export default function App() {
             });
           }
 
-          refreshActors();
+          void refreshActors(groupId);
           return;
         }
 
@@ -586,18 +586,27 @@ export default function App() {
             }
           }
         }
-        if (ev.kind === "chat.message") {
-          refreshActors();
+        const kind = String((ev as any).kind || "");
+        if (
+          kind === "chat.message" ||
+          kind === "chat.read" ||
+          kind.startsWith("actor.") ||
+          kind === "group.start" ||
+          kind === "group.stop" ||
+          kind === "group.set_state"
+        ) {
+          void refreshActors(groupId);
         }
       } catch { /* ignore */ }
     });
     eventSourceRef.current = es;
   }
 
-  async function refreshActors() {
-    if (!selectedGroupId) return;
-    const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors?include_unread=true`);
-    if (a.ok) setActors(a.result.actors || []);
+  async function refreshActors(groupId?: string) {
+    const gid = String(groupId || selectedGroupIdRef.current || selectedGroupId || "").trim();
+    if (!gid) return;
+    const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(gid)}/actors?include_unread=true`);
+    if (a.ok && selectedGroupIdRef.current === gid) setActors(a.result.actors || []);
   }
 
 

@@ -2,7 +2,21 @@
 
 This is the operational playbook for the CCCC multi-agent collaboration system.
 
-## 0) Core Philosophy
+## 0) Non-negotiables
+
+1) **Visible chat MUST go through MCP tools.** Terminal output is not a CCCC message.  
+   - Send: `cccc_message_send(text=..., to=[...])`  
+   - Reply: `cccc_message_reply(event_id=..., text=...)`
+
+2) If you accidentally answered in the terminal, **resend the answer via MCP immediately** (can be a short summary).
+
+3) **Inbox hygiene:** read via `cccc_inbox_list(...)`, clear via `cccc_inbox_mark_read(event_id=...)` / `cccc_inbox_mark_all_read(...)`.
+
+4) **PROJECT.md is the constitution:** read it (`cccc_project_info`) and follow it. **Do not edit** unless the user explicitly asks.
+
+5) **Accountability:** if you claim done/fixed, update tasks/milestones + include 1-line evidence. If you agree, say what you checked (or raise 1 concrete risk/question).
+
+## 1) Core Philosophy
 
 CCCC is a **collaboration hub**, not an orchestration system.
 
@@ -11,7 +25,7 @@ CCCC is a **collaboration hub**, not an orchestration system.
 - Peers are **team members**, not subordinates
 - Communication is like a **team chat**, not command-and-control
 
-## 1) Confirm Your Role
+## 2) Confirm Your Role
 
 Check the `Identity` line in the SYSTEM message, or call `cccc_group_info`.
 
@@ -19,7 +33,7 @@ Role is auto-determined by position:
 - **foreman**: First enabled actor (coordinator + worker)
 - **peer**: All other actors (independent experts)
 
-## 2) Foreman Playbook
+## 3) Foreman Playbook
 
 ### Your Dual Role
 
@@ -62,7 +76,7 @@ You are responsible for peer lifecycle:
 - **Listen to peers** - they can challenge your decisions
 - You're a tech lead, not a boss
 
-## 3) Peer Playbook
+## 4) Peer Playbook
 
 ### Your Independence
 
@@ -92,12 +106,13 @@ You cannot:
 - Add new actors
 - Start other actors
 
-## 4) Communication
+## 5) Communication
 
 ### Critical Rule: Use MCP for Messages
 
 Anything you print to the runtime terminal (stdout/stderr) is **not** a CCCC message and may never be seen by the user or other actors.
 
+- If you replied in the terminal, resend via MCP immediately.
 - Use `cccc_message_send` / `cccc_message_reply` for all communication you want others to see.
 - Use `cccc_inbox_list` to read, then `cccc_inbox_mark_read` to clear items you handled.
 
@@ -106,14 +121,14 @@ Anything you print to the runtime terminal (stdout/stderr) is **not** a CCCC mes
 - `@all` - Everyone (all actors + user)
 - `@foreman` - Foreman role actor only
 - `@peers` - All peer role actors
-- `user` - Human user only
+- `user` - Human user only (recipient token; never impersonate user as a sender)
 - `agent-1` - Specific actor by ID (no @ prefix)
 
 ### Message Quality
 
 - Keep messages concise and actionable
 - Include `Next:` when you have a clear next step
-- Don't send pure acknowledgments ("OK", "Got it")
+- Avoid empty acknowledgments ("OK", "Got it") unless asked; use inbox mark-read for receipt.
 - When blocked, clearly state what you need and from whom
 
 ### Communication Style
@@ -147,7 +162,7 @@ This is how CCCC avoids "polite but useless" multi-agent collaboration without f
 - If you endorse someone else's result, say **what you checked** (even if it's quick).
 - If you didn't verify, don't rubber-stamp; raise one concrete risk/question.
 
-## 5) Workflow
+## 6) Workflow
 
 ### Session Start
 
@@ -174,17 +189,17 @@ After completing significant work, ask yourself:
 3. **Dependency**: Do I need input from others?
 4. **Progress**: Should I update Context?
 
-## 6) Group State
+## 7) Group State
 
-| State | Meaning | Automation |
-|-------|---------|------------|
-| `active` | Working normally | All enabled |
-| `idle` | Task complete | All disabled |
-| `paused` | User paused | All disabled |
+| State | Meaning | Automation | Delivery |
+|-------|---------|------------|----------|
+| `active` | Working normally | enabled | chat + notifications delivered |
+| `idle` | Task complete / waiting | disabled | chat delivered; notifications suppressed |
+| `paused` | User paused | disabled | nothing delivered to PTY (inbox only) |
 
 Foreman should set to `idle` when task is complete.
 
-## 7) Permission Matrix
+## 8) Permission Matrix
 
 | Action | user | foreman | peer |
 |--------|------|---------|------|
@@ -194,7 +209,7 @@ Foreman should set to `idle` when task is complete.
 | actor_restart | ✓ | ✓ (any) | ✓ (self) |
 | actor_remove | ✓ | ✓ (self) | ✓ (self) |
 
-## 8) MCP Tools Quick Reference
+## 9) MCP Tools Quick Reference
 
 ### Messages
 - `cccc_inbox_list` - Get unread messages

@@ -43,6 +43,7 @@ from ..util.time import parse_utc_iso, utc_now_iso
 # ============================================================================
 
 DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS = 60  # Minimum interval between deliveries
+DEFAULT_DELIVERY_RETRY_INTERVAL_SECONDS = 5  # Retry interval when delivery cannot be completed
 
 
 def _get_delivery_config(group: Group) -> Dict[str, Any]:
@@ -177,6 +178,7 @@ class PendingMessage:
 class ActorDeliveryState:
     """Delivery state for a single actor."""
     last_delivery_at: Optional[datetime] = None
+    last_attempt_at: Optional[datetime] = None
     pending_messages: List[PendingMessage] = field(default_factory=list)
     delivered_chat_count: int = 0  # Count of delivered chat.message (per actor, in-memory)
 
@@ -243,20 +245,46 @@ class DeliveryThrottle:
             state = self._get_state(group_id, actor_id)
             if not state.pending_messages:
                 return False
-            if state.last_delivery_at is None:
-                return True
             now = datetime.now(timezone.utc)
-            elapsed = (now - state.last_delivery_at).total_seconds()
-            return elapsed >= min_interval_seconds
+            # If we've never successfully delivered, allow attempts with a short retry backoff.
+            if state.last_delivery_at is None:
+                if state.last_attempt_at is None:
+                    return True
+                elapsed_attempt = (now - state.last_attempt_at).total_seconds()
+                return elapsed_attempt >= DEFAULT_DELIVERY_RETRY_INTERVAL_SECONDS
+
+            elapsed_delivery = (now - state.last_delivery_at).total_seconds()
+            if elapsed_delivery < min_interval_seconds:
+                return False
+
+            # Past min-interval since last successful delivery; still avoid tight retry loops.
+            if state.last_attempt_at is None:
+                return True
+            elapsed_attempt = (now - state.last_attempt_at).total_seconds()
+            return elapsed_attempt >= DEFAULT_DELIVERY_RETRY_INTERVAL_SECONDS
     
-    def flush(self, group_id: str, actor_id: str) -> List[PendingMessage]:
-        """Get and clear pending messages for an actor."""
+    def take_pending(self, group_id: str, actor_id: str) -> List[PendingMessage]:
+        """Take and clear pending messages for an actor (marks a delivery attempt)."""
         with self._lock:
             state = self._get_state(group_id, actor_id)
             messages = state.pending_messages
             state.pending_messages = []
-            state.last_delivery_at = datetime.now(timezone.utc)
+            state.last_attempt_at = datetime.now(timezone.utc)
             return messages
+
+    def requeue_front(self, group_id: str, actor_id: str, messages: List[PendingMessage]) -> None:
+        """Requeue messages at the front to preserve ordering across retries."""
+        if not messages:
+            return
+        with self._lock:
+            state = self._get_state(group_id, actor_id)
+            state.pending_messages = list(messages) + state.pending_messages
+
+    def mark_delivered(self, group_id: str, actor_id: str) -> None:
+        """Mark a successful delivery timestamp for an actor."""
+        with self._lock:
+            state = self._get_state(group_id, actor_id)
+            state.last_delivery_at = datetime.now(timezone.utc)
 
     def get_delivered_chat_count(self, group_id: str, actor_id: str) -> int:
         """Get delivered chat.message count for an actor (in-memory)."""
@@ -368,8 +396,9 @@ def render_batched_messages(messages: List[PendingMessage], *, reminder_after_in
 
     for i, msg in enumerate(messages, 1):
         blocks.append(render_single_message(msg))
-        if reminder_after_index is not None and reminder_after_index == i:
-            blocks.append(MCP_REMINDER_LINE)
+
+    if reminder_after_index is not None:
+        blocks.append(MCP_REMINDER_LINE)
 
     return "\n\n".join([b for b in blocks if b]).rstrip()
 
@@ -464,7 +493,10 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
         text_payload = payload
     
     # 第一步：发送文本内容
-    pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=text_payload)
+    ok = bool(pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=text_payload))
+    if not ok:
+        logger.warning(f"[pty_submit_text] Failed to write payload to {gid}/{aid}")
+        return False
     logger.info(f"[pty_submit_text] Sent text payload, scheduling delayed submit")
     
     # 第二步：延迟发送回车（给 CLI 应用时间处理输入）
@@ -472,8 +504,11 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
         def delayed_submit():
             time.sleep(1.5)  # 1.5秒延迟，用户反馈这个延迟有一定成功率
             if pty_runner.SUPERVISOR.actor_running(gid, aid):
-                pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=submit)
-                logger.info(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
+                ok_submit = bool(pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=submit))
+                if ok_submit:
+                    logger.info(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
+                else:
+                    logger.warning(f"[pty_submit_text] Delayed submit failed to write to {gid}/{aid}")
             else:
                 logger.warning(f"[pty_submit_text] Actor no longer running for delayed submit: {gid}/{aid}")
         
@@ -605,7 +640,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
     if not THROTTLE.should_deliver(gid, aid, min_interval):
         return False
     
-    messages = THROTTLE.flush(gid, aid)
+    messages = THROTTLE.take_pending(gid, aid)
     if not messages:
         return False
     
@@ -620,42 +655,22 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
             # Message blocked by state - requeue for later
             requeue.append(msg)
     
-    # Requeue blocked messages
-    for msg in requeue:
-        THROTTLE.queue_message(
-            gid, aid,
-            event_id=msg.event_id,
-            by=msg.by,
-            to=msg.to,
-            text=msg.text,
-            reply_to=msg.reply_to,
-            quote_text=msg.quote_text,
-            ts=msg.ts,
-            kind=msg.kind,
-            notify_kind=msg.notify_kind,
-            notify_title=msg.notify_title,
-            notify_message=msg.notify_message,
-        )
-    
     if not deliverable:
+        # Nothing is deliverable in the current group state; keep everything queued.
+        THROTTLE.requeue_front(gid, aid, messages)
         return False
     
     actor = find_actor(group, aid)
     if not isinstance(actor, dict):
+        THROTTLE.requeue_front(gid, aid, messages)
         return False
 
     delivered_before = THROTTLE.get_delivered_chat_count(gid, aid)
     chat_total = sum(1 for m in deliverable if m.kind == "chat.message")
     reminder_after_index: Optional[int] = None
     if chat_total > 0:
-        seen = 0
-        for i, m in enumerate(deliverable, 1):
-            if m.kind != "chat.message":
-                continue
-            seen += 1
-            if (delivered_before + seen) % REMINDER_EVERY_N_MESSAGES == 0:
-                reminder_after_index = i
-                break
+        # Always remind on any chat delivery (batched by throttle, so it's not noisy).
+        reminder_after_index = len(deliverable)
     
     # Build the full delivery text
     parts: List[str] = []
@@ -684,6 +699,13 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
             if not preamble_already_sent:
                 mark_preamble_sent(group, aid)
             THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
+            THROTTLE.mark_delivered(gid, aid)
+            # Keep blocked messages queued for later.
+            if requeue:
+                THROTTLE.requeue_front(gid, aid, requeue)
+        else:
+            # Delivery failed: keep everything queued for retry.
+            THROTTLE.requeue_front(gid, aid, messages)
     
     return delivered
 
