@@ -128,12 +128,17 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
           onClick={onAddAgent}
           disabled={!canAddAgent}
           className={classNames(
-            "ml-2 flex items-center justify-center w-6 h-6 rounded hover:bg-black/5 transition-colors disabled:opacity-30",
-            isDark ? "text-slate-400 hover:bg-white/5" : "text-gray-400"
+            "ml-2 flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition-colors disabled:opacity-30 whitespace-nowrap",
+            actors.length === 0
+              ? "bg-blue-600 text-white border-blue-500 hover:bg-blue-500"
+              : isDark
+                ? "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
           )}
-          title="Add New Agent"
+          title={actors.length === 0 ? "Add your first agent (foreman)" : "Add agent"}
         >
-          +
+          <span className="text-base leading-none">+</span>
+          <span className={actors.length === 0 ? "" : "hidden sm:inline"}>{actors.length === 0 ? "Add Agent" : "Add"}</span>
         </button>
       )}
     </div>

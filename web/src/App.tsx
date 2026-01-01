@@ -398,20 +398,47 @@ export default function App() {
     return "";
   }, [busy, newActorRuntime, newActorCommand, runtimes]);
 
+  const validRecipientSet = useMemo(() => {
+    const out = new Set<string>(["@all", "@foreman", "@peers"]);
+    for (const a of actors) {
+      const id = String(a.id || "").trim();
+      if (id) out.add(id);
+    }
+    return out;
+  }, [actors]);
+
   const toTokens = useMemo(() => {
     const raw = toText.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
     // 'user' is a system recipient token for agents; Web users shouldn't target it.
-    const filtered = raw.filter((t) => t !== "user" && t !== "@user");
+    const filtered = raw.filter((t) => t !== "user" && t !== "@user" && t !== "@");
     // Deduplicate while preserving order.
     const out: string[] = [];
     const seen = new Set<string>();
     for (const t of filtered) {
+      if (!validRecipientSet.has(t)) continue;
       if (seen.has(t)) continue;
       seen.add(t);
       out.push(t);
     }
     return out;
-  }, [toText]);
+  }, [toText, validRecipientSet]);
+
+  // Keep composer recipients synced with the current actor list.
+  useEffect(() => {
+    if (!toText) return;
+    const raw = toText.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
+    const filtered = raw.filter((t) => t !== "user" && t !== "@user" && t !== "@");
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const t of filtered) {
+      if (!validRecipientSet.has(t)) continue;
+      if (seen.has(t)) continue;
+      seen.add(t);
+      out.push(t);
+    }
+    const next = out.join(", ");
+    if (next !== toText) setToText(next);
+  }, [toText, validRecipientSet]);
 
   const mentionSuggestions = useMemo(() => {
     const base = ["@all", "@foreman", "@peers"];
@@ -1080,6 +1107,13 @@ export default function App() {
 
   useEffect(() => {
     selectedGroupIdRef.current = selectedGroupId;
+    // Group selection is the top-level routing context. Clear per-group composer state
+    // to avoid sending to the wrong actors after switching groups.
+    setComposerText("");
+    setComposerFiles([]);
+    setToText("");
+    setReplyTarget(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     if (contextRefreshTimerRef.current) {
       window.clearTimeout(contextRefreshTimerRef.current);
       contextRefreshTimerRef.current = null;
@@ -1304,6 +1338,12 @@ export default function App() {
     setEditGroupTopic(groupDoc.topic || "");
     setShowGroupEdit(true);
   }
+
+  const chatMessages = events.filter((ev) => ev.kind === "chat.message");
+  const needsScope = !!selectedGroupId && !projectRoot;
+  const needsActors = !!selectedGroupId && actors.length === 0;
+  const needsStart = !!selectedGroupId && actors.length > 0 && !selectedGroupRunning;
+  const showSetupCard = needsScope || needsActors || needsStart;
 
   // Render
   return (
@@ -1626,9 +1666,92 @@ export default function App() {
                   role="log"
                   aria-label="Chat messages"
                 >
-                  {events
-                    .filter((ev) => ev.kind === "chat.message")
-                    .map((ev, idx) => {
+                  {showSetupCard && chatMessages.length > 0 && (
+                    <div
+                      className={classNames(
+                        "rounded-2xl border p-4 sm:p-5",
+                        isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70"
+                      )}
+                      role="region"
+                      aria-label="Setup checklist"
+                    >
+                      <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>Next steps</div>
+                      <div className="mt-3 space-y-2">
+                        {needsScope && (
+                          <div className={classNames("rounded-xl border px-3 py-2", isDark ? "border-slate-700 bg-slate-900/60" : "border-gray-200 bg-white")}>
+                            <div className={classNames("text-xs font-medium", isDark ? "text-slate-200" : "text-gray-800")}>Attach a project folder</div>
+                            <div className={classNames("mt-1 flex items-center justify-between gap-2 text-[11px]", isDark ? "text-slate-500" : "text-gray-500")}>
+                              <code className={classNames("truncate", isDark ? "text-slate-300" : "text-gray-700")}>
+                                cccc attach . --group {selectedGroupId}
+                              </code>
+                              <button
+                                type="button"
+                                className={classNames(
+                                  "flex-shrink-0 rounded-lg px-2 py-1 text-[11px] font-medium border",
+                                  isDark ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-gray-200 text-gray-700 hover:bg-gray-50"
+                                )}
+                                onClick={async () => {
+                                  const cmd = `cccc attach . --group ${selectedGroupId}`;
+                                  try {
+                                    await navigator.clipboard.writeText(cmd);
+                                  } catch {
+                                    window.prompt("Copy command:", cmd);
+                                  }
+                                }}
+                              >
+                                Copy
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {needsActors && (
+                          <div className={classNames("flex items-center justify-between gap-3 rounded-xl border px-3 py-2", isDark ? "border-slate-700 bg-slate-900/60" : "border-gray-200 bg-white")}>
+                            <div className="min-w-0">
+                              <div className={classNames("text-xs font-medium", isDark ? "text-slate-200" : "text-gray-800")}>Add an agent</div>
+                              <div className={classNames("text-[11px] truncate", isDark ? "text-slate-500" : "text-gray-500")}>Add a foreman first, then peers.</div>
+                            </div>
+                            <button
+                              type="button"
+                              className={classNames(
+                                "flex-shrink-0 rounded-xl px-3 py-1.5 text-[11px] font-semibold",
+                                "bg-blue-600 hover:bg-blue-500 text-white"
+                              )}
+                              onClick={() => {
+                                setNewActorRole(hasForeman ? "peer" : "foreman");
+                                setShowAddActor(true);
+                              }}
+                            >
+                              Add Agent
+                            </button>
+                          </div>
+                        )}
+
+                        {needsStart && (
+                          <div className={classNames("flex items-center justify-between gap-3 rounded-xl border px-3 py-2", isDark ? "border-slate-700 bg-slate-900/60" : "border-gray-200 bg-white")}>
+                            <div className="min-w-0">
+                              <div className={classNames("text-xs font-medium", isDark ? "text-slate-200" : "text-gray-800")}>Start the group</div>
+                              <div className={classNames("text-[11px] truncate", isDark ? "text-slate-500" : "text-gray-500")}>Launch your agents and begin chatting.</div>
+                            </div>
+                            <button
+                              type="button"
+                              className={classNames(
+                                "flex-shrink-0 rounded-xl px-3 py-1.5 text-[11px] font-semibold",
+                                "bg-emerald-600 hover:bg-emerald-500 text-white",
+                                busy === "group-start" ? "opacity-60" : ""
+                              )}
+                              onClick={startGroup}
+                              disabled={busy === "group-start"}
+                            >
+                              {busy === "group-start" ? "Starting…" : "Start"}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {chatMessages.map((ev, idx) => {
                       const isMessage = ev.kind === "chat.message";
                       const isUserMessage = isMessage && ev.by === "user";
                       const replyTo = ev.data?.reply_to;
@@ -1850,11 +1973,89 @@ export default function App() {
                   <div ref={bottomRef} />
 
                   {/* Empty State */}
-                  {events.filter((ev) => ev.kind === "chat.message").length === 0 && (
-                    <div className="flex flex-col items-center justify-center h-full text-center pb-20 opacity-50">
-                      <div className="text-4xl mb-4 grayscale">💬</div>
-                      <p className={`text-sm font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>No messages yet</p>
-                      <p className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>Start the conversation with your AI team.</p>
+                  {chatMessages.length === 0 && (
+                    <div className="flex flex-col items-center justify-center h-full text-center pb-20">
+                      {showSetupCard ? (
+                        <div className={classNames("w-full max-w-md", isDark ? "text-slate-200" : "text-gray-800")}>
+                          <div className={classNames("text-4xl mb-4", isDark ? "" : "")}>🧭</div>
+                          <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>Next steps</div>
+                          <div className={classNames("mt-4 space-y-2", isDark ? "" : "")}>
+                            {needsScope && (
+                              <div className={classNames("rounded-2xl border p-4 text-left", isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70")}>
+                                <div className="text-xs font-semibold">Attach a project folder</div>
+                                <div className={classNames("mt-2 flex items-center justify-between gap-2 text-[11px]", isDark ? "text-slate-500" : "text-gray-500")}>
+                                  <code className={classNames("truncate", isDark ? "text-slate-300" : "text-gray-700")}>
+                                    cccc attach . --group {selectedGroupId}
+                                  </code>
+                                  <button
+                                    type="button"
+                                    className={classNames(
+                                      "flex-shrink-0 rounded-lg px-2 py-1 text-[11px] font-medium border",
+                                      isDark ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-gray-200 text-gray-700 hover:bg-gray-50"
+                                    )}
+                                    onClick={async () => {
+                                      const cmd = `cccc attach . --group ${selectedGroupId}`;
+                                      try {
+                                        await navigator.clipboard.writeText(cmd);
+                                      } catch {
+                                        window.prompt("Copy command:", cmd);
+                                      }
+                                    }}
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {needsActors && (
+                              <div className={classNames("rounded-2xl border p-4 text-left", isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70")}>
+                                <div className="text-xs font-semibold">Add an agent</div>
+                                <div className={classNames("mt-1 text-[11px]", isDark ? "text-slate-500" : "text-gray-500")}>
+                                  Add a foreman first, then peers.
+                                </div>
+                                <button
+                                  type="button"
+                                  className="mt-3 w-full rounded-xl px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-500 text-white"
+                                  onClick={() => {
+                                    setNewActorRole(hasForeman ? "peer" : "foreman");
+                                    setShowAddActor(true);
+                                  }}
+                                >
+                                  Add Agent
+                                </button>
+                              </div>
+                            )}
+
+                            {needsStart && (
+                              <div className={classNames("rounded-2xl border p-4 text-left", isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70")}>
+                                <div className="text-xs font-semibold">Start the group</div>
+                                <div className={classNames("mt-1 text-[11px]", isDark ? "text-slate-500" : "text-gray-500")}>
+                                  Launch your agents and begin chatting.
+                                </div>
+                                <button
+                                  type="button"
+                                  className={classNames(
+                                    "mt-3 w-full rounded-xl px-4 py-2 text-sm font-semibold",
+                                    "bg-emerald-600 hover:bg-emerald-500 text-white",
+                                    busy === "group-start" ? "opacity-60" : ""
+                                  )}
+                                  onClick={startGroup}
+                                  disabled={busy === "group-start"}
+                                >
+                                  {busy === "group-start" ? "Starting…" : "Start Group"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="opacity-50">
+                          <div className="text-4xl mb-4 grayscale">💬</div>
+                          <p className={`text-sm font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>No messages yet</p>
+                          <p className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>Start the conversation with your AI team.</p>
+                        </div>
+                      )}
                     </div>
                   )}
 

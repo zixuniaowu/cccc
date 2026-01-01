@@ -382,6 +382,9 @@ def resolve_recipient_tokens(group: Group, tokens: List[str]) -> List[str]:
         # IM-like mentions: allow "@peer-a" / "@Claude" by stripping leading "@"
         if t.startswith("@") and t not in ("@all", "@peers", "@foreman", "@user"):
             t = t[1:].strip()
+            if not t:
+                # Ignore stray "@" tokens instead of raising "unknown recipient: ".
+                return ""
 
         if t in ("@all", "@peers", "@foreman"):
             return t
