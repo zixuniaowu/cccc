@@ -149,6 +149,7 @@ def _default_entry() -> int:
                 stdout=log_file,
                 stderr=log_file,
                 env=os.environ.copy(),
+                start_new_session=True,  # Don't forward SIGINT to daemon
             )
         except Exception as e:
             print(f"[cccc] Failed to start daemon: {e}", file=sys.stderr)
@@ -192,18 +193,14 @@ def _default_entry() -> int:
             time.sleep(1.0)
     
     def _stop_daemon() -> None:
-        nonlocal daemon_process, shutdown_requested
-        if shutdown_requested:
-            return
-        shutdown_requested = True
-        
-        # Send shutdown command
+        nonlocal daemon_process
+        # Send shutdown command (works even if we didn't start the daemon)
         try:
             call_daemon({"op": "shutdown"}, timeout_s=2.0)
         except Exception:
             pass
-        
-        # Wait for process to exit
+
+        # Wait for our subprocess to exit (if we started it)
         if daemon_process is not None:
             try:
                 daemon_process.wait(timeout=3.0)
@@ -211,50 +208,66 @@ def _default_entry() -> int:
                 daemon_process.kill()
             daemon_process = None
     
-    def _signal_handler(signum: int, frame: Any) -> None:
-        print("\n[cccc] Shutting down...", file=sys.stderr)
-        _stop_daemon()
-        sys.exit(0)
-    
     # Start daemon
     print("[cccc] Starting daemon...", file=sys.stderr)
     if not _start_daemon():
         print("[cccc] Error: Could not start daemon", file=sys.stderr)
         return 1
     print("[cccc] Daemon started", file=sys.stderr)
-    
+
     # Start daemon monitor thread
     monitor_thread = threading.Thread(target=_monitor_daemon, daemon=True)
     monitor_thread.start()
-    
-    # Register signal handlers for clean shutdown
-    signal.signal(signal.SIGINT, _signal_handler)
-    signal.signal(signal.SIGTERM, _signal_handler)
-    
+
     # Build web args from environment
     host = str(os.environ.get("CCCC_WEB_HOST") or "").strip() or "127.0.0.1"
     port = int(os.environ.get("CCCC_WEB_PORT") or 8848)
     log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip() or "info"
     reload_mode = bool(os.environ.get("CCCC_WEB_RELOAD"))
     
-    # Run web (blocking)
+    # Run web with controlled shutdown
+    import asyncio
+    import uvicorn
+
+    config = uvicorn.Config(
+        "cccc.ports.web.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        log_level=log_level,
+        reload=reload_mode,
+    )
+    server = uvicorn.Server(config)
+
+    async def serve_with_shutdown() -> None:
+        nonlocal shutdown_requested
+        loop = asyncio.get_running_loop()
+
+        def _handle_exit() -> None:
+            nonlocal shutdown_requested
+            if shutdown_requested:
+                # Second signal - force immediate exit
+                print("\n[cccc] Force quit", file=sys.stderr)
+                os._exit(0)
+            shutdown_requested = True
+            print("\n[cccc] Shutting down...", file=sys.stderr)
+            server.should_exit = True
+            _stop_daemon()
+
+        loop.add_signal_handler(signal.SIGINT, _handle_exit)
+        loop.add_signal_handler(signal.SIGTERM, _handle_exit)
+
+        await server.serve()
+
     try:
-        import uvicorn
         print("[cccc] Starting web server...", file=sys.stderr)
-        uvicorn.run(
-            "cccc.ports.web.app:create_app",
-            factory=True,
-            host=host,
-            port=port,
-            log_level=log_level,
-            reload=reload_mode,
-        )
-    except SystemExit:
+        asyncio.run(serve_with_shutdown())
+    except (SystemExit, KeyboardInterrupt):
         pass
     finally:
         if not shutdown_requested:
             print("\n[cccc] Shutting down...", file=sys.stderr)
-            _stop_daemon()
+        _stop_daemon()
     
     return 0
 

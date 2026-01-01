@@ -20,12 +20,15 @@ Group State Behavior:
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("cccc.daemon.delivery")
 
 from ..kernel.actors import find_actor, list_actors
 from ..kernel.group import Group, get_group_state, set_group_state
@@ -625,38 +628,38 @@ def queue_system_notify(
 
 def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
     """Flush pending messages for an actor if ready.
-    
+
     Respects group state:
     - active: All messages delivered
     - idle: chat.message delivered (auto-transitions to active), system.notify blocked
     - paused: All messages blocked (stay in queue for later)
-    
+
     Returns True if messages were delivered.
     """
     gid = group.group_id
     aid = actor_id
-    
+
     config = _get_delivery_config(group)
     min_interval = config["min_interval_seconds"]
-    
+
     if not THROTTLE.should_deliver(gid, aid, min_interval):
         return False
-    
+
     messages = THROTTLE.take_pending(gid, aid)
     if not messages:
         return False
-    
+
     # Filter messages based on group state
     deliverable: List[PendingMessage] = []
     requeue: List[PendingMessage] = []
-    
+
     for msg in messages:
         if should_deliver_message(group, msg.kind):
             deliverable.append(msg)
         else:
             # Message blocked by state - requeue for later
             requeue.append(msg)
-    
+
     if not deliverable:
         # Nothing is deliverable in the current group state; keep everything queued.
         THROTTLE.requeue_front(gid, aid, messages)
@@ -729,7 +732,7 @@ def tick_delivery(group: Group) -> None:
         # Check if actor process is actually running
         if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
             continue
-        
+
         try:
             flush_pending_messages(group, actor_id=aid)
         except Exception:

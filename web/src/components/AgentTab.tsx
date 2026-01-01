@@ -6,6 +6,13 @@ import { Actor, getRuntimeColor, RUNTIME_INFO } from "../types";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
 
+type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+// WebSocket reconnect configuration (moved outside component to avoid recreation)
+const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 30000;
+const MAX_RECONNECT_ATTEMPTS = 10;
+
 interface AgentTabProps {
   actor: Actor;
   groupId: string;
@@ -33,11 +40,27 @@ export function AgentTab({
   busy,
   isDark,
 }: AgentTabProps) {
+  // Derived state (must be defined before refs that use them)
+  const isRunning = actor.running ?? actor.enabled ?? false;
+  const isHeadless = actor.runner === "headless";
+
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const [connected, setConnected] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
+
+  // WebSocket reconnect state
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Ref to avoid stale closure in WebSocket callbacks
+  const isRunningRef = useRef(isRunning);
+
+  // Keep ref in sync with prop
+  useEffect(() => {
+    isRunningRef.current = isRunning;
+  }, [isRunning]);
 
   const copyToClipboard = async (text: string): Promise<boolean> => {
     const t = (text || "").toString();
@@ -58,8 +81,6 @@ export function AgentTab({
     }
   };
 
-  const isRunning = actor.running ?? actor.enabled ?? false;
-  const isHeadless = actor.runner === "headless";
   const color = getRuntimeColor(actor.runtime, isDark);
   const rtInfo = (actor.runtime && RUNTIME_INFO[actor.runtime]) ? RUNTIME_INFO[actor.runtime] : RUNTIME_INFO.codex;
   const unreadCount = actor.unread_count ?? 0;
@@ -145,27 +166,64 @@ export function AgentTab({
     };
   }, [isHeadless, isRunning]);
 
-  // Connect WebSocket when visible and running
+  // Connect WebSocket when running (with auto-reconnect)
+  // Note: Connection persists across tab switches (isVisible changes)
   useEffect(() => {
-    if (!isVisible || !isRunning || isHeadless || !terminalRef.current) return;
+    if (!isRunning || isHeadless || !terminalRef.current) return;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actor.id)}/term`;
-    
-    const ws = new WebSocket(wsUrl);
-    ws.binaryType = "arraybuffer";
-    
-    ws.onopen = () => {
-      setConnected(true);
-      // Send initial resize
-      const term = terminalRef.current;
-      if (term) {
-        ws.send(JSON.stringify({ t: "r", c: term.cols, r: term.rows }));
+    // Clear any pending reconnect
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
+    let disposed = false;
+    let disposable: { dispose: () => void } | null = null;
+    let resizeDisposable: { dispose: () => void } | null = null;
+
+    const connect = () => {
+      if (disposed) return;
+
+      // Clean up old disposables to avoid race conditions on rapid reconnect
+      if (disposable) {
+        disposable.dispose();
+        disposable = null;
       }
-    };
-    
-    ws.onmessage = (event) => {
-      if (terminalRef.current) {
+      if (resizeDisposable) {
+        resizeDisposable.dispose();
+        resizeDisposable = null;
+      }
+
+      // Close existing connection if any
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+
+      setConnectionStatus('connecting');
+
+      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const wsUrl = `${protocol}//${window.location.host}/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actor.id)}/term`;
+
+      const ws = new WebSocket(wsUrl);
+      ws.binaryType = "arraybuffer";
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (disposed) return;
+        console.log('[WebSocket] Connected');
+        setConnectionStatus('connected');
+        reconnectAttemptRef.current = 0; // Reset reconnect counter
+
+        // Send initial resize
+        const term = terminalRef.current;
+        if (term) {
+          ws.send(JSON.stringify({ t: "r", c: term.cols, r: term.rows }));
+        }
+      };
+
+      ws.onmessage = (event) => {
+        if (disposed || !terminalRef.current) return;
         if (event.data instanceof ArrayBuffer) {
           const data = new TextDecoder().decode(event.data);
           terminalRef.current.write(data);
@@ -181,48 +239,85 @@ export function AgentTab({
             terminalRef.current.write(event.data);
           }
         }
-      }
-    };
-    
-    ws.onclose = () => {
-      setConnected(false);
-    };
-    
-    ws.onerror = () => {
-      setConnected(false);
-    };
+      };
 
-    wsRef.current = ws;
+      ws.onclose = (event) => {
+        if (disposed) return;
+        console.log(`[WebSocket] Closed: code=${event.code} reason=${event.reason}`);
+        wsRef.current = null;
 
-    // Handle terminal input - send as JSON with type "i" (input)
-    const term = terminalRef.current;
-    const disposable = term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        // xterm.js may emit terminal replies (not user keystrokes), e.g. device attributes.
-        // Some runtimes (notably droid) can echo these back as literal text (seen as "1;2c").
-        if (actor.runtime === "droid") {
-          const isDeviceAttributesReply = /^\x1b\[(?:\?|>)(?:\d+)(?:;\d+)*c$/.test(data);
-          if (isDeviceAttributesReply) return;
+        // Only auto-reconnect if not a clean close (code 1000)
+        // Use ref to get latest prop value (avoid stale closure)
+        if (event.code !== 1000 && isRunningRef.current && !isHeadless) {
+          const attempt = reconnectAttemptRef.current;
+
+          // Check max reconnect attempts
+          if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+            console.log('[WebSocket] Max reconnect attempts reached, giving up');
+            setConnectionStatus('disconnected');
+            return;
+          }
+
+          const delay = Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt), RECONNECT_MAX_DELAY_MS);
+          console.log(`[WebSocket] Scheduling reconnect attempt ${attempt + 1}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms`);
+          setConnectionStatus('reconnecting');
+
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectAttemptRef.current++;
+            connect();
+          }, delay);
+        } else {
+          setConnectionStatus('disconnected');
         }
-        ws.send(JSON.stringify({ t: "i", d: data }));
-      }
-    });
+      };
 
-    // Handle terminal resize - send as JSON with type "r" (resize)
-    const resizeDisposable = term.onResize(({ cols, rows }) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ t: "r", c: cols, r: rows }));
+      ws.onerror = (error) => {
+        console.error('[WebSocket] Error:', error);
+        // onclose will be called after onerror, reconnect logic is handled there
+      };
+
+      // Handle terminal input - send as JSON with type "i" (input)
+      const term = terminalRef.current;
+      if (term) {
+        disposable = term.onData((data) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            // xterm.js may emit terminal replies (not user keystrokes), e.g. device attributes.
+            // Some runtimes (notably droid) can echo these back as literal text (seen as "1;2c").
+            if (actor.runtime === "droid") {
+              const isDeviceAttributesReply = /^\x1b\[(?:\?|>)(?:\d+)(?:;\d+)*c$/.test(data);
+              if (isDeviceAttributesReply) return;
+            }
+            ws.send(JSON.stringify({ t: "i", d: data }));
+          }
+        });
+
+        // Handle terminal resize - send as JSON with type "r" (resize)
+        resizeDisposable = term.onResize(({ cols, rows }) => {
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ t: "r", c: cols, r: rows }));
+          }
+        });
       }
-    });
+    };
+
+    // Start initial connection
+    connect();
 
     return () => {
-      disposable.dispose();
-      resizeDisposable.dispose();
-      ws.close();
-      wsRef.current = null;
-      setConnected(false);
+      disposed = true;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      if (disposable) disposable.dispose();
+      if (resizeDisposable) resizeDisposable.dispose();
+      if (wsRef.current) {
+        wsRef.current.close(1000, 'Component cleanup');
+        wsRef.current = null;
+      }
+      setConnectionStatus('disconnected');
     };
-  }, [isVisible, isRunning, isHeadless, groupId, actor.id]);
+  }, [isRunning, isHeadless, groupId, actor.id, actor.runtime]);
 
   // Fit terminal on visibility change and resize
   useEffect(() => {
@@ -269,7 +364,9 @@ export function AgentTab({
           </div>
         </div>
         <div className="flex items-center gap-2 text-xs text-slate-400">
-          {connected && <span className="text-emerald-400">● Connected</span>}
+          {connectionStatus === 'connected' && <span className="text-emerald-400">● Connected</span>}
+          {connectionStatus === 'connecting' && <span className="text-yellow-400">○ Connecting...</span>}
+          {connectionStatus === 'reconnecting' && <span className="text-yellow-400">↻ Reconnecting...</span>}
         </div>
       </div>
 
@@ -332,7 +429,7 @@ export function AgentTab({
             </button>
             <button
               onClick={sendInterrupt}
-              disabled={!connected}
+              disabled={connectionStatus !== 'connected'}
               className={classNames(
                 "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors",
                 isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
