@@ -1,0 +1,102 @@
+import { LedgerEvent } from "../../types";
+import { formatFullTime, formatTime } from "../../utils/time";
+
+function formatEventLine(ev: LedgerEvent): string {
+  if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
+    return String(ev.data.text || "");
+  }
+  if (ev.kind === "system.notify" && ev.data && typeof ev.data === "object") {
+    const kind = String(ev.data.kind || "info");
+    const title = String(ev.data.title || "");
+    const message = String(ev.data.message || "");
+    const target = ev.data.target_actor_id ? ` → ${ev.data.target_actor_id}` : "";
+    return `[${kind}]${target}: ${title}${message ? ` - ${message}` : ""}`;
+  }
+  const k = String(ev.kind || "event");
+  const by = ev.by ? ` by ${ev.by}` : "";
+  return `${k}${by}`;
+}
+
+export interface InboxModalProps {
+  isOpen: boolean;
+  isDark: boolean;
+  actorId: string;
+  messages: LedgerEvent[];
+  busy: string;
+  onClose: () => void;
+  onMarkAllRead: () => void;
+}
+
+export function InboxModal({ isOpen, isDark, actorId, messages, busy, onClose, onMarkAllRead }: InboxModalProps) {
+  if (!isOpen) return null;
+
+  return (
+    <div
+      className={`fixed inset-0 backdrop-blur-sm flex items-start justify-center p-4 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="inbox-title"
+    >
+      <div
+        className={`w-full max-w-2xl mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in ${
+          isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
+        }`}
+      >
+        <div className={`px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
+          <div className="min-w-0">
+            <div id="inbox-title" className={`text-lg font-semibold truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+              Inbox · {actorId}
+            </div>
+            <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>{messages.length} unread messages</div>
+          </div>
+          <div className="flex gap-2">
+            <button
+              className={`rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] ${
+                isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+              }`}
+              onClick={onMarkAllRead}
+              disabled={!messages.length || busy.startsWith("inbox")}
+            >
+              Mark all read
+            </button>
+            <button
+              className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors min-h-[44px] ${
+                isDark ? "bg-slate-600 hover:bg-slate-500 text-white" : "bg-gray-200 hover:bg-gray-300 text-gray-800"
+              }`}
+              onClick={onClose}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div className="max-h-[60vh] overflow-auto p-4 space-y-2">
+          {messages.map((ev, idx) => (
+            <div
+              key={String(ev.id || idx)}
+              className={`rounded-xl border px-4 py-3 ${isDark ? "border-slate-700/50 bg-slate-800/50" : "border-gray-200 bg-gray-50"}`}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className={`text-xs truncate ${isDark ? "text-slate-400" : "text-gray-500"}`} title={formatFullTime(ev.ts)}>
+                  {formatTime(ev.ts)}
+                </div>
+                <div className={`text-xs font-medium truncate ${isDark ? "text-slate-300" : "text-gray-700"}`}>{ev.by || "—"}</div>
+              </div>
+              <div className={`mt-2 text-sm whitespace-pre-wrap break-words ${isDark ? "text-slate-200" : "text-gray-800"}`}>{formatEventLine(ev)}</div>
+            </div>
+          ))}
+          {!messages.length && (
+            <div className="text-center py-8">
+              <div className="text-3xl mb-2">📭</div>
+              <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>No unread messages</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+

@@ -20,7 +20,7 @@ from ..kernel.group import attach_scope_to_group, create_group, delete_group, de
 from ..kernel.ledger import append_event
 from ..kernel.registry import load_registry
 from ..kernel.scope import detect_scope
-from ..kernel.actors import add_actor, find_actor, list_actors, remove_actor, resolve_recipient_tokens, update_actor, get_effective_role
+from ..kernel.actors import add_actor, find_actor, find_foreman, list_actors, remove_actor, resolve_recipient_tokens, update_actor, get_effective_role
 from ..kernel.blobs import resolve_blob_attachment_path
 from ..kernel.inbox import find_event, get_cursor, get_quote_text, is_message_for_actor, latest_unread_event, set_cursor, unread_messages
 from ..kernel.ledger_retention import compact as compact_ledger
@@ -307,6 +307,44 @@ def _inject_actor_context_env(env: Dict[str, Any], *, group_id: str, actor_id: s
 
 
 AUTOMATION = AutomationManager()
+
+_AUTOMATION_RESET_NOTIFY_KINDS = {"nudge", "keepalive", "actor_idle", "silence_check", "standup"}
+
+
+def _foreman_id(group: Any) -> str:
+    try:
+        foreman = find_foreman(group)
+    except Exception:
+        foreman = None
+    if isinstance(foreman, dict):
+        return str(foreman.get("id") or "").strip()
+    return ""
+
+
+def _reset_automation_timers_if_active(group: Any) -> None:
+    """Reset automation timers without catch-up bursts.
+
+    Used on resume/start and when foreman changes (ownership transfer).
+    """
+    try:
+        from ..kernel.group import get_group_state
+
+        if get_group_state(group) != "active":
+            return
+        AUTOMATION.on_resume(group)
+        try:
+            THROTTLE.clear_pending_system_notifies(group.group_id, notify_kinds=set(_AUTOMATION_RESET_NOTIFY_KINDS))
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _maybe_reset_automation_on_foreman_change(group: Any, *, before_foreman_id: str) -> None:
+    after = _foreman_id(group)
+    if str(before_foreman_id or "") == str(after or ""):
+        return
+    _reset_automation_timers_if_active(group)
 
 
 @dataclass
@@ -1102,6 +1140,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             require_group_permission(group, by=by, action="group.delete")
             _stop_im_bridges_for_group(ensure_home(), group_id=group_id)
             pty_runner.SUPERVISOR.stop_group(group_id=group_id)
+            headless_runner.SUPERVISOR.stop_group(group_id=group_id)
             reg = load_registry()
             delete_group(reg, group_id=group_id)
             active = load_active()
@@ -1315,6 +1354,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 group.save()
             except Exception:
                 pass
+            # Starting a group should behave like a resume: do not "catch up" on reminders.
+            _reset_automation_timers_if_active(group)
         ev = append_event(group.ledger_path, kind="group.start", group_id=group.group_id, scope_key="", by=by, data={"started": started})
         return DaemonResponse(ok=True, result={"group_id": group.group_id, "started": started, "event": ev}), False
 
@@ -1468,6 +1509,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
+        before_foreman_id = _foreman_id(group)
         try:
             require_actor_permission(group, by=by, action="actor.add")
             # Note: role is auto-determined by position (first enabled = foreman)
@@ -1563,6 +1605,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             set_cursor(group, actor_id, event_id=str(ev.get("id") or ""), ts=str(ev.get("ts") or ""))
         except Exception:
             pass
+        # If foreman changes (e.g., first actor created/recreated), restart automation timers to avoid bursts.
+        _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
         return DaemonResponse(ok=True, result={"actor": actor, "event": ev}), False
 
     if op == "actor_remove":
@@ -1574,13 +1618,29 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
+        before_foreman_id = _foreman_id(group)
         try:
             require_actor_permission(group, by=by, action="actor.remove", target_actor_id=actor_id)
             remove_actor(group, actor_id)
             pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
             _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+            headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
+            _remove_headless_state(group.group_id, actor_id)
+            THROTTLE.clear_actor(group.group_id, actor_id)
         except Exception as e:
             return _error("actor_remove_failed", str(e)), False
+        # Update running flag if no enabled actors remain.
+        try:
+            any_enabled = any(
+                bool(a.get("enabled", True))
+                for a in list_actors(group)
+                if isinstance(a, dict) and str(a.get("id") or "").strip()
+            )
+            if not any_enabled:
+                group.doc["running"] = False
+                group.save()
+        except Exception:
+            pass
         ev = append_event(
             group.ledger_path,
             kind="actor.remove",
@@ -1589,6 +1649,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             by=by,
             data={"actor_id": actor_id},
         )
+        _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
         return DaemonResponse(ok=True, result={"actor_id": actor_id, "event": ev}), False
 
     if op == "actor_update":
@@ -1601,13 +1662,14 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
-        allowed = {"role", "title", "command", "env", "default_scope_key", "submit", "enabled"}
+        allowed = {"role", "title", "command", "env", "default_scope_key", "submit", "enabled", "runner", "runtime"}
         unknown = set(patch.keys()) - allowed
         if unknown:
             return _error("invalid_patch", "invalid patch keys", details={"unknown_keys": sorted(unknown)}), False
         if not patch:
             return _error("invalid_patch", "empty patch"), False
         enabled_patched = "enabled" in patch
+        before_foreman_id = _foreman_id(group) if enabled_patched else ""
         try:
             require_actor_permission(group, by=by, action="actor.update", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, patch)
@@ -1660,21 +1722,89 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         )
                     cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
                     env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
-                    session = pty_runner.SUPERVISOR.start_actor(
-                        group_id=group.group_id,
-                        actor_id=actor_id,
-                        cwd=cwd,
-                        command=list(cmd or []),
-                        env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
-                    )
-                    try:
-                        _write_pty_state(group.group_id, actor_id, pid=session.pid)
-                    except Exception:
-                        pass
-                    # NOTE: 不在启动时注入 system prompt（lazy preamble）
+                    runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
+                    runtime = str(actor.get("runtime") or "codex").strip() or "codex"
+                    if runtime not in SUPPORTED_RUNTIMES:
+                        return (
+                            _error(
+                                "unsupported_runtime",
+                                f"unsupported runtime: {runtime}",
+                                details={
+                                    "group_id": group.group_id,
+                                    "actor_id": actor_id,
+                                    "runtime": runtime,
+                                    "supported": list(SUPPORTED_RUNTIMES),
+                                    "hint": "Change the actor runtime to a supported one.",
+                                },
+                            ),
+                            False,
+                        )
+                    if runtime == "custom" and runner_kind != "headless" and not cmd:
+                        return (
+                            _error(
+                                "missing_command",
+                                "custom runtime requires a command (PTY runner)",
+                                details={
+                                    "group_id": group.group_id,
+                                    "actor_id": actor_id,
+                                    "runtime": runtime,
+                                    "hint": "Set actor.command (or switch runner to headless).",
+                                },
+                            ),
+                            False,
+                        )
+                    _ensure_mcp_installed(runtime, cwd)
+
+                    if runner_kind == "headless":
+                        headless_runner.SUPERVISOR.start_actor(
+                            group_id=group.group_id,
+                            actor_id=actor_id,
+                            cwd=cwd,
+                            env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                        )
+                        try:
+                            _write_headless_state(group.group_id, actor_id)
+                        except Exception:
+                            pass
+                    else:
+                        session = pty_runner.SUPERVISOR.start_actor(
+                            group_id=group.group_id,
+                            actor_id=actor_id,
+                            cwd=cwd,
+                            command=list(cmd or []),
+                            env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                        )
+                        try:
+                            _write_pty_state(group.group_id, actor_id, pid=session.pid)
+                        except Exception:
+                            pass
+
+                    # Clear preamble/throttle state for a fresh start.
+                    clear_preamble_sent(group, actor_id)
+                    THROTTLE.clear_actor(group.group_id, actor_id)
             else:
-                pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
-                _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+                runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
+                if runner_kind == "headless":
+                    headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
+                    _remove_headless_state(group.group_id, actor_id)
+                else:
+                    pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
+                    _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+                THROTTLE.clear_actor(group.group_id, actor_id)
+                # If no enabled actors remain, mark group as not running.
+                try:
+                    any_enabled = any(
+                        bool(a.get("enabled", True))
+                        for a in list_actors(group)
+                        if isinstance(a, dict) and str(a.get("id") or "").strip()
+                    )
+                    if not any_enabled:
+                        group.doc["running"] = False
+                        group.save()
+                except Exception:
+                    pass
+        if enabled_patched:
+            _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
         ev = append_event(
             group.ledger_path,
             kind="actor.update",
@@ -1694,6 +1824,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
+        before_foreman_id = _foreman_id(group)
         try:
             require_actor_permission(group, by=by, action="actor.start", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": True})
@@ -1816,6 +1947,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             group.save()
         except Exception:
             pass
+
+        _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
         
         ev = append_event(
             group.ledger_path,
@@ -1836,6 +1969,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
+        before_foreman_id = _foreman_id(group)
         try:
             require_actor_permission(group, by=by, action="actor.stop", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": False})
@@ -1859,6 +1993,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 group.save()
         except Exception:
             pass
+        _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
         ev = append_event(
             group.ledger_path,
             kind="actor.stop",
@@ -1878,6 +2013,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group = load_group(group_id)
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
+        before_foreman_id = _foreman_id(group)
         try:
             require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": True})
@@ -1966,6 +2102,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 except Exception:
                     pass
                 # NOTE: 不在重启时注入 system prompt（lazy preamble）
+        _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
         ev = append_event(
             group.ledger_path,
             kind="actor.restart",

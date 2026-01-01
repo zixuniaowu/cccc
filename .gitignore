@@ -17,6 +17,11 @@
 /build/
 *.egg-info/
 
+# Web UI build/cache artifacts
+/web/node_modules/
+/web/.vite/
+/web/dist/
+
 # Local/editor/platform noise
 .DS_Store
 .idea/

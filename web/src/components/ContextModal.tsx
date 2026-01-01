@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiJson } from "../api";
 import { GroupContext, ProjectMdInfo } from "../types";
-
-function classNames(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
+import { classNames } from "../utils/classNames";
 
 interface ContextModalProps {
   isOpen: boolean;

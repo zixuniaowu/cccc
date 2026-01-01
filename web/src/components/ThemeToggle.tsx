@@ -1,8 +1,5 @@
 import { Theme } from "../types";
-
-function classNames(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
+import { classNames } from "../utils/classNames";
 
 interface ThemeToggleProps {
   theme: Theme;

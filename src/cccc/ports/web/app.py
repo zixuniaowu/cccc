@@ -334,7 +334,7 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/runtimes")
     async def runtimes() -> Dict[str, Any]:
         """List available agent runtimes on the system."""
-        from ...kernel.runtime import detect_all_runtimes
+        from ...kernel.runtime import detect_all_runtimes, get_runtime_command_with_flags
         
         all_runtimes = detect_all_runtimes(primary_only=False)
         return {
@@ -345,6 +345,7 @@ def create_app() -> FastAPI:
                         "name": rt.name,
                         "display_name": rt.display_name,
                         "command": rt.command,
+                        "recommended_command": " ".join(get_runtime_command_with_flags(rt.name)),
                         "available": rt.available,
                         "path": rt.path,
                         "capabilities": rt.capabilities,
@@ -587,7 +588,7 @@ def create_app() -> FastAPI:
                     "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
                     "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
                     "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
-                    "min_interval_seconds": int(delivery.get("min_interval_seconds", 60)),
+                    "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
                     "standup_interval_seconds": int(automation.get("standup_interval_seconds", 900)),
                 }
             }

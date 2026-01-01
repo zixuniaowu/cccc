@@ -8,7 +8,7 @@ This module handles:
 5. State-aware Delivery: Respects group state (active/idle/paused)
 
 Key design decisions:
-- delivery_min_interval_seconds: Minimum interval between deliveries (default 60s)
+- delivery_min_interval_seconds: Minimum interval between deliveries (default 0s)
 - Messages within the window are batched and delivered together
 - Reminders are injected every N chat messages (per actor) to reduce "stdout-only" replies
 
@@ -42,7 +42,7 @@ from ..util.time import parse_utc_iso, utc_now_iso
 # Configuration
 # ============================================================================
 
-DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS = 60  # Minimum interval between deliveries
+DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS = 0  # Minimum interval between deliveries
 DEFAULT_DELIVERY_RETRY_INTERVAL_SECONDS = 5  # Retry interval when delivery cannot be completed
 
 
@@ -285,6 +285,8 @@ class DeliveryThrottle:
         with self._lock:
             state = self._get_state(group_id, actor_id)
             state.last_delivery_at = datetime.now(timezone.utc)
+            # A successful delivery should not trigger retry backoff gating.
+            state.last_attempt_at = None
 
     def get_delivered_chat_count(self, group_id: str, actor_id: str) -> int:
         """Get delivered chat.message count for an actor (in-memory)."""
@@ -665,12 +667,14 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         THROTTLE.requeue_front(gid, aid, messages)
         return False
 
-    delivered_before = THROTTLE.get_delivered_chat_count(gid, aid)
     chat_total = sum(1 for m in deliverable if m.kind == "chat.message")
     reminder_after_index: Optional[int] = None
     if chat_total > 0:
-        # Always remind on any chat delivery (batched by throttle, so it's not noisy).
-        reminder_after_index = len(deliverable)
+        delivered_before = THROTTLE.get_delivered_chat_count(gid, aid)
+        delivered_after = delivered_before + chat_total
+        # Remind every N delivered chat messages per actor (count is in-memory).
+        if (delivered_after // REMINDER_EVERY_N_MESSAGES) > (delivered_before // REMINDER_EVERY_N_MESSAGES):
+            reminder_after_index = len(deliverable)
     
     # Build the full delivery text
     parts: List[str] = []

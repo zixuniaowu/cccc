@@ -30,7 +30,7 @@ export function SettingsModal({
   const [idleSeconds, setIdleSeconds] = useState(600);
   const [keepaliveSeconds, setKeepaliveSeconds] = useState(120);
   const [silenceSeconds, setSilenceSeconds] = useState(600);
-  const [deliveryInterval, setDeliveryInterval] = useState(60);
+  const [deliveryInterval, setDeliveryInterval] = useState(0);
   const [standupInterval, setStandupInterval] = useState(900);
 
   // IM Bridge state

@@ -4,10 +4,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Actor, getRuntimeColor, RUNTIME_INFO } from "../types";
 import { getTerminalTheme } from "../hooks/useTheme";
-
-function classNames(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
+import { classNames } from "../utils/classNames";
 
 interface AgentTabProps {
   actor: Actor;

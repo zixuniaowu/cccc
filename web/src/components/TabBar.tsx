@@ -1,9 +1,6 @@
 import { useRef, useEffect } from "react";
 import { Actor, getRuntimeColor } from "../types";
-
-function classNames(...xs: Array<string | false | null | undefined>) {
-  return xs.filter(Boolean).join(" ");
-}
+import { classNames } from "../utils/classNames";
 
 interface TabBarProps {
   actors: Actor[];
@@ -136,9 +133,10 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
                 : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
           )}
           title={actors.length === 0 ? "Add your first agent (foreman)" : "Add agent"}
+          aria-label="Add agent"
         >
           <span className="text-base leading-none">+</span>
-          <span className={actors.length === 0 ? "" : "hidden sm:inline"}>{actors.length === 0 ? "Add Agent" : "Add"}</span>
+          <span className="hidden sm:inline">Add</span>
         </button>
       )}
     </div>

@@ -48,6 +48,7 @@ export type RuntimeInfo = {
   name: string;
   display_name: string;
   command: string;
+  recommended_command?: string;
   available: boolean;
   path?: string;
   capabilities: string;
@@ -149,20 +150,22 @@ export type DirItem = { name: string; path: string; is_dir: boolean };
 export type DirSuggestion = { name: string; path: string; icon: string };
 
 // Runtime configuration
-export const RUNTIME_DEFAULTS: Record<string, string> = {
-  amp: "amp",
-  auggie: "auggie",
-  claude: "claude --dangerously-skip-permissions",
-  codex: "codex --dangerously-bypass-approvals-and-sandbox --search",
-  cursor: "cursor-agent",
-  droid: "droid --auto high",
-  gemini: "gemini",
-  kilocode: "kilocode",
-  neovate: "neovate",
-  opencode: "opencode",
-  copilot: "copilot --allow-all-tools --allow-all-paths",
-  custom: "",
-};
+export const SUPPORTED_RUNTIMES = [
+  "claude",
+  "codex",
+  "droid",
+  "amp",
+  "auggie",
+  "neovate",
+  "gemini",
+  "cursor",
+  "kilocode",
+  "opencode",
+  "copilot",
+  "custom",
+] as const;
+
+export type SupportedRuntime = typeof SUPPORTED_RUNTIMES[number];
 
 export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   amp: { label: "Amp", desc: "" },
