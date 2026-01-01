@@ -2994,8 +2994,9 @@ def call_daemon(req: Dict[str, Any], *, paths: Optional[DaemonPaths] = None, tim
             s.settimeout(timeout_s)
             s.connect(str(p.sock_path))
             s.sendall((json.dumps(request.model_dump(), ensure_ascii=False) + "\n").encode("utf-8"))
-            data = s.recv(4_000_000)
-        line = (data or b"").split(b"\n", 1)[0]
+            # Use makefile for buffered readline (handles partial reads correctly)
+            with s.makefile("rb") as f:
+                line = f.readline(4_000_000)  # 4MB limit to prevent DoS
         obj = json.loads(line.decode("utf-8", errors="replace"))
         resp = DaemonResponse.model_validate(obj)
         return resp.model_dump()
