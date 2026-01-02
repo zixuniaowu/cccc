@@ -21,6 +21,7 @@ from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
 from ...paths import ensure_home
 from ...util.fs import atomic_write_text
+from ...contracts.v1.actor import AgentRuntime
 
 
 class CreateGroupRequest(BaseModel):
@@ -56,13 +57,8 @@ class ActorCreateRequest(BaseModel):
     actor_id: str
     # Note: role is auto-determined by position (first enabled = foreman)
     runner: Literal["pty", "headless"] = Field(default="pty")
-    runtime: Literal[
-        "claude",
-        "codex",
-        "droid",
-        "opencode",
-        "copilot",
-    ] = Field(default="codex")
+    runtime: AgentRuntime = Field(default="codex")
+
     title: str = Field(default="")
     command: Union[str, list[str]] = Field(default="")
     env: Dict[str, str] = Field(default_factory=dict)
@@ -80,15 +76,8 @@ class ActorUpdateRequest(BaseModel):
     default_scope_key: Optional[str] = None
     submit: Optional[Literal["enter", "newline", "none"]] = None
     runner: Optional[Literal["pty", "headless"]] = None
-    runtime: Optional[
-        Literal[
-            "claude",
-            "codex",
-            "droid",
-            "opencode",
-            "copilot",
-        ]
-    ] = None
+    runtime: Optional[AgentRuntime] = None
+
     enabled: Optional[bool] = None
 
 
