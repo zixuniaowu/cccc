@@ -105,6 +105,9 @@ export function AgentTab({
 
     const term = new Terminal({
       cursorBlink: true,
+      // Avoid an extra blinking "outline" cursor when the terminal isn't focused.
+      // Some runtimes render their own cursor; xterm's inactive cursor can look like a second cursor.
+      cursorInactiveStyle: "none",
       fontSize: 13,
       fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, monospace',
       theme: getTerminalTheme(isDark),
@@ -118,6 +121,10 @@ export function AgentTab({
     
     term.loadAddon(fitAddon);
     term.open(termRef.current);
+    // Ensure focus works consistently across browsers (and prevents the inactive cursor style).
+    const onPointerDown = () => term.focus();
+    term.element?.addEventListener("mousedown", onPointerDown);
+    term.element?.addEventListener("touchstart", onPointerDown);
 
     const copySelection = async (): Promise<boolean> => {
       try {
@@ -160,16 +167,17 @@ export function AgentTab({
 
     return () => {
       term.element?.removeEventListener("contextmenu", onContextMenu);
+      term.element?.removeEventListener("mousedown", onPointerDown);
+      term.element?.removeEventListener("touchstart", onPointerDown);
       term.dispose();
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
   }, [isHeadless, isRunning]);
 
-  // Connect WebSocket when running (with auto-reconnect)
-  // Note: Connection persists across tab switches (isVisible changes)
+  // Connect WebSocket when visible and running (with auto-reconnect).
   useEffect(() => {
-    if (!isRunning || isHeadless || !terminalRef.current) return;
+    if (!isVisible || !isRunning || isHeadless || !terminalRef.current) return;
 
     // Clear any pending reconnect
     if (reconnectTimeoutRef.current) {
@@ -211,7 +219,6 @@ export function AgentTab({
 
       ws.onopen = () => {
         if (disposed) return;
-        console.log('[WebSocket] Connected');
         setConnectionStatus('connected');
         reconnectAttemptRef.current = 0; // Reset reconnect counter
 
@@ -243,7 +250,6 @@ export function AgentTab({
 
       ws.onclose = (event) => {
         if (disposed) return;
-        console.log(`[WebSocket] Closed: code=${event.code} reason=${event.reason}`);
         wsRef.current = null;
 
         // Only auto-reconnect if not a clean close (code 1000)
@@ -253,13 +259,11 @@ export function AgentTab({
 
           // Check max reconnect attempts
           if (attempt >= MAX_RECONNECT_ATTEMPTS) {
-            console.log('[WebSocket] Max reconnect attempts reached, giving up');
             setConnectionStatus('disconnected');
             return;
           }
 
           const delay = Math.min(RECONNECT_BASE_DELAY_MS * Math.pow(2, attempt), RECONNECT_MAX_DELAY_MS);
-          console.log(`[WebSocket] Scheduling reconnect attempt ${attempt + 1}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms`);
           setConnectionStatus('reconnecting');
 
           reconnectTimeoutRef.current = setTimeout(() => {
@@ -272,7 +276,6 @@ export function AgentTab({
       };
 
       ws.onerror = (error) => {
-        console.error('[WebSocket] Error:', error);
         // onclose will be called after onerror, reconnect logic is handled there
       };
 
@@ -317,7 +320,7 @@ export function AgentTab({
       }
       setConnectionStatus('disconnected');
     };
-  }, [isRunning, isHeadless, groupId, actor.id, actor.runtime]);
+  }, [isVisible, isRunning, isHeadless, groupId, actor.id, actor.runtime]);
 
   // Fit terminal on visibility change and resize
   useEffect(() => {

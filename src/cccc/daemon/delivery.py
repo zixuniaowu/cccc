@@ -20,15 +20,12 @@ Group State Behavior:
 from __future__ import annotations
 
 import json
-import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-
-logger = logging.getLogger("cccc.daemon.delivery")
 
 from ..kernel.actors import find_actor, list_actors
 from ..kernel.group import Group, get_group_state, set_group_state
@@ -357,10 +354,10 @@ THROTTLE = DeliveryThrottle()
 # Message Rendering
 # ============================================================================
 
-REMINDER_EVERY_N_MESSAGES = 3
+REMINDER_EVERY_N_MESSAGES = 1
 MCP_REMINDER_LINE = (
-    "[cccc] Reminder: communicate via MCP (cccc_message_send / cccc_message_reply); terminal output isn't delivered. "
-    "See cccc_help."
+    "[cccc] If you respond: use MCP (cccc_message_send / cccc_message_reply). "
+    "Terminal output isn't delivered. Help: cccc_help."
 )
 
 

@@ -1,4 +1,4 @@
-# Releasing CCCC vNext (0.4.x)
+# Releasing CCCC 0.4.x
 
 This repo publishes the Python package **`cccc-pair`** (CLI command: **`cccc`**).
 
@@ -17,7 +17,7 @@ The release workflow is tag-driven (`v*`) and enforces that the git tag matches 
 | Git tag | Upload target | Expected `pyproject.toml` version |
 |--------|----------------|-----------------------------------|
 | `v0.4.0` | PyPI | `0.4.0` |
-| `v0.4.0-rc5` | TestPyPI | `0.4.0rc5` |
+| `v0.4.0-rc6` | TestPyPI | `0.4.0rc6` |
 | `v0.4.0-alpha1` | TestPyPI | `0.4.0a1` |
 | `v0.4.0-beta1` | TestPyPI | `0.4.0b1` |
 
@@ -32,7 +32,7 @@ The release workflow is tag-driven (`v*`) and enforces that the git tag matches 
    - `python -m pip install --force-reinstall dist/*.whl`
    - `cccc version`
 4. Tag and push:
-   - `git tag -a v0.4.0-rc5 -m "v0.4.0-rc5"`
+   - `git tag -a v0.4.0-rc6 -m "v0.4.0-rc6"`
    - `git push --tags`
 
 ## Installing an RC from TestPyPI
@@ -40,5 +40,5 @@ The release workflow is tag-driven (`v*`) and enforces that the git tag matches 
 ```bash
 python -m pip install -i https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple \
-  cccc-pair==0.4.0rc5
+  cccc-pair==0.4.0rc6
 ```

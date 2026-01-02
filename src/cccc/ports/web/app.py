@@ -1138,10 +1138,15 @@ def create_app() -> FastAPI:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
 
+        prev_im = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
+        prev_enabled = bool(prev_im.get("enabled", False)) if isinstance(prev_im, dict) else False
+
         # Build IM config.
         # Note: Web UI historically used bot_token_env/app_token_env as a single input.
         # We accept either an env var name (e.g. TELEGRAM_BOT_TOKEN) or a raw token value.
         im_cfg: Dict[str, Any] = {"platform": req.platform}
+        if prev_enabled:
+            im_cfg["enabled"] = True
 
         platform = str(req.platform or "").strip().lower()
         token_hint = str(req.bot_token_env or req.token_env or "").strip()
@@ -1229,6 +1234,12 @@ def create_app() -> FastAPI:
         if not im_cfg:
             return {"ok": False, "error": {"code": "no_im_config", "message": "no IM configuration"}}
 
+        # Persist desired run-state for restart/autostart.
+        if isinstance(im_cfg, dict):
+            im_cfg["enabled"] = True
+            group.doc["im"] = im_cfg
+            group.save()
+
         platform = im_cfg.get("platform", "telegram")
 
         # Prepare environment
@@ -1285,6 +1296,16 @@ def create_app() -> FastAPI:
         group = load_group(req.group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        # Persist desired run-state for restart/autostart.
+        im_cfg = group.doc.get("im")
+        if isinstance(im_cfg, dict):
+            im_cfg["enabled"] = False
+            group.doc["im"] = im_cfg
+            try:
+                group.save()
+            except Exception:
+                pass
 
         stopped = 0
         pid_path = group.path / "state" / "im_bridge.pid"

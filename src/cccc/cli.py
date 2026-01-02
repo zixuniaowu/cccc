@@ -131,10 +131,49 @@ def _default_entry() -> int:
         if resp.get("ok"):
             return True
         
-        # Clean up stale socket/pid files
+        # Clean up stale socket/pid files.
+        # If a daemon pid is present but unresponsive, terminate it first to avoid orphan daemons.
         sock_path = home / "daemon" / "ccccd.sock"
         pid_path = home / "daemon" / "ccccd.pid"
         try:
+            pid = 0
+            if pid_path.exists():
+                txt = pid_path.read_text(encoding="utf-8").strip()
+                pid = int(txt) if txt.isdigit() else 0
+            if pid > 0:
+                try:
+                    os.kill(pid, 0)
+                except Exception:
+                    pid = 0
+            if pid > 0:
+                def _pid_alive_local(p: int) -> bool:
+                    try:
+                        os.kill(p, 0)
+                        return True
+                    except Exception:
+                        return False
+
+                try:
+                    os.killpg(os.getpgid(pid), signal.SIGTERM)
+                except Exception:
+                    try:
+                        os.kill(pid, signal.SIGTERM)
+                    except Exception:
+                        pass
+                deadline = time.time() + 2.0
+                while time.time() < deadline:
+                    if not _pid_alive_local(pid):
+                        break
+                    time.sleep(0.05)
+                if _pid_alive_local(pid):
+                    try:
+                        os.killpg(os.getpgid(pid), signal.SIGKILL)
+                    except Exception:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except Exception:
+                            pass
+
             sock_path.unlink(missing_ok=True)
             pid_path.unlink(missing_ok=True)
         except Exception:
@@ -151,7 +190,15 @@ def _default_entry() -> int:
                 env=os.environ.copy(),
                 start_new_session=True,  # Don't forward SIGINT to daemon
             )
+            try:
+                log_file.close()
+            except Exception:
+                pass
         except Exception as e:
+            try:
+                log_file.close()
+            except Exception:
+                pass
             print(f"[cccc] Failed to start daemon: {e}", file=sys.stderr)
             return False
         
@@ -203,9 +250,16 @@ def _default_entry() -> int:
         # Wait for our subprocess to exit (if we started it)
         if daemon_process is not None:
             try:
-                daemon_process.wait(timeout=3.0)
+                daemon_process.wait(timeout=10.0)
             except subprocess.TimeoutExpired:
-                daemon_process.kill()
+                try:
+                    daemon_process.terminate()
+                    daemon_process.wait(timeout=2.0)
+                except Exception:
+                    try:
+                        daemon_process.kill()
+                    except Exception:
+                        pass
             daemon_process = None
     
     # Start daemon
@@ -246,13 +300,18 @@ def _default_entry() -> int:
         def _handle_exit() -> None:
             nonlocal shutdown_requested
             if shutdown_requested:
-                # Second signal - force immediate exit
+                # Second signal - force faster shutdown without skipping cleanup.
                 print("\n[cccc] Force quit", file=sys.stderr)
-                os._exit(0)
+                try:
+                    # Uvicorn checks this to stop waiting on connections/tasks.
+                    server.force_exit = True  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                server.should_exit = True
+                return
             shutdown_requested = True
             print("\n[cccc] Shutting down...", file=sys.stderr)
             server.should_exit = True
-            _stop_daemon()
 
         loop.add_signal_handler(signal.SIGINT, _handle_exit)
         loop.add_signal_handler(signal.SIGTERM, _handle_exit)
@@ -267,6 +326,7 @@ def _default_entry() -> int:
     finally:
         if not shutdown_requested:
             print("\n[cccc] Shutting down...", file=sys.stderr)
+        shutdown_requested = True
         _stop_daemon()
     
     return 0
@@ -1954,6 +2014,15 @@ def cmd_im_start(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "no_im_config", "message": "no IM configuration. Run: cccc im set <platform>"}})
         return 2
 
+    # Persist desired run-state for restart/autostart.
+    if isinstance(im_config, dict):
+        im_config["enabled"] = True
+        group.doc["im"] = im_config
+        try:
+            group.save()
+        except Exception:
+            pass
+
     platform = im_config.get("platform", "telegram")
 
     # Prepare environment
@@ -2024,6 +2093,18 @@ def cmd_im_stop(args: argparse.Namespace) -> int:
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
         return 2
+
+    # Persist desired run-state for restart/autostart (best-effort).
+    try:
+        group = load_group(group_id)
+        if group is not None:
+            im_cfg = group.doc.get("im")
+            if isinstance(im_cfg, dict):
+                im_cfg["enabled"] = False
+                group.doc["im"] = im_cfg
+                group.save()
+    except Exception:
+        pass
 
     stopped = 0
     group_dir = _im_group_dir(group_id)

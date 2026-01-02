@@ -725,6 +725,81 @@ def _cleanup_stale_pty_state(home: Path) -> None:
             pass
 
 
+def _maybe_autostart_enabled_im_bridges() -> None:
+    """Autostart IM bridges that are marked enabled in group.yaml.
+
+    We keep this best-effort: failures shouldn't prevent the daemon from coming up.
+    """
+    home = ensure_home()
+    base = home / "groups"
+    if not base.exists():
+        return
+
+    for p in base.glob("*/group.yaml"):
+        gid = p.parent.name
+        group = load_group(gid)
+        if group is None:
+            continue
+
+        im_cfg = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else None
+        if not isinstance(im_cfg, dict) or not bool(im_cfg.get("enabled", False)):
+            continue
+
+        platform = str(im_cfg.get("platform") or "telegram").strip() or "telegram"
+        pid_path = group.path / "state" / "im_bridge.pid"
+
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+            except Exception:
+                pid = 0
+            if pid > 0 and _pid_alive(pid):
+                continue
+            try:
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        state_dir = group.path / "state"
+        try:
+            state_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        log_path = state_dir / "im_bridge.log"
+
+        log_file = None
+        try:
+            log_file = log_path.open("a", encoding="utf-8")
+            env = os.environ.copy()
+            env["CCCC_HOME"] = str(home)
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "cccc.ports.im.bridge", gid, platform],
+                env=env,
+                stdout=log_file,
+                stderr=log_file,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+                cwd=str(home),
+            )
+            time.sleep(0.25)
+            rc = proc.poll()
+            if rc is not None:
+                logger.warning("IM bridge autostart failed for %s (platform=%s, code=%s). See log: %s", gid, platform, rc, log_path)
+                continue
+            try:
+                pid_path.write_text(str(proc.pid), encoding="utf-8")
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning("IM bridge autostart failed for %s (platform=%s): %s", gid, platform, e)
+        finally:
+            try:
+                if log_file:
+                    log_file.close()
+            except Exception:
+                pass
+
+
 def _maybe_autostart_running_groups() -> None:
     home = ensure_home()
     base = home / "groups"
@@ -770,11 +845,19 @@ def _maybe_autostart_running_groups() -> None:
             if runtime == "custom" and runner_kind != "headless" and not cmd:
                 continue
 
-            # Best-effort MCP installation (non-fatal)
+            # Best-effort MCP installation (non-fatal, but important for correctness).
+            ok_mcp = True
             try:
-                _ensure_mcp_installed(runtime, cwd)
-            except Exception as e:
-                logger.debug("MCP install skipped for %s/%s: %s", gid, aid, e)
+                ok_mcp = bool(_ensure_mcp_installed(runtime, cwd))
+            except Exception:
+                ok_mcp = False
+            if not ok_mcp and runtime in AUTO_MCP_RUNTIMES:
+                logger.warning(
+                    "MCP server 'cccc' is not installed for %s/%s (runtime=%s); actor will start but tools may not work.",
+                    gid,
+                    aid,
+                    runtime,
+                )
 
             # Start actor session (errors skip this actor, continue with others)
             try:
@@ -959,15 +1042,6 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         return DaemonResponse(ok=True, result={"version": __version__, "pid": os.getpid(), "ts": utc_now_iso()}), False
 
     if op == "shutdown":
-        try:
-            _stop_all_im_bridges(ensure_home())
-        except Exception:
-            pass
-        try:
-            pty_runner.SUPERVISOR.stop_all()
-            headless_runner.SUPERVISOR.stop_all()
-        except Exception:
-            pass
         return DaemonResponse(ok=True, result={"message": "shutting down"}), True
 
     if op == "attach":
@@ -2836,12 +2910,6 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     except Exception:
         pass
 
-    # Restore groups that were previously started (desired run-state).
-    try:
-        _maybe_autostart_running_groups()
-    except Exception:
-        pass
-
     try:
         if p.sock_path.exists():
             p.sock_path.unlink()
@@ -2875,9 +2943,6 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                             continue
                         # Check if any actor is running (instead of group.running)
                         group_is_running = pty_runner.SUPERVISOR.group_running(gid)
-                        # DEBUG: Log delivery check
-                        logger.debug("tick_delivery check: gid=%s, group_running=%s, sessions=%s",
-                                     gid, group_is_running, list(pty_runner.SUPERVISOR._sessions.keys()))
                         if not group_is_running:
                             continue
                         try:
@@ -2902,6 +2967,20 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         s.listen(50)
         s.settimeout(1.0)  # Allow periodic check of stop_event
         _write_pid(p.pid_path)
+
+        # Bootstrap background work only after the daemon socket is ready, but
+        # don't block the accept loop (clients should see the daemon as responsive).
+        def _bootstrap_after_listen() -> None:
+            try:
+                _maybe_autostart_running_groups()
+            except Exception:
+                pass
+            try:
+                _maybe_autostart_enabled_im_bridges()
+            except Exception:
+                pass
+
+        threading.Thread(target=_bootstrap_after_listen, name="cccc-bootstrap", daemon=True).start()
 
         should_exit = False
         while not should_exit and not stop_event.is_set():
