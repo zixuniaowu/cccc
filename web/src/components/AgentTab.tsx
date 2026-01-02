@@ -230,20 +230,32 @@ export function AgentTab({
       };
 
       ws.onmessage = (event) => {
-        if (disposed || !terminalRef.current) return;
+        const term = terminalRef.current;
+        if (disposed || !term) return;
+
+        // xterm can throw on malformed control sequences; guard so a single bad
+        // chunk (seen with some runtimes like opencode) doesn't break the tab.
+        const writeSafe = (text: string) => {
+          try {
+            term.write(text);
+          } catch (err) {
+            console.error("terminal write failed", err);
+          }
+        };
+
         if (event.data instanceof ArrayBuffer) {
           const data = new TextDecoder().decode(event.data);
-          terminalRef.current.write(data);
+          writeSafe(data);
         } else if (typeof event.data === "string") {
           // Server might send JSON messages for status
           try {
             const msg = JSON.parse(event.data);
             if (msg.ok === false && msg.error) {
-              terminalRef.current.write(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
+              writeSafe(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
             }
           } catch {
             // Not JSON, write as text
-            terminalRef.current.write(event.data);
+            writeSafe(event.data);
           }
         }
       };

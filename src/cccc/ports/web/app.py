@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ... import __version__
+from ...contracts.v1.actor import AgentRuntime, RunnerKind
 from ...daemon.server import call_daemon
 from ...kernel.blobs import store_blob_bytes, resolve_blob_attachment_path
 from ...kernel.group import load_group
@@ -55,14 +56,8 @@ WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024
 class ActorCreateRequest(BaseModel):
     actor_id: str
     # Note: role is auto-determined by position (first enabled = foreman)
-    runner: Literal["pty", "headless"] = Field(default="pty")
-    runtime: Literal[
-        "claude",
-        "codex",
-        "droid",
-        "opencode",
-        "copilot",
-    ] = Field(default="codex")
+    runner: RunnerKind = Field(default="pty")
+    runtime: AgentRuntime = Field(default="codex")
     title: str = Field(default="")
     command: Union[str, list[str]] = Field(default="")
     env: Dict[str, str] = Field(default_factory=dict)
@@ -79,16 +74,8 @@ class ActorUpdateRequest(BaseModel):
     env: Optional[Dict[str, str]] = None
     default_scope_key: Optional[str] = None
     submit: Optional[Literal["enter", "newline", "none"]] = None
-    runner: Optional[Literal["pty", "headless"]] = None
-    runtime: Optional[
-        Literal[
-            "claude",
-            "codex",
-            "droid",
-            "opencode",
-            "copilot",
-        ]
-    ] = None
+    runner: Optional[RunnerKind] = None
+    runtime: Optional[AgentRuntime] = None
     enabled: Optional[bool] = None
 
 
