@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import copy
+import logging
 import os
 import socket
 import sys
@@ -11,6 +12,8 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+
+logger = logging.getLogger("cccc.daemon.server")
 
 from .. import __version__
 from ..contracts.v1 import ChatMessageData, DaemonError, DaemonRequest, DaemonResponse
@@ -766,31 +769,42 @@ def _maybe_autostart_running_groups() -> None:
                 continue
             if runtime == "custom" and runner_kind != "headless" and not cmd:
                 continue
-            _ensure_mcp_installed(runtime, cwd)
 
-            if runner_kind == "headless":
-                headless_runner.SUPERVISOR.start_actor(
-                    group_id=group.group_id,
-                    actor_id=aid,
-                    cwd=cwd,
-                    env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
-                )
-                try:
+            # Best-effort MCP installation (non-fatal)
+            try:
+                _ensure_mcp_installed(runtime, cwd)
+            except Exception as e:
+                logger.debug("MCP install skipped for %s/%s: %s", gid, aid, e)
+
+            # Start actor session (errors skip this actor, continue with others)
+            try:
+                if runner_kind == "headless":
+                    headless_runner.SUPERVISOR.start_actor(
+                        group_id=group.group_id,
+                        actor_id=aid,
+                        cwd=cwd,
+                        env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
+                    )
+                else:
+                    session = pty_runner.SUPERVISOR.start_actor(
+                        group_id=group.group_id,
+                        actor_id=aid,
+                        cwd=cwd,
+                        command=list(cmd or []),
+                        env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
+                    )
+            except Exception as e:
+                logger.warning("Autostart failed for %s/%s: %s", gid, aid, e)
+                continue
+
+            # Write state file (non-fatal, session already started)
+            try:
+                if runner_kind == "headless":
                     _write_headless_state(group.group_id, aid)
-                except Exception:
-                    pass
-            else:
-                session = pty_runner.SUPERVISOR.start_actor(
-                    group_id=group.group_id,
-                    actor_id=aid,
-                    cwd=cwd,
-                    command=list(cmd or []),
-                    env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
-                )
-                try:
+                else:
                     _write_pty_state(group.group_id, aid, pid=session.pid)
-                except Exception:
-                    pass
+            except Exception as e:
+                logger.debug("State write failed for %s/%s: %s", gid, aid, e)
 
             # Ensure fresh sessions always receive the lazy preamble on first delivery
             clear_preamble_sent(group, aid)
@@ -2861,6 +2875,9 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                             continue
                         # Check if any actor is running (instead of group.running)
                         group_is_running = pty_runner.SUPERVISOR.group_running(gid)
+                        # DEBUG: Log delivery check
+                        logger.debug("tick_delivery check: gid=%s, group_running=%s, sessions=%s",
+                                     gid, group_is_running, list(pty_runner.SUPERVISOR._sessions.keys()))
                         if not group_is_running:
                             continue
                         try:
