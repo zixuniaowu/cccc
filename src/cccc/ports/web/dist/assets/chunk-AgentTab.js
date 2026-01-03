@@ -20,10 +20,8 @@ WARNING: This link could potentially be dangerous`)){const h=window.open();if(h)
 `)),x=(0,v.groupBy)([...H].map((L=>P(L)[I])),(L=>L));delete x[E[I]];for(const[L,j]of Object.entries(x))M.unshift(`    - stacktraces of ${j.length} other leaks continue with ${L}`);M.unshift(F)}w+=`
 
 
-==================== Leaking disposable ${y}/${B.length}: ${S.value.constructor.name} ====================
 ${M.join(`
 `)}
-============================================================
 
 `}return B.length>D&&(w+=`
 

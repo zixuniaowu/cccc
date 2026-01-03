@@ -364,7 +364,19 @@ export function AgentTab({
       };
 
       ws.onmessage = (event) => {
-        if (disposed || !terminalRef.current) return;
+        const term = terminalRef.current;
+        if (disposed || !term) return;
+
+        // xterm can throw on malformed control sequences; guard so a single bad
+        // chunk (seen with some runtimes like opencode) doesn't break the tab.
+        const writeSafe = (text: string) => {
+          try {
+            term.write(text);
+          } catch (err) {
+            console.error("terminal write failed", err);
+          }
+        };
+
         if (event.data instanceof ArrayBuffer) {
           _handleDecoded(new TextDecoder().decode(event.data));
         } else if (event.data instanceof Blob) {
@@ -386,7 +398,7 @@ export function AgentTab({
             }
           } catch {
             // Not JSON, write as text
-            terminalRef.current.write(event.data);
+            writeSafe(event.data);
           }
         }
       };
