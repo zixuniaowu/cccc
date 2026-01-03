@@ -25,6 +25,8 @@ interface AgentTabProps {
   onInbox: () => void;
   busy: string;
   isDark: boolean;
+  /** Called when the component detects actor status may have changed (e.g., process exited) */
+  onStatusChange?: () => void;
 }
 
 export function AgentTab({
@@ -39,6 +41,7 @@ export function AgentTab({
   onInbox,
   busy,
   isDark,
+  onStatusChange,
 }: AgentTabProps) {
   // Derived state (must be defined before refs that use them)
   const isRunning = actor.running ?? actor.enabled ?? false;
@@ -63,6 +66,8 @@ export function AgentTab({
   // WebSocket reconnect state
   const reconnectAttemptRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Stop reconnecting if server reports actor is not running
+  const actorNotRunningRef = useRef(false);
 
   // Ref to avoid stale closure in WebSocket callbacks
   const isRunningRef = useRef(isRunning);
@@ -70,6 +75,10 @@ export function AgentTab({
   // Keep ref in sync with prop
   useEffect(() => {
     isRunningRef.current = isRunning;
+    // Reset the "actor not running" flag when actor starts running again
+    if (isRunning) {
+      actorNotRunningRef.current = false;
+    }
   }, [isRunning]);
 
   const copyToClipboard = async (text: string): Promise<boolean> => {
@@ -273,7 +282,11 @@ export function AgentTab({
       wsRef.current = ws;
 
       ws.onopen = () => {
-        if (disposed) return;
+        if (disposed) {
+          // Component unmounted during connection (e.g., React Strict Mode)
+          ws.close(1000, 'Component unmounted during connection');
+          return;
+        }
         setConnectionStatus('connected');
         reconnectAttemptRef.current = 0; // Reset reconnect counter
         // Reset responder state on each successful (re)connect.
@@ -363,6 +376,13 @@ export function AgentTab({
             const msg = JSON.parse(event.data);
             if (msg.ok === false && msg.error) {
               terminalRef.current.write(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
+              // If actor is not running, stop reconnecting and notify parent to refresh state
+              if (msg.error.code === "actor_not_running") {
+                actorNotRunningRef.current = true;
+                // Notify parent to refresh actor state - this will update actor.running
+                // and trigger proper UI update through normal React data flow
+                onStatusChange?.();
+              }
             }
           } catch {
             // Not JSON, write as text
@@ -377,7 +397,8 @@ export function AgentTab({
 
         // Only auto-reconnect if not a clean close (code 1000)
         // Use ref to get latest prop value (avoid stale closure)
-        if (event.code !== 1000 && isRunningRef.current && !isHeadless) {
+        // Also skip reconnect if server reported actor is not running
+        if (event.code !== 1000 && isRunningRef.current && !isHeadless && !actorNotRunningRef.current) {
           const attempt = reconnectAttemptRef.current;
 
           // Check max reconnect attempts
@@ -448,29 +469,45 @@ export function AgentTab({
       if (disposable) disposable.dispose();
       if (resizeDisposable) resizeDisposable.dispose();
       if (wsRef.current) {
-        wsRef.current.close(1000, 'Component cleanup');
+        // Only close if already connected; if still CONNECTING, just nullify ref
+        // to avoid "WebSocket is closed before the connection is established" warning
+        // (common in React Strict Mode double-invoke during development)
+        if (wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.close(1000, 'Component cleanup');
+        }
         wsRef.current = null;
       }
       setConnectionStatus('disconnected');
     };
   }, [isVisible, isRunning, isHeadless, groupId, actor.id, actor.runtime]);
 
-  // Fit terminal on visibility change and resize
+  // Fit terminal on visibility change and resize (with debounce to reduce jitter)
   useEffect(() => {
     if (!isVisible || !fitAddonRef.current) return;
-    
+
+    let resizeTimeout: ReturnType<typeof setTimeout> | null = null;
+
     const fit = () => {
       if (fitAddonRef.current) {
         fitAddonRef.current.fit();
       }
     };
 
+    // Debounced fit to prevent jitter during rapid resize events
+    const debouncedFit = () => {
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(fit, 100);
+    };
+
     // Fit when becoming visible
     setTimeout(fit, 50);
 
-    // Fit on window resize
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
+    // Fit on window resize (debounced)
+    window.addEventListener("resize", debouncedFit);
+    return () => {
+      window.removeEventListener("resize", debouncedFit);
+      if (resizeTimeout) clearTimeout(resizeTimeout);
+    };
   }, [isVisible]);
 
   const isBusy = busy.includes(actor.id);
@@ -507,7 +544,8 @@ export function AgentTab({
       </div>
 
       {/* Terminal or Status Area */}
-      <div className={classNames("flex-1 min-h-0", isDark ? "bg-slate-950" : "bg-gray-50")}>
+      {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}
+      <div className={classNames("flex-1 min-h-0", isDark ? "bg-slate-950" : "bg-gray-50")} style={{ contain: 'layout', overflow: 'hidden' }}>
         {isHeadless ? (
           // Headless agent - show status
           <div className="flex flex-col items-center justify-center h-full text-slate-400 dark:text-slate-400 p-8">
@@ -524,7 +562,8 @@ export function AgentTab({
           </div>
         ) : isRunning ? (
           // PTY agent - show terminal
-          <div ref={termRef} className="h-full w-full" />
+          // contain: layout paint isolates layout/paint calculations to prevent jitter when terminal content updates
+          <div ref={termRef} className="h-full w-full" style={{ contain: 'layout paint', overflow: 'hidden' }} />
         ) : (
           // Stopped agent
           <div className="flex flex-col items-center justify-center h-full text-slate-500 dark:text-slate-400 p-8">
