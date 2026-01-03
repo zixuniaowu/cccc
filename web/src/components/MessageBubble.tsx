@@ -1,4 +1,4 @@
-import { LedgerEvent, Actor, getRuntimeColor } from "../types";
+import { LedgerEvent, Actor, getActorAccentColor } from "../types";
 import { formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 
@@ -27,6 +27,7 @@ export function MessageBubble({
     onShowRecipients,
 }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
+    const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
     const quoteText = ev.data?.quote_text;
     const attachments = Array.isArray(ev.data?.attachments) ? (ev.data.attachments as any[]) : [];
     const blobAttachments = attachments
@@ -52,8 +53,6 @@ export function MessageBubble({
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
 
-    const senderActor = actors.find((a) => a.id === ev.by);
-
     return (
         <div
             className={classNames(
@@ -71,7 +70,8 @@ export function MessageBubble({
                         ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
                         : isDark
                             ? "bg-slate-700 text-slate-200"
-                            : "bg-white border border-gray-200 text-gray-700"
+                            : "bg-white border border-gray-200 text-gray-700",
+                    !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                 )}
             >
                 {isUserMessage ? "U" : (ev.by || "?")[0].toUpperCase()}
@@ -98,12 +98,26 @@ export function MessageBubble({
                                 ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
                                 : isDark
                                     ? "bg-slate-700 text-slate-200"
-                                    : "bg-white border border-gray-200 text-gray-700"
+                                    : "bg-white border border-gray-200 text-gray-700",
+                            !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                         )}
                     >
                         {isUserMessage ? "U" : (ev.by || "?")[0].toUpperCase()}
                     </div>
-                    <span className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                    <span
+                        className={classNames(
+                            "text-xs font-medium",
+                            isUserMessage
+                                ? isDark
+                                    ? "text-slate-300"
+                                    : "text-gray-700"
+                                : senderAccent
+                                    ? senderAccent.text
+                                    : isDark
+                                        ? "text-slate-300"
+                                        : "text-gray-700"
+                        )}
+                    >
                         {ev.by}
                     </span>
                     <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
@@ -113,7 +127,20 @@ export function MessageBubble({
 
                 {/* Desktop Metadata Header (Hidden on mobile) */}
                 <div className="hidden sm:flex items-center gap-2 mb-1 px-1">
-                    <span className={`text-[11px] font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                    <span
+                        className={classNames(
+                            "text-[11px] font-medium",
+                            isUserMessage
+                                ? isDark
+                                    ? "text-slate-400"
+                                    : "text-gray-500"
+                                : senderAccent
+                                    ? senderAccent.text
+                                    : isDark
+                                        ? "text-slate-400"
+                                        : "text-gray-500"
+                        )}
+                    >
                         {ev.by}
                     </span>
                     <span className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>

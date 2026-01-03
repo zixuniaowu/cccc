@@ -358,24 +358,19 @@ export function AgentTab({
       };
 
       const _handleDecoded = (data: string) => {
-        if (disposed || !terminalRef.current) return;
+        if (disposed) return;
         _maybeReplyOpencodeQueries(data);
-        terminalRef.current.write(data);
+        const term = terminalRef.current;
+        if (!term) return;
+        try {
+          term.write(data);
+        } catch (err) {
+          console.error("terminal write failed", err);
+        }
       };
 
       ws.onmessage = (event) => {
-        const term = terminalRef.current;
-        if (disposed || !term) return;
-
-        // xterm can throw on malformed control sequences; guard so a single bad
-        // chunk (seen with some runtimes like opencode) doesn't break the tab.
-        const writeSafe = (text: string) => {
-          try {
-            term.write(text);
-          } catch (err) {
-            console.error("terminal write failed", err);
-          }
-        };
+        if (disposed) return;
 
         if (event.data instanceof ArrayBuffer) {
           _handleDecoded(new TextDecoder().decode(event.data));
@@ -387,7 +382,7 @@ export function AgentTab({
           try {
             const msg = JSON.parse(event.data);
             if (msg.ok === false && msg.error) {
-              terminalRef.current.write(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
+              _handleDecoded(`\r\n[error] ${msg.error.message || "Unknown error"}\r\n`);
               // If actor is not running, stop reconnecting and notify parent to refresh state
               if (msg.error.code === "actor_not_running") {
                 actorNotRunningRef.current = true;
@@ -398,7 +393,7 @@ export function AgentTab({
             }
           } catch {
             // Not JSON, write as text
-            writeSafe(event.data);
+            _handleDecoded(event.data);
           }
         }
       };
@@ -666,7 +661,9 @@ export function AgentTab({
           className={classNames(
             "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors",
             unreadCount > 0
-              ? "bg-rose-900/30 text-rose-300 hover:bg-rose-900/50"
+              ? isDark
+                ? "bg-indigo-500/10 text-indigo-200 border border-indigo-500/20 hover:bg-indigo-500/15"
+                : "bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
               : isDark 
                 ? "bg-slate-800 hover:bg-slate-700 text-slate-200" 
                 : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
@@ -675,7 +672,13 @@ export function AgentTab({
         >
           <span>📥</span> Inbox
           {unreadCount > 0 && (
-            <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-medium" aria-hidden="true">
+            <span
+              className={classNames(
+                "text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold tracking-tight shadow-sm",
+                isDark ? "bg-indigo-500" : "bg-indigo-600"
+              )}
+              aria-hidden="true"
+            >
               {unreadCount > 99 ? "99+" : unreadCount}
             </span>
           )}

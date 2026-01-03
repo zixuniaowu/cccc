@@ -47,6 +47,8 @@ from ..util.time import parse_utc_iso, utc_now_iso
 
 DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS = 0  # Minimum interval between deliveries
 DEFAULT_DELIVERY_RETRY_INTERVAL_SECONDS = 5  # Retry interval when delivery cannot be completed
+PTY_SUBMIT_DELAY_SECONDS = 1.5  # Empirically reliable for CLI readline timing (payload then delayed submit)
+PREAMBLE_TO_MESSAGE_DELAY_SECONDS = 2.0  # Wait for preamble submit + a small buffer
 
 
 def _get_delivery_config(group: Group) -> Dict[str, Any]:
@@ -191,7 +193,7 @@ class DeliveryThrottle:
     
     Key behavior:
     - Messages are queued and delivered in batches
-    - Minimum interval between deliveries is configurable (default 60s)
+    - Minimum interval between deliveries is configurable (default 0s)
     - A periodic reminder can be injected by the delivery layer
     """
     
@@ -531,7 +533,7 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
 
     payload = raw.encode("utf-8", errors="replace")
     
-    logger.info(f"[pty_submit_text] Sending to {gid}/{aid}: multiline={multiline}, mode={mode}, len={len(payload)}")
+    logger.debug(f"[pty_submit_text] Sending to {gid}/{aid}: multiline={multiline}, mode={mode}, len={len(payload)}")
     
     # NOTE: bracketed paste 模式是“程序输出 -> 终端模拟器”的协商；这里是“向程序 stdin 写入”，
     # 不应发送 \x1b[?2004h/\x1b[?2004l 这类输出控制序列作为输入（会变成脏输入，可能导致 CLI 偶发丢输入/乱序）。
@@ -553,16 +555,16 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
     if not ok:
         logger.warning(f"[pty_submit_text] Failed to write payload to {gid}/{aid}")
         return False
-    logger.info(f"[pty_submit_text] Sent text payload, scheduling delayed submit")
+    logger.debug(f"[pty_submit_text] Sent text payload, scheduling delayed submit")
     
     # 第二步：延迟发送回车（给 CLI 应用时间处理输入）
     if submit:
         def delayed_submit():
-            time.sleep(1.5)  # 1.5秒延迟，用户反馈这个延迟有一定成功率
+            time.sleep(PTY_SUBMIT_DELAY_SECONDS)  # Empirically reliable delay
             if pty_runner.SUPERVISOR.actor_running(gid, aid):
                 ok_submit = bool(pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=submit))
                 if ok_submit:
-                    logger.info(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
+                    logger.debug(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
                 else:
                     logger.warning(f"[pty_submit_text] Delayed submit failed to write to {gid}/{aid}")
             else:
@@ -761,9 +763,11 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         logger.debug(f"[flush] {gid}/{aid} preamble sent, scheduling delayed message delivery")
 
         def delayed_message_send():
-            time.sleep(3.0)  # Wait for preamble's delayed submit (1.5s) + CLI processing time
+            time.sleep(PREAMBLE_TO_MESSAGE_DELAY_SECONDS)  # Wait for preamble submit + CLI processing buffer
             if not pty_runner.SUPERVISOR.actor_running(gid, aid):
-                logger.warning(f"[flush] {gid}/{aid} actor no longer running, skipping delayed message")
+                # Actor stopped before we could deliver; keep messages queued for next restart.
+                logger.warning(f"[flush] {gid}/{aid} actor no longer running, re-queueing delayed message(s)")
+                THROTTLE.requeue_front(gid, aid, messages)
                 return
             logger.debug(f"[flush] {gid}/{aid} sending delayed message now")
             ok = bool(pty_submit_text(group, actor_id=aid, text=message_text))

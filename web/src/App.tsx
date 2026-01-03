@@ -1171,8 +1171,23 @@ export default function App() {
 
   // Render
   return (
-    <div className={`h-full w-full ${isDark ? "bg-gradient-to-br from-slate-900 via-slate-900 to-slate-800" : "bg-gradient-to-br from-gray-50 via-white to-gray-100"}`}>
-      <div className="h-full grid grid-cols-1 md:grid-cols-[280px_1fr] transition-all duration-300">
+    <div
+      className={`h-full w-full relative overflow-hidden ${
+        isDark
+          ? "bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
+          : "bg-gradient-to-br from-slate-50 via-white to-slate-100"
+      }`}
+    >
+      {/* Subtle accent glow to add depth (kept light for mobile performance). */}
+      <div
+        className={`pointer-events-none absolute inset-0 ${
+          isDark
+            ? "bg-[radial-gradient(900px_600px_at_15%_-10%,rgba(56,189,248,0.16),transparent_60%),radial-gradient(700px_520px_at_95%_0%,rgba(168,85,247,0.12),transparent_55%),radial-gradient(1000px_640px_at_60%_115%,rgba(59,130,246,0.10),transparent_60%)]"
+            : "bg-[radial-gradient(900px_600px_at_15%_-10%,rgba(59,130,246,0.12),transparent_60%),radial-gradient(800px_520px_at_95%_0%,rgba(34,211,238,0.10),transparent_55%),radial-gradient(1000px_640px_at_60%_115%,rgba(99,102,241,0.08),transparent_60%)]"
+        }`}
+      />
+
+      <div className="relative h-full grid grid-cols-1 md:grid-cols-[280px_1fr] transition-all duration-300">
         <GroupSidebar
           groups={groups}
           selectedGroupId={selectedGroupId}
@@ -1187,7 +1202,7 @@ export default function App() {
         />
 
         {/* Main content */}
-        <main className={`h-full flex flex-col overflow-hidden ${isDark ? "bg-slate-900/50" : "bg-white"}`}>
+        <main className={`h-full flex flex-col overflow-hidden ${isDark ? "bg-slate-950/25" : "bg-white/75"}`}>
           <AppHeader
             isDark={isDark}
             theme={theme}

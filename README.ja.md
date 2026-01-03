@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README.zh-CN.md) | **日本語**
 
-> ステータス：**0.4.0rc8**（Release Candidate）。UX と契約（contracts）を硬化中のため、破壊的変更の可能性があります。
+> ステータス：**0.4.0rc9**（Release Candidate）。UX と契約（contracts）を硬化中のため、破壊的変更の可能性があります。
 
 CCCC は **local-first なグローバル・マルチエージェント配達カーネル**です：
 
@@ -86,12 +86,12 @@ v0.3.x（tmux-first）は有効性を示しましたが、現実的な限界も�
 
 ### TestPyPI から 0.4.x RC をインストール（現時点の推奨）
 
-RC tag（例：`v0.4.0-rc8`）は **TestPyPI** に公開されます。依存は PyPI、RC パッケージのみ TestPyPI から取得します：
+RC tag（例：`v0.4.0-rc9`）は **TestPyPI** に公開されます。依存は PyPI、RC パッケージのみ TestPyPI から取得します：
 
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc8
+  cccc-pair==0.4.0rc9
 ```
 
 注：現時点で PyPI の最新安定版は旧 v0.3.x 系です。0.4.x RC を試す場合は上記コマンドを使ってください。

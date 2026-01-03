@@ -107,7 +107,12 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
             )}
 
             {(actor.unread_count ?? 0) > 0 && (
-              <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+              <span
+                className={classNames(
+                  "text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold shadow-sm",
+                  isDark ? "bg-indigo-500" : "bg-indigo-600"
+                )}
+              >
                 {actor.unread_count}
               </span>
             )}

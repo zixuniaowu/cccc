@@ -273,3 +273,33 @@ export function getRuntimeColor(runtime?: string, isDark: boolean = true) {
     dot: colors.dotLight,
   };
 }
+
+const ACTOR_ACCENTS = [
+  // Dark theme accents are intentionally soft (low-saturation ring + readable name color).
+  { ring: "ring-sky-400/35", text: "text-sky-300", ringLight: "ring-sky-300", textLight: "text-sky-700" },
+  { ring: "ring-indigo-400/35", text: "text-indigo-300", ringLight: "ring-indigo-300", textLight: "text-indigo-700" },
+  { ring: "ring-violet-400/35", text: "text-violet-300", ringLight: "ring-violet-300", textLight: "text-violet-700" },
+  { ring: "ring-fuchsia-400/35", text: "text-fuchsia-300", ringLight: "ring-fuchsia-300", textLight: "text-fuchsia-700" },
+  { ring: "ring-cyan-400/35", text: "text-cyan-300", ringLight: "ring-cyan-300", textLight: "text-cyan-700" },
+  { ring: "ring-teal-400/35", text: "text-teal-300", ringLight: "ring-teal-300", textLight: "text-teal-700" },
+  { ring: "ring-emerald-400/35", text: "text-emerald-300", ringLight: "ring-emerald-300", textLight: "text-emerald-700" },
+  { ring: "ring-amber-400/35", text: "text-amber-300", ringLight: "ring-amber-300", textLight: "text-amber-700" },
+];
+
+function _fnv1a32(input: string): number {
+  // Deterministic, fast, and stable across JS engines.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < input.length; i++) {
+    hash ^= input.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+export function getActorAccentColor(actorId?: string, isDark: boolean = true) {
+  const id = String(actorId || "").trim();
+  const idx = id ? _fnv1a32(id) % ACTOR_ACCENTS.length : 0;
+  const a = ACTOR_ACCENTS[idx] || ACTOR_ACCENTS[0];
+  if (isDark) return { ring: a.ring, text: a.text };
+  return { ring: a.ringLight, text: a.textLight };
+}
