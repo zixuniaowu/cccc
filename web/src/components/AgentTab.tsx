@@ -50,6 +50,15 @@ export function AgentTab({
   const wsRef = useRef<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
 
+  // Best-effort terminal query responder state (per mounted actor tab).
+  // Some runtimes (notably opencode) emit terminal *queries* that xterm.js doesn't answer (e.g. OSC 4 palette).
+  // Without a reply, they can get stuck or render nothing on attach.
+  const terminalReplyStateRef = useRef<{ osc4Idx: Set<string>; osc10Sent: boolean; osc11Sent: boolean }>({
+    osc4Idx: new Set<string>(),
+    osc10Sent: false,
+    osc11Sent: false,
+  });
+
   // WebSocket reconnect state
   const reconnectAttemptRef = useRef(0);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -84,6 +93,18 @@ export function AgentTab({
   const color = getRuntimeColor(actor.runtime, isDark);
   const rtInfo = (actor.runtime && RUNTIME_INFO[actor.runtime]) ? RUNTIME_INFO[actor.runtime] : RUNTIME_INFO.codex;
   const unreadCount = actor.unread_count ?? 0;
+
+  const _hexToOscRgb = (hex: string): string => {
+    const h = (hex || "").trim().toLowerCase();
+    const m = /^#([0-9a-f]{6})$/.exec(h);
+    if (!m) return "0000/0000/0000";
+    const raw = m[1] || "000000";
+    const r8 = parseInt(raw.slice(0, 2), 16);
+    const g8 = parseInt(raw.slice(2, 4), 16);
+    const b8 = parseInt(raw.slice(4, 6), 16);
+    const to16 = (v8: number) => (v8 * 257).toString(16).padStart(4, "0");
+    return `${to16(r8)}/${to16(g8)}/${to16(b8)}`;
+  };
 
   // Send interrupt (Ctrl+C)
   const sendInterrupt = () => {
@@ -221,6 +242,8 @@ export function AgentTab({
         if (disposed) return;
         setConnectionStatus('connected');
         reconnectAttemptRef.current = 0; // Reset reconnect counter
+        // Reset responder state on each successful (re)connect.
+        terminalReplyStateRef.current = { osc4Idx: new Set<string>(), osc10Sent: false, osc11Sent: false };
 
         // Send initial resize
         const term = terminalRef.current;
@@ -229,11 +252,77 @@ export function AgentTab({
         }
       };
 
+      const _maybeReplyOpencodeQueries = (data: string) => {
+        if (actor.runtime !== "opencode" || ws.readyState !== WebSocket.OPEN || !terminalRef.current) return;
+
+        // Prefer the terminal's current theme (keeps replies consistent even after theme toggles).
+        const fallback = getTerminalTheme(isDark);
+        const theme = (terminalRef.current.options.theme || fallback) as any;
+
+        const bg = (typeof theme.background === "string" ? theme.background : fallback.background) as string;
+        const fg = (typeof theme.foreground === "string" ? theme.foreground : fallback.foreground) as string;
+        const palette: string[] = [
+          (typeof theme.black === "string" ? theme.black : fallback.black) as string,
+          (typeof theme.red === "string" ? theme.red : fallback.red) as string,
+          (typeof theme.green === "string" ? theme.green : fallback.green) as string,
+          (typeof theme.yellow === "string" ? theme.yellow : fallback.yellow) as string,
+          (typeof theme.blue === "string" ? theme.blue : fallback.blue) as string,
+          (typeof theme.magenta === "string" ? theme.magenta : fallback.magenta) as string,
+          (typeof theme.cyan === "string" ? theme.cyan : fallback.cyan) as string,
+          (typeof theme.white === "string" ? theme.white : fallback.white) as string,
+          (typeof theme.brightBlack === "string" ? theme.brightBlack : fallback.brightBlack) as string,
+          (typeof theme.brightRed === "string" ? theme.brightRed : fallback.brightRed) as string,
+          (typeof theme.brightGreen === "string" ? theme.brightGreen : fallback.brightGreen) as string,
+          (typeof theme.brightYellow === "string" ? theme.brightYellow : fallback.brightYellow) as string,
+          (typeof theme.brightBlue === "string" ? theme.brightBlue : fallback.brightBlue) as string,
+          (typeof theme.brightMagenta === "string" ? theme.brightMagenta : fallback.brightMagenta) as string,
+          (typeof theme.brightCyan === "string" ? theme.brightCyan : fallback.brightCyan) as string,
+          (typeof theme.brightWhite === "string" ? theme.brightWhite : fallback.brightWhite) as string,
+        ];
+
+        const state = terminalReplyStateRef.current;
+
+        // OSC 10/11 queries: ask for terminal default fg/bg.
+        // Reply format: ESC ] 10/11 ; rgb:RRRR/GGGG/BBBB BEL
+        if (!state.osc10Sent && /\x1b\]10;\?(?:\x07|\x1b\\)/.test(data)) {
+          state.osc10Sent = true;
+          ws.send(JSON.stringify({ t: "i", d: `\x1b]10;rgb:${_hexToOscRgb(fg)}\x07` }));
+        }
+        if (!state.osc11Sent && /\x1b\]11;\?(?:\x07|\x1b\\)/.test(data)) {
+          state.osc11Sent = true;
+          ws.send(JSON.stringify({ t: "i", d: `\x1b]11;rgb:${_hexToOscRgb(bg)}\x07` }));
+        }
+
+        // OSC 4 palette query: ESC ] 4 ; <idx> ; ? (BEL/ST)
+        // xterm.js doesn't answer this query by default; some TUIs can stall waiting for it.
+        const osc4 = /\x1b\]4;(\d+);[?](?:\x07|\x1b\\)/g;
+        let m: RegExpExecArray | null = null;
+        while ((m = osc4.exec(data)) !== null) {
+          const idx = String(m[1] || "0");
+          if (state.osc4Idx.has(idx)) continue;
+          state.osc4Idx.add(idx);
+          const n = Number.parseInt(idx, 10);
+          if (Number.isFinite(n) && n >= 0 && n < palette.length) {
+            ws.send(JSON.stringify({ t: "i", d: `\x1b]4;${idx};rgb:${_hexToOscRgb(palette[n])}\x07` }));
+          } else {
+            ws.send(JSON.stringify({ t: "i", d: `\x1b]4;${idx};rgb:0000/0000/0000\x07` }));
+          }
+        }
+      };
+
+      const _handleDecoded = (data: string) => {
+        if (disposed || !terminalRef.current) return;
+        _maybeReplyOpencodeQueries(data);
+        terminalRef.current.write(data);
+      };
+
       ws.onmessage = (event) => {
         if (disposed || !terminalRef.current) return;
         if (event.data instanceof ArrayBuffer) {
-          const data = new TextDecoder().decode(event.data);
-          terminalRef.current.write(data);
+          _handleDecoded(new TextDecoder().decode(event.data));
+        } else if (event.data instanceof Blob) {
+          // Safari/iOS can deliver binary WebSocket frames as Blob even with binaryType="arraybuffer".
+          void event.data.arrayBuffer().then((buf) => _handleDecoded(new TextDecoder().decode(buf)));
         } else if (typeof event.data === "string") {
           // Server might send JSON messages for status
           try {
@@ -282,17 +371,27 @@ export function AgentTab({
       // Handle terminal input - send as JSON with type "i" (input)
       const term = terminalRef.current;
       if (term) {
-        disposable = term.onData((data) => {
-          if (ws.readyState === WebSocket.OPEN) {
-            // xterm.js may emit terminal replies (not user keystrokes), e.g. device attributes.
-            // Some runtimes (notably droid) can echo these back as literal text (seen as "1;2c").
-            if (actor.runtime === "droid") {
-              const isDeviceAttributesReply = /^\x1b\[(?:\?|>)(?:\d+)(?:;\d+)*c$/.test(data);
-              if (isDeviceAttributesReply) return;
+          disposable = term.onData((data) => {
+            if (ws.readyState === WebSocket.OPEN) {
+              // xterm.js can emit terminal replies (not user keystrokes), e.g. device attributes / color queries.
+              // Some runtimes can echo these back as literal text (seen as "1;2c" or "]11;rgb:..."), so filter for those.
+              // Keep the filter runtime-scoped to avoid interfering with full-screen TUIs that may rely on terminal queries.
+              if (actor.runtime === "droid" || actor.runtime === "gemini" || actor.runtime === "kilocode" || actor.runtime === "copilot" || actor.runtime === "neovate") {
+                const isDeviceAttributesReply = /^\x1b\[(?:\?|>)(?:\d+)(?:;\d+)*c$/.test(data);
+                if (isDeviceAttributesReply) return;
+
+                // OSC color query replies (e.g. background/foreground): ESC ] 10/11 ; rgb:.... BEL or ST
+                const isOscColorReply = /^\x1b\](?:10|11);rgb:[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}\/[0-9a-fA-F]{1,4}(?:\x07|\x1b\\)$/.test(data);
+                if (isOscColorReply) return;
+
+                // Focus in/out events (CSI I / CSI O) can be emitted by xterm when apps enable focus tracking (DEC 1004).
+                // Some runtimes echo them as literal text on tab focus changes (seen as "[O").
+                const isFocusEvent = /^\x1b\[[IO]$/.test(data);
+                if (isFocusEvent) return;
+              }
+              ws.send(JSON.stringify({ t: "i", d: data }));
             }
-            ws.send(JSON.stringify({ t: "i", d: data }));
-          }
-        });
+          });
 
         // Handle terminal resize - send as JSON with type "r" (resize)
         resizeDisposable = term.onResize(({ cols, rows }) => {

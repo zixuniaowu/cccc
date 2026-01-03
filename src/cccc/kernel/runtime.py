@@ -193,7 +193,7 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         "codex": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--search"],
         "cursor": ["cursor-agent"],
         "droid": ["droid", "--auto", "high"],
-        "gemini": ["gemini"],
+        "gemini": ["gemini", "--yolo"],
         "kilocode": ["kilocode"],
         "neovate": ["neovate"],
         "opencode": ["opencode"],
