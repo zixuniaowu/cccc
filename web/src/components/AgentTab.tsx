@@ -58,6 +58,7 @@ export function AgentTab({
     osc10Sent: false,
     osc11Sent: false,
   });
+  const pasteStateRef = useRef<{ inFlight: boolean; lastAt: number }>({ inFlight: false, lastAt: 0 });
 
   // WebSocket reconnect state
   const reconnectAttemptRef = useRef(0);
@@ -164,10 +165,43 @@ export function AgentTab({
       const key = (ev.key || "").toLowerCase();
       const isCopy = (ev.ctrlKey || ev.metaKey) && !ev.shiftKey && key === "c";
       const isCopyShift = (ev.ctrlKey || ev.metaKey) && ev.shiftKey && key === "c";
+      const isPaste = (ev.ctrlKey || ev.metaKey) && !ev.altKey && key === "v";
       if (isCopy || isCopyShift) {
         if (term.hasSelection?.()) {
           void copySelection();
           return false; // prevent ^C from reaching the runtime
+        }
+      }
+      if (isPaste) {
+        // xterm.js intentionally doesn't map Ctrl+V to paste by default (to preserve terminal semantics),
+        // but for CCCC agents the high-ROI expectation is "Ctrl/Cmd+V pastes text into the PTY".
+        const readText = navigator.clipboard?.readText;
+        if (typeof readText === "function") {
+          // Prevent the browser's default paste behavior (xterm's textarea may also handle paste),
+          // otherwise we can end up pasting the same payload multiple times.
+          ev.preventDefault();
+          ev.stopPropagation();
+
+          const now = Date.now();
+          if (pasteStateRef.current.inFlight) return false;
+          if (now - pasteStateRef.current.lastAt < 250) return false;
+          pasteStateRef.current.inFlight = true;
+          pasteStateRef.current.lastAt = now;
+
+          void readText.call(navigator.clipboard).then((text: string) => {
+            const t = (text || "").toString();
+            if (!t) return;
+            try {
+              term.paste(t);
+            } catch {
+              // ignore
+            }
+          }).catch(() => {
+            // If clipboard read is blocked, fall back to default behavior.
+          }).finally(() => {
+            pasteStateRef.current.inFlight = false;
+          });
+          return false;
         }
       }
       return true;
