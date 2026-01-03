@@ -138,6 +138,40 @@ class PtySession:
         with self._lock:
             return bool(self._bracketed_paste)
 
+    def tail_output(self, *, max_bytes: int = 2_000_000) -> bytes:
+        """Return the latest PTY output bytes (bounded).
+
+        This is intended for developer-mode diagnostics (e.g. terminal transcript tail).
+        """
+        limit = int(max_bytes or 0)
+        if limit <= 0:
+            limit = int(self._max_backlog_bytes or 0) or 2_000_000
+        with self._lock:
+            chunks = list(self._backlog)
+        if not chunks:
+            return b""
+        out: list[bytes] = []
+        total = 0
+        for chunk in reversed(chunks):
+            out.append(chunk)
+            total += len(chunk)
+            if total >= limit:
+                break
+        data = b"".join(reversed(out))
+        if len(data) > limit:
+            data = data[-limit:]
+        return data
+
+    def clear_backlog(self) -> None:
+        """Clear the in-memory PTY backlog/ring buffer (developer-mode only)."""
+        with self._lock:
+            try:
+                self._backlog.clear()
+            except Exception:
+                self._backlog = deque()
+            self._backlog_bytes = 0
+            self._mode_tail = b""
+
     def resize(self, *, cols: int, rows: int) -> None:
         if cols <= 0 or rows <= 0:
             return
@@ -488,7 +522,44 @@ class PtySupervisor:
             s = self._sessions.get(key)
         return bool(s and s.is_running())
 
-    def start_actor(self, *, group_id: str, actor_id: str, cwd: Path, command: Iterable[str], env: Dict[str, str]) -> PtySession:
+    def tail_output(self, *, group_id: str, actor_id: str, max_bytes: int = 2_000_000) -> bytes:
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            return b""
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None:
+            return b""
+        try:
+            return s.tail_output(max_bytes=int(max_bytes or 0))
+        except Exception:
+            return b""
+
+    def clear_backlog(self, *, group_id: str, actor_id: str) -> bool:
+        """Clear an actor's PTY backlog (returns False if actor not running)."""
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            return False
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None or not s.is_running():
+            return False
+        try:
+            s.clear_backlog()
+            return True
+        except Exception:
+            return False
+
+    def start_actor(
+        self,
+        *,
+        group_id: str,
+        actor_id: str,
+        cwd: Path,
+        command: Iterable[str],
+        env: Dict[str, str],
+        max_backlog_bytes: int = 2_000_000,
+    ) -> PtySession:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())
         if not key[0] or not key[1]:
             raise ValueError("missing group_id/actor_id")
@@ -496,7 +567,15 @@ class PtySupervisor:
             existing = self._sessions.get(key)
         if existing is not None and existing.is_running():
             return existing
-        session = PtySession(group_id=key[0], actor_id=key[1], cwd=cwd, command=command, env=env, on_exit=self._on_session_exit)
+        session = PtySession(
+            group_id=key[0],
+            actor_id=key[1],
+            cwd=cwd,
+            command=command,
+            env=env,
+            on_exit=self._on_session_exit,
+            max_backlog_bytes=int(max_backlog_bytes or 0),
+        )
         with self._lock:
             self._sessions[key] = session
         return session

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import shlex
@@ -15,13 +16,35 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from ... import __version__
+from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind
 from ...daemon.server import call_daemon
 from ...kernel.blobs import store_blob_bytes, resolve_blob_attachment_path
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
 from ...paths import ensure_home
+from ...util.obslog import setup_root_json_logging
 from ...util.fs import atomic_write_text
 from ...contracts.v1.actor import AgentRuntime
+
+logger = logging.getLogger("cccc.web")
+_WEB_LOG_FH: Optional[Any] = None
+
+
+def _apply_web_logging(*, home: Path, level: str) -> None:
+    global _WEB_LOG_FH
+    try:
+        d = home / "daemon"
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / "cccc-web.log"
+        if _WEB_LOG_FH is None:
+            _WEB_LOG_FH = p.open("a", encoding="utf-8")
+        setup_root_json_logging(component="web", level=level, stream=_WEB_LOG_FH, force=True)
+    except Exception:
+        # Fall back to stderr if file logging isn't possible.
+        try:
+            setup_root_json_logging(component="web", level=level, force=True)
+        except Exception:
+            pass
 
 
 class CreateGroupRequest(BaseModel):
@@ -49,6 +72,12 @@ class ReplyRequest(BaseModel):
     reply_to: str
 
 
+class DebugClearLogsRequest(BaseModel):
+    component: str
+    group_id: str = Field(default="")
+    by: str = Field(default="user")
+
+
 WEB_MAX_FILE_MB = 20
 WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024
 
@@ -56,14 +85,13 @@ WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024
 class ActorCreateRequest(BaseModel):
     actor_id: str
     # Note: role is auto-determined by position (first enabled = foreman)
-    runner: Literal["pty", "headless"] = Field(default="pty")
+    runner: RunnerKind = Field(default="pty")
     runtime: AgentRuntime = Field(default="codex")
-
     title: str = Field(default="")
     command: Union[str, list[str]] = Field(default="")
     env: Dict[str, str] = Field(default_factory=dict)
     default_scope_key: str = Field(default="")
-    submit: Literal["enter", "newline", "none"] = Field(default="enter")
+    submit: ActorSubmit = Field(default="enter")
     by: str = Field(default="user")
 
 
@@ -74,10 +102,9 @@ class ActorUpdateRequest(BaseModel):
     command: Optional[Union[str, list[str]]] = None
     env: Optional[Dict[str, str]] = None
     default_scope_key: Optional[str] = None
-    submit: Optional[Literal["enter", "newline", "none"]] = None
-    runner: Optional[Literal["pty", "headless"]] = None
+    submit: Optional[ActorSubmit] = None
+    runner: Optional[RunnerKind] = None
     runtime: Optional[AgentRuntime] = None
-
     enabled: Optional[bool] = None
 
 
@@ -104,7 +131,17 @@ class GroupSettingsRequest(BaseModel):
     silence_timeout_seconds: Optional[int] = None
     min_interval_seconds: Optional[int] = None  # delivery throttle
     standup_interval_seconds: Optional[int] = None  # periodic review interval
+
+    # Terminal transcript (group-scoped policy)
+    terminal_transcript_visibility: Optional[Literal["off", "foreman", "all"]] = None
+    terminal_transcript_notify_tail: Optional[bool] = None
+    terminal_transcript_notify_lines: Optional[int] = None
     by: str = Field(default="user")
+
+class ObservabilityUpdateRequest(BaseModel):
+    by: str = Field(default="user")
+    developer_mode: Optional[bool] = None
+    log_level: Optional[str] = None
 
 
 class GroupDeleteRequest(BaseModel):
@@ -217,6 +254,23 @@ async def _sse_tail(path: Path) -> AsyncIterator[bytes]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="cccc web", version=__version__)
+    home = ensure_home()
+
+    # Configure web logging (best-effort) based on daemon observability settings.
+    try:
+        resp = call_daemon({"op": "observability_get"})
+        obs = (resp.get("result") or {}).get("observability") if resp.get("ok") else None
+        level = "INFO"
+        if isinstance(obs, dict):
+            level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"
+            if obs.get("developer_mode") and level == "INFO":
+                level = "DEBUG"
+        _apply_web_logging(home=home, level=level)
+    except Exception:
+        try:
+            _apply_web_logging(home=home, level="INFO")
+        except Exception:
+            pass
 
     dist = str(os.environ.get("CCCC_WEB_DIST") or "").strip()
     dist_dir: Optional[Path] = None
@@ -319,6 +373,114 @@ def create_app() -> FastAPI:
                 "daemon": "running" if daemon_ok else "stopped",
             }
         }
+
+    @app.get("/api/v1/observability")
+    async def observability_get() -> Dict[str, Any]:
+        """Get global observability settings (developer mode, log level)."""
+        return _daemon({"op": "observability_get"})
+
+    @app.put("/api/v1/observability")
+    async def observability_update(req: ObservabilityUpdateRequest) -> Dict[str, Any]:
+        """Update global observability settings (daemon-owned persistence)."""
+        patch: Dict[str, Any] = {}
+        if req.developer_mode is not None:
+            patch["developer_mode"] = bool(req.developer_mode)
+        if req.log_level is not None:
+            patch["log_level"] = str(req.log_level or "").strip().upper()
+
+        resp = _daemon({"op": "observability_update", "args": {"by": req.by, "patch": patch}})
+
+        # Apply web-side logging immediately as well (best-effort).
+        try:
+            obs = (resp.get("result") or {}).get("observability") if resp.get("ok") else None
+            if isinstance(obs, dict):
+                level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"
+                if obs.get("developer_mode") and level == "INFO":
+                    level = "DEBUG"
+                _apply_web_logging(home=ensure_home(), level=level)
+        except Exception:
+            pass
+
+        return resp
+
+    # ---------------------------------------------------------------------
+    # Terminal transcript endpoints (group-scoped)
+    # ---------------------------------------------------------------------
+
+    @app.get("/api/v1/groups/{group_id}/terminal/tail")
+    async def terminal_tail(
+        group_id: str,
+        actor_id: str,
+        max_chars: int = 8000,
+        strip_ansi: bool = True,
+        compact: bool = True,
+    ) -> Dict[str, Any]:
+        """Tail an actor's terminal transcript (subject to group policy)."""
+        return _daemon(
+            {
+                "op": "terminal_tail",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "max_chars": int(max_chars or 8000),
+                    "strip_ansi": bool(strip_ansi),
+                    "compact": bool(compact),
+                    "by": "user",
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/terminal/clear")
+    async def terminal_clear(group_id: str, actor_id: str) -> Dict[str, Any]:
+        """Clear (truncate) an actor's in-memory terminal transcript ring buffer."""
+        return _daemon(
+            {
+                "op": "terminal_clear",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "by": "user",
+                },
+            }
+        )
+
+    # ---------------------------------------------------------------------
+    # Debug endpoints (developer mode only; gated by daemon)
+    # ---------------------------------------------------------------------
+
+    @app.get("/api/v1/debug/snapshot")
+    async def debug_snapshot(group_id: str) -> Dict[str, Any]:
+        """Get a structured debug snapshot for a group (developer mode only)."""
+        return _daemon({"op": "debug_snapshot", "args": {"group_id": group_id, "by": "user"}})
+
+    @app.get("/api/v1/debug/tail_logs")
+    async def debug_tail_logs(component: str, group_id: str = "", lines: int = 200) -> Dict[str, Any]:
+        """Tail local CCCC logs (developer mode only)."""
+        return _daemon(
+            {
+                "op": "debug_tail_logs",
+                "args": {
+                    "component": str(component or ""),
+                    "group_id": str(group_id or ""),
+                    "lines": int(lines or 200),
+                    "by": "user",
+                },
+            }
+        )
+
+    @app.post("/api/v1/debug/clear_logs")
+    async def debug_clear_logs(req: DebugClearLogsRequest) -> Dict[str, Any]:
+        """Clear (truncate) local CCCC logs (developer mode only)."""
+        return _daemon(
+            {
+                "op": "debug_clear_logs",
+                "args": {
+                    "component": str(req.component or ""),
+                    "group_id": str(req.group_id or ""),
+                    "by": str(req.by or "user"),
+                },
+            }
+        )
 
     @app.get("/api/v1/runtimes")
     async def runtimes() -> Dict[str, Any]:
@@ -568,6 +730,9 @@ def create_app() -> FastAPI:
         
         automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
         delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
+        from ...kernel.terminal_transcript import get_terminal_transcript_settings
+
+        tt = get_terminal_transcript_settings(group.doc)
         return {
             "ok": True,
             "result": {
@@ -579,6 +744,9 @@ def create_app() -> FastAPI:
                     "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
                     "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
                     "standup_interval_seconds": int(automation.get("standup_interval_seconds", 900)),
+                    "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
+                    "terminal_transcript_notify_tail": bool(tt.get("notify_tail", False)),
+                    "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
                 }
             }
         }
@@ -601,6 +769,14 @@ def create_app() -> FastAPI:
             patch["min_interval_seconds"] = max(0, req.min_interval_seconds)
         if req.standup_interval_seconds is not None:
             patch["standup_interval_seconds"] = max(0, req.standup_interval_seconds)
+
+        # Terminal transcript policy (group-scoped)
+        if req.terminal_transcript_visibility is not None:
+            patch["terminal_transcript_visibility"] = str(req.terminal_transcript_visibility)
+        if req.terminal_transcript_notify_tail is not None:
+            patch["terminal_transcript_notify_tail"] = bool(req.terminal_transcript_notify_tail)
+        if req.terminal_transcript_notify_lines is not None:
+            patch["terminal_transcript_notify_lines"] = max(1, min(80, int(req.terminal_transcript_notify_lines)))
         
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}

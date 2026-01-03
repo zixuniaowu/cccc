@@ -892,7 +892,6 @@ export default function App() {
         body: JSON.stringify({ ...settings, by: "user" }),
       });
       if (!resp.ok) showError(`${resp.error.code}: ${resp.error.message}`);
-      else setShowSettingsModal(false);
       await fetchSettings(selectedGroupId);
     } finally {
       setBusy("");
@@ -1328,6 +1327,10 @@ export default function App() {
                 onInbox={() => {
                   if (!currentActor) return;
                   openInbox(currentActor.id);
+                }}
+                onStatusChange={() => {
+                  // Refresh actor list when component detects status change
+                  void refreshActors();
                 }}
               />
             )}

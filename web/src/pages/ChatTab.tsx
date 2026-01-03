@@ -429,6 +429,49 @@ export function ChatTab({
             placeholder={isSmallScreen ? "Message…" : "Message… (@ to mention, Ctrl+Enter to send)"}
             rows={1}
             value={composerText}
+            onPaste={(e) => {
+              const dt = e.clipboardData;
+              if (!dt) return;
+
+              // Prefer `items` (more consistent across browsers). Fall back to `files`.
+              // Do not read both, otherwise some browsers duplicate the same file.
+              const files: File[] = [];
+              try {
+                const items = Array.from(dt.items || []);
+                for (const it of items) {
+                  if (!it || it.kind !== "file") continue;
+                  const f = it.getAsFile();
+                  if (f) files.push(f);
+                }
+              } catch {
+                // ignore
+              }
+              if (files.length === 0) {
+                try {
+                  files.push(...Array.from(dt.files || []));
+                } catch {
+                  // ignore
+                }
+              }
+
+              if (files.length === 0) return;
+              if (!selectedGroupId) return;
+
+              // Some clipboards provide duplicate file items for the same paste.
+              const seen = new Set<string>();
+              const unique: File[] = [];
+              for (const f of files) {
+                const key = `${f.name}:${f.size}:${f.type}`;
+                if (seen.has(key)) continue;
+                seen.add(key);
+                unique.push(f);
+              }
+              if (unique.length === 0) return;
+
+              // When files are present, treat paste as "attach" (avoid inserting stray text).
+              e.preventDefault();
+              appendComposerFiles(unique);
+            }}
             onChange={(e) => {
               const val = e.target.value;
               setComposerText(val);
