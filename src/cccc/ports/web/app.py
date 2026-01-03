@@ -24,6 +24,7 @@ from ...kernel.ledger import read_last_lines
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
 from ...util.fs import atomic_write_text
+from ...contracts.v1.actor import AgentRuntime
 
 logger = logging.getLogger("cccc.web")
 _WEB_LOG_FH: Optional[Any] = None
