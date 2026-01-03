@@ -20,12 +20,15 @@ Group State Behavior:
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger("cccc.delivery")
 
 from ..kernel.actors import find_actor, list_actors
 from ..kernel.group import Group, get_group_state, set_group_state
@@ -225,6 +228,7 @@ class DeliveryThrottle:
         """Queue a message for delivery."""
         with self._lock:
             state = self._get_state(group_id, actor_id)
+            logger.debug(f"[THROTTLE] queue_message: {group_id}/{actor_id} event={event_id} text={text[:50]!r} pending_before={len(state.pending_messages)}")
             state.pending_messages.append(PendingMessage(
                 event_id=event_id,
                 by=by,
@@ -268,6 +272,7 @@ class DeliveryThrottle:
         with self._lock:
             state = self._get_state(group_id, actor_id)
             messages = state.pending_messages
+            logger.debug(f"[THROTTLE] take_pending: {group_id}/{actor_id} count={len(messages)}")
             state.pending_messages = []
             state.last_attempt_at = datetime.now(timezone.utc)
             return messages
@@ -278,6 +283,7 @@ class DeliveryThrottle:
             return
         with self._lock:
             state = self._get_state(group_id, actor_id)
+            logger.debug(f"[THROTTLE] requeue_front: {group_id}/{actor_id} requeue={len(messages)} existing={len(state.pending_messages)}")
             state.pending_messages = list(messages) + state.pending_messages
 
     def mark_delivered(self, group_id: str, actor_id: str) -> None:
@@ -308,12 +314,15 @@ class DeliveryThrottle:
         with self._lock:
             state = self._get_state(group_id, actor_id)
             return len(state.pending_messages) > 0
-    
+
     def clear_actor(self, group_id: str, actor_id: str) -> None:
         """Clear all state for an actor (e.g., on restart)."""
         with self._lock:
+            pending_count = 0
             if group_id in self._states and actor_id in self._states[group_id]:
+                pending_count = len(self._states[group_id][actor_id].pending_messages)
                 del self._states[group_id][actor_id]
+            logger.debug(f"[THROTTLE] clear_actor: {group_id}/{actor_id} cleared_pending={pending_count}")
 
     def reset_actor(self, group_id: str, actor_id: str, *, keep_pending: bool = True) -> None:
         """Reset delivery metadata for an actor without dropping queued messages.
@@ -495,9 +504,6 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
     - 延迟发送有一定成功率
     - 问题可能是 CLI 应用的 readline 处理时序问题
     """
-    import logging
-    logger = logging.getLogger("cccc.delivery")
-    
     gid = str(group.group_id or "").strip()
     aid = str(actor_id or "").strip()
     if not gid or not aid:
@@ -724,32 +730,61 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         if (delivered_after // REMINDER_EVERY_N_MESSAGES) > (delivered_before // REMINDER_EVERY_N_MESSAGES):
             reminder_after_index = len(deliverable)
     
-    # Build the full delivery text
-    parts: List[str] = []
-    
-    # Check if preamble needs to be sent - prepend to message
+    # Check if preamble needs to be sent - send SEPARATELY before message
+    # This is critical: sending preamble+message together as a large payload
+    # causes Claude Code to miss the first message (readline buffer issue).
     preamble_already_sent = is_preamble_sent(group, aid)
+    preamble_just_sent = False
     if not preamble_already_sent:
         try:
             prompt = render_system_prompt(group=group, actor=actor)
             if prompt and prompt.strip():
-                parts.append(prompt.strip())
+                preamble_ok = pty_submit_text(group, actor_id=aid, text=prompt.strip())
+                if preamble_ok:
+                    mark_preamble_sent(group, aid)
+                    preamble_just_sent = True
+                    logger.debug(f"[flush] {gid}/{aid} preamble sent, will send message after delay")
+                else:
+                    # Preamble failed, requeue everything
+                    THROTTLE.requeue_front(gid, aid, messages)
+                    return False
         except Exception:
-            pass
-    
+            THROTTLE.requeue_front(gid, aid, messages)
+            return False
+
     # Render batched messages
     message_text = render_batched_messages(deliverable, reminder_after_index=reminder_after_index)
-    if message_text:
-        parts.append(message_text)
-    
-    # Combine and send as single delivery
+
+    # If preamble was just sent, schedule message delivery after delay (non-blocking)
+    # pty_submit_text has 1.5s delayed submit, we need to wait for that + processing time
+    if preamble_just_sent and message_text:
+        logger.debug(f"[flush] {gid}/{aid} preamble sent, scheduling delayed message delivery")
+
+        def delayed_message_send():
+            time.sleep(3.0)  # Wait for preamble's delayed submit (1.5s) + CLI processing time
+            if not pty_runner.SUPERVISOR.actor_running(gid, aid):
+                logger.warning(f"[flush] {gid}/{aid} actor no longer running, skipping delayed message")
+                return
+            logger.debug(f"[flush] {gid}/{aid} sending delayed message now")
+            ok = bool(pty_submit_text(group, actor_id=aid, text=message_text))
+            if ok:
+                THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
+                THROTTLE.mark_delivered(gid, aid)
+                if requeue:
+                    THROTTLE.requeue_front(gid, aid, requeue)
+            else:
+                # Failed, requeue for retry
+                THROTTLE.requeue_front(gid, aid, messages)
+
+        send_thread = threading.Thread(target=delayed_message_send, daemon=True)
+        send_thread.start()
+        return True  # Preamble delivered, message scheduled
+
+    # Send message (no preamble delay needed)
     delivered = False
-    if parts:
-        full_text = "\n\n".join(parts)
-        delivered = bool(pty_submit_text(group, actor_id=aid, text=full_text))
+    if message_text:
+        delivered = bool(pty_submit_text(group, actor_id=aid, text=message_text))
         if delivered:
-            if not preamble_already_sent:
-                mark_preamble_sent(group, aid)
             THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
             THROTTLE.mark_delivered(gid, aid)
             # Keep blocked messages queued for later.

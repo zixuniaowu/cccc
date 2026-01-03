@@ -929,6 +929,13 @@ def _maybe_autostart_running_groups() -> None:
                     runtime,
                 )
 
+            # Clear preamble state so system prompt will be injected on first message.
+            # NOTE: Do NOT call THROTTLE.clear_actor() here!
+            # THROTTLE is an in-memory object, empty after daemon restart.
+            # If a user sends a message between socket listen and autostart completion,
+            # that message is queued in THROTTLE. Clearing it would lose user messages.
+            clear_preamble_sent(group, aid)
+
             # Start actor session (errors skip this actor, continue with others)
             try:
                 if runner_kind == "headless":
@@ -1847,12 +1854,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         _write_pty_state(group.group_id, aid, pid=session.pid)
                     except Exception:
                         pass
-                
+
                 # Clear preamble state so system prompt will be injected on first message
                 clear_preamble_sent(group, aid)
                 # Reset delivery metadata but keep any queued messages.
                 THROTTLE.reset_actor(group.group_id, aid, keep_pending=True)
-                
+
                 started.append(aid)
         except Exception as e:
             return _error("group_start_failed", str(e)), False
@@ -2460,7 +2467,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             pass
 
         _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
-        
+
         ev = append_event(
             group.ledger_path,
             kind="actor.start",
@@ -2909,17 +2916,21 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if len(attachments) > 8:
                 lines.append(f"- … ({len(attachments) - 8} more)")
             delivery_text = (delivery_text.rstrip("\n") + "\n\n" + "\n".join(lines)).strip()
-        for actor in list_actors(group):
+        actors = list_actors(group)
+        logger.debug(f"[SEND] group={group_id} text={text[:30]!r} actors={[a.get('id') for a in actors]} effective_to={effective_to}")
+        for actor in actors:
             if not isinstance(actor, dict):
                 continue
             aid = str(actor.get("id") or "").strip()
             if not aid or aid == "user" or aid == by:
+                logger.debug(f"[SEND] skip actor={aid} (user/by)")
                 continue
             # Check if message is for this actor (handles @all, @peers, @foreman, etc.)
             ev_with_effective_to = dict(ev)
             ev_with_effective_to["data"] = dict(ev.get("data") or {})
             ev_with_effective_to["data"]["to"] = effective_to
             if not is_message_for_actor(group, actor_id=aid, event=ev_with_effective_to):
+                logger.debug(f"[SEND] skip actor={aid} (not for actor)")
                 continue
             # PTY runner: queue message for throttled delivery
             runner_kind = str(actor.get("runner") or "pty").strip()
@@ -2974,7 +2985,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 if not aid:
                     continue
                 runner_kind = str(actor.get("runner") or "pty").strip()
-                if runner_kind == "pty" and pty_runner.SUPERVISOR.actor_running(group_id, aid):
+                actor_running = pty_runner.SUPERVISOR.actor_running(group_id, aid)
+                logger.debug(f"[SEND] flush check: {group_id}/{aid} runner={runner_kind} running={actor_running}")
+                if runner_kind == "pty" and actor_running:
+                    logger.debug(f"[SEND] flushing: {group_id}/{aid}")
                     flush_pending_messages(group, actor_id=aid)
         except Exception:
             pass

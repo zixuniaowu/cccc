@@ -1328,6 +1328,10 @@ export default function App() {
                   if (!currentActor) return;
                   openInbox(currentActor.id);
                 }}
+                onStatusChange={() => {
+                  // Refresh actor list when component detects status change
+                  void refreshActors();
+                }}
               />
             )}
           </div>
