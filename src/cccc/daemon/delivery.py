@@ -315,6 +315,22 @@ class DeliveryThrottle:
             if group_id in self._states and actor_id in self._states[group_id]:
                 del self._states[group_id][actor_id]
 
+    def reset_actor(self, group_id: str, actor_id: str, *, keep_pending: bool = True) -> None:
+        """Reset delivery metadata for an actor without dropping queued messages.
+
+        This is important for correctness during daemon/group/actor restarts:
+        messages can be queued while the actor is (re)starting. If we clear all
+        state we can accidentally drop those queued messages, leaving them only
+        in the inbox/ledger and never delivering to the PTY.
+        """
+        with self._lock:
+            state = self._get_state(group_id, actor_id)
+            pending = list(state.pending_messages) if keep_pending else []
+            state.last_delivery_at = None
+            state.last_attempt_at = None
+            state.delivered_chat_count = 0
+            state.pending_messages = pending
+
     def clear_pending_system_notifies(self, group_id: str, *, notify_kinds: Optional[set[str]] = None) -> int:
         """Remove pending system.notify messages for a group.
 

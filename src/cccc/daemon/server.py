@@ -962,7 +962,8 @@ def _maybe_autostart_running_groups() -> None:
 
             # Ensure fresh sessions always receive the lazy preamble on first delivery
             clear_preamble_sent(group, aid)
-            THROTTLE.clear_actor(group.group_id, aid)
+            # Do not drop any messages that may have been queued while the daemon was starting.
+            THROTTLE.reset_actor(group.group_id, aid, keep_pending=True)
             # NOTE: 不在启动时注入 system prompt（lazy preamble）
         # Daemon restart should behave like a resume: do not "catch up" on reminders.
         try:
@@ -1849,8 +1850,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 
                 # Clear preamble state so system prompt will be injected on first message
                 clear_preamble_sent(group, aid)
-                # Clear throttle state for fresh start
-                THROTTLE.clear_actor(group.group_id, aid)
+                # Reset delivery metadata but keep any queued messages.
+                THROTTLE.reset_actor(group.group_id, aid, keep_pending=True)
                 
                 started.append(aid)
         except Exception as e:
@@ -2289,7 +2290,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
                     # Clear preamble/throttle state for a fresh start.
                     clear_preamble_sent(group, actor_id)
-                    THROTTLE.clear_actor(group.group_id, actor_id)
+                    THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
             else:
                 runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
                 if runner_kind == "headless":
@@ -2298,7 +2299,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 else:
                     pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                     _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
-                THROTTLE.clear_actor(group.group_id, actor_id)
+                # Keep queued messages; they should be delivered when the actor is started again.
+                THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
                 # If no enabled actors remain, mark group as not running.
                 try:
                     any_enabled = any(
@@ -2448,8 +2450,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         
         # Clear preamble state so system prompt will be injected on first message
         clear_preamble_sent(group, actor_id)
-        # Clear throttle state for fresh start
-        THROTTLE.clear_actor(group.group_id, actor_id)
+        # Reset delivery metadata but keep queued messages.
+        THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
 
         try:
             group.doc["running"] = True
@@ -2536,8 +2538,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
             # Clear preamble state so system prompt will be re-injected on restart
             clear_preamble_sent(group, actor_id)
-            # Clear throttle state for fresh start
-            THROTTLE.clear_actor(group.group_id, actor_id)
+            # Reset delivery metadata but keep queued messages.
+            THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
         except Exception as e:
             return _error("actor_restart_failed", str(e)), False
         if bool(group.doc.get("running", False)):
