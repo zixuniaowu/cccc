@@ -22,6 +22,7 @@ from ..kernel.actors import list_actors, find_foreman
 from ..kernel.group import Group, load_group, get_group_state
 from ..kernel.inbox import unread_messages, iter_events
 from ..kernel.ledger import append_event
+from ..kernel.terminal_transcript import get_terminal_transcript_settings
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
 from .delivery import flush_pending_messages, queue_system_notify
@@ -124,6 +125,50 @@ def _get_last_actor_activity(group: Group, actor_id: str) -> Optional[datetime]:
                 if dt is not None:
                     last_ts = dt
     return last_ts
+
+
+def _terminal_tail_snippet(group: Group, *, actor_id: str, lines: int) -> str:
+    """Best-effort tail snippet for notifications (compact; bounded)."""
+    aid = str(actor_id or "").strip()
+    if not aid:
+        return ""
+    try:
+        if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
+            return ""
+    except Exception:
+        return ""
+
+    n_lines = int(lines or 0)
+    if n_lines <= 0:
+        n_lines = 20
+    if n_lines > 80:
+        n_lines = 80
+
+    try:
+        raw = pty_runner.SUPERVISOR.tail_output(group_id=group.group_id, actor_id=aid, max_bytes=200_000)
+    except Exception:
+        raw = b""
+    raw_text = raw.decode("utf-8", errors="replace")
+    if not raw_text.strip():
+        return ""
+
+    text = raw_text
+    try:
+        from ..util.terminal_render import render_transcript
+
+        text = render_transcript(text, compact=True)
+    except Exception:
+        pass
+
+    tail_lines = text.splitlines()[-n_lines:] if text else []
+    snippet = "\n".join(tail_lines).rstrip()
+    if not snippet.strip():
+        return ""
+
+    # Keep notifications bounded.
+    if len(snippet) > 6000:
+        snippet = snippet[-6000:]
+    return snippet.rstrip()
 
 
 def _actor_declared_next(group: Group, actor_id: str) -> Optional[Tuple[str, datetime]]:
@@ -395,11 +440,18 @@ class AutomationManager:
                 _save_state(group, state)
 
         for aid, idle_seconds in to_notify:
+            tt = get_terminal_transcript_settings(group.doc)
+            msg = f"Actor {aid} has been quiet for {int(idle_seconds)}s. They might be stuck or waiting for input."
+            if bool(tt.get("notify_tail", False)) and str(tt.get("visibility") or "foreman") != "off":
+                n_lines = int(tt.get("notify_lines") or 20)
+                snippet = _terminal_tail_snippet(group, actor_id=aid, lines=n_lines)
+                if snippet:
+                    msg = f"{msg}\n\n---\nTerminal tail ({aid}, last {n_lines} lines):\n{snippet}"
             notify_data = SystemNotifyData(
                 kind="actor_idle",
                 priority="normal",
                 title=f"Actor {aid} may need attention",
-                message=f"Actor {aid} has been quiet for {int(idle_seconds)}s. They might be stuck or waiting for input.",
+                message=msg,
                 target_actor_id=foreman_id,
                 requires_ack=False,
             )
@@ -527,11 +579,13 @@ class AutomationManager:
             state["last_silence_notify_at"] = utc_now_iso()
             _save_state(group, state)
 
+        msg = f"No activity for {int(silence_seconds)}s. Check if work is complete or if anyone needs help."
+
         notify_data = SystemNotifyData(
             kind="silence_check",
             priority="normal",
             title="Group is quiet",
-            message=f"No activity for {int(silence_seconds)}s. Check if work is complete or if anyone needs help.",
+            message=msg,
             target_actor_id=foreman_id,
             requires_ack=False,
         )

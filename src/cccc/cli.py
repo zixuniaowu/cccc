@@ -41,9 +41,91 @@ def _print_json(obj: Any) -> None:
 
 
 def _ensure_daemon_running() -> bool:
-    resp = call_daemon({"op": "ping"})
+    resp = call_daemon({"op": "ping"}, timeout_s=1.0)
     if resp.get("ok"):
-        return True
+        # If the daemon is from a different version, restart it. This commonly happens
+        # after a package upgrade while an old background daemon is still running,
+        # causing "unknown op" errors in newer Web/UI flows.
+        try:
+            res = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+            daemon_version = str(res.get("version") or "").strip()
+            daemon_pid = int(res.get("pid") or 0)
+        except Exception:
+            daemon_version = ""
+            daemon_pid = 0
+
+        def _daemon_supports_required_ops() -> bool:
+            try:
+                # Probe a couple of newer ops so we don't get stuck with a stale
+                # background daemon that lacks features (even if version string matches).
+                for probe in (
+                    {"op": "observability_get"},
+                    {"op": "debug_snapshot", "args": {}},
+                ):
+                    r = call_daemon(probe, timeout_s=1.0)
+                    if r.get("ok"):
+                        continue
+                    err = r.get("error") if isinstance(r.get("error"), dict) else {}
+                    if str(err.get("code") or "") == "unknown_op":
+                        return False
+                return True
+            except Exception:
+                return True
+
+        needs_restart = False
+        if daemon_version and daemon_version != __version__:
+            needs_restart = True
+        elif not _daemon_supports_required_ops():
+            needs_restart = True
+
+        if needs_restart:
+            try:
+                call_daemon({"op": "shutdown"}, timeout_s=2.0)
+            except Exception:
+                pass
+
+            deadline = time.time() + 2.0
+            while time.time() < deadline:
+                if not call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
+                    break
+                time.sleep(0.1)
+
+            # Last resort: terminate the stale daemon by pid (best-effort).
+            if call_daemon({"op": "ping"}, timeout_s=0.5).get("ok") and daemon_pid > 0:
+                try:
+                    import signal
+
+                    try:
+                        os.killpg(os.getpgid(daemon_pid), signal.SIGTERM)
+                    except Exception:
+                        try:
+                            os.kill(daemon_pid, signal.SIGTERM)
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+
+                deadline = time.time() + 2.0
+                while time.time() < deadline:
+                    if not call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
+                        break
+                    time.sleep(0.1)
+
+            # If it's still running, don't stomp its socket/pid files.
+            if call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
+                return True
+
+            # Cleanup stale socket/pid files so a new daemon can bind.
+            try:
+                home = ensure_home()
+                sock_path = home / "daemon" / "ccccd.sock"
+                pid_path = home / "daemon" / "ccccd.pid"
+                sock_path.unlink(missing_ok=True)
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        else:
+            return True
 
     try:
         subprocess.run(
@@ -127,9 +209,81 @@ def _default_entry() -> int:
     def _start_daemon() -> bool:
         nonlocal daemon_process
         # Check if already running
-        resp = call_daemon({"op": "ping"})
+        resp = call_daemon({"op": "ping"}, timeout_s=1.0)
         if resp.get("ok"):
-            return True
+            try:
+                res = resp.get("result") if isinstance(resp.get("result"), dict) else {}
+                daemon_version = str(res.get("version") or "").strip()
+                daemon_pid = int(res.get("pid") or 0)
+            except Exception:
+                daemon_version = ""
+                daemon_pid = 0
+
+            def _daemon_supports_required_ops() -> bool:
+                try:
+                    for probe in (
+                        {"op": "observability_get"},
+                        {"op": "debug_snapshot", "args": {}},
+                    ):
+                        r = call_daemon(probe, timeout_s=1.0)
+                        if r.get("ok"):
+                            continue
+                        err = r.get("error") if isinstance(r.get("error"), dict) else {}
+                        if str(err.get("code") or "") == "unknown_op":
+                            return False
+                    return True
+                except Exception:
+                    return True
+
+            needs_restart = False
+            if daemon_version and daemon_version != __version__:
+                needs_restart = True
+            elif not _daemon_supports_required_ops():
+                needs_restart = True
+
+            if needs_restart:
+                if daemon_version and daemon_version != __version__:
+                    msg = (
+                        f"[cccc] Detected daemon version mismatch (running {daemon_version}, expected {__version__}); restarting daemon..."
+                    )
+                else:
+                    msg = "[cccc] Detected stale daemon missing required ops; restarting daemon..."
+                print(msg, file=sys.stderr)
+                try:
+                    call_daemon({"op": "shutdown"}, timeout_s=2.0)
+                except Exception:
+                    pass
+
+                deadline = time.time() + 2.0
+                while time.time() < deadline:
+                    if not call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
+                        break
+                    time.sleep(0.1)
+
+                if call_daemon({"op": "ping"}, timeout_s=0.5).get("ok") and daemon_pid > 0:
+                    try:
+                        try:
+                            os.killpg(os.getpgid(daemon_pid), signal.SIGTERM)
+                        except Exception:
+                            try:
+                                os.kill(daemon_pid, signal.SIGTERM)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                    deadline = time.time() + 2.0
+                    while time.time() < deadline:
+                        if not call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
+                            break
+                        time.sleep(0.1)
+
+                # If it's still running, don't stomp its socket/pid files.
+                if call_daemon({"op": "ping"}, timeout_s=0.5).get("ok"):
+                    print("[cccc] Warning: could not stop stale daemon; continuing with existing daemon.", file=sys.stderr)
+                    return True
+            else:
+                return True
         
         # Clean up stale socket/pid files.
         # If a daemon pid is present but unresponsive, terminate it first to avoid orphan daemons.
@@ -279,8 +433,8 @@ def _default_entry() -> int:
     log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip() or "info"
     reload_mode = bool(os.environ.get("CCCC_WEB_RELOAD"))
     
-    # Run web with controlled shutdown
-    import asyncio
+    # Run web. Let uvicorn own signal handling; set a bounded graceful timeout to
+    # avoid hanging forever on long-lived connections (e.g. SSE/WebSocket).
     import uvicorn
 
     config = uvicorn.Config(
@@ -290,42 +444,16 @@ def _default_entry() -> int:
         port=port,
         log_level=log_level,
         reload=reload_mode,
+        timeout_graceful_shutdown=3,
     )
     server = uvicorn.Server(config)
 
-    async def serve_with_shutdown() -> None:
-        nonlocal shutdown_requested
-        loop = asyncio.get_running_loop()
-
-        def _handle_exit() -> None:
-            nonlocal shutdown_requested
-            if shutdown_requested:
-                # Second signal - force faster shutdown without skipping cleanup.
-                print("\n[cccc] Force quit", file=sys.stderr)
-                try:
-                    # Uvicorn checks this to stop waiting on connections/tasks.
-                    server.force_exit = True  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-                server.should_exit = True
-                return
-            shutdown_requested = True
-            print("\n[cccc] Shutting down...", file=sys.stderr)
-            server.should_exit = True
-
-        loop.add_signal_handler(signal.SIGINT, _handle_exit)
-        loop.add_signal_handler(signal.SIGTERM, _handle_exit)
-
-        await server.serve()
-
     try:
         print("[cccc] Starting web server...", file=sys.stderr)
-        asyncio.run(serve_with_shutdown())
+        server.run()
     except (SystemExit, KeyboardInterrupt):
         pass
     finally:
-        if not shutdown_requested:
-            print("\n[cccc] Shutting down...", file=sys.stderr)
         shutdown_requested = True
         _stop_daemon()
     

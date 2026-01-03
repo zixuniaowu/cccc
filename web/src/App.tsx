@@ -892,7 +892,6 @@ export default function App() {
         body: JSON.stringify({ ...settings, by: "user" }),
       });
       if (!resp.ok) showError(`${resp.error.code}: ${resp.error.message}`);
-      else setShowSettingsModal(false);
       await fetchSettings(selectedGroupId);
     } finally {
       setBusy("");

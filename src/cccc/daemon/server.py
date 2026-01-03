@@ -29,9 +29,12 @@ from ..kernel.inbox import find_event, get_cursor, get_quote_text, is_message_fo
 from ..kernel.ledger_retention import compact as compact_ledger
 from ..kernel.ledger_retention import snapshot as snapshot_ledger
 from ..kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
+from ..kernel.settings import get_observability_settings, update_observability_settings
+from ..kernel.terminal_transcript import apply_terminal_transcript_patch, get_terminal_transcript_settings
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
+from ..util.obslog import setup_root_json_logging
 from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.time import utc_now_iso
 from .automation import AutomationManager
@@ -67,6 +70,73 @@ from .ops.runner_ops import (
 
 import subprocess
 
+
+_OBS_LOCK = threading.Lock()
+_OBSERVABILITY: Dict[str, Any] = {}
+
+
+def _get_observability() -> Dict[str, Any]:
+    with _OBS_LOCK:
+        return copy.deepcopy(_OBSERVABILITY) if _OBSERVABILITY else get_observability_settings()
+
+
+def _developer_mode_enabled() -> bool:
+    obs = _get_observability()
+    return bool(obs.get("developer_mode", False))
+
+
+def _apply_observability_settings(home: Path, obs: Dict[str, Any]) -> None:
+    """Apply observability settings in-process (best-effort)."""
+    if not isinstance(obs, dict):
+        return
+    with _OBS_LOCK:
+        _OBSERVABILITY.clear()
+        _OBSERVABILITY.update(copy.deepcopy(obs))
+
+    # Logging: keep simple; configure root JSONL logger to stderr.
+    level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"
+    if obs.get("developer_mode"):
+        # Developer mode typically wants more detail.
+        if level == "INFO":
+            level = "DEBUG"
+    setup_root_json_logging(component="daemon", level=level, force=True)
+
+
+def _pty_backlog_bytes() -> int:
+    """Best-effort per-actor PTY backlog size (ring buffer)."""
+    obs = _get_observability()
+    tt = obs.get("terminal_transcript") if isinstance(obs, dict) else None
+    n = 2_000_000
+    if isinstance(tt, dict):
+        try:
+            n = int(tt.get("per_actor_bytes") or 0)
+        except Exception:
+            n = 0
+    if n <= 0:
+        n = 2_000_000
+    if n > 50_000_000:
+        n = 50_000_000
+    return int(n)
+
+
+def _can_read_terminal_transcript(group: Any, *, by: str, target_actor_id: str) -> bool:
+    who = str(by or "").strip()
+    target = str(target_actor_id or "").strip()
+    if not target:
+        return False
+    if not who or who == "user":
+        return True
+    if who == target:
+        return True
+    if find_actor(group, who) is None:
+        return False
+    tt = get_terminal_transcript_settings(group.doc)
+    vis = str(tt.get("visibility") or "foreman")
+    if vis == "all":
+        return True
+    if vis == "foreman" and get_effective_role(group, who) == "foreman":
+        return True
+    return False
 
 SUPPORTED_RUNTIMES = (
     "amp",
@@ -875,6 +945,7 @@ def _maybe_autostart_running_groups() -> None:
                         cwd=cwd,
                         command=list(cmd or []),
                         env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
+                        max_backlog_bytes=_pty_backlog_bytes(),
                     )
             except Exception as e:
                 logger.warning("Autostart failed for %s/%s: %s", gid, aid, e)
@@ -962,6 +1033,43 @@ def _send_json(conn: socket.socket, obj: Dict[str, Any]) -> None:
     conn.sendall(data)
 
 
+def _dump_response(resp: Any) -> Dict[str, Any]:
+    """Serialize a daemon response without crashing the daemon.
+
+    The daemon protocol expects `DaemonResponse`, but older/stale code paths (or
+    future regressions) might accidentally return a raw dict. Keep the daemon
+    alive and return a best-effort error payload instead of raising.
+    """
+    if resp is None:
+        return {"ok": False, "error": {"code": "internal_error", "message": "invalid daemon response: None"}}
+
+    # Pydantic v2
+    try:
+        fn = getattr(resp, "model_dump", None)
+        if callable(fn):
+            return fn()
+    except Exception:
+        pass
+
+    # Pydantic v1 / dataclasses (best-effort)
+    try:
+        fn = getattr(resp, "dict", None)
+        if callable(fn):
+            out = fn()
+            if isinstance(out, dict):
+                return out
+    except Exception:
+        pass
+
+    if isinstance(resp, dict):
+        return resp
+
+    return {
+        "ok": False,
+        "error": {"code": "internal_error", "message": f"invalid daemon response type: {type(resp).__name__}"},
+    }
+
+
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
 
@@ -1044,6 +1152,292 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
     if op == "shutdown":
         return DaemonResponse(ok=True, result={"message": "shutting down"}), True
 
+    # ---------------------------------------------------------------------
+    # Global observability / developer mode (daemon-owned persistence)
+    # ---------------------------------------------------------------------
+
+    if op == "observability_get":
+        return DaemonResponse(ok=True, result={"observability": _get_observability()}), False
+
+    if op == "observability_update":
+        by = str(args.get("by") or "user").strip()
+        if by and by != "user":
+            return _error("permission_denied", "only user can update global observability settings"), False
+        patch = args.get("patch") if isinstance(args.get("patch"), dict) else {}
+        if not patch:
+            return DaemonResponse(ok=True, result={"observability": _get_observability()}), False
+        try:
+            updated = update_observability_settings(dict(patch))
+            _apply_observability_settings(ensure_home(), updated)
+            return DaemonResponse(ok=True, result={"observability": updated}), False
+        except Exception as e:
+            return _error("observability_update_failed", str(e)), False
+
+    # ---------------------------------------------------------------------
+    # Debug (developer mode only)
+    # ---------------------------------------------------------------------
+
+    if op == "debug_snapshot":
+        if not _developer_mode_enabled():
+            return _error("developer_mode_required", "developer mode is disabled"), False
+        group_id = str(args.get("group_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        group = load_group(group_id) if group_id else None
+        if group_id and group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        if group is not None and by and by != "user":
+            role = get_effective_role(group, by)
+            if role != "foreman":
+                return _error("permission_denied", "debug tools are restricted to user + foreman"), False
+
+        try:
+            out: Dict[str, Any] = {
+                "developer_mode": True,
+                "observability": _get_observability(),
+                "daemon": {"pid": os.getpid(), "version": __version__, "ts": utc_now_iso()},
+            }
+            if group is not None:
+                out["group"] = {
+                    "group_id": group.group_id,
+                    "state": str(group.doc.get("state") or "active"),
+                    "active_scope_key": str(group.doc.get("active_scope_key") or ""),
+                    "title": str(group.doc.get("title") or ""),
+                }
+                actors = []
+                for a in list_actors(group):
+                    if not isinstance(a, dict):
+                        continue
+                    aid = str(a.get("id") or "").strip()
+                    if not aid:
+                        continue
+                    runner_kind = str(a.get("runner") or "pty")
+                    running = False
+                    try:
+                        if runner_kind == "pty":
+                            running = pty_runner.SUPERVISOR.actor_running(group.group_id, aid)
+                        elif runner_kind == "headless":
+                            running = headless_runner.SUPERVISOR.actor_running(group.group_id, aid)
+                    except Exception:
+                        running = False
+                    actors.append(
+                        {
+                            "id": aid,
+                            "role": get_effective_role(group, aid),
+                            "runtime": str(a.get("runtime") or ""),
+                            "runner": runner_kind,
+                            "enabled": bool(a.get("enabled", True)),
+                            "running": bool(running),
+                            "unread_count": int(a.get("unread_count") or 0),
+                        }
+                    )
+                out["actors"] = actors
+                try:
+                    out["delivery"] = THROTTLE.debug_summary(group.group_id)
+                except Exception:
+                    out["delivery"] = {}
+            return DaemonResponse(ok=True, result=out), False
+        except Exception as e:
+            return _error("debug_snapshot_failed", str(e)), False
+
+    if op == "terminal_tail":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        max_chars = int(args.get("max_chars") or 8000)
+        strip_ansi = bool(args.get("strip_ansi", True))
+        compact = bool(args.get("compact", True))
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not actor_id:
+            return _error("missing_actor_id", "missing actor_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        if not _can_read_terminal_transcript(group, by=by, target_actor_id=actor_id):
+            tt = get_terminal_transcript_settings(group.doc)
+            role = get_effective_role(group, by) if by and by != "user" else ""
+            return _error(
+                "permission_denied",
+                "terminal transcript is restricted by group settings",
+                details={
+                    "visibility": str(tt.get("visibility") or "foreman"),
+                    "by": by,
+                    "by_role": role,
+                    "target_actor_id": actor_id,
+                    "how_to_enable": "Ask user/foreman to change Settings → Transcript → Visibility.",
+                },
+            ), False
+        actor = find_actor(group, actor_id)
+        if not isinstance(actor, dict):
+            return _error("actor_not_found", f"actor not found: {actor_id}"), False
+        runner_kind = str(actor.get("runner") or "pty").strip()
+        if runner_kind != "pty":
+            return _error("not_pty_actor", "terminal transcript is only available for PTY actors", details={"runner": runner_kind}), False
+        if not pty_runner.SUPERVISOR.actor_running(group_id, actor_id):
+            return _error("actor_not_running", "actor is not running (no live transcript available)"), False
+        if max_chars <= 0:
+            max_chars = 8000
+        if max_chars > 200_000:
+            max_chars = 200_000
+
+        try:
+            raw = b""
+            try:
+                raw = pty_runner.SUPERVISOR.tail_output(
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    max_bytes=_pty_backlog_bytes(),
+                )
+            except Exception:
+                raw = b""
+            raw_text = raw.decode("utf-8", errors="replace")
+            text = raw_text
+            hint = ""
+            if strip_ansi:
+                try:
+                    from ..util.terminal_render import render_transcript
+
+                    text = render_transcript(text, compact=compact)
+                except Exception:
+                    pass
+                if not text.strip() and raw_text.strip():
+                    hint = "Rendered transcript is empty; try disabling Strip ANSI for full-screen TUIs."
+            if len(text) > max_chars:
+                text = text[-max_chars:]
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "warning": "Terminal transcript may include sensitive stdout/stderr.",
+                    "hint": hint,
+                    "text": text,
+                },
+            ), False
+        except Exception as e:
+            return _error("terminal_tail_failed", str(e)), False
+
+    if op == "terminal_clear":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not actor_id:
+            return _error("missing_actor_id", "missing actor_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        if not _can_read_terminal_transcript(group, by=by, target_actor_id=actor_id):
+            tt = get_terminal_transcript_settings(group.doc)
+            role = get_effective_role(group, by) if by and by != "user" else ""
+            return _error(
+                "permission_denied",
+                "terminal transcript is restricted by group settings",
+                details={
+                    "visibility": str(tt.get("visibility") or "foreman"),
+                    "by": by,
+                    "by_role": role,
+                    "target_actor_id": actor_id,
+                    "how_to_enable": "Ask user/foreman to change Settings → Transcript → Visibility.",
+                },
+            ), False
+        actor = find_actor(group, actor_id)
+        if not isinstance(actor, dict):
+            return _error("actor_not_found", f"actor not found: {actor_id}"), False
+        runner_kind = str(actor.get("runner") or "pty").strip()
+        if runner_kind != "pty":
+            return _error("not_pty_actor", "terminal transcript is only available for PTY actors", details={"runner": runner_kind}), False
+        ok = pty_runner.SUPERVISOR.clear_backlog(group_id=group_id, actor_id=actor_id)
+        if not ok:
+            return _error("actor_not_running", "actor is not running (nothing to clear)"), False
+        return DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id, "cleared": True}), False
+
+    if op == "debug_tail_logs":
+        if not _developer_mode_enabled():
+            return _error("developer_mode_required", "developer mode is disabled"), False
+        component = str(args.get("component") or "").strip().lower()
+        by = str(args.get("by") or "user").strip()
+        group_id = str(args.get("group_id") or "").strip()
+        lines = int(args.get("lines") or 200)
+        if lines <= 0:
+            lines = 200
+        if lines > 2000:
+            lines = 2000
+
+        group = load_group(group_id) if group_id else None
+        if group_id and group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        if group is not None and by and by != "user":
+            role = get_effective_role(group, by)
+            if role != "foreman":
+                return _error("permission_denied", "debug tools are restricted to user + foreman"), False
+
+        try:
+            from ..kernel.ledger import read_last_lines
+
+            home = ensure_home()
+            path: Optional[Path] = None
+            if component in ("daemon", "ccccd"):
+                path = home / "daemon" / "ccccd.log"
+            elif component in ("im", "im_bridge"):
+                if not group_id:
+                    return _error("missing_group_id", "missing group_id for im logs"), False
+                path = home / "groups" / group_id / "state" / "im_bridge.log"
+            elif component in ("web",):
+                path = home / "daemon" / "cccc-web.log"
+            else:
+                return _error("invalid_component", "unknown component", details={"component": component}), False
+
+            items = read_last_lines(path, int(lines)) if path is not None else []
+            return DaemonResponse(ok=True, result={"component": component, "group_id": group_id, "path": str(path) if path else "", "lines": items}), False
+        except Exception as e:
+            return _error("debug_tail_logs_failed", str(e)), False
+
+    if op == "debug_clear_logs":
+        if not _developer_mode_enabled():
+            return _error("developer_mode_required", "developer mode is disabled"), False
+        component = str(args.get("component") or "").strip().lower()
+        by = str(args.get("by") or "user").strip()
+        group_id = str(args.get("group_id") or "").strip()
+
+        group = load_group(group_id) if group_id else None
+        if group_id and group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        if group is not None and by and by != "user":
+            role = get_effective_role(group, by)
+            if role != "foreman":
+                return _error("permission_denied", "debug tools are restricted to user + foreman"), False
+
+        try:
+            home = ensure_home()
+            path: Optional[Path] = None
+            if component in ("daemon", "ccccd"):
+                path = home / "daemon" / "ccccd.log"
+            elif component in ("im", "im_bridge"):
+                if not group_id:
+                    return _error("missing_group_id", "missing group_id for im logs"), False
+                path = home / "groups" / group_id / "state" / "im_bridge.log"
+            elif component in ("web",):
+                path = home / "daemon" / "cccc-web.log"
+            else:
+                return _error("invalid_component", "unknown component", details={"component": component}), False
+
+            if path is None:
+                return _error("invalid_component", "unknown component", details={"component": component}), False
+            try:
+                path.parent.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+            try:
+                with open(path, "w", encoding="utf-8"):
+                    pass
+            except Exception as e:
+                return _error("debug_clear_logs_failed", str(e), details={"path": str(path)}), False
+            return DaemonResponse(ok=True, result={"component": component, "group_id": group_id, "path": str(path), "cleared": True}), False
+        except Exception as e:
+            return _error("debug_clear_logs_failed", str(e)), False
+
     if op == "attach":
         path = Path(str(args.get("path") or "."))
         scope = detect_scope(path)
@@ -1052,7 +1446,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         if requested_group_id:
             group = load_group(requested_group_id)
             if group is None:
-                return {"ok": False, "error": f"group not found: {requested_group_id}"}, False
+                return _error("group_not_found", f"group not found: {requested_group_id}"), False
             group = attach_scope_to_group(reg, group, scope, set_active=True)
         else:
             group = ensure_group_for_scope(reg, scope)
@@ -1144,7 +1538,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         delivery_keys = {"min_interval_seconds"}
         automation_keys = {"nudge_after_seconds", "actor_idle_timeout_seconds", "keepalive_delay_seconds", 
                           "keepalive_max_per_actor", "silence_timeout_seconds", "standup_interval_seconds"}
-        allowed = delivery_keys | automation_keys
+        terminal_transcript_keys = {
+            "terminal_transcript_visibility",
+            "terminal_transcript_notify_tail",
+            "terminal_transcript_notify_lines",
+        }
+        allowed = delivery_keys | automation_keys | terminal_transcript_keys
         
         unknown = set(patch.keys()) - allowed
         if unknown:
@@ -1169,6 +1568,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 for k, v in automation_patch.items():
                     automation[k] = int(v)
                 group.doc["automation"] = automation
+
+            # Update terminal transcript settings
+            tt_patch: Dict[str, Any] = {}
+            if "terminal_transcript_visibility" in patch:
+                tt_patch["visibility"] = patch.get("terminal_transcript_visibility")
+            if "terminal_transcript_notify_tail" in patch:
+                tt_patch["notify_tail"] = patch.get("terminal_transcript_notify_tail")
+            if "terminal_transcript_notify_lines" in patch:
+                tt_patch["notify_lines"] = patch.get("terminal_transcript_notify_lines")
+            if tt_patch:
+                apply_terminal_transcript_patch(group.doc, tt_patch)
             
             group.save()
         except Exception as e:
@@ -1178,6 +1588,14 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         combined_settings = {}
         combined_settings.update(group.doc.get("delivery") or {})
         combined_settings.update(group.doc.get("automation") or {})
+        tt = get_terminal_transcript_settings(group.doc)
+        combined_settings.update(
+            {
+                "terminal_transcript_visibility": tt["visibility"],
+                "terminal_transcript_notify_tail": bool(tt["notify_tail"]),
+                "terminal_transcript_notify_lines": int(tt["notify_lines"]),
+            }
+        )
         
         ev = append_event(
             group.ledger_path,
@@ -1422,6 +1840,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         cwd=cwd,
                         command=cmd,
                         env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
+                        max_backlog_bytes=_pty_backlog_bytes(),
                     )
                     try:
                         _write_pty_state(group.group_id, aid, pid=session.pid)
@@ -1861,6 +2280,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                             cwd=cwd,
                             command=list(cmd or []),
                             env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                            max_backlog_bytes=_pty_backlog_bytes(),
                         )
                         try:
                             _write_pty_state(group.group_id, actor_id, pid=session.pid)
@@ -2019,6 +2439,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 cwd=cwd,
                 command=list(cmd or []),
                 env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                max_backlog_bytes=_pty_backlog_bytes(),
             )
             try:
                 _write_pty_state(group.group_id, actor_id, pid=session.pid)
@@ -2184,6 +2605,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     cwd=cwd,
                     command=list(cmd or []),
                     env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                    max_backlog_bytes=_pty_backlog_bytes(),
                 )
                 try:
                     _write_pty_state(group.group_id, actor_id, pid=session.pid)
@@ -2884,6 +3306,12 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     p = paths or default_paths()
     p.daemon_dir.mkdir(parents=True, exist_ok=True)
 
+    # Apply global observability settings early (logging + developer mode gating).
+    try:
+        _apply_observability_settings(p.home, get_observability_settings())
+    except Exception:
+        pass
+
     _remove_stale_socket(p.sock_path)
     if p.sock_path.exists() and _is_socket_alive(p.sock_path):
         return 0
@@ -2892,7 +3320,12 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     try:
         res = _cleanup_invalid_im_bridges(p.home)
         if res.get("killed") or res.get("stale_pidfiles"):
-            print(f"[im] cleanup: killed={res.get('killed')} stale_pidfiles={res.get('stale_pidfiles')}", file=sys.stderr)
+            logger.info(
+                "im_bridge_cleanup killed=%s stale_pidfiles=%s",
+                res.get("killed"),
+                res.get("stale_pidfiles"),
+                extra={"op": "im_bridge_cleanup"},
+            )
     except Exception:
         pass
 
@@ -2998,7 +3431,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             except Exception as e:
                 resp = _error("invalid_request", "invalid request", details={"error": str(e)})
                 try:
-                    _send_json(conn, resp.model_dump())
+                    _send_json(conn, _dump_response(resp))
                 finally:
                     try:
                         conn.close()
@@ -3020,7 +3453,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                 else:
                     resp = DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id})
                 try:
-                    _send_json(conn, resp.model_dump())
+                    _send_json(conn, _dump_response(resp))
                     if resp.ok:
                         pty_runner.SUPERVISOR.attach(group_id=group_id, actor_id=actor_id, sock=conn)
                         continue
@@ -3037,7 +3470,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                 if should_exit:
                     stop_event.set()
                 try:
-                    _send_json(conn, resp.model_dump())
+                    _send_json(conn, _dump_response(resp))
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     # Client disconnected before response was sent - not an error
                     pass

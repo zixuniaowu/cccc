@@ -345,6 +345,38 @@ class DeliveryThrottle:
                 removed += before - len(kept)
             return removed
 
+    def debug_summary(self, group_id: str) -> Dict[str, Any]:
+        """Return a bounded, read-only summary for developer-mode debugging."""
+        gid = str(group_id or "").strip()
+        if not gid:
+            return {}
+        with self._lock:
+            actors = self._states.get(gid) or {}
+            out: Dict[str, Any] = {"group_id": gid, "actors": {}, "pending_total": 0}
+            for aid, st in actors.items():
+                if not isinstance(st, ActorDeliveryState):
+                    continue
+                pending = list(st.pending_messages) if st.pending_messages else []
+                pending_total = len(pending)
+                out["pending_total"] = int(out.get("pending_total") or 0) + pending_total
+                last_delivery = st.last_delivery_at.isoformat().replace("+00:00", "Z") if st.last_delivery_at else None
+                last_attempt = st.last_attempt_at.isoformat().replace("+00:00", "Z") if st.last_attempt_at else None
+                # Keep only a small preview of pending kinds (no message bodies).
+                kinds = []
+                for m in pending[:20]:
+                    try:
+                        kinds.append(str(m.kind or ""))
+                    except Exception:
+                        continue
+                out["actors"][str(aid)] = {
+                    "pending": pending_total,
+                    "pending_kinds_preview": kinds,
+                    "last_delivery_at": last_delivery,
+                    "last_attempt_at": last_attempt,
+                    "delivered_chat_count": int(st.delivered_chat_count or 0),
+                }
+            return out
+
 
 # Global throttle instance
 THROTTLE = DeliveryThrottle()
