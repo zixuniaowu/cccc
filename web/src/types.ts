@@ -125,6 +125,10 @@ export type GroupSettings = {
   silence_timeout_seconds: number;
   min_interval_seconds: number;
   standup_interval_seconds: number;
+
+  terminal_transcript_visibility: "off" | "foreman" | "all";
+  terminal_transcript_notify_tail: boolean;
+  terminal_transcript_notify_lines: number;
 };
 
 export type IMConfig = {

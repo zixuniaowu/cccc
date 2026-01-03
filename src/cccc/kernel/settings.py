@@ -112,6 +112,123 @@ DEFAULT_RUNTIME_POOL: List[RuntimePoolEntry] = [
     ),
 ]
 
+# ---------------------------------------------------------------------------
+# Observability / Developer mode (global)
+# ---------------------------------------------------------------------------
+
+DEFAULT_OBSERVABILITY: Dict[str, Any] = {
+    "developer_mode": False,
+    # Keep log level conservative by default; developer mode may raise it.
+    "log_level": "INFO",
+    # Components are informational today; filtering can be implemented later.
+    "components": ["daemon", "web", "delivery", "im", "pty", "mcp"],
+    # Terminal transcript is captured in-memory only (no persistence) by default.
+    "terminal_transcript": {
+        "enabled": False,
+        # 2 MiB per actor is enough for useful debugging while staying bounded.
+        "per_actor_bytes": 2_000_000,
+        "persist": False,
+        "strip_ansi": True,
+    },
+}
+
+
+def _as_bool(v: Any, default: bool) -> bool:
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    if isinstance(v, str):
+        s = v.strip().lower()
+        if s in ("1", "true", "yes", "y", "on"):
+            return True
+        if s in ("0", "false", "no", "n", "off"):
+            return False
+    return default
+
+
+def _as_int(v: Any, default: int, *, min_value: int = 0, max_value: Optional[int] = None) -> int:
+    try:
+        n = int(v)
+    except Exception:
+        n = int(default)
+    if n < min_value:
+        n = min_value
+    if max_value is not None and n > max_value:
+        n = max_value
+    return n
+
+
+def _as_str(v: Any, default: str) -> str:
+    s = str(v).strip() if v is not None else ""
+    return s or default
+
+
+def _merge_observability(raw: Any) -> Dict[str, Any]:
+    """Merge/validate observability settings with defaults."""
+    base = dict(DEFAULT_OBSERVABILITY)
+    if not isinstance(raw, dict):
+        return base
+
+    base["developer_mode"] = _as_bool(raw.get("developer_mode"), bool(base["developer_mode"]))
+    base["log_level"] = _as_str(raw.get("log_level"), str(base["log_level"])).upper()
+
+    comps = raw.get("components")
+    if isinstance(comps, list) and comps:
+        base["components"] = [str(x).strip() for x in comps if str(x).strip()]
+
+    tt = raw.get("terminal_transcript")
+    tt_base = dict(DEFAULT_OBSERVABILITY["terminal_transcript"])
+    if isinstance(tt, dict):
+        tt_base["enabled"] = _as_bool(tt.get("enabled"), bool(tt_base["enabled"]))
+        tt_base["per_actor_bytes"] = _as_int(tt.get("per_actor_bytes"), int(tt_base["per_actor_bytes"]), min_value=0)
+        tt_base["persist"] = _as_bool(tt.get("persist"), bool(tt_base["persist"]))
+        tt_base["strip_ansi"] = _as_bool(tt.get("strip_ansi"), bool(tt_base["strip_ansi"]))
+    base["terminal_transcript"] = tt_base
+
+    return base
+
+
+def get_observability_settings() -> Dict[str, Any]:
+    """Get merged observability settings (global)."""
+    settings = load_settings()
+    return _merge_observability(settings.get("observability"))
+
+
+def update_observability_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
+    """Update observability settings in ~/.cccc/settings.yaml and return merged result."""
+    settings = load_settings()
+    current = _merge_observability(settings.get("observability"))
+    if not isinstance(patch, dict):
+        return current
+
+    merged = dict(current)
+    if "developer_mode" in patch:
+        merged["developer_mode"] = _as_bool(patch.get("developer_mode"), bool(merged["developer_mode"]))
+    if "log_level" in patch:
+        merged["log_level"] = _as_str(patch.get("log_level"), str(merged["log_level"])).upper()
+    if "components" in patch:
+        comps = patch.get("components")
+        if isinstance(comps, list):
+            merged["components"] = [str(x).strip() for x in comps if str(x).strip()]
+    if "terminal_transcript" in patch:
+        tt_patch = patch.get("terminal_transcript")
+        if isinstance(tt_patch, dict):
+            tt = dict(merged.get("terminal_transcript") or {})
+            if "enabled" in tt_patch:
+                tt["enabled"] = _as_bool(tt_patch.get("enabled"), bool(tt.get("enabled", False)))
+            if "per_actor_bytes" in tt_patch:
+                tt["per_actor_bytes"] = _as_int(tt_patch.get("per_actor_bytes"), int(tt.get("per_actor_bytes", 0)), min_value=0)
+            if "persist" in tt_patch:
+                tt["persist"] = _as_bool(tt_patch.get("persist"), bool(tt.get("persist", False)))
+            if "strip_ansi" in tt_patch:
+                tt["strip_ansi"] = _as_bool(tt_patch.get("strip_ansi"), bool(tt.get("strip_ansi", True)))
+            merged["terminal_transcript"] = tt
+
+    settings["observability"] = merged
+    save_settings(settings)
+    return _merge_observability(merged)
+
 
 def _settings_path() -> Path:
     return ensure_home() / "settings.yaml"

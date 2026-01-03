@@ -4,6 +4,13 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   base: "/ui/",
+  resolve: {
+    // Prefer the CJS build for xterm to avoid a minification bug that can break
+    // the ESM build's `requestMode` handler (seen as `ReferenceError: i is not defined`).
+    alias: [
+      { find: /^@xterm\/xterm$/, replacement: "@xterm/xterm/lib/xterm.js" },
+    ],
+  },
   build: {
     outDir: "../src/cccc/ports/web/dist",
     emptyOutDir: true,

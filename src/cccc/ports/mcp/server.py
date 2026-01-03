@@ -41,6 +41,13 @@ notify.* namespace (system notifications, separate from chat):
 - cccc_notify_send: Send system notification
 - cccc_notify_ack: Acknowledge system notification
 
+terminal.* namespace (diagnostics):
+- cccc_terminal_tail: Tail an actor terminal transcript (group policy)
+
+debug.* namespace (developer mode diagnostics):
+- cccc_debug_snapshot: Get a structured debug snapshot (dev mode)
+- cccc_debug_tail_logs: Tail local CCCC logs (dev mode)
+
 All operations go through daemon IPC to ensure single-writer principle.
 """
 
@@ -783,6 +790,59 @@ def notify_ack(*, group_id: str, actor_id: str, notify_event_id: str) -> Dict[st
 
 
 # =============================================================================
+# Debug Tools (developer mode)
+# =============================================================================
+
+
+def debug_snapshot(*, group_id: str, actor_id: str) -> Dict[str, Any]:
+    """Get a structured debug snapshot (developer mode only; user+foreman only)."""
+    return _call_daemon_or_raise({
+        "op": "debug_snapshot",
+        "args": {"group_id": group_id, "by": actor_id},
+    })
+
+
+def terminal_tail(
+    *,
+    group_id: str,
+    actor_id: str,
+    target_actor_id: str,
+    max_chars: int = 8000,
+    strip_ansi: bool = True,
+) -> Dict[str, Any]:
+    """Tail an actor terminal transcript (subject to group policy; may include sensitive stdout/stderr)."""
+    return _call_daemon_or_raise({
+        "op": "terminal_tail",
+        "args": {
+            "group_id": group_id,
+            "actor_id": str(target_actor_id or ""),
+            "by": actor_id,
+            "max_chars": int(max_chars or 8000),
+            "strip_ansi": bool(strip_ansi),
+        },
+    })
+
+
+def debug_tail_logs(
+    *,
+    group_id: str,
+    actor_id: str,
+    component: str,
+    lines: int = 200,
+) -> Dict[str, Any]:
+    """Tail CCCC local logs (developer mode only; user+foreman only)."""
+    return _call_daemon_or_raise({
+        "op": "debug_tail_logs",
+        "args": {
+            "group_id": group_id,
+            "by": actor_id,
+            "component": str(component or ""),
+            "lines": int(lines or 200),
+        },
+    })
+
+
+# =============================================================================
 # MCP Tool Definitions
 # =============================================================================
 
@@ -1432,6 +1492,59 @@ MCP_TOOLS = [
 	            "required": ["notify_event_id"],
 	        },
 	    },
+    # terminal.* namespace - transcript (policy gated by group settings)
+	    {
+	        "name": "cccc_terminal_tail",
+	        "description": (
+                "Tail an actor terminal transcript (subject to group policy `terminal_transcript_visibility`).\n"
+                "Use it to quickly see what a peer is doing/stuck on (e.g., before you nudge/coordinate).\n"
+                "If you get permission_denied, ask user/foreman to enable it in Settings → Transcript.\n"
+                "Warning: may include sensitive stdout/stderr."
+            ),
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "target_actor_id": {"type": "string", "description": "Actor ID whose transcript to read"},
+	                "max_chars": {"type": "integer", "description": "Max characters of transcript to return (default 8000)", "default": 8000},
+	                "strip_ansi": {"type": "boolean", "description": "Strip ANSI control sequences (default true)", "default": True},
+	            },
+	            "required": ["target_actor_id"],
+	        },
+	    },
+
+    # debug.* namespace - developer mode diagnostics (user + foreman only; dev mode required)
+	    {
+	        "name": "cccc_debug_snapshot",
+	        "description": "Developer diagnostics: get a structured snapshot (requires developer mode; restricted to user + foreman).",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	            },
+	            "required": [],
+	        },
+	    },
+	    {
+	        "name": "cccc_debug_tail_logs",
+	        "description": "Developer diagnostics: tail local CCCC logs (requires developer mode; restricted to user + foreman).",
+	        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
+	                "component": {
+	                    "type": "string",
+	                    "enum": ["daemon", "web", "im"],
+	                    "description": "Which component logs to tail",
+	                },
+	                "lines": {"type": "integer", "description": "Max lines to return (default 200)", "default": 200},
+	            },
+	            "required": ["component"],
+	        },
+	    },
 ]
 
 
@@ -1834,6 +1947,37 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             group_id=gid,
             actor_id=aid,
             notify_event_id=str(arguments.get("notify_event_id") or ""),
+        )
+
+    # terminal.* namespace - transcript (policy gated by group settings)
+    if name == "cccc_terminal_tail":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return terminal_tail(
+            group_id=gid,
+            actor_id=aid,
+            target_actor_id=str(arguments.get("target_actor_id") or ""),
+            max_chars=int(arguments.get("max_chars") or 8000),
+            strip_ansi=bool(arguments.get("strip_ansi", True)),
+        )
+
+    # debug.* namespace (developer mode)
+    if name == "cccc_debug_snapshot":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return debug_snapshot(
+            group_id=gid,
+            actor_id=aid,
+        )
+
+    if name == "cccc_debug_tail_logs":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return debug_tail_logs(
+            group_id=gid,
+            actor_id=aid,
+            component=str(arguments.get("component") or ""),
+            lines=int(arguments.get("lines") or 200),
         )
 
     raise MCPError(code="unknown_tool", message=f"unknown tool: {name}")

@@ -14,6 +14,8 @@ export interface ActorTabProps {
   onEdit: () => void;
   onRemove: () => void;
   onInbox: () => void;
+  /** Called when actor status may have changed (e.g., process exited) */
+  onStatusChange?: () => void;
 }
 
 export function ActorTab({
@@ -27,6 +29,7 @@ export function ActorTab({
   onEdit,
   onRemove,
   onInbox,
+  onStatusChange,
 }: ActorTabProps) {
   if (!actor) {
     return <div className="flex-1 flex items-center justify-center text-slate-500">Agent not found</div>;
@@ -49,6 +52,7 @@ export function ActorTab({
         onInbox={onInbox}
         busy={busy}
         isDark={isDark}
+        onStatusChange={onStatusChange}
       />
     </Suspense>
   );
