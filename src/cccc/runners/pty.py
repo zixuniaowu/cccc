@@ -179,13 +179,37 @@ class PtySession:
         _best_effort_killpg(self.pid, signal.SIGWINCH)
 
     def write_input(self, data: bytes) -> bool:
+        """Write input data to the PTY master fd.
+
+        Handles non-blocking mode by:
+        1. Retrying on BlockingIOError (EAGAIN/EWOULDBLOCK)
+        2. Handling partial writes
+        3. Using a reasonable timeout to avoid infinite loops
+        """
         if not data:
             return True
-        try:
-            os.write(self._master_fd, data)
-            return True
-        except Exception:
-            return False
+
+        remaining = data
+        max_attempts = 50  # ~5 seconds max with 0.1s sleep
+        attempt = 0
+
+        while remaining and attempt < max_attempts:
+            try:
+                written = os.write(self._master_fd, remaining)
+                if written <= 0:
+                    # Shouldn't happen, but treat as failure
+                    return False
+                remaining = remaining[written:]
+                attempt = 0  # Reset attempt counter on successful write
+            except BlockingIOError:
+                # Buffer full, wait and retry
+                attempt += 1
+                time.sleep(0.1)
+            except OSError:
+                # Real error (fd closed, etc.)
+                return False
+
+        return len(remaining) == 0
 
     def stop(self) -> None:
         self._running = False
