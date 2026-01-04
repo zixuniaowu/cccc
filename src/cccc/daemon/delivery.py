@@ -49,6 +49,8 @@ DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS = 0  # Minimum interval between deliveries
 DEFAULT_DELIVERY_RETRY_INTERVAL_SECONDS = 5  # Retry interval when delivery cannot be completed
 PTY_SUBMIT_DELAY_SECONDS = 1.5  # Empirically reliable for CLI readline timing (payload then delayed submit)
 PREAMBLE_TO_MESSAGE_DELAY_SECONDS = 2.0  # Wait for preamble submit + a small buffer
+PTY_STARTUP_MAX_WAIT_SECONDS = 10.0  # Max wait for a fresh runtime to become ready before first PTY injection
+PTY_STARTUP_READY_GRACE_SECONDS = 1.0  # Extra safety delay after readiness is detected (user request)
 
 
 def _get_delivery_config(group: Group) -> Dict[str, Any]:
@@ -101,29 +103,39 @@ def should_deliver_message(group: Group, kind: str) -> bool:
 
 
 # ============================================================================
-# Lazy Preamble (System Prompt) 机制
+# Lazy Preamble (System Prompt)
 # ============================================================================
 
 
 def _preamble_state_path(group: Group) -> Path:
-    """获取 preamble 状态文件路径"""
+    """Return the on-disk preamble state file path."""
     return group.path / "state" / "preamble_sent.json"
 
 
-def _load_preamble_sent(group: Group) -> Dict[str, bool]:
-    """加载 preamble 发送状态"""
+def _load_preamble_sent(group: Group) -> Dict[str, str]:
+    """Load preamble delivery state.
+
+    State is scoped to the current PTY session:
+      {actor_id: session_key}
+    where session_key changes on every actor start/restart.
+    """
     p = _preamble_state_path(group)
     try:
         data = read_json(p)
         if isinstance(data, dict):
-            return {str(k): bool(v) for k, v in data.items()}
+            out: Dict[str, str] = {}
+            for k, v in data.items():
+                aid = str(k)
+                if isinstance(v, str):
+                    out[aid] = v
+            return out
     except Exception:
         pass
     return {}
 
 
-def _save_preamble_sent(group: Group, state: Dict[str, bool]) -> None:
-    """保存 preamble 发送状态"""
+def _save_preamble_sent(group: Group, state: Dict[str, str]) -> None:
+    """Persist preamble delivery state."""
     p = _preamble_state_path(group)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -132,23 +144,48 @@ def _save_preamble_sent(group: Group, state: Dict[str, bool]) -> None:
         pass
 
 
+def _current_preamble_session_key(group: Group, actor_id: str) -> Optional[str]:
+    """Return the current PTY session key for this actor (None if not running)."""
+    gid = str(group.group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if not gid or not aid:
+        return None
+    try:
+        return pty_runner.SUPERVISOR.session_key(group_id=gid, actor_id=aid)
+    except Exception:
+        return None
+
+
 def is_preamble_sent(group: Group, actor_id: str) -> bool:
-    """检查 actor 是否已经收到过 system prompt"""
+    """Return True if the actor has received the system prompt in the current PTY session."""
+    aid = str(actor_id or "").strip()
+    if not aid:
+        return False
+    sk = _current_preamble_session_key(group, aid)
+    if not sk:
+        return False
     state = _load_preamble_sent(group)
-    return bool(state.get(actor_id, False))
+    return state.get(aid) == sk
 
 
 def mark_preamble_sent(group: Group, actor_id: str) -> None:
-    """标记 actor 已经收到 system prompt"""
+    """Mark the system prompt as delivered for the actor's current PTY session."""
+    aid = str(actor_id or "").strip()
+    if not aid:
+        return
+    sk = _current_preamble_session_key(group, aid)
+    if not sk:
+        # No running session; do not record a stale "sent" state.
+        return
     state = _load_preamble_sent(group)
-    state[actor_id] = True
+    state[aid] = sk
     _save_preamble_sent(group, state)
 
 
 def clear_preamble_sent(group: Group, actor_id: Optional[str] = None) -> None:
-    """清除 preamble 发送状态（用于 actor 重启等场景）
-    
-    如果 actor_id 为 None，清除所有 actor 的状态
+    """Clear preamble delivery state (e.g., on actor restart).
+
+    If actor_id is None, clears state for all actors in the group.
     """
     if actor_id is None:
         _save_preamble_sent(group, {})
@@ -159,7 +196,7 @@ def clear_preamble_sent(group: Group, actor_id: Optional[str] = None) -> None:
 
 
 # ============================================================================
-# Delivery Throttle (消息打包限流)
+# Delivery Throttle (batching/throttling)
 # ============================================================================
 
 
@@ -494,17 +531,19 @@ def render_delivery_text(
 # ============================================================================
 
 
-def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bool = False) -> bool:
-    """向 PTY 投递消息文本。
-    
-    投递策略：
-    1. 发送文本内容（优先用 bracketed paste wrapper，模拟“粘贴”输入）
-    2. 延迟后发送回车键
-    
-    关键发现：
-    - 原子发送（payload + submit 一起）从未成功过
-    - 延迟发送有一定成功率
-    - 问题可能是 CLI 应用的 readline 处理时序问题
+def pty_submit_text(
+    group: Group,
+    *,
+    actor_id: str,
+    text: str,
+    file_fallback: bool = False,
+    wait_for_submit: bool = False,
+) -> bool:
+    """Send message text to a PTY session.
+
+    Strategy:
+    1) Write the payload (prefer bracketed-paste wrapper when supported).
+    2) Send a delayed "submit" (Enter/Newline) to let the CLI apply input reliably.
     """
     gid = str(group.group_id or "").strip()
     aid = str(actor_id or "").strip()
@@ -522,7 +561,7 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
 
     multiline = ("\n" in raw) or ("\r" in raw)
     
-    # 获取 actor 的 submit 模式
+    # Determine submit mode for this actor.
     submit = b"\r"
     actor = find_actor(group, aid)
     mode = str(actor.get("submit") if isinstance(actor, dict) else "") or "enter"
@@ -535,43 +574,54 @@ def pty_submit_text(group: Group, *, actor_id: str, text: str, file_fallback: bo
     
     logger.debug(f"[pty_submit_text] Sending to {gid}/{aid}: multiline={multiline}, mode={mode}, len={len(payload)}")
     
-    # NOTE: bracketed paste 模式是“程序输出 -> 终端模拟器”的协商；这里是“向程序 stdin 写入”，
-    # 不应发送 \x1b[?2004h/\x1b[?2004l 这类输出控制序列作为输入（会变成脏输入，可能导致 CLI 偶发丢输入/乱序）。
+    # NOTE: bracketed paste is negotiated as terminal output -> emulator; here we write to stdin.
+    # Do NOT write \x1b[?2004h/\x1b[?2004l as input (it becomes garbage input and can break TUIs).
     bracketed = False
     try:
         bracketed = bool(pty_runner.SUPERVISOR.bracketed_paste_enabled(group_id=gid, actor_id=aid))
     except Exception:
         bracketed = False
 
-    # 尽量把整段消息当作一次“粘贴”输入（允许包含换行），减少 readline/快捷键干扰。
-    # 仅在目标进程已启用 bracketed paste 时使用 wrapper，否则会变成原始 ESC 序列输入。
+    # Prefer sending the full message as a single "paste" payload (may include newlines).
+    # Only wrap when the target app has enabled bracketed paste; otherwise ESC codes become raw input.
     if bracketed:
         text_payload = b"\x1b[200~" + payload + b"\x1b[201~"
     else:
         text_payload = payload
     
-    # 第一步：发送文本内容
+    # Step 1: write payload
     ok = bool(pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=text_payload))
     if not ok:
         logger.warning(f"[pty_submit_text] Failed to write payload to {gid}/{aid}")
         return False
     logger.debug(f"[pty_submit_text] Sent text payload, scheduling delayed submit")
     
-    # 第二步：延迟发送回车（给 CLI 应用时间处理输入）
+    # Step 2: send submit (Enter/Newline) after a small delay for CLI timing
     if submit:
-        def delayed_submit():
-            time.sleep(PTY_SUBMIT_DELAY_SECONDS)  # Empirically reliable delay
-            if pty_runner.SUPERVISOR.actor_running(gid, aid):
-                ok_submit = bool(pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=submit))
-                if ok_submit:
-                    logger.debug(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
-                else:
-                    logger.warning(f"[pty_submit_text] Delayed submit failed to write to {gid}/{aid}")
-            else:
+        if wait_for_submit:
+            time.sleep(PTY_SUBMIT_DELAY_SECONDS)
+            if not pty_runner.SUPERVISOR.actor_running(gid, aid):
                 logger.warning(f"[pty_submit_text] Actor no longer running for delayed submit: {gid}/{aid}")
-        
-        submit_thread = threading.Thread(target=delayed_submit, daemon=True)
-        submit_thread.start()
+                return False
+            ok_submit = bool(pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=submit))
+            if not ok_submit:
+                logger.warning(f"[pty_submit_text] Delayed submit failed to write to {gid}/{aid}")
+                return False
+            logger.debug(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
+        else:
+            def delayed_submit():
+                time.sleep(PTY_SUBMIT_DELAY_SECONDS)  # Empirically reliable delay
+                if pty_runner.SUPERVISOR.actor_running(gid, aid):
+                    ok_submit = bool(pty_runner.SUPERVISOR.write_input(group_id=gid, actor_id=aid, data=submit))
+                    if ok_submit:
+                        logger.debug(f"[pty_submit_text] Delayed submit sent to {gid}/{aid}")
+                    else:
+                        logger.warning(f"[pty_submit_text] Delayed submit failed to write to {gid}/{aid}")
+                else:
+                    logger.warning(f"[pty_submit_text] Actor no longer running for delayed submit: {gid}/{aid}")
+
+            submit_thread = threading.Thread(target=delayed_submit, daemon=True)
+            submit_thread.start()
     
     return True
 
@@ -588,14 +638,14 @@ def deliver_message_with_preamble(
     message_text: str,
     by: str,
 ) -> bool:
-    """投递消息到 PTY，如果是第一条消息则附加 system prompt。
-    
-    这是 lazy preamble 机制的核心：
-    - 如果 actor 还没收到过 system prompt，先投递 system prompt
-    - 然后投递用户消息
-    
-    注意：这个函数是立即投递，不经过 throttle。用于向后兼容。
-    新代码应该使用 queue_and_maybe_deliver()。
+    """Deliver a message to PTY, prepending the system prompt on first delivery.
+
+    This is the core of the lazy preamble mechanism:
+    - If the actor hasn't received the system prompt in this PTY session, deliver it first.
+    - Then deliver the user message.
+
+    Note: this function bypasses throttling and exists for backward compatibility.
+    New code should queue messages and use flush_pending_messages().
     """
     aid = str(actor_id or "").strip()
     if not aid:
@@ -605,17 +655,17 @@ def deliver_message_with_preamble(
     if not isinstance(actor, dict):
         return False
     
-    # 检查是否需要投递 system prompt（lazy preamble）
+    # Deliver system prompt first (lazy preamble) when needed.
     if not is_preamble_sent(group, aid):
         try:
             prompt = render_system_prompt(group=group, actor=actor)
             if prompt and prompt.strip():
-                if pty_submit_text(group, actor_id=aid, text=prompt, file_fallback=True):
+                if pty_submit_text(group, actor_id=aid, text=prompt, file_fallback=True, wait_for_submit=True):
                     mark_preamble_sent(group, aid)
         except Exception:
             pass
     
-    # 投递用户消息
+    # Deliver user message
     delivered_before = THROTTLE.get_delivered_chat_count(group.group_id, aid)
     out = (message_text or "").rstrip("\n")
     if out and (delivered_before + 1) % REMINDER_EVERY_N_MESSAGES == 0:
@@ -698,6 +748,33 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
     if not THROTTLE.should_deliver(gid, aid, min_interval):
         return False
 
+    # Startup gate: when a PTY actor was just started/restarted, its CLI may still be initializing and
+    # can drop early stdin/TTY input. Hold the first delivery until we see some output (then wait an
+    # extra grace period) or until the max startup wait elapses.
+    #
+    # Additionally, for the very first delivery (system prompt preamble), prefer waiting until the
+    # app enables bracketed paste mode. The preamble is multi-line; sending it before bracketed paste
+    # is enabled can lead to partial/ignored input in some TUIs.
+    try:
+        started_at, first_output_at = pty_runner.SUPERVISOR.startup_times(group_id=gid, actor_id=aid)
+        if started_at is not None:
+            now = time.monotonic()
+            if first_output_at is not None:
+                if (now - float(first_output_at)) < PTY_STARTUP_READY_GRACE_SECONDS:
+                    return False
+            else:
+                if (now - float(started_at)) < PTY_STARTUP_MAX_WAIT_SECONDS:
+                    return False
+            # Wait for bracketed paste mode for the preamble (best-effort; fall back after max wait).
+            if not is_preamble_sent(group, aid):
+                enabled, changed_at = pty_runner.SUPERVISOR.bracketed_paste_status(group_id=gid, actor_id=aid)
+                if not enabled and (now - float(started_at)) < PTY_STARTUP_MAX_WAIT_SECONDS:
+                    return False
+                if enabled and changed_at is not None and (now - float(changed_at)) < PTY_STARTUP_READY_GRACE_SECONDS:
+                    return False
+    except Exception:
+        pass
+
     messages = THROTTLE.take_pending(gid, aid)
     if not messages:
         return False
@@ -741,7 +818,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         try:
             prompt = render_system_prompt(group=group, actor=actor)
             if prompt and prompt.strip():
-                preamble_ok = pty_submit_text(group, actor_id=aid, text=prompt.strip())
+                preamble_ok = pty_submit_text(group, actor_id=aid, text=prompt.strip(), wait_for_submit=True)
                 if preamble_ok:
                     mark_preamble_sent(group, aid)
                     preamble_just_sent = True
@@ -829,7 +906,7 @@ def inject_system_prompt(group: Group, *, actor: Dict[str, Any]) -> None:
     if not aid:
         return
     prompt = render_system_prompt(group=group, actor=actor)
-    pty_submit_text(group, actor_id=aid, text=prompt, file_fallback=True)
+    pty_submit_text(group, actor_id=aid, text=prompt, file_fallback=True, wait_for_submit=True)
 
 
 def get_headless_targets_for_message(
@@ -838,12 +915,9 @@ def get_headless_targets_for_message(
     event: Dict[str, Any],
     by: str,
 ) -> List[str]:
-    """获取需要通知的 headless actor 列表。
-    
-    这个函数只做判断，不做写入操作。写入由 daemon server 负责。
-    
-    Returns:
-        List of actor_ids that should be notified
+    """Return headless actor_ids that should be notified for a message.
+
+    This function only computes targets; the daemon server performs any writes.
     """
     targets: List[str] = []
     
@@ -854,16 +928,16 @@ def get_headless_targets_for_message(
         if not aid or aid == "user" or aid == by:
             continue
         
-        # 只处理 headless runner
+        # Headless runner only
         runner_kind = str(actor.get("runner") or "pty").strip()
         if runner_kind != "headless":
             continue
         
-        # 检查 actor 是否在运行
+        # Actor must be running
         if not headless_runner.SUPERVISOR.actor_running(group.group_id, aid):
             continue
         
-        # 检查消息是否是发给这个 actor 的
+        # Check delivery/visibility rules
         if not is_message_for_actor(group, actor_id=aid, event=event):
             continue
         

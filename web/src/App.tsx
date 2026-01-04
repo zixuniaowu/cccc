@@ -196,6 +196,11 @@ export default function App() {
   const actorsRef = useRef<Actor[]>([]);
   const dragDepthRef = useRef<number>(0);
   const contextRefreshTimerRef = useRef<number | null>(null);
+  const actorWarmupTimersRef = useRef<number[]>([]);
+  const refreshGroupsInFlightRef = useRef<boolean>(false);
+  const refreshGroupsQueuedRef = useRef<boolean>(false);
+  const refreshActorsInFlightRef = useRef<Set<string>>(new Set());
+  const refreshActorsQueuedRef = useRef<Set<string>>(new Set());
 
   // Swipe gesture state
   const touchStartX = useRef<number>(0);
@@ -342,18 +347,33 @@ export default function App() {
 
   // API functions
   async function refreshGroups() {
-    const resp = await apiJson<{ groups: GroupMeta[] }>("/api/v1/groups");
-    if (resp.ok) {
-      const next = resp.result.groups || [];
-      setGroups(next);
+    if (refreshGroupsInFlightRef.current) {
+      refreshGroupsQueuedRef.current = true;
+      return;
+    }
+    refreshGroupsInFlightRef.current = true;
+    try {
+      const resp = await apiJson<{ groups: GroupMeta[] }>("/api/v1/groups");
+      if (resp.ok) {
+        const next = resp.result.groups || [];
+        setGroups(next);
 
-      // Don't override user's selection on periodic refresh. Only auto-select when:
-      // - nothing selected yet, or
-      // - the selected group no longer exists (deleted elsewhere).
-      const cur = selectedGroupIdRef.current;
-      const curExists = !!cur && next.some((g) => String(g.group_id || "") === cur);
-      if (!curExists && next.length > 0) {
-        setSelectedGroupId(String(next[0].group_id || ""));
+        // Don't override user's selection on periodic refresh. Only auto-select when:
+        // - nothing selected yet, or
+        // - the selected group no longer exists (deleted elsewhere).
+        const cur = selectedGroupIdRef.current;
+        const curExists = !!cur && next.some((g) => String(g.group_id || "") === cur);
+        if (!curExists && next.length > 0) {
+          setSelectedGroupId(String(next[0].group_id || ""));
+        }
+      }
+    } catch {
+      // Ignore transient failures (daemon/web restarting); next poll will retry.
+    } finally {
+      refreshGroupsInFlightRef.current = false;
+      if (refreshGroupsQueuedRef.current) {
+        refreshGroupsQueuedRef.current = false;
+        void refreshGroups();
       }
     }
   }
@@ -518,8 +538,42 @@ export default function App() {
   async function refreshActors(groupId?: string) {
     const gid = String(groupId || selectedGroupIdRef.current || selectedGroupId || "").trim();
     if (!gid) return;
-    const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(gid)}/actors?include_unread=true`);
-    if (a.ok && selectedGroupIdRef.current === gid) setActors(a.result.actors || []);
+    if (refreshActorsInFlightRef.current.has(gid)) {
+      refreshActorsQueuedRef.current.add(gid);
+      return;
+    }
+    refreshActorsInFlightRef.current.add(gid);
+    try {
+      const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(gid)}/actors?include_unread=true`);
+      if (a.ok && selectedGroupIdRef.current === gid) setActors(a.result.actors || []);
+    } catch {
+      // Ignore transient failures (daemon/web restarting); subsequent refresh will retry.
+    } finally {
+      refreshActorsInFlightRef.current.delete(gid);
+      if (refreshActorsQueuedRef.current.has(gid)) {
+        refreshActorsQueuedRef.current.delete(gid);
+        void refreshActors(gid);
+      }
+    }
+  }
+
+  function clearActorWarmupTimers() {
+    for (const t of actorWarmupTimersRef.current) window.clearTimeout(t);
+    actorWarmupTimersRef.current = [];
+  }
+
+  function scheduleActorWarmupRefresh(groupId: string) {
+    const gid = String(groupId || "").trim();
+    if (!gid) return;
+    clearActorWarmupTimers();
+    const delaysMs = [1000, 2500, 5000, 10000, 15000];
+    for (const ms of delaysMs) {
+      const t = window.setTimeout(() => {
+        if (selectedGroupIdRef.current !== gid) return;
+        void refreshActors(gid);
+      }, ms);
+      actorWarmupTimersRef.current.push(t);
+    }
   }
 
 
@@ -988,16 +1042,19 @@ export default function App() {
       window.clearTimeout(contextRefreshTimerRef.current);
       contextRefreshTimerRef.current = null;
     }
+    clearActorWarmupTimers();
     dragDepthRef.current = 0;
     setDropOverlayOpen(false);
     if (!selectedGroupId) return;
     loadGroup(selectedGroupId);
     connectStream(selectedGroupId);
+    scheduleActorWarmupRefresh(selectedGroupId);
     return () => {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
       }
+      clearActorWarmupTimers();
     };
   }, [selectedGroupId]);
 

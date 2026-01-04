@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class Reference(BaseModel):
-    """引用：文件/commit/URL 等"""
+    """Reference to a file/commit/URL/text snippet."""
 
     kind: Literal["file", "url", "commit", "text"] = "url"
     url: str = ""
@@ -19,7 +19,7 @@ class Reference(BaseModel):
 
 
 class Attachment(BaseModel):
-    """附件元信息（实际内容存储在 blobs 目录）"""
+    """Attachment metadata (payload stored under blobs/)."""
 
     kind: Literal["text", "image", "file"] = "file"
     path: str = ""
@@ -32,36 +32,35 @@ class Attachment(BaseModel):
 
 
 class ChatMessageData(BaseModel):
-    """IM 风格的聊天消息"""
+    """IM-style chat message."""
 
-    # 核心内容
+    # Core content
     text: str
     format: Literal["plain", "markdown"] = "plain"
 
-    # IM 核心语义
-    to: List[str] = Field(default_factory=list)  # @mention 收件人（空=广播）
-    reply_to: Optional[str] = None  # 回复哪条消息（event_id）
-    quote_text: Optional[str] = None  # 被引用消息的文本片段（便于展示）
+    # IM semantics
+    to: List[str] = Field(default_factory=list)  # @mentions (empty = broadcast)
+    reply_to: Optional[str] = None  # The replied-to message event_id
+    quote_text: Optional[str] = None  # Quoted snippet for display
 
-    # 附件与引用
+    # Attachments and references
     refs: List[Dict[str, Any]] = Field(default_factory=list)
     attachments: List[Dict[str, Any]] = Field(default_factory=list)
 
-    # 预留
-    thread: str = ""  # 话题/线程 ID（后置）
+    # Reserved
+    thread: str = ""  # Topic/thread ID (future)
 
-    # 元数据
-    client_id: Optional[str] = None  # 客户端去重 ID（幂等）
+    # Metadata
+    client_id: Optional[str] = None  # Client-generated idempotency key
 
     model_config = ConfigDict(extra="forbid")
 
 
 class ChatReactionData(BaseModel):
-    """消息反应（emoji）"""
+    """Message reaction (emoji)."""
 
-    event_id: str  # 对哪条消息
-    actor_id: str  # 谁发的
-    emoji: str  # 反应符号（✅/❌/👍/🤔）
+    event_id: str  # Target message event_id
+    actor_id: str  # Actor who reacted
+    emoji: str  # Emoji reaction (e.g., ✅/❌/👍/🤔)
 
     model_config = ConfigDict(extra="forbid")
-

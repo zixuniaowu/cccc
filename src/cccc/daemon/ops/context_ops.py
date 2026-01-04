@@ -1,7 +1,7 @@
 """
 Context operations for daemon.
 
-所有 context 操作都通过 daemon 执行，保证单写者原则。
+All context operations go through the daemon to preserve the single-writer invariant.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ def _utc_now_iso() -> str:
 
 
 def _get_storage(group_id: str) -> Optional[ContextStorage]:
-    """获取 group 的 context storage"""
+    """Get context storage for a group."""
     group = load_group(group_id)
     if group is None:
         return None
@@ -74,7 +74,7 @@ def _task_to_dict(task: Task) -> Dict[str, Any]:
 
 
 def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
-    """获取 group 的完整上下文"""
+    """Return the full context for a group."""
     group_id = str(args.get("group_id") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -152,7 +152,7 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
 
 
 def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
-    """批量同步上下文操作"""
+    """Apply a batch of context operations."""
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "system").strip() or "system"
     ops = args.get("ops") or []
@@ -496,7 +496,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
 
 
 def handle_task_list(args: Dict[str, Any]) -> DaemonResponse:
-    """列出任务或获取单个任务"""
+    """List tasks or get a single task."""
     group_id = str(args.get("group_id") or "").strip()
     task_id = args.get("task_id")
 
@@ -523,7 +523,7 @@ def handle_task_list(args: Dict[str, Any]) -> DaemonResponse:
 
 
 def handle_presence_get(args: Dict[str, Any]) -> DaemonResponse:
-    """获取在线状态"""
+    """Get presence state."""
     group_id = str(args.get("group_id") or "").strip()
 
     if not group_id:

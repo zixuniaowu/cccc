@@ -1,15 +1,15 @@
 """System notification contracts.
 
-系统通知与聊天消息分离，避免把系统噪音塞进用户对话。
+System notifications are separated from chat messages to avoid polluting user conversations.
 
-通知类型：
-- nudge: 提醒 actor 处理未读消息
-- keepalive: 提醒 actor 继续工作（检测到 Next: 声明后）
-- actor_idle: Actor 空闲通知（发给 foreman）
-- silence_check: 群聊静默通知（发给 foreman）
-- standup: 周期性 stand-up 提醒（发给 foreman）
-- status_change: actor/group 状态变更
-- error: 系统错误通知
+Kinds:
+- nudge: remind an actor to handle unread messages
+- keepalive: remind an actor to continue work (after detecting a "Next:" declaration)
+- actor_idle: actor idle alert (to foreman)
+- silence_check: group silence alert (to foreman)
+- standup: periodic stand-up reminder (to foreman)
+- status_change: actor/group status change
+- error: system error
 """
 from __future__ import annotations
 
@@ -19,49 +19,49 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 NotifyKind = Literal[
-    "nudge",           # 提醒处理未读消息
-    "keepalive",       # 提醒继续工作（检测到 Next: 声明后）
-    "actor_idle",      # Actor 空闲通知（发给 foreman）
-    "silence_check",   # 群聊静默通知（发给 foreman）
-    "standup",         # 周期性 stand-up 提醒（发给 foreman）
-    "status_change",   # 状态变更通知
-    "error",           # 错误通知
-    "info",            # 一般信息
+    "nudge",           # Remind about unread messages
+    "keepalive",       # Remind to continue work
+    "actor_idle",      # Actor idle alert (to foreman)
+    "silence_check",   # Group silence alert (to foreman)
+    "standup",         # Periodic stand-up reminder (to foreman)
+    "status_change",   # Status change notification
+    "error",           # Error notification
+    "info",            # Informational notification
 ]
 
 NotifyPriority = Literal["low", "normal", "high", "urgent"]
 
 
 class SystemNotifyData(BaseModel):
-    """系统通知数据结构"""
+    """System notification payload."""
 
-    # 通知类型
+    # Type
     kind: NotifyKind
     priority: NotifyPriority = "normal"
 
-    # 通知内容
+    # Content
     title: str = ""
     message: str = ""
 
-    # 目标
-    target_actor_id: Optional[str] = None  # 目标 actor（None=广播）
+    # Target
+    target_actor_id: Optional[str] = None  # Target actor (None = broadcast)
 
-    # 上下文
+    # Context
     context: Dict[str, Any] = Field(default_factory=dict)
 
-    # 是否需要确认
+    # Acknowledgement
     requires_ack: bool = False
 
-    # 关联事件
+    # Related event
     related_event_id: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
 
 
 class NotifyAckData(BaseModel):
-    """通知确认数据"""
+    """Notification acknowledgement payload."""
 
-    notify_event_id: str  # 被确认的通知 event_id
-    actor_id: str         # 确认者
+    notify_event_id: str  # The acknowledged notify event_id
+    actor_id: str         # Actor who acknowledged
 
     model_config = ConfigDict(extra="forbid")

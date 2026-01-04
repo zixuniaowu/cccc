@@ -111,7 +111,7 @@ export function AddActorModal({
 
           <div>
             <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-              Agent Name <span className={isDark ? "text-slate-500" : "text-gray-400"}>(supports 中文/日本語)</span>
+              Agent Name <span className={isDark ? "text-slate-500" : "text-gray-400"}>(supports Unicode, incl. CJK)</span>
             </label>
             <input
               className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${

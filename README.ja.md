@@ -2,9 +2,15 @@
 
 [English](README.md) | [中文](README.zh-CN.md) | **日本語**
 
-> ステータス：**0.4.0rc9**（Release Candidate）。UX と契約（contracts）を硬化中のため、破壊的変更の可能性があります。
+> ステータス：**0.4.0rc10**（Release Candidate）。UX と契約（contracts）を硬化中のため、破壊的変更の可能性があります。
 
-CCCC は **local-first なグローバル・マルチエージェント配達カーネル**です：
+CCCC は **local-first なマルチエージェント協調カーネル**です。成熟した IM に近い操作感を目指しつつ、以下で信頼性を担保します：
+
+- 単一 writer の daemon（唯一の事実源）
+- Working Group ごとの追記型 ledger（永続的な履歴）
+- agent 向け MCP ツール面（「stdout で答えたが誰にも届かない」を避ける）
+
+要点：
 
 - 単一の daemon（`ccccd`）が複数の agent runtime（Claude Code / Codex CLI / Droid / OpenCode / Copilot など）を統合的に協調
 - Working Group ごとに **追記型 ledger** を持ち、唯一の事実源にする
@@ -14,6 +20,16 @@ CCCC は **local-first なグローバル・マルチエージェント配達カ
 旧 tmux/TUI 版（v0.3.x）： https://github.com/ChesterRa/cccc-tmux
 
 ---
+
+## スクリーンショット
+
+Chat UI：
+
+![CCCC Chat UI](screenshots/chat.png)
+
+Agent terminal UI：
+
+![CCCC Agent Terminal](screenshots/terminal.png)
 
 ## なぜ v0.3 からリライト？
 
@@ -86,12 +102,12 @@ v0.3.x（tmux-first）は有効性を示しましたが、現実的な限界も�
 
 ### TestPyPI から 0.4.x RC をインストール（現時点の推奨）
 
-RC tag（例：`v0.4.0-rc9`）は **TestPyPI** に公開されます。依存は PyPI、RC パッケージのみ TestPyPI から取得します：
+RC tag（例：`v0.4.0-rc10`）は **TestPyPI** に公開されます。依存は PyPI、RC パッケージのみ TestPyPI から取得します：
 
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc9
+  cccc-pair==0.4.0rc10
 ```
 
 注：現時点で PyPI の最新安定版は旧 v0.3.x 系です。0.4.x RC を試す場合は上記コマンドを使ってください。

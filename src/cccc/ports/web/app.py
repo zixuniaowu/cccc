@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from ... import __version__
 from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind
@@ -24,7 +25,6 @@ from ...kernel.ledger import read_last_lines
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
 from ...util.fs import atomic_write_text
-from ...contracts.v1.actor import AgentRuntime
 
 logger = logging.getLogger("cccc.web")
 _WEB_LOG_FH: Optional[Any] = None
@@ -193,8 +193,8 @@ def _require_token_if_configured(request: Request) -> Optional[JSONResponse]:
     return None
 
 
-def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
-    resp = call_daemon(req)
+async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
+    resp = await run_in_threadpool(call_daemon, req)
     if not resp.get("ok") and isinstance(resp.get("error"), dict) and resp["error"].get("code") == "daemon_unavailable":
         raise HTTPException(status_code=503, detail={"code": "daemon_unavailable", "message": "ccccd unavailable"})
     return resp
@@ -355,14 +355,14 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/ping")
     async def ping() -> Dict[str, Any]:
         home = ensure_home()
-        resp = _daemon({"op": "ping"})
+        resp = await _daemon({"op": "ping"})
         return {"ok": True, "result": {"home": str(home), "daemon": resp.get("result", {}), "version": __version__}}
 
     @app.get("/api/v1/health")
     async def health() -> Dict[str, Any]:
         """Health check endpoint for monitoring."""
         home = ensure_home()
-        daemon_resp = _daemon({"op": "ping"})
+        daemon_resp = await _daemon({"op": "ping"})
         daemon_ok = daemon_resp.get("ok", False)
         
         return {
@@ -377,7 +377,7 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/observability")
     async def observability_get() -> Dict[str, Any]:
         """Get global observability settings (developer mode, log level)."""
-        return _daemon({"op": "observability_get"})
+        return await _daemon({"op": "observability_get"})
 
     @app.put("/api/v1/observability")
     async def observability_update(req: ObservabilityUpdateRequest) -> Dict[str, Any]:
@@ -388,7 +388,7 @@ def create_app() -> FastAPI:
         if req.log_level is not None:
             patch["log_level"] = str(req.log_level or "").strip().upper()
 
-        resp = _daemon({"op": "observability_update", "args": {"by": req.by, "patch": patch}})
+        resp = await _daemon({"op": "observability_update", "args": {"by": req.by, "patch": patch}})
 
         # Apply web-side logging immediately as well (best-effort).
         try:
@@ -416,7 +416,7 @@ def create_app() -> FastAPI:
         compact: bool = True,
     ) -> Dict[str, Any]:
         """Tail an actor's terminal transcript (subject to group policy)."""
-        return _daemon(
+        return await _daemon(
             {
                 "op": "terminal_tail",
                 "args": {
@@ -433,7 +433,7 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/groups/{group_id}/terminal/clear")
     async def terminal_clear(group_id: str, actor_id: str) -> Dict[str, Any]:
         """Clear (truncate) an actor's in-memory terminal transcript ring buffer."""
-        return _daemon(
+        return await _daemon(
             {
                 "op": "terminal_clear",
                 "args": {
@@ -451,12 +451,12 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/debug/snapshot")
     async def debug_snapshot(group_id: str) -> Dict[str, Any]:
         """Get a structured debug snapshot for a group (developer mode only)."""
-        return _daemon({"op": "debug_snapshot", "args": {"group_id": group_id, "by": "user"}})
+        return await _daemon({"op": "debug_snapshot", "args": {"group_id": group_id, "by": "user"}})
 
     @app.get("/api/v1/debug/tail_logs")
     async def debug_tail_logs(component: str, group_id: str = "", lines: int = 200) -> Dict[str, Any]:
         """Tail local CCCC logs (developer mode only)."""
-        return _daemon(
+        return await _daemon(
             {
                 "op": "debug_tail_logs",
                 "args": {
@@ -471,7 +471,7 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/debug/clear_logs")
     async def debug_clear_logs(req: DebugClearLogsRequest) -> Dict[str, Any]:
         """Clear (truncate) local CCCC logs (developer mode only)."""
-        return _daemon(
+        return await _daemon(
             {
                 "op": "debug_clear_logs",
                 "args": {
@@ -571,15 +571,15 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups")
     async def groups() -> Dict[str, Any]:
-        return _daemon({"op": "groups"})
+        return await _daemon({"op": "groups"})
 
     @app.post("/api/v1/groups")
     async def group_create(req: CreateGroupRequest) -> Dict[str, Any]:
-        return _daemon({"op": "group_create", "args": {"title": req.title, "topic": req.topic, "by": req.by}})
+        return await _daemon({"op": "group_create", "args": {"title": req.title, "topic": req.topic, "by": req.by}})
 
     @app.get("/api/v1/groups/{group_id}")
     async def group_show(group_id: str) -> Dict[str, Any]:
-        return _daemon({"op": "group_show", "args": {"group_id": group_id}})
+        return await _daemon({"op": "group_show", "args": {"group_id": group_id}})
 
     @app.put("/api/v1/groups/{group_id}")
     async def group_update(group_id: str, req: GroupUpdateRequest) -> Dict[str, Any]:
@@ -591,7 +591,7 @@ def create_app() -> FastAPI:
             patch["topic"] = req.topic
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}
-        return _daemon({"op": "group_update", "args": {"group_id": group_id, "by": req.by, "patch": patch}})
+        return await _daemon({"op": "group_update", "args": {"group_id": group_id, "by": req.by, "patch": patch}})
 
     @app.delete("/api/v1/groups/{group_id}")
     async def group_delete(group_id: str, confirm: str = "", by: str = "user") -> Dict[str, Any]:
@@ -601,12 +601,12 @@ def create_app() -> FastAPI:
                 status_code=400,
                 detail={"code": "confirmation_required", "message": f"confirm must equal group_id: {group_id}"}
             )
-        return _daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
+        return await _daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
 
     @app.get("/api/v1/groups/{group_id}/context")
     async def group_context(group_id: str) -> Dict[str, Any]:
         """Get full group context (vision/sketch/milestones/tasks/notes/refs/presence)."""
-        return _daemon({"op": "context_get", "args": {"group_id": group_id}})
+        return await _daemon({"op": "context_get", "args": {"group_id": group_id}})
 
     @app.get("/api/v1/groups/{group_id}/project_md")
     async def project_md_get(group_id: str) -> Dict[str, Any]:
@@ -716,7 +716,7 @@ def create_app() -> FastAPI:
         by = str(body.get("by") or "user")
         dry_run = bool(body.get("dry_run", False))
         
-        return _daemon({
+        return await _daemon({
             "op": "context_sync",
             "args": {"group_id": group_id, "ops": ops, "by": by, "dry_run": dry_run}
         })
@@ -781,19 +781,19 @@ def create_app() -> FastAPI:
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}
         
-        return _daemon({
+        return await _daemon({
             "op": "group_settings_update",
             "args": {"group_id": group_id, "patch": patch, "by": req.by}
         })
 
     @app.post("/api/v1/groups/{group_id}/attach")
     async def group_attach(group_id: str, req: AttachRequest) -> Dict[str, Any]:
-        return _daemon({"op": "attach", "args": {"path": req.path, "by": req.by, "group_id": group_id}})
+        return await _daemon({"op": "attach", "args": {"path": req.path, "by": req.by, "group_id": group_id}})
 
     @app.delete("/api/v1/groups/{group_id}/scopes/{scope_key}")
     async def group_detach_scope(group_id: str, scope_key: str, by: str = "user") -> Dict[str, Any]:
         """Detach a scope from a group."""
-        return _daemon({"op": "group_detach_scope", "args": {"group_id": group_id, "scope_key": scope_key, "by": by}})
+        return await _daemon({"op": "group_detach_scope", "args": {"group_id": group_id, "scope_key": scope_key, "by": by}})
 
     @app.get("/api/v1/groups/{group_id}/ledger/tail")
     async def ledger_tail(group_id: str, lines: int = 50, with_read_status: bool = False) -> Dict[str, Any]:
@@ -896,7 +896,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/groups/{group_id}/send")
     async def send(group_id: str, req: SendRequest) -> Dict[str, Any]:
-        return _daemon(
+        return await _daemon(
             {
                 "op": "send",
                 "args": {"group_id": group_id, "text": req.text, "by": req.by, "to": list(req.to), "path": req.path},
@@ -905,7 +905,7 @@ def create_app() -> FastAPI:
 
     @app.post("/api/v1/groups/{group_id}/reply")
     async def reply(group_id: str, req: ReplyRequest) -> Dict[str, Any]:
-        return _daemon(
+        return await _daemon(
             {
                 "op": "reply",
                 "args": {"group_id": group_id, "text": req.text, "by": req.by, "to": list(req.to), "reply_to": req.reply_to},
@@ -955,7 +955,7 @@ def create_app() -> FastAPI:
             else:
                 msg_text = f"[files] {len(attachments)} attachments"
 
-        return _daemon(
+        return await _daemon(
             {
                 "op": "send",
                 "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "path": path, "attachments": attachments},
@@ -1005,7 +1005,7 @@ def create_app() -> FastAPI:
             else:
                 msg_text = f"[files] {len(attachments)} attachments"
 
-        return _daemon(
+        return await _daemon(
             {
                 "op": "reply",
                 "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "reply_to": reply_to, "attachments": attachments},
@@ -1038,12 +1038,12 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups/{group_id}/actors")
     async def actors(group_id: str, include_unread: bool = False) -> Dict[str, Any]:
-        return _daemon({"op": "actor_list", "args": {"group_id": group_id, "include_unread": include_unread}})
+        return await _daemon({"op": "actor_list", "args": {"group_id": group_id, "include_unread": include_unread}})
 
     @app.post("/api/v1/groups/{group_id}/actors")
     async def actor_create(group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:
         command = _normalize_command(req.command) or []
-        return _daemon(
+        return await _daemon(
             {
                 "op": "actor_add",
                 "args": {
@@ -1082,23 +1082,23 @@ def create_app() -> FastAPI:
             patch["runtime"] = req.runtime
         if req.enabled is not None:
             patch["enabled"] = bool(req.enabled)
-        return _daemon({"op": "actor_update", "args": {"group_id": group_id, "actor_id": actor_id, "patch": patch, "by": req.by}})
+        return await _daemon({"op": "actor_update", "args": {"group_id": group_id, "actor_id": actor_id, "patch": patch, "by": req.by}})
 
     @app.delete("/api/v1/groups/{group_id}/actors/{actor_id}")
     async def actor_delete(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
-        return _daemon({"op": "actor_remove", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+        return await _daemon({"op": "actor_remove", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
 
     @app.post("/api/v1/groups/{group_id}/actors/{actor_id}/start")
     async def actor_start(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
-        return _daemon({"op": "actor_start", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+        return await _daemon({"op": "actor_start", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
 
     @app.post("/api/v1/groups/{group_id}/actors/{actor_id}/stop")
     async def actor_stop(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
-        return _daemon({"op": "actor_stop", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+        return await _daemon({"op": "actor_stop", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
 
     @app.post("/api/v1/groups/{group_id}/actors/{actor_id}/restart")
     async def actor_restart(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
-        return _daemon({"op": "actor_restart", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+        return await _daemon({"op": "actor_restart", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
 
     @app.websocket("/api/v1/groups/{group_id}/actors/{actor_id}/term")
     async def actor_terminal(websocket: WebSocket, group_id: str, actor_id: str) -> None:
@@ -1207,26 +1207,26 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups/{group_id}/inbox/{actor_id}")
     async def inbox_list(group_id: str, actor_id: str, by: str = "user", limit: int = 50) -> Dict[str, Any]:
-        return _daemon({"op": "inbox_list", "args": {"group_id": group_id, "actor_id": actor_id, "by": by, "limit": int(limit)}})
+        return await _daemon({"op": "inbox_list", "args": {"group_id": group_id, "actor_id": actor_id, "by": by, "limit": int(limit)}})
 
     @app.post("/api/v1/groups/{group_id}/inbox/{actor_id}/read")
     async def inbox_mark_read(group_id: str, actor_id: str, req: InboxReadRequest) -> Dict[str, Any]:
-        return _daemon(
+        return await _daemon(
             {"op": "inbox_mark_read", "args": {"group_id": group_id, "actor_id": actor_id, "event_id": req.event_id, "by": req.by}}
         )
 
     @app.post("/api/v1/groups/{group_id}/start")
     async def group_start(group_id: str, by: str = "user") -> Dict[str, Any]:
-        return _daemon({"op": "group_start", "args": {"group_id": group_id, "by": by}})
+        return await _daemon({"op": "group_start", "args": {"group_id": group_id, "by": by}})
 
     @app.post("/api/v1/groups/{group_id}/stop")
     async def group_stop(group_id: str, by: str = "user") -> Dict[str, Any]:
-        return _daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
+        return await _daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
 
     @app.post("/api/v1/groups/{group_id}/state")
     async def group_set_state(group_id: str, state: str, by: str = "user") -> Dict[str, Any]:
         """Set group state (active/idle/paused) to control automation behavior."""
-        return _daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
+        return await _daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
 
     # =========================================================================
     # IM Bridge API

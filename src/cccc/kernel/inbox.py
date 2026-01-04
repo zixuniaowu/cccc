@@ -10,12 +10,12 @@ from .actors import find_actor, get_effective_role, list_actors
 from .group import Group
 
 
-# 消息类型过滤
+# Message kind filter
 MessageKindFilter = Literal["all", "chat", "notify"]
 
 
 def iter_events(ledger_path: Path) -> Iterable[Dict[str, Any]]:
-    """遍历 ledger 中的所有事件"""
+    """Iterate over all events in a ledger file."""
     if not ledger_path.exists():
         return
     with ledger_path.open("r", encoding="utf-8", errors="replace") as f:
@@ -36,7 +36,7 @@ def _cursor_path(group: Group) -> Path:
 
 
 def load_cursors(group: Group) -> Dict[str, Any]:
-    """加载所有 actor 的已读游标"""
+    """Load read cursors for all actors."""
     p = _cursor_path(group)
     doc = read_json(p)
     return doc if isinstance(doc, dict) else {}
@@ -49,7 +49,7 @@ def _save_cursors(group: Group, doc: Dict[str, Any]) -> None:
 
 
 def get_cursor(group: Group, actor_id: str) -> Tuple[str, str]:
-    """获取 actor 的已读游标 (event_id, ts)"""
+    """Get an actor's read cursor: (event_id, ts)."""
     cursors = load_cursors(group)
     cur = cursors.get(actor_id)
     if isinstance(cur, dict):
@@ -60,18 +60,18 @@ def get_cursor(group: Group, actor_id: str) -> Tuple[str, str]:
 
 
 def set_cursor(group: Group, actor_id: str, *, event_id: str, ts: str) -> Dict[str, Any]:
-    """设置 actor 的已读游标（只能往前推进）"""
+    """Set an actor's read cursor (monotonic forward-only)."""
     cursors = load_cursors(group)
     cur = cursors.get(actor_id)
 
-    # 检查是否往前推进
+    # Ensure the cursor moves forward (never backwards).
     if isinstance(cur, dict):
         cur_ts = str(cur.get("ts") or "")
         if cur_ts:
             cur_dt = parse_utc_iso(cur_ts)
             new_dt = parse_utc_iso(ts)
             if cur_dt is not None and new_dt is not None and new_dt < cur_dt:
-                # 不允许往回退
+                # Do not allow moving backwards.
                 return dict(cur)
 
     cursors[str(actor_id)] = {
@@ -84,7 +84,7 @@ def set_cursor(group: Group, actor_id: str, *, event_id: str, ts: str) -> Dict[s
 
 
 def _message_targets(event: Dict[str, Any]) -> List[str]:
-    """获取消息的目标收件人列表"""
+    """Get the 'to' targets for a chat message event."""
     data = event.get("data")
     if not isinstance(data, dict):
         return []
@@ -95,41 +95,41 @@ def _message_targets(event: Dict[str, Any]) -> List[str]:
 
 
 def _actor_role(group: Group, actor_id: str) -> str:
-    """获取 actor 的有效角色（基于位置自动判断）"""
+    """Get the actor's effective role (derived from position)."""
     return get_effective_role(group, actor_id)
 
 
 def is_message_for_actor(group: Group, *, actor_id: str, event: Dict[str, Any]) -> bool:
-    """判断消息是否应该投递给指定 actor"""
+    """Return True if the event should be visible/delivered to the given actor."""
     kind = str(event.get("kind") or "")
     
-    # system.notify 事件检查 target_actor_id
+    # system.notify: check target_actor_id
     if kind == "system.notify":
         data = event.get("data")
         if not isinstance(data, dict):
             return False
         target = str(data.get("target_actor_id") or "").strip()
-        # 空 target = 广播给所有人
+        # Empty target = broadcast to everyone
         if not target:
             return True
         return target == actor_id
     
-    # chat.message 事件检查 to 字段
+    # chat.message: check the "to" field
     targets = _message_targets(event)
 
-    # 空 targets = 广播，所有人可见
+    # Empty targets = broadcast (everyone can see)
     if not targets:
         return True
 
-    # @all = 所有 actors
+    # @all = all actors
     if "@all" in targets:
         return True
 
-    # 直接指定 actor_id
+    # Direct actor_id mention
     if actor_id in targets:
         return True
 
-    # 按角色匹配
+    # Role-based matching
     role = _actor_role(group, actor_id)
     if role == "peer" and "@peers" in targets:
         return True
@@ -140,21 +140,21 @@ def is_message_for_actor(group: Group, *, actor_id: str, event: Dict[str, Any]) 
 
 
 def unread_messages(group: Group, *, actor_id: str, limit: int = 50, kind_filter: MessageKindFilter = "all") -> List[Dict[str, Any]]:
-    """获取 actor 的未读消息列表
-    
+    """Get unread events for an actor.
+
     Args:
-        group: 工作组
-        actor_id: actor ID
-        limit: 最大返回数量
-        kind_filter: 消息类型过滤
-            - "all": 所有消息（chat.message + system.notify）
-            - "chat": 仅 chat.message
-            - "notify": 仅 system.notify
+        group: Working group
+        actor_id: Actor id
+        limit: Max results (0 = unlimited)
+        kind_filter:
+            - "all": chat.message + system.notify
+            - "chat": chat.message only
+            - "notify": system.notify only
     """
     _, cursor_ts = get_cursor(group, actor_id)
     cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
 
-    # 确定要匹配的 event kinds
+    # Determine which kinds to include.
     if kind_filter == "chat":
         allowed_kinds = {"chat.message"}
     elif kind_filter == "notify":
@@ -167,13 +167,13 @@ def unread_messages(group: Group, *, actor_id: str, limit: int = 50, kind_filter
         ev_kind = str(ev.get("kind") or "")
         if ev_kind not in allowed_kinds:
             continue
-        # 排除自己发的消息（chat.message）
+        # Exclude messages sent by the actor itself.
         if ev_kind == "chat.message" and str(ev.get("by") or "") == actor_id:
             continue
-        # 检查是否是发给自己的
+        # Check delivery/visibility rules.
         if not is_message_for_actor(group, actor_id=actor_id, event=ev):
             continue
-        # 检查是否已读
+        # Check read cursor.
         if cursor_dt is not None:
             ev_dt = parse_utc_iso(str(ev.get("ts") or ""))
             if ev_dt is not None and ev_dt <= cursor_dt:
@@ -185,17 +185,17 @@ def unread_messages(group: Group, *, actor_id: str, limit: int = 50, kind_filter
 
 
 def unread_count(group: Group, *, actor_id: str, kind_filter: MessageKindFilter = "all") -> int:
-    """获取 actor 的未读消息数量
-    
+    """Count unread events for an actor.
+
     Args:
-        group: 工作组
-        actor_id: actor ID
-        kind_filter: 消息类型过滤（同 unread_messages）
+        group: Working group
+        actor_id: Actor id
+        kind_filter: Same semantics as unread_messages()
     """
     _, cursor_ts = get_cursor(group, actor_id)
     cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
 
-    # 确定要匹配的 event kinds
+    # Determine which kinds to include.
     if kind_filter == "chat":
         allowed_kinds = {"chat.message"}
     elif kind_filter == "notify":
@@ -260,7 +260,7 @@ def latest_unread_event(
 
 
 def find_event(group: Group, event_id: str) -> Optional[Dict[str, Any]]:
-    """根据 event_id 查找事件"""
+    """Find an event by event_id."""
     wanted = event_id.strip()
     if not wanted:
         return None
@@ -271,7 +271,7 @@ def find_event(group: Group, event_id: str) -> Optional[Dict[str, Any]]:
 
 
 def get_quote_text(group: Group, event_id: str, max_len: int = 100) -> Optional[str]:
-    """获取被引用消息的文本片段（用于 reply_to）"""
+    """Get a short quoted snippet for reply_to rendering."""
     ev = find_event(group, event_id)
     if ev is None:
         return None
@@ -288,7 +288,7 @@ def get_quote_text(group: Group, event_id: str, max_len: int = 100) -> Optional[
 
 
 def get_read_status(group: Group, event_id: str) -> Dict[str, bool]:
-    """获取消息的已读状态（哪些 actor 已读）"""
+    """Get per-actor read status for a chat.message event."""
     ev = find_event(group, event_id)
     if ev is None:
         return {}

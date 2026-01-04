@@ -55,12 +55,14 @@ from __future__ import annotations
 
 import mimetypes
 import os
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...daemon.server import call_daemon
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import load_group
+from ...kernel.ledger import read_last_lines
 
 
 class MCPError(Exception):
@@ -206,7 +208,15 @@ def inbox_mark_all_read(*, group_id: str, actor_id: str, kind_filter: str = "all
     })
 
 
-def bootstrap(*, group_id: str, actor_id: str, inbox_limit: int = 50, inbox_kind_filter: str = "all") -> Dict[str, Any]:
+def bootstrap(
+    *,
+    group_id: str,
+    actor_id: str,
+    inbox_limit: int = 50,
+    inbox_kind_filter: str = "all",
+    ledger_tail_limit: int = 20,
+    ledger_tail_max_chars: int = 8000,
+) -> Dict[str, Any]:
     """One-call session bootstrap for agents.
 
     Returns:
@@ -215,6 +225,7 @@ def bootstrap(*, group_id: str, actor_id: str, inbox_limit: int = 50, inbox_kind
     - project: PROJECT.md info
     - context: group context
     - inbox: unread messages
+    - ledger_tail: recent chat.message tail (optional)
     """
     gi = group_info(group_id=group_id)
     group = gi.get("group") if isinstance(gi, dict) else None
@@ -225,6 +236,63 @@ def bootstrap(*, group_id: str, actor_id: str, inbox_limit: int = 50, inbox_kind
     project = project_info(group_id=group_id)
     context = context_get(group_id=group_id)
     inbox = inbox_list(group_id=group_id, actor_id=actor_id, limit=int(inbox_limit or 50), kind_filter=inbox_kind_filter)
+
+    # Recent chat tail (for resuming mid-task). Keep it small: only chat.message.
+    ledger_tail: List[Dict[str, Any]] = []
+    ledger_tail_truncated = False
+    try:
+        limit = int(ledger_tail_limit or 0)
+        max_chars = int(ledger_tail_max_chars or 0)
+        if limit > 0 and max_chars > 0:
+            g = load_group(str(group_id or "").strip())
+            if g is not None:
+                # Read a reasonable tail of lines, then filter to chat.message and take the last N.
+                # This avoids scanning the whole file while still being robust to non-chat events.
+                read_lines = min(2000, max(200, limit * 10))
+                lines = read_last_lines(g.ledger_path, read_lines)
+                chat_events: List[Dict[str, Any]] = []
+                for raw in lines:
+                    try:
+                        ev = json.loads(raw)
+                    except Exception:
+                        continue
+                    if not isinstance(ev, dict) or str(ev.get("kind") or "") != "chat.message":
+                        continue
+                    data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+                    text = data.get("text") if isinstance(data, dict) else None
+                    if not isinstance(text, str) or not text:
+                        continue
+                    to = data.get("to") if isinstance(data, dict) else None
+                    to_list = [str(x) for x in to] if isinstance(to, list) else []
+                    chat_events.append(
+                        {
+                            "id": str(ev.get("id") or ""),
+                            "ts": str(ev.get("ts") or ""),
+                            "by": str(ev.get("by") or ""),
+                            "to": to_list,
+                            "text": text,
+                        }
+                    )
+                chat_events = chat_events[-limit:]
+
+                # Enforce a max total character budget across returned message texts.
+                used = 0
+                for ev in chat_events:
+                    remaining = max_chars - used
+                    if remaining <= 0:
+                        ledger_tail_truncated = True
+                        break
+                    t = str(ev.get("text") or "")
+                    if len(t) > remaining:
+                        ev["text"] = t[:remaining]
+                        ledger_tail_truncated = True
+                        ledger_tail.append(ev)
+                        break
+                    ledger_tail.append(ev)
+                    used += len(t)
+    except Exception:
+        ledger_tail = []
+        ledger_tail_truncated = False
 
     last_event_id = ""
     try:
@@ -240,6 +308,8 @@ def bootstrap(*, group_id: str, actor_id: str, inbox_limit: int = 50, inbox_kind
         "project": project,
         "context": context,
         "inbox": inbox,
+        "ledger_tail": ledger_tail,
+        "ledger_tail_truncated": ledger_tail_truncated,
         "suggested_mark_read_event_id": last_event_id,
     }
 
@@ -858,6 +928,7 @@ MCP_TOOLS = [
         "description": (
             "One-call session bootstrap. Use at session start to reduce tool calls.\n\n"
             "Returns: group info + actor list + PROJECT.md + context + your unread inbox.\n"
+            "Optionally includes a small recent chat.message tail from the ledger (useful after restarts).\n"
             "Also returns suggested_mark_read_event_id (use with cccc_inbox_mark_read)."
         ),
 	        "inputSchema": {
@@ -872,6 +943,16 @@ MCP_TOOLS = [
 	                    "description": "Unread message filter",
 	                    "default": "all",
 	                },
+                    "ledger_tail_limit": {
+                        "type": "integer",
+                        "description": "Number of recent chat messages to include from the ledger (default 20; 0=disable)",
+                        "default": 20,
+                    },
+                    "ledger_tail_max_chars": {
+                        "type": "integer",
+                        "description": "Max total characters across returned ledger_tail[].text (default 8000)",
+                        "default": 8000,
+                    },
 	            },
 	            "required": [],
 	        },
@@ -1581,6 +1662,8 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             actor_id=aid,
             inbox_limit=int(arguments.get("inbox_limit") or 50),
             inbox_kind_filter=str(arguments.get("inbox_kind_filter") or "all"),
+            ledger_tail_limit=int(arguments.get("ledger_tail_limit") or 20),
+            ledger_tail_max_chars=int(arguments.get("ledger_tail_max_chars") or 8000),
         )
 
     if name == "cccc_inbox_mark_read":

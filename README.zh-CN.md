@@ -2,9 +2,15 @@
 
 [English](README.md) | **中文** | [日本語](README.ja.md)
 
-> 状态：**0.4.0rc9**（Release Candidate）。为了保证正确性与一致性，0.4.x 期间仍可能有破坏性变更。
+> 状态：**0.4.0rc10**（Release Candidate）。为了保证正确性与一致性，0.4.x 期间仍可能有破坏性变更。
 
-CCCC 是一个**本地优先（local-first）的全局多智能体交付内核**：
+CCCC 是一个**本地优先（local-first）的多智能体协作内核**：它的交互体验尽量接近成熟 IM，但在可靠性上依托于：
+
+- 单一写入者 daemon（唯一事实源）
+- 每个工作组一份追加式 ledger（持久历史）
+- 面向 agents 的 MCP 工具面（避免“stdout 打字但没人看到”的歧义）
+
+一眼看懂：
 
 - 单一 daemon（`ccccd`）统一协调多个 agent runtime（Claude Code、Codex CLI、Droid、OpenCode、Copilot 等）
 - 每个 working group 都有一份**追加式 ledger**，作为唯一事实源
@@ -14,6 +20,16 @@ CCCC 是一个**本地优先（local-first）的全局多智能体交付内核**
 旧版 tmux/TUI（v0.3.x）仓库： https://github.com/ChesterRa/cccc-tmux
 
 ---
+
+## 截图
+
+Chat 界面：
+
+![CCCC Chat UI](screenshots/chat.png)
+
+Agent terminal 界面：
+
+![CCCC Agent Terminal](screenshots/terminal.png)
 
 ## 为什么要从 v0.3 重写？
 
@@ -86,12 +102,12 @@ v0.3.x（tmux-first）验证了“多 agent + 编排循环”是可行的，但�
 
 ### 从 TestPyPI 安装 0.4.x RC（当前推荐）
 
-RC tag（例如 `v0.4.0-rc9`）会发布到 **TestPyPI**。建议依赖从 PyPI 安装，仅 RC 包从 TestPyPI 获取：
+RC tag（例如 `v0.4.0-rc10`）会发布到 **TestPyPI**。建议依赖从 PyPI 安装，仅 RC 包从 TestPyPI 获取：
 
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc9
+  cccc-pair==0.4.0rc10
 ```
 
 说明：目前 PyPI 上的最新稳定版仍是旧版 v0.3.x。想体验 0.4.x RC 请使用以上命令。

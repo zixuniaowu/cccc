@@ -35,6 +35,8 @@ export function VirtualMessageList({
 
     const prevMessageCountRef = useRef(messages.length);
     const isAtBottomRef = useRef(true);
+    const didInitialScrollRef = useRef(false);
+    const scrollTimeoutRef = useRef<number | null>(null);
 
     const virtualizer = useVirtualizer({
         count: messages.length,
@@ -58,6 +60,29 @@ export function VirtualMessageList({
         }
     }, [messages.length, virtualizer]);
 
+    const cancelScheduledScroll = useCallback(() => {
+        const id = scrollTimeoutRef.current;
+        if (id == null) return;
+        scrollTimeoutRef.current = null;
+        window.clearTimeout(id);
+    }, []);
+
+    const scheduleScroll = useCallback((fn: () => void) => {
+        cancelScheduledScroll();
+        // Use setTimeout(0) to avoid flushSync warning during React lifecycle.
+        scrollTimeoutRef.current = window.setTimeout(() => {
+            scrollTimeoutRef.current = null;
+            fn();
+        }, 0);
+    }, [cancelScheduledScroll]);
+
+    const scheduleScrollToBottom = useCallback((opts?: { requireAtBottom?: boolean }) => {
+        scheduleScroll(() => {
+            if (opts?.requireAtBottom && !isAtBottomRef.current) return;
+            scrollToBottom();
+        });
+    }, [scheduleScroll, scrollToBottom]);
+
     // Handle scroll events
     const handleScroll = useCallback(() => {
         const atBottom = checkIsAtBottom();
@@ -72,32 +97,29 @@ export function VirtualMessageList({
         prevMessageCountRef.current = newCount;
 
         if (newCount > prevCount && isAtBottomRef.current) {
-            // Use setTimeout to avoid flushSync warning during React lifecycle
-            setTimeout(() => {
-                scrollToBottom();
-            }, 0);
+            scheduleScrollToBottom({ requireAtBottom: true });
         }
-    }, [messages.length, scrollToBottom]);
+    }, [messages.length, scheduleScrollToBottom]);
 
-    // Initial scroll to bottom
+    // Initial scroll to bottom (first time we have messages)
     useEffect(() => {
-        if (messages.length > 0) {
-            setTimeout(() => {
-                scrollToBottom();
-            }, 0);
-        }
-    }, []);
+        if (didInitialScrollRef.current) return;
+        if (messages.length <= 0) return;
+        didInitialScrollRef.current = true;
+        scheduleScrollToBottom();
+    }, [messages.length, scheduleScrollToBottom]);
 
     // When switching groups, default to showing the latest messages.
     useEffect(() => {
         prevMessageCountRef.current = messages.length;
         isAtBottomRef.current = true;
         if (messages.length > 0) {
-            setTimeout(() => {
-                virtualizer.scrollToIndex(messages.length - 1, { align: "end" });
-            }, 0);
+            scheduleScrollToBottom();
         }
-    }, [groupId, virtualizer]);
+    }, [groupId, messages.length, scheduleScrollToBottom]);
+
+    // Cleanup scheduled scrolls.
+    useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
     return (
         <div

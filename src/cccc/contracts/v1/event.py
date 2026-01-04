@@ -134,10 +134,10 @@ class ContextSyncData(BaseModel):
 
 
 class ChatReadData(BaseModel):
-    """已读回执：actor 标记已读到某条消息"""
+    """Read receipt: an actor marks messages read up to a given event."""
 
-    actor_id: str  # 谁标记的
-    event_id: str  # 已读到哪条消息（含之前所有）
+    actor_id: str  # Actor who marked as read
+    event_id: str  # The last read event_id (inclusive)
 
     model_config = ConfigDict(extra="forbid")
 

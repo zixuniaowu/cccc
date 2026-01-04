@@ -1,15 +1,15 @@
 """
 Context storage for CCCC groups.
 
-基于 ccontext 的设计，为每个 group 提供上下文管理：
-- Vision/Sketch: 项目愿景和静态蓝图
-- Milestones: 里程碑（2-6 个粗粒度阶段）
-- Tasks: 任务（带 3-7 个步骤的可交付工作项）
-- Notes: 笔记（带 TTL 的临时记录）
-- References: 引用（带 TTL 的文件/URL 引用）
-- Presence: 在线状态（agent 当前在做什么）
+Inspired by the "ccontext" pattern, each group has a small, shared working context:
+- Vision/Sketch: project vision and high-level blueprint
+- Milestones: 2–6 coarse phases
+- Tasks: deliverable work items with 3–7 steps
+- Notes: short-lived notes with TTL
+- References: file/URL references with TTL
+- Presence: what each agent is doing
 
-存储位置: ~/.cccc/groups/<group_id>/context/
+Storage: ~/.cccc/groups/<group_id>/context/
 """
 
 from __future__ import annotations

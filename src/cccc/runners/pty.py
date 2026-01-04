@@ -64,6 +64,8 @@ class PtySession:
         self.group_id = group_id
         self.actor_id = actor_id
         self._on_exit = on_exit
+        self._started_at = time.monotonic()
+        self._first_output_at: Optional[float] = None
         self._max_backlog_bytes = int(max_backlog_bytes)
         self._max_client_buffer_bytes = max(int(max_client_buffer_bytes), int(max_backlog_bytes))
 
@@ -80,6 +82,7 @@ class PtySession:
         self._backlog_bytes = 0
         self._mode_tail = b""
         self._bracketed_paste = False
+        self._bracketed_paste_changed_at: Optional[float] = None
 
         master_fd, slave_fd = pty.openpty()
         _set_winsize(master_fd, cols=cols, rows=rows)
@@ -134,9 +137,20 @@ class PtySession:
     def is_running(self) -> bool:
         return bool(self._running) and self._proc.poll() is None
 
+    def started_at_monotonic(self) -> float:
+        return float(self._started_at)
+
+    def first_output_at_monotonic(self) -> Optional[float]:
+        with self._lock:
+            return None if self._first_output_at is None else float(self._first_output_at)
+
     def bracketed_paste_enabled(self) -> bool:
         with self._lock:
             return bool(self._bracketed_paste)
+
+    def bracketed_paste_changed_at_monotonic(self) -> Optional[float]:
+        with self._lock:
+            return None if self._bracketed_paste_changed_at is None else float(self._bracketed_paste_changed_at)
 
     def tail_output(self, *, max_bytes: int = 2_000_000) -> bytes:
         """Return the latest PTY output bytes (bounded).
@@ -275,6 +289,8 @@ class PtySession:
     def _append_backlog(self, chunk: bytes) -> None:
         if not chunk:
             return
+        if self._first_output_at is None:
+            self._first_output_at = time.monotonic()
         self._backlog.append(chunk)
         self._backlog_bytes += len(chunk)
         limit = max(0, self._max_backlog_bytes)
@@ -373,7 +389,10 @@ class PtySession:
             last_enable = data.rfind(enable)
             last_disable = data.rfind(disable)
             if last_enable >= 0 or last_disable >= 0:
-                self._bracketed_paste = last_enable > last_disable
+                new_state = last_enable > last_disable
+                if new_state != self._bracketed_paste:
+                    self._bracketed_paste = new_state
+                    self._bracketed_paste_changed_at = time.monotonic()
             keep = max(len(enable), len(disable)) - 1
             self._mode_tail = data[-keep:] if keep > 0 else b""
 
@@ -648,6 +667,55 @@ class PtySupervisor:
         with self._lock:
             s = self._sessions.get(key)
         return bool(s and s.is_running() and s.bracketed_paste_enabled())
+
+    def bracketed_paste_status(self, *, group_id: str, actor_id: str) -> Tuple[bool, Optional[float]]:
+        """Return (enabled, changed_at_monotonic) for bracketed paste mode."""
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None or not s.is_running():
+            return (False, None)
+        try:
+            return (bool(s.bracketed_paste_enabled()), s.bracketed_paste_changed_at_monotonic())
+        except Exception:
+            return (False, None)
+
+    def startup_times(self, *, group_id: str, actor_id: str) -> Tuple[Optional[float], Optional[float]]:
+        """Return (started_at_monotonic, first_output_at_monotonic) for a running actor."""
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None or not s.is_running():
+            return (None, None)
+        try:
+            return (s.started_at_monotonic(), s.first_output_at_monotonic())
+        except Exception:
+            return (None, None)
+
+    def session_key(self, *, group_id: str, actor_id: str) -> Optional[str]:
+        """Return a stable key for the current PTY session (changes on restart).
+
+        Used to scope "lazy preamble sent" state to a specific PTY session, not just actor_id.
+        """
+        key = (str(group_id or "").strip(), str(actor_id or "").strip())
+        if not key[0] or not key[1]:
+            return None
+        with self._lock:
+            s = self._sessions.get(key)
+        if s is None or not s.is_running():
+            return None
+        try:
+            pid = int(s.pid or 0)
+            started_us = int(float(s.started_at_monotonic()) * 1_000_000)
+            if pid > 0 and started_us > 0:
+                return f"{pid}:{started_us}"
+            if started_us > 0:
+                return str(started_us)
+            if pid > 0:
+                return str(pid)
+        except Exception:
+            return None
+        return None
 
     def resize(self, *, group_id: str, actor_id: str, cols: int, rows: int) -> None:
         key = (str(group_id or "").strip(), str(actor_id or "").strip())

@@ -971,7 +971,7 @@ def _maybe_autostart_running_groups() -> None:
             clear_preamble_sent(group, aid)
             # Do not drop any messages that may have been queued while the daemon was starting.
             THROTTLE.reset_actor(group.group_id, aid, keep_pending=True)
-            # NOTE: 不在启动时注入 system prompt（lazy preamble）
+            # NOTE: Do not inject the system prompt at startup (lazy preamble).
         # Daemon restart should behave like a resume: do not "catch up" on reminders.
         try:
             from ..kernel.group import get_group_state
@@ -2620,7 +2620,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     _write_pty_state(group.group_id, actor_id, pid=session.pid)
                 except Exception:
                     pass
-                # NOTE: 不在重启时注入 system prompt（lazy preamble）
+                # NOTE: Do not inject the system prompt during restart (lazy preamble).
         _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
         ev = append_event(
             group.ledger_path,
@@ -2976,22 +2976,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         except Exception:
             pass
 
-        # Immediately try to flush pending messages (don't wait for tick)
-        try:
-            for actor in list_actors(group):
-                if not isinstance(actor, dict):
-                    continue
-                aid = str(actor.get("id") or "").strip()
-                if not aid:
-                    continue
-                runner_kind = str(actor.get("runner") or "pty").strip()
-                actor_running = pty_runner.SUPERVISOR.actor_running(group_id, aid)
-                logger.debug(f"[SEND] flush check: {group_id}/{aid} runner={runner_kind} running={actor_running}")
-                if runner_kind == "pty" and actor_running:
-                    logger.debug(f"[SEND] flushing: {group_id}/{aid}")
-                    flush_pending_messages(group, actor_id=aid)
-        except Exception:
-            pass
+        # Delivery is handled by the background tick. Do not flush synchronously here:
+        # PTY writes can block and would stall the daemon request loop, freezing the UI.
 
         return DaemonResponse(ok=True, result={"event": ev}), False
 
@@ -3035,15 +3021,15 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         except Exception:
             pass
 
-        # 查找被回复的消息
+        # Find the original message being replied to.
         original = find_event(group, reply_to)
         if original is None:
             return _error("event_not_found", f"event not found: {reply_to}"), False
 
-        # 获取引用文本
+        # Extract quote text.
         quote_text = get_quote_text(group, reply_to, max_len=100)
 
-        # 如果没有指定收件人，默认回复给原消息发送者
+        # If recipients are not provided, default to the original sender.
         if not to_tokens:
             original_by = str(original.get("by") or "").strip()
             if original_by:
@@ -3075,7 +3061,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             ).model_dump(),
         )
 
-        # 更新 group 活跃时间
+        # Update group "last active" timestamp.
         try:
             reg = load_registry()
             meta = reg.groups.get(group.group_id)
@@ -3158,19 +3144,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         except Exception:
             pass
 
-        # Immediately try to flush pending messages (don't wait for tick)
-        try:
-            for actor in list_actors(group):
-                if not isinstance(actor, dict):
-                    continue
-                aid = str(actor.get("id") or "").strip()
-                if not aid:
-                    continue
-                runner_kind = str(actor.get("runner") or "pty").strip()
-                if runner_kind == "pty" and pty_runner.SUPERVISOR.actor_running(group_id, aid):
-                    flush_pending_messages(group, actor_id=aid)
-        except Exception:
-            pass
+        # Delivery is handled by the background tick. Do not flush synchronously here:
+        # PTY writes can block and would stall the daemon request loop, freezing the UI.
 
         return DaemonResponse(ok=True, result={"event": ev}), False
 
@@ -3224,7 +3199,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
 
-        # 验证 kind 和 priority
+        # Validate kind and priority.
         valid_kinds = {"nudge", "keepalive", "actor_idle", "silence_check", "standup", "status_change", "error", "info"}
         valid_priorities = {"low", "normal", "high", "urgent"}
         if kind not in valid_kinds:
@@ -3249,7 +3224,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             },
         )
 
-        # Best-effort 投递到 PTY（仅 high/urgent 优先级）
+        # Best-effort PTY delivery (high/urgent priority only).
         if priority in ("high", "urgent"):
             event_id = str(ev.get("id") or "").strip()
             event_ts = str(ev.get("ts") or "").strip()
@@ -3259,10 +3234,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 aid = str(actor.get("id") or "").strip()
                 if not aid or aid == "user":
                     continue
-                # 检查是否是目标 actor
+                # Respect explicit target_actor_id if set.
                 if target_actor_id and aid != target_actor_id:
                     continue
-                # 只投递给 PTY runner
+                # PTY runner only.
                 runner_kind = str(actor.get("runner") or "pty").strip()
                 if runner_kind != "pty":
                     continue
@@ -3296,7 +3271,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         if group is None:
             return _error("group_not_found", f"group not found: {group_id}"), False
 
-        # 验证通知事件存在
+        # Validate the referenced notify event.
         notify_ev = find_event(group, notify_event_id)
         if notify_ev is None:
             return _error("event_not_found", f"event not found: {notify_event_id}"), False

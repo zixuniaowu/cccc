@@ -1,12 +1,12 @@
 """
-CCCC MCP Server — 主入口
+CCCC MCP Server — entrypoint
 
-支持 stdio 模式运行，供 agent runtimes 调用。
+Runs in stdio mode for agent runtimes.
 
 Usage:
     python -m cccc.ports.mcp.main
 
-或通过 CLI:
+Or via CLI:
     cccc mcp
 """
 
@@ -21,7 +21,7 @@ from .server import MCP_TOOLS, MCPError, handle_tool_call
 
 
 def _read_message() -> Optional[Dict[str, Any]]:
-    """从 stdin 读取一条 JSON-RPC 消息"""
+    """Read a single JSON-RPC message from stdin."""
     try:
         line = sys.stdin.readline()
         if not line:
@@ -32,18 +32,18 @@ def _read_message() -> Optional[Dict[str, Any]]:
 
 
 def _write_message(msg: Dict[str, Any]) -> None:
-    """向 stdout 写入一条 JSON-RPC 消息"""
+    """Write a single JSON-RPC message to stdout."""
     sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
 
 def _make_response(id: Any, result: Any) -> Dict[str, Any]:
-    """构造 JSON-RPC 成功响应"""
+    """Build a JSON-RPC success response."""
     return {"jsonrpc": "2.0", "id": id, "result": result}
 
 
 def _make_error(id: Any, code: int, message: str, data: Any = None) -> Dict[str, Any]:
-    """构造 JSON-RPC 错误响应"""
+    """Build a JSON-RPC error response."""
     error: Dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         error["data"] = data
@@ -51,12 +51,12 @@ def _make_error(id: Any, code: int, message: str, data: Any = None) -> Dict[str,
 
 
 def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
-    """处理 MCP JSON-RPC 请求"""
+    """Handle an MCP JSON-RPC request."""
     req_id = req.get("id")
     method = str(req.get("method") or "")
     params = req.get("params") or {}
 
-    # MCP 协议方法
+    # MCP protocol methods
     if method == "initialize":
         return _make_response(req_id, {
             "protocolVersion": "2024-11-05",
@@ -73,7 +73,7 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
         })
 
     if method.startswith("notifications/"):
-        # 通知，不需要响应
+        # Notifications do not require a response.
         return {}
 
     if method == "tools/list":
@@ -141,19 +141,19 @@ def handle_request(req: Dict[str, Any]) -> Dict[str, Any]:
                 "isError": True,
             })
 
-    # 未知方法
+    # Unknown method
     return _make_error(req_id, -32601, f"Method not found: {method}")
 
 
 def main() -> int:
-    """MCP Server 主循环（stdio 模式）"""
+    """MCP server main loop (stdio mode)."""
     while True:
         msg = _read_message()
         if msg is None:
             break
 
         resp = handle_request(msg)
-        if resp:  # 通知不需要响应
+        if resp:  # Notifications return {}
             _write_message(resp)
 
     return 0

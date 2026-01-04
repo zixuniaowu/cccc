@@ -32,31 +32,30 @@ def validate_actor_id(actor_id: str) -> str:
     aid = actor_id.strip()
     
     if not aid:
-        raise ValueError("名前を入力してください / Please enter a name")
+        raise ValueError("Please enter a name")
     
     if len(aid) > 32:
-        raise ValueError("名前は32文字以内にしてください / Name must be 32 characters or less")
+        raise ValueError("Name must be 32 characters or less")
     
     if " " in aid or "\t" in aid or "\n" in aid:
-        raise ValueError("名前にスペースは使えません / Name cannot contain spaces")
+        raise ValueError("Name cannot contain spaces")
     
     if "." in aid:
-        raise ValueError("名前にドット(.)は使えません / Name cannot contain dots")
+        raise ValueError("Name cannot contain dots")
     
     if "@" in aid:
-        raise ValueError("名前に@は使えません / Name cannot contain @")
+        raise ValueError("Name cannot contain @")
     
     if "/" in aid or "\\" in aid:
-        raise ValueError("名前にスラッシュは使えません / Name cannot contain slashes")
+        raise ValueError("Name cannot contain slashes")
     
     if not _ACTOR_ID_RE.match(aid):
         raise ValueError(
-            "名前は文字・数字・ハイフン・アンダースコアのみ使用できます / "
             "Name can only contain letters, numbers, hyphens, and underscores"
         )
     
     if aid.casefold() in _RESERVED_IDS or aid in _RESERVED_IDS:
-        raise ValueError(f"'{aid}' は予約語です。別の名前を使ってください / '{aid}' is reserved, please use another name")
+        raise ValueError(f"'{aid}' is reserved, please use another name")
     
     return aid
 
@@ -183,7 +182,7 @@ def add_actor(
 
     existing = find_actor(group, aid)
     if existing is not None:
-        raise ValueError(f"この名前は既に使われています / Name already exists: {aid}")
+        raise ValueError(f"Name already exists: {aid}")
 
     now = utc_now_iso()
     actor = Actor(
