@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { LedgerEvent, Actor, getActorAccentColor } from "../types";
 import { formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
@@ -18,7 +19,7 @@ export interface MessageBubbleProps {
     onShowRecipients: () => void;
 }
 
-export function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
     event: ev,
     actors,
     isDark,
@@ -271,4 +272,13 @@ export function MessageBubble({
             </div>
         </div>
     );
-}
+}, (prevProps, nextProps) => {
+    // 自定义比较：忽略回调函数（它们每次渲染都会重新创建，但行为一致）
+    return (
+        prevProps.event.id === nextProps.event.id &&
+        prevProps.event.ts === nextProps.event.ts &&
+        prevProps.actors === nextProps.actors &&
+        prevProps.isDark === nextProps.isDark &&
+        prevProps.groupId === nextProps.groupId
+    );
+});
