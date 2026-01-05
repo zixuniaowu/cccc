@@ -1,13 +1,13 @@
-// useSwipeNavigation - 触摸手势导航 hook
+// useSwipeNavigation provides touch swipe navigation between tabs.
 import { useRef, useCallback } from "react";
 
 interface UseSwipeNavigationOptions {
   tabs: string[];
   activeTab: string;
   onTabChange: (tab: string) => void;
-  /** 最小水平滑动距离 (px) */
+  /** Minimum horizontal swipe distance (px). */
   minSwipeDistance?: number;
-  /** 水平/垂直比例阈值 */
+  /** Horizontal/vertical ratio threshold. */
   swipeRatio?: number;
 }
 
@@ -33,14 +33,14 @@ export function useSwipeNavigation({
       const deltaX = touchEndX - touchStartX.current;
       const deltaY = touchEndY - touchStartY.current;
 
-      // 判断是否为有效的水平滑动
+      // Determine whether this is a valid horizontal swipe.
       if (Math.abs(deltaX) > minSwipeDistance && Math.abs(deltaX) > Math.abs(deltaY) * swipeRatio) {
         const currentIndex = tabs.indexOf(activeTab);
         if (deltaX > 0 && currentIndex > 0) {
-          // 向右滑动 -> 上一个 tab
+          // Swipe right -> previous tab
           onTabChange(tabs[currentIndex - 1]);
         } else if (deltaX < 0 && currentIndex < tabs.length - 1) {
-          // 向左滑动 -> 下一个 tab
+          // Swipe left -> next tab
           onTabChange(tabs[currentIndex + 1]);
         }
       }

@@ -1,4 +1,4 @@
-// ChatTab - 聊天页面主组件
+// ChatTab is the main chat page component.
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
 import { Actor, LedgerEvent, ReplyTarget } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
@@ -31,7 +31,6 @@ export interface ChatTabProps {
   onScrollChange: (isAtBottom: boolean) => void;
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
-  initialScrollTop?: number; // 用于恢复滚动位置
 
   // Composer
   replyTarget: ReplyTarget;
@@ -80,7 +79,6 @@ export function ChatTab({
   onScrollChange,
   onReply,
   onShowRecipients,
-  initialScrollTop,
   replyTarget,
   onCancelReply,
   toTokens,
@@ -102,7 +100,7 @@ export function ChatTab({
   setMentionFilter,
   onAppendRecipientToken,
 }: ChatTabProps) {
-  // 空状态 - 显示全屏设置引导
+  // Empty state: show full-screen setup guidance.
   if (chatMessages.length === 0 && showSetupCard) {
     return (
       <>
@@ -165,7 +163,7 @@ export function ChatTab({
 
   return (
     <>
-      {/* 紧凑设置卡片 - 有消息时显示在顶部 */}
+      {/* Compact setup card (shown above the list when messages exist) */}
       {showSetupCard && chatMessages.length > 0 && (
         <div className="flex-shrink-0 px-4 pt-4">
           <div
@@ -194,7 +192,7 @@ export function ChatTab({
         </div>
       )}
 
-      {/* 消息列表 */}
+      {/* Message list */}
       <VirtualMessageList
         messages={chatMessages}
         actors={actors}
@@ -207,10 +205,9 @@ export function ChatTab({
         onScrollButtonClick={onScrollButtonClick}
         chatUnreadCount={chatUnreadCount}
         onScrollChange={onScrollChange}
-        initialScrollTop={initialScrollTop}
       />
 
-      {/* 消息输入 */}
+      {/* Composer */}
       <ChatComposer
         isDark={isDark}
         isSmallScreen={isSmallScreen}

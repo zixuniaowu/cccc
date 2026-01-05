@@ -1,4 +1,4 @@
-// Settings Modal 组件导出
+// Settings modal exports.
 export { TimingTab } from "./TimingTab";
 export { IMBridgeTab } from "./IMBridgeTab";
 export { TranscriptTab } from "./TranscriptTab";

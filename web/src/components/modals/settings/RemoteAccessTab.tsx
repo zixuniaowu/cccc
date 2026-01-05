@@ -1,4 +1,4 @@
-// RemoteAccessTab - 远程访问设置指南
+// RemoteAccessTab provides remote access setup guidance.
 import { cardClass, preClass } from "./types";
 
 interface RemoteAccessTabProps {

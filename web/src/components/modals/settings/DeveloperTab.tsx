@@ -1,4 +1,4 @@
-// DeveloperTab - 开发者模式设置
+// DeveloperTab configures developer mode.
 import { inputClass, labelClass, primaryButtonClass, cardClass, preClass } from "./types";
 
 interface DeveloperTabProps {

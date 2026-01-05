@@ -21,7 +21,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
     if (!activeTabRef.current || !tabBarRef.current) return;
     const container = tabBarRef.current;
     const tab = activeTabRef.current;
-    // 使用 requestAnimationFrame 避免 forced reflow
+    // Use requestAnimationFrame to avoid forced reflow.
     requestAnimationFrame(() => {
       const containerRect = container.getBoundingClientRect();
       const tabRect = tab.getBoundingClientRect();

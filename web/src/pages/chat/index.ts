@@ -1,4 +1,4 @@
-// Chat 页面组件导出
+// Chat page exports.
 export { ChatTab } from "./ChatTab";
 export type { ChatTabProps } from "./ChatTab";
 export { SetupChecklist } from "./SetupChecklist";

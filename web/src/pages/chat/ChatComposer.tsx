@@ -1,4 +1,4 @@
-// ChatComposer - 消息输入组件
+// ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { Actor, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
@@ -68,7 +68,7 @@ export function ChatComposer({
   setMentionFilter,
   onAppendRecipientToken,
 }: ChatComposerProps) {
-  // 处理粘贴文件
+  // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const dt = e.clipboardData;
     if (!dt) return;
@@ -95,7 +95,7 @@ export function ChatComposer({
     if (files.length === 0) return;
     if (!selectedGroupId) return;
 
-    // 去重
+    // De-duplicate within a single paste.
     const seen = new Set<string>();
     const unique: File[] = [];
     for (const f of files) {
@@ -110,18 +110,18 @@ export function ChatComposer({
     appendComposerFiles(unique);
   };
 
-  // 处理文本变化
+  // Handle text changes.
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setComposerText(val);
     const target = e.target;
-    // 使用 requestAnimationFrame 避免 forced reflow
+    // Use requestAnimationFrame to avoid forced reflow during layout.
     requestAnimationFrame(() => {
       target.style.height = "auto";
       target.style.height = Math.min(target.scrollHeight, 140) + "px";
     });
 
-    // 检测 @ 提及
+    // Detect @ mentions for the recipient helper menu.
     const lastAt = val.lastIndexOf("@");
     if (lastAt >= 0) {
       const afterAt = val.slice(lastAt + 1);
@@ -141,7 +141,7 @@ export function ChatComposer({
     }
   };
 
-  // 处理键盘事件
+  // Handle keyboard shortcuts and mention navigation.
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (showMentionMenu && mentionSuggestions.length > 0) {
       const maxIndex = Math.min(mentionSuggestions.length, 8) - 1;
@@ -178,7 +178,7 @@ export function ChatComposer({
     }
   };
 
-  // 选择提及
+  // Select a mention from the menu.
   const selectMention = (selected: string | undefined) => {
     if (!selected) return;
     const lastAt = composerText.lastIndexOf("@");

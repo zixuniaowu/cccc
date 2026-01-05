@@ -1,4 +1,4 @@
-// AppModals - 集中渲染所有 Modal 组件
+// AppModals renders all modal components in one place.
 import { ContextModal } from "./ContextModal";
 import { SettingsModal } from "./SettingsModal";
 import { SearchModal } from "./SearchModal";

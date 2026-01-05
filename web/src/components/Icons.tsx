@@ -4,7 +4,7 @@ interface IconProps {
   size?: number;
 }
 
-// 简洁现代的线条图标，配合液态玻璃 UI 风格
+// Minimal line icons, designed to match the "liquid glass" UI style.
 export function ClipboardIcon({ className, size = 18 }: IconProps) {
   return (
     <svg

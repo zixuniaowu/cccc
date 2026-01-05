@@ -1,10 +1,10 @@
-// Settings Modal 共享类型
+// Shared types/helpers for the Settings modal.
 
 export type SettingsScope = "group" | "global";
 export type GroupTabId = "timing" | "im" | "transcript";
 export type GlobalTabId = "remote" | "developer";
 
-// 共享的样式类名
+// Shared style class helpers
 export const inputClass = (isDark: boolean) =>
   `w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
     isDark

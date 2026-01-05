@@ -1,8 +1,8 @@
-// UI 状态管理 - 管理 UI 相关状态
+// UI state store (tabs, sidebar, toasts, etc.).
 import { create } from "zustand";
 
 interface UIState {
-  // 状态
+  // State
   activeTab: string;
   busy: string;
   errorMsg: string;
@@ -29,7 +29,7 @@ interface UIState {
 let errorTimeoutId: number | null = null;
 
 export const useUIStore = create<UIState>((set) => ({
-  // 初始状态
+  // Initial state
   activeTab: "chat",
   busy: "",
   errorMsg: "",

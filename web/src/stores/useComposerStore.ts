@@ -1,4 +1,4 @@
-// Composer 状态管理 - 消息编辑器状态
+// Chat composer state store.
 import { create } from "zustand";
 import type { ReplyTarget } from "../types";
 

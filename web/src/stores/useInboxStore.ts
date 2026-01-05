@@ -1,4 +1,4 @@
-// Inbox 状态管理
+// Inbox modal state store.
 import { create } from "zustand";
 import type { LedgerEvent } from "../types";
 

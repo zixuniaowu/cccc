@@ -1,4 +1,4 @@
-// 表单状态管理 - 管理各种 Modal 的表单状态
+// Form state store for modals.
 import { create } from "zustand";
 import type { DirItem, DirSuggestion, SupportedRuntime } from "../types";
 

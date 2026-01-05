@@ -1,4 +1,4 @@
-// API 服务层 - 集中管理所有 API 调用
+// API service layer (centralized API calls).
 import type {
   GroupMeta,
   GroupDoc,
@@ -13,13 +13,13 @@ import type {
   IMStatus,
 } from "../types";
 
-// ============ 基础类型和封装 ============
+// ============ Base types & helpers ============
 
 export type ApiResponse<T> =
   | { ok: true; result: T; error?: null }
   | { ok: false; result?: unknown; error: { code: string; message: string; details?: unknown } };
 
-// 创建错误响应的辅助函数
+// Helper to create a typed error response.
 function makeErrorResponse<T>(code: string, message: string): ApiResponse<T> {
   return { ok: false, error: { code, message } };
 }
@@ -35,13 +35,13 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
       },
     });
   } catch (e) {
-    // 网络错误
+    // Network error
     return makeErrorResponse("NETWORK_ERROR", e instanceof Error ? e.message : "Network request failed");
   }
 
   const text = await resp.text();
   if (!text) {
-    // 空响应但状态码成功
+    // Empty body but 2xx
     if (resp.ok) {
       return { ok: true, result: {} as T };
     }
@@ -52,7 +52,7 @@ export async function apiJson<T>(path: string, init?: RequestInit): Promise<ApiR
     const data = JSON.parse(text);
     return data as ApiResponse<T>;
   } catch {
-    // JSON 解析失败
+    // JSON parse error
     return makeErrorResponse("PARSE_ERROR", `Invalid JSON response: ${text.slice(0, 100)}`);
   }
 }

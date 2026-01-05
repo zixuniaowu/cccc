@@ -5,37 +5,35 @@ import { LedgerEvent, Actor } from "../types";
 import { MessageBubble } from "./MessageBubble";
 
 export interface VirtualMessageListProps {
-    messages: LedgerEvent[];
-    actors: Actor[];
-    isDark: boolean;
-    groupId: string;
-    scrollRef?: MutableRefObject<HTMLDivElement | null>;
-    onReply: (ev: LedgerEvent) => void;
-    onShowRecipients: (eventId: string) => void;
-    showScrollButton: boolean;
-    onScrollButtonClick: () => void;
-    chatUnreadCount: number;
-    onScrollChange?: (isAtBottom: boolean) => void;
-    initialScrollTop?: number; // 用于恢复滚动位置
+  messages: LedgerEvent[];
+  actors: Actor[];
+  isDark: boolean;
+  groupId: string;
+  scrollRef?: MutableRefObject<HTMLDivElement | null>;
+  onReply: (ev: LedgerEvent) => void;
+  onShowRecipients: (eventId: string) => void;
+  showScrollButton: boolean;
+  onScrollButtonClick: () => void;
+  chatUnreadCount: number;
+  onScrollChange?: (isAtBottom: boolean) => void;
 }
 
 export const VirtualMessageList = memo(function VirtualMessageList({
-    messages,
-    actors,
-    isDark,
-    groupId,
-    scrollRef,
-    onReply,
-    onShowRecipients,
-    showScrollButton,
-    onScrollButtonClick,
-    chatUnreadCount,
-    onScrollChange,
-    initialScrollTop,
+  messages,
+  actors,
+  isDark,
+  groupId,
+  scrollRef,
+  onReply,
+  onShowRecipients,
+  showScrollButton,
+  onScrollButtonClick,
+  chatUnreadCount,
+  onScrollChange,
 }: VirtualMessageListProps) {
   const parentRef = useRef<HTMLDivElement | null>(null);
 
-  const prevMessageCountRef = useRef(0); // 初始为 0，确保首次有消息时能触发滚动
+  const prevMessageCountRef = useRef(messages.length);
   const isAtBottomRef = useRef(true);
   const didInitialScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<number | null>(null);
@@ -46,13 +44,8 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     getScrollElement: () => parentRef.current,
     estimateSize: () => 120,
     overscan: 5,
-    // initialOffset is only used when there is a saved scroll position
-    ...(initialScrollTop && initialScrollTop > 0
-      ? { initialOffset: initialScrollTop }
-      : {}),
   });
 
-  // Check if scrolled to bottom
   const checkIsAtBottom = useCallback(() => {
     const el = parentRef.current;
     if (!el) return true;
@@ -60,11 +53,9 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   }, []);
 
-  // Scroll to bottom - Use native scrolling to avoid boundary issues with virtualizer.scrollToIndex
   const scrollToBottom = useCallback(() => {
     const el = parentRef.current;
     if (!el || messages.length <= 0) return;
-    // use requestAnimationFrame
     requestAnimationFrame(() => {
       el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
     });
@@ -89,49 +80,38 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     [cancelScheduledScroll]
   );
 
-  const scheduleScrollToBottom = useCallback(() => {
-    scheduleScroll(() => scrollToBottom());
-  }, [scheduleScroll, scrollToBottom]);
+  const scheduleScrollToBottom = useCallback(
+    (opts?: { requireAtBottom?: boolean }) => {
+      scheduleScroll(() => {
+        if (opts?.requireAtBottom && !isAtBottomRef.current) return;
+        scrollToBottom();
+      });
+    },
+    [scheduleScroll, scrollToBottom]
+  );
 
-  // Handle scroll events
   const handleScroll = useCallback(() => {
     const atBottom = checkIsAtBottom();
     isAtBottomRef.current = atBottom;
     onScrollChange?.(atBottom);
   }, [checkIsAtBottom, onScrollChange]);
 
-  // Auto-scroll when new messages arrive and user was at bottom
   useEffect(() => {
     const prevCount = prevMessageCountRef.current;
     const newCount = messages.length;
     prevMessageCountRef.current = newCount;
 
-    // 在此刻捕获 isAtBottom 状态，不要在异步回调中再检查
-    // 因为 virtualizer 重新渲染可能导致短暂的滚动事件改变 isAtBottomRef
     if (newCount > prevCount && isAtBottomRef.current) {
-      scheduleScrollToBottom();
+      scheduleScrollToBottom({ requireAtBottom: true });
     }
   }, [messages.length, scheduleScrollToBottom]);
 
-  // Initial scroll to bottom (only when no initialOffset is provided)
   useEffect(() => {
     if (didInitialScrollRef.current) return;
     if (messages.length <= 0) return;
     didInitialScrollRef.current = true;
-    // 如果有 initialScrollTop，virtualizer 的 initialOffset 已处理
-    // 否则滚动到底部
-    if (!initialScrollTop || initialScrollTop <= 0) {
-      scheduleScrollToBottom();
-    } else {
-      // 更新 isAtBottom 状态
-      isAtBottomRef.current = checkIsAtBottom();
-    }
-  }, [
-    messages.length,
-    scheduleScrollToBottom,
-    initialScrollTop,
-    checkIsAtBottom,
-  ]);
+    scheduleScrollToBottom();
+  }, [messages.length, scheduleScrollToBottom]);
 
   // When switching groups, default to showing the latest messages.
   // Important: do NOT depend on messages.length here, otherwise every new message would
@@ -143,7 +123,6 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     cancelScheduledScroll();
   }, [groupId, cancelScheduledScroll]);
 
-  // Cleanup scheduled scrolls.
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
   return (
@@ -160,18 +139,10 @@ export const VirtualMessageList = memo(function VirtualMessageList({
       {messages.length === 0 ? (
         <div className="flex flex-col items-center justify-center h-full text-center pb-20 opacity-50">
           <div className="text-4xl mb-4 grayscale">💬</div>
-          <p
-            className={`text-sm font-medium ${
-              isDark ? "text-slate-400" : "text-gray-500"
-            }`}
-          >
+          <p className={`text-sm font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>
             No messages yet
           </p>
-          <p
-            className={`text-xs mt-1 ${
-              isDark ? "text-slate-600" : "text-gray-400"
-            }`}
-          >
+          <p className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
             Start the conversation with your AI team.
           </p>
         </div>
@@ -233,18 +204,8 @@ export const VirtualMessageList = memo(function VirtualMessageList({
               }}
               aria-label="Scroll to bottom"
             >
-              <svg
-                className="w-5 h-5"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M19 14l-7 7m0 0l-7-7m7 7V3"
-                />
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
               </svg>
               {chatUnreadCount > 0 && (
                 <span className="absolute -top-1 -right-1 flex h-4 w-4">

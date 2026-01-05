@@ -1,4 +1,4 @@
-// Group 状态管理 - 管理 groups, actors, events 等核心数据
+// Group state store (groups, actors, events, context, settings).
 import { create } from "zustand";
 import type {
   GroupMeta,
@@ -12,7 +12,7 @@ import type {
 import * as api from "../services/api";
 
 interface GroupState {
-  // 数据
+  // Data
   groups: GroupMeta[];
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
@@ -42,14 +42,14 @@ interface GroupState {
 
 const MAX_UI_EVENTS = 800;
 
-// 防抖标记
+// In-flight guards
 let refreshGroupsInFlight = false;
 let refreshGroupsQueued = false;
 const refreshActorsInFlight = new Set<string>();
 const refreshActorsQueued = new Set<string>();
 
 export const useGroupStore = create<GroupState>((set, get) => ({
-  // 初始状态
+  // Initial state
   groups: [],
   selectedGroupId: "",
   groupDoc: null,
@@ -59,7 +59,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   groupSettings: null,
   runtimes: [],
 
-  // 同步 actions
+  // Sync actions
   setGroups: (groups) => set({ groups }),
   setSelectedGroupId: (id) => set({ selectedGroupId: id }),
   setGroupDoc: (doc) => set({ groupDoc: doc }),
@@ -87,8 +87,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       for (let i = 0; i <= idx; i++) {
         const m = next[i];
         if (!m || m.kind !== "chat.message") continue;
-        const rs: Record<string, boolean> =
-          m._read_status && typeof m._read_status === "object" ? { ...m._read_status } : {};
+        const rs: Record<string, boolean> | null =
+          m._read_status && typeof m._read_status === "object" ? { ...m._read_status } : null;
+        // Only mark for actual recipients; never add keys for non-recipients.
+        if (!rs || !Object.prototype.hasOwnProperty.call(rs, actorId)) continue;
         if (rs[actorId] === true) continue;
         rs[actorId] = true;
         next[i] = { ...m, _read_status: rs };
@@ -96,7 +98,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       return { events: next };
     }),
 
-  // 异步 actions
+  // Async actions
   refreshGroups: async () => {
     if (refreshGroupsInFlight) {
       refreshGroupsQueued = true;
@@ -151,13 +153,19 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   },
 
   loadGroup: async (groupId: string) => {
+    const gid = String(groupId || "").trim();
+    if (!gid) return;
+
     const [show, tail, a, ctx, settings] = await Promise.all([
-      api.fetchGroup(groupId),
-      api.fetchLedgerTail(groupId),
-      api.fetchActors(groupId),
-      api.fetchContext(groupId),
-      api.fetchSettings(groupId),
+      api.fetchGroup(gid),
+      api.fetchLedgerTail(gid),
+      api.fetchActors(gid),
+      api.fetchContext(gid),
+      api.fetchSettings(gid),
     ]);
+
+    // Guard against out-of-order resolves when the user switches groups quickly.
+    if (get().selectedGroupId !== gid) return;
 
     set({
       groupDoc: show.ok ? show.result.group : null,

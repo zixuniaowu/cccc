@@ -1,4 +1,4 @@
-// TimingTab - 时间设置
+// TimingTab configures timing-related settings.
 import { inputClass, labelClass, primaryButtonClass } from "./types";
 
 interface TimingTabProps {

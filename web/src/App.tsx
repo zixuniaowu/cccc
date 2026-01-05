@@ -105,7 +105,6 @@ export default function App() {
   const chatAtBottomRef = useRef<boolean>(true);
   const actorsRef = useRef<Actor[]>([]);
   // Local state
-  const [chatScrollTop, setChatScrollTop] = React.useState(0); // 保存 chat 滚动位置
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [mentionFilter, setMentionFilter] = React.useState("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
@@ -128,16 +127,10 @@ export default function App() {
     return ["chat", ...actors.map((a) => a.id)];
   }, [actors]);
 
-  // 切换 tab 时先保存滚动位置（在组件卸载前同步执行）
   const handleTabChange = React.useCallback((newTab: string) => {
-    if (activeTab === "chat" && newTab !== "chat") {
-      const container = eventContainerRef.current;
-      if (container) {
-        setChatScrollTop(container.scrollTop);
-      }
-    }
+    // Keep Chat mounted to preserve scroll position; no need to snapshot scrollTop.
     setActiveTab(newTab);
-  }, [activeTab, setActiveTab]);
+  }, [setActiveTab]);
 
   // Swipe navigation
   const { handleTouchStart, handleTouchEnd } = useSwipeNavigation({
@@ -149,20 +142,14 @@ export default function App() {
   // Keep refs in sync
   useEffect(() => {
     activeTabRef.current = activeTab;
-    // 进入 chat tab 时清理未读计数并滚动到底部
-    if (activeTab === "chat") {
-      setChatUnreadCount(0);
-      setShowScrollButton(false);
-      // 延迟滚动，等待 hidden 类移除后虚拟列表重新计算
-      const timer = setTimeout(() => {
-        const container = eventContainerRef.current;
-        if (container) {
-          container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
-        }
-        chatAtBottomRef.current = true;
-      }, 50);
-      return () => clearTimeout(timer);
-    }
+    if (activeTab !== "chat") return;
+    const el = eventContainerRef.current;
+    if (!el) return;
+    const threshold = 100;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    chatAtBottomRef.current = atBottom;
+    setShowScrollButton(!atBottom);
+    if (atBottom) setChatUnreadCount(0);
   }, [activeTab, setChatUnreadCount, setShowScrollButton]);
 
   useEffect(() => {
@@ -228,7 +215,7 @@ export default function App() {
   }, [activeTab, actors]);
 
   // ============ Group Selection Effect ============
-  // 只在 selectedGroupId 变化时重新连接，其他函数是稳定引用
+  // Only reconnect/reload when selectedGroupId changes.
   useEffect(() => {
     clearComposer();
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -247,7 +234,7 @@ export default function App() {
   }, [selectedGroupId]);
 
   // ============ Initial Load ============
-  // 只在 mount 时执行一次
+  // Run once on mount.
   useEffect(() => {
     refreshGroups();
     void fetchRuntimes();
@@ -336,11 +323,7 @@ export default function App() {
     });
   }
 
-  const scrollToBottom = () => {
-    const container = eventContainerRef.current;
-    if (container) {
-      container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
-    }
+  const handleScrollButtonClick = () => {
     chatAtBottomRef.current = true;
     setShowScrollButton(false);
     setChatUnreadCount(0);
@@ -359,7 +342,7 @@ export default function App() {
 
   const messageMeta = useMemo(() => {
     if (!messageMetaEvent) return null;
-    // 类型守卫：检查 data 是否包含 to 数组
+    // Type guard: ensure data.to is an array.
     const data = messageMetaEvent.data as { to?: unknown[] } | undefined;
     const toRaw = data && Array.isArray(data.to) ? data.to : [];
     const toTokensList = toRaw
@@ -501,17 +484,19 @@ export default function App() {
             />
           )}
 
-          {/* Tab Content - 使用 CSS 隐藏而非条件渲染，避免重新挂载导致的闪烁 */}
+          {/* Tab Content */}
           <div
             ref={contentRef}
-            className={`flex-1 min-h-0 flex flex-col overflow-hidden transition-opacity duration-150 ${
+            className={`relative flex-1 min-h-0 flex flex-col overflow-hidden transition-opacity duration-150 ${
               isTransitioning ? "opacity-0" : "opacity-100"
             }`}
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
           >
-            {/* Chat Tab - 始终挂载，通过 CSS 控制显示 */}
-            <div className={`flex-1 min-h-0 flex flex-col ${activeTab !== "chat" ? "hidden" : ""}`}>
+            <div
+              className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "chat" ? "" : "invisible pointer-events-none"}`}
+              aria-hidden={activeTab !== "chat"}
+            >
               <ChatTab
                 isDark={isDark}
                 isSmallScreen={isSmallScreen}
@@ -532,7 +517,7 @@ export default function App() {
                 scrollRef={eventContainerRef}
                 showScrollButton={showScrollButton}
                 chatUnreadCount={chatUnreadCount}
-                onScrollButtonClick={scrollToBottom}
+                onScrollButtonClick={handleScrollButtonClick}
                 onScrollChange={(isAtBottom) => {
                   chatAtBottomRef.current = isAtBottom;
                   setShowScrollButton(!isAtBottom);
@@ -540,7 +525,6 @@ export default function App() {
                 }}
                 onReply={startReply}
                 onShowRecipients={(eventId) => setRecipientsModal(eventId)}
-                initialScrollTop={chatScrollTop}
                 replyTarget={replyTarget}
                 onCancelReply={() => setReplyTarget(null)}
                 toTokens={toTokens}
@@ -567,21 +551,22 @@ export default function App() {
                 }
               />
             </div>
-            {/* Agent Tab - 仅在选中 agent 时显示 */}
             {activeTab !== "chat" && (
-              <ActorTab
-                actor={currentActor}
-                groupId={selectedGroupId}
-                termEpoch={currentActor ? getTermEpoch(currentActor.id) : 0}
-                busy={busy}
-                isDark={isDark}
-                onToggleEnabled={() => currentActor && toggleActorEnabled(currentActor)}
-                onRelaunch={() => currentActor && relaunchActor(currentActor)}
-                onEdit={() => currentActor && editActor(currentActor)}
-                onRemove={() => currentActor && removeActor(currentActor, activeTab)}
-                onInbox={() => currentActor && openActorInbox(currentActor)}
-                onStatusChange={() => void refreshActors()}
-              />
+              <div className="absolute inset-0 flex min-h-0 flex-col">
+                <ActorTab
+                  actor={currentActor}
+                  groupId={selectedGroupId}
+                  termEpoch={currentActor ? getTermEpoch(currentActor.id) : 0}
+                  busy={busy}
+                  isDark={isDark}
+                  onToggleEnabled={() => currentActor && toggleActorEnabled(currentActor)}
+                  onRelaunch={() => currentActor && relaunchActor(currentActor)}
+                  onEdit={() => currentActor && editActor(currentActor)}
+                  onRemove={() => currentActor && removeActor(currentActor, activeTab)}
+                  onInbox={() => currentActor && openActorInbox(currentActor)}
+                  onStatusChange={() => void refreshActors()}
+                />
+              </div>
             )}
           </div>
         </main>

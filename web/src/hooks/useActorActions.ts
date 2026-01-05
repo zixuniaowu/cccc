@@ -1,4 +1,4 @@
-// Actor 操作 hook - 抽离 ActorTab 相关的所有操作逻辑
+// Actor action helpers extracted from ActorTab-related logic.
 import { useCallback, useState } from "react";
 import { useGroupStore, useUIStore, useModalStore, useInboxStore } from "../stores";
 import * as api from "../services/api";
@@ -10,10 +10,10 @@ export function useActorActions(groupId: string) {
   const { openModal, setEditingActor } = useModalStore();
   const { setInboxActorId, setInboxMessages } = useInboxStore();
 
-  // 本地状态：terminal epoch 用于强制重新挂载终端
+  // Local state: terminal epoch is used to force a terminal re-mount.
   const [termEpochByActor, setTermEpochByActor] = useState<Record<string, number>>({});
 
-  // 启动/停止 actor
+  // Start/stop actor
   const toggleActorEnabled = useCallback(
     async (actor: Actor) => {
       if (!actor || !groupId) return;
@@ -35,7 +35,7 @@ export function useActorActions(groupId: string) {
     [groupId, setBusy, showError, refreshActors]
   );
 
-  // 重启 actor
+  // Restart actor
   const relaunchActor = useCallback(
     async (actor: Actor) => {
       if (!groupId || !actor) return;
@@ -57,7 +57,7 @@ export function useActorActions(groupId: string) {
     [groupId, setBusy, showError, refreshActors]
   );
 
-  // 编辑 actor (表单状态由 Modal 组件自己管理)
+  // Edit actor (form state is managed by the modal component).
   const editActor = useCallback(
     (actor: Actor) => {
       if (!actor) return;
@@ -71,7 +71,7 @@ export function useActorActions(groupId: string) {
     [setEditingActor, showError]
   );
 
-  // 删除 actor
+  // Remove actor
   const removeActor = useCallback(
     async (actor: Actor, currentActiveTab: string) => {
       if (!actor || !groupId) return;
@@ -95,7 +95,7 @@ export function useActorActions(groupId: string) {
     [groupId, setBusy, showError, refreshActors, loadGroup, setActiveTab]
   );
 
-  // 打开 inbox
+  // Open inbox modal
   const openActorInbox = useCallback(
     async (actor: Actor) => {
       if (!actor || !groupId) return;
@@ -117,7 +117,7 @@ export function useActorActions(groupId: string) {
     [groupId, setBusy, showError, setInboxActorId, setInboxMessages, openModal]
   );
 
-  // 获取 actor 的 termEpoch
+  // Get actor termEpoch
   const getTermEpoch = useCallback(
     (actorId: string) => termEpochByActor[actorId] || 0,
     [termEpochByActor]

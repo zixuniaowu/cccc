@@ -1,4 +1,4 @@
-// Group 操作 hook
+// Group action helpers (start/stop/state).
 import { useCallback } from "react";
 import { useGroupStore, useUIStore } from "../stores";
 import * as api from "../services/api";
@@ -14,7 +14,7 @@ export function useGroupActions() {
 
   const { setBusy, showError } = useUIStore();
 
-  // 启动 Group
+  // Start group
   const handleStartGroup = useCallback(async () => {
     if (!selectedGroupId) return;
     setBusy("group-start");
@@ -31,7 +31,7 @@ export function useGroupActions() {
     }
   }, [selectedGroupId, setBusy, showError, refreshActors, refreshGroups]);
 
-  // 停止 Group
+  // Stop group
   const handleStopGroup = useCallback(async () => {
     if (!selectedGroupId) return;
     setBusy("group-stop");
@@ -48,7 +48,7 @@ export function useGroupActions() {
     }
   }, [selectedGroupId, setBusy, showError, refreshActors, refreshGroups]);
 
-  // 设置 Group 状态
+  // Set group state
   const handleSetGroupState = useCallback(
     async (s: "active" | "idle" | "paused") => {
       if (!selectedGroupId) return;

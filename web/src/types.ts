@@ -22,7 +22,7 @@ export type GroupDoc = {
   state?: "active" | "idle" | "paused";
 };
 
-// 事件附件类型
+// Event attachment metadata
 export type EventAttachment = {
   kind?: string;
   path?: string;
@@ -31,7 +31,7 @@ export type EventAttachment = {
   mime_type?: string;
 };
 
-// 聊天消息数据类型
+// Chat message payload
 export type ChatMessageData = {
   text?: string;
   to?: string[];
@@ -39,13 +39,13 @@ export type ChatMessageData = {
   attachments?: EventAttachment[];
 };
 
-// 聊天已读数据类型
+// Chat read receipt payload
 export type ChatReadData = {
   actor_id?: string;
   event_id?: string;
 };
 
-// 事件数据联合类型
+// Ledger event data union
 export type LedgerEventData = ChatMessageData | ChatReadData | Record<string, unknown>;
 
 export type LedgerEvent = {

@@ -245,7 +245,7 @@ export function AgentTab({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- isDark 变化由单独 effect 处理，避免主题切换时重建终端
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled in a dedicated effect; avoid re-creating the terminal.
   }, [isHeadless, isRunning]);
 
   // Connect WebSocket when visible and running (with auto-reconnect).
@@ -511,7 +511,7 @@ export function AgentTab({
       setConnectionStatus('disconnected');
       setTerminalReady(false);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- isDark 由单独 effect 处理，onStatusChange 变化不应触发重连
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled separately; onStatusChange should not trigger reconnects.
   }, [isVisible, isRunning, isHeadless, groupId, actor.id, actor.runtime]);
 
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)

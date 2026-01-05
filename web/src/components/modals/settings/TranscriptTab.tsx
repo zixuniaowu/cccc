@@ -1,4 +1,4 @@
-// TranscriptTab - 终端转录设置
+// TranscriptTab configures terminal transcript visibility and viewing.
 import { Actor } from "../../../types";
 import { inputClass, primaryButtonClass, cardClass, preClass } from "./types";
 

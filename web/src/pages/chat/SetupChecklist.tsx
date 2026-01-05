@@ -1,4 +1,4 @@
-// SetupChecklist - 显示设置引导步骤
+// SetupChecklist renders the setup guidance steps.
 import { classNames } from "../../utils/classNames";
 
 export interface SetupChecklistProps {
@@ -10,11 +10,11 @@ export interface SetupChecklistProps {
   needsStart: boolean;
   onAddAgent: () => void;
   onStartGroup: () => void;
-  /** 紧凑模式用于消息列表上方 */
+  /** Compact mode is used above the message list. */
   variant?: "compact" | "full";
 }
 
-// 复制命令到剪贴板
+// Copy a command to clipboard.
 async function copyCommand(cmd: string) {
   try {
     await navigator.clipboard.writeText(cmd);
@@ -37,7 +37,7 @@ export function SetupChecklist({
   const isCompact = variant === "compact";
   const attachCmd = `cccc attach . --group ${selectedGroupId}`;
 
-  // 无需显示任何步骤
+  // Nothing to show.
   if (!needsScope && !needsActors && !needsStart) {
     if (!isCompact) {
       return (

@@ -1,10 +1,10 @@
-// IMBridgeTab - IM 桥接设置
+// IMBridgeTab configures IM bridge settings.
 import { IMStatus } from "../../../types";
 import { inputClass, labelClass, primaryButtonClass, cardClass } from "./types";
 
 interface IMBridgeTabProps {
   isDark: boolean;
-  groupId?: string; // 保留用于未来扩展
+  groupId?: string; // Reserved for future use.
   imStatus: IMStatus | null;
   imPlatform: "telegram" | "slack" | "discord";
   setImPlatform: (v: "telegram" | "slack" | "discord") => void;

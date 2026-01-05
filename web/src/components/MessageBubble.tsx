@@ -30,7 +30,7 @@ export const MessageBubble = memo(function MessageBubble({
     const isUserMessage = ev.by === "user";
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
 
-    // 类型守卫：将 data 作为 ChatMessageData 处理
+    // Treat data as ChatMessageData.
     const msgData = ev.data as ChatMessageData | undefined;
     const quoteText = msgData?.quote_text;
     const rawAttachments: EventAttachment[] = Array.isArray(msgData?.attachments) ? msgData.attachments : [];

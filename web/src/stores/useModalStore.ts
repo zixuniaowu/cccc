@@ -1,9 +1,9 @@
-// Modal 状态管理
+// Modal state store.
 import { create } from "zustand";
 import type { Actor } from "../types";
 
 interface ModalState {
-  // Modal 开关状态
+  // Modal visibility state
   modals: {
     context: boolean;
     settings: boolean;

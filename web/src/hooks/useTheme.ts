@@ -37,7 +37,7 @@ function applyTheme(theme: Theme) {
   }
 }
 
-// 订阅系统主题变化
+// Subscribe to system theme changes.
 function subscribeToSystemTheme(callback: () => void) {
   const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQuery.addEventListener("change", callback);
@@ -47,14 +47,14 @@ function subscribeToSystemTheme(callback: () => void) {
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(getStoredTheme);
   
-  // 使用 useSyncExternalStore 订阅系统主题变化
+  // Use useSyncExternalStore to subscribe to system theme changes.
   const systemTheme = useSyncExternalStore(
     subscribeToSystemTheme,
     getSystemTheme,
     () => "dark" as const
   );
 
-  // 使用 useMemo 计算 resolvedTheme，避免在 effect 中 setState
+  // Compute resolvedTheme with useMemo to avoid extra state writes in effects.
   const resolvedTheme = useMemo<"light" | "dark">(
     () => (theme === "system" ? systemTheme : theme),
     [theme, systemTheme]

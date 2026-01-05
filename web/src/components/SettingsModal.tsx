@@ -1,4 +1,4 @@
-// SettingsModal - 设置弹窗主组件
+// SettingsModal renders the settings modal.
 import { useState, useEffect } from "react";
 import { Actor, GroupSettings, IMStatus } from "../types";
 import * as api from "../services/api";
@@ -107,7 +107,7 @@ export function SettingsModal({
 
   useEffect(() => {
     if (isOpen && groupId) loadIMStatus();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在 modal 打开或 groupId 变化时加载
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only load when the modal opens or groupId changes.
   }, [isOpen, groupId]);
 
   useEffect(() => {
@@ -116,7 +116,7 @@ export function SettingsModal({
 
   useEffect(() => {
     if (isOpen && groupId) loadDevActors();
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在 modal 打开或 groupId 变化时加载
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Only load when the modal opens or groupId changes.
   }, [isOpen, groupId]);
 
   // ============ Data Loading ============

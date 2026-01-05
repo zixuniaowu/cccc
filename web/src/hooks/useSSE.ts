@@ -1,16 +1,16 @@
-// SSE 连接管理 hook
+// SSE connection management for the ledger stream.
 import { useEffect, useRef } from "react";
 import { useGroupStore, useUIStore } from "../stores";
 import * as api from "../services/api";
 import type { LedgerEvent, Actor, ChatMessageData, GroupContext } from "../types";
 
-// 获取消息的接收者 Actor IDs (导出供其他组件使用)
+// Compute recipient actor IDs for a chat message (exported for reuse).
 export function getRecipientActorIdsForEvent(ev: LedgerEvent, actors: Actor[]): string[] {
   if (!actors.length) return [];
   const actorIds = actors.map((a) => String(a.id || "")).filter((id) => id);
   const actorIdSet = new Set(actorIds);
 
-  // 将 data 作为 ChatMessageData 处理
+  // Treat data as ChatMessageData.
   const msgData = ev.data as ChatMessageData | undefined;
   const toRaw = msgData && Array.isArray(msgData.to) ? msgData.to : [];
   const tokens = (toRaw as unknown[])
@@ -68,12 +68,12 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
   const actorWarmupTimersRef = useRef<number[]>([]);
   const selectedGroupIdRef = useRef<string>("");
 
-  // 同步 ref
+  // Keep a ref in sync to avoid stale closures.
   useEffect(() => {
     selectedGroupIdRef.current = selectedGroupId;
   }, [selectedGroupId]);
 
-  // 获取 Context
+  // Fetch Context
   async function fetchContext(groupId: string) {
     const resp = await api.fetchContext(groupId);
     if (resp.ok && resp.result && typeof resp.result === "object") {
@@ -81,7 +81,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
   }
 
-  // SSE 连接
+  // Connect SSE stream for a group.
   function connectStream(groupId: string) {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -94,7 +94,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       try {
         const ev = JSON.parse(String(msg.data || "{}"));
 
-        // Context sync 事件
+        // Context sync event
         if (ev && typeof ev === "object" && ev.kind === "context.sync") {
           if (contextRefreshTimerRef.current) window.clearTimeout(contextRefreshTimerRef.current);
           contextRefreshTimerRef.current = window.setTimeout(() => {
@@ -104,7 +104,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           return;
         }
 
-        // Chat read 事件
+        // Chat read event
         if (ev && typeof ev === "object" && ev.kind === "chat.read") {
           const actorId = String(ev.data?.actor_id || "");
           const eventId = String(ev.data?.event_id || "");
@@ -115,7 +115,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           return;
         }
 
-        // Chat message 事件 - 添加 read status
+        // Chat message: initialize read-status keys (for live ✓ updates).
         if (ev && typeof ev === "object" && ev.kind === "chat.message" && !ev._read_status) {
           const recipients = getRecipientActorIdsForEvent(ev, actorsRef.current);
           if (recipients.length > 0) {
@@ -127,7 +127,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
         appendEvent(ev);
 
-        // 更新未读计数
+        // Update unread count
         if (ev && typeof ev === "object" && ev.kind === "chat.message") {
           const by = String(ev.by || "");
           if (by && by !== "user") {
@@ -139,7 +139,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
           }
         }
 
-        // 刷新 actors
+        // Refresh actors when relevant events arrive
         const kind = String(ev.kind || "");
         if (
           kind === "chat.message" ||
@@ -158,7 +158,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     eventSourceRef.current = es;
   }
 
-  // Actor warmup 定时刷新
+  // Actor warmup refresh (helps smooth startup state transitions).
   function clearActorWarmupTimers() {
     for (const t of actorWarmupTimersRef.current) window.clearTimeout(t);
     actorWarmupTimersRef.current = [];
@@ -178,7 +178,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
   }
 
-  // 清理函数
+  // Cleanup
   function cleanup() {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();

@@ -1,4 +1,4 @@
-// 文件拖放 hook
+// Drag-and-drop file handling.
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useUIStore, useComposerStore } from "../stores";
 
@@ -16,7 +16,7 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
   const [dropOverlayOpen, setDropOverlayOpen] = useState(false);
   const dragDepthRef = useRef<number>(0);
 
-  // 处理添加文件
+  // Handle adding files to the composer.
   const handleAppendComposerFiles = useCallback(
     (incoming: File[]) => {
       const files = Array.from(incoming || []);
@@ -38,7 +38,7 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
     [showError, appendComposerFiles]
   );
 
-  // 拖放事件监听
+  // Drag/drop event listeners.
   useEffect(() => {
     const hasFiles = (e: DragEvent) => {
       const dt = e.dataTransfer;
@@ -98,7 +98,7 @@ export function useDragDrop({ selectedGroupId }: UseDragDropOptions) {
     };
   }, [handleAppendComposerFiles, selectedGroupId, showError]);
 
-  // 重置拖放状态
+  // Reset drag/drop state.
   const resetDragDrop = useCallback(() => {
     dragDepthRef.current = 0;
     setDropOverlayOpen(false);
