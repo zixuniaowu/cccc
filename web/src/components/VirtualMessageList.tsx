@@ -46,6 +46,18 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     overscan: 5,
   });
 
+  const measureElement = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (!node) return;
+      if (typeof queueMicrotask === "function") {
+        queueMicrotask(() => virtualizer.measureElement(node));
+      } else {
+        Promise.resolve().then(() => virtualizer.measureElement(node));
+      }
+    },
+    [virtualizer]
+  );
+
   const checkIsAtBottom = useCallback(() => {
     const el = parentRef.current;
     if (!el) return true;
@@ -163,7 +175,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                 <div
                   key={message.id || virtualRow.index}
                   data-index={virtualRow.index}
-                  ref={virtualizer.measureElement}
+                  ref={measureElement}
                   style={{
                     position: "absolute",
                     top: 0,
