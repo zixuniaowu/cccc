@@ -10,10 +10,12 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Literal, Optional, Union
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.concurrency import run_in_threadpool
 
 from ... import __version__
@@ -185,12 +187,21 @@ def _require_token_if_configured(request: Request) -> Optional[JSONResponse]:
     if not token:
         return None
     auth = str(request.headers.get("authorization") or "").strip()
-    if auth != f"Bearer {token}":
-        return JSONResponse(
-            status_code=401,
-            content={"ok": False, "error": {"code": "unauthorized", "message": "missing/invalid token", "details": {}}},
-        )
-    return None
+    if auth == f"Bearer {token}":
+        return None
+
+    cookie = str(request.cookies.get("cccc_web_token") or "").strip()
+    if cookie == token:
+        return None
+
+    q = str(request.query_params.get("token") or "").strip()
+    if q == token:
+        return None
+
+    return JSONResponse(
+        status_code=401,
+        content={"ok": False, "error": {"code": "unauthorized", "message": "missing/invalid token", "details": {}}},
+    )
 
 
 async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
@@ -316,10 +327,55 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def _auth(request: Request, call_next):  # type: ignore[no-untyped-def]
+        token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
+        q = str(request.query_params.get("token") or "").strip()
+
         blocked = _require_token_if_configured(request)
         if blocked is not None:
             return blocked
-        return await call_next(request)
+
+        resp = await call_next(request)
+        if token and q and q == token and str(request.cookies.get("cccc_web_token") or "").strip() != token:
+            resp.set_cookie(
+                key="cccc_web_token",
+                value=token,
+                httponly=True,
+                samesite="lax",
+                secure=str(getattr(request.url, "scheme", "") or "").lower() == "https",
+                path="/",
+            )
+        return resp
+
+    @app.exception_handler(HTTPException)
+    async def _handle_fastapi_http_exception(_request: Request, exc: HTTPException) -> JSONResponse:
+        detail = exc.detail
+        if isinstance(detail, dict):
+            code = str(detail.get("code") or "http_error")
+            msg = str(detail.get("message") or "HTTP error")
+            details: Any = detail.get("details") if "details" in detail else detail
+        else:
+            code = "http_error"
+            msg = str(detail) if detail else "HTTP error"
+            details = detail
+        return JSONResponse(status_code=int(getattr(exc, "status_code", 500) or 500), content={"ok": False, "error": {"code": code, "message": msg, "details": details}})
+
+    @app.exception_handler(StarletteHTTPException)
+    async def _handle_starlette_http_exception(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code = "not_found" if int(getattr(exc, "status_code", 500) or 500) == 404 else "http_error"
+        msg = str(getattr(exc, "detail", "") or "HTTP error")
+        return JSONResponse(status_code=int(getattr(exc, "status_code", 500) or 500), content={"ok": False, "error": {"code": code, "message": msg, "details": {}}})
+
+    @app.exception_handler(RequestValidationError)
+    async def _handle_request_validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"ok": False, "error": {"code": "validation_error", "message": "invalid request", "details": exc.errors()}},
+        )
+
+    @app.exception_handler(Exception)
+    async def _handle_unexpected_exception(_request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("unhandled exception in cccc web")
+        return JSONResponse(status_code=500, content={"ok": False, "error": {"code": "internal_error", "message": "internal error", "details": {}}})
 
     @app.middleware("http")
     async def _ui_cache_control(request: Request, call_next):  # type: ignore[no-untyped-def]
@@ -1105,7 +1161,12 @@ def create_app() -> FastAPI:
         token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
         if token:
             provided = str(websocket.query_params.get("token") or "").strip()
-            if provided != token:
+            cookie = ""
+            try:
+                cookie = str(getattr(websocket, "cookies", {}) or {}).get("cccc_web_token") or ""
+            except Exception:
+                cookie = ""
+            if provided != token and str(cookie).strip() != token:
                 await websocket.close(code=4401)
                 return
 

@@ -5,7 +5,8 @@ import { classNames } from "../utils/classNames";
 
 function formatEventLine(ev: LedgerEvent): string {
     if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
-        return String(ev.data.text || "");
+        const msg = ev.data as ChatMessageData;
+        return String(msg.text || "");
     }
     return "";
 }
@@ -91,8 +92,8 @@ export const MessageBubble = memo(function MessageBubble({
                 {/* Mobile Header Row (Visible only on mobile) */}
                 <div
                     className={classNames(
-                        "flex items-center gap-2 mb-1 sm:hidden",
-                        isUserMessage ? "flex-row-reverse" : "flex-row"
+                        "flex items-center gap-2 mb-1 sm:hidden min-w-0",
+                        isUserMessage ? "justify-end" : "justify-start"
                     )}
                 >
                     <div
@@ -110,7 +111,7 @@ export const MessageBubble = memo(function MessageBubble({
                     </div>
                     <span
                         className={classNames(
-                            "text-xs font-medium",
+                            "text-xs font-medium flex-shrink-0",
                             isUserMessage
                                 ? isDark
                                     ? "text-slate-300"
@@ -124,16 +125,25 @@ export const MessageBubble = memo(function MessageBubble({
                     >
                         {ev.by}
                     </span>
-                    <span className={`text-[10px] ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                    <span className={`text-[10px] flex-shrink-0 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                         {formatTime(ev.ts)}
+                    </span>
+                    <span
+                        className={classNames(
+                            "text-[10px] min-w-0 truncate",
+                            isDark ? "text-slate-500" : "text-gray-500"
+                        )}
+                        title={`to ${toLabel}`}
+                    >
+                        to {toLabel}
                     </span>
                 </div>
 
                 {/* Desktop Metadata Header (Hidden on mobile) */}
-                <div className="hidden sm:flex items-center gap-2 mb-1 px-1">
+                <div className="hidden sm:flex items-center gap-2 mb-1 px-1 min-w-0">
                     <span
                         className={classNames(
-                            "text-[11px] font-medium",
+                            "text-[11px] font-medium flex-shrink-0",
                             isUserMessage
                                 ? isDark
                                     ? "text-slate-400"
@@ -147,8 +157,11 @@ export const MessageBubble = memo(function MessageBubble({
                     >
                         {ev.by}
                     </span>
-                    <span className={`text-[10px] ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+                    <span className={`text-[10px] flex-shrink-0 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
                         {formatTime(ev.ts)}
+                    </span>
+                    <span className={classNames("text-[10px] min-w-0 truncate", isDark ? "text-slate-500" : "text-gray-500")} title={`to ${toLabel}`}>
+                        to {toLabel}
                     </span>
                 </div>
 
@@ -208,30 +221,14 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 </div>
 
-                {/* Message meta (always visible): to + per-recipient read status */}
                 <div
                     className={classNames(
-                        "flex items-center justify-between gap-3 mt-1 px-1 text-[10px] transition-opacity",
+                        "flex items-center gap-3 mt-1 px-1 text-[10px] transition-opacity",
+                        visibleReadStatusEntries.length > 0 ? "justify-between" : "justify-end",
                         "opacity-70 group-hover:opacity-100",
                         isDark ? "text-slate-500" : "text-gray-500"
                     )}
                 >
-                    <div className="flex items-center gap-2 min-w-0">
-                        <button
-                            type="button"
-                            className={classNames(
-                                "touch-target-sm px-1 rounded hover:underline transition-colors",
-                                isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
-                            )}
-                            onClick={onReply}
-                        >
-                            Reply
-                        </button>
-                        <span className="min-w-0 truncate" title={`to ${toLabel}`}>
-                            to {toLabel}
-                        </span>
-                    </div>
-
                     {visibleReadStatusEntries.length > 0 && (
                         <button
                             type="button"
@@ -271,6 +268,17 @@ export const MessageBubble = memo(function MessageBubble({
                             </div>
                         </button>
                     )}
+
+                    <button
+                        type="button"
+                        className={classNames(
+                            "touch-target-sm px-1 rounded hover:underline transition-colors",
+                            isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                        )}
+                        onClick={onReply}
+                    >
+                        Reply
+                    </button>
                 </div>
             </div>
         </div>

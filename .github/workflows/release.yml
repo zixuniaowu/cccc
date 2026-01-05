@@ -29,6 +29,7 @@ jobs:
         run: |
           npm ci --prefix web
           npm -C web run build
+          test -f src/cccc/ports/web/dist/index.html
 
       - name: Verify tag matches package version
         run: |
