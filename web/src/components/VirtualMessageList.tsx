@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react";
+import { memo, useRef, useEffect, useCallback } from "react";
 import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { LedgerEvent, Actor } from "../types";
@@ -18,7 +18,7 @@ export interface VirtualMessageListProps {
     onScrollChange?: (isAtBottom: boolean) => void;
 }
 
-export function VirtualMessageList({
+export const VirtualMessageList = memo(function VirtualMessageList({
     messages,
     actors,
     isDark,
@@ -217,4 +217,4 @@ export function VirtualMessageList({
             )}
         </div>
     );
-}
+});

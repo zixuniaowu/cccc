@@ -111,6 +111,7 @@ export default function App() {
   // UI state
   const [busy, setBusy] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [isTransitioning, setIsTransitioning] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [termEpochByActor, setTermEpochByActor] = useState<Record<string, number>>({});
   const [showScrollButton, setShowScrollButton] = useState(false);
@@ -421,27 +422,37 @@ export default function App() {
   }
 
   async function loadGroup(groupId: string) {
-    setGroupDoc(null);
-    setEvents([]);
-    setActors([]);
-    setGroupContext(null);
-    setGroupSettings(null);
+    // 1. 开始过渡动画（淡出）
+    setIsTransitioning(true);
+
+    // 2. 等待淡出动画完成
+    await new Promise((r) => setTimeout(r, 150));
+
+    // 3. 并行加载所有数据（不先清空，避免中间状态导致闪烁）
+    const [show, tail, a, ctx, settings] = await Promise.all([
+      apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(groupId)}`),
+      apiJson<{ events: LedgerEvent[] }>(
+        `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?lines=120&with_read_status=true`
+      ),
+      apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors?include_unread=true`),
+      apiJson<{ context: GroupContext }>(`/api/v1/groups/${encodeURIComponent(groupId)}/context`),
+      apiJson<{ settings: GroupSettings }>(`/api/v1/groups/${encodeURIComponent(groupId)}/settings`),
+    ]);
+
+    // 4. 一次性更新所有状态（直接替换，不是先清空再设置）
+    setGroupDoc(show.ok ? show.result.group : null);
+    setEvents(tail.ok ? (tail.result.events || []).filter((ev) => ev && (ev as any).kind !== "context.sync") : []);
+    setActors(a.ok ? a.result.actors || [] : []);
+    setGroupContext(ctx.ok ? ctx.result.context : null);
+    setGroupSettings(settings.ok && settings.result.settings ? settings.result.settings : null);
     setErrorMsg("");
     setActiveTab("chat");
 
-    const show = await apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(groupId)}`);
-    if (show.ok) setGroupDoc(show.result.group);
+    // 5. 等待一帧让 React 完成渲染
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-    const tail = await apiJson<{ events: LedgerEvent[] }>(
-      `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?lines=120&with_read_status=true`
-    );
-    if (tail.ok) setEvents((tail.result.events || []).filter((ev) => ev && (ev as any).kind !== "context.sync"));
-
-    const a = await apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors?include_unread=true`);
-    if (a.ok) setActors(a.result.actors || []);
-
-    await fetchContext(groupId);
-    await fetchSettings(groupId);
+    // 6. 结束过渡动画（淡入）
+    setIsTransitioning(false);
   }
 
   function connectStream(groupId: string) {
@@ -1303,7 +1314,9 @@ export default function App() {
           {/* Tab Content */}
           <div
             ref={contentRef}
-            className="flex-1 min-h-0 flex flex-col overflow-hidden"
+            className={`flex-1 min-h-0 flex flex-col overflow-hidden transition-opacity duration-150 ${
+              isTransitioning ? "opacity-0" : "opacity-100"
+            }`}
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
           >
