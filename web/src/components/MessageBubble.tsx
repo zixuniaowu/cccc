@@ -273,10 +273,8 @@ export const MessageBubble = memo(function MessageBubble({
         </div>
     );
 }, (prevProps, nextProps) => {
-    // 自定义比较：忽略回调函数（它们每次渲染都会重新创建，但行为一致）
     return (
-        prevProps.event.id === nextProps.event.id &&
-        prevProps.event.ts === nextProps.event.ts &&
+        prevProps.event === nextProps.event &&
         prevProps.actors === nextProps.actors &&
         prevProps.isDark === nextProps.isDark &&
         prevProps.groupId === nextProps.groupId

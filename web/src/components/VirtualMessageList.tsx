@@ -110,13 +110,14 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     }, [messages.length, scheduleScrollToBottom]);
 
     // When switching groups, default to showing the latest messages.
+    // Important: do NOT depend on messages.length here, otherwise every new message would
+    // look like a "group switch" and force-scroll to bottom even if the user scrolled up.
     useEffect(() => {
-        prevMessageCountRef.current = messages.length;
+        prevMessageCountRef.current = 0;
         isAtBottomRef.current = true;
-        if (messages.length > 0) {
-            scheduleScrollToBottom();
-        }
-    }, [groupId, messages.length, scheduleScrollToBottom]);
+        didInitialScrollRef.current = false;
+        cancelScheduledScroll();
+    }, [groupId, cancelScheduledScroll]);
 
     // Cleanup scheduled scrolls.
     useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);

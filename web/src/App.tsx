@@ -202,6 +202,7 @@ export default function App() {
   const refreshGroupsQueuedRef = useRef<boolean>(false);
   const refreshActorsInFlightRef = useRef<Set<string>>(new Set());
   const refreshActorsQueuedRef = useRef<Set<string>>(new Set());
+  const loadGroupSeqRef = useRef<number>(0);
 
   // Swipe gesture state
   const touchStartX = useRef<number>(0);
@@ -422,37 +423,53 @@ export default function App() {
   }
 
   async function loadGroup(groupId: string) {
-    // 1. 开始过渡动画（淡出）
+    const gid = String(groupId || "").trim();
+    if (!gid) return;
+
+    loadGroupSeqRef.current += 1;
+    const seq = loadGroupSeqRef.current;
+
+    const sleep = (ms: number) => new Promise<void>((r) => window.setTimeout(r, ms));
+    const safe = async <T,>(p: Promise<any>) => {
+      try {
+        return await p;
+      } catch {
+        return { ok: false, error: { code: "network_error", message: "Network error" } } as any;
+      }
+    };
+
     setIsTransitioning(true);
+    try {
+      // Fade out to avoid intermediate empty states (jitter) while switching groups.
+      await sleep(150);
+      if (loadGroupSeqRef.current !== seq || selectedGroupIdRef.current !== gid) return;
 
-    // 2. 等待淡出动画完成
-    await new Promise((r) => setTimeout(r, 150));
+      // Load in parallel; do not clear state first (prevents flicker on fast devices).
+      const [show, tail, a, ctx, settings] = await Promise.all([
+        safe(apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(gid)}`)),
+        safe(apiJson<{ events: LedgerEvent[] }>(
+          `/api/v1/groups/${encodeURIComponent(gid)}/ledger/tail?lines=120&with_read_status=true`
+        )),
+        safe(apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(gid)}/actors?include_unread=true`)),
+        safe(apiJson<GroupContext>(`/api/v1/groups/${encodeURIComponent(gid)}/context`)),
+        safe(apiJson<{ settings: GroupSettings }>(`/api/v1/groups/${encodeURIComponent(gid)}/settings`)),
+      ]);
 
-    // 3. 并行加载所有数据（不先清空，避免中间状态导致闪烁）
-    const [show, tail, a, ctx, settings] = await Promise.all([
-      apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(groupId)}`),
-      apiJson<{ events: LedgerEvent[] }>(
-        `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?lines=120&with_read_status=true`
-      ),
-      apiJson<{ actors: Actor[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors?include_unread=true`),
-      apiJson<{ context: GroupContext }>(`/api/v1/groups/${encodeURIComponent(groupId)}/context`),
-      apiJson<{ settings: GroupSettings }>(`/api/v1/groups/${encodeURIComponent(groupId)}/settings`),
-    ]);
+      if (loadGroupSeqRef.current !== seq || selectedGroupIdRef.current !== gid) return;
 
-    // 4. 一次性更新所有状态（直接替换，不是先清空再设置）
-    setGroupDoc(show.ok ? show.result.group : null);
-    setEvents(tail.ok ? (tail.result.events || []).filter((ev) => ev && (ev as any).kind !== "context.sync") : []);
-    setActors(a.ok ? a.result.actors || [] : []);
-    setGroupContext(ctx.ok ? ctx.result.context : null);
-    setGroupSettings(settings.ok && settings.result.settings ? settings.result.settings : null);
-    setErrorMsg("");
-    setActiveTab("chat");
+      setGroupDoc(show.ok ? show.result.group : null);
+      setEvents(tail.ok ? (tail.result.events || []).filter((ev) => ev && (ev as any).kind !== "context.sync") : []);
+      setActors(a.ok ? a.result.actors || [] : []);
+      setGroupContext(ctx.ok ? ctx.result : null);
+      setGroupSettings(settings.ok && settings.result.settings ? settings.result.settings : null);
+      setErrorMsg("");
+      setActiveTab("chat");
 
-    // 5. 等待一帧让 React 完成渲染
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-    // 6. 结束过渡动画（淡入）
-    setIsTransitioning(false);
+      // Let React flush layout before fading back in.
+      await sleep(0);
+    } finally {
+      if (loadGroupSeqRef.current === seq) setIsTransitioning(false);
+    }
   }
 
   function connectStream(groupId: string) {
@@ -1130,9 +1147,13 @@ export default function App() {
   useEffect(() => {
     activeTabRef.current = activeTab;
     if (activeTab !== "chat") return;
-    setChatUnreadCount(0);
-    chatAtBottomRef.current = true;
-    setShowScrollButton(false);
+    const el = eventContainerRef.current;
+    if (!el) return;
+    const threshold = 100;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+    chatAtBottomRef.current = atBottom;
+    setShowScrollButton(!atBottom);
+    if (atBottom) setChatUnreadCount(0);
   }, [activeTab]);
 
   useEffect(() => {
@@ -1314,13 +1335,16 @@ export default function App() {
           {/* Tab Content */}
           <div
             ref={contentRef}
-            className={`flex-1 min-h-0 flex flex-col overflow-hidden transition-opacity duration-150 ${
+            className={`relative flex-1 min-h-0 flex flex-col overflow-hidden transition-opacity duration-150 ${
               isTransitioning ? "opacity-0" : "opacity-100"
             }`}
             onTouchStart={handleTouchStart}
             onTouchEnd={handleTouchEnd}
           >
-            {activeTab === "chat" ? (
+            <div
+              className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "chat" ? "" : "invisible pointer-events-none"}`}
+              aria-hidden={activeTab !== "chat"}
+            >
               <ChatTab
                 isDark={isDark}
                 isSmallScreen={isSmallScreen}
@@ -1370,54 +1394,57 @@ export default function App() {
                 setMentionFilter={setMentionFilter}
                 onAppendRecipientToken={(token) => setToText((prev) => (prev ? prev + ", " + token : token))}
               />
-            ) : (
-              <ActorTab
-                actor={currentActor}
-                groupId={selectedGroupId}
-                termEpoch={currentActor ? (termEpochByActor[currentActor.id] || 0) : 0}
-                busy={busy}
-                isDark={isDark}
-                onToggleEnabled={() => {
-                  if (!currentActor) return;
-                  toggleActorEnabled(currentActor);
-                }}
-                onRelaunch={() => {
-                  void (async () => {
-                    if (!selectedGroupId || !currentActor) return;
-                    setBusy(`actor-relaunch:${currentActor.id}`);
-                    try {
-                      const resp = await apiJson(
-                        `/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors/${encodeURIComponent(currentActor.id)}/restart?by=user`,
-                        { method: "POST" }
-                      );
-                      if (!resp.ok) showError(`${resp.error.code}: ${resp.error.message}`);
-                      await refreshActors();
-                      setTermEpochByActor((prev) => ({
-                        ...prev,
-                        [currentActor.id]: (prev[currentActor.id] || 0) + 1,
-                      }));
-                    } finally {
-                      setBusy("");
-                    }
-                  })();
-                }}
-                onEdit={() => {
-                  if (!currentActor) return;
-                  openEditActor(currentActor);
-                }}
-                onRemove={() => {
-                  if (!currentActor) return;
-                  removeActor(currentActor);
-                }}
-                onInbox={() => {
-                  if (!currentActor) return;
-                  openInbox(currentActor.id);
-                }}
-                onStatusChange={() => {
-                  // Refresh actor list when component detects status change
-                  void refreshActors();
-                }}
-              />
+            </div>
+            {activeTab !== "chat" && (
+              <div className="absolute inset-0 flex min-h-0 flex-col">
+                <ActorTab
+                  actor={currentActor}
+                  groupId={selectedGroupId}
+                  termEpoch={currentActor ? (termEpochByActor[currentActor.id] || 0) : 0}
+                  busy={busy}
+                  isDark={isDark}
+                  onToggleEnabled={() => {
+                    if (!currentActor) return;
+                    toggleActorEnabled(currentActor);
+                  }}
+                  onRelaunch={() => {
+                    void (async () => {
+                      if (!selectedGroupId || !currentActor) return;
+                      setBusy(`actor-relaunch:${currentActor.id}`);
+                      try {
+                        const resp = await apiJson(
+                          `/api/v1/groups/${encodeURIComponent(selectedGroupId)}/actors/${encodeURIComponent(currentActor.id)}/restart?by=user`,
+                          { method: "POST" }
+                        );
+                        if (!resp.ok) showError(`${resp.error.code}: ${resp.error.message}`);
+                        await refreshActors();
+                        setTermEpochByActor((prev) => ({
+                          ...prev,
+                          [currentActor.id]: (prev[currentActor.id] || 0) + 1,
+                        }));
+                      } finally {
+                        setBusy("");
+                      }
+                    })();
+                  }}
+                  onEdit={() => {
+                    if (!currentActor) return;
+                    openEditActor(currentActor);
+                  }}
+                  onRemove={() => {
+                    if (!currentActor) return;
+                    removeActor(currentActor);
+                  }}
+                  onInbox={() => {
+                    if (!currentActor) return;
+                    openInbox(currentActor.id);
+                  }}
+                  onStatusChange={() => {
+                    // Refresh actor list when component detects status change
+                    void refreshActors();
+                  }}
+                />
+              </div>
             )}
           </div>
         </main>
