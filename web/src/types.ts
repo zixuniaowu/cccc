@@ -22,12 +22,38 @@ export type GroupDoc = {
   state?: "active" | "idle" | "paused";
 };
 
+// Event attachment metadata
+export type EventAttachment = {
+  kind?: string;
+  path?: string;
+  title?: string;
+  bytes?: number;
+  mime_type?: string;
+};
+
+// Chat message payload
+export type ChatMessageData = {
+  text?: string;
+  to?: string[];
+  quote_text?: string;
+  attachments?: EventAttachment[];
+};
+
+// Chat read receipt payload
+export type ChatReadData = {
+  actor_id?: string;
+  event_id?: string;
+};
+
+// Ledger event data union
+export type LedgerEventData = ChatMessageData | ChatReadData | Record<string, unknown>;
+
 export type LedgerEvent = {
   id?: string;
   ts?: string;
   kind?: string;
   by?: string;
-  data?: any;
+  data?: LedgerEventData;
   _read_status?: Record<string, boolean>;
 };
 

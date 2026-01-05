@@ -19,6 +19,13 @@ export default defineConfig({
         entryFileNames: "assets/index.js",
         chunkFileNames: "assets/chunk-[name].js",
         assetFileNames: "assets/[name][extname]",
+        // Split large deps into dedicated chunks to avoid oversized bundles.
+        manualChunks: {
+          // xterm (~400KB): keep separate to avoid bloating AgentTab.
+          xterm: ["@xterm/xterm", "@xterm/addon-fit"],
+          // React core
+          "react-vendor": ["react", "react-dom"],
+        },
       },
     },
   },

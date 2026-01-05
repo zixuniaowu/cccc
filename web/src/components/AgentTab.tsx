@@ -1,12 +1,17 @@
+/* eslint-disable no-control-regex */
 import { useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
+import { Terminal, ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Actor, getRuntimeColor, RUNTIME_INFO } from "../types";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
+import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
+
+// Delay before showing terminal after connection (allows backlog replay to complete without visible scrolling)
+const TERMINAL_SHOW_DELAY_MS = 150;
 
 // WebSocket reconnect configuration (moved outside component to avoid recreation)
 const RECONNECT_BASE_DELAY_MS = 1000;
@@ -52,6 +57,9 @@ export function AgentTab({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected');
+  // Hide terminal during initial backlog replay to avoid visible scrolling
+  const [terminalReady, setTerminalReady] = useState(false);
+  const terminalReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Best-effort terminal query responder state (per mounted actor tab).
   // Some runtimes (notably opencode) emit terminal *queries* that xterm.js doesn't answer (e.g. OSC 4 palette).
@@ -155,7 +163,7 @@ export function AgentTab({
     // Ensure focus works consistently across browsers (and prevents the inactive cursor style).
     const onPointerDown = () => term.focus();
     term.element?.addEventListener("mousedown", onPointerDown);
-    term.element?.addEventListener("touchstart", onPointerDown);
+    term.element?.addEventListener("touchstart", onPointerDown, { passive: true });
 
     const copySelection = async (): Promise<boolean> => {
       try {
@@ -237,6 +245,7 @@ export function AgentTab({
       terminalRef.current = null;
       fitAddonRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled in a dedicated effect; avoid re-creating the terminal.
   }, [isHeadless, isRunning]);
 
   // Connect WebSocket when visible and running (with auto-reconnect).
@@ -292,6 +301,17 @@ export function AgentTab({
         // Reset responder state on each successful (re)connect.
         terminalReplyStateRef.current = { osc4Idx: new Set<string>(), osc10Sent: false, osc11Sent: false };
 
+        // Delay showing terminal to let backlog replay complete (avoids visible scrolling)
+        if (terminalReadyTimeoutRef.current) {
+          clearTimeout(terminalReadyTimeoutRef.current);
+        }
+        setTerminalReady(false);
+        terminalReadyTimeoutRef.current = setTimeout(() => {
+          if (!disposed) {
+            setTerminalReady(true);
+          }
+        }, TERMINAL_SHOW_DELAY_MS);
+
         // Send initial resize
         const term = terminalRef.current;
         if (term) {
@@ -304,7 +324,7 @@ export function AgentTab({
 
         // Prefer the terminal's current theme (keeps replies consistent even after theme toggles).
         const fallback = getTerminalTheme(isDark);
-        const theme = (terminalRef.current.options.theme || fallback) as any;
+        const theme: ITheme = terminalRef.current.options.theme || fallback;
 
         const bg = (typeof theme.background === "string" ? theme.background : fallback.background) as string;
         const fg = (typeof theme.foreground === "string" ? theme.foreground : fallback.foreground) as string;
@@ -426,7 +446,7 @@ export function AgentTab({
         }
       };
 
-      ws.onerror = (error) => {
+      ws.onerror = (_error) => {
         // onclose will be called after onerror, reconnect logic is handled there
       };
 
@@ -473,6 +493,10 @@ export function AgentTab({
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
+      if (terminalReadyTimeoutRef.current) {
+        clearTimeout(terminalReadyTimeoutRef.current);
+        terminalReadyTimeoutRef.current = null;
+      }
       if (disposable) disposable.dispose();
       if (resizeDisposable) resizeDisposable.dispose();
       if (wsRef.current) {
@@ -485,7 +509,9 @@ export function AgentTab({
         wsRef.current = null;
       }
       setConnectionStatus('disconnected');
+      setTerminalReady(false);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled separately; onStatusChange should not trigger reconnects.
   }, [isVisible, isRunning, isHeadless, groupId, actor.id, actor.runtime]);
 
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)
@@ -556,7 +582,7 @@ export function AgentTab({
         {isHeadless ? (
           // Headless agent - show status
           <div className="flex flex-col items-center justify-center h-full text-slate-400 dark:text-slate-400 p-8">
-            <div className="text-4xl mb-4">🤖</div>
+            <div className="mb-4"><RocketIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">Headless Agent</div>
             <div className="text-sm text-center max-w-md">
               This agent runs without a terminal. It communicates via MCP tools and the inbox system.
@@ -570,11 +596,20 @@ export function AgentTab({
         ) : isRunning ? (
           // PTY agent - show terminal
           // contain: layout paint isolates layout/paint calculations to prevent jitter when terminal content updates
-          <div ref={termRef} className="h-full w-full" style={{ contain: 'layout paint', overflow: 'hidden' }} />
+          // opacity transition hides initial backlog replay scrolling
+          <div
+            ref={termRef}
+            className="h-full w-full transition-opacity duration-100"
+            style={{
+              contain: 'layout paint',
+              overflow: 'hidden',
+              opacity: terminalReady ? 1 : 0,
+            }}
+          />
         ) : (
           // Stopped agent
           <div className="flex flex-col items-center justify-center h-full text-slate-500 dark:text-slate-400 p-8">
-            <div className="text-4xl mb-4">⏹</div>
+            <div className="mb-4"><TerminalIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">Agent Not Running</div>
             <div className="text-sm text-center max-w-md mb-4">
               Click Launch to start this agent's terminal session.
@@ -582,10 +617,11 @@ export function AgentTab({
             <button
               onClick={onLaunch}
               disabled={isBusy}
-              className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50 min-h-[44px] transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50 min-h-[44px] transition-colors"
               aria-label="Launch agent"
             >
-              {isBusy ? "Launching..." : "▶ Launch Agent"}
+              <PlayIcon size={16} />
+              {isBusy ? "Launching..." : "Launch Agent"}
             </button>
           </div>
         )}
@@ -607,7 +643,7 @@ export function AgentTab({
               )}
               aria-label="Quit agent"
             >
-              <span>⏹</span> Quit
+              <StopIcon size={16} /> Quit
             </button>
             <button
               onClick={sendInterrupt}
@@ -630,7 +666,7 @@ export function AgentTab({
               )}
               aria-label="Relaunch agent"
             >
-              <span>🔄</span> Relaunch
+              <RefreshIcon size={16} /> Relaunch
             </button>
           </>
         ) : (
@@ -641,7 +677,7 @@ export function AgentTab({
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-sm disabled:opacity-50 min-h-[44px] transition-colors"
               aria-label="Launch agent"
             >
-              <span>▶</span> Launch
+              <PlayIcon size={16} /> Launch
             </button>
             <button
               onClick={onEdit}
@@ -652,7 +688,7 @@ export function AgentTab({
               )}
               aria-label="Edit agent configuration"
             >
-              <span>✏️</span> Edit
+              <EditIcon size={16} /> Edit
             </button>
           </>
         )}
@@ -670,7 +706,7 @@ export function AgentTab({
           )}
           aria-label={`Open inbox${unreadCount > 0 ? `, ${unreadCount} unread messages` : ""}`}
         >
-          <span>📥</span> Inbox
+          <InboxIcon size={16} /> Inbox
           {unreadCount > 0 && (
             <span
               className={classNames(
@@ -694,7 +730,7 @@ export function AgentTab({
           title={isRunning ? "Stop the agent before removing" : "Remove agent"}
           aria-label="Remove agent"
         >
-          <span>🗑</span> Remove
+          <TrashIcon size={16} /> Remove
         </button>
       </div>
     </div>
