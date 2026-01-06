@@ -16,6 +16,10 @@ export interface VirtualMessageListProps {
   onScrollButtonClick: () => void;
   chatUnreadCount: number;
   onScrollChange?: (isAtBottom: boolean) => void;
+  // History loading
+  isLoadingHistory?: boolean;
+  hasMoreHistory?: boolean;
+  onLoadMore?: () => void;
 }
 
 export const VirtualMessageList = memo(function VirtualMessageList({
@@ -30,6 +34,9 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   onScrollButtonClick,
   chatUnreadCount,
   onScrollChange,
+  isLoadingHistory = false,
+  hasMoreHistory = true,
+  onLoadMore,
 }: VirtualMessageListProps) {
   const parentRef = useRef<HTMLDivElement | null>(null);
 
@@ -37,6 +44,10 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   const isAtBottomRef = useRef(true);
   const didInitialScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<number | null>(null);
+
+  // For history loading scroll position preservation
+  const prevScrollHeightRef = useRef(0);
+  const wasAtTopRef = useRef(false);
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
@@ -63,6 +74,12 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     if (!el) return true;
     const threshold = 100;
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+  }, []);
+
+  const checkIsAtTop = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return false;
+    return el.scrollTop < 100;
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -106,7 +123,15 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     const atBottom = checkIsAtBottom();
     isAtBottomRef.current = atBottom;
     onScrollChange?.(atBottom);
-  }, [checkIsAtBottom, onScrollChange]);
+
+    // Top detection for loading more history
+    const atTop = checkIsAtTop();
+    if (atTop && hasMoreHistory && !isLoadingHistory && onLoadMore) {
+      wasAtTopRef.current = true;
+      prevScrollHeightRef.current = parentRef.current?.scrollHeight || 0;
+      onLoadMore();
+    }
+  }, [checkIsAtBottom, checkIsAtTop, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange]);
 
   useEffect(() => {
     const prevCount = prevMessageCountRef.current;
@@ -137,6 +162,19 @@ export const VirtualMessageList = memo(function VirtualMessageList({
 
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
+  // Restore scroll position after loading older messages
+  useEffect(() => {
+    if (!wasAtTopRef.current || isLoadingHistory) return;
+    const el = parentRef.current;
+    if (!el) return;
+
+    const heightDiff = el.scrollHeight - prevScrollHeightRef.current;
+    if (heightDiff > 0) {
+      el.scrollTop = heightDiff;
+    }
+    wasAtTopRef.current = false;
+  }, [isLoadingHistory, messages.length]);
+
   return (
     <div
       ref={(el) => {
@@ -160,6 +198,20 @@ export const VirtualMessageList = memo(function VirtualMessageList({
         </div>
       ) : (
         <>
+          {/* Loading indicator for history */}
+          {isLoadingHistory && (
+            <div className="flex justify-center py-4">
+              <div className="animate-spin w-5 h-5 border-2 border-current border-t-transparent rounded-full opacity-50" />
+            </div>
+          )}
+
+          {/* No more history indicator */}
+          {!hasMoreHistory && !isLoadingHistory && (
+            <div className={`text-center py-4 text-sm ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              No more messages
+            </div>
+          )}
+
           {/* Virtual list container */}
           <div
             style={{

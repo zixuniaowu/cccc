@@ -21,6 +21,8 @@ interface GroupState {
   groupContext: GroupContext | null;
   groupSettings: GroupSettings | null;
   runtimes: RuntimeInfo[];
+  hasMoreHistory: boolean;
+  isLoadingHistory: boolean;
 
   // Actions
   setGroups: (groups: GroupMeta[]) => void;
@@ -28,16 +30,20 @@ interface GroupState {
   setGroupDoc: (doc: GroupDoc | null) => void;
   setEvents: (events: LedgerEvent[]) => void;
   appendEvent: (event: LedgerEvent) => void;
+  prependEvents: (events: LedgerEvent[]) => void;
   setActors: (actors: Actor[]) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;
   setRuntimes: (runtimes: RuntimeInfo[]) => void;
   updateReadStatus: (eventId: string, actorId: string) => void;
+  setHasMoreHistory: (v: boolean) => void;
+  setIsLoadingHistory: (v: boolean) => void;
 
   // Async actions
   refreshGroups: () => Promise<void>;
   refreshActors: (groupId?: string) => Promise<void>;
   loadGroup: (groupId: string) => Promise<void>;
+  loadMoreHistory: () => Promise<void>;
 }
 
 const MAX_UI_EVENTS = 800;
@@ -58,6 +64,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   groupContext: null,
   groupSettings: null,
   runtimes: [],
+  hasMoreHistory: true,
+  isLoadingHistory: false,
 
   // Sync actions
   setGroups: (groups) => set({ groups }),
@@ -69,6 +77,17 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const next = state.events.concat([event]);
       return {
         events: next.length > MAX_UI_EVENTS ? next.slice(next.length - MAX_UI_EVENTS) : next,
+      };
+    }),
+  prependEvents: (newEvents) =>
+    set((state) => {
+      // Deduplicate by id: filter out events that already exist
+      const existingIds = new Set(state.events.map((e) => e.id).filter(Boolean));
+      const uniqueNew = newEvents.filter((e) => e.id && !existingIds.has(e.id));
+      const merged = [...uniqueNew, ...state.events];
+      return {
+        // Keep oldest when over limit (trim from end, preserving history)
+        events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
       };
     }),
   setActors: (actors) => set({ actors }),
@@ -97,6 +116,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       }
       return { events: next };
     }),
+  setHasMoreHistory: (v) => set({ hasMoreHistory: v }),
+  setIsLoadingHistory: (v) => set({ isLoadingHistory: v }),
 
   // Async actions
   refreshGroups: async () => {
@@ -175,6 +196,42 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       actors: a.ok ? a.result.actors || [] : [],
       groupContext: ctx.ok ? (ctx.result as GroupContext) : null,
       groupSettings: settings.ok && settings.result.settings ? settings.result.settings : null,
+      hasMoreHistory: true, // Reset when switching groups
     });
+  },
+
+  loadMoreHistory: async () => {
+    const { selectedGroupId, events, isLoadingHistory, hasMoreHistory } = get();
+    if (!selectedGroupId) return;
+    if (isLoadingHistory || !hasMoreHistory) return;
+
+    // Find first chat message to use as cursor
+    const chatMessages = events.filter((ev) => ev.kind === "chat.message");
+    const firstEvent = chatMessages[0];
+    if (!firstEvent?.id) return;
+
+    set({ isLoadingHistory: true });
+    try {
+      const resp = await api.fetchOlderMessages(selectedGroupId, String(firstEvent.id), 50);
+      // Guard against group switch during loading
+      if (get().selectedGroupId !== selectedGroupId) return;
+
+      if (resp.ok) {
+        // Filter to only chat messages (same as initial load)
+        const olderChatEvents = (resp.result.events || []).filter(
+          (ev) => ev && ev.kind === "chat.message"
+        );
+        // Deduplicate and prepend
+        const existingIds = new Set(get().events.map((e) => e.id).filter(Boolean));
+        const uniqueNew = olderChatEvents.filter((e) => e.id && !existingIds.has(e.id));
+        const merged = [...uniqueNew, ...get().events];
+        set({
+          events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
+          hasMoreHistory: resp.result.has_more,
+        });
+      }
+    } finally {
+      set({ isLoadingHistory: false });
+    }
   },
 }));

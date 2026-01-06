@@ -45,10 +45,13 @@ export default function App() {
     groupDoc,
     events,
     actors,
+    hasMoreHistory,
+    isLoadingHistory,
     setSelectedGroupId,
     refreshGroups,
     refreshActors,
     loadGroup,
+    loadMoreHistory,
   } = useGroupStore();
 
   const {
@@ -549,6 +552,9 @@ export default function App() {
                 onAppendRecipientToken={(token) =>
                   setToText(toText ? toText + ", " + token : token)
                 }
+                isLoadingHistory={isLoadingHistory}
+                hasMoreHistory={hasMoreHistory}
+                onLoadMore={loadMoreHistory}
               />
             </div>
             {activeTab !== "chat" && (

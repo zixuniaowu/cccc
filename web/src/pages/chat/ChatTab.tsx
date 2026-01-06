@@ -57,6 +57,11 @@ export interface ChatTabProps {
   setMentionSelectedIndex: Dispatch<SetStateAction<number>>;
   setMentionFilter: Dispatch<SetStateAction<string>>;
   onAppendRecipientToken: (token: string) => void;
+
+  // History loading
+  isLoadingHistory?: boolean;
+  hasMoreHistory?: boolean;
+  onLoadMore?: () => void;
 }
 
 export function ChatTab({
@@ -99,6 +104,9 @@ export function ChatTab({
   setMentionSelectedIndex,
   setMentionFilter,
   onAppendRecipientToken,
+  isLoadingHistory,
+  hasMoreHistory,
+  onLoadMore,
 }: ChatTabProps) {
   // Empty state: show full-screen setup guidance.
   if (chatMessages.length === 0 && showSetupCard) {
@@ -205,6 +213,9 @@ export function ChatTab({
         onScrollButtonClick={onScrollButtonClick}
         chatUnreadCount={chatUnreadCount}
         onScrollChange={onScrollChange}
+        isLoadingHistory={isLoadingHistory}
+        hasMoreHistory={hasMoreHistory}
+        onLoadMore={onLoadMore}
       />
 
       {/* Composer */}
