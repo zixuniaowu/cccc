@@ -24,7 +24,10 @@ export interface AppHeaderProps {
   actors: Actor[];
   busy: string;
   errorMsg: string;
+  notice: { message: string; actionLabel?: string; actionId?: string } | null;
   onDismissError: () => void;
+  onNoticeAction: (actionId: string) => void;
+  onDismissNotice: () => void;
   onOpenSidebar: () => void;
   onOpenGroupEdit: () => void;
   onOpenContext: () => void;
@@ -45,7 +48,10 @@ export function AppHeader({
   actors,
   busy,
   errorMsg,
+  notice,
   onDismissError,
+  onNoticeAction,
+  onDismissNotice,
   onOpenSidebar,
   onOpenGroupEdit,
   onOpenContext,
@@ -229,6 +235,42 @@ export function AppHeader({
                 isDark ? "text-rose-400" : "text-rose-600"
               )} 
               onClick={onDismissError}
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
+
+      {notice && (
+        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 animate-slide-up">
+          <div
+            className={classNames(
+              "rounded-2xl px-4 py-2.5 text-sm flex items-center gap-3 glass-modal",
+              isDark ? "border-white/10 text-slate-200" : "border-black/10 text-gray-800"
+            )}
+            role="status"
+          >
+            <span className="min-w-0 truncate">{notice.message}</span>
+            {notice.actionId && notice.actionLabel && (
+              <button
+                type="button"
+                className={classNames(
+                  "px-2 py-1 rounded-xl text-xs transition-all glass-btn",
+                  isDark ? "text-slate-100" : "text-gray-900"
+                )}
+                onClick={() => onNoticeAction(notice.actionId!)}
+              >
+                {notice.actionLabel}
+              </button>
+            )}
+            <button
+              className={classNames(
+                "p-1 rounded-lg transition-all glass-btn",
+                isDark ? "text-slate-300" : "text-gray-600"
+              )}
+              onClick={onDismissNotice}
+              aria-label="Dismiss"
             >
               ×
             </button>

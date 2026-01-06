@@ -1,8 +1,26 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { VitePWA } from "vite-plugin-pwa";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    VitePWA({
+      strategies: "injectManifest",
+      srcDir: "src",
+      filename: "sw.ts",
+      scope: "/ui/",
+      base: "/ui/",
+      injectRegister: false,
+      registerType: "prompt",
+      includeAssets: ["favicon.ico", "favicon.png", "logo.png", "logo.svg", "manifest.webmanifest"],
+      manifest: false,
+      injectManifest: {
+        // We handle HTML navigation fallback in the custom SW.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+      },
+    }),
+  ],
   base: "/ui/",
   resolve: {
     // Prefer the CJS build for xterm to avoid a minification bug that can break

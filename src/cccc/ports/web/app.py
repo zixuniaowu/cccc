@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import re
 import shlex
@@ -266,6 +267,9 @@ async def _sse_tail(path: Path) -> AsyncIterator[bytes]:
 def create_app() -> FastAPI:
     app = FastAPI(title="cccc web", version=__version__)
     home = ensure_home()
+
+    # Some environments don't register the standard PWA manifest extension.
+    mimetypes.add_type("application/manifest+json", ".webmanifest")
 
     # Configure web logging (best-effort) based on daemon observability settings.
     try:

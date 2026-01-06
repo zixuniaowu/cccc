@@ -1,11 +1,18 @@
 // UI state store (tabs, sidebar, toasts, etc.).
 import { create } from "zustand";
 
+interface UINotice {
+  message: string;
+  actionLabel?: string;
+  actionId?: string;
+}
+
 interface UIState {
   // State
   activeTab: string;
   busy: string;
   errorMsg: string;
+  notice: UINotice | null;
   isTransitioning: boolean;
   sidebarOpen: boolean;
   showScrollButton: boolean;
@@ -18,6 +25,8 @@ interface UIState {
   setError: (msg: string) => void;
   showError: (msg: string) => void;
   dismissError: () => void;
+  showNotice: (notice: UINotice) => void;
+  dismissNotice: () => void;
   setTransitioning: (v: boolean) => void;
   setSidebarOpen: (v: boolean) => void;
   setShowScrollButton: (v: boolean) => void;
@@ -33,6 +42,7 @@ export const useUIStore = create<UIState>((set) => ({
   activeTab: "chat",
   busy: "",
   errorMsg: "",
+  notice: null,
   isTransitioning: false,
   sidebarOpen: true,
   showScrollButton: false,
@@ -60,6 +70,9 @@ export const useUIStore = create<UIState>((set) => ({
     }
     set({ errorMsg: "" });
   },
+
+  showNotice: (notice) => set({ notice }),
+  dismissNotice: () => set({ notice: null }),
 
   setTransitioning: (v) => set({ isTransitioning: v }),
   setSidebarOpen: (v) => set({ sidebarOpen: v }),

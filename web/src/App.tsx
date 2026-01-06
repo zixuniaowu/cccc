@@ -19,6 +19,7 @@ import {
   useComposerStore,
   useFormStore,
 } from "./stores";
+import { handlePwaNoticeAction } from "./pwa";
 import * as api from "./services/api";
 import type { GroupDoc, LedgerEvent, Actor, ChatMessageData } from "./types";
 
@@ -57,6 +58,7 @@ export default function App() {
   const {
     busy,
     errorMsg,
+    notice,
     isTransitioning,
     sidebarOpen,
     activeTab,
@@ -66,6 +68,8 @@ export default function App() {
     setBusy,
     showError,
     dismissError,
+    dismissNotice,
+    showNotice,
     setSidebarOpen,
     setActiveTab,
     setShowScrollButton,
@@ -451,7 +455,15 @@ export default function App() {
             actors={actors}
             busy={busy}
             errorMsg={errorMsg}
+            notice={notice}
             onDismissError={dismissError}
+            onNoticeAction={(actionId) => {
+              void handlePwaNoticeAction(actionId, {
+                showNotice,
+                dismissNotice,
+              });
+            }}
+            onDismissNotice={dismissNotice}
             onOpenSidebar={() => setSidebarOpen(true)}
             onOpenGroupEdit={() => {
               if (groupDoc) {
