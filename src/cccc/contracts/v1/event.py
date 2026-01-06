@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...util.time import utc_now_iso
-from .actor import Actor, ActorRole, ActorSubmit
+from .actor import Actor, ActorRole, ActorSubmit, AgentRuntime, RunnerKind
 from .message import ChatMessageData, ChatReactionData
 from .notify import NotifyAckData, SystemNotifyData
 
@@ -101,6 +101,8 @@ class ActorUpdatePatch(BaseModel):
     default_scope_key: Optional[str] = None
     submit: Optional[ActorSubmit] = None
     enabled: Optional[bool] = None
+    runner: Optional[RunnerKind] = None
+    runtime: Optional[AgentRuntime] = None
 
     model_config = ConfigDict(extra="forbid")
 

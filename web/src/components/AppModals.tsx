@@ -92,6 +92,7 @@ export function AppModals({
     editActorTitle,
     setEditActorRuntime,
     setEditActorCommand,
+    setEditActorTitle,
     newActorId,
     newActorRole,
     newActorRuntime,
@@ -452,6 +453,8 @@ export function AppModals({
         onChangeRuntime={setEditActorRuntime}
         command={editActorCommand}
         onChangeCommand={setEditActorCommand}
+        title={editActorTitle}
+        onChangeTitle={setEditActorTitle}
         onSave={handleSaveEditActor}
         onCancel={() => setEditingActor(null)}
       />
