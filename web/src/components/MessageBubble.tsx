@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { LedgerEvent, Actor, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
 import { formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
@@ -9,6 +9,60 @@ function formatEventLine(ev: LedgerEvent): string {
         return String(msg.text || "");
     }
     return "";
+}
+
+// Image preview component with loading state and error handling
+function ImagePreview({
+    href,
+    alt,
+    isUserMessage,
+    isDark,
+}: {
+    href: string;
+    alt: string;
+    isUserMessage: boolean;
+    isDark: boolean;
+}) {
+    const [loadError, setLoadError] = useState(false);
+
+    if (loadError) {
+        // Fallback to file download link on error
+        return (
+            <a
+                href={href}
+                className={classNames(
+                    "inline-flex items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors max-w-full",
+                    isUserMessage
+                        ? "bg-blue-700/50 hover:bg-blue-700 text-white border border-blue-500"
+                        : isDark
+                            ? "bg-slate-900/50 hover:bg-slate-900 text-slate-300 border border-slate-700"
+                            : "bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200"
+                )}
+                title={`Download ${alt}`}
+                download
+            >
+                <span className="opacity-70">🖼️</span>
+                <span className="truncate">{alt}</span>
+            </a>
+        );
+    }
+
+    return (
+        <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block rounded-lg overflow-hidden max-w-full"
+        >
+            <img
+                src={href}
+                alt={alt}
+                className="max-w-full max-h-64 sm:max-h-80 object-contain rounded-lg"
+                loading="lazy"
+                onError={() => setLoadError(true)}
+            />
+        </a>
+    );
 }
 
 export interface MessageBubbleProps {
@@ -168,7 +222,7 @@ export const MessageBubble = memo(function MessageBubble({
                 {/* Bubble */}
                 <div
                     className={classNames(
-                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed",
+                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85%] sm:max-w-none",
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none"
                             : isDark
@@ -190,35 +244,68 @@ export const MessageBubble = memo(function MessageBubble({
                     <div className="whitespace-pre-wrap break-words">{formatEventLine(ev)}</div>
 
                     {/* Attachments */}
-                    {blobAttachments.length > 0 && groupId && (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                            {blobAttachments.map((a, i) => {
-                                const parts = a.path.split("/");
-                                const blobName = parts[parts.length - 1] || "";
-                                const href = `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`;
-                                const label = a.title || blobName || "file";
-                                return (
-                                    <a
-                                        key={`${blobName}:${i}`}
-                                        href={href}
-                                        className={classNames(
-                                            "inline-flex items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors max-w-full",
-                                            isUserMessage
-                                                ? "bg-blue-700/50 hover:bg-blue-700 text-white border border-blue-500"
-                                                : isDark
-                                                    ? "bg-slate-900/50 hover:bg-slate-900 text-slate-300 border border-slate-700"
-                                                    : "bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200"
-                                        )}
-                                        title={`Download ${label}`}
-                                        download
-                                    >
-                                        <span className="opacity-70">📎</span>
-                                        <span className="truncate">{label}</span>
-                                    </a>
-                                );
-                            })}
-                        </div>
-                    )}
+                    {blobAttachments.length > 0 && groupId && (() => {
+                        const imageAttachments = blobAttachments.filter((a) =>
+                            a.mime_type.startsWith("image/")
+                        );
+                        const fileAttachments = blobAttachments.filter((a) =>
+                            !a.mime_type.startsWith("image/")
+                        );
+                        return (
+                            <>
+                                {/* Image previews */}
+                                {imageAttachments.length > 0 && (
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        {imageAttachments.map((a, i) => {
+                                            const parts = a.path.split("/");
+                                            const blobName = parts[parts.length - 1] || "";
+                                            const href = `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`;
+                                            const label = a.title || blobName;
+                                            return (
+                                                <ImagePreview
+                                                    key={`img-${blobName}:${i}`}
+                                                    href={href}
+                                                    alt={label}
+                                                    isUserMessage={isUserMessage}
+                                                    isDark={isDark}
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                {/* File attachments */}
+                                {fileAttachments.length > 0 && (
+                                    <div className="mt-3 flex flex-wrap gap-2">
+                                        {fileAttachments.map((a, i) => {
+                                            const parts = a.path.split("/");
+                                            const blobName = parts[parts.length - 1] || "";
+                                            const href = `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`;
+                                            const label = a.title || blobName || "file";
+                                            return (
+                                                <a
+                                                    key={`file-${blobName}:${i}`}
+                                                    href={href}
+                                                    className={classNames(
+                                                        "inline-flex items-center gap-2 rounded px-2 py-1.5 text-xs transition-colors max-w-full",
+                                                        isUserMessage
+                                                            ? "bg-blue-700/50 hover:bg-blue-700 text-white border border-blue-500"
+                                                            : isDark
+                                                                ? "bg-slate-900/50 hover:bg-slate-900 text-slate-300 border border-slate-700"
+                                                                : "bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200"
+                                                    )}
+                                                    title={`Download ${label}`}
+                                                    download
+                                                >
+                                                    <span className="opacity-70">📎</span>
+                                                    <span className="truncate">{label}</span>
+                                                </a>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </>
+                        );
+                    })()}
                 </div>
 
                 <div
