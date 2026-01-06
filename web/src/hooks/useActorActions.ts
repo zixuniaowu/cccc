@@ -62,11 +62,6 @@ export function useActorActions(groupId: string) {
   const editActor = useCallback(
     (actor: Actor) => {
       if (!actor) return;
-      const isRunning = actor.running ?? actor.enabled ?? false;
-      if (isRunning) {
-        showError("Stop the actor before editing.");
-        return;
-      }
       // Initialize form state with actor's current values
       setEditActorRuntime((actor.runtime as any) || "codex");
       setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");

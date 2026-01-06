@@ -1,6 +1,6 @@
 // ChatTab is the main chat page component.
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
-import { Actor, LedgerEvent, ReplyTarget } from "../../types";
+import { Actor, LedgerEvent, ReplyTarget, PresenceAgent } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { SetupChecklist } from "./SetupChecklist";
@@ -11,6 +11,7 @@ export interface ChatTabProps {
   isSmallScreen: boolean;
   selectedGroupId: string;
   actors: Actor[];
+  presenceAgents: PresenceAgent[];
   busy: string;
 
   // Setup checklist
@@ -69,6 +70,7 @@ export function ChatTab({
   isSmallScreen,
   selectedGroupId,
   actors,
+  presenceAgents,
   busy,
   showSetupCard,
   needsScope,
@@ -204,8 +206,9 @@ export function ChatTab({
       <VirtualMessageList
         messages={chatMessages}
         actors={actors}
+        presenceAgents={presenceAgents}
         isDark={isDark}
-        groupId={selectedGroupId || ""}
+        groupId={selectedGroupId}
         scrollRef={scrollRef}
         onReply={onReply}
         onShowRecipients={onShowRecipients}

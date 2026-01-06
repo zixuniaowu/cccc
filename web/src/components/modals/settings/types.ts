@@ -1,7 +1,7 @@
 // Shared types/helpers for the Settings modal.
 
 export type SettingsScope = "group" | "global";
-export type GroupTabId = "timing" | "im" | "transcript";
+export type GroupTabId = "timing" | "im" | "transcript" | "prompts";
 export type GlobalTabId = "remote" | "developer";
 
 // Shared style class helpers

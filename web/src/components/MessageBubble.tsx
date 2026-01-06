@@ -1,6 +1,7 @@
-import { memo, useState } from "react";
-import { LedgerEvent, Actor, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
-import { formatTime } from "../utils/time";
+import { memo, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { LedgerEvent, Actor, PresenceAgent, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
+import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 
 function formatEventLine(ev: LedgerEvent): string {
@@ -68,6 +69,7 @@ function ImagePreview({
 export interface MessageBubbleProps {
     event: LedgerEvent;
     actors: Actor[];
+    presenceAgent: PresenceAgent | null;
     isDark: boolean;
     groupId: string;
     onReply: () => void;
@@ -77,6 +79,7 @@ export interface MessageBubbleProps {
 export const MessageBubble = memo(function MessageBubble({
     event: ev,
     actors,
+    presenceAgent,
     isDark,
     groupId,
     onReply,
@@ -84,6 +87,55 @@ export const MessageBubble = memo(function MessageBubble({
 }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
+
+    const [showPresence, setShowPresence] = useState(false);
+    const [presencePos, setPresencePos] = useState<{ x: number; y: number } | null>(null);
+    const hideTimerRef = useRef<number | null>(null);
+
+    const canShowPresence = useMemo(() => {
+        if (isUserMessage) return false;
+        const id = String(ev.by || "");
+        if (!id) return false;
+        return true;
+    }, [ev.by, isUserMessage]);
+
+    const clearHide = () => {
+        if (hideTimerRef.current != null) {
+            window.clearTimeout(hideTimerRef.current);
+            hideTimerRef.current = null;
+        }
+    };
+
+    const scheduleHide = () => {
+        clearHide();
+        hideTimerRef.current = window.setTimeout(() => {
+            setShowPresence(false);
+            setPresencePos(null);
+            hideTimerRef.current = null;
+        }, 160);
+    };
+
+    const handlePresenceEnter = (el: HTMLElement) => {
+        if (!canShowPresence) return;
+        clearHide();
+        const rect = el.getBoundingClientRect();
+        const width = 360;
+        const estimatedHeight = 140;
+        const margin = 10;
+        let x = rect.left;
+        x = Math.min(x, window.innerWidth - width - margin);
+        x = Math.max(margin, x);
+        const below = rect.bottom + 10;
+        const above = rect.top - estimatedHeight - 10;
+        let y = below;
+        if (below + estimatedHeight > window.innerHeight - margin && above > margin) {
+            y = above;
+        }
+        y = Math.min(y, window.innerHeight - estimatedHeight - margin);
+        y = Math.max(margin, y);
+        setPresencePos({ x, y });
+        setShowPresence(true);
+    };
 
     // Treat data as ChatMessageData.
     const msgData = ev.data as ChatMessageData | undefined;
@@ -132,6 +184,8 @@ export const MessageBubble = memo(function MessageBubble({
                             : "bg-white border border-gray-200 text-gray-700",
                     !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                 )}
+                onPointerEnter={(e) => handlePresenceEnter(e.currentTarget)}
+                onPointerLeave={() => scheduleHide()}
             >
                 {isUserMessage ? "U" : (ev.by || "?")[0].toUpperCase()}
             </div>
@@ -160,6 +214,8 @@ export const MessageBubble = memo(function MessageBubble({
                                     : "bg-white border border-gray-200 text-gray-700",
                             !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                         )}
+                        onPointerEnter={(e) => handlePresenceEnter(e.currentTarget)}
+                        onPointerLeave={() => scheduleHide()}
                     >
                         {isUserMessage ? "U" : (ev.by || "?")[0].toUpperCase()}
                     </div>
@@ -368,12 +424,54 @@ export const MessageBubble = memo(function MessageBubble({
                     </button>
                 </div>
             </div>
+
+            {showPresence && presencePos && canShowPresence && typeof document !== "undefined" &&
+                createPortal(
+                    <div
+                        className={classNames(
+                            "fixed z-[200] w-[360px] rounded-xl border shadow-2xl px-3 py-2",
+                            isDark
+                                ? "bg-slate-900/95 border-white/10 text-slate-200"
+                                : "bg-white/95 border-black/10 text-gray-900"
+                        )}
+                        style={{ left: presencePos.x, top: presencePos.y }}
+                        onPointerEnter={() => clearHide()}
+                        onPointerLeave={() => scheduleHide()}
+                        role="status"
+                    >
+                        <div className="flex items-center gap-2">
+                            <div
+                                className={classNames("text-xs font-semibold", isDark ? "text-slate-200" : "text-gray-900")}
+                            >
+                                {String(ev.by || "")}
+                            </div>
+                            {presenceAgent?.updated_at ? (
+                                <div
+                                    className={classNames(
+                                        "ml-auto text-xs tabular-nums",
+                                        isDark ? "text-slate-400" : "text-gray-500"
+                                    )}
+                                    title={formatFullTime(presenceAgent.updated_at)}
+                                >
+                                    Updated {formatTime(presenceAgent.updated_at)}
+                                </div>
+                            ) : null}
+                        </div>
+                        <div
+                            className={classNames("mt-1 text-xs whitespace-pre-wrap", isDark ? "text-slate-300" : "text-gray-700")}
+                        >
+                            {presenceAgent?.status ? presenceAgent.status : "No presence yet"}
+                        </div>
+                    </div>,
+                    document.body
+                )}
         </div>
     );
 }, (prevProps, nextProps) => {
     return (
         prevProps.event === nextProps.event &&
         prevProps.actors === nextProps.actors &&
+        prevProps.presenceAgent === nextProps.presenceAgent &&
         prevProps.isDark === nextProps.isDark &&
         prevProps.groupId === nextProps.groupId
     );

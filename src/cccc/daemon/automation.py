@@ -23,6 +23,7 @@ from ..kernel.group import Group, load_group, get_group_state
 from ..kernel.inbox import unread_messages, iter_events
 from ..kernel.ledger import append_event
 from ..kernel.terminal_transcript import get_terminal_transcript_settings
+from ..kernel.prompt_files import DEFAULT_STANDUP_TEMPLATE, STANDUP_FILENAME, read_repo_prompt_file
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
 from .delivery import flush_pending_messages, queue_system_notify
@@ -646,27 +647,12 @@ class AutomationManager:
         # Calculate minutes since last standup for the message
         interval_minutes = cfg.standup_interval_seconds // 60
 
-        standup_message = f"""{interval_minutes} minutes have passed. Time for a team review.
+        pf = read_repo_prompt_file(group, STANDUP_FILENAME)
+        template = str(pf.content or "").strip() if pf.found else ""
+        if not template:
+            template = str(DEFAULT_STANDUP_TEMPLATE or "")
 
-Foreman, please initiate a stand-up with @peers:
-
-1. ASK PEERS TO REFLECT (not just report):
-   - Update your progress in context (use cccc_task_update)
-   - Step back and think: Is our approach correct? Any blind spots?
-   - Any better ideas or alternative approaches?
-   - What concerns or risks do you see?
-
-2. COLLECT & SYNTHESIZE:
-   - Gather insights from all peers
-   - Look for patterns, conflicts, or new opportunities
-   - Peers are collaborators, not subordinates - value their perspectives
-
-3. DECIDE TOGETHER:
-   - Adjust direction if needed based on collective wisdom
-   - Update vision/sketch to reflect new understanding
-   - Reallocate work if better approaches emerge
-
-Example: "@peers Stand-up time. Please: 1) Update your task progress, 2) Share any concerns about our current approach, 3) Suggest improvements if you see any.\""""
+        standup_message = template.replace("{{interval_minutes}}", str(interval_minutes)).strip()
 
         notify_data = SystemNotifyData(
             kind="standup",

@@ -5,8 +5,8 @@ Inspired by the "ccontext" pattern, each group has a small, shared working conte
 - Vision/Sketch: project vision and high-level blueprint
 - Milestones: 2–6 coarse phases
 - Tasks: deliverable work items with 3–7 steps
-- Notes: short-lived notes with TTL
-- References: file/URL references with TTL
+- Notes: short notes (manually managed)
+- References: file/URL references (manually managed)
 - Presence: what each agent is doing
 
 Storage: ~/.cccc/groups/<group_id>/context/
@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -35,13 +35,15 @@ from .group import Group
 class MilestoneStatus(str, Enum):
     DONE = "done"
     ACTIVE = "active"
-    PENDING = "pending"
+    PLANNED = "planned"
+    ARCHIVED = "archived"
 
 
 class TaskStatus(str, Enum):
     PLANNED = "planned"
     ACTIVE = "active"
     DONE = "done"
+    ARCHIVED = "archived"
 
 
 class StepStatus(str, Enum):
@@ -61,7 +63,8 @@ class Milestone:
         id: str,
         name: str,
         description: str = "",
-        status: MilestoneStatus = MilestoneStatus.PENDING,
+        status: MilestoneStatus = MilestoneStatus.PLANNED,
+        archived_from: Optional[str] = None,
         started: Optional[str] = None,
         completed: Optional[str] = None,
         outcomes: Optional[str] = None,
@@ -71,6 +74,7 @@ class Milestone:
         self.name = name
         self.description = description
         self.status = status
+        self.archived_from = archived_from
         self.started = started
         self.completed = completed
         self.outcomes = outcomes
@@ -78,26 +82,16 @@ class Milestone:
 
 
 class Note:
-    def __init__(self, id: str, content: str, ttl: int = 30):
+    def __init__(self, id: str, content: str):
         self.id = id
         self.content = content
-        self.ttl = max(0, min(100, ttl))
-
-    @property
-    def expiring(self) -> bool:
-        return self.ttl <= 3
 
 
 class Reference:
-    def __init__(self, id: str, url: str, note: str, ttl: int = 30):
+    def __init__(self, id: str, url: str, note: str):
         self.id = id
         self.url = url
         self.note = note
-        self.ttl = max(0, min(100, ttl))
-
-    @property
-    def expiring(self) -> bool:
-        return self.ttl <= 3
 
 
 class Step:
@@ -121,6 +115,7 @@ class Task:
         name: str,
         goal: str = "",
         status: TaskStatus = TaskStatus.PLANNED,
+        archived_from: Optional[str] = None,
         milestone: Optional[str] = None,
         assignee: Optional[str] = None,
         created_at: Optional[str] = None,
@@ -131,6 +126,7 @@ class Task:
         self.name = name
         self.goal = goal
         self.status = status
+        self.archived_from = archived_from
         self.milestone = milestone
         self.assignee = assignee
         self.created_at = created_at or _utc_now_iso()
@@ -195,25 +191,9 @@ class PresenceData:
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-
-def _parse_ttl(value: Any, default: int = 30) -> int:
-    try:
-        ttl_int = int(value)
-    except (TypeError, ValueError):
-        ttl_int = default
-    return max(0, min(100, ttl_int))
-
-
 # =============================================================================
 # Context Storage
 # =============================================================================
-
-
-# Archive thresholds
-ARCHIVE_TTL_THRESHOLD = 0
-ARCHIVE_DONE_DAYS = 7
-MAX_DONE_TASKS = 10
-MAX_DONE_MILESTONES_RETURNED = 3
 
 
 class ContextStorage:
@@ -223,23 +203,16 @@ class ContextStorage:
         self.group = group
         self.context_dir = group.path / "context"
         self.tasks_dir = self.context_dir / "tasks"
-        self.archive_dir = self.context_dir / "archive"
-        self.archive_tasks_dir = self.archive_dir / "tasks"
 
     def _ensure_dirs(self) -> None:
         self.context_dir.mkdir(parents=True, exist_ok=True)
         self.tasks_dir.mkdir(parents=True, exist_ok=True)
-        self.archive_dir.mkdir(parents=True, exist_ok=True)
-        self.archive_tasks_dir.mkdir(parents=True, exist_ok=True)
 
     def _context_path(self) -> Path:
         return self.context_dir / "context.yaml"
 
     def _task_path(self, task_id: str) -> Path:
         return self.tasks_dir / f"{task_id}.yaml"
-
-    def _archive_task_path(self, task_id: str) -> Path:
-        return self.archive_tasks_dir / f"{task_id}.yaml"
 
     def _presence_path(self) -> Path:
         return self.context_dir / "presence.yaml"
@@ -262,24 +235,6 @@ class ContextStorage:
                 return {str(k): _jsonable(v) for k, v in obj.items()}
             return str(obj)
 
-        def _strip_ttl(obj: Any) -> Any:
-            if not isinstance(obj, dict):
-                return obj
-            out = dict(obj)
-            for key in ("notes", "references"):
-                items = out.get(key)
-                if isinstance(items, list):
-                    new_items: List[Any] = []
-                    for it in items:
-                        if isinstance(it, dict):
-                            it2 = dict(it)
-                            it2.pop("ttl", None)
-                            new_items.append(it2)
-                        else:
-                            new_items.append(it)
-                    out[key] = new_items
-            return out
-
         h = hashlib.sha256()
 
         ctx_path = self._context_path()
@@ -288,7 +243,7 @@ class ContextStorage:
                 data = yaml.safe_load(ctx_path.read_text(encoding="utf-8"))
             except Exception:
                 data = None
-            payload = json.dumps(_jsonable(_strip_ttl(data)), sort_keys=True).encode()
+            payload = json.dumps(_jsonable(data), sort_keys=True).encode()
             h.update(payload)
 
         if self.tasks_dir.exists():
@@ -336,12 +291,16 @@ class ContextStorage:
 
             milestones = []
             for m in data.get("milestones", []):
+                raw_status = str(m.get("status", "planned") or "planned")
+                if raw_status.lower() == "pending":
+                    raw_status = "planned"
                 milestones.append(
                     Milestone(
                         id=m.get("id", ""),
                         name=m.get("name", ""),
                         description=m.get("description", ""),
-                        status=MilestoneStatus(m.get("status", "pending")),
+                        status=MilestoneStatus(raw_status.lower()),
+                        archived_from=m.get("archived_from"),
                         started=m.get("started"),
                         completed=m.get("completed"),
                         outcomes=m.get("outcomes"),
@@ -357,7 +316,6 @@ class ContextStorage:
                     Note(
                         id=n.get("id", ""),
                         content=n.get("content", ""),
-                        ttl=_parse_ttl(n.get("ttl", 30)),
                     )
                 )
 
@@ -370,7 +328,6 @@ class ContextStorage:
                         id=r.get("id", ""),
                         url=r.get("url", ""),
                         note=r.get("note", ""),
-                        ttl=_parse_ttl(r.get("ttl", 30)),
                     )
                 )
 
@@ -407,6 +364,7 @@ class ContextStorage:
                     "name": m.name,
                     "description": m.description,
                     "status": m.status.value if isinstance(m.status, MilestoneStatus) else m.status,
+                    "archived_from": getattr(m, "archived_from", None),
                     "started": m.started,
                     "completed": m.completed,
                     "outcomes": m.outcomes,
@@ -417,9 +375,9 @@ class ContextStorage:
             for m in context.milestones
         ]
 
-        data["notes"] = [{"id": n.id, "content": n.content, "ttl": n.ttl} for n in context.notes]
+        data["notes"] = [{"id": n.id, "content": n.content} for n in context.notes]
         data["references"] = [
-            {"id": r.id, "url": r.url, "note": r.note, "ttl": r.ttl} for r in context.references
+            {"id": r.id, "url": r.url, "note": r.note} for r in context.references
         ]
 
         path = self._context_path()
@@ -486,14 +444,10 @@ class ContextStorage:
     # Task Operations
     # =========================================================================
 
-    def load_task(self, task_id: str, include_archived: bool = False) -> Optional[Task]:
+    def load_task(self, task_id: str) -> Optional[Task]:
         path = self._task_path(task_id)
         if path.exists():
             return self._parse_task(path)
-        if include_archived:
-            archive_path = self._archive_task_path(task_id)
-            if archive_path.exists():
-                return self._parse_task(archive_path)
         return None
 
     def _parse_task(self, path: Path) -> Optional[Task]:
@@ -513,11 +467,16 @@ class ContextStorage:
                     )
                 )
 
+            raw_status = str(data.get("status", "planned") or "planned").strip().lower()
+            if raw_status == "pending":
+                raw_status = "planned"
+
             return Task(
                 id=data.get("id", ""),
                 name=data.get("name", ""),
                 goal=data.get("goal", ""),
-                status=TaskStatus(data.get("status", "planned")),
+                status=TaskStatus(raw_status),
+                archived_from=data.get("archived_from"),
                 milestone=data.get("milestone") or data.get("milestone_id"),
                 assignee=data.get("assignee"),
                 created_at=data.get("created_at", ""),
@@ -535,6 +494,7 @@ class ContextStorage:
             "name": task.name,
             "goal": task.goal,
             "status": task.status.value if isinstance(task.status, TaskStatus) else task.status,
+            "archived_from": getattr(task, "archived_from", None),
             "milestone": task.milestone,
             "assignee": task.assignee,
             "created_at": task.created_at,
@@ -557,22 +517,10 @@ class ContextStorage:
             encoding="utf-8",
         )
 
-    def delete_task(self, task_id: str) -> bool:
-        path = self._task_path(task_id)
-        if path.exists():
-            path.unlink()
-            return True
-        return False
-
-    def list_tasks(self, include_archived: bool = False) -> List[Task]:
+    def list_tasks(self) -> List[Task]:
         tasks = []
         if self.tasks_dir.exists():
             for path in self.tasks_dir.glob("T*.yaml"):
-                task = self._parse_task(path)
-                if task:
-                    tasks.append(task)
-        if include_archived and self.archive_tasks_dir.exists():
-            for path in self.archive_tasks_dir.glob("T*.yaml"):
                 task = self._parse_task(path)
                 if task:
                     tasks.append(task)
@@ -581,42 +529,12 @@ class ContextStorage:
 
     def generate_task_id(self) -> str:
         max_num = 0
-        for dir_path in [self.tasks_dir, self.archive_tasks_dir]:
-            if dir_path.exists():
-                for path in dir_path.glob("T*.yaml"):
-                    match = re.match(r"T(\d+)", path.stem)
-                    if match:
-                        max_num = max(max_num, int(match.group(1)))
+        if self.tasks_dir.exists():
+            for path in self.tasks_dir.glob("T*.yaml"):
+                match = re.match(r"T(\d+)", path.stem)
+                if match:
+                    max_num = max(max_num, int(match.group(1)))
         return f"T{max_num + 1:03d}"
-
-    # =========================================================================
-    # TTL Decay
-    # =========================================================================
-
-    def decay_ttl(self, context: Context) -> Tuple[Context, List[Note], List[Reference]]:
-        """Decay ttl for notes and references. Returns archived items."""
-        archived_notes = []
-        archived_refs = []
-        remaining_notes = []
-        remaining_refs = []
-
-        for note in context.notes:
-            if note.ttl <= ARCHIVE_TTL_THRESHOLD:
-                archived_notes.append(note)
-                continue
-            note.ttl = max(0, note.ttl - 1)
-            remaining_notes.append(note)
-
-        for ref in context.references:
-            if ref.ttl <= ARCHIVE_TTL_THRESHOLD:
-                archived_refs.append(ref)
-                continue
-            ref.ttl = max(0, ref.ttl - 1)
-            remaining_refs.append(ref)
-
-        context.notes = remaining_notes
-        context.references = remaining_refs
-        return context, archived_notes, archived_refs
 
     # =========================================================================
     # Presence Operations

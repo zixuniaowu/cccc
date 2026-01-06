@@ -25,6 +25,18 @@ from ...daemon.server import call_daemon
 from ...kernel.blobs import store_blob_bytes, resolve_blob_attachment_path
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
+from ...kernel.prompt_files import (
+    DEFAULT_PREAMBLE_BODY,
+    DEFAULT_STANDUP_TEMPLATE,
+    HELP_FILENAME,
+    PREAMBLE_FILENAME,
+    STANDUP_FILENAME,
+    delete_repo_prompt_file,
+    load_builtin_help_markdown,
+    read_repo_prompt_file,
+    resolve_active_scope_root,
+    write_repo_prompt_file,
+)
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
 from ...util.fs import atomic_write_text
@@ -116,6 +128,10 @@ class InboxReadRequest(BaseModel):
     by: str = Field(default="user")
 
 class ProjectMdUpdateRequest(BaseModel):
+    content: str = Field(default="")
+    by: str = Field(default="user")
+
+class RepoPromptUpdateRequest(BaseModel):
     content: str = Field(default="")
     by: str = Field(default="user")
 
@@ -668,6 +684,14 @@ def create_app() -> FastAPI:
         """Get full group context (vision/sketch/milestones/tasks/notes/refs/presence)."""
         return await _daemon({"op": "context_get", "args": {"group_id": group_id}})
 
+    @app.get("/api/v1/groups/{group_id}/tasks")
+    async def group_tasks(group_id: str, task_id: Optional[str] = None) -> Dict[str, Any]:
+        """List tasks (or fetch a single task when task_id is provided)."""
+        args: Dict[str, Any] = {"group_id": group_id}
+        if task_id:
+            args["task_id"] = task_id
+        return await _daemon({"op": "task_list", "args": args})
+
     @app.get("/api/v1/groups/{group_id}/project_md")
     async def project_md_get(group_id: str) -> Dict[str, Any]:
         """Get PROJECT.md content for the group's active scope root (repo root)."""
@@ -751,6 +775,103 @@ def create_app() -> FastAPI:
             return {"ok": True, "result": {"found": True, "path": str(project_md_path), "content": content}}
         except Exception as e:
             return {"ok": False, "error": {"code": "WRITE_FAILED", "message": f"Failed to write PROJECT.md: {e}"}}
+
+    def _prompt_kind_to_filename(kind: str) -> str:
+        k = str(kind or "").strip().lower()
+        if k == "preamble":
+            return PREAMBLE_FILENAME
+        if k == "help":
+            return HELP_FILENAME
+        if k == "standup":
+            return STANDUP_FILENAME
+        raise HTTPException(status_code=400, detail={"code": "invalid_kind", "message": f"unknown prompt kind: {kind}"})
+
+    def _builtin_prompt_markdown(kind: str) -> str:
+        k = str(kind or "").strip().lower()
+        if k == "preamble":
+            return str(DEFAULT_PREAMBLE_BODY or "").strip()
+        if k == "help":
+            return str(load_builtin_help_markdown() or "").strip()
+        if k == "standup":
+            return str(DEFAULT_STANDUP_TEMPLATE or "").strip()
+        return ""
+
+    @app.get("/api/v1/groups/{group_id}/prompts")
+    async def prompts_get(group_id: str) -> Dict[str, Any]:
+        """Get effective group prompt markdown (preamble/help/standup) and repo override status."""
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        root = resolve_active_scope_root(group)
+        scope_root = str(root) if root is not None else None
+
+        def _one(kind: str) -> Dict[str, Any]:
+            filename = _prompt_kind_to_filename(kind)
+            pf = read_repo_prompt_file(group, filename)
+            repo_content = str(pf.content or "").strip() if pf.found else ""
+            if repo_content:
+                return {
+                    "kind": kind,
+                    "source": "repo",
+                    "filename": filename,
+                    "path": pf.path,
+                    "content": repo_content,
+                }
+            return {
+                "kind": kind,
+                "source": "builtin",
+                "filename": filename,
+                "path": pf.path,
+                "content": _builtin_prompt_markdown(kind),
+            }
+
+        return {
+            "ok": True,
+            "result": {
+                "scope_root": scope_root,
+                "preamble": _one("preamble"),
+                "help": _one("help"),
+                "standup": _one("standup"),
+            },
+        }
+
+    @app.put("/api/v1/groups/{group_id}/prompts/{kind}")
+    async def prompts_put(group_id: str, kind: str, req: RepoPromptUpdateRequest) -> Dict[str, Any]:
+        """Create or update a group prompt override file in the repo root (active scope)."""
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        filename = _prompt_kind_to_filename(kind)
+        if resolve_active_scope_root(group) is None:
+            return {"ok": False, "error": {"code": "NO_SCOPE", "message": "No scope attached to group. Use 'cccc attach <path>' first."}}
+
+        try:
+            pf = write_repo_prompt_file(group, filename, str(req.content or ""))
+            return {"ok": True, "result": {"kind": kind, "source": "repo", "filename": filename, "path": pf.path, "content": pf.content or ""}}
+        except Exception as e:
+            return {"ok": False, "error": {"code": "WRITE_FAILED", "message": f"Failed to write {filename}: {e}"}}
+
+    @app.delete("/api/v1/groups/{group_id}/prompts/{kind}")
+    async def prompts_delete(group_id: str, kind: str, confirm: str = "") -> Dict[str, Any]:
+        """Reset a group prompt override by deleting the repo file (requires confirm=kind)."""
+        if str(confirm or "").strip().lower() != str(kind or "").strip().lower():
+            raise HTTPException(status_code=400, detail={"code": "confirmation_required", "message": f"confirm must equal kind: {kind}"})
+
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        filename = _prompt_kind_to_filename(kind)
+        if resolve_active_scope_root(group) is None:
+            return {"ok": False, "error": {"code": "NO_SCOPE", "message": "No scope attached to group. Use 'cccc attach <path>' first."}}
+
+        try:
+            pf = delete_repo_prompt_file(group, filename)
+            return {"ok": True, "result": {"kind": kind, "source": "builtin", "filename": filename, "path": pf.path, "content": _builtin_prompt_markdown(kind)}}
+        except Exception as e:
+            return {"ok": False, "error": {"code": "DELETE_FAILED", "message": f"Failed to delete {filename}: {e}"}}
 
     @app.post("/api/v1/groups/{group_id}/context")
     async def group_context_sync(group_id: str, request: Request) -> Dict[str, Any]:

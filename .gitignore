@@ -32,7 +32,9 @@
 # Local dev environments
 /venv-publish/
 
-# Legacy and internal docs (not for public repo)
+# Docs: ignore by default; whitelist only what we ship.
+/docs/*
+!/docs/vnext/
 /docs/vnext/*
 !/docs/vnext/README.md
 !/docs/vnext/STATUS.md

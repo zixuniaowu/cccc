@@ -7,6 +7,7 @@ All context operations go through the daemon to preserve the single-writer invar
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from ...contracts.v1 import DaemonResponse, DaemonError
@@ -32,6 +33,35 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_status_token(value: str) -> str:
+    s = str(value or "").strip().lower()
+    if s == "pending":
+        return "planned"
+    return s
+
+
+def _parse_milestone_status(value: Any) -> MilestoneStatus:
+    s = _normalize_status_token(str(value or "planned"))
+    try:
+        return MilestoneStatus(s)
+    except ValueError as e:
+        raise ValueError(f"Invalid milestone status: {value}") from e
+
+
+def _parse_task_status(value: Any) -> TaskStatus:
+    s = _normalize_status_token(str(value or "planned"))
+    try:
+        return TaskStatus(s)
+    except ValueError as e:
+        raise ValueError(f"Invalid task status: {value}") from e
+
+
+def _status_value(value: Any) -> str:
+    if isinstance(value, Enum):
+        return value.value
+    return str(value or "").strip().lower()
 
 
 def _get_storage(group_id: str) -> Optional[ContextStorage]:
@@ -87,11 +117,6 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     tasks = storage.list_tasks()
     presence = storage.load_presence()
 
-    # Decay TTL and save
-    context, archived_notes, archived_refs = storage.decay_ttl(context)
-    if archived_notes or archived_refs:
-        storage.save_context(context)
-
     # Build tasks summary
     done_count = sum(1 for t in tasks if t.status == TaskStatus.DONE)
     active_count = sum(1 for t in tasks if t.status == TaskStatus.ACTIVE)
@@ -121,11 +146,11 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
             for m in context.milestones
         ],
         "notes": [
-            {"id": n.id, "content": n.content, "ttl": n.ttl, "expiring": n.expiring}
+            {"id": n.id, "content": n.content}
             for n in context.notes
         ],
         "references": [
-            {"id": r.id, "url": r.url, "note": r.note, "ttl": r.ttl, "expiring": r.expiring}
+            {"id": r.id, "url": r.url, "note": r.note}
             for r in context.references
         ],
         "tasks_summary": {
@@ -201,11 +226,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
             elif op_name == "milestone.create":
                 name = str(item.get("name") or "")
                 description = str(item.get("description") or "")
-                status_str = str(item.get("status") or "pending")
-                try:
-                    status = MilestoneStatus(status_str)
-                except ValueError:
-                    raise ValueError(f"Invalid milestone status: {status_str}")
+                status = _parse_milestone_status(item.get("status") or "planned")
 
                 milestone_id = storage.generate_milestone_id(context)
                 started = None
@@ -235,11 +256,17 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if "description" in item:
                     milestone.description = str(item["description"])
                 if "status" in item:
-                    try:
-                        new_status = MilestoneStatus(str(item["status"]))
-                    except ValueError:
-                        raise ValueError(f"Invalid status: {item['status']}")
-                    if new_status == MilestoneStatus.ACTIVE and milestone.status != MilestoneStatus.ACTIVE:
+                    new_status = _parse_milestone_status(item["status"])
+                    prev_status = milestone.status
+                    prev_status_value = _normalize_status_token(_status_value(prev_status))
+
+                    if new_status == MilestoneStatus.ARCHIVED:
+                        if prev_status_value and prev_status_value != "archived":
+                            milestone.archived_from = prev_status_value
+                    else:
+                        milestone.archived_from = None
+
+                    if new_status == MilestoneStatus.ACTIVE and prev_status_value != "active":
                         if milestone.started is None:
                             milestone.started = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     milestone.status = new_status
@@ -256,20 +283,36 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     raise ValueError(f"Milestone not found: {milestone_id}")
 
                 milestone.status = MilestoneStatus.DONE
+                milestone.archived_from = None
                 milestone.completed = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 milestone.outcomes = outcomes
                 milestone.updated_at = _utc_now_iso()
                 context_dirty = True
                 _mark_change(idx, op_name, f"Completed {milestone_id}")
 
-            elif op_name == "milestone.remove":
+            elif op_name == "milestone.restore":
                 milestone_id = str(item.get("milestone_id") or "")
-                before = len(context.milestones)
-                context.milestones = [m for m in context.milestones if m.id != milestone_id]
-                if len(context.milestones) == before:
+                milestone = storage.get_milestone(context, milestone_id)
+                if milestone is None:
                     raise ValueError(f"Milestone not found: {milestone_id}")
+
+                if milestone.status != MilestoneStatus.ARCHIVED:
+                    raise ValueError(f"Milestone is not archived: {milestone_id}")
+
+                target_raw = str(getattr(milestone, "archived_from", "") or "planned")
+                target = _normalize_status_token(target_raw)
+                if target == "archived":
+                    target = "planned"
+
+                new_status = _parse_milestone_status(target)
+                if new_status == MilestoneStatus.ACTIVE and milestone.started is None:
+                    milestone.started = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+                milestone.status = new_status
+                milestone.archived_from = None
+                milestone.updated_at = _utc_now_iso()
                 context_dirty = True
-                _mark_change(idx, op_name, f"Removed {milestone_id}")
+                _mark_change(idx, op_name, f"Restored {milestone_id} -> {new_status.value}")
 
             elif op_name == "task.create":
                 name = str(item.get("name") or "")
@@ -312,10 +355,14 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     raise ValueError(f"Task not found: {task_id}")
 
                 if "status" in item:
-                    try:
-                        task.status = TaskStatus(str(item["status"]))
-                    except ValueError:
-                        raise ValueError(f"Invalid task status: {item['status']}")
+                    new_status = _parse_task_status(item["status"])
+                    prev_status_value = _normalize_status_token(_status_value(task.status))
+                    if new_status == TaskStatus.ARCHIVED:
+                        if prev_status_value and prev_status_value != "archived":
+                            task.archived_from = prev_status_value
+                    else:
+                        task.archived_from = None
+                    task.status = new_status
                 if "name" in item:
                     task.name = str(item["name"])
                 if "goal" in item:
@@ -346,23 +393,31 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 dirty_task_ids.add(task_id)
                 _mark_change(idx, op_name, f"Updated {task_id}")
 
-            elif op_name == "task.delete":
+            elif op_name == "task.restore":
                 task_id = str(item.get("task_id") or "")
-                if task_id not in tasks_by_id:
+                task = tasks_by_id.get(task_id)
+                if task is None:
                     raise ValueError(f"Task not found: {task_id}")
-                del tasks_by_id[task_id]
-                if not dry_run:
-                    storage.delete_task(task_id)
-                _mark_change(idx, op_name, f"Deleted {task_id}")
+                if task.status != TaskStatus.ARCHIVED:
+                    raise ValueError(f"Task is not archived: {task_id}")
+
+                target_raw = str(getattr(task, "archived_from", "") or "planned")
+                target = _normalize_status_token(target_raw)
+                if target == "archived":
+                    target = "planned"
+                new_status = _parse_task_status(target)
+
+                task.status = new_status
+                task.archived_from = None
+                task.updated_at = _utc_now_iso()
+                dirty_task_ids.add(task_id)
+                _mark_change(idx, op_name, f"Restored {task_id} -> {new_status.value}")
 
             elif op_name == "note.add":
                 content = str(item.get("content") or "")
-                ttl = int(item.get("ttl") or 30)
-                if ttl < 10 or ttl > 100:
-                    raise ValueError(f"ttl must be between 10 and 100, got: {ttl}")
 
                 note_id = storage.generate_note_id(context)
-                note = Note(id=note_id, content=content, ttl=ttl)
+                note = Note(id=note_id, content=content)
                 context.notes.append(note)
                 context_dirty = True
                 _mark_change(idx, op_name, f"Added {note_id}")
@@ -375,11 +430,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
 
                 if "content" in item:
                     note.content = str(item["content"])
-                if "ttl" in item:
-                    ttl = int(item["ttl"])
-                    if ttl < 0 or ttl > 100:
-                        raise ValueError(f"ttl must be between 0 and 100, got: {ttl}")
-                    note.ttl = ttl
 
                 context_dirty = True
                 _mark_change(idx, op_name, f"Updated {note_id}")
@@ -396,12 +446,9 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
             elif op_name == "reference.add":
                 url = str(item.get("url") or "")
                 note_text = str(item.get("note") or "")
-                ttl = int(item.get("ttl") or 30)
-                if ttl < 10 or ttl > 100:
-                    raise ValueError(f"ttl must be between 10 and 100, got: {ttl}")
 
                 ref_id = storage.generate_reference_id(context)
-                ref = Reference(id=ref_id, url=url, note=note_text, ttl=ttl)
+                ref = Reference(id=ref_id, url=url, note=note_text)
                 context.references.append(ref)
                 context_dirty = True
                 _mark_change(idx, op_name, f"Added {ref_id}")
@@ -416,11 +463,6 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     ref.url = str(item["url"])
                 if "note" in item:
                     ref.note = str(item["note"])
-                if "ttl" in item:
-                    ttl = int(item["ttl"])
-                    if ttl < 0 or ttl > 100:
-                        raise ValueError(f"ttl must be between 0 and 100, got: {ttl}")
-                    ref.ttl = ttl
 
                 context_dirty = True
                 _mark_change(idx, op_name, f"Updated {ref_id}")

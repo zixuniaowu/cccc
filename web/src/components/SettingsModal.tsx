@@ -1,11 +1,12 @@
 // SettingsModal renders the settings modal.
 import { useState, useEffect } from "react";
-import { Actor, GroupSettings, IMStatus } from "../types";
+import { Actor, GroupDoc, GroupSettings, IMStatus } from "../types";
 import * as api from "../services/api";
 import {
   TimingTab,
   IMBridgeTab,
   TranscriptTab,
+  PromptsTab,
   RemoteAccessTab,
   DeveloperTab,
   SettingsScope,
@@ -21,6 +22,7 @@ interface SettingsModalProps {
   busy: boolean;
   isDark: boolean;
   groupId?: string;
+  groupDoc?: GroupDoc | null;
 }
 
 export function SettingsModal({
@@ -31,6 +33,7 @@ export function SettingsModal({
   busy,
   isDark,
   groupId,
+  groupDoc,
 }: SettingsModalProps) {
   const [scope, setScope] = useState<SettingsScope>(groupId ? "group" : "global");
   const [groupTab, setGroupTab] = useState<GroupTabId>("timing");
@@ -410,10 +413,20 @@ export function SettingsModal({
 
   if (!isOpen) return null;
 
+  const scopeRootUrl = (() => {
+    if (!groupDoc || String(groupDoc.group_id || "") !== String(groupId || "")) return "";
+    const scopes = Array.isArray(groupDoc.scopes) ? groupDoc.scopes : [];
+    const activeKey = String(groupDoc.active_scope_key || "");
+    const active = scopes.find((s) => String(s?.scope_key || "") === activeKey && String(s?.url || "").trim());
+    const first = scopes.find((s) => String(s?.url || "").trim());
+    return String((active || first)?.url || "").trim();
+  })();
+
   const groupTabs: { id: GroupTabId; label: string }[] = [
     { id: "timing", label: "Timing" },
     { id: "im", label: "IM Bridge" },
     { id: "transcript", label: "Transcript" },
+    { id: "prompts", label: "Prompts" },
   ];
   const globalTabs: { id: GlobalTabId; label: string }[] = [
     { id: "remote", label: "Remote Access" },
@@ -497,7 +510,11 @@ export function SettingsModal({
           </div>
           {scope === "group" && groupId && (
             <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-              Applies to <span className="font-mono">{groupId}</span> only.
+              Applies to{" "}
+              <span className="font-mono" title={scopeRootUrl || groupId}>
+                {scopeRootUrl || groupId}
+              </span>{" "}
+              only.
             </div>
           )}
           {scope === "global" && (
@@ -600,6 +617,8 @@ export function SettingsModal({
               onClearTail={clearTail}
             />
           )}
+
+          {activeTab === "prompts" && <PromptsTab isDark={isDark} groupId={groupId} />}
 
           {activeTab === "remote" && <RemoteAccessTab isDark={isDark} />}
 

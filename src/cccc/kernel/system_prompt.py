@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 from .actors import get_effective_role, list_actors
 from .group import Group
+from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_repo_prompt_file
 
 
 def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
@@ -119,30 +120,23 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         lines.append("scopes (* = active):")
         lines.extend(scope_lines)
     
-    # Instructions - emphasize MCP for messaging
-    lines.extend([
-        "",
-        "---",
-        "cccc_help contains the CCCC ops playbook (authoritative).",
-        "",
+    # Minimal platform invariants. Keep this stable and short; group-specific details belong in cccc_help / repo files.
+    core_lines = [
         "Non-negotiables:",
-        "- Visible chat MUST be sent via MCP:",
-        "    - cccc_message_send(text=..., to=[...])",
-        "    - cccc_message_reply(event_id=..., text=...)",
+        "- On session start/restart: call cccc_help once before replying/acting.",
+        "- Visible chat MUST be sent via MCP: cccc_message_send / cccc_message_reply.",
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
-        "- Read/clear inbox via cccc_inbox_list(...) + cccc_inbox_mark_read(event_id=...) / cccc_inbox_mark_all_read(...).",
-        "- Follow PROJECT.md (via cccc_project_info). Do NOT edit it unless the user explicitly asks.",
-        "- Use MCP for CCCC control-plane actions; use shell only for repo work.",
-        "",
-        "Collaboration baseline (high ROI):",
-        "- If DoD is unclear: ask + record a short DoD in Context (notes/tasks).",
-        "- If you claim done/fixed: update tasks/milestones + 1-line evidence (tests/files/logs).",
-        "- If you agree with someone: say what you checked; otherwise raise 1 concrete risk/question.",
-        "",
-        "Start:",
-        "- cccc_bootstrap(...) (recommended).",
-        "- Foreman: you may add peers only by cloning your own runtime config (same runtime/runner/command/env).",
-        "Tone: talk like a real teammate (human, direct, lightly emotional is OK). Avoid bureaucratic/corporate phrasing.",
-    ])
-    
-    return "\n".join(lines) + "\n"
+    ]
+
+    # Group override: CCCC_PREAMBLE.md in repo root (active scope).
+    pf = read_repo_prompt_file(group, PREAMBLE_FILENAME)
+    custom_body = str(pf.content or "").strip() if pf.found else ""
+
+    body = custom_body if custom_body else str(DEFAULT_PREAMBLE_BODY or "").strip()
+
+    parts = [
+        "\n".join(lines).rstrip(),
+        "---\n" + "\n".join(core_lines).rstrip(),
+        body.rstrip(),
+    ]
+    return "\n\n".join([p for p in parts if p]).rstrip() + "\n"

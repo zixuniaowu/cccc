@@ -1,6 +1,13 @@
-# CCCC Ops Playbook
+# CCCC Help
 
-This is the operational playbook for the CCCC multi-agent collaboration system.
+This is the help playbook for the CCCC multi-agent collaboration system.
+
+## Customization (per repo)
+
+In your group’s active scope root, you can override:
+- `CCCC_HELP.md` (this document; returned by `cccc_help`)
+- `CCCC_PREAMBLE.md` (session preamble body; injected on first delivery after start/restart)
+- `CCCC_STANDUP.md` (stand-up reminder template)
 
 ## 0) Non-negotiables
 
@@ -12,7 +19,7 @@ This is the operational playbook for the CCCC multi-agent collaboration system.
 
 3) **Inbox hygiene:** read via `cccc_inbox_list(...)`, clear via `cccc_inbox_mark_read(event_id=...)` / `cccc_inbox_mark_all_read(...)`.
 
-4) **PROJECT.md is the constitution:** read it (`cccc_project_info`) and follow it. **Do not edit** unless the user explicitly asks.
+4) **PROJECT.md is the constitution:** read it (`cccc_project_info`) and follow it.
 
 5) **Accountability:** if you claim done/fixed, update tasks/milestones + include 1-line evidence. If you agree, say what you checked (or raise 1 concrete risk/question).
 

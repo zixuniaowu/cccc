@@ -250,6 +250,37 @@ export function AppModals({
     }
   };
 
+  const handleSaveEditActorAndRestart = async () => {
+    if (!selectedGroupId || !editingActor) return;
+    const label = editingActor.title || editingActor.id;
+    if (!window.confirm(`Save changes and restart "${label}" now? This will interrupt any running work.`)) return;
+    setBusy("actor-update");
+    try {
+      const resp = await api.updateActor(
+        selectedGroupId,
+        editingActor.id,
+        editActorRuntime,
+        editActorCommand,
+        editActorTitle
+      );
+      if (!resp.ok) {
+        showError(`${resp.error.code}: ${resp.error.message}`);
+        return;
+      }
+
+      const restartResp = await api.restartActor(selectedGroupId, editingActor.id);
+      if (!restartResp.ok) {
+        showError(`${restartResp.error.code}: ${restartResp.error.message}`);
+        return;
+      }
+
+      setEditingActor(null);
+      await refreshActors();
+    } finally {
+      setBusy("");
+    }
+  };
+
   const handleFetchDirContents = async (path: string) => {
     setShowDirBrowser(true);
     const resp = await api.fetchDirContents(path);
@@ -395,6 +426,9 @@ export function AppModals({
         onClose={() => closeModal("context")}
         groupId={selectedGroupId}
         context={groupContext}
+        onRefreshContext={async () => {
+          if (selectedGroupId) await fetchContext(selectedGroupId);
+        }}
         onUpdateVision={handleUpdateVision}
         onUpdateSketch={handleUpdateSketch}
         busy={busy === "context-update"}
@@ -409,6 +443,7 @@ export function AppModals({
         busy={busy.startsWith("settings")}
         isDark={isDark}
         groupId={selectedGroupId}
+        groupDoc={groupDoc}
       />
 
       <RecipientsModal
@@ -448,6 +483,7 @@ export function AppModals({
         isDark={isDark}
         busy={busy}
         actorId={editingActor?.id || ""}
+        isRunning={!!(editingActor && (editingActor.running ?? editingActor.enabled ?? false))}
         runtimes={runtimes}
         runtime={editActorRuntime}
         onChangeRuntime={setEditActorRuntime}
@@ -456,6 +492,7 @@ export function AppModals({
         title={editActorTitle}
         onChangeTitle={setEditActorTitle}
         onSave={handleSaveEditActor}
+        onSaveAndRestart={handleSaveEditActorAndRestart}
         onCancel={() => setEditingActor(null)}
       />
 

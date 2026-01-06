@@ -6,6 +6,7 @@ export interface EditActorModalProps {
   isDark: boolean;
   busy: string;
   actorId: string;
+  isRunning: boolean;
   runtimes: RuntimeInfo[];
   runtime: SupportedRuntime;
   onChangeRuntime: (runtime: SupportedRuntime) => void;
@@ -14,6 +15,7 @@ export interface EditActorModalProps {
   title: string;
   onChangeTitle: (title: string) => void;
   onSave: () => void;
+  onSaveAndRestart?: () => void;
   onCancel: () => void;
 }
 
@@ -22,6 +24,7 @@ export function EditActorModal({
   isDark,
   busy,
   actorId,
+  isRunning,
   runtimes,
   runtime,
   onChangeRuntime,
@@ -30,6 +33,7 @@ export function EditActorModal({
   title,
   onChangeTitle,
   onSave,
+  onSaveAndRestart,
   onCancel,
 }: EditActorModalProps) {
   if (!isOpen) return null;
@@ -86,7 +90,9 @@ export function EditActorModal({
               onChange={(e) => {
                 const next = e.target.value as SupportedRuntime;
                 onChangeRuntime(next);
-                onChangeCommand("");
+                const nextInfo = runtimes.find((r) => r.name === next);
+                const nextDefault = String(nextInfo?.recommended_command || "").trim();
+                onChangeCommand(nextDefault);
               }}
             >
               {SUPPORTED_RUNTIMES.map((rt) => {
@@ -183,6 +189,11 @@ export function EditActorModal({
               onChange={(e) => onChangeCommand(e.target.value)}
               placeholder={defaultCommand || "Enter command..."}
             />
+            {isRunning ? (
+              <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                Runtime/command changes take effect after restart. Use "Save & Restart" to apply immediately.
+              </div>
+            ) : null}
             {defaultCommand.trim() ? (
               <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                 Default:{" "}
@@ -198,6 +209,18 @@ export function EditActorModal({
             >
               Save
             </button>
+            {isRunning && onSaveAndRestart ? (
+              <button
+                className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors min-h-[44px] disabled:opacity-50 ${
+                  isDark ? "bg-amber-500/15 text-amber-200 hover:bg-amber-500/20 border border-amber-500/20" : "bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200"
+                }`}
+                onClick={onSaveAndRestart}
+                disabled={busy === "actor-update" || (requireCommand && !command.trim())}
+                title="Restart is required for runtime/command changes to take effect"
+              >
+                Save & Restart
+              </button>
+            ) : null}
             <button
               className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${
                 isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"

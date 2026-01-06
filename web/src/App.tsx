@@ -46,6 +46,7 @@ export default function App() {
     groupDoc,
     events,
     actors,
+    groupContext,
     hasMoreHistory,
     isLoadingHistory,
     setSelectedGroupId,
@@ -517,6 +518,7 @@ export default function App() {
                 isSmallScreen={isSmallScreen}
                 selectedGroupId={selectedGroupId}
                 actors={actors}
+                presenceAgents={groupContext?.presence?.agents || []}
                 busy={busy}
                 showSetupCard={showSetupCard}
                 needsScope={needsScope}
@@ -574,6 +576,7 @@ export default function App() {
                 <ActorTab
                   actor={currentActor}
                   groupId={selectedGroupId}
+                  presenceAgent={(groupContext?.presence?.agents || []).find((a) => a.id === (currentActor?.id || "")) || null}
                   termEpoch={currentActor ? getTermEpoch(currentActor.id) : 0}
                   busy={busy}
                   isDark={isDark}

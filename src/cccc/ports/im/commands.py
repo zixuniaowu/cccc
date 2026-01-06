@@ -254,7 +254,7 @@ def format_context(context: dict) -> str:
     if milestones:
         lines.append("🏁 Milestones:")
         for m in milestones[:5]:
-            status = m.get("status", "pending")
+            status = m.get("status", "planned")
             icon = "✅" if status == "done" else "🔄" if status == "active" else "⏳"
             lines.append(f"  {icon} {m.get('name', m.get('title', '?'))}")
         lines.append("")

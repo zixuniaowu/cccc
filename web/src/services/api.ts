@@ -7,6 +7,7 @@ import type {
   RuntimeInfo,
   GroupContext,
   GroupSettings,
+  Task,
   DirItem,
   DirSuggestion,
   IMConfig,
@@ -252,6 +253,21 @@ export async function restartActor(groupId: string, actorId: string) {
 
 export async function fetchContext(groupId: string) {
   return apiJson<GroupContext>(`/api/v1/groups/${encodeURIComponent(groupId)}/context`);
+}
+
+export async function fetchTasks(groupId: string) {
+  return apiJson<{ tasks: Task[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/tasks`);
+}
+
+export async function contextSync(
+  groupId: string,
+  ops: Array<Record<string, unknown>>,
+  dryRun: boolean = false
+) {
+  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/context`, {
+    method: "POST",
+    body: JSON.stringify({ ops, by: "user", dry_run: dryRun }),
+  });
 }
 
 export async function updateVision(groupId: string, vision: string) {

@@ -1,12 +1,13 @@
-import { memo, useRef, useEffect, useCallback } from "react";
+import { memo, useRef, useEffect, useCallback, useMemo } from "react";
 import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { LedgerEvent, Actor } from "../types";
+import { LedgerEvent, Actor, PresenceAgent } from "../types";
 import { MessageBubble } from "./MessageBubble";
 
 export interface VirtualMessageListProps {
   messages: LedgerEvent[];
   actors: Actor[];
+  presenceAgents: PresenceAgent[];
   isDark: boolean;
   groupId: string;
   scrollRef?: MutableRefObject<HTMLDivElement | null>;
@@ -25,6 +26,7 @@ export interface VirtualMessageListProps {
 export const VirtualMessageList = memo(function VirtualMessageList({
   messages,
   actors,
+  presenceAgents,
   isDark,
   groupId,
   scrollRef,
@@ -40,10 +42,17 @@ export const VirtualMessageList = memo(function VirtualMessageList({
 }: VirtualMessageListProps) {
   const parentRef = useRef<HTMLDivElement | null>(null);
 
+  const presenceById = useMemo(() => {
+    const m = new Map<string, PresenceAgent>();
+    for (const p of presenceAgents || []) m.set(String(p.id || ""), p);
+    return m;
+  }, [presenceAgents]);
+
   const prevMessageCountRef = useRef(messages.length);
   const isAtBottomRef = useRef(true);
   const didInitialScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<number | null>(null);
+  const lastScrollTopRef = useRef(0);
 
   // For history loading scroll position preservation
   const prevScrollHeightRef = useRef(0);
@@ -74,12 +83,6 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     if (!el) return true;
     const threshold = 100;
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
-  }, []);
-
-  const checkIsAtTop = useCallback(() => {
-    const el = parentRef.current;
-    if (!el) return false;
-    return el.scrollTop < 100;
   }, []);
 
   const scrollToBottom = useCallback(() => {
@@ -120,18 +123,28 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   );
 
   const handleScroll = useCallback(() => {
+    const el = parentRef.current;
+    if (!el) return;
+
+    const prevTop = lastScrollTopRef.current;
+    const curTop = el.scrollTop;
+    lastScrollTopRef.current = curTop;
+    // Only allow top-history loading when the user is scrolling up (or attempting to),
+    // otherwise being near the top while scrolling down would repeatedly trigger loads.
+    const isScrollingUpOrStationary = curTop <= prevTop;
+
     const atBottom = checkIsAtBottom();
     isAtBottomRef.current = atBottom;
     onScrollChange?.(atBottom);
 
     // Top detection for loading more history
-    const atTop = checkIsAtTop();
-    if (atTop && hasMoreHistory && !isLoadingHistory && onLoadMore) {
+    const atTop = curTop < 100;
+    if (isScrollingUpOrStationary && atTop && hasMoreHistory && !isLoadingHistory && onLoadMore) {
       wasAtTopRef.current = true;
-      prevScrollHeightRef.current = parentRef.current?.scrollHeight || 0;
+      prevScrollHeightRef.current = el.scrollHeight || 0;
       onLoadMore();
     }
-  }, [checkIsAtBottom, checkIsAtTop, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange]);
+  }, [checkIsAtBottom, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange]);
 
   useEffect(() => {
     const prevCount = prevMessageCountRef.current;
@@ -157,6 +170,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     prevMessageCountRef.current = 0;
     isAtBottomRef.current = true;
     didInitialScrollRef.current = false;
+    lastScrollTopRef.current = 0;
     cancelScheduledScroll();
   }, [groupId, cancelScheduledScroll]);
 
@@ -240,6 +254,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                   <MessageBubble
                     event={message}
                     actors={actors}
+                    presenceAgent={presenceById.get(String(message.by || "")) || null}
                     isDark={isDark}
                     groupId={groupId}
                     onReply={() => onReply(message)}

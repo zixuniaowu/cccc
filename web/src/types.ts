@@ -70,6 +70,12 @@ export type Actor = {
   unread_count?: number;
 };
 
+export type PresenceAgent = {
+  id: string;
+  status?: string | null;
+  updated_at?: string | null;
+};
+
 export type RuntimeInfo = {
   name: string;
   display_name: string;
@@ -85,6 +91,27 @@ export type ReplyTarget = {
   by: string;
   text: string;
 } | null;
+
+export type TaskStep = {
+  id: string;
+  name: string;
+  acceptance?: string | null;
+  status?: string | null;
+};
+
+export type Task = {
+  id: string;
+  name: string;
+  goal?: string | null;
+  status?: string | null;
+  milestone?: string | null;
+  assignee?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  steps?: TaskStep[];
+  current_step?: string | null;
+  progress?: number | null;
+};
 
 export type GroupContext = {
   version?: string;
@@ -102,15 +129,11 @@ export type GroupContext = {
   notes?: Array<{
     id: string;
     content: string;
-    ttl?: number;
-    expiring?: boolean;
   }>;
   references?: Array<{
     id: string;
     url: string;
     note?: string | null;
-    ttl?: number;
-    expiring?: boolean;
   }>;
   tasks_summary?: {
     total: number;
@@ -132,7 +155,7 @@ export type GroupContext = {
     progress?: number | null;
   } | null;
   presence?: {
-    agents?: Array<{ id: string; status?: string | null; updated_at?: string | null }>;
+    agents?: PresenceAgent[];
   };
 };
 

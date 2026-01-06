@@ -4,7 +4,7 @@ CCCC MCP Server — IM-style Agent Collaboration Tools
 Core tools exposed to agents:
 
 cccc.* namespace (collaboration control plane):
-- cccc_help: CCCC operational playbook (embedded in tool description)
+- cccc_help: CCCC help playbook (authoritative; returns effective CCCC_HELP.md if present)
 - cccc_bootstrap: One-call session bootstrap (group+project+context+inbox)
 - cccc_inbox_list: Get unread messages (supports kind_filter)
 - cccc_inbox_mark_read: Mark messages as read
@@ -63,6 +63,7 @@ from ...daemon.server import call_daemon
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
+from ...kernel.prompt_files import HELP_FILENAME, load_builtin_help_markdown as _load_builtin_help_markdown, read_repo_prompt_file
 
 
 class MCPError(Exception):
@@ -152,26 +153,15 @@ def _call_daemon_or_raise(req: Dict[str, Any]) -> Dict[str, Any]:
     return resp.get("result") if isinstance(resp.get("result"), dict) else {}
 
 
-def _load_ops_playbook() -> str:
-    """Load the CCCC ops playbook text for cccc_help."""
-    try:
-        import importlib.resources
-
-        files = importlib.resources.files("cccc.resources")
-        return (files / "cccc-ops.md").read_text(encoding="utf-8")
-    except Exception:
-        try:
-            p = Path(__file__).resolve().parents[2] / "resources" / "cccc-ops.md"
-            return p.read_text(encoding="utf-8")
-        except Exception:
-            return ""
-
-
-_CCCC_HELP_TEXT = _load_ops_playbook().strip()
+_CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
 _CCCC_HELP_DESCRIPTION = (
-    "CCCC Help — Ops Playbook (authoritative)\n\n"
-    "This tool's description intentionally embeds the full CCCC operational playbook so it stays in context.\n\n"
-    + (_CCCC_HELP_TEXT if _CCCC_HELP_TEXT else "(missing playbook: cccc-ops.md)")
+    "CCCC Help (authoritative)\n\n"
+    "Call this once at the start of a session/restart, or whenever unsure.\n"
+    "Returns the effective CCCC help markdown for the current group.\n\n"
+    "Repo override (active scope root): CCCC_HELP.md\n\n"
+    "Do not answer in the terminal. Visible chat MUST use MCP:\n"
+    "- cccc_message_send(text=..., to=[...])\n"
+    "- cccc_message_reply(event_id=..., text=...)"
 )
 
 
@@ -644,9 +634,34 @@ def project_info(*, group_id: str) -> Dict[str, Any]:
 # =============================================================================
 
 
-def context_get(*, group_id: str) -> Dict[str, Any]:
-    """Get full context"""
-    return _call_daemon_or_raise({"op": "context_get", "args": {"group_id": group_id}})
+def context_get(*, group_id: str, include_archived: bool = False) -> Dict[str, Any]:
+    """Get full context.
+
+    By default, archived milestones are hidden to reduce cognitive load.
+    """
+    result = _call_daemon_or_raise({"op": "context_get", "args": {"group_id": group_id}})
+    if include_archived:
+        return result
+
+    milestones = result.get("milestones")
+    if isinstance(milestones, list):
+        result["milestones"] = [
+            m
+            for m in milestones
+            if isinstance(m, dict) and str(m.get("status") or "").strip().lower() != "archived"
+        ]
+
+    tasks_summary = result.get("tasks_summary")
+    if isinstance(tasks_summary, dict):
+        try:
+            active = int(tasks_summary.get("active") or 0)
+            planned = int(tasks_summary.get("planned") or 0)
+            done = int(tasks_summary.get("done") or 0)
+            tasks_summary["total"] = active + planned + done
+        except Exception:
+            pass
+
+    return result
 
 
 def context_sync(*, group_id: str, ops: List[Dict[str, Any]], dry_run: bool = False) -> Dict[str, Any]:
@@ -657,12 +672,35 @@ def context_sync(*, group_id: str, ops: List[Dict[str, Any]], dry_run: bool = Fa
     })
 
 
-def task_list(*, group_id: str, task_id: Optional[str] = None) -> Dict[str, Any]:
-    """List tasks"""
+def task_list(
+    *, group_id: str, task_id: Optional[str] = None, include_archived: bool = False
+) -> Dict[str, Any]:
+    """List tasks.
+
+    By default, archived tasks are hidden to reduce cognitive load.
+    """
     args: Dict[str, Any] = {"group_id": group_id}
     if task_id:
         args["task_id"] = task_id
-    return _call_daemon_or_raise({"op": "task_list", "args": args})
+    result = _call_daemon_or_raise({"op": "task_list", "args": args})
+    if include_archived:
+        return result
+
+    if "task" in result and isinstance(result.get("task"), dict):
+        task = result.get("task")
+        status = str(task.get("status") or "").strip().lower() if isinstance(task, dict) else ""
+        if status == "archived":
+            raise MCPError(code="archived_hidden", message="archived task is hidden by default")
+        return result
+
+    tasks = result.get("tasks")
+    if isinstance(tasks, list):
+        result["tasks"] = [
+            t
+            for t in tasks
+            if isinstance(t, dict) and str(t.get("status") or "").strip().lower() != "archived"
+        ]
+    return result
 
 
 def presence_get(*, group_id: str) -> Dict[str, Any]:
@@ -681,7 +719,7 @@ def sketch_update(*, group_id: str, sketch: str) -> Dict[str, Any]:
     return context_sync(group_id=group_id, ops=[{"op": "sketch.update", "sketch": sketch}])
 
 
-def milestone_create(*, group_id: str, name: str, description: str, status: str = "pending") -> Dict[str, Any]:
+def milestone_create(*, group_id: str, name: str, description: str, status: str = "planned") -> Dict[str, Any]:
     return context_sync(group_id=group_id, ops=[{
         "op": "milestone.create", "name": name, "description": description, "status": status
     }])
@@ -705,10 +743,6 @@ def milestone_complete(*, group_id: str, milestone_id: str, outcomes: str) -> Di
     return context_sync(group_id=group_id, ops=[{
         "op": "milestone.complete", "milestone_id": milestone_id, "outcomes": outcomes
     }])
-
-
-def milestone_remove(*, group_id: str, milestone_id: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "milestone.remove", "milestone_id": milestone_id}])
 
 
 def task_create(
@@ -744,20 +778,14 @@ def task_update(
     return context_sync(group_id=group_id, ops=[op])
 
 
-def task_delete(*, group_id: str, task_id: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "task.delete", "task_id": task_id}])
+def note_add(*, group_id: str, content: str) -> Dict[str, Any]:
+    return context_sync(group_id=group_id, ops=[{"op": "note.add", "content": content}])
 
 
-def note_add(*, group_id: str, content: str, ttl: int = 30) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "note.add", "content": content, "ttl": ttl}])
-
-
-def note_update(*, group_id: str, note_id: str, content: Optional[str] = None, ttl: Optional[int] = None) -> Dict[str, Any]:
+def note_update(*, group_id: str, note_id: str, content: Optional[str] = None) -> Dict[str, Any]:
     op: Dict[str, Any] = {"op": "note.update", "note_id": note_id}
     if content is not None:
         op["content"] = content
-    if ttl is not None:
-        op["ttl"] = ttl
     return context_sync(group_id=group_id, ops=[op])
 
 
@@ -765,21 +793,19 @@ def note_remove(*, group_id: str, note_id: str) -> Dict[str, Any]:
     return context_sync(group_id=group_id, ops=[{"op": "note.remove", "note_id": note_id}])
 
 
-def reference_add(*, group_id: str, url: str, note: str, ttl: int = 30) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "reference.add", "url": url, "note": note, "ttl": ttl}])
+def reference_add(*, group_id: str, url: str, note: str) -> Dict[str, Any]:
+    return context_sync(group_id=group_id, ops=[{"op": "reference.add", "url": url, "note": note}])
 
 
 def reference_update(
     *, group_id: str, reference_id: str,
-    url: Optional[str] = None, note: Optional[str] = None, ttl: Optional[int] = None
+    url: Optional[str] = None, note: Optional[str] = None
 ) -> Dict[str, Any]:
     op: Dict[str, Any] = {"op": "reference.update", "reference_id": reference_id}
     if url is not None:
         op["url"] = url
     if note is not None:
         op["note"] = note
-    if ttl is not None:
-        op["ttl"] = ttl
     return context_sync(group_id=group_id, ops=[op])
 
 
@@ -1211,15 +1237,18 @@ MCP_TOOLS = [
 	        },
 	    },
     # context.* namespace - state sync
-    {
-        "name": "cccc_context_get",
-        "description": "Get full group context (vision/sketch/milestones/tasks/notes/references/presence). Call at session start.",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {"group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"}},
-	            "required": [],
-	        },
-	    },
+	    {
+	        "name": "cccc_context_get",
+	        "description": "Get group context (vision/sketch/milestones/notes/references/presence + tasks_summary/active_task). Call at session start. Archived milestones are hidden by default.",
+		        "inputSchema": {
+		            "type": "object",
+		            "properties": {
+		                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+		                "include_archived": {"type": "boolean", "description": "Include archived milestones (default false)", "default": False},
+		            },
+		            "required": [],
+		        },
+		    },
     {
         "name": "cccc_context_sync",
         "description": "Batch sync context operations. Supported ops: vision.update, sketch.update, milestone.*, task.*, note.*, reference.*, presence.*",
@@ -1257,72 +1286,61 @@ MCP_TOOLS = [
 	            "required": ["sketch"],
 	        },
 	    },
-	    {
-	        "name": "cccc_milestone_create",
-	        "description": "Create a milestone (coarse-grained phase, 2-6 total).",
-	        "inputSchema": {
+		    {
+		        "name": "cccc_milestone_create",
+		        "description": "Create a milestone (coarse-grained phase, 2-6 total).",
+		        "inputSchema": {
+	            "type": "object",
+	            "properties": {
+		                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+		                "name": {"type": "string", "description": "Milestone name"},
+		                "description": {"type": "string", "description": "Detailed description"},
+		                "status": {"type": "string", "enum": ["planned", "active", "done", "archived"], "description": "Status (default planned)", "default": "planned"},
+		            },
+		            "required": ["name", "description"],
+		        },
+		    },
+		    {
+		        "name": "cccc_milestone_update",
+		        "description": "Update a milestone.",
+		        "inputSchema": {
 	            "type": "object",
 	            "properties": {
 	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "name": {"type": "string", "description": "Milestone name"},
-	                "description": {"type": "string", "description": "Detailed description"},
-	                "status": {"type": "string", "enum": ["pending", "active", "done"], "description": "Status (default pending)", "default": "pending"},
-	            },
-	            "required": ["name", "description"],
-	        },
-	    },
-	    {
-	        "name": "cccc_milestone_update",
-	        "description": "Update a milestone.",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {
-	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "milestone_id": {"type": "string", "description": "Milestone ID (M1, M2...)"},
-	                "name": {"type": "string", "description": "New name"},
-	                "description": {"type": "string", "description": "New description"},
-	                "status": {"type": "string", "enum": ["pending", "active", "done"], "description": "New status"},
-	            },
-	            "required": ["milestone_id"],
-	        },
-	    },
-	    {
-	        "name": "cccc_milestone_complete",
-	        "description": "Complete a milestone and record outcomes.",
-	        "inputSchema": {
+		                "milestone_id": {"type": "string", "description": "Milestone ID (M1, M2...)"},
+		                "name": {"type": "string", "description": "New name"},
+		                "description": {"type": "string", "description": "New description"},
+		                "status": {"type": "string", "enum": ["planned", "active", "done", "archived"], "description": "New status"},
+		            },
+		            "required": ["milestone_id"],
+		        },
+		    },
+		    {
+		        "name": "cccc_milestone_complete",
+		        "description": "Complete a milestone and record outcomes.",
+		        "inputSchema": {
 	            "type": "object",
 	            "properties": {
 	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
 	                "milestone_id": {"type": "string", "description": "Milestone ID"},
 	                "outcomes": {"type": "string", "description": "Outcomes summary"},
 	            },
-	            "required": ["milestone_id", "outcomes"],
-	        },
-	    },
-	    {
-	        "name": "cccc_milestone_remove",
-	        "description": "Remove a milestone.",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {
-	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "milestone_id": {"type": "string", "description": "Milestone ID"},
-	            },
-	            "required": ["milestone_id"],
-	        },
-	    },
-	    {
-	        "name": "cccc_task_list",
-	        "description": "List all tasks or get single task details.",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {
-	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "task_id": {"type": "string", "description": "Task ID (optional, omit to list all)"},
-	            },
-	            "required": [],
-	        },
-	    },
+		            "required": ["milestone_id", "outcomes"],
+		        },
+		    },
+			    {
+			        "name": "cccc_task_list",
+			        "description": "List all tasks or get single task details. Archived tasks are hidden by default.",
+			        "inputSchema": {
+		            "type": "object",
+		            "properties": {
+		                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+		                "task_id": {"type": "string", "description": "Task ID (optional, omit to list all)"},
+		                "include_archived": {"type": "boolean", "description": "Include archived tasks (default false)", "default": False},
+		            },
+		            "required": [],
+		        },
+		    },
 	    {
 	        "name": "cccc_task_create",
 	        "description": "Create a task (deliverable work item with 3-7 steps).",
@@ -1343,64 +1361,50 @@ MCP_TOOLS = [
 	            "required": ["name", "goal", "steps"],
 	        },
 	    },
-	    {
-	        "name": "cccc_task_update",
-	        "description": "Update task status or step progress.",
-	        "inputSchema": {
+		    {
+		        "name": "cccc_task_update",
+		        "description": "Update task status or step progress.",
+		        "inputSchema": {
 	            "type": "object",
 	            "properties": {
 	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
 	                "task_id": {"type": "string", "description": "Task ID (T001, T002...)"},
-                "status": {"type": "string", "enum": ["planned", "active", "done"], "description": "Task status"},
-                "name": {"type": "string", "description": "New name"},
-                "goal": {"type": "string", "description": "New completion criteria"},
-                "assignee": {"type": "string", "description": "New assignee"},
-                "milestone_id": {"type": "string", "description": "New associated milestone"},
+	                "status": {"type": "string", "enum": ["planned", "active", "done", "archived"], "description": "Task status"},
+	                "name": {"type": "string", "description": "New name"},
+	                "goal": {"type": "string", "description": "New completion criteria"},
+	                "assignee": {"type": "string", "description": "New assignee"},
+	                "milestone_id": {"type": "string", "description": "New associated milestone"},
                 "step_id": {"type": "string", "description": "Step ID to update (S1, S2...)"},
 	                "step_status": {"type": "string", "enum": ["pending", "in_progress", "done"], "description": "New step status"},
 	            },
-	            "required": ["task_id"],
-	        },
-	    },
-	    {
-	        "name": "cccc_task_delete",
-	        "description": "Delete a task.",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {
-	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "task_id": {"type": "string", "description": "Task ID"},
-	            },
-	            "required": ["task_id"],
-	        },
-	    },
-	    {
-	        "name": "cccc_note_add",
-	        "description": "Add a note (lessons, discoveries, warnings). TTL controls retention.",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {
-	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "content": {"type": "string", "description": "Note content"},
-	                "ttl": {"type": "integer", "description": "TTL rounds (10=short, 30=normal, 100=long)", "default": 30, "minimum": 10, "maximum": 100},
-	            },
-	            "required": ["content"],
-	        },
-	    },
-	    {
-	        "name": "cccc_note_update",
-	        "description": "Update note content or TTL.",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {
-	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "note_id": {"type": "string", "description": "Note ID (N001, N002...)"},
-	                "content": {"type": "string", "description": "New content"},
-	                "ttl": {"type": "integer", "description": "New TTL", "minimum": 0, "maximum": 100},
-	            },
-	            "required": ["note_id"],
-	        },
-	    },
+		            "required": ["task_id"],
+		        },
+		    },
+		    {
+		        "name": "cccc_note_add",
+		        "description": "Add a note (lessons, discoveries, warnings).",
+		        "inputSchema": {
+		            "type": "object",
+		            "properties": {
+		                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+		                "content": {"type": "string", "description": "Note content"},
+		            },
+		            "required": ["content"],
+		        },
+		    },
+		    {
+		        "name": "cccc_note_update",
+		        "description": "Update note content.",
+		        "inputSchema": {
+		            "type": "object",
+		            "properties": {
+		                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+		                "note_id": {"type": "string", "description": "Note ID (N001, N002...)"},
+		                "content": {"type": "string", "description": "New content"},
+		            },
+		            "required": ["note_id"],
+		        },
+		    },
 	    {
 	        "name": "cccc_note_remove",
 	        "description": "Remove a note.",
@@ -1413,35 +1417,33 @@ MCP_TOOLS = [
 	            "required": ["note_id"],
 	        },
 	    },
-	    {
-	        "name": "cccc_reference_add",
-	        "description": "Add a reference (useful file/URL). TTL controls retention.",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {
-	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "url": {"type": "string", "description": "File path or URL"},
-	                "note": {"type": "string", "description": "Why this is useful"},
-	                "ttl": {"type": "integer", "description": "TTL rounds (10=short, 30=normal, 100=long)", "default": 30, "minimum": 10, "maximum": 100},
-	            },
-	            "required": ["url", "note"],
-	        },
-	    },
-	    {
-	        "name": "cccc_reference_update",
-	        "description": "Update a reference.",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {
-	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "reference_id": {"type": "string", "description": "Reference ID (R001, R002...)"},
-	                "url": {"type": "string", "description": "New URL"},
-	                "note": {"type": "string", "description": "New note"},
-	                "ttl": {"type": "integer", "description": "New TTL", "minimum": 0, "maximum": 100},
-	            },
-	            "required": ["reference_id"],
-	        },
-	    },
+		    {
+		        "name": "cccc_reference_add",
+		        "description": "Add a reference (useful file/URL).",
+		        "inputSchema": {
+		            "type": "object",
+		            "properties": {
+		                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+		                "url": {"type": "string", "description": "File path or URL"},
+		                "note": {"type": "string", "description": "Why this is useful"},
+		            },
+		            "required": ["url", "note"],
+		        },
+		    },
+		    {
+		        "name": "cccc_reference_update",
+		        "description": "Update a reference.",
+		        "inputSchema": {
+		            "type": "object",
+		            "properties": {
+		                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+		                "reference_id": {"type": "string", "description": "Reference ID (R001, R002...)"},
+		                "url": {"type": "string", "description": "New URL"},
+		                "note": {"type": "string", "description": "New note"},
+		            },
+		            "required": ["reference_id"],
+		        },
+		    },
 	    {
 	        "name": "cccc_reference_remove",
 	        "description": "Remove a reference.",
@@ -1639,9 +1641,16 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
 
     # cccc.* namespace
     if name == "cccc_help":
+        gid = _env_str("CCCC_GROUP_ID")
+        if gid:
+            g = load_group(gid)
+            if g is not None:
+                pf = read_repo_prompt_file(g, HELP_FILENAME)
+                if pf.found and isinstance(pf.content, str) and pf.content.strip():
+                    return {"markdown": pf.content, "source": str(pf.path or "")}
         return {
-            "markdown": _load_ops_playbook(),
-            "source": "cccc.resources/cccc-ops.md",
+            "markdown": _CCCC_HELP_BUILTIN,
+            "source": "cccc.resources/cccc-help.md",
         }
 
     if name == "cccc_inbox_list":
@@ -1808,7 +1817,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     # context.* namespace
     if name == "cccc_context_get":
         gid = _resolve_group_id(arguments)
-        return context_get(group_id=gid)
+        return context_get(group_id=gid, include_archived=bool(arguments.get("include_archived")))
 
     if name == "cccc_context_sync":
         gid = _resolve_group_id(arguments)
@@ -1839,7 +1848,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             group_id=gid,
             name=str(arguments.get("name") or ""),
             description=str(arguments.get("description") or ""),
-            status=str(arguments.get("status") or "pending"),
+            status=str(arguments.get("status") or "planned"),
         )
 
     if name == "cccc_milestone_update":
@@ -1860,18 +1869,12 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             outcomes=str(arguments.get("outcomes") or ""),
         )
 
-    if name == "cccc_milestone_remove":
-        gid = _resolve_group_id(arguments)
-        return milestone_remove(
-            group_id=gid,
-            milestone_id=str(arguments.get("milestone_id") or ""),
-        )
-
     if name == "cccc_task_list":
         gid = _resolve_group_id(arguments)
         return task_list(
             group_id=gid,
             task_id=arguments.get("task_id"),
+            include_archived=bool(arguments.get("include_archived")),
         )
 
     if name == "cccc_task_create":
@@ -1900,19 +1903,11 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             step_status=arguments.get("step_status"),
         )
 
-    if name == "cccc_task_delete":
-        gid = _resolve_group_id(arguments)
-        return task_delete(
-            group_id=gid,
-            task_id=str(arguments.get("task_id") or ""),
-        )
-
     if name == "cccc_note_add":
         gid = _resolve_group_id(arguments)
         return note_add(
             group_id=gid,
             content=str(arguments.get("content") or ""),
-            ttl=int(arguments.get("ttl") or 30),
         )
 
     if name == "cccc_note_update":
@@ -1921,7 +1916,6 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             group_id=gid,
             note_id=str(arguments.get("note_id") or ""),
             content=arguments.get("content"),
-            ttl=int(arguments["ttl"]) if "ttl" in arguments else None,
         )
 
     if name == "cccc_note_remove":
@@ -1937,7 +1931,6 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             group_id=gid,
             url=str(arguments.get("url") or ""),
             note=str(arguments.get("note") or ""),
-            ttl=int(arguments.get("ttl") or 30),
         )
 
     if name == "cccc_reference_update":
@@ -1947,7 +1940,6 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             reference_id=str(arguments.get("reference_id") or ""),
             url=arguments.get("url"),
             note=arguments.get("note"),
-            ttl=int(arguments["ttl"]) if "ttl" in arguments else None,
         )
 
     if name == "cccc_reference_remove":

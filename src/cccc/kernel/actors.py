@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from ..contracts.v1 import Actor, ActorRole, ActorSubmit, RunnerKind, AgentRuntime
 from ..util.time import utc_now_iso
 from .group import Group
+from .runtime import get_runtime_command_with_flags
 
 # Actor ID naming rules:
 # - Length: 1-32 characters
@@ -335,6 +336,12 @@ def update_actor(group: Group, actor_id: str, patch: Dict[str, Any]) -> Dict[str
             and not item.get("command")
         ):
             raise ValueError("custom runtime requires a command (PTY runner)")
+
+    # Normalize "empty command" for non-custom PTY runtimes: treat it as "use default command".
+    runner_kind = str(item.get("runner") or "pty").strip() or "pty"
+    runtime_name = str(item.get("runtime") or "codex").strip() or "codex"
+    if runner_kind != "headless" and runtime_name != "custom" and not item.get("command"):
+        item["command"] = get_runtime_command_with_flags(runtime_name)
 
     item["updated_at"] = utc_now_iso()
     group.save()
