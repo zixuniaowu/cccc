@@ -153,6 +153,22 @@ export async function fetchLedgerTail(groupId: string, lines = 120) {
   );
 }
 
+export async function fetchOlderMessages(
+  groupId: string,
+  beforeEventId: string,
+  limit = 50
+) {
+  const params = new URLSearchParams({
+    kind: "chat",
+    before: beforeEventId,
+    limit: String(limit),
+    with_read_status: "true",
+  });
+  return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`
+  );
+}
+
 // ============ Actors ============
 
 export async function fetchActors(groupId: string) {
