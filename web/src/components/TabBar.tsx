@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { Actor } from "../types";
 import { classNames } from "../utils/classNames";
 
@@ -15,6 +15,21 @@ interface TabBarProps {
 export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark, onAddAgent, canAddAgent = true }: TabBarProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const activeTabRef = useRef<HTMLButtonElement>(null);
+  const [isOverflowing, setIsOverflowing] = useState(false);
+
+  // Check if content overflows
+  const checkOverflow = useCallback(() => {
+    if (!scrollRef.current) return;
+    const { scrollWidth, clientWidth } = scrollRef.current;
+    setIsOverflowing(scrollWidth > clientWidth);
+  }, []);
+
+  // Check overflow on mount and when actors change
+  useEffect(() => {
+    checkOverflow();
+    window.addEventListener('resize', checkOverflow);
+    return () => window.removeEventListener('resize', checkOverflow);
+  }, [checkOverflow, actors.length]);
 
   // Auto-scroll active tab into view
   useEffect(() => {
@@ -32,6 +47,23 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
       }
     });
   }, [activeTab]);
+
+  const addButton = onAddAgent && (
+    <button
+      onClick={onAddAgent}
+      disabled={!canAddAgent}
+      className={classNames(
+        "flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-lg text-sm font-medium transition-all disabled:opacity-30 focus:outline-none border",
+        isDark
+          ? "border-white/10 text-slate-300 hover:bg-white/5 hover:text-white"
+          : "border-black/10 text-gray-600 hover:bg-black/5 hover:text-gray-900"
+      )}
+      title={actors.length === 0 ? "Add your first agent (foreman)" : "Add agent"}
+      aria-label="Add agent"
+    >
+      +
+    </button>
+  );
 
   return (
     <div
@@ -130,28 +162,18 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
             </button>
           );
         })}
+
+        {/* Add button inside scroll area when not overflowing */}
+        {!isOverflowing && addButton}
       </div>
 
-      {/* Fixed Add Button */}
-      {onAddAgent && (
+      {/* Fixed Add Button when overflowing */}
+      {isOverflowing && onAddAgent && (
         <div className={classNames(
           "flex-shrink-0 px-2 py-1.5 border-l",
           isDark ? "border-white/5" : "border-black/5"
         )}>
-          <button
-            onClick={onAddAgent}
-            disabled={!canAddAgent}
-            className={classNames(
-              "flex items-center justify-center w-8 h-8 rounded-lg text-sm font-medium transition-all disabled:opacity-30 focus:outline-none border",
-              isDark
-                ? "border-white/10 text-slate-300 hover:bg-white/5 hover:text-white"
-                : "border-black/10 text-gray-600 hover:bg-black/5 hover:text-gray-900"
-            )}
-            title={actors.length === 0 ? "Add your first agent (foreman)" : "Add agent"}
-            aria-label="Add agent"
-          >
-            +
-          </button>
+          {addButton}
         </div>
       )}
     </div>
