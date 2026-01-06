@@ -3465,6 +3465,20 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     # Client disconnected before response was sent - not an error
                     pass
+            except Exception as e:
+                # Catch any unexpected errors in handle_request to prevent daemon crash
+                logger.exception("Unexpected error in handle_request: %s", e)
+                try:
+                    error_resp = DaemonResponse(
+                        ok=False,
+                        error=DaemonError(
+                            code="internal_error",
+                            message=f"internal error: {type(e).__name__}: {e}",
+                        ),
+                    )
+                    _send_json(conn, _dump_response(error_resp))
+                except Exception:
+                    pass
             finally:
                 try:
                     conn.close()
