@@ -1,6 +1,6 @@
 // Actor action helpers extracted from ActorTab-related logic.
 import { useCallback, useState } from "react";
-import { useGroupStore, useUIStore, useModalStore, useInboxStore } from "../stores";
+import { useGroupStore, useUIStore, useModalStore, useInboxStore, useFormStore } from "../stores";
 import * as api from "../services/api";
 import type { Actor } from "../types";
 
@@ -9,6 +9,7 @@ export function useActorActions(groupId: string) {
   const { setBusy, setActiveTab, showError } = useUIStore();
   const { openModal, setEditingActor } = useModalStore();
   const { setInboxActorId, setInboxMessages } = useInboxStore();
+  const { setEditActorRuntime, setEditActorCommand, setEditActorTitle } = useFormStore();
 
   // Local state: terminal epoch is used to force a terminal re-mount.
   const [termEpochByActor, setTermEpochByActor] = useState<Record<string, number>>({});
@@ -57,7 +58,7 @@ export function useActorActions(groupId: string) {
     [groupId, setBusy, showError, refreshActors]
   );
 
-  // Edit actor (form state is managed by the modal component).
+  // Edit actor (initialize form state and open modal).
   const editActor = useCallback(
     (actor: Actor) => {
       if (!actor) return;
@@ -66,16 +67,20 @@ export function useActorActions(groupId: string) {
         showError("Stop the actor before editing.");
         return;
       }
+      // Initialize form state with actor's current values
+      setEditActorRuntime((actor.runtime as any) || "codex");
+      setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
+      setEditActorTitle(actor.title || "");
       setEditingActor(actor);
     },
-    [setEditingActor, showError]
+    [setEditingActor, showError, setEditActorRuntime, setEditActorCommand, setEditActorTitle]
   );
 
   // Remove actor
   const removeActor = useCallback(
     async (actor: Actor, currentActiveTab: string) => {
       if (!actor || !groupId) return;
-      if (!window.confirm(`Remove actor ${actor.id}?`)) return;
+      if (!window.confirm(`Remove actor "${actor.title || actor.id}"?`)) return;
       setBusy(`actor-remove:${actor.id}`);
       try {
         const resp = await api.removeActor(groupId, actor.id);

@@ -556,7 +556,7 @@ export function AgentTab({
           <span className={classNames("w-3 h-3 rounded-full", isRunning ? "bg-emerald-500" : isDark ? "bg-slate-600" : "bg-gray-400")} />
           <div>
             <div className="flex items-center gap-2">
-              <span className={classNames("font-semibold", color.text)}>{actor.id}</span>
+              <span className={classNames("font-semibold", color.text)}>{actor.title || actor.id}</span>
               {actor.role === "foreman" && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-900/50 text-amber-300 font-medium">
                   foreman

@@ -101,7 +101,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
               )}
             />
 
-            <span>{actor.id}</span>
+            <span>{actor.title || actor.id}</span>
 
             {actor.role === "foreman" && (
               <span className={classNames(
