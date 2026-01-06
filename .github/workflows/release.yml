@@ -108,10 +108,10 @@ jobs:
           import subprocess
 
           web_index = ir.files("cccc.ports.web").joinpath("dist/index.html")
-          ops = ir.files("cccc.resources").joinpath("cccc-ops.md")
+          help_md = ir.files("cccc.resources").joinpath("cccc-help.md")
 
           assert web_index.is_file(), f"missing bundled web UI: {web_index}"
-          assert ops.is_file(), f"missing bundled ops playbook: {ops}"
+          assert help_md.is_file(), f"missing bundled help playbook: {help_md}"
 
           proc = subprocess.Popen(
               ["cccc", "mcp"],
@@ -137,7 +137,7 @@ jobs:
 
           proc.terminate()
 
-          print("OK: bundled web UI + ops playbook + MCP handshake")
+          print("OK: bundled web UI + help playbook + MCP handshake")
           PY
 
       - name: Determine repository
