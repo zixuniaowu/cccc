@@ -459,6 +459,7 @@ export function AppModals({
         isOpen={modals.inbox}
         isDark={isDark}
         actorId={inboxActorId}
+        actors={actors}
         messages={inboxMessages}
         busy={busy}
         onClose={() => closeModal("inbox")}

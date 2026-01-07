@@ -174,6 +174,13 @@ export const MessageBubble = memo(function MessageBubble({
             .join(", ");
     }, [recipients, displayNameMap]);
 
+    // Sender display name (use title if available)
+    const senderDisplayName = useMemo(() => {
+        const by = String(ev.by || "");
+        if (!by || by === "user") return by;
+        return displayNameMap.get(by) || by;
+    }, [ev.by, displayNameMap]);
+
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
 
@@ -200,7 +207,7 @@ export const MessageBubble = memo(function MessageBubble({
                 onPointerEnter={(e) => handlePresenceEnter(e.currentTarget)}
                 onPointerLeave={() => scheduleHide()}
             >
-                {isUserMessage ? "U" : (ev.by || "?")[0].toUpperCase()}
+                {isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
             </div>
 
             {/* Message Content */}
@@ -230,7 +237,7 @@ export const MessageBubble = memo(function MessageBubble({
                         onPointerEnter={(e) => handlePresenceEnter(e.currentTarget)}
                         onPointerLeave={() => scheduleHide()}
                     >
-                        {isUserMessage ? "U" : (ev.by || "?")[0].toUpperCase()}
+                        {isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
                     </div>
                     <span
                         className={classNames(
@@ -246,7 +253,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         : "text-gray-700"
                         )}
                     >
-                        {ev.by}
+                        {senderDisplayName}
                     </span>
                     <span className={`text-[10px] flex-shrink-0 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
                         {formatTime(ev.ts)}
@@ -278,7 +285,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         : "text-gray-500"
                         )}
                     >
-                        {ev.by}
+                        {senderDisplayName}
                     </span>
                     <span className={`text-[10px] flex-shrink-0 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
                         {formatTime(ev.ts)}
@@ -456,7 +463,7 @@ export const MessageBubble = memo(function MessageBubble({
                             <div
                                 className={classNames("text-xs font-semibold", isDark ? "text-slate-200" : "text-gray-900")}
                             >
-                                {String(ev.by || "")}
+                                {senderDisplayName}
                             </div>
                             {presenceAgent?.updated_at ? (
                                 <div

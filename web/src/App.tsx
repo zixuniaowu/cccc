@@ -90,6 +90,8 @@ export default function App() {
     setToText,
     setReplyTarget,
     clearComposer,
+    switchGroup,
+    clearDraft,
   } = useComposerStore();
 
   const { setNewActorRole, setEditGroupTitle, setEditGroupTopic, setDirSuggestions } = useFormStore();
@@ -112,6 +114,7 @@ export default function App() {
   const activeTabRef = useRef<string>("chat");
   const chatAtBottomRef = useRef<boolean>(true);
   const actorsRef = useRef<Actor[]>([]);
+  const prevGroupIdRef = useRef<string | null>(null);
   // Local state
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [mentionFilter, setMentionFilter] = React.useState("");
@@ -225,7 +228,10 @@ export default function App() {
   // ============ Group Selection Effect ============
   // Only reconnect/reload when selectedGroupId changes.
   useEffect(() => {
-    clearComposer();
+    // Save draft from previous group and load draft for new group
+    switchGroup(prevGroupIdRef.current, selectedGroupId || null);
+    prevGroupIdRef.current = selectedGroupId || null;
+
     if (fileInputRef.current) fileInputRef.current.value = "";
     resetDragDrop();
 
@@ -314,6 +320,7 @@ export default function App() {
         return;
       }
       clearComposer();
+      clearDraft(selectedGroupId); // Also clear saved draft for this group
       if (fileInputRef.current) fileInputRef.current.value = "";
     } finally {
       setBusy("");

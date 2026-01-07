@@ -97,6 +97,19 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply 
     return ids;
   }, [actors]);
 
+  // Helper to get display name for actor
+  const getDisplayName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const actor of actors) {
+      const id = String(actor.id || "");
+      if (id) map.set(id, actor.title || id);
+    }
+    return (id: string) => {
+      if (!id || id === "user") return id;
+      return map.get(id) || id;
+    };
+  }, [actors]);
+
   useEffect(() => {
     if (!isOpen) return;
     setError("");
@@ -325,7 +338,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply 
                         {formatTime(ev.ts)}
                       </span>
                       <span className={classNames("text-xs font-medium", isDark ? "text-slate-200" : "text-gray-800")}>
-                        {ev.by || "—"}
+                        {getDisplayName(ev.by || "") || "—"}
                       </span>
                       <span
                         className={classNames(
@@ -362,7 +375,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply 
                             : "bg-white border-gray-200 hover:bg-gray-100 text-gray-600 hover:text-gray-900"
                         )}
                         onClick={() => onReply(ev)}
-                        aria-label={`Reply to ${String(ev.by || "message")}`}
+                        aria-label={`Reply to ${getDisplayName(ev.by || "") || "message"}`}
                         title="Reply"
                       >
                         ↩ Reply

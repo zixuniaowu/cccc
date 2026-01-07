@@ -1,5 +1,6 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useMemo } from "react";
 import { Actor, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 
@@ -68,6 +69,14 @@ export function ChatComposer({
   setMentionFilter,
   onAppendRecipientToken,
 }: ChatComposerProps) {
+  // Get display name for reply target
+  const replyByDisplayName = useMemo(() => {
+    if (!replyTarget?.by) return "";
+    if (replyTarget.by === "user") return "user";
+    const actor = actors.find(a => a.id === replyTarget.by);
+    return actor?.title || replyTarget.by;
+  }, [replyTarget, actors]);
+
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const dt = e.clipboardData;
@@ -209,7 +218,7 @@ export function ChatComposer({
           isDark ? "text-slate-400 bg-slate-900/50" : "text-gray-500 bg-gray-100"
         )}>
           <span className={isDark ? "text-slate-500" : "text-gray-400"}>Replying to</span>
-          <span className={classNames("font-medium", isDark ? "text-slate-300" : "text-gray-700")}>{replyTarget.by}</span>
+          <span className={classNames("font-medium", isDark ? "text-slate-300" : "text-gray-700")}>{replyByDisplayName}</span>
           <span className={classNames("truncate flex-1", isDark ? "text-slate-500" : "text-gray-400")}>"{replyTarget.text}"</span>
           <button
             className={classNames(
