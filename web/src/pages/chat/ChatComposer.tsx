@@ -1,5 +1,6 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
+import { useMemo } from "react";
 import { Actor, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 
@@ -68,6 +69,14 @@ export function ChatComposer({
   setMentionFilter,
   onAppendRecipientToken,
 }: ChatComposerProps) {
+  // Get display name for reply target
+  const replyByDisplayName = useMemo(() => {
+    if (!replyTarget?.by) return "";
+    if (replyTarget.by === "user") return "user";
+    const actor = actors.find(a => a.id === replyTarget.by);
+    return actor?.title || replyTarget.by;
+  }, [replyTarget, actors]);
+
   // Handle pasted files (clipboard items).
   const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const dt = e.clipboardData;
@@ -209,7 +218,7 @@ export function ChatComposer({
           isDark ? "text-slate-400 bg-slate-900/50" : "text-gray-500 bg-gray-100"
         )}>
           <span className={isDark ? "text-slate-500" : "text-gray-400"}>Replying to</span>
-          <span className={classNames("font-medium", isDark ? "text-slate-300" : "text-gray-700")}>{replyTarget.by}</span>
+          <span className={classNames("font-medium", isDark ? "text-slate-300" : "text-gray-700")}>{replyByDisplayName}</span>
           <span className={classNames("truncate flex-1", isDark ? "text-slate-500" : "text-gray-400")}>"{replyTarget.text}"</span>
           <button
             className={classNames(
@@ -230,13 +239,12 @@ export function ChatComposer({
         <div className={classNames("text-xs font-medium flex-shrink-0", isDark ? "text-slate-500" : "text-gray-400")}>To</div>
         <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide sm:overflow-visible">
           <div className="flex items-center gap-1.5 flex-nowrap sm:flex-wrap">
-            {["@all", "@foreman", "@peers", ...actors.map((a) => String(a.id || ""))].map((tok) => {
-              const t = tok.trim();
-              if (!t) return null;
-              const active = toTokens.includes(t);
+            {/* Special tokens */}
+            {["@all", "@foreman", "@peers"].map((tok) => {
+              const active = toTokens.includes(tok);
               return (
                 <button
-                  key={t}
+                  key={tok}
                   className={classNames(
                     "flex-shrink-0 whitespace-nowrap text-[11px] px-2.5 py-1 rounded-full border transition-all",
                     active
@@ -245,12 +253,38 @@ export function ChatComposer({
                         ? "bg-slate-900 text-slate-400 border-slate-800 hover:border-slate-600 hover:text-slate-200"
                         : "bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:text-gray-800"
                   )}
-                  onClick={() => onToggleRecipient(t)}
+                  onClick={() => onToggleRecipient(tok)}
                   disabled={!selectedGroupId || busy === "send"}
                   title={active ? "Remove recipient" : "Add recipient"}
                   aria-pressed={active}
                 >
-                  {t}
+                  {tok}
+                </button>
+              );
+            })}
+            {/* Actor tokens - show title but use id as value */}
+            {actors.map((actor) => {
+              const id = String(actor.id || "");
+              if (!id) return null;
+              const active = toTokens.includes(id);
+              const displayName = actor.title || id;
+              return (
+                <button
+                  key={id}
+                  className={classNames(
+                    "flex-shrink-0 whitespace-nowrap text-[11px] px-2.5 py-1 rounded-full border transition-all",
+                    active
+                      ? "bg-emerald-600 text-white border-emerald-500 shadow-sm"
+                      : isDark
+                        ? "bg-slate-900 text-slate-400 border-slate-800 hover:border-slate-600 hover:text-slate-200"
+                        : "bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:text-gray-800"
+                  )}
+                  onClick={() => onToggleRecipient(id)}
+                  disabled={!selectedGroupId || busy === "send"}
+                  title={active ? `Remove ${displayName}` : `Add ${displayName}`}
+                  aria-pressed={active}
+                >
+                  {displayName}
                 </button>
               );
             })}

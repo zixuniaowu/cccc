@@ -1,7 +1,11 @@
-import { LedgerEvent } from "../../types";
+import { useMemo } from "react";
+import { Actor, LedgerEvent } from "../../types";
 import { formatFullTime, formatTime } from "../../utils/time";
 
-function formatEventLine(ev: LedgerEvent): string {
+function formatEventLine(
+  ev: LedgerEvent,
+  getDisplayName: (id: string) => string
+): string {
   if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
     return String(ev.data.text || "");
   }
@@ -9,11 +13,13 @@ function formatEventLine(ev: LedgerEvent): string {
     const kind = String(ev.data.kind || "info");
     const title = String(ev.data.title || "");
     const message = String(ev.data.message || "");
-    const target = ev.data.target_actor_id ? ` → ${ev.data.target_actor_id}` : "";
+    const targetId = ev.data.target_actor_id ? String(ev.data.target_actor_id) : "";
+    const target = targetId ? ` → ${getDisplayName(targetId)}` : "";
     return `[${kind}]${target}: ${title}${message ? ` - ${message}` : ""}`;
   }
   const k = String(ev.kind || "event");
-  const by = ev.by ? ` by ${ev.by}` : "";
+  const byId = ev.by ? String(ev.by) : "";
+  const by = byId ? ` by ${getDisplayName(byId)}` : "";
   return `${k}${by}`;
 }
 
@@ -21,13 +27,27 @@ export interface InboxModalProps {
   isOpen: boolean;
   isDark: boolean;
   actorId: string;
+  actors: Actor[];
   messages: LedgerEvent[];
   busy: string;
   onClose: () => void;
   onMarkAllRead: () => void;
 }
 
-export function InboxModal({ isOpen, isDark, actorId, messages, busy, onClose, onMarkAllRead }: InboxModalProps) {
+export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, onClose, onMarkAllRead }: InboxModalProps) {
+  // Helper to get display name for actor
+  const getDisplayName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const actor of actors) {
+      const id = String(actor.id || "");
+      if (id) map.set(id, actor.title || id);
+    }
+    return (id: string) => {
+      if (!id || id === "user") return id;
+      return map.get(id) || id;
+    };
+  }, [actors]);
+
   if (!isOpen) return null;
 
   return (
@@ -83,9 +103,9 @@ export function InboxModal({ isOpen, isDark, actorId, messages, busy, onClose, o
                 <div className={`text-xs truncate ${isDark ? "text-slate-400" : "text-gray-500"}`} title={formatFullTime(ev.ts)}>
                   {formatTime(ev.ts)}
                 </div>
-                <div className={`text-xs font-medium truncate ${isDark ? "text-slate-300" : "text-gray-700"}`}>{ev.by || "—"}</div>
+                <div className={`text-xs font-medium truncate ${isDark ? "text-slate-300" : "text-gray-700"}`}>{getDisplayName(ev.by || "") || "—"}</div>
               </div>
-              <div className={`mt-2 text-sm whitespace-pre-wrap break-words ${isDark ? "text-slate-200" : "text-gray-800"}`}>{formatEventLine(ev)}</div>
+              <div className={`mt-2 text-sm whitespace-pre-wrap break-words ${isDark ? "text-slate-200" : "text-gray-800"}`}>{formatEventLine(ev, getDisplayName)}</div>
             </div>
           ))}
           {!messages.length && (
