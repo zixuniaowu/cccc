@@ -106,6 +106,27 @@ export async function createGroup(title: string, topic: string = "") {
   });
 }
 
+export async function createGroupFromTemplate(
+  path: string,
+  title: string,
+  topic: string,
+  file: File
+) {
+  const form = new FormData();
+  form.append("path", path);
+  form.append("title", title);
+  form.append("topic", topic || "");
+  form.append("by", "user");
+  form.append("file", file);
+  return apiForm<{ group_id: string }>("/api/v1/groups/from_template", form);
+}
+
+export async function previewTemplate(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return apiForm<{ template: unknown }>("/api/v1/templates/preview", form);
+}
+
 export async function updateGroup(groupId: string, title: string, topic: string) {
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}`, {
     method: "PUT",
@@ -143,6 +164,35 @@ export async function setGroupState(groupId: string, state: "active" | "idle" | 
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/state?state=${encodeURIComponent(state)}&by=user`,
     { method: "POST" }
+  );
+}
+
+// ============ Group Templates (Replace) ============
+
+export async function exportGroupTemplate(groupId: string) {
+  return apiJson<{ template: string; filename: string }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/template/export`
+  );
+}
+
+export async function previewGroupTemplate(groupId: string, file: File) {
+  const form = new FormData();
+  form.append("by", "user");
+  form.append("file", file);
+  return apiForm<{ template: unknown; diff: unknown; scope_root: string }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/template/preview_upload`,
+    form
+  );
+}
+
+export async function importGroupTemplateReplace(groupId: string, file: File) {
+  const form = new FormData();
+  form.append("confirm", groupId);
+  form.append("by", "user");
+  form.append("file", file);
+  return apiForm<{ applied: boolean }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/template/import_replace`,
+    form
   );
 }
 
@@ -375,6 +425,12 @@ export async function fetchDirSuggestions() {
 export async function fetchDirContents(path: string) {
   return apiJson<{ path: string; parent: string | null; items: DirItem[] }>(
     `/api/v1/fs/list?path=${encodeURIComponent(path)}`
+  );
+}
+
+export async function resolveScopeRoot(path: string) {
+  return apiJson<{ path: string; scope_root: string; scope_key: string; git_remote: string }>(
+    `/api/v1/fs/scope_root?path=${encodeURIComponent(path)}`
   );
 }
 

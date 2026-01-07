@@ -25,6 +25,7 @@ from ...daemon.server import call_daemon
 from ...kernel.blobs import store_blob_bytes, resolve_blob_attachment_path
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
+from ...kernel.scope import detect_scope
 from ...kernel.prompt_files import (
     DEFAULT_PREAMBLE_BODY,
     DEFAULT_STANDUP_TEMPLATE,
@@ -37,6 +38,7 @@ from ...kernel.prompt_files import (
     resolve_active_scope_root,
     write_repo_prompt_file,
 )
+from ...kernel.group_template import parse_group_template
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
 from ...util.fs import atomic_write_text
@@ -92,9 +94,14 @@ class DebugClearLogsRequest(BaseModel):
     group_id: str = Field(default="")
     by: str = Field(default="user")
 
+class GroupTemplatePreviewRequest(BaseModel):
+    template: str = Field(default="")
+    by: str = Field(default="user")
+
 
 WEB_MAX_FILE_MB = 20
 WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024
+WEB_MAX_TEMPLATE_BYTES = 2 * 1024 * 1024  # safety bound for template uploads
 
 
 class ActorCreateRequest(BaseModel):
@@ -645,6 +652,28 @@ def create_app() -> FastAPI:
         
         return {"ok": True, "result": {"suggestions": suggestions[:10]}}
 
+    @app.get("/api/v1/fs/scope_root")
+    async def fs_scope_root(path: str = "") -> Dict[str, Any]:
+        """Resolve the effective scope root for a path (git root if applicable)."""
+        p = Path(str(path or "")).expanduser()
+        if not str(path or "").strip():
+            return {"ok": False, "error": {"code": "missing_path", "message": "missing path"}}
+        if not p.exists() or not p.is_dir():
+            return {"ok": False, "error": {"code": "invalid_path", "message": f"path does not exist: {p}"}}
+        try:
+            scope = detect_scope(p)
+            return {
+                "ok": True,
+                "result": {
+                    "path": str(p.resolve()),
+                    "scope_root": str(scope.url),
+                    "scope_key": str(scope.scope_key),
+                    "git_remote": str(scope.git_remote or ""),
+                },
+            }
+        except Exception as e:
+            return {"ok": False, "error": {"code": "resolve_failed", "message": str(e)}}
+
     @app.get("/api/v1/groups")
     async def groups() -> Dict[str, Any]:
         return await _daemon({"op": "groups"})
@@ -652,6 +681,77 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/groups")
     async def group_create(req: CreateGroupRequest) -> Dict[str, Any]:
         return await _daemon({"op": "group_create", "args": {"title": req.title, "topic": req.topic, "by": req.by}})
+
+    @app.post("/api/v1/groups/from_template")
+    async def group_create_from_template(
+        path: str = Form(...),
+        title: str = Form("working-group"),
+        topic: str = Form(""),
+        by: str = Form("user"),
+        file: UploadFile = File(...),
+    ) -> Dict[str, Any]:
+        raw = await file.read()
+        if len(raw) > WEB_MAX_TEMPLATE_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "template_too_large", "message": "template too large"})
+        template_text = raw.decode("utf-8", errors="replace")
+        return await _daemon(
+            {
+                "op": "group_create_from_template",
+                "args": {"path": path, "title": title, "topic": topic, "by": by, "template": template_text},
+            }
+        )
+
+    @app.post("/api/v1/templates/preview")
+    async def template_preview(file: UploadFile = File(...)) -> Dict[str, Any]:
+        raw = await file.read()
+        if len(raw) > WEB_MAX_TEMPLATE_BYTES:
+            return {"ok": False, "error": {"code": "template_too_large", "message": "template too large"}}
+        template_text = raw.decode("utf-8", errors="replace")
+        try:
+            tpl = parse_group_template(template_text)
+        except Exception as e:
+            return {"ok": False, "error": {"code": "invalid_template", "message": str(e)}}
+
+        def _prompt_preview(value: Any, limit: int = 2000) -> Dict[str, Any]:
+            if value is None:
+                return {"source": "builtin"}
+            raw_text = str(value)
+            out = raw_text.strip()
+            if len(out) > limit:
+                out = out[:limit] + "\n…"
+            return {"source": "repo", "chars": len(raw_text), "preview": out}
+
+        return {
+            "ok": True,
+            "result": {
+                "template": {
+                    "kind": tpl.kind,
+                    "v": tpl.v,
+                    "title": tpl.title,
+                    "topic": tpl.topic,
+                    "exported_at": tpl.exported_at,
+                    "cccc_version": tpl.cccc_version,
+                    "actors": [
+                        {
+                            "id": a.actor_id,
+                            "title": a.title,
+                            "runtime": a.runtime,
+                            "runner": a.runner,
+                            "command": a.command,
+                            "submit": a.submit,
+                            "enabled": bool(a.enabled),
+                        }
+                        for a in tpl.actors
+                    ],
+                    "settings": tpl.settings.model_dump(),
+                    "prompts": {
+                        "preamble": _prompt_preview(tpl.prompts.preamble),
+                        "help": _prompt_preview(tpl.prompts.help),
+                        "standup": _prompt_preview(tpl.prompts.standup),
+                    },
+                }
+            },
+        }
 
     @app.get("/api/v1/groups/{group_id}")
     async def group_show(group_id: str) -> Dict[str, Any]:
@@ -683,6 +783,44 @@ def create_app() -> FastAPI:
     async def group_context(group_id: str) -> Dict[str, Any]:
         """Get full group context (vision/sketch/milestones/tasks/notes/refs/presence)."""
         return await _daemon({"op": "context_get", "args": {"group_id": group_id}})
+
+    @app.get("/api/v1/groups/{group_id}/template/export")
+    async def group_template_export(group_id: str) -> Dict[str, Any]:
+        return await _daemon({"op": "group_template_export", "args": {"group_id": group_id}})
+
+    @app.post("/api/v1/groups/{group_id}/template/preview")
+    async def group_template_preview(group_id: str, req: GroupTemplatePreviewRequest) -> Dict[str, Any]:
+        return await _daemon({"op": "group_template_preview", "args": {"group_id": group_id, "template": req.template, "by": req.by}})
+
+    @app.post("/api/v1/groups/{group_id}/template/preview_upload")
+    async def group_template_preview_upload(
+        group_id: str,
+        by: str = Form("user"),
+        file: UploadFile = File(...),
+    ) -> Dict[str, Any]:
+        raw = await file.read()
+        if len(raw) > WEB_MAX_TEMPLATE_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "template_too_large", "message": "template too large"})
+        template_text = raw.decode("utf-8", errors="replace")
+        return await _daemon({"op": "group_template_preview", "args": {"group_id": group_id, "template": template_text, "by": by}})
+
+    @app.post("/api/v1/groups/{group_id}/template/import_replace")
+    async def group_template_import_replace(
+        group_id: str,
+        confirm: str = Form(""),
+        by: str = Form("user"),
+        file: UploadFile = File(...),
+    ) -> Dict[str, Any]:
+        raw = await file.read()
+        if len(raw) > WEB_MAX_TEMPLATE_BYTES:
+            raise HTTPException(status_code=413, detail={"code": "template_too_large", "message": "template too large"})
+        template_text = raw.decode("utf-8", errors="replace")
+        return await _daemon(
+            {
+                "op": "group_template_import_replace",
+                "args": {"group_id": group_id, "confirm": confirm, "by": by, "template": template_text},
+            }
+        )
 
     @app.get("/api/v1/groups/{group_id}/tasks")
     async def group_tasks(group_id: str, task_id: Optional[str] = None) -> Dict[str, Any]:

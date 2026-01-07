@@ -1,4 +1,5 @@
 import { DirItem, DirSuggestion } from "../../types";
+import { TemplatePreviewDetails } from "../TemplatePreviewDetails";
 
 export interface CreateGroupModalProps {
   isOpen: boolean;
@@ -15,6 +16,13 @@ export interface CreateGroupModalProps {
   setCreateGroupPath: (path: string) => void;
   createGroupName: string;
   setCreateGroupName: (name: string) => void;
+  createGroupTemplateFile: File | null;
+  templatePreview: unknown | null;
+  scopeRoot: string;
+  promptOverwriteFiles: string[];
+  templateError: string;
+  templateBusy: boolean;
+  onSelectTemplate: (file: File | null) => void;
 
   onFetchDirContents: (path: string) => void;
   onCreateGroup: () => void;
@@ -35,6 +43,13 @@ export function CreateGroupModal({
   setCreateGroupPath,
   createGroupName,
   setCreateGroupName,
+  createGroupTemplateFile,
+  templatePreview,
+  scopeRoot,
+  promptOverwriteFiles,
+  templateError,
+  templateBusy,
+  onSelectTemplate,
   onFetchDirContents,
   onCreateGroup,
   onClose,
@@ -53,7 +68,7 @@ export function CreateGroupModal({
       aria-labelledby="create-group-title"
     >
       <div
-        className={`w-full max-w-lg mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in ${
+        className={`w-full max-w-lg mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in overflow-hidden flex flex-col max-h-[calc(100vh-4rem)] sm:max-h-[calc(100vh-8rem)] ${
           isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
         }`}
       >
@@ -63,7 +78,7 @@ export function CreateGroupModal({
           </div>
           <div className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Select a project directory to start collaborating</div>
         </div>
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-5 overflow-y-auto min-h-0 flex-1">
           {dirSuggestions.length > 0 && !createGroupPath && (
             <div>
               <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Quick Select</label>
@@ -182,13 +197,79 @@ export function CreateGroupModal({
               placeholder="Auto-filled from directory name"
             />
           </div>
-          <div className="flex gap-3 pt-2">
+
+          <div>
+            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              Create Group From Template (optional)
+            </label>
+            <div
+              className={`rounded-xl border px-4 py-3 ${
+                isDark ? "border-slate-600/50 bg-slate-900/50" : "border-gray-200 bg-gray-50"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <input
+                  key={createGroupTemplateFile ? createGroupTemplateFile.name : "none"}
+                  type="file"
+                  accept=".yaml,.yml,.json"
+                  className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}
+                  disabled={templateBusy || busy === "create"}
+                  onChange={(e) => {
+                    const f = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
+                    onSelectTemplate(f);
+                  }}
+                />
+                {createGroupTemplateFile && (
+                  <button
+                    type="button"
+                    className={`ml-auto px-3 py-2 rounded-lg text-sm min-h-[40px] transition-colors ${
+                      isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-100 text-gray-700 border border-gray-200"
+                    }`}
+                    disabled={templateBusy || busy === "create"}
+                    onClick={() => onSelectTemplate(null)}
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+              {templateBusy && (
+                <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>Loading template…</div>
+              )}
+              {!templateBusy && templateError && (
+                <div className={`mt-2 text-xs ${isDark ? "text-rose-300" : "text-red-600"}`}>{templateError}</div>
+              )}
+              {!templateBusy && createGroupTemplateFile && !!templatePreview && (
+                <div className="mt-3">
+                  <TemplatePreviewDetails
+                    isDark={isDark}
+                    template={templatePreview as any}
+                    scopeRoot={scopeRoot}
+                    promptOverwriteFiles={promptOverwriteFiles}
+                    detailsOpenByDefault={true}
+                    wrap={false}
+                  />
+                </div>
+              )}
+              <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                Applies actors, settings, and prompt files (CCCC_PREAMBLE.md / CCCC_HELP.md / CCCC_STANDUP.md).
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className={`px-6 py-4 border-t ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
+          <div className="flex gap-3">
             <button
               className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 text-sm font-semibold shadow-lg disabled:opacity-50 transition-all min-h-[44px]"
               onClick={onCreateGroup}
-              disabled={!createGroupPath.trim() || busy === "create"}
+              disabled={
+                !createGroupPath.trim() ||
+                busy === "create" ||
+                templateBusy ||
+                (!!createGroupTemplateFile && !templatePreview) ||
+                (!!createGroupTemplateFile && !!templateError)
+              }
             >
-              {busy === "create" ? "Creating..." : "Create Group"}
+              {busy === "create" ? "Creating..." : createGroupTemplateFile ? "Create Group From Template" : "Create Group"}
             </button>
             <button
               className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${
@@ -204,4 +285,3 @@ export function CreateGroupModal({
     </div>
   );
 }
-

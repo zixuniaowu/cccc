@@ -7,13 +7,15 @@ function formatEventLine(
   getDisplayName: (id: string) => string
 ): string {
   if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
-    return String(ev.data.text || "");
+    const d = ev.data as Record<string, unknown>;
+    return typeof d.text === "string" ? d.text : "";
   }
   if (ev.kind === "system.notify" && ev.data && typeof ev.data === "object") {
-    const kind = String(ev.data.kind || "info");
-    const title = String(ev.data.title || "");
-    const message = String(ev.data.message || "");
-    const targetId = ev.data.target_actor_id ? String(ev.data.target_actor_id) : "";
+    const d = ev.data as Record<string, unknown>;
+    const kind = typeof d.kind === "string" ? d.kind : "info";
+    const title = typeof d.title === "string" ? d.title : "";
+    const message = typeof d.message === "string" ? d.message : "";
+    const targetId = typeof d.target_actor_id === "string" ? d.target_actor_id : "";
     const target = targetId ? ` → ${getDisplayName(targetId)}` : "";
     return `[${kind}]${target}: ${title}${message ? ` - ${message}` : ""}`;
   }
@@ -119,4 +121,3 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
     </div>
   );
 }
-

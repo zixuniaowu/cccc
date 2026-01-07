@@ -620,3 +620,41 @@ class ContextStorage:
 
     def clear_agent_status(self, agent_id: str) -> AgentPresence:
         return self.update_agent_presence(agent_id=agent_id, status="")
+
+    def clear_agent_status_if_present(self, agent_id: str) -> bool:
+        """Clear an agent status only if an entry already exists."""
+        canonical_id = self._canonicalize_agent_id(agent_id)
+        if not canonical_id:
+            return False
+
+        presence = self.load_presence()
+        agent = None
+        for a in presence.agents:
+            if a.id == canonical_id:
+                agent = a
+                break
+        if agent is None:
+            return False
+
+        agent.status = ""
+        agent.updated_at = _utc_now_iso()
+        self.save_presence(presence)
+        return True
+
+    def delete_agent_presence(self, agent_id: str) -> bool:
+        """Delete an agent presence entry entirely.
+
+        Use this when an actor is removed from the group and should no longer be
+        visible in presence lists.
+        """
+        canonical_id = self._canonicalize_agent_id(agent_id)
+        if not canonical_id:
+            return False
+
+        presence = self.load_presence()
+        before = len(presence.agents)
+        presence.agents = [a for a in presence.agents if a.id != canonical_id]
+        if len(presence.agents) == before:
+            return False
+        self.save_presence(presence)
+        return True

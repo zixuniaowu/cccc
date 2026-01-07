@@ -67,6 +67,12 @@ from .ops.runner_ops import (
     stop_group as runner_stop_group,
     stop_all as runner_stop_all,
 )
+from .ops.template_ops import (
+    group_create_from_template,
+    group_template_export,
+    group_template_import_replace,
+    group_template_preview,
+)
 
 import subprocess
 
@@ -1491,6 +1497,29 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             DaemonResponse(ok=True, result={"group_id": group.group_id, "title": group.doc.get("title"), "event": ev}),
             False,
         )
+
+    if op == "group_create_from_template":
+        return group_create_from_template(args), False
+
+    if op == "group_template_export":
+        return group_template_export(args), False
+
+    if op == "group_template_preview":
+        return group_template_preview(args), False
+
+    if op == "group_template_import_replace":
+        group_id = str(args.get("group_id") or "").strip()
+        before_foreman_id = ""
+        if group_id:
+            g = load_group(group_id)
+            if g is not None:
+                before_foreman_id = _foreman_id(g)
+        resp = group_template_import_replace(args)
+        if resp.ok and group_id:
+            g2 = load_group(group_id)
+            if g2 is not None:
+                _maybe_reset_automation_on_foreman_change(g2, before_foreman_id=before_foreman_id)
+        return resp, False
 
     if op == "group_show":
         group_id = str(args.get("group_id") or "").strip()

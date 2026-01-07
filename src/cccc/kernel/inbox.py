@@ -83,6 +83,19 @@ def set_cursor(group: Group, actor_id: str, *, event_id: str, ts: str) -> Dict[s
     return dict(cursors[str(actor_id)])
 
 
+def delete_cursor(group: Group, actor_id: str) -> bool:
+    """Delete an actor's read cursor entry (used when an actor is removed)."""
+    aid = str(actor_id or "").strip()
+    if not aid:
+        return False
+    cursors = load_cursors(group)
+    if aid not in cursors:
+        return False
+    cursors.pop(aid, None)
+    _save_cursors(group, cursors)
+    return True
+
+
 def _message_targets(event: Dict[str, Any]) -> List[str]:
     """Get the 'to' targets for a chat message event."""
     data = event.get("data")

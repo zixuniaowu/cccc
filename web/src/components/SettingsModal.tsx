@@ -7,6 +7,7 @@ import {
   IMBridgeTab,
   TranscriptTab,
   PromptsTab,
+  TemplateTab,
   RemoteAccessTab,
   DeveloperTab,
   SettingsScope,
@@ -427,6 +428,7 @@ export function SettingsModal({
     { id: "im", label: "IM Bridge" },
     { id: "transcript", label: "Transcript" },
     { id: "prompts", label: "Prompts" },
+    { id: "template", label: "Template" },
   ];
   const globalTabs: { id: GlobalTabId; label: string }[] = [
     { id: "remote", label: "Remote Access" },
@@ -619,6 +621,8 @@ export function SettingsModal({
           )}
 
           {activeTab === "prompts" && <PromptsTab isDark={isDark} groupId={groupId} />}
+
+          {activeTab === "template" && <TemplateTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
 
           {activeTab === "remote" && <RemoteAccessTab isDark={isDark} />}
 

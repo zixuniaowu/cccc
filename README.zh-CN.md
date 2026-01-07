@@ -2,7 +2,7 @@
 
 [English](README.md) | **中文** | [日本語](README.ja.md)
 
-> 状态：**0.4.0rc13**（Release Candidate）。为了保证正确性与一致性，0.4.x 期间仍可能有破坏性变更。
+> 状态：**0.4.0rc14**（Release Candidate）。为了保证正确性与一致性，0.4.x 期间仍可能有破坏性变更。
 
 CCCC 是一个**本地优先（local-first）的多智能体协作内核**：它的交互体验尽量接近成熟 IM，但在可靠性上依托于：
 
@@ -102,12 +102,12 @@ v0.3.x（tmux-first）验证了“多 agent + 编排循环”是可行的，但�
 
 ### 从 TestPyPI 安装 0.4.x RC（当前推荐）
 
-RC tag（例如 `v0.4.0-rc13`）会发布到 **TestPyPI**。建议依赖从 PyPI 安装，仅 RC 包从 TestPyPI 获取：
+RC tag（例如 `v0.4.0-rc14`）会发布到 **TestPyPI**。建议依赖从 PyPI 安装，仅 RC 包从 TestPyPI 获取：
 
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc13
+  cccc-pair==0.4.0rc14
 ```
 
 说明：目前 PyPI 上的最新稳定版仍是旧版 v0.3.x。想体验 0.4.x RC 请使用以上命令。
