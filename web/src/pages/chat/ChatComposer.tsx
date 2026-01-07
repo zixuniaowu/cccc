@@ -230,13 +230,12 @@ export function ChatComposer({
         <div className={classNames("text-xs font-medium flex-shrink-0", isDark ? "text-slate-500" : "text-gray-400")}>To</div>
         <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide sm:overflow-visible">
           <div className="flex items-center gap-1.5 flex-nowrap sm:flex-wrap">
-            {["@all", "@foreman", "@peers", ...actors.map((a) => String(a.id || ""))].map((tok) => {
-              const t = tok.trim();
-              if (!t) return null;
-              const active = toTokens.includes(t);
+            {/* Special tokens */}
+            {["@all", "@foreman", "@peers"].map((tok) => {
+              const active = toTokens.includes(tok);
               return (
                 <button
-                  key={t}
+                  key={tok}
                   className={classNames(
                     "flex-shrink-0 whitespace-nowrap text-[11px] px-2.5 py-1 rounded-full border transition-all",
                     active
@@ -245,12 +244,38 @@ export function ChatComposer({
                         ? "bg-slate-900 text-slate-400 border-slate-800 hover:border-slate-600 hover:text-slate-200"
                         : "bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:text-gray-800"
                   )}
-                  onClick={() => onToggleRecipient(t)}
+                  onClick={() => onToggleRecipient(tok)}
                   disabled={!selectedGroupId || busy === "send"}
                   title={active ? "Remove recipient" : "Add recipient"}
                   aria-pressed={active}
                 >
-                  {t}
+                  {tok}
+                </button>
+              );
+            })}
+            {/* Actor tokens - show title but use id as value */}
+            {actors.map((actor) => {
+              const id = String(actor.id || "");
+              if (!id) return null;
+              const active = toTokens.includes(id);
+              const displayName = actor.title || id;
+              return (
+                <button
+                  key={id}
+                  className={classNames(
+                    "flex-shrink-0 whitespace-nowrap text-[11px] px-2.5 py-1 rounded-full border transition-all",
+                    active
+                      ? "bg-emerald-600 text-white border-emerald-500 shadow-sm"
+                      : isDark
+                        ? "bg-slate-900 text-slate-400 border-slate-800 hover:border-slate-600 hover:text-slate-200"
+                        : "bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:text-gray-800"
+                  )}
+                  onClick={() => onToggleRecipient(id)}
+                  disabled={!selectedGroupId || busy === "send"}
+                  title={active ? `Remove ${displayName}` : `Add ${displayName}`}
+                  aria-pressed={active}
+                >
+                  {displayName}
                 </button>
               );
             })}
