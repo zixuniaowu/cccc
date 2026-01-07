@@ -234,6 +234,8 @@ export default function App() {
 
     if (fileInputRef.current) fileInputRef.current.value = "";
     resetDragDrop();
+    // Reset to chat tab when switching groups to avoid "Agent not found" error
+    setActiveTab("chat");
 
     if (!selectedGroupId) return;
 
