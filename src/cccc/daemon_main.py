@@ -58,6 +58,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                 print("ccccd: cleaning up stale state from crashed daemon")
                 try:
                     paths.sock_path.unlink(missing_ok=True)
+                    paths.addr_path.unlink(missing_ok=True)
                     paths.pid_path.unlink(missing_ok=True)
                 except Exception:
                     pass

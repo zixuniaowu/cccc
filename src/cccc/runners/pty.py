@@ -18,6 +18,8 @@ from typing import Callable, Dict, Iterable, Optional, Tuple
 
 import termios
 
+PTY_SUPPORTED = True
+
 
 def _set_winsize(fd: int, *, cols: int, rows: int) -> None:
     try:

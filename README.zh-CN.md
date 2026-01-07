@@ -78,7 +78,8 @@ v0.3.x（tmux-first）验证了“多 agent + 编排循环”是可行的，但�
 ```text
 ~/.cccc/
   daemon/
-    ccccd.sock
+    ccccd.addr.json   # daemon 端点（跨平台；Windows 默认 TCP）
+    ccccd.sock        # Unix domain socket（仅在部分平台/配置下存在）
     ccccd.log
   groups/<group_id>/
     group.yaml
@@ -92,7 +93,7 @@ v0.3.x（tmux-first）验证了“多 agent + 编排循环”是可行的，但�
 ## 运行要求
 
 - Python 3.9+
-- macOS / Linux（Windows 建议使用 WSL）
+- macOS / Linux / Windows（Windows 原生推荐 `headless` runner；若需要内嵌终端/PTY 体验建议使用 WSL）
 - 至少安装一个支持的 agent CLI（Claude/Codex/Droid/OpenCode/Copilot 等）
 - Node.js 仅用于 **Web UI 开发**（普通用户无需 Node，UI 已内置打包）
 
@@ -118,6 +119,39 @@ python -m pip install --index-url https://pypi.org/simple \
 git clone https://github.com/ChesterRa/cccc
 cd cccc
 pip install -e .
+```
+
+### 使用 uv 管理开发环境（推荐，尤其是 Windows）
+
+说明：`uv` 会为你选择/下载合适的 Python，并创建隔离的虚拟环境；仓库内的 `.venv/`、`.cccc/` 都在 `.gitignore` 中。
+
+Windows（PowerShell）：
+
+```powershell
+# 1) 创建虚拟环境（也可用 -p 3.12）
+uv venv -p 3.11 .venv
+
+# 2) 安装（editable）
+uv pip install -p .venv\Scripts\python.exe -e .
+
+# 3) 运行（不需要激活 venv）
+uv run -p .venv\Scripts\python.exe --no-sync cccc --help
+```
+
+macOS / Linux：
+
+```bash
+uv venv -p 3.11 .venv
+uv pip install -p .venv/bin/python -e .
+uv run -p .venv/bin/python --no-sync cccc --help
+```
+
+可选：将运行时目录隔离到当前仓库（避免写入默认的 `~/.cccc/`）：
+
+```powershell
+$env:CCCC_HOME = (Join-Path $PWD '.cccc')
+uv run -p .venv\Scripts\python.exe --no-sync cccc daemon start
+uv run -p .venv\Scripts\python.exe --no-sync cccc web
 ```
 
 Web UI 开发（可选）：
@@ -186,7 +220,7 @@ cccc setup --runtime <name>
 - 多 group 导航
 - Actor 管理（add/start/stop/relaunch）
 - Chat（@mentions + reply）
-- 每个 actor 的内嵌终端（PTY runner）
+- 每个 actor 的内嵌终端（PTY runner；Windows 原生推荐使用 `headless` 或 WSL）
 - Context + Automation settings
 - IM Bridge 配置
 - PROJECT.md 查看/编辑（repo root）

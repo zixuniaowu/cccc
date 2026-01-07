@@ -880,6 +880,7 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
 
 def tick_delivery(group: Group) -> None:
     """Called periodically to flush pending messages for all actors."""
+    pty_supported = bool(getattr(pty_runner, "PTY_SUPPORTED", True))
     for actor in list_actors(group):
         if not isinstance(actor, dict):
             continue
@@ -888,7 +889,7 @@ def tick_delivery(group: Group) -> None:
             continue
         # Only for PTY runners
         runner_kind = str(actor.get("runner") or "pty").strip()
-        if runner_kind != "pty":
+        if runner_kind != "pty" or not pty_supported:
             continue
         # Check if actor process is actually running
         if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
@@ -921,6 +922,7 @@ def get_headless_targets_for_message(
     """
     targets: List[str] = []
     
+    pty_supported = bool(getattr(pty_runner, "PTY_SUPPORTED", True))
     for actor in list_actors(group):
         if not isinstance(actor, dict):
             continue
@@ -928,9 +930,9 @@ def get_headless_targets_for_message(
         if not aid or aid == "user" or aid == by:
             continue
         
-        # Headless runner only
+        # Headless runner only (or PTY fallback when PTY is unsupported)
         runner_kind = str(actor.get("runner") or "pty").strip()
-        if runner_kind != "headless":
+        if runner_kind != "headless" and not (runner_kind == "pty" and not pty_supported):
             continue
         
         # Actor must be running

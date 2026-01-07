@@ -96,9 +96,10 @@ class HeadlessSession:
             self._status = "stopped"
             self._updated_at = utc_now_iso()
 
-        if self._on_exit is not None:
+        hook = self.on_exit
+        if hook is not None:
             try:
-                self.on_exit(self)
+                hook(self)
             except Exception:
                 pass
 

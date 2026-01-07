@@ -125,6 +125,21 @@ def _pty_backlog_bytes() -> int:
     return int(n)
 
 
+def _pty_supported() -> bool:
+    return bool(getattr(pty_runner, "PTY_SUPPORTED", True))
+
+
+def _effective_runner_kind(runner_kind: str) -> str:
+    """Return the effective runner kind for this platform.
+
+    Windows (and some Python builds) cannot run PTY; treat PTY as headless.
+    """
+    rk = str(runner_kind or "").strip() or "pty"
+    if rk == "headless":
+        return "headless"
+    return "pty" if _pty_supported() else "headless"
+
+
 def _can_read_terminal_transcript(group: Any, *, by: str, target_actor_id: str) -> bool:
     who = str(by or "").strip()
     target = str(target_actor_id or "").strip()
@@ -439,6 +454,11 @@ class DaemonPaths:
         return self.daemon_dir / "ccccd.sock"
 
     @property
+    def addr_path(self) -> Path:
+        # Cross-platform daemon endpoint descriptor (TCP fallback on Windows).
+        return self.daemon_dir / "ccccd.addr.json"
+
+    @property
     def pid_path(self) -> Path:
         return self.daemon_dir / "ccccd.pid"
 
@@ -451,16 +471,73 @@ def default_paths() -> DaemonPaths:
     return DaemonPaths(home=ensure_home())
 
 
-def _is_socket_alive(sock_path: Path) -> bool:
+def _desired_daemon_transport() -> str:
+    override = str(os.environ.get("CCCC_DAEMON_TRANSPORT") or "").strip().lower()
+    if override in ("unix", "tcp"):
+        return override
+    # Default: AF_UNIX on POSIX, TCP on Windows.
+    return "tcp" if os.name == "nt" else "unix"
+
+
+def _daemon_tcp_host() -> str:
+    host = str(os.environ.get("CCCC_DAEMON_HOST") or "").strip()
+    return host or "127.0.0.1"
+
+
+def _daemon_tcp_port() -> int:
+    raw = str(os.environ.get("CCCC_DAEMON_PORT") or "").strip()
+    if not raw:
+        return 0
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.settimeout(0.2)
-            s.connect(str(sock_path))
-            s.sendall(b'{"op":"ping"}\n')
-            _ = s.recv(1024)
-            return True
+        port = int(raw)
+    except Exception:
+        return 0
+    if port < 0 or port > 65535:
+        return 0
+    return port
+
+
+def get_daemon_endpoint(paths: Optional[DaemonPaths] = None) -> Dict[str, Any]:
+    """Best-effort: load the daemon endpoint descriptor (cross-platform)."""
+    p = paths or default_paths()
+    doc = read_json(p.addr_path)
+    if isinstance(doc, dict):
+        transport = str(doc.get("transport") or "").strip().lower()
+        if transport == "tcp":
+            try:
+                host = str(doc.get("host") or "").strip() or "127.0.0.1"
+                port = int(doc.get("port") or 0)
+            except Exception:
+                host = "127.0.0.1"
+                port = 0
+            if port > 0:
+                return {"transport": "tcp", "host": host, "port": port}
+        if transport == "unix":
+            path = str(doc.get("path") or "").strip()
+            if path:
+                return {"transport": "unix", "path": path}
+
+    # Back-compat: if no descriptor exists, fall back to AF_UNIX when available.
+    if getattr(socket, "AF_UNIX", None) is not None:
+        return {"transport": "unix", "path": str(p.sock_path)}
+    return {}
+
+
+def _is_daemon_alive(paths: DaemonPaths) -> bool:
+    try:
+        return bool(call_daemon({"op": "ping"}, paths=paths, timeout_s=0.2).get("ok"))
     except Exception:
         return False
+
+
+def _cleanup_stale_daemon_endpoints(paths: DaemonPaths) -> None:
+    if _is_daemon_alive(paths):
+        return
+    for stale in (paths.addr_path, paths.sock_path):
+        try:
+            stale.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _write_pid(pid_path: Path) -> None:
@@ -905,6 +982,7 @@ def _maybe_autostart_running_groups() -> None:
             if not bool(actor.get("enabled", True)):
                 continue
             runner_kind = str(actor.get("runner") or "pty").strip()
+            effective_runner = _effective_runner_kind(runner_kind)
             scope_key = str(actor.get("default_scope_key") or group_scope_key).strip()
             url = _find_scope_url(group, scope_key)
             if not url:
@@ -918,7 +996,7 @@ def _maybe_autostart_running_groups() -> None:
             runtime = str(actor.get("runtime") or "codex").strip()
             if runtime not in SUPPORTED_RUNTIMES:
                 continue
-            if runtime == "custom" and runner_kind != "headless" and not cmd:
+            if runtime == "custom" and effective_runner != "headless" and not cmd:
                 continue
 
             # Best-effort MCP installation (non-fatal, but important for correctness).
@@ -944,7 +1022,13 @@ def _maybe_autostart_running_groups() -> None:
 
             # Start actor session (errors skip this actor, continue with others)
             try:
-                if runner_kind == "headless":
+                if effective_runner == "headless":
+                    if runner_kind != "headless" and not _pty_supported():
+                        logger.warning(
+                            "pty runner is not supported on this platform; autostarting %s/%s as headless",
+                            gid,
+                            aid,
+                        )
                     headless_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
                         actor_id=aid,
@@ -966,7 +1050,7 @@ def _maybe_autostart_running_groups() -> None:
 
             # Write state file (non-fatal, session already started)
             try:
-                if runner_kind == "headless":
+                if effective_runner == "headless":
                     _write_headless_state(group.group_id, aid)
                 else:
                     _write_pty_state(group.group_id, aid, pid=session.pid)
@@ -1019,9 +1103,10 @@ def _inject_system_prompt(group: Any, actor: Dict[str, Any]) -> None:
 
 
 def _remove_stale_socket(sock_path: Path) -> None:
+    # Deprecated: daemon IPC is now cross-platform and uses `ccccd.addr.json`.
+    # Keep this as a best-effort cleanup helper for older call sites.
     try:
-        if sock_path.exists() and not _is_socket_alive(sock_path):
-            sock_path.unlink()
+        sock_path.unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -1225,11 +1310,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     if not aid:
                         continue
                     runner_kind = str(a.get("runner") or "pty")
+                    effective_runner = _effective_runner_kind(runner_kind)
                     running = False
                     try:
-                        if runner_kind == "pty":
+                        if effective_runner == "pty":
                             running = pty_runner.SUPERVISOR.actor_running(group.group_id, aid)
-                        elif runner_kind == "headless":
+                        elif effective_runner == "headless":
                             running = headless_runner.SUPERVISOR.actor_running(group.group_id, aid)
                     except Exception:
                         running = False
@@ -1239,6 +1325,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                             "role": get_effective_role(group, aid),
                             "runtime": str(a.get("runtime") or ""),
                             "runner": runner_kind,
+                            "runner_effective": (effective_runner if effective_runner != runner_kind else runner_kind),
                             "enabled": bool(a.get("enabled", True)),
                             "running": bool(running),
                             "unread_count": int(a.get("unread_count") or 0),
@@ -1822,12 +1909,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 start_specs.append((aid, cwd, list(cmd or []), dict(env or {}), dict(actor), runner_kind))
 
             started: list[str] = []
+            forced_headless: list[str] = []
             for aid, cwd, cmd, env, actor, runner_kind in start_specs:
                 # Set enabled=true for all actors being started
                 try:
                     update_actor(group, aid, {"enabled": True})
                 except Exception:
                     pass
+
+                effective_runner = _effective_runner_kind(runner_kind)
+                if effective_runner == "headless" and runner_kind != "headless" and not _pty_supported():
+                    forced_headless.append(aid)
                 
                 # Ensure MCP is installed for the runtime BEFORE starting the actor
                 runtime = str(actor.get("runtime") or "codex").strip()
@@ -1846,7 +1938,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         ),
                         False,
                     )
-                if runtime == "custom" and runner_kind != "headless" and not cmd:
+                if runtime == "custom" and effective_runner != "headless" and not cmd:
                     return (
                         _error(
                             "missing_command",
@@ -1862,9 +1954,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     )
                 _ensure_mcp_installed(runtime, cwd)
                 
-                if runner_kind == "headless":
+                if effective_runner == "headless":
                     headless_runner.SUPERVISOR.start_actor(
-                        group_id=group.group_id, actor_id=aid, cwd=cwd, env=env
+                        group_id=group.group_id,
+                        actor_id=aid,
+                        cwd=cwd,
+                        env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
                     )
                     try:
                         _write_headless_state(group.group_id, aid)
@@ -1900,8 +1995,14 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 pass
             # Starting a group should behave like a resume: do not "catch up" on reminders.
             _reset_automation_timers_if_active(group)
-        ev = append_event(group.ledger_path, kind="group.start", group_id=group.group_id, scope_key="", by=by, data={"started": started})
-        return DaemonResponse(ok=True, result={"group_id": group.group_id, "started": started, "event": ev}), False
+        data: Dict[str, Any] = {"started": started}
+        if forced_headless:
+            data["forced_headless"] = forced_headless
+        ev = append_event(group.ledger_path, kind="group.start", group_id=group.group_id, scope_key="", by=by, data=data)
+        result: Dict[str, Any] = {"group_id": group.group_id, "started": started, "event": ev}
+        if forced_headless:
+            result["forced_headless"] = forced_headless
+        return DaemonResponse(ok=True, result=result), False
 
     if op == "group_stop":
         # Batch operation: stop ALL actors in the group
@@ -2022,12 +2123,13 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 actor["role"] = get_effective_role(group, aid)
                 # Add actual running status (is the process running?)
                 runner_kind = str(actor.get("runner") or "pty").strip()
-                if runner_kind == "pty":
-                    actor["running"] = pty_runner.SUPERVISOR.actor_running(group_id, aid)
-                elif runner_kind == "headless":
+                effective_runner = _effective_runner_kind(runner_kind)
+                if effective_runner == "headless":
                     actor["running"] = headless_runner.SUPERVISOR.actor_running(group_id, aid)
                 else:
-                    actor["running"] = False
+                    actor["running"] = pty_runner.SUPERVISOR.actor_running(group_id, aid)
+                if effective_runner != runner_kind:
+                    actor["runner_effective"] = effective_runner
         # Optionally include unread message count for each actor
         if include_unread:
             from ..kernel.inbox import unread_count
@@ -2042,7 +2144,13 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         actor_id = str(args.get("actor_id") or "").strip()
         title = str(args.get("title") or "").strip()
         submit = str(args.get("submit") or "").strip()
-        runner = str(args.get("runner") or "pty").strip()
+        runner = str(args.get("runner") or "").strip()
+        if not runner:
+            runner = "pty" if _pty_supported() else "headless"
+        forced_headless = False
+        if runner == "pty" and not _pty_supported():
+            runner = "headless"
+            forced_headless = True
         runtime = str(args.get("runtime") or "codex").strip()
         by = str(args.get("by") or "user").strip()
         command_raw = args.get("command")
@@ -2091,6 +2199,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if isinstance(foreman_cfg, dict) and foreman_cfg.get("id") == by:
                 foreman_runtime = str(foreman_cfg.get("runtime") or "").strip()
                 foreman_runner = str(foreman_cfg.get("runner") or "pty").strip() or "pty"
+                foreman_runner_effective = _effective_runner_kind(foreman_runner)
+                runner_effective = _effective_runner_kind(runner)
                 foreman_command_raw = foreman_cfg.get("command") if isinstance(foreman_cfg.get("command"), list) else []
                 foreman_command = [str(x) for x in foreman_command_raw if isinstance(x, str) and str(x).strip()]
                 foreman_env_raw = foreman_cfg.get("env") if isinstance(foreman_cfg.get("env"), dict) else {}
@@ -2100,8 +2210,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     raise ValueError("foreman config missing runtime")
                 if runtime != foreman_runtime:
                     raise ValueError(f"foreman can only add actors with the same runtime as itself (expected: {foreman_runtime})")
-                if runner != foreman_runner:
-                    raise ValueError(f"foreman can only add actors with the same runner as itself (expected: {foreman_runner})")
+                if runner_effective != foreman_runner_effective:
+                    raise ValueError(
+                        f"foreman can only add actors with the same runner as itself (expected: {foreman_runner_effective})"
+                    )
 
                 # Command: treat empty list as omitted (clone foreman).
                 if not command:
@@ -2135,6 +2247,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             )
         except Exception as e:
             return _error("actor_add_failed", str(e)), False
+        if forced_headless:
+            logger.warning(
+                "pty runner is not supported on this platform; forcing runner=headless for %s/%s",
+                group.group_id,
+                str(actor.get("id") or actor_id),
+            )
         ev = append_event(
             group.ledger_path,
             kind="actor.add",
@@ -2267,6 +2385,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
                     env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
                     runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
+                    effective_runner = _effective_runner_kind(runner_kind)
                     runtime = str(actor.get("runtime") or "codex").strip() or "codex"
                     if runtime not in SUPPORTED_RUNTIMES:
                         return (
@@ -2283,7 +2402,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                             ),
                             False,
                         )
-                    if runtime == "custom" and runner_kind != "headless" and not cmd:
+                    if runtime == "custom" and effective_runner != "headless" and not cmd:
                         return (
                             _error(
                                 "missing_command",
@@ -2299,7 +2418,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         )
                     _ensure_mcp_installed(runtime, cwd)
 
-                    if runner_kind == "headless":
+                    if effective_runner == "headless":
                         headless_runner.SUPERVISOR.start_actor(
                             group_id=group.group_id,
                             actor_id=actor_id,
@@ -2329,12 +2448,15 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
             else:
                 runner_kind = str(actor.get("runner") or "pty").strip() or "pty"
-                if runner_kind == "headless":
+                effective_runner = _effective_runner_kind(runner_kind)
+                if effective_runner == "headless":
                     headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                     _remove_headless_state(group.group_id, actor_id)
+                    _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
                 else:
                     pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                     _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+                    _remove_headless_state(group.group_id, actor_id)
                 # Keep queued messages; they should be delivered when the actor is started again.
                 THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
                 # If no enabled actors remain, mark group as not running.
@@ -2423,6 +2545,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
         env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
         runner_kind = str(actor.get("runner") or "pty").strip()
+        effective_runner = _effective_runner_kind(runner_kind)
+        forced_headless = effective_runner == "headless" and runner_kind != "headless" and not _pty_supported()
 
         # Ensure MCP is installed for the runtime BEFORE starting the actor
         runtime = str(actor.get("runtime") or "codex").strip()
@@ -2441,7 +2565,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 ),
                 False,
             )
-        if runtime == "custom" and runner_kind != "headless" and not cmd:
+        if runtime == "custom" and effective_runner != "headless" and not cmd:
             return (
                 _error(
                     "missing_command",
@@ -2457,7 +2581,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             )
         _ensure_mcp_installed(runtime, cwd)
 
-        if runner_kind == "headless":
+        if effective_runner == "headless":
             # Start headless session (no PTY, MCP-driven)
             headless_runner.SUPERVISOR.start_actor(
                 group_id=group.group_id,
@@ -2497,15 +2621,21 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
         _maybe_reset_automation_on_foreman_change(group, before_foreman_id=before_foreman_id)
 
+        data: Dict[str, Any] = {"actor_id": actor_id, "runner": str(actor.get("runner") or "pty")}
+        if forced_headless:
+            data["runner_effective"] = "headless"
         ev = append_event(
             group.ledger_path,
             kind="actor.start",
             group_id=group.group_id,
             scope_key="",
             by=by,
-            data={"actor_id": actor_id, "runner": str(actor.get("runner") or "pty")},
+            data=data,
         )
-        return DaemonResponse(ok=True, result={"actor": actor, "event": ev}), False
+        result: Dict[str, Any] = {"actor": actor, "event": ev}
+        if forced_headless:
+            result["runner_effective"] = "headless"
+        return DaemonResponse(ok=True, result=result), False
 
     if op == "actor_stop":
         group_id = str(args.get("group_id") or "").strip()
@@ -2521,12 +2651,15 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             require_actor_permission(group, by=by, action="actor.stop", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": False})
             runner_kind = str(actor.get("runner") or "pty").strip()
-            if runner_kind == "headless":
+            effective_runner = _effective_runner_kind(runner_kind)
+            if effective_runner == "headless":
                 headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                 _remove_headless_state(group.group_id, actor_id)
+                _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
             else:
                 pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                 _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+                _remove_headless_state(group.group_id, actor_id)
         except Exception as e:
             return _error("actor_stop_failed", str(e)), False
         try:
@@ -2565,13 +2698,16 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
             actor = update_actor(group, actor_id, {"enabled": True})
             runner_kind = str(actor.get("runner") or "pty").strip()
+            effective_runner = _effective_runner_kind(runner_kind)
             # Stop existing session
-            if runner_kind == "headless":
+            if effective_runner == "headless":
                 headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                 _remove_headless_state(group.group_id, actor_id)
+                _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
             else:
                 pty_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
                 _remove_pty_state_if_pid(group.group_id, actor_id, pid=0)
+                _remove_headless_state(group.group_id, actor_id)
             # Clear preamble state so system prompt will be re-injected on restart
             clear_preamble_sent(group, actor_id)
             # Reset delivery metadata but keep queued messages.
@@ -2624,8 +2760,9 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
             env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
             runner_kind = str(actor.get("runner") or "pty").strip()
+            effective_runner = _effective_runner_kind(runner_kind)
 
-            if runner_kind == "headless":
+            if effective_runner == "headless":
                 headless_runner.SUPERVISOR.start_actor(
                     group_id=group.group_id,
                     actor_id=actor_id,
@@ -2963,7 +3100,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 continue
             # PTY runner: queue message for throttled delivery
             runner_kind = str(actor.get("runner") or "pty").strip()
-            if runner_kind != "headless":
+            if _effective_runner_kind(runner_kind) == "pty":
                 queue_chat_message(
                     group,
                     actor_id=aid,
@@ -3131,7 +3268,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 continue
             # PTY runner: queue message for throttled delivery
             runner_kind = str(actor.get("runner") or "pty").strip()
-            if runner_kind != "headless":
+            if _effective_runner_kind(runner_kind) == "pty":
                 queue_chat_message(
                     group,
                     actor_id=aid,
@@ -3332,8 +3469,8 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     except Exception:
         pass
 
-    _remove_stale_socket(p.sock_path)
-    if p.sock_path.exists() and _is_socket_alive(p.sock_path):
+    _cleanup_stale_daemon_endpoints(p)
+    if _is_daemon_alive(p):
         return 0
 
     # Cleanup stale IM bridge state from previous runs/crashes.
@@ -3364,8 +3501,11 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         pass
 
     try:
-        if p.sock_path.exists():
-            p.sock_path.unlink()
+        p.sock_path.unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        p.addr_path.unlink(missing_ok=True)
     except Exception:
         pass
 
@@ -3395,7 +3535,10 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                         if group is None:
                             continue
                         # Check if any actor is running (instead of group.running)
-                        group_is_running = pty_runner.SUPERVISOR.group_running(gid)
+                        group_is_running = (
+                            pty_runner.SUPERVISOR.group_running(gid)
+                            or headless_runner.SUPERVISOR.group_running(gid)
+                        )
                         if not group_is_running:
                             continue
                         try:
@@ -3415,11 +3558,75 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
     threading.Thread(target=_automation_loop, name="cccc-automation", daemon=True).start()
 
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+    transport = _desired_daemon_transport()
+    if transport == "unix" and getattr(socket, "AF_UNIX", None) is None:
+        transport = "tcp"
+
+    if transport == "unix":
+        af_unix = getattr(socket, "AF_UNIX", None)
+        assert af_unix is not None
+        s = socket.socket(af_unix, socket.SOCK_STREAM)
+        endpoint = {"transport": "unix", "path": str(p.sock_path)}
         s.bind(str(p.sock_path))
+    else:
+        host = _daemon_tcp_host()
+        port = _daemon_tcp_port()
+        # Avoid colliding with the default web port when auto-selecting a TCP port (port=0).
+        # Some Windows installs configure the dynamic port range to include 8848, so a random
+        # ephemeral port can occasionally grab the web port and prevent `cccc web` from starting.
+        reserved_ports = {8848} if port == 0 else set()
+        s = None
+        endpoint = {"transport": "tcp", "host": host, "port": port}
+        for _ in range(25):
+            cand = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                cand.bind((host, port))
+                bound = cand.getsockname()
+                try:
+                    bound_port = int(bound[1])
+                except Exception:
+                    bound_port = 0
+                if bound_port and bound_port in reserved_ports:
+                    cand.close()
+                    continue
+                s = cand
+                break
+            except Exception:
+                try:
+                    cand.close()
+                except Exception:
+                    pass
+                raise
+        if s is None:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.bind((host, port))
+        try:
+            bound_host, bound_port = s.getsockname()[:2]
+            endpoint["host"] = str(bound_host)
+            endpoint["port"] = int(bound_port)
+        except Exception:
+            pass
+
+    with s:
         s.listen(50)
         s.settimeout(1.0)  # Allow periodic check of stop_event
         _write_pid(p.pid_path)
+        try:
+            atomic_write_json(
+                p.addr_path,
+                {
+                    "v": 1,
+                    "transport": str(endpoint.get("transport") or ""),
+                    "path": str(endpoint.get("path") or ""),
+                    "host": str(endpoint.get("host") or ""),
+                    "port": int(endpoint.get("port") or 0),
+                    "pid": int(os.getpid()),
+                    "version": str(__version__),
+                    "ts": utc_now_iso(),
+                },
+            )
+        except Exception:
+            pass
 
         # Bootstrap background work only after the daemon socket is ready, but
         # don't block the accept loop (clients should see the daemon as responsive).
@@ -3536,6 +3743,11 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     except Exception:
         pass
     try:
+        if p.addr_path.exists():
+            p.addr_path.unlink()
+    except Exception:
+        pass
+    try:
         if p.pid_path.exists():
             p.pid_path.unlink()
     except Exception:
@@ -3553,13 +3765,47 @@ def call_daemon(req: Dict[str, Any], *, paths: Optional[DaemonPaths] = None, tim
             error=DaemonError(code="invalid_request", message="invalid request", details={"error": str(e)}),
         ).model_dump()
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.settimeout(timeout_s)
-            s.connect(str(p.sock_path))
-            s.sendall((json.dumps(request.model_dump(), ensure_ascii=False) + "\n").encode("utf-8"))
-            # Use makefile for buffered readline (handles partial reads correctly)
-            with s.makefile("rb") as f:
-                line = f.readline(4_000_000)  # 4MB limit to prevent DoS
+        ep = get_daemon_endpoint(p)
+        transport = str(ep.get("transport") or "").strip().lower()
+
+        if transport == "tcp":
+            host = str(ep.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+            try:
+                port = int(ep.get("port") or 0)
+            except Exception:
+                port = 0
+            if port <= 0:
+                raise RuntimeError("invalid tcp daemon endpoint")
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                s.settimeout(timeout_s)
+                s.connect((host, port))
+                s.sendall((json.dumps(request.model_dump(), ensure_ascii=False) + "\n").encode("utf-8"))
+                with s.makefile("rb") as f:
+                    line = f.readline(4_000_000)  # 4MB limit to prevent DoS
+            finally:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+
+        else:
+            af_unix = getattr(socket, "AF_UNIX", None)
+            if af_unix is None:
+                raise RuntimeError("AF_UNIX not supported")
+            path = str(ep.get("path") or p.sock_path)
+            s = socket.socket(af_unix, socket.SOCK_STREAM)
+            try:
+                s.settimeout(timeout_s)
+                s.connect(path)
+                s.sendall((json.dumps(request.model_dump(), ensure_ascii=False) + "\n").encode("utf-8"))
+                with s.makefile("rb") as f:
+                    line = f.readline(4_000_000)  # 4MB limit to prevent DoS
+            finally:
+                try:
+                    s.close()
+                except Exception:
+                    pass
         obj = json.loads(line.decode("utf-8", errors="replace"))
         resp = DaemonResponse.model_validate(obj)
         return resp.model_dump()

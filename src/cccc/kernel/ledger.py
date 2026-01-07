@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import hashlib
 import json
 import os
@@ -11,6 +10,7 @@ from typing import Any, Dict, Iterable, Optional
 from ..contracts.v1 import Event
 from ..contracts.v1.event import normalize_event_data
 from ..util.fs import atomic_write_text
+from ..util.file_lock import acquire_lockfile, release_lockfile
 
 
 MAX_EVENT_BYTES = 256_000
@@ -67,11 +67,12 @@ def append_event(
     if len(line.encode("utf-8", errors="replace")) > MAX_EVENT_BYTES:
         raise ValueError(f"ledger event too large (>{MAX_EVENT_BYTES} bytes): {kind}")
     lock = _lock_path(ledger_path)
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    with lock.open("a", encoding="utf-8") as lk:
-        fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+    lk = acquire_lockfile(lock, blocking=True)
+    try:
         with ledger_path.open("a", encoding="utf-8") as f:
             f.write(line + "\n")
+    finally:
+        release_lockfile(lk)
     return out
 
 

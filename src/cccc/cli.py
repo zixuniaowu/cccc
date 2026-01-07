@@ -40,6 +40,16 @@ def _print_json(obj: Any) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
+def _default_runner_kind() -> str:
+    """Pick a sensible default runner for this platform."""
+    try:
+        from .runners import pty as pty_runner
+
+        return "pty" if bool(getattr(pty_runner, "PTY_SUPPORTED", True)) else "headless"
+    except Exception:
+        return "headless"
+
+
 def _ensure_daemon_running() -> bool:
     resp = call_daemon({"op": "ping"}, timeout_s=1.0)
     if resp.get("ok"):
@@ -119,8 +129,10 @@ def _ensure_daemon_running() -> bool:
             try:
                 home = ensure_home()
                 sock_path = home / "daemon" / "ccccd.sock"
+                addr_path = home / "daemon" / "ccccd.addr.json"
                 pid_path = home / "daemon" / "ccccd.pid"
                 sock_path.unlink(missing_ok=True)
+                addr_path.unlink(missing_ok=True)
                 pid_path.unlink(missing_ok=True)
             except Exception:
                 pass
@@ -137,9 +149,11 @@ def _ensure_daemon_running() -> bool:
     except Exception:
         return False
 
-    for _ in range(30):
+    # Windows TCP startup can take longer than POSIX AF_UNIX; be patient but bounded.
+    attempts = 200 if os.name == "nt" else 60
+    for _ in range(attempts):
         time.sleep(0.05)
-        resp = call_daemon({"op": "ping"})
+        resp = call_daemon({"op": "ping"}, timeout_s=0.5)
         if resp.get("ok"):
             return True
     return False
@@ -288,6 +302,7 @@ def _default_entry() -> int:
         # Clean up stale socket/pid files.
         # If a daemon pid is present but unresponsive, terminate it first to avoid orphan daemons.
         sock_path = home / "daemon" / "ccccd.sock"
+        addr_path = home / "daemon" / "ccccd.addr.json"
         pid_path = home / "daemon" / "ccccd.pid"
         try:
             pid = 0
@@ -329,6 +344,7 @@ def _default_entry() -> int:
                             pass
 
             sock_path.unlink(missing_ok=True)
+            addr_path.unlink(missing_ok=True)
             pid_path.unlink(missing_ok=True)
         except Exception:
             pass
@@ -1107,7 +1123,7 @@ def cmd_actor_add(args: argparse.Namespace) -> int:
     command: list[str] = []
     if args.command:
         try:
-            command = shlex.split(str(args.command))
+            command = shlex.split(str(args.command), posix=(os.name != "nt"))
         except Exception:
             command = [str(args.command)]
     
@@ -1330,7 +1346,7 @@ def cmd_actor_update(args: argparse.Namespace) -> int:
         cmd: list[str] = []
         if str(args.command).strip():
             try:
-                cmd = shlex.split(str(args.command))
+                cmd = shlex.split(str(args.command), posix=(os.name != "nt"))
             except Exception:
                 cmd = [str(args.command)]
         patch["command"] = cmd
@@ -2458,7 +2474,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_add.add_argument("--env", action="append", default=[], help="Environment var (KEY=VAL), repeatable")
     p_actor_add.add_argument("--scope", default="", help="Default scope path for this actor (optional; must be attached)")
     p_actor_add.add_argument("--submit", choices=["enter", "newline", "none"], default="enter", help="Submit key (default: enter)")
-    p_actor_add.add_argument("--runner", choices=["pty", "headless"], default="pty", help="Runner type: pty (interactive) or headless (MCP-driven)")
+    p_actor_add.add_argument("--runner", choices=["pty", "headless"], default=_default_runner_kind(), help="Runner type: pty (interactive) or headless (MCP-driven)")
     p_actor_add.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_add.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_add.set_defaults(func=cmd_actor_add)

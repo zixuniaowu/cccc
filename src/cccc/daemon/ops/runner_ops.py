@@ -15,6 +15,17 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
 
 
+def _pty_supported() -> bool:
+    return bool(getattr(pty_runner, "PTY_SUPPORTED", True))
+
+
+def _effective_runner_kind(runner_kind: str) -> str:
+    rk = str(runner_kind or "").strip() or "pty"
+    if rk == "headless":
+        return "headless"
+    return "pty" if _pty_supported() else "headless"
+
+
 def handle_headless_status(args: Dict[str, Any]) -> DaemonResponse:
     """Get headless session status."""
     group_id = str(args.get("group_id") or "").strip()
@@ -99,7 +110,7 @@ def handle_headless_ack_message(args: Dict[str, Any]) -> DaemonResponse:
 
 def is_actor_running(group_id: str, actor_id: str, runner_kind: str) -> bool:
     """Check if an actor is running (works for both PTY and headless)."""
-    if runner_kind == "headless":
+    if _effective_runner_kind(runner_kind) == "headless":
         return headless_runner.SUPERVISOR.actor_running(group_id, actor_id)
     else:
         return pty_runner.SUPERVISOR.actor_running(group_id, actor_id)
@@ -115,7 +126,7 @@ def is_group_running(group_id: str) -> bool:
 
 def stop_actor(group_id: str, actor_id: str, runner_kind: str) -> None:
     """Stop an actor (works for both PTY and headless)."""
-    if runner_kind == "headless":
+    if _effective_runner_kind(runner_kind) == "headless":
         headless_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
     else:
         pty_runner.SUPERVISOR.stop_actor(group_id=group_id, actor_id=actor_id)
