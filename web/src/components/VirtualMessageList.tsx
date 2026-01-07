@@ -52,16 +52,18 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   const isAtBottomRef = useRef(true);
   const didInitialScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<number | null>(null);
-  const lastScrollTopRef = useRef(0);
 
-  // For history loading scroll position preservation
-  const prevScrollHeightRef = useRef(0);
-  const wasAtTopRef = useRef(false);
+  // For history loading scroll position preservation (prepend older messages)
+  const topLoadArmedRef = useRef(true);
+  const pendingRestoreRef = useRef(false);
+  const anchorMessageIdRef = useRef<string>("");
+  const anchorOffsetRef = useRef(0);
 
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => parentRef.current,
+    getItemKey: (index) => messages[index]?.id ?? index,
     estimateSize: () => 120,
     overscan: 5,
   });
@@ -126,25 +128,34 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     const el = parentRef.current;
     if (!el) return;
 
-    const prevTop = lastScrollTopRef.current;
     const curTop = el.scrollTop;
-    lastScrollTopRef.current = curTop;
-    // Only allow top-history loading when the user is scrolling up (or attempting to),
-    // otherwise being near the top while scrolling down would repeatedly trigger loads.
-    const isScrollingUpOrStationary = curTop <= prevTop;
 
     const atBottom = checkIsAtBottom();
     isAtBottomRef.current = atBottom;
     onScrollChange?.(atBottom);
 
-    // Top detection for loading more history
-    const atTop = curTop < 100;
-    if (isScrollingUpOrStationary && atTop && hasMoreHistory && !isLoadingHistory && onLoadMore) {
-      wasAtTopRef.current = true;
-      prevScrollHeightRef.current = el.scrollHeight || 0;
+    // Top detection for loading more history.
+    //
+    // Use a hysteresis "arm/disarm" gate instead of relying on scroll direction.
+    // This prevents repeated loads when the scroll position jitters near the top
+    // (e.g. due to browser scroll anchoring or dynamic row measurement).
+    const topTriggerPx = 80;
+    const topRearmPx = 240;
+    if (curTop > topRearmPx) topLoadArmedRef.current = true;
+
+    const atTop = curTop < topTriggerPx;
+    if (atTop && topLoadArmedRef.current && hasMoreHistory && !isLoadingHistory && onLoadMore) {
+      topLoadArmedRef.current = false;
+      pendingRestoreRef.current = true;
+
+      const first = virtualizer.getVirtualItems()[0];
+      const firstMsg = first ? messages[first.index] : null;
+      anchorMessageIdRef.current = firstMsg?.id ? String(firstMsg.id) : "";
+      anchorOffsetRef.current = first ? Math.max(0, curTop - first.start) : 0;
+
       onLoadMore();
     }
-  }, [checkIsAtBottom, hasMoreHistory, isLoadingHistory, onLoadMore, onScrollChange]);
+  }, [checkIsAtBottom, hasMoreHistory, isLoadingHistory, messages, onLoadMore, onScrollChange, virtualizer]);
 
   useEffect(() => {
     const prevCount = prevMessageCountRef.current;
@@ -170,24 +181,41 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     prevMessageCountRef.current = 0;
     isAtBottomRef.current = true;
     didInitialScrollRef.current = false;
-    lastScrollTopRef.current = 0;
+    topLoadArmedRef.current = true;
     cancelScheduledScroll();
+    pendingRestoreRef.current = false;
+    anchorMessageIdRef.current = "";
+    anchorOffsetRef.current = 0;
   }, [groupId, cancelScheduledScroll]);
 
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
   // Restore scroll position after loading older messages
   useEffect(() => {
-    if (!wasAtTopRef.current || isLoadingHistory) return;
+    if (isLoadingHistory) return;
+    if (!pendingRestoreRef.current) return;
     const el = parentRef.current;
     if (!el) return;
 
-    const heightDiff = el.scrollHeight - prevScrollHeightRef.current;
-    if (heightDiff > 0) {
-      el.scrollTop = heightDiff;
+    pendingRestoreRef.current = false;
+
+    const anchorId = anchorMessageIdRef.current;
+    const offsetInRow = anchorOffsetRef.current;
+    anchorMessageIdRef.current = "";
+    anchorOffsetRef.current = 0;
+
+    if (anchorId) {
+      const idx = messages.findIndex((m) => String(m.id || "") === anchorId);
+      if (idx >= 0) {
+        const offsetInfo = virtualizer.getOffsetForIndex(idx, "start");
+        if (offsetInfo) {
+          virtualizer.scrollToOffset(offsetInfo[0] + offsetInRow, { align: "start", behavior: "auto" });
+        } else {
+          virtualizer.scrollToIndex(idx, { align: "start", behavior: "auto" });
+        }
+      }
     }
-    wasAtTopRef.current = false;
-  }, [isLoadingHistory, messages.length]);
+  }, [isLoadingHistory, messages, virtualizer]);
 
   return (
     <div
@@ -196,6 +224,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
         if (scrollRef) scrollRef.current = el;
       }}
       className="flex-1 min-h-0 overflow-auto px-4 py-4 relative"
+      style={{ overflowAnchor: "none" }}
       onScroll={messages.length > 0 ? handleScroll : undefined}
       role="log"
       aria-label="Chat messages"
@@ -239,7 +268,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
               const message = messages[virtualRow.index];
               return (
                 <div
-                  key={message.id || virtualRow.index}
+                  key={virtualRow.key}
                   data-index={virtualRow.index}
                   ref={measureElement}
                   style={{
