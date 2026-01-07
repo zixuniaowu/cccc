@@ -28,7 +28,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
     if (!rootEl || !scrollEl || !tabsEl) return;
 
     if (!onAddAgent) {
-      setIsOverflowing(false);
+      setIsOverflowing(prev => prev === false ? prev : false);
       return;
     }
 
@@ -42,28 +42,35 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
 
     const required = tabsWidth + (addButtonWidth > 0 ? addButtonWidth + gap : 0);
     const available = Math.max(0, rootWidth - paddingX);
-    setIsOverflowing(required > available);
+    const newValue = required > available;
+    // Only update state if value actually changed to avoid unnecessary re-renders
+    setIsOverflowing(prev => prev === newValue ? prev : newValue);
   }, [onAddAgent]);
 
-  // Check overflow after every render, so width-affecting updates (titles, unread badges) are handled.
-  useEffect(() => {
-    checkOverflow();
-  });
-
-  // Re-check on container resize (e.g., window resize, layout changes).
+  // Check overflow on mount, resize, and when content changes
   useEffect(() => {
     const rootEl = rootRef.current;
     if (!rootEl) return;
 
-    if (typeof ResizeObserver === "undefined") {
-      window.addEventListener("resize", checkOverflow);
-      return () => window.removeEventListener("resize", checkOverflow);
-    }
+    // Use requestAnimationFrame to avoid synchronous setState in effect body
+    const rafId = requestAnimationFrame(checkOverflow);
 
-    const ro = new ResizeObserver(() => checkOverflow());
-    ro.observe(rootEl);
-    return () => ro.disconnect();
-  }, [checkOverflow]);
+    // Handle resize via ResizeObserver or fallback to window resize
+    if (typeof ResizeObserver !== "undefined") {
+      const ro = new ResizeObserver(() => checkOverflow());
+      ro.observe(rootEl);
+      return () => {
+        cancelAnimationFrame(rafId);
+        ro.disconnect();
+      };
+    } else {
+      window.addEventListener("resize", checkOverflow);
+      return () => {
+        cancelAnimationFrame(rafId);
+        window.removeEventListener("resize", checkOverflow);
+      };
+    }
+  }, [checkOverflow, actors, unreadChatCount]);
 
   // Auto-scroll active tab into view
   useEffect(() => {
