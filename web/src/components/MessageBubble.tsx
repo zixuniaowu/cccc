@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { LedgerEvent, Actor, PresenceAgent, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
+import { useActorDisplayNameMap, getRecipientDisplayName } from "../hooks/useActorDisplayName";
 
 function formatEventLine(ev: LedgerEvent): string {
     if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
@@ -154,13 +155,25 @@ export const MessageBubble = memo(function MessageBubble({
 
     const readStatus = ev._read_status;
     const recipients = msgData?.to;
-    const visibleReadStatusEntries = readStatus
-        ? actors
+
+    // Memoized lookup map for O(1) display name access
+    const displayNameMap = useActorDisplayNameMap(actors);
+
+    const visibleReadStatusEntries = useMemo(() => {
+        if (!readStatus) return [];
+        return actors
             .map((a) => String(a.id || ""))
             .filter((id) => id && Object.prototype.hasOwnProperty.call(readStatus, id))
-            .map((id) => [id, !!readStatus[id]] as const)
-        : [];
-    const toLabel = recipients && recipients.length > 0 ? recipients.join(", ") : "@all";
+            .map((id) => [id, !!readStatus[id]] as const);
+    }, [actors, readStatus]);
+
+    const toLabel = useMemo(() => {
+        if (!recipients || recipients.length === 0) return "@all";
+        return recipients
+            .map(r => getRecipientDisplayName(r, displayNameMap))
+            .join(", ");
+    }, [recipients, displayNameMap]);
+
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
 
@@ -385,7 +398,7 @@ export const MessageBubble = memo(function MessageBubble({
                             <div className="flex items-center gap-2 min-w-0">
                                 {readPreviewEntries.map(([id, cleared]) => (
                                     <span key={id} className="inline-flex items-center gap-1 min-w-0">
-                                        <span className="truncate max-w-[10ch]">{id}</span>
+                                        <span className="truncate max-w-[10ch]">{displayNameMap.get(id) || id}</span>
                                         <span
                                             className={classNames(
                                                 "text-[10px] font-semibold tracking-tight",
