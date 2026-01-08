@@ -235,58 +235,6 @@ async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
     return resp
 
 
-async def _sse_tail(path: Path) -> AsyncIterator[bytes]:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.touch(exist_ok=True)
-
-    inode = -1
-    f = None
-
-    def _open() -> None:
-        nonlocal f, inode
-        if f is not None:
-            try:
-                f.close()
-            except Exception:
-                pass
-        f = path.open("r", encoding="utf-8", errors="replace")
-        try:
-            st = os.fstat(f.fileno())
-            inode = int(getattr(st, "st_ino", -1) or -1)
-        except Exception:
-            inode = -1
-        f.seek(0, 2)
-
-    _open()
-    assert f is not None
-
-    while True:
-        line = f.readline()
-        if line:
-            raw = line.rstrip("\n")
-            if raw:
-                yield b"event: ledger\n"
-                yield b"data: " + raw.encode("utf-8", errors="replace") + b"\n\n"
-            continue
-
-        await asyncio.sleep(0.2)
-        try:
-            st = path.stat()
-            cur_inode = int(getattr(st, "st_ino", -1) or -1)
-            if inode != -1 and cur_inode != -1 and cur_inode != inode:
-                _open()
-                continue
-            if st.st_size < f.tell():
-                _open()
-                continue
-        except Exception:
-            try:
-                path.touch(exist_ok=True)
-            except Exception:
-                pass
-            _open()
-
-
 def create_app() -> FastAPI:
     app = FastAPI(title="cccc web", version=__version__)
     home = ensure_home()
@@ -1127,12 +1075,14 @@ def create_app() -> FastAPI:
             except Exception:
                 continue
         
-        # Optionally include read status for chat.message events
+        # Optionally include read status for chat.message events (batch optimized)
         if with_read_status:
-            from ...kernel.inbox import get_read_status
+            from ...kernel.inbox import get_read_status_batch
+            status_map = get_read_status_batch(group, events)
             for ev in events:
-                if ev.get("kind") == "chat.message" and ev.get("id"):
-                    ev["_read_status"] = get_read_status(group, str(ev["id"]))
+                event_id = str(ev.get("id") or "")
+                if event_id in status_map:
+                    ev["_read_status"] = status_map[event_id]
         
         return {"ok": True, "result": {"events": events}}
 
@@ -1162,7 +1112,7 @@ def create_app() -> FastAPI:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
         
-        from ...kernel.inbox import search_messages, get_read_status
+        from ...kernel.inbox import search_messages, get_read_status_batch
         
         # Validate and clamp limit
         limit = max(1, min(200, limit))
@@ -1180,11 +1130,13 @@ def create_app() -> FastAPI:
             limit=limit,
         )
         
-        # Optionally include read status
+        # Optionally include read status (batch optimized)
         if with_read_status:
+            status_map = get_read_status_batch(group, events)
             for ev in events:
-                if ev.get("kind") == "chat.message" and ev.get("id"):
-                    ev["_read_status"] = get_read_status(group, str(ev["id"]))
+                event_id = str(ev.get("id") or "")
+                if event_id in status_map:
+                    ev["_read_status"] = status_map[event_id]
         
         return {
             "ok": True,
@@ -1208,10 +1160,17 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups/{group_id}/ledger/stream")
     async def ledger_stream(group_id: str) -> StreamingResponse:
+        from .streams import sse_ledger_tail, create_sse_response
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
-        return StreamingResponse(_sse_tail(group.ledger_path), media_type="text/event-stream")
+        return create_sse_response(sse_ledger_tail(group.ledger_path))
+
+    @app.get("/api/v1/events/stream")
+    async def global_events_stream() -> StreamingResponse:
+        """SSE stream for global events (group created/deleted, etc.)."""
+        from .streams import sse_global_events_generator, create_sse_response
+        return create_sse_response(sse_global_events_generator())
 
     @app.post("/api/v1/groups/{group_id}/send")
     async def send(group_id: str, req: SendRequest) -> Dict[str, Any]:
