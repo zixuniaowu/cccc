@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { LedgerEvent, Actor, PresenceAgent, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
-import { useActorDisplayNameMap, getRecipientDisplayName } from "../hooks/useActorDisplayName";
+import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
 
 function formatEventLine(ev: LedgerEvent): string {
     if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
@@ -70,6 +70,7 @@ function ImagePreview({
 export interface MessageBubbleProps {
     event: LedgerEvent;
     actors: Actor[];
+    displayNameMap: Map<string, string>;
     presenceAgent: PresenceAgent | null;
     isDark: boolean;
     groupId: string;
@@ -80,6 +81,7 @@ export interface MessageBubbleProps {
 export const MessageBubble = memo(function MessageBubble({
     event: ev,
     actors,
+    displayNameMap,
     presenceAgent,
     isDark,
     groupId,
@@ -155,9 +157,6 @@ export const MessageBubble = memo(function MessageBubble({
 
     const readStatus = ev._read_status;
     const recipients = msgData?.to;
-
-    // Memoized lookup map for O(1) display name access
-    const displayNameMap = useActorDisplayNameMap(actors);
 
     const visibleReadStatusEntries = useMemo(() => {
         if (!readStatus) return [];
@@ -491,6 +490,7 @@ export const MessageBubble = memo(function MessageBubble({
     return (
         prevProps.event === nextProps.event &&
         prevProps.actors === nextProps.actors &&
+        prevProps.displayNameMap === nextProps.displayNameMap &&
         prevProps.presenceAgent === nextProps.presenceAgent &&
         prevProps.isDark === nextProps.isDark &&
         prevProps.groupId === nextProps.groupId

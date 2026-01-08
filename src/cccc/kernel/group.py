@@ -95,6 +95,11 @@ def create_group(reg: Registry, *, title: str, topic: str = "") -> Group:
         "updated_at": now,
     }
     reg.save()
+
+    # Publish event for SSE subscribers
+    from .events import publish_event
+    publish_event("group.created", {"group_id": group_id, "title": group_doc["title"]})
+
     return Group(group_id=group_id, path=gp, doc=group_doc)
 
 
@@ -319,6 +324,10 @@ def delete_group(reg: Registry, *, group_id: str) -> None:
         if v == gid:
             reg.defaults.pop(k, None)
     reg.save()
+
+    # Publish event for SSE subscribers
+    from .events import publish_event
+    publish_event("group.deleted", {"group_id": gid})
 
 
 def get_group_state(group: Group) -> str:

@@ -341,6 +341,68 @@ def get_read_status(group: Group, event_id: str) -> Dict[str, bool]:
     return result
 
 
+def get_read_status_batch(
+    group: Group,
+    events: List[Dict[str, Any]],
+) -> Dict[str, Dict[str, bool]]:
+    """Batch compute per-actor read status for multiple chat.message events.
+
+    This is an optimized version of get_read_status() that loads cursors and
+    actors only once, avoiding N+1 queries.
+
+    Args:
+        group: Working group
+        events: List of events (only chat.message events will be processed)
+
+    Returns:
+        Dict mapping event_id -> {actor_id: bool}
+    """
+    # Load shared data once
+    cursors = load_cursors(group)
+    actors = list_actors(group)
+
+    result: Dict[str, Dict[str, bool]] = {}
+
+    for ev in events:
+        if str(ev.get("kind") or "") != "chat.message":
+            continue
+
+        event_id = str(ev.get("id") or "")
+        if not event_id:
+            continue
+
+        ev_ts = str(ev.get("ts") or "")
+        ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
+        if ev_dt is None:
+            continue
+
+        by = str(ev.get("by") or "").strip()
+        status: Dict[str, bool] = {}
+
+        for actor in actors:
+            if not isinstance(actor, dict):
+                continue
+            actor_id = str(actor.get("id") or "").strip()
+            if not actor_id or actor_id == "user" or actor_id == by:
+                continue
+            created_ts = str(actor.get("created_at") or "").strip()
+            created_dt = parse_utc_iso(created_ts) if created_ts else None
+            if created_dt is not None and created_dt > ev_dt:
+                # Actor did not exist yet at the time of this message.
+                continue
+            if not is_message_for_actor(group, actor_id=actor_id, event=ev):
+                continue
+
+            cur = cursors.get(actor_id)
+            cur_ts = str(cur.get("ts") or "") if isinstance(cur, dict) else ""
+            cur_dt = parse_utc_iso(cur_ts) if cur_ts else None
+            status[actor_id] = bool(cur_dt is not None and cur_dt >= ev_dt)
+
+        result[event_id] = status
+
+    return result
+
+
 def search_messages(
     group: Group,
     *,

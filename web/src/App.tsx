@@ -255,8 +255,44 @@ export default function App() {
     refreshGroups();
     void fetchRuntimes();
     void fetchDirSuggestions();
-    const t = window.setInterval(refreshGroups, 5000);
-    return () => window.clearInterval(t);
+
+    // Subscribe to global events stream (replaces polling)
+    let es: EventSource | null = null;
+    let fallbackTimer: number | null = null;
+    let errorCount = 0;
+
+    function connectSSE() {
+      es = new EventSource("/api/v1/events/stream");
+      es.addEventListener("event", (e) => {
+        try {
+          const ev = JSON.parse((e as MessageEvent).data || "{}");
+          if (ev.kind === "group.created" || ev.kind === "group.deleted") {
+            refreshGroups();
+          }
+        } catch {
+          /* ignore parse errors */
+        }
+      });
+      es.onopen = () => {
+        errorCount = 0; // Reset on successful connection
+      };
+      es.onerror = () => {
+        errorCount++;
+        // After 3 consecutive errors, fallback to polling
+        if (errorCount >= 3 && !fallbackTimer) {
+          es?.close();
+          es = null;
+          fallbackTimer = window.setInterval(refreshGroups, 10000);
+        }
+      };
+    }
+
+    connectSSE();
+
+    return () => {
+      es?.close();
+      if (fallbackTimer) window.clearInterval(fallbackTimer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -383,7 +419,10 @@ export default function App() {
     return { toLabel, entries };
   }, [actors, messageMetaEvent]);
 
-  const chatMessages = events.filter((ev) => ev.kind === "chat.message");
+  const chatMessages = useMemo(
+    () => events.filter((ev) => ev.kind === "chat.message"),
+    [events]
+  );
   const needsScope = !!selectedGroupId && !projectRoot;
   const needsActors = !!selectedGroupId && actors.length === 0;
   const needsStart = !!selectedGroupId && actors.length > 0 && !selectedGroupRunning;
