@@ -37,6 +37,7 @@ from .commands import (
     parse_message,
 )
 from .subscribers import SubscriberManager
+from ...util.file_lock import LockUnavailableError, acquire_lockfile
 
 
 def _now() -> str:
@@ -53,22 +54,20 @@ def _acquire_singleton_lock(lock_path: Path) -> Optional[Any]:
     Returns file handle on success, None on failure.
     """
     try:
-        import fcntl
-    except ImportError:
-        fcntl = None  # type: ignore
-
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    f = open(lock_path, "w")
+        f = acquire_lockfile(lock_path, blocking=False)
+    except LockUnavailableError:
+        return None
+    except Exception:
+        return None
 
     try:
-        if fcntl is not None:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        f.write(str(os.getpid()))
+        f.seek(0)
+        f.write((str(os.getpid()) + "\n").encode("utf-8", errors="replace"))
         f.flush()
-        return f
     except Exception:
-        f.close()
-        return None
+        # Best-effort: the lock is the important part.
+        pass
+    return f
 
 
 class LedgerWatcher:

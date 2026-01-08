@@ -78,7 +78,8 @@ Runtime layout (default):
 ```text
 ~/.cccc/
   daemon/
-    ccccd.sock
+    ccccd.addr.json   # daemon endpoint (cross-platform; TCP on Windows by default)
+    ccccd.sock        # Unix domain socket (only on some platforms/configs)
     ccccd.log
   groups/<group_id>/
     group.yaml
@@ -92,7 +93,7 @@ Runtime layout (default):
 ## Requirements
 
 - Python 3.9+
-- macOS / Linux (Windows via WSL recommended)
+- macOS / Linux / Windows (Windows native recommends `headless` runner; for PTY use WSL)
 - At least one supported agent runtime CLI installed (Claude/Codex/Droid/OpenCode/Copilot/…)
 - Node.js is only needed for **Web UI development** (end users get a bundled UI)
 
@@ -118,6 +119,34 @@ Note: at the moment, the latest stable on PyPI is still the legacy v0.3.x line. 
 git clone https://github.com/ChesterRa/cccc
 cd cccc
 pip install -e .
+```
+
+### Use uv (recommended, especially on Windows)
+
+Note: `uv` can download/select Python, create an isolated venv, and run without activation. `.venv/` and `.cccc/` are ignored by git.
+
+Windows (PowerShell):
+
+```powershell
+uv venv -p 3.11 .venv
+uv pip install -p .venv\Scripts\python.exe -e .
+uv run -p .venv\Scripts\python.exe --no-sync cccc --help
+```
+
+macOS / Linux:
+
+```bash
+uv venv -p 3.11 .venv
+uv pip install -p .venv/bin/python -e .
+uv run -p .venv/bin/python --no-sync cccc --help
+```
+
+Optional: isolate runtime home to this repo (instead of writing to `~/.cccc/`):
+
+```powershell
+$env:CCCC_HOME = (Join-Path $PWD '.cccc')
+uv run -p .venv\Scripts\python.exe --no-sync cccc daemon start
+uv run -p .venv\Scripts\python.exe --no-sync cccc web
 ```
 
 Web UI development (optional):

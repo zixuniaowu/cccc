@@ -77,6 +77,8 @@ class GroupSetActiveScopeData(BaseModel):
 
 class GroupStartData(BaseModel):
     started: List[str] = Field(default_factory=list)
+    # When PTY is unavailable (e.g., Windows), some actors may be forced to headless.
+    forced_headless: List[str] = Field(default_factory=list)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -124,6 +126,8 @@ class ActorSetRoleData(BaseModel):
 class ActorLifecycleData(BaseModel):
     actor_id: str
     runner: Optional[str] = None  # pty or headless
+    # Effective runner used at runtime (e.g., PTY → headless fallback).
+    runner_effective: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
 

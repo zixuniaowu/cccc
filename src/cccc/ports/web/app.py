@@ -21,7 +21,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ... import __version__
 from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind
-from ...daemon.server import call_daemon
+from ...daemon.server import call_daemon, get_daemon_endpoint
 from ...kernel.blobs import store_blob_bytes, resolve_blob_attachment_path
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
@@ -45,6 +45,15 @@ from ...util.fs import atomic_write_text
 
 logger = logging.getLogger("cccc.web")
 _WEB_LOG_FH: Optional[Any] = None
+
+
+def _default_runner_kind() -> str:
+    try:
+        from ...runners import pty as pty_runner
+
+        return "pty" if bool(getattr(pty_runner, "PTY_SUPPORTED", True)) else "headless"
+    except Exception:
+        return "headless"
 
 
 def _apply_web_logging(*, home: Path, level: str) -> None:
@@ -107,7 +116,7 @@ WEB_MAX_TEMPLATE_BYTES = 2 * 1024 * 1024  # safety bound for template uploads
 class ActorCreateRequest(BaseModel):
     actor_id: str
     # Note: role is auto-determined by position (first enabled = foreman)
-    runner: RunnerKind = Field(default="pty")
+    runner: RunnerKind = Field(default_factory=_default_runner_kind)
     runtime: AgentRuntime = Field(default="codex")
     title: str = Field(default="")
     command: Union[str, list[str]] = Field(default="")
@@ -200,7 +209,7 @@ def _normalize_command(cmd: Union[str, list[str], None]) -> Optional[list[str]]:
         return None
     if isinstance(cmd, str):
         s = cmd.strip()
-        return shlex.split(s) if s else []
+        return shlex.split(s, posix=(os.name != "nt")) if s else []
     if isinstance(cmd, list) and all(isinstance(x, str) for x in cmd):
         return [str(x).strip() for x in cmd if str(x).strip()]
     raise HTTPException(status_code=400, detail={"code": "invalid_command", "message": "invalid command"})
@@ -1441,10 +1450,18 @@ def create_app() -> FastAPI:
             await websocket.close(code=1008)
             return
 
-        home = ensure_home()
-        sock_path = home / "daemon" / "ccccd.sock"
         try:
-            reader, writer = await asyncio.open_unix_connection(str(sock_path))
+            ep = get_daemon_endpoint()
+            transport = str(ep.get("transport") or "").strip().lower()
+            if transport == "tcp":
+                host = str(ep.get("host") or "127.0.0.1").strip() or "127.0.0.1"
+                port = int(ep.get("port") or 0)
+                reader, writer = await asyncio.open_connection(host, port)
+            else:
+                home = ensure_home()
+                sock_path = home / "daemon" / "ccccd.sock"
+                path = str(ep.get("path") or sock_path)
+                reader, writer = await asyncio.open_unix_connection(path)
         except Exception:
             await websocket.send_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "ccccd unavailable"}})
             await websocket.close(code=1011)

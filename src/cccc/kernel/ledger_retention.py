@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import tempfile
@@ -10,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..util.fs import atomic_write_json, read_json
+from ..util.file_lock import acquire_lockfile, release_lockfile
 from ..util.time import parse_utc_iso, utc_now_iso
 from .group import Group
 from .ledger import read_last_lines
@@ -133,9 +133,8 @@ def compact(group: Group, *, reason: str = "auto", force: bool = False) -> Dict[
         return {"ok": True, "skipped": True, "reason": "no_global_cursor"}
 
     lock = _ledger_lock_path(group)
-    lock.parent.mkdir(parents=True, exist_ok=True)
-    with lock.open("a", encoding="utf-8") as lk:
-        fcntl.flock(lk.fileno(), fcntl.LOCK_EX)
+    lk = acquire_lockfile(lock, blocking=True)
+    try:
 
         total_lines = 0
         with active.open("r", encoding="utf-8", errors="replace") as f:
@@ -213,3 +212,5 @@ def compact(group: Group, *, reason: str = "auto", force: bool = False) -> Dict[
         atomic_write_json(state_path, result)
         snap = snapshot(group, reason=f"compact:{reason}")
         return {"ok": True, "skipped": False, "result": result, "snapshot": snap}
+    finally:
+        release_lockfile(lk)

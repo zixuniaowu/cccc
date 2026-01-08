@@ -78,7 +78,8 @@ v0.3.x（tmux-first）は有効性を示しましたが、現実的な限界も�
 ```text
 ~/.cccc/
   daemon/
-    ccccd.sock
+    ccccd.addr.json   # daemon endpoint（クロスプラットフォーム；Windows は既定で TCP）
+    ccccd.sock        # Unix domain socket（プラットフォーム/設定によってのみ存在）
     ccccd.log
   groups/<group_id>/
     group.yaml
@@ -92,7 +93,7 @@ v0.3.x（tmux-first）は有効性を示しましたが、現実的な限界も�
 ## 要件
 
 - Python 3.9+
-- macOS / Linux（Windows は WSL 推奨）
+- macOS / Linux / Windows（Windows ネイティブは `headless` runner 推奨。PTY が必要なら WSL）
 - 対応する agent CLI を最低 1 つインストール（Claude/Codex/Droid/OpenCode/Copilot など）
 - Node.js は **Web UI 開発** のみで必要（ユーザーは同梱 UI を利用可能）
 
