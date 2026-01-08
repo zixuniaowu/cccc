@@ -3,6 +3,7 @@ import type { MutableRefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { LedgerEvent, Actor, PresenceAgent } from "../types";
 import { MessageBubble } from "./MessageBubble";
+import { useActorDisplayNameMap } from "../hooks/useActorDisplayName";
 
 export interface VirtualMessageListProps {
   messages: LedgerEvent[];
@@ -47,6 +48,9 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     for (const p of presenceAgents || []) m.set(String(p.id || ""), p);
     return m;
   }, [presenceAgents]);
+
+  // Create display name map once at the list level (not per-message)
+  const displayNameMap = useActorDisplayNameMap(actors);
 
   const prevMessageCountRef = useRef(messages.length);
   const isAtBottomRef = useRef(true);
@@ -283,6 +287,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                   <MessageBubble
                     event={message}
                     actors={actors}
+                    displayNameMap={displayNameMap}
                     presenceAgent={presenceById.get(String(message.by || "")) || null}
                     isDark={isDark}
                     groupId={groupId}
