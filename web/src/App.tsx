@@ -266,7 +266,8 @@ export default function App() {
       es.addEventListener("event", (e) => {
         try {
           const ev = JSON.parse((e as MessageEvent).data || "{}");
-          if (ev.kind === "group.created" || ev.kind === "group.deleted") {
+          const kind = typeof ev?.kind === "string" ? ev.kind : "";
+          if (kind.startsWith("group.")) {
             refreshGroups();
           }
         } catch {
@@ -275,6 +276,7 @@ export default function App() {
       });
       es.onopen = () => {
         errorCount = 0; // Reset on successful connection
+        refreshGroups(); // Re-sync after reconnects (best-effort)
       };
       es.onerror = () => {
         errorCount++;

@@ -479,9 +479,45 @@ def _desired_daemon_transport() -> str:
     return "tcp" if os.name == "nt" else "unix"
 
 
-def _daemon_tcp_host() -> str:
+def _allow_remote_daemon() -> bool:
+    """Whether it's OK to bind the daemon to a non-loopback TCP host.
+
+    Warning: the daemon IPC has no authentication.
+    """
+    v = str(os.environ.get("CCCC_DAEMON_ALLOW_REMOTE") or "").strip().lower()
+    return v in ("1", "true", "yes", "y", "on")
+
+
+def _daemon_tcp_connect_host(bind_host: str) -> str:
+    """Return a TCP host that local clients can connect to."""
+    h = str(bind_host or "").strip()
+    if not h or h == "localhost":
+        return "127.0.0.1"
+    if h == "0.0.0.0":
+        return "127.0.0.1"
+    # This daemon currently uses AF_INET only; avoid writing an IPv6 host into addr.json.
+    if ":" in h:
+        return "127.0.0.1"
+    return h
+
+
+def _daemon_tcp_bind_host() -> str:
     host = str(os.environ.get("CCCC_DAEMON_HOST") or "").strip()
-    return host or "127.0.0.1"
+    if not host or host == "localhost":
+        return "127.0.0.1"
+    if ":" in host:
+        logger.warning("CCCC_DAEMON_HOST=%s looks like IPv6; only IPv4 is supported. Using 127.0.0.1.", host)
+        return "127.0.0.1"
+    if host == "127.0.0.1":
+        return host
+    if not _allow_remote_daemon():
+        logger.warning(
+            "Refusing to bind daemon to non-loopback host %s (no auth). Using 127.0.0.1. "
+            "Set CCCC_DAEMON_ALLOW_REMOTE=1 to override.",
+            host,
+        )
+        return "127.0.0.1"
+    return host
 
 
 def _daemon_tcp_port() -> int:
@@ -511,7 +547,7 @@ def get_daemon_endpoint(paths: Optional[DaemonPaths] = None) -> Dict[str, Any]:
                 host = "127.0.0.1"
                 port = 0
             if port > 0:
-                return {"transport": "tcp", "host": host, "port": port}
+                return {"transport": "tcp", "host": _daemon_tcp_connect_host(host), "port": port}
         if transport == "unix":
             path = str(doc.get("path") or "").strip()
             if path:
@@ -3569,7 +3605,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         endpoint = {"transport": "unix", "path": str(p.sock_path)}
         s.bind(str(p.sock_path))
     else:
-        host = _daemon_tcp_host()
+        host = _daemon_tcp_bind_host()
         port = _daemon_tcp_port()
         # Avoid colliding with the default web port when auto-selecting a TCP port (port=0).
         # Some Windows installs configure the dynamic port range to include 8848, so a random

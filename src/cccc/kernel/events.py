@@ -1,52 +1,54 @@
-"""Global event bus for system-wide events (group changes, etc.)."""
+"""Global event log for system-wide events (cross-process safe).
+
+Design:
+- Daemon (and other local writers) append JSONL entries to a single file under CCCC_HOME.
+- The web port tails this file over SSE to invalidate cached UI state (e.g., group list).
+
+This avoids in-memory pub/sub, which cannot work across processes.
+"""
 from __future__ import annotations
 
-import asyncio
-from typing import Any, AsyncIterator, Dict, Set
+import json
+import uuid
+from pathlib import Path
+from typing import Any, Dict, Optional
 
+from ..paths import ensure_home
+from ..util.file_lock import acquire_lockfile, release_lockfile
 from ..util.time import utc_now_iso
 
 
-class GlobalEventBus:
-    """In-memory pub/sub event bus for SSE streaming."""
-
-    def __init__(self) -> None:
-        self._queues: Set[asyncio.Queue[Dict[str, Any]]] = set()
-
-    def publish(self, kind: str, data: Dict[str, Any] | None = None) -> None:
-        """Publish an event to all subscribers."""
-        event = {
-            "kind": kind,
-            "data": data or {},
-            "ts": utc_now_iso(),
-        }
-        for q in self._queues:
-            try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                pass  # Drop if queue is full (slow consumer)
-
-    async def subscribe(self) -> AsyncIterator[Dict[str, Any]]:
-        """Subscribe to events. Yields events as they arrive."""
-        q: asyncio.Queue[Dict[str, Any]] = asyncio.Queue(maxsize=100)
-        self._queues.add(q)
-        try:
-            while True:
-                event = await q.get()
-                yield event
-        finally:
-            self._queues.discard(q)
-
-    @property
-    def subscriber_count(self) -> int:
-        """Number of active subscribers."""
-        return len(self._queues)
+def global_events_path(home: Optional[Path] = None) -> Path:
+    h = home or ensure_home()
+    return h / "daemon" / "ccccd.events.jsonl"
 
 
-# Singleton instance
-global_event_bus = GlobalEventBus()
+def global_events_lock_path(home: Optional[Path] = None) -> Path:
+    h = home or ensure_home()
+    return h / "daemon" / "ccccd.events.lock"
 
 
 def publish_event(kind: str, data: Dict[str, Any] | None = None) -> None:
-    """Convenience function to publish to the global bus."""
-    global_event_bus.publish(kind, data)
+    """Append a global event to the CCCC_HOME event log (best-effort)."""
+    try:
+        ev = {
+            "v": 1,
+            "id": uuid.uuid4().hex,
+            "ts": utc_now_iso(),
+            "kind": str(kind or "").strip(),
+            "data": data if isinstance(data, dict) else {},
+        }
+        if not ev["kind"]:
+            return
+        line = json.dumps(ev, ensure_ascii=False)
+        path = global_events_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lk = acquire_lockfile(global_events_lock_path(), blocking=True)
+        try:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(line + "\n")
+        finally:
+            release_lockfile(lk)
+    except Exception:
+        # Never fail the caller; this is an auxiliary invalidation mechanism.
+        return

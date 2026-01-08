@@ -2,21 +2,22 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
+import time
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, TextIO
+from typing import AsyncIterator, TextIO
 
 from starlette.responses import StreamingResponse
 
 
-async def sse_ledger_tail(path: Path) -> AsyncIterator[bytes]:
-    """Tail a ledger file and yield SSE events for new lines."""
+async def sse_jsonl_tail(path: Path, *, event_name: str, heartbeat_s: float = 30.0) -> AsyncIterator[bytes]:
+    """Tail a JSONL file and yield SSE events for each appended line."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch(exist_ok=True)
 
     inode = -1
     f: TextIO | None = None
+    last_send = time.monotonic()
 
     def _open() -> None:
         nonlocal f, inode
@@ -36,14 +37,22 @@ async def sse_ledger_tail(path: Path) -> AsyncIterator[bytes]:
     _open()
     assert f is not None
 
+    yield b": connected\n\n"
+
     while True:
         line = f.readline()
         if line:
             raw = line.rstrip("\n")
             if raw:
-                yield b"event: ledger\n"
+                yield f"event: {event_name}\n".encode("utf-8")
                 yield b"data: " + raw.encode("utf-8", errors="replace") + b"\n\n"
+                last_send = time.monotonic()
             continue
+
+        now = time.monotonic()
+        if heartbeat_s > 0 and now - last_send >= heartbeat_s:
+            yield b": heartbeat\n\n"
+            last_send = now
 
         await asyncio.sleep(0.2)
         try:
@@ -63,28 +72,17 @@ async def sse_ledger_tail(path: Path) -> AsyncIterator[bytes]:
             _open()
 
 
-async def sse_global_events_generator() -> AsyncIterator[bytes]:
-    """Generate SSE events from the global event bus with heartbeat."""
-    from ...kernel.events import global_event_bus
+async def sse_ledger_tail(path: Path) -> AsyncIterator[bytes]:
+    async for item in sse_jsonl_tail(path, event_name="ledger", heartbeat_s=30.0):
+        yield item
 
-    # Send initial comment to establish connection
-    yield b": connected\n\n"
 
-    # Create a queue and subscribe to the event bus
-    q: asyncio.Queue[Dict[str, Any]] = asyncio.Queue(maxsize=100)
-    global_event_bus._queues.add(q)
-    try:
-        while True:
-            try:
-                # Wait for event with 30s timeout
-                event = await asyncio.wait_for(q.get(), timeout=30.0)
-                data = json.dumps(event, ensure_ascii=False)
-                yield f"event: event\ndata: {data}\n\n".encode("utf-8")
-            except asyncio.TimeoutError:
-                # Send heartbeat comment to keep connection alive
-                yield b": heartbeat\n\n"
-    finally:
-        global_event_bus._queues.discard(q)
+async def sse_global_events_tail(home: Path | None = None) -> AsyncIterator[bytes]:
+    from ...kernel.events import global_events_path
+
+    path = global_events_path(home)
+    async for item in sse_jsonl_tail(path, event_name="event", heartbeat_s=30.0):
+        yield item
 
 
 def create_sse_response(generator: AsyncIterator[bytes]) -> StreamingResponse:
@@ -95,5 +93,6 @@ def create_sse_response(generator: AsyncIterator[bytes]) -> StreamingResponse:
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )

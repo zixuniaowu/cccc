@@ -1178,8 +1178,8 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/events/stream")
     async def global_events_stream() -> StreamingResponse:
         """SSE stream for global events (group created/deleted, etc.)."""
-        from .streams import sse_global_events_generator, create_sse_response
-        return create_sse_response(sse_global_events_generator())
+        from .streams import sse_global_events_tail, create_sse_response
+        return create_sse_response(sse_global_events_tail(home))
 
     @app.post("/api/v1/groups/{group_id}/send")
     async def send(group_id: str, req: SendRequest) -> Dict[str, Any]:

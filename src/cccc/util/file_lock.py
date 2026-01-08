@@ -88,6 +88,12 @@ def acquire_lockfile(path: Path, *, blocking: bool = True) -> IO[bytes]:
 
 def release_lockfile(f: IO[bytes]) -> None:
     """Release a lockfile acquired via acquire_lockfile (best-effort)."""
+    # On Windows, msvcrt.locking() locks/unlocks from the current file position.
+    # Seek to 0 so we reliably unlock the 1-byte region we lock in acquire_lockfile().
+    try:
+        f.seek(0)
+    except Exception:
+        pass
     try:
         if os.name == "nt":
             _unlock_windows(f.fileno())

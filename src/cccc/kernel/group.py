@@ -262,6 +262,17 @@ def update_group(reg: Registry, group: Group, *, patch: Dict[str, Any]) -> Group
         meta["topic"] = str(group.doc.get("topic") or "")
         meta["updated_at"] = str(group.doc.get("updated_at") or utc_now_iso())
     reg.save()
+    # Publish event for SSE subscribers (best-effort invalidation for group list).
+    from .events import publish_event
+
+    publish_event(
+        "group.updated",
+        {
+            "group_id": group.group_id,
+            "title": str(group.doc.get("title") or ""),
+            "topic": str(group.doc.get("topic") or ""),
+        },
+    )
     return group
 
 
@@ -358,4 +369,8 @@ def set_group_state(group: Group, *, state: str) -> Group:
     
     group.doc["state"] = s
     group.save()
+    # Publish event for SSE subscribers (best-effort invalidation for group list).
+    from .events import publish_event
+
+    publish_event("group.state_changed", {"group_id": group.group_id, "state": s})
     return group
