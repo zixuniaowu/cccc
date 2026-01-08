@@ -245,10 +245,15 @@ export const VirtualMessageList = memo(function VirtualMessageList({
         </div>
       ) : (
         <>
-          {/* Loading indicator for history */}
+          {/* Loading indicator for history - sticky positioned for visibility */}
           {isLoadingHistory && (
-            <div className="flex justify-center py-4">
-              <div className="animate-spin w-5 h-5 border-2 border-current border-t-transparent rounded-full opacity-50" />
+            <div className="sticky top-0 z-10 flex justify-center py-3">
+              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full shadow-md ${
+                isDark ? "bg-slate-800 text-slate-300" : "bg-white text-gray-600"
+              }`}>
+                <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
+                <span className="text-xs">Loading...</span>
+              </div>
             </div>
           )}
 
