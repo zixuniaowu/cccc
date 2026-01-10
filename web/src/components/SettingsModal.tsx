@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { Actor, GroupDoc, GroupSettings, IMStatus } from "../types";
 import * as api from "../services/api";
+import { useObservabilityStore } from "../stores";
 import {
   TimingTab,
   IMBridgeTab,
@@ -44,7 +45,10 @@ export function SettingsModal({
   const [nudgeSeconds, setNudgeSeconds] = useState(300);
   const [idleSeconds, setIdleSeconds] = useState(600);
   const [keepaliveSeconds, setKeepaliveSeconds] = useState(120);
+  const [keepaliveMax, setKeepaliveMax] = useState(3);
   const [silenceSeconds, setSilenceSeconds] = useState(600);
+  const [helpNudgeIntervalSeconds, setHelpNudgeIntervalSeconds] = useState(600);
+  const [helpNudgeMinMessages, setHelpNudgeMinMessages] = useState(10);
   const [deliveryInterval, setDeliveryInterval] = useState(0);
   const [standupInterval, setStandupInterval] = useState(900);
 
@@ -74,6 +78,8 @@ export function SettingsModal({
   // Global observability (developer mode)
   const [developerMode, setDeveloperMode] = useState(false);
   const [logLevel, setLogLevel] = useState<"INFO" | "DEBUG">("INFO");
+  const [terminalBacklogMiB, setTerminalBacklogMiB] = useState(10);
+  const [terminalScrollbackLines, setTerminalScrollbackLines] = useState(8000);
   const [obsBusy, setObsBusy] = useState(false);
 
   // Developer-mode debug views
@@ -95,7 +101,10 @@ export function SettingsModal({
       setNudgeSeconds(settings.nudge_after_seconds);
       setIdleSeconds(settings.actor_idle_timeout_seconds);
       setKeepaliveSeconds(settings.keepalive_delay_seconds);
+      setKeepaliveMax(settings.keepalive_max_per_actor ?? 3);
       setSilenceSeconds(settings.silence_timeout_seconds);
+      setHelpNudgeIntervalSeconds(settings.help_nudge_interval_seconds ?? 600);
+      setHelpNudgeMinMessages(settings.help_nudge_min_messages ?? 10);
       setDeliveryInterval(settings.min_interval_seconds);
       setStandupInterval(settings.standup_interval_seconds ?? 900);
       setTerminalVisibility(settings.terminal_transcript_visibility || "foreman");
@@ -152,9 +161,18 @@ export function SettingsModal({
       const resp = await api.fetchObservability();
       if (resp.ok && resp.result?.observability) {
         const obs = resp.result.observability;
+        useObservabilityStore.getState().setFromObs(obs);
         setDeveloperMode(Boolean(obs.developer_mode));
         const lvl = String(obs.log_level || "INFO").toUpperCase();
         setLogLevel(lvl === "DEBUG" ? "DEBUG" : "INFO");
+        const perActorBytes = Number(obs.terminal_transcript?.per_actor_bytes || 0);
+        if (Number.isFinite(perActorBytes) && perActorBytes > 0) {
+          setTerminalBacklogMiB(Math.max(1, Math.round(perActorBytes / (1024 * 1024))));
+        }
+        const scrollbackLines = Number(obs.terminal_ui?.scrollback_lines || 0);
+        if (Number.isFinite(scrollbackLines) && scrollbackLines > 0) {
+          setTerminalScrollbackLines(Math.max(1000, Math.round(scrollbackLines)));
+        }
       }
     } catch {
       // ignore
@@ -184,7 +202,10 @@ export function SettingsModal({
       nudge_after_seconds: nudgeSeconds,
       actor_idle_timeout_seconds: idleSeconds,
       keepalive_delay_seconds: keepaliveSeconds,
+      keepalive_max_per_actor: keepaliveMax,
       silence_timeout_seconds: silenceSeconds,
+      help_nudge_interval_seconds: helpNudgeIntervalSeconds,
+      help_nudge_min_messages: helpNudgeMinMessages,
       min_interval_seconds: deliveryInterval,
       standup_interval_seconds: standupInterval,
     });
@@ -339,8 +360,31 @@ export function SettingsModal({
   const handleSaveObservability = async () => {
     setObsBusy(true);
     try {
-      const resp = await api.updateObservability(developerMode, logLevel);
-      if (resp.ok) await loadObservability();
+      const perActorBytes = Math.max(1, Math.min(50, Number(terminalBacklogMiB || 0))) * 1024 * 1024;
+      const scrollbackLines = Math.max(1000, Math.min(200000, Number(terminalScrollbackLines || 0)));
+      const resp = await api.updateObservability({
+        developerMode,
+        logLevel,
+        terminalTranscriptPerActorBytes: perActorBytes,
+        terminalUiScrollbackLines: scrollbackLines,
+      });
+      if (resp.ok && resp.result?.observability) {
+        const obs = resp.result.observability;
+        useObservabilityStore.getState().setFromObs(obs);
+        setDeveloperMode(Boolean(obs.developer_mode));
+        const lvl = String(obs.log_level || "INFO").toUpperCase();
+        setLogLevel(lvl === "DEBUG" ? "DEBUG" : "INFO");
+        const bytes = Number(obs.terminal_transcript?.per_actor_bytes || 0);
+        if (Number.isFinite(bytes) && bytes > 0) {
+          setTerminalBacklogMiB(Math.max(1, Math.round(bytes / (1024 * 1024))));
+        }
+        const lines = Number(obs.terminal_ui?.scrollback_lines || 0);
+        if (Number.isFinite(lines) && lines > 0) {
+          setTerminalScrollbackLines(Math.max(1000, Math.round(lines)));
+        }
+      } else if (resp.ok) {
+        await loadObservability();
+      }
     } catch {
       // ignore
     } finally {
@@ -559,8 +603,14 @@ export function SettingsModal({
               setIdleSeconds={setIdleSeconds}
               keepaliveSeconds={keepaliveSeconds}
               setKeepaliveSeconds={setKeepaliveSeconds}
+              keepaliveMax={keepaliveMax}
+              setKeepaliveMax={setKeepaliveMax}
               silenceSeconds={silenceSeconds}
               setSilenceSeconds={setSilenceSeconds}
+              helpNudgeIntervalSeconds={helpNudgeIntervalSeconds}
+              setHelpNudgeIntervalSeconds={setHelpNudgeIntervalSeconds}
+              helpNudgeMinMessages={helpNudgeMinMessages}
+              setHelpNudgeMinMessages={setHelpNudgeMinMessages}
               deliveryInterval={deliveryInterval}
               setDeliveryInterval={setDeliveryInterval}
               standupInterval={standupInterval}
@@ -626,19 +676,23 @@ export function SettingsModal({
 
           {activeTab === "remote" && <RemoteAccessTab isDark={isDark} />}
 
-          {activeTab === "developer" && (
-            <DeveloperTab
-              isDark={isDark}
-              groupId={groupId}
-              developerMode={developerMode}
-              setDeveloperMode={setDeveloperMode}
-              logLevel={logLevel}
-              setLogLevel={setLogLevel}
-              obsBusy={obsBusy}
-              onSaveObservability={handleSaveObservability}
-              debugSnapshot={debugSnapshot}
-              debugSnapshotErr={debugSnapshotErr}
-              debugSnapshotBusy={debugSnapshotBusy}
+	          {activeTab === "developer" && (
+	            <DeveloperTab
+	              isDark={isDark}
+	              groupId={groupId}
+	              developerMode={developerMode}
+	              setDeveloperMode={setDeveloperMode}
+	              logLevel={logLevel}
+	              setLogLevel={setLogLevel}
+	              terminalBacklogMiB={terminalBacklogMiB}
+	              setTerminalBacklogMiB={setTerminalBacklogMiB}
+	              terminalScrollbackLines={terminalScrollbackLines}
+	              setTerminalScrollbackLines={setTerminalScrollbackLines}
+	              obsBusy={obsBusy}
+	              onSaveObservability={handleSaveObservability}
+	              debugSnapshot={debugSnapshot}
+	              debugSnapshotErr={debugSnapshotErr}
+	              debugSnapshotBusy={debugSnapshotBusy}
               onLoadDebugSnapshot={loadDebugSnapshot}
               onClearDebugSnapshot={() => {
                 setDebugSnapshot("");

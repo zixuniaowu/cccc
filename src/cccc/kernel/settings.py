@@ -125,10 +125,14 @@ DEFAULT_OBSERVABILITY: Dict[str, Any] = {
     # Terminal transcript is captured in-memory only (no persistence) by default.
     "terminal_transcript": {
         "enabled": False,
-        # 2 MiB per actor is enough for useful debugging while staying bounded.
-        "per_actor_bytes": 2_000_000,
+        # 10 MiB per actor helps with full-screen TUIs while staying bounded.
+        "per_actor_bytes": 10 * 1024 * 1024,
         "persist": False,
         "strip_ansi": True,
+    },
+    # Web terminal UI preferences (global).
+    "terminal_ui": {
+        "scrollback_lines": 8000,
     },
 }
 
@@ -186,6 +190,17 @@ def _merge_observability(raw: Any) -> Dict[str, Any]:
         tt_base["strip_ansi"] = _as_bool(tt.get("strip_ansi"), bool(tt_base["strip_ansi"]))
     base["terminal_transcript"] = tt_base
 
+    tui = raw.get("terminal_ui")
+    tui_base = dict(DEFAULT_OBSERVABILITY["terminal_ui"])
+    if isinstance(tui, dict):
+        tui_base["scrollback_lines"] = _as_int(
+            tui.get("scrollback_lines"),
+            int(tui_base["scrollback_lines"]),
+            min_value=1000,
+            max_value=200_000,
+        )
+    base["terminal_ui"] = tui_base
+
     return base
 
 
@@ -224,6 +239,18 @@ def update_observability_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
             if "strip_ansi" in tt_patch:
                 tt["strip_ansi"] = _as_bool(tt_patch.get("strip_ansi"), bool(tt.get("strip_ansi", True)))
             merged["terminal_transcript"] = tt
+    if "terminal_ui" in patch:
+        tui_patch = patch.get("terminal_ui")
+        if isinstance(tui_patch, dict):
+            tui = dict(merged.get("terminal_ui") or {})
+            if "scrollback_lines" in tui_patch:
+                tui["scrollback_lines"] = _as_int(
+                    tui_patch.get("scrollback_lines"),
+                    int(tui.get("scrollback_lines", 8000)),
+                    min_value=1000,
+                    max_value=200_000,
+                )
+            merged["terminal_ui"] = tui
 
     settings["observability"] = merged
     save_settings(settings)

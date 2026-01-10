@@ -484,17 +484,38 @@ export async function stopIMBridge(groupId: string) {
 
 // ============ Observability ============
 
-export async function fetchObservability() {
-  return apiJson<{ observability: { developer_mode: boolean; log_level: string } }>("/api/v1/observability");
+export interface Observability {
+  developer_mode?: boolean;
+  log_level?: string;
+  terminal_transcript?: {
+    enabled?: boolean;
+    per_actor_bytes?: number;
+    persist?: boolean;
+    strip_ansi?: boolean;
+  };
+  terminal_ui?: {
+    scrollback_lines?: number;
+  };
 }
 
-export async function updateObservability(developerMode: boolean, logLevel: "INFO" | "DEBUG") {
-  return apiJson("/api/v1/observability", {
+export async function fetchObservability() {
+  return apiJson<{ observability: Observability }>("/api/v1/observability");
+}
+
+export async function updateObservability(args: {
+  developerMode: boolean;
+  logLevel: "INFO" | "DEBUG";
+  terminalTranscriptPerActorBytes?: number;
+  terminalUiScrollbackLines?: number;
+}) {
+  return apiJson<{ observability: Observability }>("/api/v1/observability", {
     method: "PUT",
     body: JSON.stringify({
       by: "user",
-      developer_mode: developerMode,
-      log_level: logLevel,
+      developer_mode: args.developerMode,
+      log_level: args.logLevel,
+      terminal_transcript_per_actor_bytes: args.terminalTranscriptPerActorBytes,
+      terminal_ui_scrollback_lines: args.terminalUiScrollbackLines,
     }),
   });
 }

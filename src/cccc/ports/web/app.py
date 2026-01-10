@@ -164,6 +164,8 @@ class GroupSettingsRequest(BaseModel):
     keepalive_delay_seconds: Optional[int] = None
     keepalive_max_per_actor: Optional[int] = None
     silence_timeout_seconds: Optional[int] = None
+    help_nudge_interval_seconds: Optional[int] = None
+    help_nudge_min_messages: Optional[int] = None
     min_interval_seconds: Optional[int] = None  # delivery throttle
     standup_interval_seconds: Optional[int] = None  # periodic review interval
 
@@ -177,6 +179,8 @@ class ObservabilityUpdateRequest(BaseModel):
     by: str = Field(default="user")
     developer_mode: Optional[bool] = None
     log_level: Optional[str] = None
+    terminal_transcript_per_actor_bytes: Optional[int] = None
+    terminal_ui_scrollback_lines: Optional[int] = None
 
 
 class GroupDeleteRequest(BaseModel):
@@ -427,6 +431,10 @@ def create_app() -> FastAPI:
             patch["developer_mode"] = bool(req.developer_mode)
         if req.log_level is not None:
             patch["log_level"] = str(req.log_level or "").strip().upper()
+        if req.terminal_transcript_per_actor_bytes is not None:
+            patch.setdefault("terminal_transcript", {})["per_actor_bytes"] = int(req.terminal_transcript_per_actor_bytes)
+        if req.terminal_ui_scrollback_lines is not None:
+            patch.setdefault("terminal_ui", {})["scrollback_lines"] = int(req.terminal_ui_scrollback_lines)
 
         resp = await _daemon({"op": "observability_update", "args": {"by": req.by, "patch": patch}})
 
@@ -1018,6 +1026,8 @@ def create_app() -> FastAPI:
                     "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
                     "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
                     "silence_timeout_seconds": int(automation.get("silence_timeout_seconds", 600)),
+                    "help_nudge_interval_seconds": int(automation.get("help_nudge_interval_seconds", 600)),
+                    "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
                     "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
                     "standup_interval_seconds": int(automation.get("standup_interval_seconds", 900)),
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
@@ -1041,6 +1051,10 @@ def create_app() -> FastAPI:
             patch["keepalive_max_per_actor"] = max(0, req.keepalive_max_per_actor)
         if req.silence_timeout_seconds is not None:
             patch["silence_timeout_seconds"] = max(0, req.silence_timeout_seconds)
+        if req.help_nudge_interval_seconds is not None:
+            patch["help_nudge_interval_seconds"] = max(0, req.help_nudge_interval_seconds)
+        if req.help_nudge_min_messages is not None:
+            patch["help_nudge_min_messages"] = max(0, req.help_nudge_min_messages)
         if req.min_interval_seconds is not None:
             patch["min_interval_seconds"] = max(0, req.min_interval_seconds)
         if req.standup_interval_seconds is not None:

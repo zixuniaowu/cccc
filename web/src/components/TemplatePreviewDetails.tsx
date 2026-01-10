@@ -145,6 +145,8 @@ export function TemplatePreviewDetails({
     "keepalive_delay_seconds",
     "keepalive_max_per_actor",
     "silence_timeout_seconds",
+    "help_nudge_interval_seconds",
+    "help_nudge_min_messages",
     "min_interval_seconds",
     "standup_interval_seconds",
     "terminal_transcript_visibility",

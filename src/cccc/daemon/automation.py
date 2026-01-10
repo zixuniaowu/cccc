@@ -11,6 +11,7 @@ All automation respects group state:
 """
 from __future__ import annotations
 
+import json
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -20,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..contracts.v1 import SystemNotifyData
 from ..kernel.actors import list_actors, find_foreman
 from ..kernel.group import Group, load_group, get_group_state
-from ..kernel.inbox import unread_messages, iter_events
+from ..kernel.inbox import unread_messages, iter_events, is_message_for_actor
 from ..kernel.ledger import append_event
 from ..kernel.terminal_transcript import get_terminal_transcript_settings
 from ..kernel.prompt_files import DEFAULT_STANDUP_TEMPLATE, STANDUP_FILENAME, read_repo_prompt_file
@@ -44,6 +45,10 @@ class AutomationConfig:
     silence_timeout_seconds: int      # Check group if silent for this long
     standup_interval_seconds: int     # Periodic standup reminder for foreman (0 to disable)
 
+    # Level 3: Help refresh nudges (actor-facing)
+    help_nudge_interval_seconds: int  # Minimum time between help nudges per actor (0 to disable)
+    help_nudge_min_messages: int      # Minimum delivered messages between help nudges (0 to disable)
+
 
 def _cfg(group: Group) -> AutomationConfig:
     """Load automation config from group.yaml."""
@@ -66,6 +71,9 @@ def _cfg(group: Group) -> AutomationConfig:
         keepalive_max_per_actor=_int("keepalive_max_per_actor", 3),
         silence_timeout_seconds=_int("silence_timeout_seconds", 600),
         standup_interval_seconds=_int("standup_interval_seconds", 900),  # Default 15 minutes
+        # Level 3
+        help_nudge_interval_seconds=_int("help_nudge_interval_seconds", 600),
+        help_nudge_min_messages=_int("help_nudge_min_messages", 10),
     )
 
 
@@ -77,7 +85,13 @@ def _load_state(group: Group) -> Dict[str, Any]:
     doc = read_json(_state_path(group))
     if not isinstance(doc, dict):
         doc = {}
-    doc.setdefault("v", 3)  # Bumped version for new schema
+    # Schema marker (best-effort). We only use it for future migrations, but keep it monotonic.
+    try:
+        v = int(doc.get("v") or 0)
+    except Exception:
+        v = 0
+    if v < 4:
+        doc["v"] = 4
     actors = doc.get("actors")
     if not isinstance(actors, dict):
         actors = {}
@@ -255,6 +269,10 @@ class AutomationManager:
             state["resume_at"] = now
             state["last_silence_notify_at"] = now
             state["last_standup_at"] = now
+            try:
+                state["help_ledger_pos"] = int(group.ledger_path.stat().st_size)
+            except Exception:
+                pass
             for actor in list_actors(group):
                 if not isinstance(actor, dict):
                     continue
@@ -267,6 +285,22 @@ class AutomationManager:
                 st["last_keepalive_at"] = now
                 st["last_nudge_event_id"] = ""
                 st["last_nudge_at"] = now
+                st["help_last_nudge_at"] = now
+                st["help_msg_count_since"] = 0
+                runner_kind = str(actor.get("runner") or "pty").strip()
+                session_key: Optional[str] = None
+                if runner_kind == "headless":
+                    try:
+                        hs = headless_runner.SUPERVISOR.get_state(group_id=group.group_id, actor_id=aid)
+                        session_key = str(hs.started_at) if hs is not None else None
+                    except Exception:
+                        session_key = None
+                else:
+                    try:
+                        session_key = pty_runner.SUPERVISOR.session_key(group_id=group.group_id, actor_id=aid)
+                    except Exception:
+                        session_key = None
+                st["help_session_key"] = str(session_key or "")
             _save_state(group, state)
 
     def tick(self, *, home: Path) -> None:
@@ -306,6 +340,9 @@ class AutomationManager:
         self._check_keepalive(group, cfg, now)
         self._check_silence(group, cfg, now)
         self._check_standup(group, cfg, now)
+
+        # Level 3: Actor-facing help nudges
+        self._check_help_nudge(group, cfg, now)
 
     def _check_nudge(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
         """Check for actors with old unread messages and send nudge."""
@@ -354,8 +391,15 @@ class AutomationManager:
                     continue
 
                 st = _actor_state(state, aid)
-                if str(st.get("last_nudge_event_id") or "") == ev_id:
-                    continue
+                last_ev_id = str(st.get("last_nudge_event_id") or "")
+                last_nudge_dt = parse_utc_iso(str(st.get("last_nudge_at") or "")) if st.get("last_nudge_at") else None
+                # Repeat nudges while the oldest unread message stays unread.
+                # - If the oldest unread changed, send immediately (once it is older than nudge_after_seconds).
+                # - Otherwise, send again every nudge_after_seconds until the message is marked read.
+                if last_ev_id == ev_id and last_nudge_dt is not None:
+                    since_last = (now - last_nudge_dt).total_seconds()
+                    if since_last < float(cfg.nudge_after_seconds):
+                        continue
                 st["last_nudge_event_id"] = ev_id
                 st["last_nudge_at"] = utc_now_iso()
                 to_nudge.append((aid, ev_ts, runner_kind))
@@ -502,25 +546,29 @@ class AutomationManager:
                 next_text, next_ts = next_info
                 if resume_dt is not None and next_ts < resume_dt:
                     next_ts = resume_dt
-                
-                # Check if enough time has passed
-                elapsed = (now - next_ts).total_seconds()
-                if elapsed < float(cfg.keepalive_delay_seconds):
-                    continue
 
                 st = _actor_state(state, aid)
                 
                 # Check keepalive count
                 keepalive_count = int(st.get("keepalive_count") or 0)
                 last_keepalive_next = st.get("last_keepalive_next")
+                last_keepalive_at = parse_utc_iso(str(st.get("last_keepalive_at") or "")) if st.get("last_keepalive_at") else None
                 
                 # Reset count if this is a new Next: declaration
                 if last_keepalive_next != next_text:
                     keepalive_count = 0
                     st["last_keepalive_next"] = next_text
+                    last_keepalive_at = None
                 
                 # Check max keepalives
                 if keepalive_count >= cfg.keepalive_max_per_actor:
+                    continue
+
+                # Rate limit keepalive reminders. Use the same delay for the initial reminder
+                # and for subsequent reminders (measured from the last keepalive we sent).
+                base_dt = next_ts if keepalive_count <= 0 else (last_keepalive_at or next_ts)
+                elapsed = (now - base_dt).total_seconds()
+                if elapsed < float(cfg.keepalive_delay_seconds):
                     continue
                 
                 st["keepalive_count"] = keepalive_count + 1
@@ -671,6 +719,176 @@ class AutomationManager:
             data=notify_data.model_dump(),
         )
         _queue_notify_to_pty(group, actor_id=foreman_id, runner_kind=runner_kind, ev=ev, notify=notify_data)
+
+    def _check_help_nudge(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
+        """Remind running actors to refresh the help playbook via cccc_help.
+
+        This is intentionally low-frequency and tied to "work volume" rather than pure time,
+        to avoid nagging idle sessions.
+        """
+        if cfg.help_nudge_interval_seconds <= 0 or cfg.help_nudge_min_messages <= 0:
+            return
+
+        # Snapshot currently running actors (we only track "work volume" while running).
+        running: list[tuple[str, str, str]] = []  # (actor_id, runner_kind, session_key)
+        for actor in list_actors(group):
+            if not isinstance(actor, dict):
+                continue
+            aid = str(actor.get("id") or "").strip()
+            if not aid or aid == "user":
+                continue
+            if not bool(actor.get("enabled", True)):
+                continue
+            runner_kind = str(actor.get("runner") or "pty").strip()
+            if runner_kind == "headless":
+                if not headless_runner.SUPERVISOR.actor_running(group.group_id, aid):
+                    continue
+                try:
+                    hs = headless_runner.SUPERVISOR.get_state(group_id=group.group_id, actor_id=aid)
+                    session_key = str(hs.started_at) if hs is not None else ""
+                except Exception:
+                    session_key = ""
+            else:
+                if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
+                    continue
+                try:
+                    session_key = str(pty_runner.SUPERVISOR.session_key(group_id=group.group_id, actor_id=aid) or "")
+                except Exception:
+                    session_key = ""
+            running.append((aid, runner_kind, session_key))
+
+        if not running:
+            return
+
+        running_ids = [aid for aid, _, _ in running]
+        to_notify: list[tuple[str, str]] = []  # (actor_id, runner_kind)
+
+        with self._lock:
+            state = _load_state(group)
+            dirty = False
+
+            # Increment per-actor work counters by ingesting newly appended ledger events.
+            #
+            # We intentionally do not backfill on first run: start counting from "now" to
+            # avoid catch-up bursts from historical ledgers.
+            pos_key = "help_ledger_pos"
+            try:
+                ledger_size = int(group.ledger_path.stat().st_size)
+            except Exception:
+                ledger_size = 0
+
+            raw_pos = state.get(pos_key)
+            pos = int(raw_pos) if isinstance(raw_pos, int) else None
+            if pos is None or pos < 0 or pos > ledger_size:
+                state[pos_key] = ledger_size
+                dirty = True
+                pos = ledger_size
+            else:
+                events: list[dict[str, Any]] = []
+                try:
+                    with group.ledger_path.open("rb") as f:
+                        f.seek(pos)
+                        while True:
+                            start = f.tell()
+                            line = f.readline()
+                            if not line:
+                                break
+                            if not line.endswith(b"\n"):
+                                # Partial write; retry next tick.
+                                f.seek(start)
+                                break
+                            pos = f.tell()
+                            s = line.decode("utf-8", errors="replace").strip()
+                            if not s:
+                                continue
+                            try:
+                                ev = json.loads(s)
+                            except Exception:
+                                continue
+                            if isinstance(ev, dict):
+                                events.append(ev)
+                except Exception:
+                    events = []
+
+                next_pos = int(pos or 0)
+                if int(state.get(pos_key) or 0) != next_pos:
+                    state[pos_key] = next_pos
+                    dirty = True
+
+                for ev in events:
+                    kind = str(ev.get("kind") or "")
+                    if kind not in ("chat.message", "system.notify"):
+                        continue
+                    for aid in running_ids:
+                        try:
+                            if not is_message_for_actor(group, actor_id=aid, event=ev):
+                                continue
+                        except Exception:
+                            continue
+                        st = _actor_state(state, aid)
+                        try:
+                            cur = int(st.get("help_msg_count_since") or 0)
+                        except Exception:
+                            cur = 0
+                        st["help_msg_count_since"] = cur + 1
+                        dirty = True
+
+            # Decide which actors should be nudged.
+            for aid, runner_kind, session_key in running:
+                st = _actor_state(state, aid)
+
+                # Reset per-actor counters when the session changes.
+                if session_key and str(st.get("help_session_key") or "") != session_key:
+                    st["help_session_key"] = session_key
+                    st["help_last_nudge_at"] = utc_now_iso()
+                    st["help_msg_count_since"] = 0
+                    dirty = True
+                    continue
+
+                last_dt = parse_utc_iso(str(st.get("help_last_nudge_at") or "")) if st.get("help_last_nudge_at") else None
+                if last_dt is None:
+                    st["help_last_nudge_at"] = utc_now_iso()
+                    st["help_msg_count_since"] = 0
+                    dirty = True
+                    continue
+
+                elapsed = (now - last_dt).total_seconds()
+                if elapsed < float(cfg.help_nudge_interval_seconds):
+                    continue
+
+                try:
+                    count = int(st.get("help_msg_count_since") or 0)
+                except Exception:
+                    count = 0
+                if count < int(cfg.help_nudge_min_messages):
+                    continue
+
+                st["help_last_nudge_at"] = utc_now_iso()
+                st["help_msg_count_since"] = 0
+                dirty = True
+                to_notify.append((aid, runner_kind))
+
+            if dirty:
+                _save_state(group, state)
+
+        for aid, runner_kind in to_notify:
+            notify_data = SystemNotifyData(
+                kind="help_nudge",
+                priority="normal",
+                title="Refresh collaboration rules",
+                message="Run `cccc_help` now to refresh collaboration rules (ignoring will keep reminding).",
+                target_actor_id=aid,
+                requires_ack=False,
+            )
+            ev = append_event(
+                group.ledger_path,
+                kind="system.notify",
+                group_id=group.group_id,
+                scope_key="",
+                by="system",
+                data=notify_data.model_dump(),
+            )
+            _queue_notify_to_pty(group, actor_id=aid, runner_kind=runner_kind, ev=ev, notify=notify_data)
 
     def on_new_message(self, group: Group) -> None:
         """Called when a new message arrives.

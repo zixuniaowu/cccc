@@ -15,41 +15,23 @@ STANDUP_FILENAME = "CCCC_STANDUP.md"
 
 _MAX_FILE_BYTES = 512 * 1024  # Safety limit for repo-managed markdown files.
 
-DEFAULT_PREAMBLE_BODY = """Collaboration baseline (high ROI):
-- If DoD is unclear: ask + record a short DoD in Context (notes/tasks).
-- If you claim done/fixed: update tasks/milestones + 1-line evidence (tests/files/logs).
-- If you agree with someone: say what you checked; otherwise raise 1 concrete risk/question.
+DEFAULT_PREAMBLE_BODY = """Quick start (recommended):
+- Call `cccc_bootstrap` to load PROJECT.md (if present) + Context + inbox + the CCCC help playbook.
+- If PROJECT.md is missing, ask the user for goals/constraints/DoD and record a short DoD in Context.
+- Read the returned help playbook (or call `cccc_help` anytime to refresh).
 
-Start:
-- cccc_bootstrap(...) (recommended).
-- Read/clear inbox via cccc_inbox_list(...) + cccc_inbox_mark_read(event_id=...) / cccc_inbox_mark_all_read(...).
-- Follow PROJECT.md (via cccc_project_info).
-- Use MCP for CCCC control-plane actions; use shell only for repo work.
-
-Tone: talk like a real teammate (human, direct, lightly emotional is OK). Avoid bureaucratic/corporate phrasing.
+Intent: collaborate rigorously (if peers exist) and keep pushing the task forward with evidence-based steps.
+Mechanics: use MCP for visible chat; keep commitments/decisions/progress in Context; keep the inbox clean.
 """
 
-DEFAULT_STANDUP_TEMPLATE = """{{interval_minutes}} minutes have passed. Time for a team review.
+DEFAULT_STANDUP_TEMPLATE = """{{interval_minutes}} minutes have passed. Stand-up reminder (foreman only).
 
-Foreman, please initiate a stand-up with @peers:
+Alignment checkpoint:
+- Direction: Re-check goals/constraints/DoD (PROJECT.md if present; otherwise user + Context). Are we drifting?
+- Rigor: Which key points are evidence vs hypotheses? What needs investigation/verification next (including web search if allowed)?
+- Coordination: Ask @peers for risks/alternatives/objections. Synthesize and update Context. If a major decision is unclear, ask the user.
 
-1. ASK PEERS TO REFLECT (not just report):
-   - Update your progress in context (use cccc_task_update)
-   - Step back and think: Is our approach correct? Any blind spots?
-   - Any better ideas or alternative approaches?
-   - What concerns or risks do you see?
-
-2. COLLECT & SYNTHESIZE:
-   - Gather insights from all peers
-   - Look for patterns, conflicts, or new opportunities
-   - Peers are collaborators, not subordinates - value their perspectives
-
-3. DECIDE TOGETHER:
-   - Adjust direction if needed based on collective wisdom
-   - Update vision/sketch to reflect new understanding
-   - Reallocate work if better approaches emerge
-
-Example: "@peers Stand-up time. Please: 1) Update your task progress, 2) Share any concerns about our current approach, 3) Suggest improvements if you see any."
+Use your own words. Avoid rigid templates; keep it human and direct.
 """
 
 def load_builtin_help_markdown() -> str:

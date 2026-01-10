@@ -5,6 +5,7 @@ System notifications are separated from chat messages to avoid polluting user co
 Kinds:
 - nudge: remind an actor to handle unread messages
 - keepalive: remind an actor to continue work (after detecting a "Next:" declaration)
+- help_nudge: remind an actor to refresh the collaboration playbook (cccc_help)
 - actor_idle: actor idle alert (to foreman)
 - silence_check: group silence alert (to foreman)
 - standup: periodic stand-up reminder (to foreman)
@@ -21,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 NotifyKind = Literal[
     "nudge",           # Remind about unread messages
     "keepalive",       # Remind to continue work
+    "help_nudge",      # Ask actor to refresh cccc_help
     "actor_idle",      # Actor idle alert (to foreman)
     "silence_check",   # Group silence alert (to foreman)
     "standup",         # Periodic stand-up reminder (to foreman)

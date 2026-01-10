@@ -102,7 +102,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         lines.append(f"team: solo (you're the only actor)")
     else:
         show_ids = enabled_actor_ids[:8]
-        suffix = "…" if len(enabled_actor_ids) > 8 else ""
+        suffix = "..." if len(enabled_actor_ids) > 8 else ""
         lines.append(f"team: {actor_count} actors ({', '.join(show_ids)}{suffix})")
         if foremen:
             lines.append(f"foreman: {', '.join(foremen)}")
@@ -123,7 +123,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     # Minimal platform invariants. Keep this stable and short; group-specific details belong in cccc_help / repo files.
     core_lines = [
         "Non-negotiables:",
-        "- On session start/restart: call cccc_help once before replying/acting.",
+        "- No fabrication: do not invent facts/results/sources. Investigate first; mark hypotheses.",
         "- Visible chat MUST be sent via MCP: cccc_message_send / cccc_message_reply.",
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
     ]

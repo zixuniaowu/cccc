@@ -213,6 +213,8 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
     _int("keepalive_delay_seconds", min_v=0)
     _int("keepalive_max_per_actor", min_v=0)
     _int("silence_timeout_seconds", min_v=0)
+    _int("help_nudge_interval_seconds", min_v=0)
+    _int("help_nudge_min_messages", min_v=0)
     _int("min_interval_seconds", min_v=0)
     _int("standup_interval_seconds", min_v=0)
 
@@ -235,6 +237,8 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
         "keepalive_delay_seconds",
         "keepalive_max_per_actor",
         "silence_timeout_seconds",
+        "help_nudge_interval_seconds",
+        "help_nudge_min_messages",
         "standup_interval_seconds",
     }
 

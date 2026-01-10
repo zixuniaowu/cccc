@@ -5,3 +5,4 @@ export { useModalStore } from "./useModalStore";
 export { useComposerStore } from "./useComposerStore";
 export { useInboxStore } from "./useInboxStore";
 export { useFormStore } from "./useFormStore";
+export { useObservabilityStore } from "./useObservabilityStore";

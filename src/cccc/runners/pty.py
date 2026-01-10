@@ -69,7 +69,10 @@ class PtySession:
         self._started_at = time.monotonic()
         self._first_output_at: Optional[float] = None
         self._max_backlog_bytes = int(max_backlog_bytes)
-        self._max_client_buffer_bytes = max(int(max_client_buffer_bytes), int(max_backlog_bytes))
+        # Allow some slack beyond the initial backlog so clients are not immediately detached if the
+        # PTY produces output while we are still draining the attach-time backlog.
+        slack = max(2_000_000, int(self._max_backlog_bytes // 8))
+        self._max_client_buffer_bytes = max(int(max_client_buffer_bytes), int(self._max_backlog_bytes + slack))
 
         self._selector = selectors.DefaultSelector()
         self._lock = threading.Lock()

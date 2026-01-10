@@ -1,11 +1,11 @@
 """
-CCCC MCP Server — IM-style Agent Collaboration Tools
+CCCC MCP Server - IM-style Agent Collaboration Tools
 
 Core tools exposed to agents:
 
 cccc.* namespace (collaboration control plane):
 - cccc_help: CCCC help playbook (authoritative; returns effective CCCC_HELP.md if present)
-- cccc_bootstrap: One-call session bootstrap (group+project+context+inbox)
+- cccc_bootstrap: One-call session bootstrap (group+help+project+context+inbox)
 - cccc_inbox_list: Get unread messages (supports kind_filter)
 - cccc_inbox_mark_read: Mark messages as read
 - cccc_inbox_mark_all_read: Mark all current unread messages as read
@@ -16,7 +16,7 @@ cccc.* namespace (collaboration control plane):
 - cccc_group_info: Get group info
 - cccc_actor_list: Get actor list
 - cccc_actor_add: Add new actor (foreman only)
-- cccc_actor_remove: Remove actor (foreman only)
+- cccc_actor_remove: Remove an actor (foreman/peer can only remove themselves)
 - cccc_actor_start: Start actor
 - cccc_actor_stop: Stop actor
 - cccc_runtime_list: List available agent runtimes
@@ -56,11 +56,13 @@ from __future__ import annotations
 import mimetypes
 import os
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...daemon.server import call_daemon
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
+from ...kernel.actors import get_effective_role
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
 from ...kernel.prompt_files import HELP_FILENAME, load_builtin_help_markdown as _load_builtin_help_markdown, read_repo_prompt_file
@@ -155,14 +157,102 @@ def _call_daemon_or_raise(req: Dict[str, Any]) -> Dict[str, Any]:
 
 _CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
 _CCCC_HELP_DESCRIPTION = (
-    "CCCC Help (authoritative)\n\n"
-    "Call this once at the start of a session/restart, or whenever unsure.\n"
-    "Returns the effective CCCC help markdown for the current group.\n\n"
-    "Repo override (active scope root): CCCC_HELP.md\n\n"
-    "Do not answer in the terminal. Visible chat MUST use MCP:\n"
-    "- cccc_message_send(text=..., to=[...])\n"
-    "- cccc_message_reply(event_id=..., text=...)"
+    "CCCC Help (authoritative).\n\n"
+    "Contract (non-negotiable):\n"
+    "- No fabrication. Investigate first (artifacts/data/logs; web search if available/allowed).\n"
+    "- If you claim done/fixed/verified, include what you checked; otherwise say not verified.\n"
+    "- Visible chat MUST use MCP: cccc_message_send / cccc_message_reply (terminal output is not delivered).\n"
+    "- Keep shared memory in Context; keep the inbox clean (mark read only after handling).\n"
+    "- If you receive a system reminder to run cccc_help, do it.\n\n"
+    "Returns the effective collaboration playbook for the current group (repo override if present)."
 )
+
+_HELP_ROLE_HEADER_RE = re.compile(r"^##\s*@role:\s*(\w+)\s*$", re.IGNORECASE)
+_HELP_ACTOR_HEADER_RE = re.compile(r"^##\s*@actor:\s*(.+?)\s*$", re.IGNORECASE)
+_HELP_H2_RE = re.compile(r"^##(?!#)\s+.*$")
+
+
+def _select_help_markdown(markdown: str, *, role: Optional[str], actor_id: Optional[str]) -> str:
+    """Filter CCCC_HELP markdown by optional conditional blocks.
+
+    Supported markers (level-2 headings):
+    - "## @role: foreman|peer"
+    - "## @actor: <actor_id>"
+
+    Untagged content is always included. Tagged blocks are filtered only when the selector is known.
+
+    A tagged block starts at its marker heading and ends at the next level-2 heading.
+    Within tagged blocks, prefer "###" for subheadings (so "##" can remain a block boundary).
+    """
+    raw = str(markdown or "")
+    if not raw.strip():
+        return raw
+
+    role_norm = str(role or "").strip().casefold()
+    actor_norm = str(actor_id or "").strip()
+    lines = raw.splitlines()
+    keep_trailing_newline = raw.endswith("\n")
+
+    out: list[str] = []
+    buf: list[str] = []
+    tag_kind: Optional[str] = None
+    tag_value: str = ""
+
+    def _include_block() -> bool:
+        if tag_kind is None:
+            return True
+        if tag_kind == "role":
+            if not role_norm:
+                return True
+            return role_norm == str(tag_value or "").strip().casefold()
+        if tag_kind == "actor":
+            if not actor_norm:
+                return False
+            return actor_norm == str(tag_value or "").strip()
+        return True
+
+    def _flush() -> None:
+        nonlocal buf
+        if buf and _include_block():
+            out.extend(buf)
+        buf = []
+
+    for ln in lines:
+        m_role = _HELP_ROLE_HEADER_RE.match(ln)
+        m_actor = _HELP_ACTOR_HEADER_RE.match(ln)
+        is_h2 = bool(_HELP_H2_RE.match(ln))
+
+        if m_role or m_actor:
+            _flush()
+            if m_role:
+                tag_kind = "role"
+                tag_value = str(m_role.group(1) or "").strip()
+                role_label = tag_value.strip().casefold()
+                if role_label == "foreman":
+                    ln = "## Foreman"
+                elif role_label == "peer":
+                    ln = "## Peer"
+                else:
+                    ln = f"## Role: {tag_value}"
+            else:
+                tag_kind = "actor"
+                tag_value = str(m_actor.group(1) or "").strip()
+                ln = "## Notes for you"
+            buf.append(ln)
+            continue
+
+        if is_h2:
+            _flush()
+            tag_kind = None
+            tag_value = ""
+
+        buf.append(ln)
+    _flush()
+
+    out_text = "\n".join(out)
+    if keep_trailing_newline:
+        out_text += "\n"
+    return out_text
 
 
 # =============================================================================
@@ -204,7 +294,7 @@ def bootstrap(
     actor_id: str,
     inbox_limit: int = 50,
     inbox_kind_filter: str = "all",
-    ledger_tail_limit: int = 20,
+    ledger_tail_limit: int = 10,
     ledger_tail_max_chars: int = 8000,
 ) -> Dict[str, Any]:
     """One-call session bootstrap for agents.
@@ -212,6 +302,7 @@ def bootstrap(
     Returns:
     - group: group metadata
     - actors: actor list (roles + runtime)
+    - help: effective CCCC help playbook (markdown + source)
     - project: PROJECT.md info
     - context: group context
     - inbox: unread messages
@@ -222,6 +313,28 @@ def bootstrap(
 
     al = actor_list(group_id=group_id)
     actors = al.get("actors") if isinstance(al, dict) else None
+
+    help_payload: Dict[str, Any] = {
+        "markdown": _select_help_markdown(_CCCC_HELP_BUILTIN, role=None, actor_id=None),
+        "source": "cccc.resources/cccc-help.md",
+    }
+    try:
+        g = load_group(str(group_id or "").strip())
+        if g is not None:
+            role = get_effective_role(g, str(actor_id or "").strip())
+            pf = read_repo_prompt_file(g, HELP_FILENAME)
+            if pf.found and isinstance(pf.content, str) and pf.content.strip():
+                help_payload = {
+                    "markdown": _select_help_markdown(pf.content, role=role, actor_id=actor_id),
+                    "source": str(pf.path or ""),
+                }
+            else:
+                help_payload = {
+                    "markdown": _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=actor_id),
+                    "source": "cccc.resources/cccc-help.md",
+                }
+    except Exception:
+        pass
 
     project = project_info(group_id=group_id)
     context = context_get(group_id=group_id)
@@ -295,6 +408,7 @@ def bootstrap(
     return {
         "group": group,
         "actors": actors,
+        "help": help_payload,
         "project": project,
         "context": context,
         "inbox": inbox,
@@ -952,10 +1066,10 @@ MCP_TOOLS = [
 	    {
 	        "name": "cccc_bootstrap",
         "description": (
-            "One-call session bootstrap. Use at session start to reduce tool calls.\n\n"
-            "Returns: group info + actor list + PROJECT.md + context + your unread inbox.\n"
+            "One-call session bootstrap. Use at session start/restart to reduce tool calls.\n\n"
+            "Returns: group info + actor list + effective CCCC help playbook + PROJECT.md + context + your unread inbox.\n"
             "Optionally includes a small recent chat.message tail from the ledger (useful after restarts).\n"
-            "Also returns suggested_mark_read_event_id (use with cccc_inbox_mark_read)."
+            "Also returns suggested_mark_read_event_id (use only after reviewing inbox; pass to cccc_inbox_mark_read)."
         ),
 	        "inputSchema": {
 	            "type": "object",
@@ -971,8 +1085,8 @@ MCP_TOOLS = [
 	                },
                     "ledger_tail_limit": {
                         "type": "integer",
-                        "description": "Number of recent chat messages to include from the ledger (default 20; 0=disable)",
-                        "default": 20,
+                        "description": "Number of recent chat messages to include from the ledger (default 10; 0=disable)",
+                        "default": 10,
                     },
                     "ledger_tail_max_chars": {
                         "type": "integer",
@@ -1017,7 +1131,10 @@ MCP_TOOLS = [
 	    },
     {
         "name": "cccc_inbox_mark_all_read",
-        "description": "Mark all currently-unread messages as read (safe: only up to current latest unread).",
+        "description": (
+            "Bulk-ack: mark all currently-unread messages as read (safe: only up to current latest unread).\n"
+            "Does not mean the messages were processed. Consider reviewing via cccc_inbox_list first."
+        ),
 	        "inputSchema": {
 	            "type": "object",
 	            "properties": {
@@ -1545,7 +1662,7 @@ MCP_TOOLS = [
 	                "actor_id": {"type": "string", "description": "Your actor ID (sender, optional if CCCC_ACTOR_ID is set)"},
 	                "kind": {
 	                    "type": "string",
-	                    "enum": ["nudge", "keepalive", "actor_idle", "silence_check", "status_change", "error", "info"],
+	                    "enum": ["nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup", "status_change", "error", "info"],
 	                    "description": "Notification type",
                 },
                 "title": {"type": "string", "description": "Notification title"},
@@ -1581,7 +1698,7 @@ MCP_TOOLS = [
 	        "description": (
                 "Tail an actor terminal transcript (subject to group policy `terminal_transcript_visibility`).\n"
                 "Use it to quickly see what a peer is doing/stuck on (e.g., before you nudge/coordinate).\n"
-                "If you get permission_denied, ask user/foreman to enable it in Settings → Transcript.\n"
+                "If you get permission_denied, ask user/foreman to enable it in Settings -> Transcript.\n"
                 "Warning: may include sensitive stdout/stderr."
             ),
 	        "inputSchema": {
@@ -1642,14 +1759,24 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     # cccc.* namespace
     if name == "cccc_help":
         gid = _env_str("CCCC_GROUP_ID")
+        aid = _env_str("CCCC_ACTOR_ID")
+        role: Optional[str] = None
         if gid:
             g = load_group(gid)
             if g is not None:
+                if aid:
+                    try:
+                        role = get_effective_role(g, aid)
+                    except Exception:
+                        role = None
                 pf = read_repo_prompt_file(g, HELP_FILENAME)
                 if pf.found and isinstance(pf.content, str) and pf.content.strip():
-                    return {"markdown": pf.content, "source": str(pf.path or "")}
+                    return {
+                        "markdown": _select_help_markdown(pf.content, role=role, actor_id=aid),
+                        "source": str(pf.path or ""),
+                    }
         return {
-            "markdown": _CCCC_HELP_BUILTIN,
+            "markdown": _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
             "source": "cccc.resources/cccc-help.md",
         }
 
@@ -1671,7 +1798,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             actor_id=aid,
             inbox_limit=int(arguments.get("inbox_limit") or 50),
             inbox_kind_filter=str(arguments.get("inbox_kind_filter") or "all"),
-            ledger_tail_limit=int(arguments.get("ledger_tail_limit") or 20),
+            ledger_tail_limit=int(arguments.get("ledger_tail_limit") or 10),
             ledger_tail_max_chars=int(arguments.get("ledger_tail_max_chars") or 8000),
         )
 

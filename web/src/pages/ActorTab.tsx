@@ -10,6 +10,7 @@ export interface ActorTabProps {
   termEpoch: number;
   busy: string;
   isDark: boolean;
+  isVisible: boolean;
   onToggleEnabled: () => void;
   onRelaunch: () => void;
   onEdit: () => void;
@@ -26,6 +27,7 @@ export function ActorTab({
   termEpoch,
   busy,
   isDark,
+  isVisible,
   onToggleEnabled,
   onRelaunch,
   onEdit,
@@ -46,7 +48,7 @@ export function ActorTab({
         actor={actor}
         groupId={groupId}
         presenceAgent={presenceAgent}
-        isVisible={true}
+        isVisible={isVisible}
         onQuit={onToggleEnabled}
         onLaunch={onToggleEnabled}
         onRelaunch={onRelaunch}
@@ -60,4 +62,3 @@ export function ActorTab({
     </Suspense>
   );
 }
-

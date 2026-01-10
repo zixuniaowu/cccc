@@ -172,6 +172,8 @@ export type GroupSettings = {
   keepalive_delay_seconds: number;
   keepalive_max_per_actor: number;
   silence_timeout_seconds: number;
+  help_nudge_interval_seconds: number;
+  help_nudge_min_messages: number;
   min_interval_seconds: number;
   standup_interval_seconds: number;
 

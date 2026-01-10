@@ -7,6 +7,7 @@ import { Actor, PresenceAgent, getRuntimeColor, RUNTIME_INFO } from "../types";
 import { getTerminalTheme } from "../hooks/useTheme";
 import { classNames } from "../utils/classNames";
 import { formatFullTime, formatTime } from "../utils/time";
+import { useObservabilityStore } from "../stores";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
@@ -54,6 +55,7 @@ export function AgentTab({
   // Derived state (must be defined before refs that use them)
   const isRunning = actor.running ?? actor.enabled ?? false;
   const isHeadless = actor.runner === "headless";
+  const terminalScrollbackLines = useObservabilityStore((s) => s.terminalScrollbackLines);
 
   const termRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -63,6 +65,8 @@ export function AgentTab({
   // Hide terminal during initial backlog replay to avoid visible scrolling
   const [terminalReady, setTerminalReady] = useState(false);
   const terminalReadyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const outputFilterTailRef = useRef<string>("");
+  const [activated, setActivated] = useState(false);
 
   // Best-effort terminal query responder state (per mounted actor tab).
   // Some runtimes (notably opencode) emit terminal *queries* that xterm.js doesn't answer (e.g. OSC 4 palette).
@@ -91,6 +95,12 @@ export function AgentTab({
       actorNotRunningRef.current = false;
     }
   }, [isRunning]);
+
+  // Activate the terminal only after the user has visited this actor tab at least once.
+  // Once activated, keep the PTY session connected even when the tab is hidden to avoid backlog replay and scroll jumps.
+  useEffect(() => {
+    if (isVisible) setActivated(true);
+  }, [isVisible]);
 
   const copyToClipboard = async (text: string): Promise<boolean> => {
     const t = (text || "").toString();
@@ -147,9 +157,16 @@ export function AgentTab({
     }
   }, [isDark]);
 
+  // Update terminal scrollback when global settings change.
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.options.scrollback = terminalScrollbackLines;
+    }
+  }, [terminalScrollbackLines]);
+
   // Initialize terminal
   useEffect(() => {
-    if (!termRef.current || isHeadless || !isRunning) return;
+    if (!termRef.current || isHeadless || !isRunning || !activated) return;
 
     const term = new Terminal({
       cursorBlink: true,
@@ -160,8 +177,8 @@ export function AgentTab({
       fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, monospace',
       theme: getTerminalTheme(isDark),
       // Bigger scrollback improves history browsing without going "infinite" and hurting perf.
-      // 8k lines is a good default for multi-agent (memory scales with #opened terminals).
-      scrollback: 8000,
+      // Default is 8k lines; the user can override it in Global → Developer settings.
+      scrollback: terminalScrollbackLines || 8000,
       allowProposedApi: true,
     });
 
@@ -255,11 +272,11 @@ export function AgentTab({
       fitAddonRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled in a dedicated effect; avoid re-creating the terminal.
-  }, [isHeadless, isRunning]);
+  }, [isHeadless, isRunning, activated]);
 
   // Connect WebSocket when visible and running (with auto-reconnect).
   useEffect(() => {
-    if (!isVisible || !isRunning || isHeadless || !terminalRef.current) return;
+    if (!activated || !isRunning || isHeadless || !terminalRef.current) return;
 
     // Clear any pending reconnect
     if (reconnectTimeoutRef.current) {
@@ -309,6 +326,8 @@ export function AgentTab({
         reconnectAttemptRef.current = 0; // Reset reconnect counter
         // Reset responder state on each successful (re)connect.
         terminalReplyStateRef.current = { osc4Idx: new Set<string>(), osc10Sent: false, osc11Sent: false };
+        // Reset output filter state on each successful (re)connect.
+        outputFilterTailRef.current = "";
 
         // Delay showing terminal to let backlog replay complete (avoids visible scrolling)
         if (terminalReadyTimeoutRef.current) {
@@ -391,8 +410,29 @@ export function AgentTab({
         _maybeReplyOpencodeQueries(data);
         const term = terminalRef.current;
         if (!term) return;
+        // Preserve scrollback: many TUIs emit CSI 3 J (clear scrollback) which makes the terminal
+        // history appear "very short" regardless of scrollback buffer size. Convert it to CSI 2 J
+        // (clear screen only) so users can still scroll back. This also makes the scrollback_lines
+        // setting meaningful across runtimes.
+        //
+        // Note: we keep a tiny tail buffer so we can catch the escape sequence even if it spans
+        // WebSocket frame boundaries.
+        const seq = "\x1b[3J";
+        const repl = "\x1b[2J";
+        const combined = `${outputFilterTailRef.current}${data || ""}`;
+        const replaced = combined.split(seq).join(repl);
+        let tail = "";
+        for (let n = seq.length - 1; n > 0; n--) {
+          const suffix = replaced.slice(-n);
+          if (seq.startsWith(suffix)) {
+            tail = suffix;
+            break;
+          }
+        }
+        outputFilterTailRef.current = tail;
+        const safe = tail ? replaced.slice(0, -tail.length) : replaced;
         try {
-          term.write(data);
+          term.write(safe);
         } catch (err) {
           console.error("terminal write failed", err);
         }
@@ -521,7 +561,7 @@ export function AgentTab({
       setTerminalReady(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled separately; onStatusChange should not trigger reconnects.
-  }, [isVisible, isRunning, isHeadless, groupId, actor.id, actor.runtime]);
+  }, [activated, isRunning, isHeadless, groupId, actor.id, actor.runtime]);
 
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)
   useEffect(() => {

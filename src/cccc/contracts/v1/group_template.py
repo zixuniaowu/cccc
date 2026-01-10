@@ -37,6 +37,8 @@ class GroupTemplateSettings(BaseModel):
     keepalive_delay_seconds: int = 120
     keepalive_max_per_actor: int = 3
     silence_timeout_seconds: int = 600
+    help_nudge_interval_seconds: int = 600
+    help_nudge_min_messages: int = 10
     min_interval_seconds: int = 0
     standup_interval_seconds: int = 900
 

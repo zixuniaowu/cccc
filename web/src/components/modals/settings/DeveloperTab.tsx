@@ -8,6 +8,10 @@ interface DeveloperTabProps {
   setDeveloperMode: (v: boolean) => void;
   logLevel: "INFO" | "DEBUG";
   setLogLevel: (v: "INFO" | "DEBUG") => void;
+  terminalBacklogMiB: number;
+  setTerminalBacklogMiB: (v: number) => void;
+  terminalScrollbackLines: number;
+  setTerminalScrollbackLines: (v: number) => void;
   obsBusy: boolean;
   onSaveObservability: () => void;
   // Debug snapshot
@@ -35,6 +39,10 @@ export function DeveloperTab({
   setDeveloperMode,
   logLevel,
   setLogLevel,
+  terminalBacklogMiB,
+  setTerminalBacklogMiB,
+  terminalScrollbackLines,
+  setTerminalScrollbackLines,
   obsBusy,
   onSaveObservability,
   debugSnapshot,
@@ -107,6 +115,46 @@ export function DeveloperTab({
             <option value="INFO">INFO</option>
             <option value="DEBUG">DEBUG</option>
           </select>
+        </div>
+
+        <div className={`mt-4 pt-3 border-t ${isDark ? "border-slate-800" : "border-gray-200"}`}>
+          <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+            Terminal buffers
+          </div>
+          <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+            Controls how much terminal history is kept. Larger buffers use more memory (scales with running actors and opened terminals).
+          </div>
+
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <div>
+              <label className={labelClass(isDark)}>PTY backlog (MiB / actor)</label>
+              <input
+                type="number"
+                value={terminalBacklogMiB}
+                min={1}
+                max={50}
+                onChange={(e) => setTerminalBacklogMiB(Number(e.target.value || 10))}
+                className={inputClass(isDark)}
+              />
+              <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                Affects initial history and transcript tail. Takes full effect after restarting an actor.
+              </div>
+            </div>
+            <div>
+              <label className={labelClass(isDark)}>Web scrollback (lines)</label>
+              <input
+                type="number"
+                value={terminalScrollbackLines}
+                min={1000}
+                max={200000}
+                onChange={(e) => setTerminalScrollbackLines(Number(e.target.value || 8000))}
+                className={inputClass(isDark)}
+              />
+              <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                Controls how far you can scroll up in the Web terminal.
+              </div>
+            </div>
+          </div>
         </div>
 
         <div className="mt-3 flex gap-2">
@@ -197,7 +245,7 @@ export function DeveloperTab({
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label className={labelClass(isDark)}>Component</label>
             <select

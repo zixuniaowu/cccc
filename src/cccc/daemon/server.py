@@ -112,14 +112,14 @@ def _pty_backlog_bytes() -> int:
     """Best-effort per-actor PTY backlog size (ring buffer)."""
     obs = _get_observability()
     tt = obs.get("terminal_transcript") if isinstance(obs, dict) else None
-    n = 2_000_000
+    n = 10 * 1024 * 1024
     if isinstance(tt, dict):
         try:
             n = int(tt.get("per_actor_bytes") or 0)
         except Exception:
             n = 0
     if n <= 0:
-        n = 2_000_000
+        n = 10 * 1024 * 1024
     if n > 50_000_000:
         n = 50_000_000
     return int(n)
@@ -402,7 +402,7 @@ def _inject_actor_context_env(env: Dict[str, Any], *, group_id: str, actor_id: s
 
 AUTOMATION = AutomationManager()
 
-_AUTOMATION_RESET_NOTIFY_KINDS = {"nudge", "keepalive", "actor_idle", "silence_check", "standup"}
+_AUTOMATION_RESET_NOTIFY_KINDS = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup"}
 
 
 def _foreman_id(group: Any) -> str:
@@ -1696,8 +1696,16 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         
         # Define allowed keys and their target sections
         delivery_keys = {"min_interval_seconds"}
-        automation_keys = {"nudge_after_seconds", "actor_idle_timeout_seconds", "keepalive_delay_seconds", 
-                          "keepalive_max_per_actor", "silence_timeout_seconds", "standup_interval_seconds"}
+        automation_keys = {
+            "nudge_after_seconds",
+            "actor_idle_timeout_seconds",
+            "keepalive_delay_seconds",
+            "keepalive_max_per_actor",
+            "silence_timeout_seconds",
+            "standup_interval_seconds",
+            "help_nudge_interval_seconds",
+            "help_nudge_min_messages",
+        }
         terminal_transcript_keys = {
             "terminal_transcript_visibility",
             "terminal_transcript_notify_tail",
@@ -2126,7 +2134,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 try:
                     THROTTLE.clear_pending_system_notifies(
                         group.group_id,
-                        notify_kinds={"nudge", "keepalive", "actor_idle", "silence_check", "standup"},
+                        notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup"},
                     )
                 except Exception:
                     pass
@@ -3022,7 +3030,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     try:
                         THROTTLE.clear_pending_system_notifies(
                             group.group_id,
-                            notify_kinds={"nudge", "keepalive", "actor_idle", "silence_check", "standup"},
+                            notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup"},
                         )
                     except Exception:
                         pass
@@ -3216,7 +3224,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     try:
                         THROTTLE.clear_pending_system_notifies(
                             group.group_id,
-                            notify_kinds={"nudge", "keepalive", "actor_idle", "silence_check", "standup"},
+                            notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup"},
                         )
                     except Exception:
                         pass
@@ -3402,7 +3410,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("group_not_found", f"group not found: {group_id}"), False
 
         # Validate kind and priority.
-        valid_kinds = {"nudge", "keepalive", "actor_idle", "silence_check", "standup", "status_change", "error", "info"}
+        valid_kinds = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "standup", "status_change", "error", "info"}
         valid_priorities = {"low", "normal", "high", "urgent"}
         if kind not in valid_kinds:
             kind = "info"

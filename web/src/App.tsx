@@ -18,6 +18,7 @@ import {
   useModalStore,
   useComposerStore,
   useFormStore,
+  useObservabilityStore,
 } from "./stores";
 import { handlePwaNoticeAction } from "./pwa";
 import * as api from "./services/api";
@@ -119,6 +120,7 @@ export default function App() {
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [mentionFilter, setMentionFilter] = React.useState("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
+  const [mountedActorIds, setMountedActorIds] = React.useState<string[]>([]);
 
   // Custom hooks
   const { connectStream, fetchContext, scheduleActorWarmupRefresh, cleanup: cleanupSSE } = useSSE({
@@ -140,6 +142,9 @@ export default function App() {
 
   const handleTabChange = React.useCallback((newTab: string) => {
     // Keep Chat mounted to preserve scroll position; no need to snapshot scrollTop.
+    if (newTab !== "chat") {
+      setMountedActorIds((prev) => (prev.includes(newTab) ? prev : [...prev, newTab]));
+    }
     setActiveTab(newTab);
   }, [setActiveTab]);
 
@@ -163,8 +168,20 @@ export default function App() {
     if (atBottom) setChatUnreadCount(0);
   }, [activeTab, setChatUnreadCount, setShowScrollButton]);
 
+  // Keep visited actor tabs mounted (sticky) so their terminal sessions do not reconnect/replay on tab switches.
+  useEffect(() => {
+    if (!activeTab || activeTab === "chat") return;
+    setMountedActorIds((prev) => (prev.includes(activeTab) ? prev : [...prev, activeTab]));
+  }, [activeTab]);
+
   useEffect(() => {
     actorsRef.current = actors;
+  }, [actors]);
+
+  // Prune mounted actor ids when the actor list changes (e.g., actor removed).
+  useEffect(() => {
+    const live = new Set(actors.map((a) => String(a.id || "")).filter((id) => id));
+    setMountedActorIds((prev) => prev.filter((id) => live.has(id)));
   }, [actors]);
 
   // Responsive screen detection
@@ -220,10 +237,12 @@ export default function App() {
     return all.filter((s) => s.toLowerCase().includes(lower));
   }, [actors, mentionFilter]);
 
-  const currentActor = useMemo(() => {
-    if (activeTab === "chat") return null;
-    return actors.find((a) => a.id === activeTab) || null;
-  }, [activeTab, actors]);
+  const renderedActorIds = useMemo(() => {
+    if (activeTab !== "chat" && !mountedActorIds.includes(activeTab)) {
+      return [...mountedActorIds, activeTab];
+    }
+    return mountedActorIds;
+  }, [mountedActorIds, activeTab]);
 
   // ============ Group Selection Effect ============
   // Only reconnect/reload when selectedGroupId changes.
@@ -234,6 +253,7 @@ export default function App() {
 
     if (fileInputRef.current) fileInputRef.current.value = "";
     resetDragDrop();
+    setMountedActorIds([]);
     // Reset to chat tab when switching groups to avoid "Agent not found" error
     setActiveTab("chat");
 
@@ -255,6 +275,7 @@ export default function App() {
     refreshGroups();
     void fetchRuntimes();
     void fetchDirSuggestions();
+    void useObservabilityStore.getState().load();
 
     // Subscribe to global events stream (replaces polling)
     let es: EventSource | null = null;
@@ -621,24 +642,37 @@ export default function App() {
                 onLoadMore={loadMoreHistory}
               />
             </div>
-            {activeTab !== "chat" && (
-              <div className="absolute inset-0 flex min-h-0 flex-col">
-                <ActorTab
-                  actor={currentActor}
-                  groupId={selectedGroupId}
-                  presenceAgent={(groupContext?.presence?.agents || []).find((a) => a.id === (currentActor?.id || "")) || null}
-                  termEpoch={currentActor ? getTermEpoch(currentActor.id) : 0}
-                  busy={busy}
-                  isDark={isDark}
-                  onToggleEnabled={() => currentActor && toggleActorEnabled(currentActor)}
-                  onRelaunch={() => currentActor && relaunchActor(currentActor)}
-                  onEdit={() => currentActor && editActor(currentActor)}
-                  onRemove={() => currentActor && removeActor(currentActor, activeTab)}
-                  onInbox={() => currentActor && openActorInbox(currentActor)}
-                  onStatusChange={() => void refreshActors()}
-                />
-              </div>
-            )}
+            <div
+              className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "chat" ? "invisible pointer-events-none" : ""}`}
+              aria-hidden={activeTab === "chat"}
+            >
+              {renderedActorIds.map((actorId) => {
+                const actor = actors.find((a) => a.id === actorId) || null;
+                const isVisible = activeTab === actorId && activeTab !== "chat";
+                const presence =
+                  (groupContext?.presence?.agents || []).find((p) => p.id === (actor?.id || "")) || null;
+
+                return (
+                  <div key={actorId} className={isVisible ? "flex min-h-0 flex-col flex-1" : "hidden"}>
+                    <ActorTab
+                      actor={actor}
+                      groupId={selectedGroupId}
+                      presenceAgent={presence}
+                      termEpoch={actor ? getTermEpoch(actor.id) : 0}
+                      busy={busy}
+                      isDark={isDark}
+                      isVisible={isVisible}
+                      onToggleEnabled={() => actor && toggleActorEnabled(actor)}
+                      onRelaunch={() => actor && relaunchActor(actor)}
+                      onEdit={() => actor && editActor(actor)}
+                      onRemove={() => actor && removeActor(actor, activeTab)}
+                      onInbox={() => actor && openActorInbox(actor)}
+                      onStatusChange={() => void refreshActors()}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </main>
       </div>
