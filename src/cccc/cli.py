@@ -1974,8 +1974,8 @@ def cmd_im_set(args: argparse.Namespace) -> int:
         return 2
 
     platform = str(args.platform or "").strip().lower()
-    if platform not in ("telegram", "slack", "discord"):
-        _print_json({"ok": False, "error": {"code": "invalid_platform", "message": "platform must be telegram, slack, or discord"}})
+    if platform not in ("telegram", "slack", "discord", "feishu", "dingtalk"):
+        _print_json({"ok": False, "error": {"code": "invalid_platform", "message": "platform must be telegram, slack, discord, feishu, or dingtalk"}})
         return 2
 
     # Get token fields
@@ -1983,13 +1983,35 @@ def cmd_im_set(args: argparse.Namespace) -> int:
     app_token_env = str(getattr(args, "app_token_env", "") or "").strip()
     token_env = str(args.token_env or "").strip()
     token = str(args.token or "").strip()
+    # Feishu/DingTalk specific
+    app_key_env = str(getattr(args, "app_key_env", "") or "").strip()
+    app_secret_env = str(getattr(args, "app_secret_env", "") or "").strip()
 
     # Backward compat: if only token_env provided, use as bot_token_env
     if token_env and not bot_token_env:
         bot_token_env = token_env
 
     # Interactive mode if no token provided
-    if not bot_token_env and not token:
+    if platform in ("feishu", "dingtalk"):
+        # Feishu/DingTalk use app_key + app_secret
+        if not app_key_env or not app_secret_env:
+            try:
+                platform_name = "Feishu" if platform == "feishu" else "DingTalk"
+                default_key = "FEISHU_APP_ID" if platform == "feishu" else "DINGTALK_APP_KEY"
+                default_secret = "FEISHU_APP_SECRET" if platform == "feishu" else "DINGTALK_APP_SECRET"
+                print(f"{platform_name} requires app credentials:")
+                if not app_key_env:
+                    print(f"Enter App Key/ID env var name (default: {default_key}):")
+                    key_input = input("> ").strip()
+                    app_key_env = key_input or default_key
+                if not app_secret_env:
+                    print(f"Enter App Secret env var name (default: {default_secret}):")
+                    secret_input = input("> ").strip()
+                    app_secret_env = secret_input or default_secret
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return 1
+    elif not bot_token_env and not token:
         try:
             if platform == "slack":
                 print(f"Slack requires two tokens:")
@@ -2038,11 +2060,17 @@ def cmd_im_set(args: argparse.Namespace) -> int:
             im_config["bot_token_env"] = bot_token_env
         if app_token_env:
             im_config["app_token_env"] = app_token_env
+    elif platform in ("feishu", "dingtalk"):
+        # Feishu/DingTalk use app_key + app_secret
+        if app_key_env:
+            im_config["app_key_env"] = app_key_env
+        if app_secret_env:
+            im_config["app_secret_env"] = app_secret_env
     else:
         # Telegram/Discord use single token
         if bot_token_env:
             im_config["token_env"] = bot_token_env
-    
+
     if token:
         im_config["token"] = token
 
@@ -2179,6 +2207,47 @@ def cmd_im_start(args: argparse.Namespace) -> int:
         # Set default env var based on platform
         default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
         env[default_env.get(platform, "BOT_TOKEN")] = token
+
+    # Feishu/DingTalk: set credentials from config
+    # Supports both direct values and env var names (for Web UI compatibility)
+    if platform == "feishu":
+        # Direct values
+        app_id = im_config.get("feishu_app_id", "")
+        app_secret = im_config.get("feishu_app_secret", "")
+        # Env var names
+        app_id_env = im_config.get("feishu_app_id_env", "")
+        app_secret_env = im_config.get("feishu_app_secret_env", "")
+        # Set env vars (direct value takes precedence)
+        if app_id:
+            env["FEISHU_APP_ID"] = app_id
+        elif app_id_env and app_id_env in os.environ:
+            env["FEISHU_APP_ID"] = os.environ[app_id_env]
+        if app_secret:
+            env["FEISHU_APP_SECRET"] = app_secret
+        elif app_secret_env and app_secret_env in os.environ:
+            env["FEISHU_APP_SECRET"] = os.environ[app_secret_env]
+    elif platform == "dingtalk":
+        # Direct values
+        app_key = im_config.get("dingtalk_app_key", "")
+        app_secret = im_config.get("dingtalk_app_secret", "")
+        robot_code = im_config.get("dingtalk_robot_code", "")
+        # Env var names
+        app_key_env = im_config.get("dingtalk_app_key_env", "")
+        app_secret_env = im_config.get("dingtalk_app_secret_env", "")
+        robot_code_env = im_config.get("dingtalk_robot_code_env", "")
+        # Set env vars (direct value takes precedence)
+        if app_key:
+            env["DINGTALK_APP_KEY"] = app_key
+        elif app_key_env and app_key_env in os.environ:
+            env["DINGTALK_APP_KEY"] = os.environ[app_key_env]
+        if app_secret:
+            env["DINGTALK_APP_SECRET"] = app_secret
+        elif app_secret_env and app_secret_env in os.environ:
+            env["DINGTALK_APP_SECRET"] = os.environ[app_secret_env]
+        if robot_code:
+            env["DINGTALK_ROBOT_CODE"] = robot_code
+        elif robot_code_env and robot_code_env in os.environ:
+            env["DINGTALK_ROBOT_CODE"] = os.environ[robot_code_env]
 
     # Start bridge as subprocess
     state_dir = group.path / "state"
@@ -2591,14 +2660,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_daemon.set_defaults(func=cmd_daemon)
 
     # IM Bridge commands
-    p_im = sub.add_parser("im", help="Manage IM bridge (Telegram/Slack/Discord)")
+    p_im = sub.add_parser("im", help="Manage IM bridge (Telegram/Slack/Discord/Feishu/DingTalk)")
     im_sub = p_im.add_subparsers(dest="action", required=True)
 
     p_im_set = im_sub.add_parser("set", help="Set IM bridge configuration")
-    p_im_set.add_argument("platform", choices=["telegram", "slack", "discord"], help="IM platform")
+    p_im_set.add_argument("platform", choices=["telegram", "slack", "discord", "feishu", "dingtalk"], help="IM platform")
     p_im_set.add_argument("--token-env", default="", help="Environment variable name for token (telegram/discord)")
     p_im_set.add_argument("--bot-token-env", default="", help="Bot token env var (Slack: xoxb- for outbound)")
     p_im_set.add_argument("--app-token-env", default="", help="App token env var (Slack: xapp- for inbound Socket Mode)")
+    p_im_set.add_argument("--app-key-env", default="", help="App Key env var (Feishu/DingTalk)")
+    p_im_set.add_argument("--app-secret-env", default="", help="App Secret env var (Feishu/DingTalk)")
     p_im_set.add_argument("--token", default="", help="Token value directly (not recommended, use env vars)")
     p_im_set.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_im_set.set_defaults(func=cmd_im_set)

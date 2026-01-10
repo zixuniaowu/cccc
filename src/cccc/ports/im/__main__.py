@@ -14,8 +14,15 @@ from .bridge import start_bridge
 
 def main() -> int:
     if len(sys.argv) < 2:
-        print("Usage: python -m cccc.ports.im.bridge <group_id> [platform]")
-        print("  platform: telegram (default), slack, discord")
+        print("Usage: python -m cccc.ports.im <group_id> [platform]")
+        print("  platform: telegram (default), slack, discord, feishu, dingtalk")
+        print("")
+        print("Environment variables:")
+        print("  Telegram: TELEGRAM_BOT_TOKEN")
+        print("  Slack:    SLACK_BOT_TOKEN, SLACK_APP_TOKEN (optional)")
+        print("  Discord:  DISCORD_BOT_TOKEN")
+        print("  Feishu:   FEISHU_APP_ID, FEISHU_APP_SECRET")
+        print("  DingTalk: DINGTALK_APP_KEY, DINGTALK_APP_SECRET, DINGTALK_ROBOT_CODE (optional)")
         return 1
 
     group_id = sys.argv[1]

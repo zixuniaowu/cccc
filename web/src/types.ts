@@ -182,14 +182,22 @@ export type GroupSettings = {
   terminal_transcript_notify_lines: number;
 };
 
+export type IMPlatform = "telegram" | "slack" | "discord" | "feishu" | "dingtalk";
+
 export type IMConfig = {
-  platform?: "telegram" | "slack" | "discord";
+  platform?: IMPlatform;
   // Legacy single token field (backward compat)
   token_env?: string;
   token?: string;
   // Dual token fields for Slack (bot_token for outbound, app_token for inbound)
   bot_token_env?: string;
   app_token_env?: string;
+  // Feishu fields
+  feishu_app_id?: string;
+  feishu_app_secret?: string;
+  // DingTalk fields
+  dingtalk_app_key?: string;
+  dingtalk_app_secret?: string;
 };
 
 export type IMStatus = {

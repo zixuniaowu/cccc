@@ -766,7 +766,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         if not bot_token and bot_token_env_raw and not bot_token_env:
             # Common misconfig: raw token pasted into *_env field.
             bot_token = bot_token_env_raw
-        
+
         app_token_env_raw = str(im_config.get("app_token_env") or "").strip()
         app_token_env = app_token_env_raw if _is_env_var_name(app_token_env_raw) else ""
         if app_token_env:
@@ -775,16 +775,22 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
             app_token = str(im_config.get("app_token") or "").strip()
         if not app_token and app_token_env_raw and not app_token_env:
             app_token = app_token_env_raw
-        
+
         if not bot_token:
             print(f"[error] No bot token configured for Slack")
             if bot_token_env:
                 print(f"Set environment variable: {bot_token_env}")
             sys.exit(1)
-        
+
         # app_token is optional (inbound disabled without it)
         if not app_token:
             print("[warn] No app token configured - inbound messages disabled")
+    elif platform.lower() == "feishu":
+        # Feishu uses app_id + app_secret, handled later in adapter creation
+        pass
+    elif platform.lower() == "dingtalk":
+        # DingTalk uses app_key + app_secret, handled later in adapter creation
+        pass
     else:
         # Telegram/Discord: single token
         token_env_raw = str(im_config.get("token_env") or im_config.get("bot_token_env") or "").strip()
@@ -847,6 +853,28 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         adapter = SlackAdapter(bot_token=bot_token, app_token=app_token, log_path=log_path)
     elif platform.lower() == "discord":
         adapter = DiscordAdapter(token=bot_token, log_path=log_path)
+    elif platform.lower() == "feishu":
+        from .adapters.feishu import FeishuAdapter
+        feishu_app_id = os.environ.get("FEISHU_APP_ID", "")
+        feishu_app_secret = os.environ.get("FEISHU_APP_SECRET", "")
+        if not feishu_app_id or not feishu_app_secret:
+            print("[error] FEISHU_APP_ID and FEISHU_APP_SECRET environment variables required")
+            sys.exit(1)
+        adapter = FeishuAdapter(app_id=feishu_app_id, app_secret=feishu_app_secret, log_path=log_path)
+    elif platform.lower() == "dingtalk":
+        from .adapters.dingtalk import DingTalkAdapter
+        dingtalk_app_key = os.environ.get("DINGTALK_APP_KEY", "")
+        dingtalk_app_secret = os.environ.get("DINGTALK_APP_SECRET", "")
+        dingtalk_robot_code = os.environ.get("DINGTALK_ROBOT_CODE", "")
+        if not dingtalk_app_key or not dingtalk_app_secret:
+            print("[error] DINGTALK_APP_KEY and DINGTALK_APP_SECRET environment variables required")
+            sys.exit(1)
+        adapter = DingTalkAdapter(
+            app_key=dingtalk_app_key,
+            app_secret=dingtalk_app_secret,
+            robot_code=dingtalk_robot_code,
+            log_path=log_path,
+        )
     else:
         print(f"[error] Unsupported platform: {platform}")
         sys.exit(1)
@@ -897,7 +925,14 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python -m cccc.ports.im.bridge <group_id> [platform]")
-        print("  platform: telegram (default), slack, discord")
+        print("  platform: telegram (default), slack, discord, feishu, dingtalk")
+        print("")
+        print("Environment variables:")
+        print("  Telegram: TELEGRAM_BOT_TOKEN")
+        print("  Slack:    SLACK_BOT_TOKEN, SLACK_APP_TOKEN (optional)")
+        print("  Discord:  DISCORD_BOT_TOKEN")
+        print("  Feishu:   FEISHU_APP_ID, FEISHU_APP_SECRET")
+        print("  DingTalk: DINGTALK_APP_KEY, DINGTALK_APP_SECRET, DINGTALK_ROBOT_CODE (optional)")
         sys.exit(1)
 
     _group_id = sys.argv[1]

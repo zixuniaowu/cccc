@@ -1,17 +1,28 @@
 // IMBridgeTab configures IM bridge settings.
-import { IMStatus } from "../../../types";
+import { IMStatus, IMPlatform } from "../../../types";
 import { inputClass, labelClass, primaryButtonClass, cardClass } from "./types";
 
 interface IMBridgeTabProps {
   isDark: boolean;
   groupId?: string; // Reserved for future use.
   imStatus: IMStatus | null;
-  imPlatform: "telegram" | "slack" | "discord";
-  setImPlatform: (v: "telegram" | "slack" | "discord") => void;
+  imPlatform: IMPlatform;
+  setImPlatform: (v: IMPlatform) => void;
   imBotTokenEnv: string;
   setImBotTokenEnv: (v: string) => void;
   imAppTokenEnv: string;
   setImAppTokenEnv: (v: string) => void;
+  // Feishu fields
+  imFeishuAppId: string;
+  setImFeishuAppId: (v: string) => void;
+  imFeishuAppSecret: string;
+  setImFeishuAppSecret: (v: string) => void;
+  // DingTalk fields
+  imDingtalkAppKey: string;
+  setImDingtalkAppKey: (v: string) => void;
+  imDingtalkAppSecret: string;
+  setImDingtalkAppSecret: (v: string) => void;
+  // Actions
   imBusy: boolean;
   onSaveConfig: () => void;
   onRemoveConfig: () => void;
@@ -29,6 +40,14 @@ export function IMBridgeTab({
   setImBotTokenEnv,
   imAppTokenEnv,
   setImAppTokenEnv,
+  imFeishuAppId,
+  setImFeishuAppId,
+  imFeishuAppSecret,
+  setImFeishuAppSecret,
+  imDingtalkAppKey,
+  setImDingtalkAppKey,
+  imDingtalkAppSecret,
+  setImDingtalkAppSecret,
   imBusy,
   onSaveConfig,
   onRemoveConfig,
@@ -40,6 +59,7 @@ export function IMBridgeTab({
       case "telegram": return "Bot Token (token or env var)";
       case "slack": return "Bot Token (xoxb- or env var)";
       case "discord": return "Bot Token (token or env var)";
+      default: return "Bot Token";
     }
   };
 
@@ -48,21 +68,30 @@ export function IMBridgeTab({
       case "telegram": return "TELEGRAM_BOT_TOKEN (or 123456:ABC...)";
       case "slack": return "SLACK_BOT_TOKEN (or xoxb-...)";
       case "discord": return "DISCORD_BOT_TOKEN (or <token>)";
+      default: return "";
     }
   };
 
   const canSaveIM = () => {
+    if (imPlatform === "feishu") {
+      return !!imFeishuAppId && !!imFeishuAppSecret;
+    }
+    if (imPlatform === "dingtalk") {
+      return !!imDingtalkAppKey && !!imDingtalkAppSecret;
+    }
     if (!imBotTokenEnv) return false;
     if (imPlatform === "slack" && !imAppTokenEnv) return false;
     return true;
   };
+
+  const needsBotToken = imPlatform === "telegram" || imPlatform === "slack" || imPlatform === "discord";
 
   return (
     <div className="space-y-4">
       <div>
         <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>IM Bridge</h3>
         <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-          Connect this group to Telegram, Slack, or Discord.
+          Connect this group to Telegram, Slack, Discord, Feishu, or DingTalk.
         </p>
       </div>
 
@@ -94,31 +123,35 @@ export function IMBridgeTab({
           <label className={labelClass(isDark)}>Platform</label>
           <select
             value={imPlatform}
-            onChange={(e) => setImPlatform(e.target.value as "telegram" | "slack" | "discord")}
+            onChange={(e) => setImPlatform(e.target.value as IMPlatform)}
             className={inputClass(isDark)}
           >
             <option value="telegram">Telegram</option>
             <option value="slack">Slack</option>
             <option value="discord">Discord</option>
+            <option value="feishu">Feishu (飞书)</option>
+            <option value="dingtalk">DingTalk (钉钉)</option>
           </select>
         </div>
 
-        {/* Bot Token */}
-        <div>
-          <label className={labelClass(isDark)}>{getBotTokenLabel()}</label>
-          <input
-            type="text"
-            value={imBotTokenEnv}
-            onChange={(e) => setImBotTokenEnv(e.target.value)}
-            placeholder={getBotTokenPlaceholder()}
-            className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
-          />
-          <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-            {imPlatform === "slack"
-              ? "Paste xoxb-… token or an env var name; required for outbound messages."
-              : "Paste the bot token or an env var name; required for bot authentication."}
-          </p>
-        </div>
+        {/* Bot Token (Telegram/Slack/Discord) */}
+        {needsBotToken && (
+          <div>
+            <label className={labelClass(isDark)}>{getBotTokenLabel()}</label>
+            <input
+              type="text"
+              value={imBotTokenEnv}
+              onChange={(e) => setImBotTokenEnv(e.target.value)}
+              placeholder={getBotTokenPlaceholder()}
+              className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+            />
+            <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              {imPlatform === "slack"
+                ? "Paste xoxb-… token or an env var name; required for outbound messages."
+                : "Paste the bot token or an env var name; required for bot authentication."}
+            </p>
+          </div>
+        )}
 
         {/* App Token (Slack only) */}
         {imPlatform === "slack" && (
@@ -135,6 +168,70 @@ export function IMBridgeTab({
               Optional; needed for inbound messages (Socket Mode).
             </p>
           </div>
+        )}
+
+        {/* Feishu fields */}
+        {imPlatform === "feishu" && (
+          <>
+            <div>
+              <label className={labelClass(isDark)}>App ID</label>
+              <input
+                type="text"
+                value={imFeishuAppId}
+                onChange={(e) => setImFeishuAppId(e.target.value)}
+                placeholder="FEISHU_APP_ID (or cli_xxx...)"
+                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+              />
+              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                飞书应用的 App ID 或环境变量名
+              </p>
+            </div>
+            <div>
+              <label className={labelClass(isDark)}>App Secret</label>
+              <input
+                type="password"
+                value={imFeishuAppSecret}
+                onChange={(e) => setImFeishuAppSecret(e.target.value)}
+                placeholder="FEISHU_APP_SECRET (or secret)"
+                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+              />
+              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                飞书应用的 App Secret 或环境变量名
+              </p>
+            </div>
+          </>
+        )}
+
+        {/* DingTalk fields */}
+        {imPlatform === "dingtalk" && (
+          <>
+            <div>
+              <label className={labelClass(isDark)}>App Key</label>
+              <input
+                type="text"
+                value={imDingtalkAppKey}
+                onChange={(e) => setImDingtalkAppKey(e.target.value)}
+                placeholder="DINGTALK_APP_KEY (or key)"
+                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+              />
+              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                钉钉应用的 AppKey 或环境变量名
+              </p>
+            </div>
+            <div>
+              <label className={labelClass(isDark)}>App Secret</label>
+              <input
+                type="password"
+                value={imDingtalkAppSecret}
+                onChange={(e) => setImDingtalkAppSecret(e.target.value)}
+                placeholder="DINGTALK_APP_SECRET (or secret)"
+                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+              />
+              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                钉钉应用的 AppSecret 或环境变量名
+              </p>
+            </div>
+          </>
         )}
       </div>
 

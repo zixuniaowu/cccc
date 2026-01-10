@@ -231,7 +231,7 @@ Place `PROJECT.md` at the scope root (repo root). Treat it as the project consti
 
 ---
 
-## IM Bridge (Telegram / Slack / Discord)
+## IM Bridge (Telegram / Slack / Discord / Feishu / DingTalk)
 
 CCCC can bridge a working group to an IM platform.
 
