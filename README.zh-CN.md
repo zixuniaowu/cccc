@@ -236,7 +236,7 @@ cccc setup --runtime <name>
 
 ---
 
-## IM Bridge（Telegram / Slack / Discord）
+## IM Bridge（Telegram / Slack / Discord / 飞书 / 钉钉）
 
 CCCC 支持把 working group 桥接到 IM 平台：
 

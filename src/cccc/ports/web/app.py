@@ -190,13 +190,20 @@ class GroupDeleteRequest(BaseModel):
 
 class IMSetRequest(BaseModel):
     group_id: str
-    platform: Literal["telegram", "slack", "discord"]
+    platform: Literal["telegram", "slack", "discord", "feishu", "dingtalk"]
     # Legacy single token field (backward compat for telegram/discord)
     token_env: str = ""
     token: str = ""
     # Dual token fields for Slack
     bot_token_env: str = ""  # xoxb- for outbound (Web API)
     app_token_env: str = ""  # xapp- for inbound (Socket Mode)
+    # Feishu fields
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    # DingTalk fields
+    dingtalk_app_key: str = ""
+    dingtalk_app_secret: str = ""
+    dingtalk_robot_code: str = ""
 
 
 class IMActionRequest(BaseModel):
@@ -1650,6 +1657,40 @@ def create_app() -> FastAPI:
 
             if req.token:
                 im_cfg.setdefault("bot_token", str(req.token).strip())
+        elif platform == "feishu":
+            # Feishu: app_id + app_secret
+            app_id = str(req.feishu_app_id or "").strip()
+            app_secret = str(req.feishu_app_secret or "").strip()
+            if app_id:
+                if _is_env_var_name(app_id):
+                    im_cfg["feishu_app_id_env"] = app_id
+                else:
+                    im_cfg["feishu_app_id"] = app_id
+            if app_secret:
+                if _is_env_var_name(app_secret):
+                    im_cfg["feishu_app_secret_env"] = app_secret
+                else:
+                    im_cfg["feishu_app_secret"] = app_secret
+        elif platform == "dingtalk":
+            # DingTalk: app_key + app_secret + optional robot_code
+            app_key = str(req.dingtalk_app_key or "").strip()
+            app_secret = str(req.dingtalk_app_secret or "").strip()
+            robot_code = str(req.dingtalk_robot_code or "").strip()
+            if app_key:
+                if _is_env_var_name(app_key):
+                    im_cfg["dingtalk_app_key_env"] = app_key
+                else:
+                    im_cfg["dingtalk_app_key"] = app_key
+            if app_secret:
+                if _is_env_var_name(app_secret):
+                    im_cfg["dingtalk_app_secret_env"] = app_secret
+                else:
+                    im_cfg["dingtalk_app_secret"] = app_secret
+            if robot_code:
+                if _is_env_var_name(robot_code):
+                    im_cfg["dingtalk_robot_code_env"] = robot_code
+                else:
+                    im_cfg["dingtalk_robot_code"] = robot_code
         else:
             # Telegram/Discord: single token.
             if token_hint:
@@ -1723,13 +1764,54 @@ def create_app() -> FastAPI:
 
         # Prepare environment
         env = os.environ.copy()
-        token_env = im_cfg.get("token_env")
-        token = im_cfg.get("token")
-        if token and token_env:
-            env[token_env] = token
-        elif token:
-            default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
-            env[default_env.get(platform, "BOT_TOKEN")] = token
+
+        if platform == "feishu":
+            # Feishu: set FEISHU_APP_ID and FEISHU_APP_SECRET
+            app_id = im_cfg.get("feishu_app_id") or ""
+            app_secret = im_cfg.get("feishu_app_secret") or ""
+            app_id_env = im_cfg.get("feishu_app_id_env") or ""
+            app_secret_env = im_cfg.get("feishu_app_secret_env") or ""
+            # Set actual values to default env var names
+            if app_id:
+                env["FEISHU_APP_ID"] = app_id
+            if app_secret:
+                env["FEISHU_APP_SECRET"] = app_secret
+            # Also set to custom env var names if specified
+            if app_id_env and app_id:
+                env[app_id_env] = app_id
+            if app_secret_env and app_secret:
+                env[app_secret_env] = app_secret
+        elif platform == "dingtalk":
+            # DingTalk: set DINGTALK_APP_KEY, DINGTALK_APP_SECRET, DINGTALK_ROBOT_CODE
+            app_key = im_cfg.get("dingtalk_app_key") or ""
+            app_secret = im_cfg.get("dingtalk_app_secret") or ""
+            robot_code = im_cfg.get("dingtalk_robot_code") or ""
+            app_key_env = im_cfg.get("dingtalk_app_key_env") or ""
+            app_secret_env = im_cfg.get("dingtalk_app_secret_env") or ""
+            robot_code_env = im_cfg.get("dingtalk_robot_code_env") or ""
+            # Set actual values to default env var names
+            if app_key:
+                env["DINGTALK_APP_KEY"] = app_key
+            if app_secret:
+                env["DINGTALK_APP_SECRET"] = app_secret
+            if robot_code:
+                env["DINGTALK_ROBOT_CODE"] = robot_code
+            # Also set to custom env var names if specified
+            if app_key_env and app_key:
+                env[app_key_env] = app_key
+            if app_secret_env and app_secret:
+                env[app_secret_env] = app_secret
+            if robot_code_env and robot_code:
+                env[robot_code_env] = robot_code
+        else:
+            # Telegram/Slack/Discord: token-based
+            token_env = im_cfg.get("token_env")
+            token = im_cfg.get("token")
+            if token and token_env:
+                env[token_env] = token
+            elif token:
+                default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
+                env[default_env.get(platform, "BOT_TOKEN")] = token
 
         # Start bridge as subprocess
         state_dir = group.path / "state"

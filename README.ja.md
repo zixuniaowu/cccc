@@ -201,7 +201,7 @@ scope ルート（repo root）に `PROJECT.md` を置き、プロジェクトの
 
 ---
 
-## IM Bridge（Telegram / Slack / Discord）
+## IM Bridge（Telegram / Slack / Discord / Feishu / DingTalk）
 
 Working Group を IM にブリッジできます：
 

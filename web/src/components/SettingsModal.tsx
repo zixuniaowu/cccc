@@ -1,6 +1,6 @@
 // SettingsModal renders the settings modal.
 import { useState, useEffect } from "react";
-import { Actor, GroupDoc, GroupSettings, IMStatus } from "../types";
+import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform } from "../types";
 import * as api from "../services/api";
 import { useObservabilityStore } from "../stores";
 import {
@@ -70,9 +70,15 @@ export function SettingsModal({
 
   // IM Bridge state
   const [imStatus, setImStatus] = useState<IMStatus | null>(null);
-  const [imPlatform, setImPlatform] = useState<"telegram" | "slack" | "discord">("telegram");
+  const [imPlatform, setImPlatform] = useState<IMPlatform>("telegram");
   const [imBotTokenEnv, setImBotTokenEnv] = useState("");
   const [imAppTokenEnv, setImAppTokenEnv] = useState("");
+  // Feishu fields
+  const [imFeishuAppId, setImFeishuAppId] = useState("");
+  const [imFeishuAppSecret, setImFeishuAppSecret] = useState("");
+  // DingTalk fields
+  const [imDingtalkAppKey, setImDingtalkAppKey] = useState("");
+  const [imDingtalkAppSecret, setImDingtalkAppSecret] = useState("");
   const [imBusy, setImBusy] = useState(false);
 
   // Global observability (developer mode)
@@ -141,7 +147,7 @@ export function SettingsModal({
       if (statusResp.ok) {
         setImStatus(statusResp.result);
         if (statusResp.result.platform) {
-          setImPlatform(statusResp.result.platform as "telegram" | "slack" | "discord");
+          setImPlatform(statusResp.result.platform as IMPlatform);
         }
       }
       const configResp = await api.fetchIMConfig(groupId);
@@ -150,6 +156,12 @@ export function SettingsModal({
         if (im.platform) setImPlatform(im.platform);
         setImBotTokenEnv(im.bot_token_env || im.token_env || im.token || "");
         setImAppTokenEnv(im.app_token_env || "");
+        // Feishu fields
+        setImFeishuAppId(im.feishu_app_id || "");
+        setImFeishuAppSecret(im.feishu_app_secret || "");
+        // DingTalk fields
+        setImDingtalkAppKey(im.dingtalk_app_key || "");
+        setImDingtalkAppSecret(im.dingtalk_app_secret || "");
       }
     } catch (e) {
       console.error("Failed to load IM status:", e);
@@ -305,7 +317,12 @@ export function SettingsModal({
     if (!groupId) return;
     setImBusy(true);
     try {
-      const resp = await api.setIMConfig(groupId, imPlatform, imBotTokenEnv, imAppTokenEnv);
+      const resp = await api.setIMConfig(groupId, imPlatform, imBotTokenEnv, imAppTokenEnv, {
+        feishu_app_id: imFeishuAppId,
+        feishu_app_secret: imFeishuAppSecret,
+        dingtalk_app_key: imDingtalkAppKey,
+        dingtalk_app_secret: imDingtalkAppSecret,
+      });
       if (resp.ok) await loadIMStatus();
     } catch (e) {
       console.error("Failed to save IM config:", e);
@@ -322,6 +339,10 @@ export function SettingsModal({
       if (resp.ok) {
         setImBotTokenEnv("");
         setImAppTokenEnv("");
+        setImFeishuAppId("");
+        setImFeishuAppSecret("");
+        setImDingtalkAppKey("");
+        setImDingtalkAppSecret("");
         await loadIMStatus();
       }
     } catch (e) {
@@ -630,6 +651,14 @@ export function SettingsModal({
               setImBotTokenEnv={setImBotTokenEnv}
               imAppTokenEnv={imAppTokenEnv}
               setImAppTokenEnv={setImAppTokenEnv}
+              imFeishuAppId={imFeishuAppId}
+              setImFeishuAppId={setImFeishuAppId}
+              imFeishuAppSecret={imFeishuAppSecret}
+              setImFeishuAppSecret={setImFeishuAppSecret}
+              imDingtalkAppKey={imDingtalkAppKey}
+              setImDingtalkAppKey={setImDingtalkAppKey}
+              imDingtalkAppSecret={imDingtalkAppSecret}
+              setImDingtalkAppSecret={setImDingtalkAppSecret}
               imBusy={imBusy}
               onSaveConfig={handleSaveIMConfig}
               onRemoveConfig={handleRemoveIMConfig}

@@ -12,6 +12,7 @@ import type {
   DirSuggestion,
   IMConfig,
   IMStatus,
+  IMPlatform,
 } from "../types";
 
 // ============ Base types & helpers ============
@@ -446,18 +447,44 @@ export async function fetchIMConfig(groupId: string) {
 
 export async function setIMConfig(
   groupId: string,
-  platform: "telegram" | "slack" | "discord",
+  platform: IMPlatform,
   botTokenEnv: string,
-  appTokenEnv?: string
+  appTokenEnv?: string,
+  extra?: {
+    feishu_app_id?: string;
+    feishu_app_secret?: string;
+    dingtalk_app_key?: string;
+    dingtalk_app_secret?: string;
+  }
 ) {
+  const body: Record<string, unknown> = {
+    group_id: groupId,
+    platform,
+  };
+
+  // Telegram/Slack/Discord use bot_token_env
+  if (platform === "telegram" || platform === "slack" || platform === "discord") {
+    body.bot_token_env = botTokenEnv;
+    if (platform === "slack" && appTokenEnv) {
+      body.app_token_env = appTokenEnv;
+    }
+  }
+
+  // Feishu uses app_id and app_secret
+  if (platform === "feishu" && extra) {
+    body.feishu_app_id = extra.feishu_app_id;
+    body.feishu_app_secret = extra.feishu_app_secret;
+  }
+
+  // DingTalk uses app_key and app_secret
+  if (platform === "dingtalk" && extra) {
+    body.dingtalk_app_key = extra.dingtalk_app_key;
+    body.dingtalk_app_secret = extra.dingtalk_app_secret;
+  }
+
   return apiJson("/api/im/set", {
     method: "POST",
-    body: JSON.stringify({
-      group_id: groupId,
-      platform,
-      bot_token_env: botTokenEnv,
-      app_token_env: platform === "slack" ? appTokenEnv : undefined,
-    }),
+    body: JSON.stringify(body),
   });
 }
 
