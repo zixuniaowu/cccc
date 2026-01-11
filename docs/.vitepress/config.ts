@@ -4,13 +4,16 @@ export default defineConfig({
   title: 'CCCC',
   description: 'Multi-Agent Collaboration Kernel',
 
+  // GitHub Pages base path
+  base: '/cccc/',
+
   // Ignore dead links in legacy vnext docs
   ignoreDeadLinks: [
     /archive/
   ],
 
   head: [
-    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/logo.svg' }]
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/cccc/logo.svg' }]
   ],
 
   themeConfig: {
