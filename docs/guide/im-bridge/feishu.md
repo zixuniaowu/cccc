@@ -113,9 +113,12 @@ The CCCC IM Bridge must be running before you can configure event subscriptions.
 :::
 
 1. Go back to [Feishu Open Platform](https://open.feishu.cn/app)
-2. Navigate to your app → **Event Subscriptions**
-3. Enable **Event Subscriptions**
-4. For **Request URL**, CCCC uses long polling mode by default, so you can leave this empty or configure as needed
+2. Navigate to your app → **Events & Callbacks**
+3. In **Event Configuration** tab, find **Subscription mode**
+4. Select **Receive events through persistent connection** (Recommended)
+5. Click **Save**
+
+![Feishu Event Configuration - Long Polling](/images/feishu-event-config.png)
 
 ## Step 6: Configure Event Subscriptions
 
