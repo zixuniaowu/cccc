@@ -1,0 +1,12 @@
+{
+  "name": "cccc-docs",
+  "type": "module",
+  "scripts": {
+    "dev": "vitepress dev --port 5000",
+    "build": "vitepress build",
+    "preview": "vitepress preview"
+  },
+  "devDependencies": {
+    "vitepress": "^1.5.0"
+  }
+}
