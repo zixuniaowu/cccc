@@ -1,0 +1,71 @@
+# Getting Started
+
+Get CCCC running in 10 minutes.
+
+## Choose Your Approach
+
+CCCC offers two ways to get started:
+
+<div class="vp-card-container">
+
+### [Web UI Quick Start](./web)
+
+**Recommended for most users**
+
+- Visual interface for managing agents
+- Point-and-click configuration
+- Real-time terminal view
+- Mobile-friendly
+
+### [CLI Quick Start](./cli)
+
+**For terminal enthusiasts**
+
+- Full control via command line
+- Scriptable and automatable
+- Great for CI/CD integration
+- Power user features
+
+</div>
+
+## Prerequisites
+
+Both approaches require:
+
+- **Python 3.9+** installed
+- At least one AI agent CLI:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
+  - [Codex CLI](https://github.com/openai/codex)
+  - [GitHub Copilot CLI](https://docs.github.com/en/copilot)
+  - Or any other supported runtime
+
+## Installation
+
+### From TestPyPI (recommended for RC)
+
+```bash
+python -m pip install --index-url https://pypi.org/simple \
+  --extra-index-url https://test.pypi.org/simple \
+  cccc-pair==0.4.0rc15
+```
+
+### From Source
+
+```bash
+git clone https://github.com/ChesterRa/cccc
+cd cccc
+pip install -e .
+```
+
+## Verify Installation
+
+```bash
+cccc doctor
+```
+
+This checks Python version, available runtimes, and system configuration.
+
+## Next Steps
+
+- [Web UI Quick Start](./web) - Get started with the visual interface
+- [CLI Quick Start](./cli) - Get started with the command line

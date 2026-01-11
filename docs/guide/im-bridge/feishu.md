@@ -1,0 +1,297 @@
+# Feishu (Lark) Setup
+
+Connect your CCCC working group to Feishu for enterprise collaboration in China.
+
+## Overview
+
+Feishu (飞书, also known as Lark internationally) is ideal for:
+
+- Chinese enterprises
+- Teams already using Feishu
+- Bytedance ecosystem users
+
+## Prerequisites
+
+- Feishu enterprise account with admin access
+- CCCC installed and running
+
+## Step 1: Create an App
+
+1. Go to [Feishu Open Platform](https://open.feishu.cn/app)
+2. Click **Create Custom App**
+3. Fill in the app information:
+   - App Name (e.g., "CCCC Bot")
+   - App Description
+   - App Icon
+4. Click **Create**
+
+## Step 2: Configure Permissions
+
+1. Go to **Permissions & Scopes**
+2. Click **Add permission scopes to app**
+3. Search for `im:message` in the search box
+4. Select the **Tenant token scopes** tab
+5. Click **All** to select all `im:message` related scopes
+6. Click **Confirm and Apply**
+
+![Feishu Permissions Configuration](/images/feishu-permissions.png)
+
+::: tip Quick Setup
+Selecting all `im:message` scopes ensures the bot has full messaging capabilities including sending, receiving, and managing messages.
+:::
+
+## Step 3: Configure CCCC
+
+1. In your app dashboard, go to **Credentials & Basic Info**
+2. Copy **App ID** and **App Secret**
+
+::: warning Security
+Keep your App Secret confidential. Never commit it to version control.
+:::
+
+### Option A: Via Web UI
+
+1. Open the CCCC Web UI at `http://127.0.0.1:8848/`
+2. Go to **Settings** (gear icon in header)
+3. Navigate to the **IM Bridge** tab
+4. Select **Feishu (飞书)** as the platform
+5. Enter your credentials:
+   - **App ID**: Your Feishu App ID (e.g., `cli_a9e92055a5b89bc6`)
+   - **App Secret**: Your Feishu App Secret
+6. Click **Save Config**
+
+![CCCC IM Bridge Configuration](/images/cccc-im-bridge-feishu.png)
+
+### Option B: Via CLI
+
+First set environment variables:
+
+```bash
+export FEISHU_APP_ID="cli_your_app_id"
+export FEISHU_APP_SECRET="your_app_secret"
+```
+
+Then configure CCCC:
+
+```bash
+cccc im set feishu \
+  --app-id-env FEISHU_APP_ID \
+  --app-secret-env FEISHU_APP_SECRET
+```
+
+Both methods save to `group.yaml`:
+
+```yaml
+im:
+  platform: feishu
+  app_id_env: FEISHU_APP_ID
+  app_secret_env: FEISHU_APP_SECRET
+```
+
+## Step 4: Start the Bridge
+
+### Via Web UI
+
+Click the **Save Config** button in the IM Bridge settings. The bridge will start automatically and show **Running** status.
+
+### Via CLI
+
+```bash
+cccc im start
+```
+
+Verify it's running:
+
+```bash
+cccc im status
+```
+
+## Step 5: Configure Long Polling
+
+::: warning Prerequisite
+The CCCC IM Bridge must be running before you can configure event subscriptions. CCCC provides a long polling endpoint that Feishu will connect to.
+:::
+
+1. Go back to [Feishu Open Platform](https://open.feishu.cn/app)
+2. Navigate to your app → **Event Subscriptions**
+3. Enable **Event Subscriptions**
+4. For **Request URL**, CCCC uses long polling mode by default, so you can leave this empty or configure as needed
+
+## Step 6: Configure Event Subscriptions
+
+1. In **Event Subscriptions**, click **Add Events**
+2. Subscribe to the following events:
+
+| Event | Purpose |
+|-------|---------|
+| `im.message.receive_v1` | Receive messages |
+| `im.message.message_read_v1` | Read receipts |
+
+3. Click **Save**
+
+## Step 7: Enable Bot
+
+::: tip Why This Step?
+You must enable the Bot capability so users can find and chat with your bot after the app is published.
+:::
+
+1. In the sidebar, go to **Features** → **Bot**
+2. In **Bot Setting**, fill in the **Get started** field with a greeting message (e.g., "cccc im")
+3. Click **Save**
+
+![Feishu Bot Setting](/images/feishu-bot-setting.png)
+
+## Step 8: Publish the App
+
+1. Go to **Version Management & Release**
+2. Create a new version
+3. Submit for review (enterprise apps may auto-approve)
+4. Once approved, publish to your organization
+
+## Step 9: Subscribe in Feishu
+
+1. Find the bot in your Feishu app
+2. Start a chat or add to a group
+3. Send `/subscribe`
+4. Confirm the subscription
+
+## Usage
+
+### Sending Messages to Agents
+
+In group chats, @mention the bot first, then use the `/send` command:
+
+```
+@YourBotName /send Please implement the login feature
+```
+
+In direct messages with the bot, you can use `/send` directly:
+
+```
+/send Please implement the login feature
+```
+
+::: warning Important
+- In group chats, you must @mention the bot before using commands
+- Plain messages without the `/send` command are ignored
+:::
+
+### Targeting Specific Agents
+
+Use `@mention` syntax with the `/send` command:
+
+```
+/send @foreman Please assign today's tasks
+/send @backend Check the API endpoints
+/send @all Status update please
+```
+
+### Receiving Messages
+
+After subscribing, you will automatically receive:
+- Agent responses
+- Status updates
+- Error notifications
+
+Use `/verbose` to toggle whether you see agent-to-agent messages.
+
+### File Sharing
+
+Attach files to your message. Feishu files are downloaded and stored in CCCC's blob storage, then forwarded to agents.
+
+## Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `/subscribe` | Start receiving messages from CCCC |
+| `/unsubscribe` | Stop receiving messages |
+| `/send <message>` | Send a message to agents |
+| `/send @<actor> <message>` | Send to a specific agent |
+| `/status` | Show group and agent status |
+| `/pause` | Pause message delivery |
+| `/resume` | Resume message delivery |
+| `/verbose` | Toggle verbose mode (see all agent messages) |
+| `/help` | Show available commands |
+
+## Troubleshooting
+
+### "Invalid app_id" Error
+
+1. Verify your App ID in the Feishu Open Platform
+2. Check environment variable is set correctly
+3. Ensure the app is published and approved
+
+### "Permission denied" Error
+
+1. Go to **Permissions & Scopes**
+2. Add the missing permission
+3. Submit a new version for approval
+
+### Bot not receiving messages
+
+1. Check Event Subscriptions are configured
+2. Verify the app is installed in the chat
+3. Ensure the app version is published
+4. Make sure CCCC IM Bridge is running
+
+### Token expired
+
+CCCC auto-refreshes tokens, but if issues persist:
+
+```bash
+cccc im stop
+cccc im start
+```
+
+## Advanced Configuration
+
+### Webhook Mode
+
+For production, use webhooks instead of long polling:
+
+```yaml
+im:
+  platform: feishu
+  app_id_env: FEISHU_APP_ID
+  app_secret_env: FEISHU_APP_SECRET
+  webhook_verification_token: "your-verification-token"
+```
+
+Configure the webhook URL in Feishu Open Platform → Event Subscriptions.
+
+### Message Cards
+
+Enable rich message cards:
+
+```yaml
+im:
+  platform: feishu
+  app_id_env: FEISHU_APP_ID
+  app_secret_env: FEISHU_APP_SECRET
+  use_message_cards: true
+```
+
+### Encryption (Optional)
+
+For sensitive enterprises, enable message encryption:
+
+1. Go to **Encrypt Configuration** in Feishu Open Platform
+2. Enable and configure encryption
+3. Add to CCCC config:
+
+```yaml
+im:
+  platform: feishu
+  app_id_env: FEISHU_APP_ID
+  app_secret_env: FEISHU_APP_SECRET
+  encrypt_key_env: FEISHU_ENCRYPT_KEY
+```
+
+## Security Notes
+
+- Store credentials in environment variables or a secrets manager
+- Use the minimal required permissions
+- Review app access regularly
+- Consider IP whitelisting for webhook endpoints
+- Enable encryption for sensitive communications
+- Audit app usage through Feishu admin console
