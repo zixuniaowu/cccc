@@ -62,6 +62,8 @@ daemon 解析 to 字段
 | Telegram | ✅ 完成 | `token_env` |
 | Slack | ✅ 完成 | `bot_token_env` + `app_token_env` |
 | Discord | ✅ 完成 | `token_env` |
+| Feishu | ✅ 完成 | `FEISHU_APP_ID` + `FEISHU_APP_SECRET` |
+| DingTalk | ✅ 完成 | `DINGTALK_APP_KEY` + `DINGTALK_APP_SECRET` |
 
 ### 2.3 配置
 
@@ -76,6 +78,19 @@ im:
   platform: slack
   bot_token_env: SLACK_BOT_TOKEN    # xoxb-... Web API
   app_token_env: SLACK_APP_TOKEN    # xapp-... Socket Mode
+
+# Feishu 使用环境变量（App ID/Secret）
+# export FEISHU_APP_ID=xxx
+# export FEISHU_APP_SECRET=xxx
+im:
+  platform: feishu
+
+# DingTalk 使用环境变量（App Key/Secret；可选 Robot Code）
+# export DINGTALK_APP_KEY=xxx
+# export DINGTALK_APP_SECRET=xxx
+# export DINGTALK_ROBOT_CODE=xxx  # optional
+im:
+  platform: dingtalk
 ```
 
 ### 2.4 IM 命令
