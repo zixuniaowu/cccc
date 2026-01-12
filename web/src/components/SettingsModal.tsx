@@ -142,6 +142,15 @@ export function SettingsModal({
 
   const loadIMStatus = async () => {
     if (!groupId) return;
+    // Reset IM state before loading new group's config to avoid stale data
+    setImStatus(null);
+    setImPlatform("telegram");
+    setImBotTokenEnv("");
+    setImAppTokenEnv("");
+    setImFeishuAppId("");
+    setImFeishuAppSecret("");
+    setImDingtalkAppKey("");
+    setImDingtalkAppSecret("");
     try {
       const statusResp = await api.fetchIMStatus(groupId);
       if (statusResp.ok) {

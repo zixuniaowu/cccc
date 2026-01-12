@@ -786,11 +786,25 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         if not app_token:
             print("[warn] No app token configured - inbound messages disabled")
     elif platform.lower() == "feishu":
-        # Feishu uses app_id + app_secret, handled later in adapter creation
-        pass
+        # Feishu uses app_id + app_secret
+        # Read credentials early for lock fingerprint calculation
+        feishu_app_id_cfg = str(im_config.get("feishu_app_id") or "").strip()
+        feishu_app_secret_cfg = str(im_config.get("feishu_app_secret") or "").strip()
+        if not feishu_app_id_cfg or not feishu_app_secret_cfg:
+            print("[error] Feishu app_id and app_secret required in group config")
+            sys.exit(1)
+        # Use app_id for lock fingerprint (bot_token slot)
+        bot_token = feishu_app_id_cfg
     elif platform.lower() == "dingtalk":
-        # DingTalk uses app_key + app_secret, handled later in adapter creation
-        pass
+        # DingTalk uses app_key + app_secret
+        # Read credentials early for lock fingerprint calculation
+        dingtalk_app_key_cfg = str(im_config.get("dingtalk_app_key") or "").strip()
+        dingtalk_app_secret_cfg = str(im_config.get("dingtalk_app_secret") or "").strip()
+        if not dingtalk_app_key_cfg or not dingtalk_app_secret_cfg:
+            print("[error] DingTalk app_key and app_secret required in group config")
+            sys.exit(1)
+        # Use app_key for lock fingerprint (bot_token slot)
+        bot_token = dingtalk_app_key_cfg
     else:
         # Telegram/Discord: single token
         token_env_raw = str(im_config.get("token_env") or im_config.get("bot_token_env") or "").strip()

@@ -18,7 +18,7 @@
 *.egg-info/
 
 # Web UI build/cache artifacts
-/web/node_modules/
+*/node_modules/
 /web/.vite/
 /web/dist/
 /src/cccc/ports/web/dist/
@@ -32,8 +32,11 @@
 # Local dev environments
 /venv-publish/
 
-# Docs: ignore by default; whitelist only what we ship.
-/docs/*
+# Docs: VitePress build artifacts
+/docs/.vitepress/cache/
+/docs/.vitepress/dist/
+
+# Docs: legacy vnext - whitelist only what we ship
 !/docs/vnext/
 /docs/vnext/*
 !/docs/vnext/README.md
