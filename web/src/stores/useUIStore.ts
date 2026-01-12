@@ -18,6 +18,7 @@ interface UIState {
   showScrollButton: boolean;
   chatUnreadCount: number;
   isSmallScreen: boolean;
+  chatFilter: "all" | "to_user" | "attention";
 
   // Actions
   setActiveTab: (tab: string) => void;
@@ -33,6 +34,7 @@ interface UIState {
   setChatUnreadCount: (v: number) => void;
   incrementChatUnread: () => void;
   setSmallScreen: (v: boolean) => void;
+  setChatFilter: (v: "all" | "to_user" | "attention") => void;
 }
 
 let errorTimeoutId: number | null = null;
@@ -48,6 +50,7 @@ export const useUIStore = create<UIState>((set) => ({
   showScrollButton: false,
   chatUnreadCount: 0,
   isSmallScreen: false,
+  chatFilter: "all",
 
   // Actions
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -80,4 +83,5 @@ export const useUIStore = create<UIState>((set) => ({
   setChatUnreadCount: (v) => set({ chatUnreadCount: v }),
   incrementChatUnread: () => set((state) => ({ chatUnreadCount: state.chatUnreadCount + 1 })),
   setSmallScreen: (v) => set({ isSmallScreen: v }),
+  setChatFilter: (v) => set({ chatFilter: v }),
 }));

@@ -231,12 +231,14 @@ Place `PROJECT.md` at the scope root (repo root). Treat it as the project consti
 
 ---
 
-## IM Bridge (Telegram / Slack / Discord / Feishu / DingTalk)
+## IM Bridge (Telegram / Slack / Discord / Feishu/Lark / DingTalk)
 
 CCCC can bridge a working group to an IM platform.
 
 - Subscriptions are explicit (e.g. send `/subscribe` in the chat).
 - Attachments are stored under `CCCC_HOME` blobs and referenced in the ledger (not written into your repo by default).
+- Feishu/Lark share the same API surface, but Lark uses a different domain (selectable in Settings).
+- Inbound streaming requires extra Python deps: `lark-oapi` (Feishu/Lark) and `dingtalk-stream` (DingTalk).
 
 Configure via Web UI (Settings → IM Bridge) or CLI:
 

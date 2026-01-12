@@ -25,7 +25,7 @@ from ..kernel.registry import load_registry
 from ..kernel.scope import detect_scope
 from ..kernel.actors import add_actor, find_actor, find_foreman, list_actors, remove_actor, resolve_recipient_tokens, update_actor, get_effective_role
 from ..kernel.blobs import resolve_blob_attachment_path
-from ..kernel.inbox import find_event, get_cursor, get_quote_text, is_message_for_actor, latest_unread_event, set_cursor, unread_messages
+from ..kernel.inbox import find_event, get_cursor, get_quote_text, has_chat_ack, is_message_for_actor, latest_unread_event, set_cursor, unread_messages
 from ..kernel.ledger_retention import compact as compact_ledger
 from ..kernel.ledger_retention import snapshot as snapshot_ledger
 from ..kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
@@ -2924,7 +2924,106 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             by=by,
             data={"actor_id": actor_id, "event_id": event_id},
         )
-        return DaemonResponse(ok=True, result={"cursor": cursor, "event": read_ev}), False
+        ack_ev: Optional[dict[str, Any]] = None
+        try:
+            # Attention acknowledgements are explicit and independent of read cursors.
+            # For actors, we treat "mark_read on an attention message" as the ACK gesture.
+            if by == actor_id and str(ev.get("kind") or "") == "chat.message":
+                data = ev.get("data")
+                if isinstance(data, dict) and str(data.get("priority") or "normal").strip() == "attention":
+                    sender = str(ev.get("by") or "").strip()
+                    if sender and sender != actor_id and not has_chat_ack(group, event_id=event_id, actor_id=actor_id):
+                        ack_ev = append_event(
+                            group.ledger_path,
+                            kind="chat.ack",
+                            group_id=group.group_id,
+                            scope_key="",
+                            by=by,
+                            data={"actor_id": actor_id, "event_id": event_id},
+                        )
+        except Exception:
+            ack_ev = None
+        return DaemonResponse(ok=True, result={"cursor": cursor, "event": read_ev, "ack_event": ack_ev}), False
+
+    if op == "chat_ack":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        event_id = str(args.get("event_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not actor_id:
+            return _error("missing_actor_id", "missing actor_id"), False
+        if not event_id:
+            return _error("missing_event_id", "missing event_id"), False
+        if not by:
+            by = "user"
+
+        # ACK is self-only (no acks on behalf of other recipients).
+        if by != actor_id:
+            return _error("permission_denied", "ack must be performed by the recipient (by must equal actor_id)"), False
+
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+
+        if actor_id != "user":
+            actor = find_actor(group, actor_id)
+            if not isinstance(actor, dict):
+                return _error("unknown_actor", f"unknown actor: {actor_id}"), False
+
+        target = find_event(group, event_id)
+        if target is None:
+            return _error("event_not_found", f"event not found: {event_id}"), False
+        if str(target.get("kind") or "") != "chat.message":
+            return _error("invalid_event_kind", "event kind must be chat.message"), False
+
+        sender = str(target.get("by") or "").strip()
+        if sender and sender == actor_id:
+            return _error("cannot_ack_own_message", "cannot acknowledge your own message"), False
+
+        data = target.get("data")
+        if not isinstance(data, dict):
+            return _error("invalid_event_data", "invalid message data"), False
+        if str(data.get("priority") or "normal").strip() != "attention":
+            return _error("not_an_attention_message", "message priority is not attention"), False
+
+        # Validate that the recipient is a target of the message.
+        if actor_id == "user":
+            to_raw = data.get("to")
+            to_tokens = [str(x).strip() for x in to_raw] if isinstance(to_raw, list) else []
+            to_set = {t for t in to_tokens if t}
+            if "user" not in to_set and "@user" not in to_set:
+                return _error("event_not_for_actor", "message is not addressed to user"), False
+        else:
+            # Ensure actor existed at the time of the message (avoid ack requirements for later-added actors).
+            try:
+                from ..util.time import parse_utc_iso
+
+                msg_dt = parse_utc_iso(str(target.get("ts") or ""))
+                actor = find_actor(group, actor_id)
+                created_ts = str(actor.get("created_at") or "").strip() if isinstance(actor, dict) else ""
+                created_dt = parse_utc_iso(created_ts) if created_ts else None
+                if msg_dt is not None and created_dt is not None and created_dt > msg_dt:
+                    return _error("event_not_for_actor", f"actor did not exist at message time: {actor_id}"), False
+            except Exception:
+                pass
+            if not is_message_for_actor(group, actor_id=actor_id, event=target):
+                return _error("event_not_for_actor", f"event is not addressed to actor: {actor_id}"), False
+
+        if has_chat_ack(group, event_id=event_id, actor_id=actor_id):
+            return DaemonResponse(ok=True, result={"acked": True, "already": True, "event": None}), False
+
+        ack_ev = append_event(
+            group.ledger_path,
+            kind="chat.ack",
+            group_id=group.group_id,
+            scope_key="",
+            by=by,
+            data={"actor_id": actor_id, "event_id": event_id},
+        )
+        return DaemonResponse(ok=True, result={"acked": True, "already": False, "event": ack_ev}), False
 
     if op == "inbox_mark_all_read":
         group_id = str(args.get("group_id") or "").strip()
@@ -3000,14 +3099,110 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("ledger_compact_failed", str(e)), False
         return DaemonResponse(ok=True, result=res), False
 
+    if op == "send_cross_group":
+        src_group_id = str(args.get("group_id") or "").strip()
+        dst_group_id = str(args.get("dst_group_id") or "").strip()
+        text = str(args.get("text") or "")
+        by = str(args.get("by") or "user").strip() or "user"
+        priority = str(args.get("priority") or "normal").strip() or "normal"
+        to_raw = args.get("to")
+        dst_to_tokens: list[str] = []
+        if isinstance(to_raw, list):
+            dst_to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
+
+        attachments_raw = args.get("attachments")
+        if attachments_raw:
+            return _error("attachments_not_supported", "attachments are not supported for cross-group messages yet"), False
+
+        if priority not in ("normal", "attention"):
+            return _error("invalid_priority", "priority must be 'normal' or 'attention'"), False
+
+        if not src_group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not dst_group_id:
+            return _error("missing_dst_group_id", "missing dst_group_id"), False
+        if src_group_id == dst_group_id:
+            return _error("invalid_dst_group_id", "dst_group_id must be different from group_id"), False
+
+        src_group = load_group(src_group_id)
+        if src_group is None:
+            return _error("group_not_found", f"group not found: {src_group_id}"), False
+        dst_group = load_group(dst_group_id)
+        if dst_group is None:
+            return _error("group_not_found", f"group not found: {dst_group_id}"), False
+
+        # Canonicalize destination recipient tokens for stable display in the source message.
+        dst_to_canon: list[str] = []
+        if dst_to_tokens:
+            try:
+                dst_to_canon = resolve_recipient_tokens(dst_group, dst_to_tokens)
+            except Exception as e:
+                return _error("invalid_recipient", str(e)), False
+
+        # 1) Write a source message into the origin group (not delivered to local actors).
+        src_req = DaemonRequest(
+            op="send",
+            args={
+                "group_id": src_group_id,
+                "text": text,
+                "by": by,
+                "to": ["user"],
+                "priority": priority,
+                "dst_group_id": dst_group_id,
+                "dst_to": dst_to_canon,
+            },
+        )
+        src_resp, _ = handle_request(src_req)
+        if not src_resp.ok:
+            return src_resp, False
+
+        src_event = src_resp.result.get("event")
+        src_event_id = str((src_event or {}).get("id") or "").strip() if isinstance(src_event, dict) else ""
+        if not src_event_id:
+            return _error("send_failed", "missing source event id"), False
+
+        # 2) Forward a message into the destination group with provenance.
+        dst_req = DaemonRequest(
+            op="send",
+            args={
+                "group_id": dst_group_id,
+                "text": text,
+                "by": by,
+                "to": dst_to_canon,
+                "priority": priority,
+                "src_group_id": src_group_id,
+                "src_event_id": src_event_id,
+            },
+        )
+        dst_resp, _ = handle_request(dst_req)
+        if not dst_resp.ok:
+            return dst_resp, False
+
+        return DaemonResponse(ok=True, result={"src_event": src_event, "dst_event": dst_resp.result.get("event")}), False
+
     if op == "send":
         group_id = str(args.get("group_id") or "").strip()
         text = str(args.get("text") or "")
         by = str(args.get("by") or "user").strip()
+        priority = str(args.get("priority") or "normal").strip() or "normal"
+        src_group_id = str(args.get("src_group_id") or "").strip()
+        src_event_id = str(args.get("src_event_id") or "").strip()
+        dst_group_id = str(args.get("dst_group_id") or "").strip()
+        dst_to_raw = args.get("dst_to")
+        dst_to: list[str] = []
+        if isinstance(dst_to_raw, list):
+            dst_to = [str(x).strip() for x in dst_to_raw if isinstance(x, str) and str(x).strip()]
+        if (src_group_id and not src_event_id) or (src_event_id and not src_group_id):
+            # Require both fields to treat this as a relay reference.
+            src_group_id = ""
+            src_event_id = ""
         to_raw = args.get("to")
         to_tokens: list[str] = []
         if isinstance(to_raw, list):
             to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
+
+        if priority not in ("normal", "attention"):
+            return _error("invalid_priority", "priority must be 'normal' or 'attention'"), False
 
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
@@ -3098,7 +3293,17 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             group_id=group.group_id,
             scope_key=scope_key,
             by=by,
-            data=ChatMessageData(text=text, format="plain", to=to, attachments=attachments).model_dump(),
+            data=ChatMessageData(
+                text=text,
+                format="plain",
+                priority=priority,
+                to=to,
+                attachments=attachments,
+                src_group_id=src_group_id or None,
+                src_event_id=src_event_id or None,
+                dst_group_id=dst_group_id or None,
+                dst_to=dst_to if dst_group_id else None,
+            ).model_dump(),
         )
         # Keep group ordering IM-like by bumping the group's last activity timestamp.
         try:
@@ -3116,6 +3321,13 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         event_id = str(ev.get("id") or "").strip()
         event_ts = str(ev.get("ts") or "").strip()
         delivery_text = text
+        prefix_lines: list[str] = []
+        if priority == "attention" and event_id:
+            prefix_lines.append(f"[cccc] IMPORTANT (event_id={event_id}):")
+        if src_group_id and src_event_id:
+            prefix_lines.append(f"[cccc] RELAYED FROM (group_id={src_group_id}, event_id={src_event_id}):")
+        if prefix_lines:
+            delivery_text = "\n".join(prefix_lines) + "\n" + delivery_text
         if attachments:
             lines = ["[cccc] Attachments:"]
             for a in attachments[:8]:
@@ -3160,6 +3372,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             ev_for_headless["data"] = dict(ev.get("data") or {})
             ev_for_headless["data"]["to"] = effective_to
             headless_targets = get_headless_targets_for_message(group, event=ev_for_headless, by=by)
+            notify_title = "Important message" if priority == "attention" else "New message"
+            notify_priority = "urgent" if priority == "attention" else "high"
             for aid in headless_targets:
                 append_event(
                     group.ledger_path,
@@ -3169,8 +3383,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     by="system",
                     data={
                         "kind": "info",
-                        "priority": "high",
-                        "title": "New message",
+                        "priority": notify_priority,
+                        "title": notify_title,
                         "message": f"New message from {by}. Check your inbox.",
                         "target_actor_id": aid,
                         "requires_ack": False,
@@ -3196,10 +3410,14 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         text = str(args.get("text") or "")
         by = str(args.get("by") or "user").strip()
         reply_to = str(args.get("reply_to") or "").strip()
+        priority = str(args.get("priority") or "normal").strip() or "normal"
         to_raw = args.get("to")
         to_tokens: list[str] = []
         if isinstance(to_raw, list):
             to_tokens = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
+
+        if priority not in ("normal", "attention"):
+            return _error("invalid_priority", "priority must be 'normal' or 'attention'"), False
 
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
@@ -3264,6 +3482,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             data=ChatMessageData(
                 text=text,
                 format="plain",
+                priority=priority,
                 to=to,
                 reply_to=reply_to,
                 quote_text=quote_text,
@@ -3291,6 +3510,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         event_id = str(ev.get("id") or "").strip()
         event_ts = str(ev.get("ts") or "").strip()
         delivery_text = text
+        if priority == "attention" and event_id:
+            delivery_text = f"[cccc] IMPORTANT (event_id={event_id}):\n" + delivery_text
         if attachments:
             lines = ["[cccc] Attachments:"]
             for a in attachments[:8]:
@@ -3328,6 +3549,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         # Headless runners: notify via system.notify event (daemon writes to ledger)
         try:
             headless_targets = get_headless_targets_for_message(group, event=ev_with_effective_to, by=by)
+            notify_title = "Important message" if priority == "attention" else "New message"
+            notify_priority = "urgent" if priority == "attention" else "high"
             for aid in headless_targets:
                 append_event(
                     group.ledger_path,
@@ -3337,8 +3560,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     by="system",
                     data={
                         "kind": "info",
-                        "priority": "high",
-                        "title": "New message",
+                        "priority": notify_priority,
+                        "title": notify_title,
                         "message": f"New message from {by}. Check your inbox.",
                         "target_actor_id": aid,
                         "requires_ack": False,

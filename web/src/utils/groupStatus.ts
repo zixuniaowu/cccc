@@ -1,28 +1,63 @@
-export function getGroupStatus(running: boolean, state?: string): { label: string; colorClass: string } {
-  if (!running) {
-    return { label: "○ STOP", colorClass: "bg-slate-700/50 text-slate-500" };
-  }
+export type GroupStatus = { label: string; pillClass: string; dotClass: string };
+
+export function getGroupStatus(running: boolean, state?: string): GroupStatus {
   switch (state) {
     case "paused":
-      return { label: "⏸ PAUSED", colorClass: "bg-amber-500/20 text-amber-500" };
+      return {
+        label: "⏸ PAUSED",
+        pillClass: "bg-amber-500/20 text-amber-500",
+        dotClass: "bg-amber-400",
+      };
     case "idle":
-      return { label: "✓ IDLE", colorClass: "bg-blue-500/20 text-blue-400" };
+      return {
+        label: "✓ IDLE",
+        pillClass: "bg-blue-500/20 text-blue-400",
+        dotClass: "bg-blue-400",
+      };
     default:
-      return { label: "● RUN", colorClass: "bg-emerald-500/20 text-emerald-500" };
+      break;
   }
+  if (!running) {
+    return {
+      label: "○ STOP",
+      pillClass: "bg-slate-700/50 text-slate-500",
+      dotClass: "bg-slate-500",
+    };
+  }
+  return {
+    label: "● RUN",
+    pillClass: "bg-emerald-500/20 text-emerald-500",
+    dotClass: "bg-emerald-400",
+  };
 }
 
-export function getGroupStatusLight(running: boolean, state?: string): { label: string; colorClass: string } {
-  if (!running) {
-    return { label: "○ STOP", colorClass: "bg-gray-200 text-gray-500" };
-  }
+export function getGroupStatusLight(running: boolean, state?: string): GroupStatus {
   switch (state) {
     case "paused":
-      return { label: "⏸ PAUSED", colorClass: "bg-amber-100 text-amber-600" };
+      return {
+        label: "⏸ PAUSED",
+        pillClass: "bg-amber-100 text-amber-600",
+        dotClass: "bg-amber-500",
+      };
     case "idle":
-      return { label: "✓ IDLE", colorClass: "bg-blue-100 text-blue-600" };
+      return {
+        label: "✓ IDLE",
+        pillClass: "bg-blue-100 text-blue-600",
+        dotClass: "bg-blue-500",
+      };
     default:
-      return { label: "● RUN", colorClass: "bg-emerald-100 text-emerald-600" };
+      break;
   }
+  if (!running) {
+    return {
+      label: "○ STOP",
+      pillClass: "bg-gray-200 text-gray-500",
+      dotClass: "bg-gray-400",
+    };
+  }
+  return {
+    label: "● RUN",
+    pillClass: "bg-emerald-100 text-emerald-600",
+    dotClass: "bg-emerald-500",
+  };
 }
-

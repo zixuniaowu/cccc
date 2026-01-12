@@ -17,12 +17,21 @@ interface GroupState {
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
   events: LedgerEvent[];
+  chatWindow: {
+    groupId: string;
+    centerEventId: string;
+    centerIndex: number;
+    events: LedgerEvent[];
+    hasMoreBefore: boolean;
+    hasMoreAfter: boolean;
+  } | null;
   actors: Actor[];
   groupContext: GroupContext | null;
   groupSettings: GroupSettings | null;
   runtimes: RuntimeInfo[];
   hasMoreHistory: boolean;
   isLoadingHistory: boolean;
+  isChatWindowLoading: boolean;
 
   // Actions
   setGroups: (groups: GroupMeta[]) => void;
@@ -31,19 +40,24 @@ interface GroupState {
   setEvents: (events: LedgerEvent[]) => void;
   appendEvent: (event: LedgerEvent) => void;
   prependEvents: (events: LedgerEvent[]) => void;
+  setChatWindow: (w: GroupState["chatWindow"]) => void;
   setActors: (actors: Actor[]) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;
   setRuntimes: (runtimes: RuntimeInfo[]) => void;
   updateReadStatus: (eventId: string, actorId: string) => void;
+  updateAckStatus: (eventId: string, actorId: string) => void;
   setHasMoreHistory: (v: boolean) => void;
   setIsLoadingHistory: (v: boolean) => void;
+  setIsChatWindowLoading: (v: boolean) => void;
 
   // Async actions
   refreshGroups: () => Promise<void>;
   refreshActors: (groupId?: string) => Promise<void>;
   loadGroup: (groupId: string) => Promise<void>;
   loadMoreHistory: () => Promise<void>;
+  openChatWindow: (groupId: string, centerEventId: string) => Promise<void>;
+  closeChatWindow: () => void;
 }
 
 const MAX_UI_EVENTS = 800;
@@ -60,18 +74,21 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   selectedGroupId: "",
   groupDoc: null,
   events: [],
+  chatWindow: null,
   actors: [],
   groupContext: null,
   groupSettings: null,
   runtimes: [],
   hasMoreHistory: true,
   isLoadingHistory: false,
+  isChatWindowLoading: false,
 
   // Sync actions
   setGroups: (groups) => set({ groups }),
   setSelectedGroupId: (id) => set({ selectedGroupId: id }),
   setGroupDoc: (doc) => set({ groupDoc: doc }),
   setEvents: (events) => set({ events }),
+  setChatWindow: (w) => set({ chatWindow: w }),
   appendEvent: (event) =>
     set((state) => {
       const next = state.events.concat([event]);
@@ -100,24 +117,97 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const idx = state.events.findIndex(
         (x) => x.kind === "chat.message" && String(x.id || "") === eventId
       );
-      if (idx < 0) return state;
+      if (idx < 0 && !state.chatWindow) return state;
 
       const next = state.events.slice();
-      for (let i = 0; i <= idx; i++) {
-        const m = next[i];
-        if (!m || m.kind !== "chat.message") continue;
-        const rs: Record<string, boolean> | null =
-          m._read_status && typeof m._read_status === "object" ? { ...m._read_status } : null;
-        // Only mark for actual recipients; never add keys for non-recipients.
-        if (!rs || !Object.prototype.hasOwnProperty.call(rs, actorId)) continue;
-        if (rs[actorId] === true) continue;
-        rs[actorId] = true;
-        next[i] = { ...m, _read_status: rs };
+      let didChange = false;
+
+      if (idx >= 0) {
+        for (let i = 0; i <= idx; i++) {
+          const m = next[i];
+          if (!m || m.kind !== "chat.message") continue;
+          const rs: Record<string, boolean> | null =
+            m._read_status && typeof m._read_status === "object" ? { ...m._read_status } : null;
+          // Only mark for actual recipients; never add keys for non-recipients.
+          if (!rs || !Object.prototype.hasOwnProperty.call(rs, actorId)) continue;
+          if (rs[actorId] === true) continue;
+          rs[actorId] = true;
+          next[i] = { ...m, _read_status: rs };
+          didChange = true;
+        }
       }
-      return { events: next };
+
+      let nextWindow = state.chatWindow;
+      if (state.chatWindow && String(state.chatWindow.groupId || "") === String(state.selectedGroupId || "")) {
+        const wNext = state.chatWindow.events.slice();
+        const wIdx = wNext.findIndex((x) => x.kind === "chat.message" && String(x.id || "") === eventId);
+        if (wIdx >= 0) {
+          for (let i = 0; i <= wIdx; i++) {
+            const m = wNext[i];
+            if (!m || m.kind !== "chat.message") continue;
+            const rs: Record<string, boolean> | null =
+              m._read_status && typeof m._read_status === "object" ? { ...m._read_status } : null;
+            if (!rs || !Object.prototype.hasOwnProperty.call(rs, actorId)) continue;
+            if (rs[actorId] === true) continue;
+            rs[actorId] = true;
+            wNext[i] = { ...m, _read_status: rs };
+            didChange = true;
+          }
+          nextWindow = { ...state.chatWindow, events: wNext };
+        }
+      }
+
+      if (!didChange) return state;
+      return { events: next, chatWindow: nextWindow };
+    }),
+
+  updateAckStatus: (eventId, actorId) =>
+    set((state) => {
+      const idx = state.events.findIndex(
+        (x) => x.kind === "chat.message" && String(x.id || "") === eventId
+      );
+      if (idx < 0 && !state.chatWindow) return state;
+
+      const next = state.events.slice();
+      const msg = idx >= 0 ? next[idx] : null;
+
+      let didChange = false;
+
+      if (msg && msg.kind === "chat.message") {
+        const as: Record<string, boolean> | null =
+          msg._ack_status && typeof msg._ack_status === "object" ? { ...msg._ack_status } : null;
+        if (as && Object.prototype.hasOwnProperty.call(as, actorId) && as[actorId] !== true) {
+          as[actorId] = true;
+          next[idx] = { ...msg, _ack_status: as };
+          didChange = true;
+        }
+      }
+
+      let nextWindow = state.chatWindow;
+      if (state.chatWindow && String(state.chatWindow.groupId || "") === String(state.selectedGroupId || "")) {
+        const wNext = state.chatWindow.events.slice();
+        const wIdx = wNext.findIndex((x) => x.kind === "chat.message" && String(x.id || "") === eventId);
+        if (wIdx >= 0) {
+          const wMsg = wNext[wIdx];
+          const as: Record<string, boolean> | null =
+            wMsg && wMsg.kind === "chat.message" && wMsg._ack_status && typeof wMsg._ack_status === "object"
+              ? { ...wMsg._ack_status }
+              : null;
+          if (as && Object.prototype.hasOwnProperty.call(as, actorId) && as[actorId] !== true) {
+            as[actorId] = true;
+            wNext[wIdx] = { ...wMsg, _ack_status: as };
+            nextWindow = { ...state.chatWindow, events: wNext };
+            didChange = true;
+          }
+        }
+      }
+
+      if (!didChange) return state;
+      return { events: next, chatWindow: nextWindow };
     }),
   setHasMoreHistory: (v) => set({ hasMoreHistory: v }),
   setIsLoadingHistory: (v) => set({ isLoadingHistory: v }),
+  setIsChatWindowLoading: (v) => set({ isChatWindowLoading: v }),
 
   // Async actions
   refreshGroups: async () => {
@@ -136,6 +226,24 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         const curExists = !!cur && next.some((g) => String(g.group_id || "") === cur);
         if (!curExists && next.length > 0) {
           set({ selectedGroupId: String(next[0].group_id || "") });
+        }
+
+        // Keep groupDoc's basic fields in sync with the group list. This matters when
+        // group state/title/topic is changed externally (CLI/MCP/etc.), since groupDoc
+        // is otherwise only updated by web actions or explicit loadGroup().
+        const selectedId = get().selectedGroupId;
+        const doc = get().groupDoc;
+        if (doc && selectedId && String(doc.group_id || "") === String(selectedId || "")) {
+          const meta = next.find((g) => String(g.group_id || "") === String(selectedId || "")) || null;
+          if (meta) {
+            const patch: Partial<GroupDoc> = {};
+            if (typeof meta.state === "string" && meta.state !== doc.state) patch.state = meta.state;
+            if (typeof meta.title === "string" && meta.title !== doc.title) patch.title = meta.title;
+            if (typeof meta.topic === "string" && meta.topic !== doc.topic) patch.topic = meta.topic;
+            if (Object.keys(patch).length > 0) {
+              set({ groupDoc: { ...doc, ...patch } });
+            }
+          }
         }
       }
     } catch {
@@ -196,7 +304,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       actors: a.ok ? a.result.actors || [] : [],
       groupContext: ctx.ok ? (ctx.result as GroupContext) : null,
       groupSettings: settings.ok && settings.result.settings ? settings.result.settings : null,
-      hasMoreHistory: true, // Reset when switching groups
+      hasMoreHistory: tail.ok ? !!tail.result.has_more : true,
     });
   },
 
@@ -234,4 +342,47 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       set({ isLoadingHistory: false });
     }
   },
+
+  openChatWindow: async (groupId: string, centerEventId: string) => {
+    const gid = String(groupId || "").trim();
+    const eid = String(centerEventId || "").trim();
+    if (!gid || !eid) return;
+
+    set({
+      isChatWindowLoading: true,
+      chatWindow: {
+        groupId: gid,
+        centerEventId: eid,
+        centerIndex: 0,
+        events: [],
+        hasMoreBefore: false,
+        hasMoreAfter: false,
+      },
+    });
+    try {
+      const resp = await api.fetchMessageWindow(gid, eid, { before: 30, after: 30 });
+      if (!resp.ok) {
+        set({ chatWindow: null });
+        return;
+      }
+      // Guard against group switch during load.
+      if (get().selectedGroupId !== gid) return;
+
+      const events = (resp.result.events || []).filter((ev) => ev && ev.kind === "chat.message");
+      set({
+        chatWindow: {
+          groupId: gid,
+          centerEventId: resp.result.center_id,
+          centerIndex: resp.result.center_index,
+          events,
+          hasMoreBefore: !!resp.result.has_more_before,
+          hasMoreAfter: !!resp.result.has_more_after,
+        },
+      });
+    } finally {
+      set({ isChatWindowLoading: false });
+    }
+  },
+
+  closeChatWindow: () => set({ chatWindow: null, isChatWindowLoading: false }),
 }));

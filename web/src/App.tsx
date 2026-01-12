@@ -6,7 +6,7 @@ import { AppHeader } from "./components/layout/AppHeader";
 import { GroupSidebar } from "./components/layout/GroupSidebar";
 import { useTheme } from "./hooks/useTheme";
 import { useActorActions } from "./hooks/useActorActions";
-import { useSSE, getRecipientActorIdsForEvent } from "./hooks/useSSE";
+import { useSSE, getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "./hooks/useSSE";
 import { useDragDrop } from "./hooks/useDragDrop";
 import { useGroupActions } from "./hooks/useGroupActions";
 import { useSwipeNavigation } from "./hooks/useSwipeNavigation";
@@ -46,15 +46,19 @@ export default function App() {
     selectedGroupId,
     groupDoc,
     events,
+    chatWindow,
     actors,
     groupContext,
     hasMoreHistory,
     isLoadingHistory,
+    isChatWindowLoading,
     setSelectedGroupId,
     refreshGroups,
     refreshActors,
     loadGroup,
     loadMoreHistory,
+    openChatWindow,
+    closeChatWindow,
   } = useGroupStore();
 
   const {
@@ -67,6 +71,7 @@ export default function App() {
     showScrollButton,
     chatUnreadCount,
     isSmallScreen,
+    chatFilter,
     setBusy,
     showError,
     dismissError,
@@ -77,19 +82,24 @@ export default function App() {
     setShowScrollButton,
     setChatUnreadCount,
     setSmallScreen,
+    setChatFilter,
   } = useUIStore();
 
-  const { recipientsEventId, openModal, setRecipientsModal } = useModalStore();
+  const { recipientsEventId, openModal, setRecipientsModal, setRelayModal } = useModalStore();
 
   const {
     composerText,
     composerFiles,
     toText,
     replyTarget,
+    priority,
+    destGroupId,
     setComposerText,
     setComposerFiles,
     setToText,
     setReplyTarget,
+    setPriority,
+    setDestGroupId,
     clearComposer,
     switchGroup,
     clearDraft,
@@ -114,13 +124,20 @@ export default function App() {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<string>("chat");
   const chatAtBottomRef = useRef<boolean>(true);
+  const chatScrollMemoryRef = useRef<Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>>({});
   const actorsRef = useRef<Actor[]>([]);
   const prevGroupIdRef = useRef<string | null>(null);
+  const deepLinkRef = useRef<{ groupId: string; eventId: string } | null>(null);
   // Local state
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
   const [mentionFilter, setMentionFilter] = React.useState("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
   const [mountedActorIds, setMountedActorIds] = React.useState<string[]>([]);
+  const [recipientActors, setRecipientActors] = React.useState<Actor[]>([]);
+  const [recipientActorsBusy, setRecipientActorsBusy] = React.useState(false);
+  const recipientActorsCacheRef = React.useRef<Record<string, Actor[]>>({});
+  const [destGroupScopeLabel, setDestGroupScopeLabel] = React.useState("");
+  const groupDocCacheRef = React.useRef<Record<string, GroupDoc>>({});
 
   // Custom hooks
   const { connectStream, fetchContext, scheduleActorWarmupRefresh, cleanup: cleanupSSE } = useSSE({
@@ -200,16 +217,34 @@ export default function App() {
     () => groups.find((g) => String(g.group_id || "") === selectedGroupId) || null,
     [groups, selectedGroupId]
   );
-  const selectedGroupRunning = selectedGroupMeta?.running ?? false;
+  const selectedGroupRunning = useMemo(() => {
+    const anyActorRunning = actors.some((a) => !!a.running);
+    return anyActorRunning || (selectedGroupMeta?.running ?? false);
+  }, [actors, selectedGroupMeta]);
+  const sendGroupId = useMemo(() => {
+    const raw = String(destGroupId || "").trim();
+    return raw || selectedGroupId;
+  }, [destGroupId, selectedGroupId]);
+
+  const groupLabelById = useMemo(() => {
+    const out: Record<string, string> = {};
+    for (const g of groups || []) {
+      const gid = String(g.group_id || "").trim();
+      if (!gid) continue;
+      const title = String(g.title || "").trim();
+      out[gid] = title || gid;
+    }
+    return out;
+  }, [groups]);
 
   const validRecipientSet = useMemo(() => {
     const out = new Set<string>(["@all", "@foreman", "@peers"]);
-    for (const a of actors) {
+    for (const a of recipientActors) {
       const id = String(a.id || "").trim();
       if (id) out.add(id);
     }
     return out;
-  }, [actors]);
+  }, [recipientActors]);
 
   const toTokens = useMemo(() => {
     const raw = toText
@@ -230,12 +265,128 @@ export default function App() {
 
   const mentionSuggestions = useMemo(() => {
     const base = ["@all", "@foreman", "@peers"];
-    const actorIds = actors.map((a) => String(a.id || "")).filter((id) => id);
+    const actorIds = recipientActors.map((a) => String(a.id || "")).filter((id) => id);
     const all = [...base, ...actorIds];
     if (!mentionFilter) return all;
     const lower = mentionFilter.toLowerCase();
     return all.filter((s) => s.toLowerCase().includes(lower));
-  }, [actors, mentionFilter]);
+  }, [recipientActors, mentionFilter]);
+
+  React.useEffect(() => {
+    const gid = String(selectedGroupId || "").trim();
+    if (!gid) return;
+    if (!destGroupId) {
+      setDestGroupId(gid);
+    }
+  }, [destGroupId, selectedGroupId, setDestGroupId]);
+
+  React.useEffect(() => {
+    const gid = String(selectedGroupId || "").trim();
+    if (!gid) return;
+    if (replyTarget || composerFiles.length > 0) {
+      if (sendGroupId && sendGroupId !== gid) {
+        setDestGroupId(gid);
+      }
+    }
+  }, [composerFiles.length, replyTarget, selectedGroupId, sendGroupId, setDestGroupId]);
+
+  React.useEffect(() => {
+    const gid = String(selectedGroupId || "").trim();
+    if (!gid) return;
+    recipientActorsCacheRef.current[gid] = actors;
+  }, [actors, selectedGroupId]);
+
+  React.useEffect(() => {
+    const activeScopeLabel = (doc: GroupDoc | null) => {
+      if (!doc) return "";
+      const key = String(doc.active_scope_key || "").trim();
+      if (!key) return "";
+      const scopes = Array.isArray(doc.scopes) ? doc.scopes : [];
+      const hit = scopes.find((s) => String(s?.scope_key || "").trim() === key);
+      const label = String(hit?.label || "").trim();
+      const url = String(hit?.url || "").trim();
+      return label || url;
+    };
+
+    const gid = String(sendGroupId || "").trim();
+    if (!gid) {
+      setDestGroupScopeLabel("");
+      return;
+    }
+
+    if (gid === String(selectedGroupId || "").trim()) {
+      setDestGroupScopeLabel(activeScopeLabel(groupDoc));
+      if (groupDoc) groupDocCacheRef.current[gid] = groupDoc;
+      return;
+    }
+
+    const cached = groupDocCacheRef.current[gid];
+    if (cached) {
+      setDestGroupScopeLabel(activeScopeLabel(cached));
+      return;
+    }
+
+    let cancelled = false;
+    setDestGroupScopeLabel("");
+    void api.fetchGroup(gid).then((resp) => {
+      if (cancelled) return;
+      if (!resp.ok) {
+        setDestGroupScopeLabel("");
+        return;
+      }
+      const doc = resp.result.group;
+      groupDocCacheRef.current[gid] = doc;
+      setDestGroupScopeLabel(activeScopeLabel(doc));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [groupDoc, selectedGroupId, sendGroupId]);
+
+  React.useEffect(() => {
+    const gid = String(sendGroupId || "").trim();
+    if (!gid) {
+      setRecipientActors([]);
+      setRecipientActorsBusy(false);
+      return;
+    }
+    if (gid === String(selectedGroupId || "").trim()) {
+      setRecipientActors(actors);
+      setRecipientActorsBusy(false);
+      return;
+    }
+    const cached = recipientActorsCacheRef.current[gid];
+    if (cached) {
+      setRecipientActors(cached);
+      setRecipientActorsBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    setRecipientActorsBusy(true);
+    setRecipientActors([]);
+    void api
+      .fetchActors(gid)
+      .then((resp) => {
+        if (cancelled) return;
+        if (!resp.ok) {
+          setRecipientActors([]);
+          return;
+        }
+        const next = resp.result.actors || [];
+        recipientActorsCacheRef.current[gid] = next;
+        setRecipientActors(next);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setRecipientActorsBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [actors, selectedGroupId, sendGroupId]);
 
   const renderedActorIds = useMemo(() => {
     if (activeTab !== "chat" && !mountedActorIds.includes(activeTab)) {
@@ -256,6 +407,7 @@ export default function App() {
     setMountedActorIds([]);
     // Reset to chat tab when switching groups to avoid "Agent not found" error
     setActiveTab("chat");
+    closeChatWindow();
 
     if (!selectedGroupId) return;
 
@@ -272,6 +424,14 @@ export default function App() {
   // ============ Initial Load ============
   // Run once on mount.
   useEffect(() => {
+    // Capture deep links (?group=<id>&event=<event_id>) on initial load.
+    const params = new URLSearchParams(window.location.search);
+    const gid = String(params.get("group") || "").trim();
+    const eid = String(params.get("event") || "").trim();
+    if (gid && eid) {
+      deepLinkRef.current = { groupId: gid, eventId: eid };
+    }
+
     refreshGroups();
     void fetchRuntimes();
     void fetchDirSuggestions();
@@ -319,6 +479,34 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Apply deep links after groups are loaded.
+  useEffect(() => {
+    const dl = deepLinkRef.current;
+    if (!dl) return;
+    const gid = String(dl.groupId || "").trim();
+    const eid = String(dl.eventId || "").trim();
+    if (!gid || !eid) {
+      deepLinkRef.current = null;
+      return;
+    }
+    const exists = groups.some((g) => String(g.group_id || "") === gid);
+    if (!exists) {
+      if (groups.length > 0) {
+        showError(`Group not found: ${gid}`);
+        deepLinkRef.current = null;
+      }
+      return;
+    }
+    if (selectedGroupId !== gid) {
+      setSelectedGroupId(gid);
+      return;
+    }
+
+    setActiveTab("chat");
+    void openChatWindow(gid, eid);
+    deepLinkRef.current = null;
+  }, [groups, openChatWindow, selectedGroupId, setActiveTab, setSelectedGroupId, showError]);
+
   async function fetchRuntimes() {
     const resp = await api.fetchRuntimes();
     if (resp.ok) {
@@ -352,11 +540,26 @@ export default function App() {
     const txt = composerText.trim();
     if (!selectedGroupId) return;
     if (!txt && composerFiles.length === 0) return;
+
+    const dstGroup = String(sendGroupId || "").trim();
+    const isCrossGroup = !!dstGroup && dstGroup !== selectedGroupId;
+
+    const prio = priority || "normal";
+    if (prio === "attention") {
+      const ok = window.confirm("Send as an IMPORTANT message? Recipients must acknowledge it.");
+      if (!ok) return;
+    }
+
     setBusy("send");
     try {
       const to = toTokens;
       let resp;
       if (replyTarget) {
+        if (isCrossGroup) {
+          showError("Cross-group send does not support replies.");
+          setDestGroupId(selectedGroupId);
+          return;
+        }
         const replyBy = String(replyTarget.by || "").trim();
         const replyFallbackTo =
           replyBy && replyBy !== "user" && replyBy !== "unknown" ? [replyBy] : ["@all"];
@@ -366,26 +569,117 @@ export default function App() {
           txt,
           replyTo,
           replyTarget.eventId,
-          composerFiles.length > 0 ? composerFiles : undefined
+          composerFiles.length > 0 ? composerFiles : undefined,
+          prio
         );
       } else {
-        resp = await api.sendMessage(
-          selectedGroupId,
-          txt,
-          to,
-          composerFiles.length > 0 ? composerFiles : undefined
-        );
+        if (isCrossGroup) {
+          if (composerFiles.length > 0) {
+            showError("Cross-group send does not support attachments yet.");
+            return;
+          }
+          resp = await api.sendCrossGroupMessage(selectedGroupId, dstGroup, txt, to, prio);
+        } else {
+          resp = await api.sendMessage(
+            selectedGroupId,
+            txt,
+            to,
+            composerFiles.length > 0 ? composerFiles : undefined,
+            prio
+          );
+        }
       }
       if (!resp.ok) {
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
       }
       clearComposer();
+      setDestGroupId(selectedGroupId);
       clearDraft(selectedGroupId); // Also clear saved draft for this group
       if (fileInputRef.current) fileInputRef.current.value = "";
+      if (inChatWindow) {
+        closeChatWindow();
+        const url = new URL(window.location.href);
+        url.searchParams.delete("event");
+        url.searchParams.delete("tab");
+        window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
+      }
     } finally {
       setBusy("");
     }
+  }
+
+  async function acknowledgeMessage(eventId: string) {
+    const eid = String(eventId || "").trim();
+    if (!eid) return;
+    if (!selectedGroupId) return;
+    const resp = await api.ackMessage(selectedGroupId, eid);
+    if (!resp.ok) {
+      showError(`${resp.error.code}: ${resp.error.message}`);
+      return;
+    }
+    useGroupStore.getState().updateAckStatus(eid, "user");
+  }
+
+  async function copyMessageLink(eventId: string) {
+    const eid = String(eventId || "").trim();
+    if (!eid || !selectedGroupId) return;
+
+    const url = new URL(window.location.origin + window.location.pathname);
+    url.searchParams.set("group", selectedGroupId);
+    url.searchParams.set("event", eid);
+    url.searchParams.set("tab", "chat");
+
+    const text = url.toString();
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      // Fallback for older browsers / insecure contexts.
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.left = "-9999px";
+        ta.style.top = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch {
+        ok = false;
+      }
+    }
+    if (ok) {
+      showNotice({ message: "Link copied" });
+    } else {
+      showError("Failed to copy link");
+    }
+  }
+
+  function openMessageWindow(groupId: string, eventId: string) {
+    const gid = String(groupId || "").trim();
+    const eid = String(eventId || "").trim();
+    if (!gid || !eid) return;
+
+    const url = new URL(window.location.href);
+    url.searchParams.set("group", gid);
+    url.searchParams.set("event", eid);
+    url.searchParams.set("tab", "chat");
+    window.history.replaceState({}, "", url.pathname + "?" + url.searchParams.toString());
+
+    // If we're already in the target group, jump immediately.
+    if (selectedGroupId === gid) {
+      setActiveTab("chat");
+      void openChatWindow(gid, eid);
+      deepLinkRef.current = null;
+      return;
+    }
+
+    // Otherwise, queue a deep link and switch groups; the deep-link effect will open the window.
+    deepLinkRef.current = { groupId: gid, eventId: eid };
+    setSelectedGroupId(gid);
   }
 
   function startReply(ev: LedgerEvent) {
@@ -419,12 +713,35 @@ export default function App() {
   const messageMeta = useMemo(() => {
     if (!messageMetaEvent) return null;
     // Type guard: ensure data.to is an array.
-    const data = messageMetaEvent.data as { to?: unknown[] } | undefined;
-    const toRaw = data && Array.isArray(data.to) ? data.to : [];
+    const metaData = messageMetaEvent.data as { to?: unknown[] } | undefined;
+    const toRaw = metaData && Array.isArray(metaData.to) ? metaData.to : [];
     const toTokensList = toRaw
       .map((x) => String(x || "").trim())
       .filter((s) => s.length > 0);
     const toLabel = toTokensList.length > 0 ? toTokensList.join(", ") : "@all";
+
+    const msgData = messageMetaEvent.data as ChatMessageData | undefined;
+    const isAttention = String(msgData?.priority || "normal") === "attention";
+
+    if (isAttention) {
+      const as =
+        messageMetaEvent._ack_status && typeof messageMetaEvent._ack_status === "object"
+          ? messageMetaEvent._ack_status
+          : null;
+      const recipientIds = as
+        ? Object.keys(as)
+        : getAckRecipientIdsForEvent(messageMetaEvent, actors);
+      const recipientIdSet = new Set(recipientIds);
+      const entries = [
+        ...actors
+          .map((a) => String(a.id || ""))
+          .filter((id) => id && recipientIdSet.has(id))
+          .map((id) => [id, !!(as && as[id])] as const),
+        recipientIdSet.has("user") ? (["user", !!(as && as["user"])] as const) : null,
+      ].filter(Boolean) as Array<readonly [string, boolean]>;
+
+      return { toLabel, entries, statusKind: "ack" as const };
+    }
 
     const rs =
       messageMetaEvent._read_status && typeof messageMetaEvent._read_status === "object"
@@ -439,13 +756,48 @@ export default function App() {
       .filter((id) => id && recipientIdSet.has(id))
       .map((id) => [id, !!(rs && rs[id])] as const);
 
-    return { toLabel, entries };
+    return { toLabel, entries, statusKind: "read" as const };
   }, [actors, messageMetaEvent]);
 
-  const chatMessages = useMemo(
-    () => events.filter((ev) => ev.kind === "chat.message"),
-    [events]
-  );
+  const inChatWindow = useMemo(() => {
+    return !!chatWindow && String(chatWindow.groupId || "") === String(selectedGroupId || "");
+  }, [chatWindow, selectedGroupId]);
+
+  const liveChatMessages = useMemo(() => {
+    const all = events.filter((ev) => ev.kind === "chat.message");
+    if (chatFilter === "attention") {
+      return all.filter((ev) => {
+        const d = ev.data as ChatMessageData | undefined;
+        return String(d?.priority || "normal") === "attention";
+      });
+    }
+    if (chatFilter === "to_user") {
+      return all.filter((ev) => {
+        const d = ev.data as ChatMessageData | undefined;
+        const dst = typeof d?.dst_group_id === "string" ? String(d.dst_group_id || "").trim() : "";
+        if (dst) return false;
+        const to = Array.isArray(d?.to) ? d?.to : [];
+        return to.includes("user") || to.includes("@user");
+      });
+    }
+    return all;
+  }, [events, chatFilter]);
+
+  const chatMessages = useMemo(() => {
+    if (inChatWindow && chatWindow) return chatWindow.events || [];
+    return liveChatMessages;
+  }, [chatWindow, inChatWindow, liveChatMessages]);
+
+  const restoreChatAnchor = useMemo(() => {
+    if (!selectedGroupId) return null;
+    if (inChatWindow) return null;
+    const snap = chatScrollMemoryRef.current[String(selectedGroupId || "").trim()];
+    if (!snap || snap.atBottom) return null;
+    if (!snap.anchorId) return null;
+    return snap;
+  }, [inChatWindow, selectedGroupId]);
+
+  const hasAnyChatMessages = useMemo(() => events.some((ev) => ev.kind === "chat.message"), [events]);
   const needsScope = !!selectedGroupId && !projectRoot;
   const needsActors = !!selectedGroupId && actors.length === 0;
   const needsStart = !!selectedGroupId && actors.length > 0 && !selectedGroupRunning;
@@ -544,6 +896,7 @@ export default function App() {
                 openModal("groupEdit");
               }
             }}
+            onOpenSearch={() => openModal("search")}
             onOpenContext={() => {
               if (selectedGroupId) void fetchContext(selectedGroupId);
               openModal("context");
@@ -584,14 +937,23 @@ export default function App() {
               className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "chat" ? "" : "invisible pointer-events-none"}`}
               aria-hidden={activeTab !== "chat"}
             >
-              <ChatTab
-                isDark={isDark}
-                isSmallScreen={isSmallScreen}
-                selectedGroupId={selectedGroupId}
-                actors={actors}
-                presenceAgents={groupContext?.presence?.agents || []}
-                busy={busy}
-                showSetupCard={showSetupCard}
+                <ChatTab
+                  isDark={isDark}
+                  isSmallScreen={isSmallScreen}
+                  selectedGroupId={selectedGroupId}
+                  groupLabelById={groupLabelById}
+                  actors={actors}
+                  groups={groups}
+                  destGroupId={sendGroupId}
+                  setDestGroupId={setDestGroupId}
+                  destGroupScopeLabel={destGroupScopeLabel}
+                  recipientActors={recipientActors}
+                  recipientActorsBusy={recipientActorsBusy}
+                  presenceAgents={groupContext?.presence?.agents || []}
+                  busy={busy}
+                  chatFilter={chatFilter}
+                  setChatFilter={setChatFilter}
+                  showSetupCard={showSetupCard}
                 needsScope={needsScope}
                 needsActors={needsActors}
                 needsStart={needsStart}
@@ -602,6 +964,7 @@ export default function App() {
                 }}
                 onStartGroup={handleStartGroup}
                 chatMessages={chatMessages}
+                hasAnyChatMessages={hasAnyChatMessages}
                 scrollRef={eventContainerRef}
                 showScrollButton={showScrollButton}
                 chatUnreadCount={chatUnreadCount}
@@ -613,6 +976,41 @@ export default function App() {
                 }}
                 onReply={startReply}
                 onShowRecipients={(eventId) => setRecipientsModal(eventId)}
+                onAckMessage={acknowledgeMessage}
+                onCopyMessageLink={copyMessageLink}
+                onRelayMessage={(eventId) => setRelayModal(eventId)}
+                onOpenSourceMessage={(srcGroupId, srcEventId) => openMessageWindow(srcGroupId, srcEventId)}
+                chatWindow={
+                  inChatWindow && chatWindow
+                    ? {
+                        centerEventId: chatWindow.centerEventId,
+                        hasMoreBefore: chatWindow.hasMoreBefore,
+                        hasMoreAfter: chatWindow.hasMoreAfter,
+                      }
+                    : null
+                }
+                onExitChatWindow={() => {
+                  closeChatWindow();
+                  const url = new URL(window.location.href);
+                  url.searchParams.delete("event");
+                  url.searchParams.delete("tab");
+                  window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
+                }}
+                chatViewKey={
+                  inChatWindow && chatWindow
+                    ? `${selectedGroupId}:window:${chatWindow.centerEventId}`
+                    : `${selectedGroupId}:live`
+                }
+                chatInitialScrollTargetId={inChatWindow && chatWindow ? chatWindow.centerEventId : undefined}
+                chatInitialScrollAnchorId={!inChatWindow ? restoreChatAnchor?.anchorId : undefined}
+                chatInitialScrollAnchorOffsetPx={!inChatWindow ? restoreChatAnchor?.offsetPx : undefined}
+                chatHighlightEventId={inChatWindow && chatWindow ? chatWindow.centerEventId : undefined}
+                onScrollSnapshot={(snap) => {
+                  if (inChatWindow) return;
+                  const gid = String(selectedGroupId || "").trim();
+                  if (!gid) return;
+                  chatScrollMemoryRef.current[gid] = snap;
+                }}
                 replyTarget={replyTarget}
                 onCancelReply={() => setReplyTarget(null)}
                 toTokens={toTokens}
@@ -625,21 +1023,23 @@ export default function App() {
                 appendComposerFiles={handleAppendComposerFiles}
                 fileInputRef={fileInputRef}
                 composerRef={composerRef}
-                composerText={composerText}
-                setComposerText={setComposerText}
-                onSendMessage={sendMessage}
-                showMentionMenu={showMentionMenu}
-                setShowMentionMenu={setShowMentionMenu}
-                mentionSuggestions={mentionSuggestions}
-                mentionSelectedIndex={mentionSelectedIndex}
+                  composerText={composerText}
+                  setComposerText={setComposerText}
+                  priority={priority}
+                  setPriority={setPriority}
+                  onSendMessage={sendMessage}
+                  showMentionMenu={showMentionMenu}
+                  setShowMentionMenu={setShowMentionMenu}
+                  mentionSuggestions={mentionSuggestions}
+                  mentionSelectedIndex={mentionSelectedIndex}
                 setMentionSelectedIndex={setMentionSelectedIndex}
                 setMentionFilter={setMentionFilter}
                 onAppendRecipientToken={(token) =>
                   setToText(toText ? toText + ", " + token : token)
                 }
-                isLoadingHistory={isLoadingHistory}
-                hasMoreHistory={hasMoreHistory}
-                onLoadMore={loadMoreHistory}
+                isLoadingHistory={inChatWindow ? isChatWindowLoading : isLoadingHistory}
+                hasMoreHistory={inChatWindow ? false : hasMoreHistory}
+                onLoadMore={inChatWindow ? undefined : loadMoreHistory}
               />
             </div>
             <div

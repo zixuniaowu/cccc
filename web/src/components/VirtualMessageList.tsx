@@ -11,13 +11,24 @@ export interface VirtualMessageListProps {
   presenceAgents: PresenceAgent[];
   isDark: boolean;
   groupId: string;
+  groupLabelById: Record<string, string>;
+  viewKey?: string;
+  initialScrollTargetId?: string;
+  initialScrollAnchorId?: string;
+  initialScrollAnchorOffsetPx?: number;
+  highlightEventId?: string;
   scrollRef?: MutableRefObject<HTMLDivElement | null>;
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
+  onAck?: (eventId: string) => void;
+  onCopyLink?: (eventId: string) => void;
+  onRelay?: (eventId: string) => void;
+  onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   showScrollButton: boolean;
   onScrollButtonClick: () => void;
   chatUnreadCount: number;
   onScrollChange?: (isAtBottom: boolean) => void;
+  onScrollSnapshot?: (snap: { atBottom: boolean; anchorId: string; offsetPx: number }) => void;
   // History loading
   isLoadingHistory?: boolean;
   hasMoreHistory?: boolean;
@@ -30,13 +41,24 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   presenceAgents,
   isDark,
   groupId,
+  groupLabelById,
+  viewKey,
+  initialScrollTargetId,
+  initialScrollAnchorId,
+  initialScrollAnchorOffsetPx,
+  highlightEventId,
   scrollRef,
   onReply,
   onShowRecipients,
+  onAck,
+  onCopyLink,
+  onRelay,
+  onOpenSource,
   showScrollButton,
   onScrollButtonClick,
   chatUnreadCount,
   onScrollChange,
+  onScrollSnapshot,
   isLoadingHistory = false,
   hasMoreHistory = true,
   onLoadMore,
@@ -56,6 +78,10 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   const isAtBottomRef = useRef(true);
   const didInitialScrollRef = useRef(false);
   const scrollTimeoutRef = useRef<number | null>(null);
+  const scrollRafRef = useRef<number | null>(null);
+  const followupScrollTimeoutRef = useRef<number | null>(null);
+  const scrollTokenRef = useRef(0);
+  const resetKey = viewKey ?? groupId;
 
   // For history loading scroll position preservation (prepend older messages)
   const topLoadArmedRef = useRef(true);
@@ -101,9 +127,20 @@ export const VirtualMessageList = memo(function VirtualMessageList({
 
   const cancelScheduledScroll = useCallback(() => {
     const id = scrollTimeoutRef.current;
-    if (id == null) return;
-    scrollTimeoutRef.current = null;
-    window.clearTimeout(id);
+    if (id != null) {
+      scrollTimeoutRef.current = null;
+      window.clearTimeout(id);
+    }
+    const rid = scrollRafRef.current;
+    if (rid != null) {
+      scrollRafRef.current = null;
+      window.cancelAnimationFrame(rid);
+    }
+    const fid = followupScrollTimeoutRef.current;
+    if (fid != null) {
+      followupScrollTimeoutRef.current = null;
+      window.clearTimeout(fid);
+    }
   }, []);
 
   const scheduleScroll = useCallback(
@@ -128,6 +165,59 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     [scheduleScroll, scrollToBottom]
   );
 
+  const scrollToIndexStable = useCallback(
+    (idx: number) => {
+      cancelScheduledScroll();
+      const token = scrollTokenRef.current;
+      const doScroll = () => {
+        virtualizer.scrollToIndex(idx, { align: "center", behavior: "auto" });
+      };
+      doScroll();
+
+      scrollRafRef.current = window.requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        if (scrollTokenRef.current !== token) return;
+        doScroll();
+
+        followupScrollTimeoutRef.current = window.setTimeout(() => {
+          followupScrollTimeoutRef.current = null;
+          if (scrollTokenRef.current !== token) return;
+          doScroll();
+        }, 120);
+      });
+    },
+    [cancelScheduledScroll, virtualizer]
+  );
+
+  const scrollToAnchorStable = useCallback(
+    (idx: number, offsetPx: number) => {
+      cancelScheduledScroll();
+      const token = scrollTokenRef.current;
+      const doScroll = () => {
+        const offsetInfo = virtualizer.getOffsetForIndex(idx, "start");
+        if (offsetInfo) {
+          virtualizer.scrollToOffset(offsetInfo[0] + Math.max(0, offsetPx), { align: "start", behavior: "auto" });
+        } else {
+          virtualizer.scrollToIndex(idx, { align: "start", behavior: "auto" });
+        }
+      };
+      doScroll();
+
+      scrollRafRef.current = window.requestAnimationFrame(() => {
+        scrollRafRef.current = null;
+        if (scrollTokenRef.current !== token) return;
+        doScroll();
+
+        followupScrollTimeoutRef.current = window.setTimeout(() => {
+          followupScrollTimeoutRef.current = null;
+          if (scrollTokenRef.current !== token) return;
+          doScroll();
+        }, 120);
+      });
+    },
+    [cancelScheduledScroll, virtualizer]
+  );
+
   const handleScroll = useCallback(() => {
     const el = parentRef.current;
     if (!el) return;
@@ -137,6 +227,20 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     const atBottom = checkIsAtBottom();
     isAtBottomRef.current = atBottom;
     onScrollChange?.(atBottom);
+
+    // Capture a stable "anchor" (first visible message id + offset into that row)
+    // so the parent can restore scroll position when switching groups.
+    const vItems = virtualizer.getVirtualItems();
+    if (vItems.length > 0) {
+      const anchorItem =
+        vItems.find((v) => v.start + v.size > curTop + 1) || vItems[0];
+      const msg = messages[anchorItem.index];
+      const anchorId = msg?.id ? String(msg.id) : "";
+      if (anchorId) {
+        const offsetPx = Math.max(0, curTop - anchorItem.start);
+        onScrollSnapshot?.({ atBottom, anchorId, offsetPx });
+      }
+    }
 
     // Top detection for loading more history.
     //
@@ -152,14 +256,30 @@ export const VirtualMessageList = memo(function VirtualMessageList({
       topLoadArmedRef.current = false;
       pendingRestoreRef.current = true;
 
-      const first = virtualizer.getVirtualItems()[0];
+      const first = vItems[0];
       const firstMsg = first ? messages[first.index] : null;
       anchorMessageIdRef.current = firstMsg?.id ? String(firstMsg.id) : "";
       anchorOffsetRef.current = first ? Math.max(0, curTop - first.start) : 0;
 
       onLoadMore();
     }
-  }, [checkIsAtBottom, hasMoreHistory, isLoadingHistory, messages, onLoadMore, onScrollChange, virtualizer]);
+  }, [checkIsAtBottom, hasMoreHistory, isLoadingHistory, messages, onLoadMore, onScrollChange, onScrollSnapshot, virtualizer]);
+
+  // When switching views (group or window-mode), reset internal scroll bookkeeping.
+  //
+  // Important: this must run before the auto-scroll effects below, otherwise it may
+  // cancel their scheduled scrolls (breaking deep-link jump precision).
+  useEffect(() => {
+    scrollTokenRef.current += 1;
+    prevMessageCountRef.current = 0;
+    isAtBottomRef.current = true;
+    didInitialScrollRef.current = false;
+    topLoadArmedRef.current = true;
+    cancelScheduledScroll();
+    pendingRestoreRef.current = false;
+    anchorMessageIdRef.current = "";
+    anchorOffsetRef.current = 0;
+  }, [resetKey, cancelScheduledScroll]);
 
   useEffect(() => {
     const prevCount = prevMessageCountRef.current;
@@ -175,22 +295,26 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     if (didInitialScrollRef.current) return;
     if (messages.length <= 0) return;
     didInitialScrollRef.current = true;
-    scheduleScrollToBottom();
-  }, [messages.length, scheduleScrollToBottom]);
-
-  // When switching groups, default to showing the latest messages.
-  // Important: do NOT depend on messages.length here, otherwise every new message would
-  // look like a "group switch" and force-scroll to bottom even if the user scrolled up.
-  useEffect(() => {
-    prevMessageCountRef.current = 0;
-    isAtBottomRef.current = true;
-    didInitialScrollRef.current = false;
-    topLoadArmedRef.current = true;
-    cancelScheduledScroll();
-    pendingRestoreRef.current = false;
-    anchorMessageIdRef.current = "";
-    anchorOffsetRef.current = 0;
-  }, [groupId, cancelScheduledScroll]);
+    scheduleScroll(() => {
+      if (initialScrollTargetId) {
+        isAtBottomRef.current = false;
+        const idx = messages.findIndex((m) => String(m?.id || "") === String(initialScrollTargetId));
+        if (idx >= 0) {
+          scrollToIndexStable(idx);
+          return;
+        }
+      }
+      if (initialScrollAnchorId) {
+        const idx = messages.findIndex((m) => String(m?.id || "") === String(initialScrollAnchorId));
+        if (idx >= 0) {
+          isAtBottomRef.current = false;
+          scrollToAnchorStable(idx, Number(initialScrollAnchorOffsetPx || 0));
+          return;
+        }
+      }
+      scrollToBottom();
+    });
+  }, [initialScrollAnchorId, initialScrollAnchorOffsetPx, initialScrollTargetId, messages, scheduleScroll, scrollToAnchorStable, scrollToBottom, scrollToIndexStable]);
 
   useEffect(() => cancelScheduledScroll, [cancelScheduledScroll]);
 
@@ -234,15 +358,28 @@ export const VirtualMessageList = memo(function VirtualMessageList({
       aria-label="Chat messages"
     >
       {messages.length === 0 ? (
-        <div className="flex flex-col items-center justify-center h-full text-center pb-20 opacity-50">
-          <div className="text-4xl mb-4 grayscale">💬</div>
-          <p className={`text-sm font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            No messages yet
-          </p>
-          <p className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
-            Start the conversation with your AI team.
-          </p>
-        </div>
+        isLoadingHistory ? (
+          <div className="flex flex-col items-center justify-center h-full text-center pb-20">
+            <div
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-full shadow-md ${
+                isDark ? "bg-slate-800 text-slate-300" : "bg-white text-gray-600"
+              }`}
+            >
+              <div className="animate-spin w-4 h-4 border-2 border-current border-t-transparent rounded-full" />
+              <span className="text-xs">Loading...</span>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full text-center pb-20 opacity-50">
+            <div className="text-4xl mb-4 grayscale">💬</div>
+            <p className={`text-sm font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              No messages yet
+            </p>
+            <p className={`text-xs mt-1 ${isDark ? "text-slate-600" : "text-gray-400"}`}>
+              Start the conversation with your AI team.
+            </p>
+          </div>
+        )
       ) : (
         <>
           {/* Loading indicator for history - sticky positioned for visibility */}
@@ -296,12 +433,18 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                     presenceAgent={presenceById.get(String(message.by || "")) || null}
                     isDark={isDark}
                     groupId={groupId}
+                    groupLabelById={groupLabelById}
+                    isHighlighted={!!highlightEventId && String(message.id || "") === String(highlightEventId)}
                     onReply={() => onReply(message)}
                     onShowRecipients={() => {
                       if (message.id) {
                         onShowRecipients(String(message.id));
                       }
                     }}
+                    onAck={(eventId) => onAck?.(eventId)}
+                    onCopyLink={onCopyLink}
+                    onRelay={onRelay}
+                    onOpenSource={onOpenSource}
                   />
                 </div>
               );

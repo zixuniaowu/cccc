@@ -200,8 +200,14 @@ export async function importGroupTemplateReplace(groupId: string, file: File) {
 // ============ Ledger ============
 
 export async function fetchLedgerTail(groupId: string, lines = 120) {
-  return apiJson<{ events: LedgerEvent[] }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/tail?lines=${lines}&with_read_status=true`
+  const params = new URLSearchParams({
+    kind: "chat",
+    limit: String(lines),
+    with_read_status: "true",
+    with_ack_status: "true",
+  });
+  return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`
   );
 }
 
@@ -215,7 +221,50 @@ export async function fetchOlderMessages(
     before: beforeEventId,
     limit: String(limit),
     with_read_status: "true",
+    with_ack_status: "true",
   });
+  return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`
+  );
+}
+
+export async function fetchMessageWindow(
+  groupId: string,
+  centerEventId: string,
+  opts?: { before?: number; after?: number }
+) {
+  const params = new URLSearchParams({
+    kind: "chat",
+    center: centerEventId,
+    before: String(opts?.before ?? 30),
+    after: String(opts?.after ?? 30),
+    with_read_status: "true",
+    with_ack_status: "true",
+  });
+  return apiJson<{
+    center_id: string;
+    center_index: number;
+    events: LedgerEvent[];
+    has_more_before: boolean;
+    has_more_after: boolean;
+    count: number;
+  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/window?${params.toString()}`);
+}
+
+export async function searchChatMessages(
+  groupId: string,
+  q: string,
+  opts?: { limit?: number; before?: string; after?: string }
+) {
+  const params = new URLSearchParams({
+    kind: "chat",
+    q: q || "",
+    limit: String(opts?.limit ?? 50),
+    with_read_status: "true",
+    with_ack_status: "true",
+  });
+  if (opts?.before) params.set("before", opts.before);
+  if (opts?.after) params.set("after", opts.after);
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`
   );
@@ -372,7 +421,8 @@ export async function sendMessage(
   groupId: string,
   text: string,
   to: string[],
-  files?: File[]
+  files?: File[],
+  priority: "normal" | "attention" = "normal"
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -380,12 +430,13 @@ export async function sendMessage(
     form.append("text", text);
     form.append("to_json", JSON.stringify(to));
     form.append("path", "");
+    form.append("priority", priority);
     for (const f of files) form.append("files", f);
     return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/send_upload`, form);
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/send`, {
     method: "POST",
-    body: JSON.stringify({ text, by: "user", to, path: "" }),
+    body: JSON.stringify({ text, by: "user", to, path: "", priority }),
   });
 }
 
@@ -394,7 +445,8 @@ export async function replyMessage(
   text: string,
   to: string[],
   replyTo: string,
-  files?: File[]
+  files?: File[],
+  priority: "normal" | "attention" = "normal"
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -402,12 +454,59 @@ export async function replyMessage(
     form.append("text", text);
     form.append("to_json", JSON.stringify(to));
     form.append("reply_to", replyTo);
+    form.append("priority", priority);
     for (const f of files) form.append("files", f);
     return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/reply_upload`, form);
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/reply`, {
     method: "POST",
-    body: JSON.stringify({ text, by: "user", to, reply_to: replyTo }),
+    body: JSON.stringify({ text, by: "user", to, reply_to: replyTo, priority }),
+  });
+}
+
+export async function relayMessage(
+  dstGroupId: string,
+  text: string,
+  to: string[],
+  src: { groupId: string; eventId: string }
+) {
+  return apiJson(`/api/v1/groups/${encodeURIComponent(dstGroupId)}/send`, {
+    method: "POST",
+    body: JSON.stringify({
+      text,
+      by: "user",
+      to,
+      path: "",
+      priority: "normal",
+      src_group_id: src.groupId,
+      src_event_id: src.eventId,
+    }),
+  });
+}
+
+export async function sendCrossGroupMessage(
+  srcGroupId: string,
+  dstGroupId: string,
+  text: string,
+  to: string[],
+  priority: "normal" | "attention" = "normal"
+) {
+  return apiJson(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_cross_group`, {
+    method: "POST",
+    body: JSON.stringify({
+      text,
+      by: "user",
+      dst_group_id: dstGroupId,
+      to,
+      priority,
+    }),
+  });
+}
+
+export async function ackMessage(groupId: string, eventId: string) {
+  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(eventId)}/ack`, {
+    method: "POST",
+    body: JSON.stringify({ by: "user" }),
   });
 }
 
@@ -451,10 +550,12 @@ export async function setIMConfig(
   botTokenEnv: string,
   appTokenEnv?: string,
   extra?: {
+    feishu_domain?: string;
     feishu_app_id?: string;
     feishu_app_secret?: string;
     dingtalk_app_key?: string;
     dingtalk_app_secret?: string;
+    dingtalk_robot_code?: string;
   }
 ) {
   const body: Record<string, unknown> = {
@@ -472,6 +573,7 @@ export async function setIMConfig(
 
   // Feishu uses app_id and app_secret
   if (platform === "feishu" && extra) {
+    body.feishu_domain = extra.feishu_domain;
     body.feishu_app_id = extra.feishu_app_id;
     body.feishu_app_secret = extra.feishu_app_secret;
   }
@@ -480,6 +582,7 @@ export async function setIMConfig(
   if (platform === "dingtalk" && extra) {
     body.dingtalk_app_key = extra.dingtalk_app_key;
     body.dingtalk_app_secret = extra.dingtalk_app_secret;
+    body.dingtalk_robot_code = extra.dingtalk_robot_code;
   }
 
   return apiJson("/api/im/set", {

@@ -1983,20 +1983,23 @@ def cmd_im_set(args: argparse.Namespace) -> int:
     app_token_env = str(getattr(args, "app_token_env", "") or "").strip()
     token_env = str(args.token_env or "").strip()
     token = str(args.token or "").strip()
-    # Feishu/DingTalk specific
+    # Feishu/DingTalk specific (app credentials)
     app_key_env = str(getattr(args, "app_key_env", "") or "").strip()
     app_secret_env = str(getattr(args, "app_secret_env", "") or "").strip()
+    feishu_domain = str(getattr(args, "domain", "") or "").strip()
+    dingtalk_robot_code_env = str(getattr(args, "robot_code_env", "") or "").strip()
+    dingtalk_robot_code = str(getattr(args, "robot_code", "") or "").strip()
 
     # Backward compat: if only token_env provided, use as bot_token_env
     if token_env and not bot_token_env:
         bot_token_env = token_env
 
-    # Interactive mode if no token provided
+    # Interactive mode if required fields are missing
     if platform in ("feishu", "dingtalk"):
-        # Feishu/DingTalk use app_key + app_secret
+        # Feishu/DingTalk use app credentials (env var names by default).
         if not app_key_env or not app_secret_env:
             try:
-                platform_name = "Feishu" if platform == "feishu" else "DingTalk"
+                platform_name = "Feishu/Lark" if platform == "feishu" else "DingTalk"
                 default_key = "FEISHU_APP_ID" if platform == "feishu" else "DINGTALK_APP_KEY"
                 default_secret = "FEISHU_APP_SECRET" if platform == "feishu" else "DINGTALK_APP_SECRET"
                 print(f"{platform_name} requires app credentials:")
@@ -2060,18 +2063,44 @@ def cmd_im_set(args: argparse.Namespace) -> int:
             im_config["bot_token_env"] = bot_token_env
         if app_token_env:
             im_config["app_token_env"] = app_token_env
-    elif platform in ("feishu", "dingtalk"):
-        # Feishu/DingTalk use app_key + app_secret
+    elif platform == "feishu":
+        # Feishu: app_id/app_secret (stored as env var names; the bridge reads FEISHU_APP_ID/FEISHU_APP_SECRET).
+        if feishu_domain:
+            v = feishu_domain.strip().lower()
+            if v in (
+                "lark",
+                "global",
+                "intl",
+                "international",
+                "open.larkoffice.com",
+                "https://open.larkoffice.com",
+                # Historical alias used in some SDKs/docs.
+                "open.larksuite.com",
+                "https://open.larksuite.com",
+            ):
+                im_config["feishu_domain"] = "https://open.larkoffice.com"
+            else:
+                im_config["feishu_domain"] = "https://open.feishu.cn"
         if app_key_env:
-            im_config["app_key_env"] = app_key_env
+            im_config["feishu_app_id_env"] = app_key_env
         if app_secret_env:
-            im_config["app_secret_env"] = app_secret_env
+            im_config["feishu_app_secret_env"] = app_secret_env
+    elif platform == "dingtalk":
+        # DingTalk: app_key/app_secret (+ optional robot_code).
+        if app_key_env:
+            im_config["dingtalk_app_key_env"] = app_key_env
+        if app_secret_env:
+            im_config["dingtalk_app_secret_env"] = app_secret_env
+        if dingtalk_robot_code_env:
+            im_config["dingtalk_robot_code_env"] = dingtalk_robot_code_env
+        if dingtalk_robot_code:
+            im_config["dingtalk_robot_code"] = dingtalk_robot_code
     else:
         # Telegram/Discord use single token
         if bot_token_env:
             im_config["token_env"] = bot_token_env
 
-    if token:
+    if token and platform not in ("feishu", "dingtalk"):
         im_config["token"] = token
 
     # Update group doc and save
@@ -2144,8 +2173,14 @@ def _im_find_bridge_pids_by_script(group_id: str) -> list[int]:
             pid = int(d.name)
             try:
                 cmdline = (d / "cmdline").read_bytes().decode("utf-8", "ignore")
-                # Look for our bridge module with this group_id
-                if "cccc.ports.im.bridge" in cmdline and group_id in cmdline:
+                # Look for our bridge module with this group_id.
+                # We support both historical entrypoints:
+                # - python -m cccc.ports.im.bridge <group_id> ...
+                # - python -m cccc.ports.im <group_id> ...
+                if (
+                    ("cccc.ports.im.bridge" in cmdline or "cccc.ports.im" in cmdline)
+                    and group_id in cmdline
+                ):
                     pids.append(pid)
             except Exception:
                 continue
@@ -2258,7 +2293,7 @@ def cmd_im_start(args: argparse.Namespace) -> int:
     try:
         log_file = log_path.open("a", encoding="utf-8")
         proc = subprocess.Popen(
-            [sys.executable, "-m", "cccc.ports.im.bridge", group_id, platform],
+            [sys.executable, "-m", "cccc.ports.im", group_id, platform],
             env=env,
             stdout=log_file,
             stderr=log_file,
@@ -2660,7 +2695,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_daemon.set_defaults(func=cmd_daemon)
 
     # IM Bridge commands
-    p_im = sub.add_parser("im", help="Manage IM bridge (Telegram/Slack/Discord/Feishu/DingTalk)")
+    p_im = sub.add_parser("im", help="Manage IM bridge (Telegram/Slack/Discord/Feishu/Lark/DingTalk)")
     im_sub = p_im.add_subparsers(dest="action", required=True)
 
     p_im_set = im_sub.add_parser("set", help="Set IM bridge configuration")
@@ -2668,8 +2703,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_im_set.add_argument("--token-env", default="", help="Environment variable name for token (telegram/discord)")
     p_im_set.add_argument("--bot-token-env", default="", help="Bot token env var (Slack: xoxb- for outbound)")
     p_im_set.add_argument("--app-token-env", default="", help="App token env var (Slack: xapp- for inbound Socket Mode)")
-    p_im_set.add_argument("--app-key-env", default="", help="App Key env var (Feishu/DingTalk)")
-    p_im_set.add_argument("--app-secret-env", default="", help="App Secret env var (Feishu/DingTalk)")
+    p_im_set.add_argument("--app-key-env", default="", help="App ID (Feishu/Lark) / App Key (DingTalk) env var")
+    p_im_set.add_argument("--app-secret-env", default="", help="App Secret (Feishu/Lark/DingTalk) env var")
+    p_im_set.add_argument("--domain", default="", help="Feishu domain override: feishu (CN) or lark (Global)")
+    p_im_set.add_argument("--robot-code-env", default="", help="Robot code env var (DingTalk; optional but recommended)")
+    p_im_set.add_argument("--robot-code", default="", help="Robot code value directly (DingTalk; not recommended, prefer env var)")
     p_im_set.add_argument("--token", default="", help="Token value directly (not recommended, use env vars)")
     p_im_set.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_im_set.set_defaults(func=cmd_im_set)

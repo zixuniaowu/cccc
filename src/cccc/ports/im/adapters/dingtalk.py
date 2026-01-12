@@ -94,7 +94,7 @@ class DingTalkAdapter(IMAdapter):
     ):
         self.app_key = app_key
         self.app_secret = app_secret
-        self.robot_code = robot_code or app_key  # Robot code defaults to app_key
+        self.robot_code = str(robot_code or "").strip()
         self.log_path = log_path
         self.max_chars = max_chars
         self.max_lines = max_lines
@@ -287,6 +287,16 @@ class DingTalkAdapter(IMAdapter):
         1. Verify credentials by getting token
         2. Start Stream mode listener (if available)
         """
+        # Inbound requires the official SDK (dingtalk-stream) for stream mode.
+        try:
+            import dingtalk_stream  # type: ignore
+        except Exception:
+            import sys
+            self._log(f"[error] Missing dependency: dingtalk-stream. Install: {sys.executable} -m pip install dingtalk-stream")
+            return False
+
+        self._dingtalk_stream = dingtalk_stream
+
         # Get initial token
         if not self._refresh_token():
             self._log("[connect] Failed to get token")
@@ -314,15 +324,14 @@ class DingTalkAdapter(IMAdapter):
             """Stream event loop using official DingTalk SDK."""
             self._log("[stream] Event listener starting...")
 
-            # Try to import official SDK
-            try:
-                import dingtalk_stream
-                from dingtalk_stream import AckMessage
-            except ImportError:
-                self._log("[stream] dingtalk-stream not installed")
-                self._log("[stream] Install with: pip install dingtalk-stream")
-                while self._stream_running:
-                    time.sleep(5.0)
+            dingtalk_stream = getattr(self, "_dingtalk_stream", None)
+            if dingtalk_stream is None:
+                self._log("[stream] Missing SDK handles; connect() should have returned False.")
+                return
+
+            AckMessage = getattr(dingtalk_stream, "AckMessage", None)
+            if AckMessage is None:
+                self._log("[stream] dingtalk_stream.AckMessage not found")
                 return
 
             # Create handler class that references self
@@ -338,11 +347,24 @@ class DingTalkAdapter(IMAdapter):
 
                         # callback.data is a dict, not an object
                         data = callback.data
-                        adapter._log(f"[stream] Message data: {data}")
+                        try:
+                            adapter._log(
+                                "[stream] msg_id=%s conv_id=%s type=%s from=%s msgtype=%s"
+                                % (
+                                    str(data.get("msgId") or ""),
+                                    str(data.get("conversationId") or ""),
+                                    str(data.get("conversationType") or ""),
+                                    str(data.get("senderNick") or data.get("senderStaffId") or data.get("senderId") or ""),
+                                    str(data.get("msgtype") or ""),
+                                )
+                            )
+                        except Exception:
+                            pass
 
                         # Build event dict for _enqueue_message
                         event = {
                             "msgtype": data.get('msgtype', 'text'),
+                            "robotCode": data.get('robotCode', ''),
                             "conversationId": data.get('conversationId', ''),
                             "conversationType": data.get('conversationType', ''),
                             "senderId": data.get('senderId', ''),
@@ -360,7 +382,7 @@ class DingTalkAdapter(IMAdapter):
                         text_data = data.get('text', {})
                         if text_data:
                             event["text"] = {"content": text_data.get('content', '')}
-                            adapter._log(f"[stream] Text: {event['text']}")
+                            adapter._log("[stream] text message received")
 
                         # Enqueue the message
                         adapter._enqueue_message(event)
@@ -490,6 +512,13 @@ class DingTalkAdapter(IMAdapter):
             else:
                 chat_type = "unknown"
 
+            # Cache robotCode if present (needed for some outbound APIs).
+            if not self.robot_code:
+                rc = str(event.get("robotCode") or "").strip()
+                if rc:
+                    self.robot_code = rc
+                    self._log("[stream] Learned robot_code from inbound event")
+
             # Get chat title (use from event if available, else API)
             chat_title = event.get("conversationTitle", "")
             if not chat_title:
@@ -593,22 +622,25 @@ class DingTalkAdapter(IMAdapter):
         self._rate_limiter.wait_and_acquire(chat_id)
 
         # Try sessionWebhook first (most reliable for group messages)
-        self._log(f"[send] chat_id={chat_id}, cache_keys={list(self._session_webhook_cache.keys())}")
         if chat_id in self._session_webhook_cache:
             webhook_url, expires_at = self._session_webhook_cache[chat_id]
             current_time = time.time()
-            self._log(f"[send] Found in cache: expires_at={expires_at:.0f}, current={current_time:.0f}, delta={expires_at - current_time:.0f}s")
             if current_time < expires_at:
-                self._log(f"[send] Using cached webhook for {chat_id[:20]}...")
                 if self._send_via_webhook(webhook_url, safe_text):
                     return True
                 self._log("[send] Webhook failed, falling back to API...")
             else:
                 # Webhook expired, remove from cache
                 del self._session_webhook_cache[chat_id]
-                self._log(f"[send] Webhook expired for {chat_id[:20]}...")
         else:
-            self._log(f"[send] No cached webhook for {chat_id[:20]}...")
+            self._log("[send] No cached sessionWebhook; falling back to API.")
+
+        if not self.robot_code:
+            if chat_id.startswith("cid"):
+                self._log("[send] Missing robot_code; cannot use new API fallback. Trying legacy API.")
+                return self._send_message_legacy(chat_id, safe_text)
+            self._log("[send] Missing robot_code; cannot send via API fallback. Configure DINGTALK_ROBOT_CODE.")
+            return False
 
         # Use robot message API
         body: Dict[str, Any] = {
@@ -689,6 +721,9 @@ class DingTalkAdapter(IMAdapter):
         download_code = attachment.get("download_code", "")
         if not download_code:
             raise ValueError("Missing download_code")
+
+        if not self.robot_code:
+            raise ValueError("Missing robot_code (configure DINGTALK_ROBOT_CODE to download attachments)")
 
         token = self._get_token()
         if not token:

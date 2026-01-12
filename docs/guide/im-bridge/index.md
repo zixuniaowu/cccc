@@ -18,7 +18,7 @@ The IM Bridge allows you to:
 | [Telegram](./telegram) | ✅ | Personal use, quick setup |
 | [Slack](./slack) | ✅ | Team collaboration |
 | [Discord](./discord) | ✅ | Community/gaming |
-| [Feishu](./feishu) | ✅ | Enterprise (China) |
+| [Feishu/Lark](./feishu) | ✅ | Enterprise (China/Global) |
 | [DingTalk](./dingtalk) | ✅ | Enterprise (China) |
 
 ## Design Principles
@@ -69,5 +69,5 @@ cccc im logs -f      # Follow logs
 - [Telegram Setup](./telegram) - Quick personal setup
 - [Slack Setup](./slack) - Team collaboration
 - [Discord Setup](./discord) - Community access
-- [Feishu Setup](./feishu) - Enterprise (China)
+- [Feishu/Lark Setup](./feishu) - Enterprise (China/Global)
 - [DingTalk Setup](./dingtalk) - Enterprise (China)

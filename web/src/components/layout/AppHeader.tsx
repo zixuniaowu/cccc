@@ -4,6 +4,7 @@ import { classNames } from "../../utils/classNames";
 import { ThemeToggleCompact } from "../ThemeToggle";
 import { 
   ClipboardIcon, 
+  SearchIcon,
   RocketIcon, 
   PlayIcon, 
   PauseIcon, 
@@ -30,6 +31,7 @@ export interface AppHeaderProps {
   onDismissNotice: () => void;
   onOpenSidebar: () => void;
   onOpenGroupEdit: () => void;
+  onOpenSearch: () => void;
   onOpenContext: () => void;
   onStartGroup: () => void;
   onStopGroup: () => void;
@@ -54,6 +56,7 @@ export function AppHeader({
   onDismissNotice,
   onOpenSidebar,
   onOpenGroupEdit,
+  onOpenSearch,
   onOpenContext,
   onStartGroup,
   onStopGroup,
@@ -85,10 +88,16 @@ export function AppHeader({
             {selectedGroupId &&
               groupDoc &&
               (() => {
-                const status = isDark ? getGroupStatus(selectedGroupRunning, groupDoc.state) : getGroupStatusLight(selectedGroupRunning, groupDoc.state);
+                const status = isDark
+                  ? getGroupStatus(selectedGroupRunning, groupDoc.state)
+                  : getGroupStatusLight(selectedGroupRunning, groupDoc.state);
                 return (
                   <span
-                    className={`w-2 h-2 rounded-full ${status.colorClass.replace("text-", "bg-").split(" ")[0]}`}
+                    className={classNames(
+                      "w-2 h-2 rounded-full ring-2",
+                      status.dotClass,
+                      isDark ? "ring-white/10" : "ring-black/10"
+                    )}
                     title={status.label}
                   />
                 );
@@ -115,6 +124,19 @@ export function AppHeader({
       <div className="flex items-center gap-1">
         {/* Desktop Actions - subtle */}
         <div className="hidden sm:flex items-center gap-1.5 mr-2">
+          <button
+            onClick={onOpenSearch}
+            disabled={!selectedGroupId}
+            className={classNames(
+              "p-2 rounded-xl transition-all glass-btn",
+              isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"
+            )}
+            title="Search messages"
+          >
+            <span className="sr-only">Search</span>
+            <SearchIcon size={18} />
+          </button>
+
           <button
             onClick={onOpenContext}
             disabled={!selectedGroupId}

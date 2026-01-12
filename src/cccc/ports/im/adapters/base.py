@@ -44,7 +44,7 @@ class IMAdapter(ABC):
         - chat_id: str
         - text: str
         - from_user: str (username or display name)
-        - message_id: int (platform message ID)
+        - message_id: str (platform message ID; type varies by platform)
         """
         pass
 

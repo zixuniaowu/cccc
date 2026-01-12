@@ -1,5 +1,5 @@
 """
-Feishu (Lark) adapter for CCCC IM Bridge.
+Lark / Feishu adapter for CCCC IM Bridge.
 
 Uses Feishu Open API with WebSocket long connection for real-time messaging.
 Reference: https://open.feishu.cn/document/
@@ -30,8 +30,24 @@ FEISHU_MAX_MESSAGE_LENGTH = 4096
 DEFAULT_MAX_CHARS = 4096
 DEFAULT_MAX_LINES = 64
 
-# API base URL
-FEISHU_API_BASE = "https://open.feishu.cn/open-apis"
+# API domains:
+# - Feishu (CN): https://open.feishu.cn
+# - Lark (Global): https://open.larkoffice.com
+FEISHU_DOMAIN = "https://open.feishu.cn"
+LARK_DOMAIN = "https://open.larkoffice.com"
+
+
+def _normalize_domain(domain: str) -> str:
+    d = str(domain or "").strip()
+    if not d:
+        return FEISHU_DOMAIN
+    d = d.rstrip("/")
+    if d.endswith("/open-apis"):
+        d = d[: -len("/open-apis")]
+        d = d.rstrip("/")
+    if not (d.startswith("http://") or d.startswith("https://")):
+        d = "https://" + d
+    return d
 
 
 class RateLimiter:
@@ -83,12 +99,15 @@ class FeishuAdapter(IMAdapter):
         self,
         app_id: str,
         app_secret: str,
+        domain: str = FEISHU_DOMAIN,
         log_path: Optional[Path] = None,
         max_chars: int = DEFAULT_MAX_CHARS,
         max_lines: int = DEFAULT_MAX_LINES,
     ):
         self.app_id = app_id
         self.app_secret = app_secret
+        self.domain = _normalize_domain(domain)
+        self.api_base = f"{self.domain}/open-apis"
         self.log_path = log_path
         self.max_chars = max_chars
         self.max_lines = max_lines
@@ -142,7 +161,7 @@ class FeishuAdapter(IMAdapter):
         Refresh tenant_access_token.
         Token expires in 2 hours.
         """
-        url = f"{FEISHU_API_BASE}/auth/v3/tenant_access_token/internal"
+        url = f"{self.api_base}/auth/v3/tenant_access_token/internal"
         data = json.dumps({
             "app_id": self.app_id,
             "app_secret": self.app_secret,
@@ -189,7 +208,7 @@ class FeishuAdapter(IMAdapter):
         if not token:
             return {"code": -1, "msg": "No valid token"}
 
-        url = f"{FEISHU_API_BASE}{endpoint}"
+        url = f"{self.api_base}{endpoint}"
 
         if method == "GET" and body:
             # Convert body to query params for GET
@@ -228,6 +247,19 @@ class FeishuAdapter(IMAdapter):
         1. Verify credentials by getting token
         2. Start WebSocket event listener
         """
+        # Inbound requires the official SDK (lark-oapi) for long connection messaging.
+        try:
+            import lark_oapi as lark  # type: ignore
+            from lark_oapi.ws import Client as WsClient  # type: ignore
+        except Exception:
+            import sys
+            self._log(f"[error] Missing dependency: lark-oapi. Install: {sys.executable} -m pip install lark-oapi")
+            return False
+
+        # Cache SDK handles for the background thread.
+        self._lark = lark
+        self._WsClient = WsClient
+
         # Get initial token
         if not self._refresh_token():
             self._log("[connect] Failed to get token")
@@ -237,7 +269,7 @@ class FeishuAdapter(IMAdapter):
         self._start_ws_listener()
 
         self._connected = True
-        self._log(f"[connect] Connected with app_id={self.app_id[:8]}...")
+        self._log(f"[connect] Connected (domain={self.domain}, app_id={self.app_id[:8]}...)")
         return True
 
     def _start_ws_listener(self) -> None:
@@ -255,27 +287,19 @@ class FeishuAdapter(IMAdapter):
             """WebSocket event loop using official Feishu SDK."""
             self._log("[ws] Event listener starting...")
 
-            # Try to import official SDK
-            try:
-                from lark_oapi.ws import Client as WsClient
-                import lark_oapi as lark
-            except ImportError:
-                self._log("[ws] lark-oapi not installed")
-                self._log("[ws] Install with: pip install lark-oapi")
-                while self._ws_running:
-                    time.sleep(5.0)
+            # SDK is imported and cached in connect().
+            lark = getattr(self, "_lark", None)
+            WsClient = getattr(self, "_WsClient", None)
+            if lark is None or WsClient is None:
+                self._log("[ws] Missing SDK handles; connect() should have returned False.")
                 return
-
-            # Clear proxy env vars that might interfere
-            import os
-            for key in ['HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'ALL_PROXY', 'all_proxy']:
-                os.environ.pop(key, None)
 
             # Event handler function - SDK passes single data argument
             def on_p2_im_message_receive_v1(data):
                 """Handle incoming im.message.receive_v1 event from SDK."""
                 try:
-                    self._log(f"[ws] Received message event: {type(data).__name__}")
+                    # Note: keep logs minimal; message payload may contain sensitive content.
+                    self._log(f"[ws] Received event: {type(data).__name__}")
 
                     # SDK provides structured event object
                     event_data = {
@@ -297,9 +321,7 @@ class FeishuAdapter(IMAdapter):
                                 "content": getattr(msg, 'content', '{}') or '{}',
                                 "root_id": getattr(msg, 'root_id', '') or '',
                             }
-                            self._log(f"[ws] Message from chat: {event_data['message']['chat_id']}")
-                            self._log(f"[ws] Message type: {event_data['message']['message_type']}")
-                            self._log(f"[ws] Content: {event_data['message']['content'][:100]}")
+                            self._log(f"[ws] Chat: {event_data['message']['chat_id']} type={event_data['message']['message_type']}")
 
                         if hasattr(event_obj, 'sender') and event_obj.sender:
                             sender = event_obj.sender
@@ -311,7 +333,7 @@ class FeishuAdapter(IMAdapter):
                                     "open_id": getattr(sid, 'open_id', '') or '',
                                     "user_id": getattr(sid, 'user_id', '') or '',
                                 }
-                            self._log(f"[ws] Sender: {event_data['sender']}")
+                            # Sender IDs may be sensitive; avoid logging raw IDs.
 
                     # Wrap in expected format for _enqueue_message
                     full_event = {
@@ -319,7 +341,7 @@ class FeishuAdapter(IMAdapter):
                         "event": event_data
                     }
                     self._enqueue_message(full_event)
-                    self._log("[ws] Message enqueued successfully")
+                    self._log("[ws] Message enqueued")
 
                 except Exception as e:
                     self._log(f"[ws] Event handler error: {e}")
@@ -336,7 +358,8 @@ class FeishuAdapter(IMAdapter):
                     app_id=self.app_id,
                     app_secret=self.app_secret,
                     event_handler=event_handler,
-                    log_level=lark.LogLevel.DEBUG,
+                    log_level=lark.LogLevel.INFO,
+                    domain=self.domain,
                 )
 
                 self._log("[ws] Starting Feishu SDK WebSocket client...")
@@ -587,13 +610,13 @@ class FeishuAdapter(IMAdapter):
             if not image_key:
                 raise ValueError("Missing image_key")
 
-            url = f"{FEISHU_API_BASE}/im/v1/images/{image_key}"
+            url = f"{self.api_base}/im/v1/images/{image_key}"
         elif kind == "file":
             file_key = attachment.get("file_key", "")
             if not file_key:
                 raise ValueError("Missing file_key")
 
-            url = f"{FEISHU_API_BASE}/im/v1/files/{file_key}"
+            url = f"{self.api_base}/im/v1/files/{file_key}"
         else:
             raise ValueError(f"Unknown attachment kind: {kind}")
 
@@ -634,7 +657,7 @@ class FeishuAdapter(IMAdapter):
 
         # Step 1: Upload file to get file_key
         boundary = "----cccc" + uuid.uuid4().hex
-        upload_url = f"{FEISHU_API_BASE}/im/v1/files"
+        upload_url = f"{self.api_base}/im/v1/files"
 
         safe_fn = (filename or file_path.name or "file").replace("\\", "_").replace("/", "_")
 

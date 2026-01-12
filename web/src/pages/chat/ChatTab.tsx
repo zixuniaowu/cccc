@@ -1,6 +1,6 @@
 // ChatTab is the main chat page component.
 import type { Dispatch, MutableRefObject, RefObject, SetStateAction } from "react";
-import { Actor, LedgerEvent, ReplyTarget, PresenceAgent } from "../../types";
+import { Actor, GroupMeta, LedgerEvent, ReplyTarget, PresenceAgent } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { SetupChecklist } from "./SetupChecklist";
@@ -10,9 +10,12 @@ export interface ChatTabProps {
   isDark: boolean;
   isSmallScreen: boolean;
   selectedGroupId: string;
+  groupLabelById: Record<string, string>;
   actors: Actor[];
   presenceAgents: PresenceAgent[];
   busy: string;
+  chatFilter: "all" | "to_user" | "attention";
+  setChatFilter: (v: "all" | "to_user" | "attention") => void;
 
   // Setup checklist
   showSetupCard: boolean;
@@ -25,6 +28,7 @@ export interface ChatTabProps {
 
   // Messages + scrolling
   chatMessages: LedgerEvent[];
+  hasAnyChatMessages: boolean;
   scrollRef: MutableRefObject<HTMLDivElement | null>;
   showScrollButton: boolean;
   chatUnreadCount: number;
@@ -32,6 +36,24 @@ export interface ChatTabProps {
   onScrollChange: (isAtBottom: boolean) => void;
   onReply: (ev: LedgerEvent) => void;
   onShowRecipients: (eventId: string) => void;
+  onAckMessage: (eventId: string) => void;
+  onCopyMessageLink?: (eventId: string) => void;
+  onRelayMessage?: (eventId: string) => void;
+  onOpenSourceMessage?: (srcGroupId: string, srcEventId: string) => void;
+
+  // Jump-to window mode (optional)
+  chatWindow?: {
+    centerEventId: string;
+    hasMoreBefore: boolean;
+    hasMoreAfter: boolean;
+  } | null;
+  onExitChatWindow?: () => void;
+  chatViewKey?: string;
+  chatInitialScrollTargetId?: string;
+  chatInitialScrollAnchorId?: string;
+  chatInitialScrollAnchorOffsetPx?: number;
+  chatHighlightEventId?: string;
+  onScrollSnapshot?: (snap: { atBottom: boolean; anchorId: string; offsetPx: number }) => void;
 
   // Composer
   replyTarget: ReplyTarget;
@@ -39,6 +61,12 @@ export interface ChatTabProps {
   toTokens: string[];
   onToggleRecipient: (token: string) => void;
   onClearRecipients: () => void;
+  groups: GroupMeta[];
+  destGroupId: string;
+  setDestGroupId: (groupId: string) => void;
+  destGroupScopeLabel?: string;
+  recipientActors: Actor[];
+  recipientActorsBusy?: boolean;
 
   composerFiles: File[];
   onRemoveComposerFile: (index: number) => void;
@@ -48,6 +76,8 @@ export interface ChatTabProps {
   composerRef: RefObject<HTMLTextAreaElement>;
   composerText: string;
   setComposerText: Dispatch<SetStateAction<string>>;
+  priority: "normal" | "attention";
+  setPriority: (priority: "normal" | "attention") => void;
   onSendMessage: () => void;
 
   // Mention menu
@@ -69,9 +99,12 @@ export function ChatTab({
   isDark,
   isSmallScreen,
   selectedGroupId,
+  groupLabelById,
   actors,
   presenceAgents,
   busy,
+  chatFilter,
+  setChatFilter,
   showSetupCard,
   needsScope,
   needsActors,
@@ -79,6 +112,7 @@ export function ChatTab({
   onAddAgent,
   onStartGroup,
   chatMessages,
+  hasAnyChatMessages,
   scrollRef,
   showScrollButton,
   chatUnreadCount,
@@ -86,11 +120,29 @@ export function ChatTab({
   onScrollChange,
   onReply,
   onShowRecipients,
+  onAckMessage,
+  onCopyMessageLink,
+  onRelayMessage,
+  onOpenSourceMessage,
+  chatWindow,
+  onExitChatWindow,
+  chatViewKey,
+  chatInitialScrollTargetId,
+  chatInitialScrollAnchorId,
+  chatInitialScrollAnchorOffsetPx,
+  chatHighlightEventId,
+  onScrollSnapshot,
   replyTarget,
   onCancelReply,
   toTokens,
   onToggleRecipient,
   onClearRecipients,
+  groups,
+  destGroupId,
+  setDestGroupId,
+  destGroupScopeLabel,
+  recipientActors,
+  recipientActorsBusy,
   composerFiles,
   onRemoveComposerFile,
   appendComposerFiles,
@@ -98,6 +150,8 @@ export function ChatTab({
   composerRef,
   composerText,
   setComposerText,
+  priority,
+  setPriority,
   onSendMessage,
   showMentionMenu,
   setShowMentionMenu,
@@ -145,6 +199,12 @@ export function ChatTab({
           isSmallScreen={isSmallScreen}
           selectedGroupId={selectedGroupId}
           actors={actors}
+          recipientActors={recipientActors}
+          recipientActorsBusy={recipientActorsBusy}
+          groups={groups}
+          destGroupId={destGroupId}
+          setDestGroupId={setDestGroupId}
+          destGroupScopeLabel={destGroupScopeLabel}
           busy={busy}
           replyTarget={replyTarget}
           onCancelReply={onCancelReply}
@@ -158,6 +218,8 @@ export function ChatTab({
           composerRef={composerRef}
           composerText={composerText}
           setComposerText={setComposerText}
+          priority={priority}
+          setPriority={setPriority}
           onSendMessage={onSendMessage}
           showMentionMenu={showMentionMenu}
           setShowMentionMenu={setShowMentionMenu}
@@ -173,6 +235,86 @@ export function ChatTab({
 
   return (
     <>
+      {/* Jump-to window banner */}
+      {chatWindow ? (
+        <div className="flex-shrink-0 px-4 pt-4">
+          <div
+            className={classNames(
+              "flex items-center justify-between gap-3 rounded-2xl border px-4 py-3 shadow-sm",
+              isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-white/70"
+            )}
+            role="status"
+            aria-label="Viewing message context window"
+          >
+            <div className="min-w-0">
+              <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
+                Viewing a message
+              </div>
+              <div className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}>
+                {isLoadingHistory
+                  ? "Loading context…"
+                  : chatWindow.hasMoreBefore || chatWindow.hasMoreAfter
+                    ? "Context is truncated."
+                    : "Context loaded."}
+              </div>
+            </div>
+            <button
+              type="button"
+              className={classNames(
+                "flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors",
+                isDark
+                  ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
+                  : "border-gray-200 text-gray-800 hover:bg-gray-100"
+              )}
+              onClick={() => onExitChatWindow?.()}
+            >
+              Return to latest
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Chat filters */}
+      {!chatWindow && hasAnyChatMessages && (
+        <div className="flex-shrink-0 px-4 pt-4">
+          <div
+            className={classNames(
+              "inline-flex items-center gap-1 rounded-full border p-1 shadow-sm",
+              isDark ? "border-slate-700/60 bg-slate-900/40" : "border-gray-200 bg-white/60"
+            )}
+            role="tablist"
+            aria-label="Chat filters"
+          >
+            {[
+              ["all", "All"],
+              ["to_user", "To user"],
+              ["attention", "Important"],
+            ].map(([key, label]) => {
+              const k = key as "all" | "to_user" | "attention";
+              const active = chatFilter === k;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  className={classNames(
+                    "text-xs px-3 py-1.5 rounded-full transition-all",
+                    active
+                      ? "bg-blue-600 text-white shadow-sm"
+                      : isDark
+                        ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                        : "text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                  )}
+                  onClick={() => setChatFilter(k)}
+                  aria-pressed={active}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Compact setup card (shown above the list when messages exist) */}
       {showSetupCard && chatMessages.length > 0 && (
         <div className="flex-shrink-0 px-4 pt-4">
@@ -209,41 +351,60 @@ export function ChatTab({
         presenceAgents={presenceAgents}
         isDark={isDark}
         groupId={selectedGroupId}
+        groupLabelById={groupLabelById}
+        viewKey={chatViewKey}
+        initialScrollTargetId={chatInitialScrollTargetId}
+        initialScrollAnchorId={chatInitialScrollAnchorId}
+        initialScrollAnchorOffsetPx={chatInitialScrollAnchorOffsetPx}
+        highlightEventId={chatHighlightEventId}
         scrollRef={scrollRef}
         onReply={onReply}
         onShowRecipients={onShowRecipients}
+        onAck={onAckMessage}
+        onCopyLink={onCopyMessageLink}
+        onRelay={onRelayMessage}
+        onOpenSource={onOpenSourceMessage}
         showScrollButton={showScrollButton}
         onScrollButtonClick={onScrollButtonClick}
         chatUnreadCount={chatUnreadCount}
         onScrollChange={onScrollChange}
+        onScrollSnapshot={onScrollSnapshot}
         isLoadingHistory={isLoadingHistory}
         hasMoreHistory={hasMoreHistory}
         onLoadMore={onLoadMore}
       />
 
       {/* Composer */}
-      <ChatComposer
-        isDark={isDark}
-        isSmallScreen={isSmallScreen}
-        selectedGroupId={selectedGroupId}
-        actors={actors}
-        busy={busy}
-        replyTarget={replyTarget}
-        onCancelReply={onCancelReply}
-        toTokens={toTokens}
-        onToggleRecipient={onToggleRecipient}
+        <ChatComposer
+          isDark={isDark}
+          isSmallScreen={isSmallScreen}
+          selectedGroupId={selectedGroupId}
+          actors={actors}
+          recipientActors={recipientActors}
+          recipientActorsBusy={recipientActorsBusy}
+          groups={groups}
+          destGroupId={destGroupId}
+          setDestGroupId={setDestGroupId}
+          destGroupScopeLabel={destGroupScopeLabel}
+          busy={busy}
+          replyTarget={replyTarget}
+          onCancelReply={onCancelReply}
+          toTokens={toTokens}
+          onToggleRecipient={onToggleRecipient}
         onClearRecipients={onClearRecipients}
         composerFiles={composerFiles}
         onRemoveComposerFile={onRemoveComposerFile}
         appendComposerFiles={appendComposerFiles}
         fileInputRef={fileInputRef}
         composerRef={composerRef}
-        composerText={composerText}
-        setComposerText={setComposerText}
-        onSendMessage={onSendMessage}
-        showMentionMenu={showMentionMenu}
-        setShowMentionMenu={setShowMentionMenu}
-        mentionSuggestions={mentionSuggestions}
+          composerText={composerText}
+          setComposerText={setComposerText}
+          priority={priority}
+          setPriority={setPriority}
+          onSendMessage={onSendMessage}
+          showMentionMenu={showMentionMenu}
+          setShowMentionMenu={setShowMentionMenu}
+          mentionSuggestions={mentionSuggestions}
         mentionSelectedIndex={mentionSelectedIndex}
         setMentionSelectedIndex={setMentionSelectedIndex}
         setMentionFilter={setMentionFilter}

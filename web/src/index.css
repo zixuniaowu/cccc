@@ -214,6 +214,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Native select dropdowns are rendered by the OS and are only lightly stylable.
+   Force option text to follow our theme tokens without overriding the system
+   highlight background (so hover/selected stays natural). */
+select.cccc-group-select option {
+  background-color: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+}
+
 /* ============================================
    Focus States (Accessibility)
    ============================================ */

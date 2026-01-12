@@ -64,8 +64,8 @@ Delivery format:
 | Telegram | ✅ Complete | `token_env` |
 | Slack | ✅ Complete | `bot_token_env` + `app_token_env` |
 | Discord | ✅ Complete | `token_env` |
-| Feishu | ✅ Complete | `app_id_env` + `app_secret_env` |
-| DingTalk | ✅ Complete | `app_key_env` + `app_secret_env` |
+| Feishu/Lark | ✅ Complete | `feishu_app_id_env` + `feishu_app_secret_env` |
+| DingTalk | ✅ Complete | `dingtalk_app_key_env` + `dingtalk_app_secret_env` (+ optional `dingtalk_robot_code_env`) |
 
 ### Configuration
 

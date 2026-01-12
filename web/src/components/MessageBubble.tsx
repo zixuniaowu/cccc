@@ -74,8 +74,14 @@ export interface MessageBubbleProps {
     presenceAgent: PresenceAgent | null;
     isDark: boolean;
     groupId: string;
+    groupLabelById: Record<string, string>;
+    isHighlighted?: boolean;
     onReply: () => void;
     onShowRecipients: () => void;
+    onAck?: (eventId: string) => void;
+    onCopyLink?: (eventId: string) => void;
+    onRelay?: (eventId: string) => void;
+    onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -85,8 +91,14 @@ export const MessageBubble = memo(function MessageBubble({
     presenceAgent,
     isDark,
     groupId,
+    groupLabelById,
+    isHighlighted,
     onReply,
     onShowRecipients,
+    onAck,
+    onCopyLink,
+    onRelay,
+    onOpenSource,
 }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
@@ -143,6 +155,17 @@ export const MessageBubble = memo(function MessageBubble({
     // Treat data as ChatMessageData.
     const msgData = ev.data as ChatMessageData | undefined;
     const quoteText = msgData?.quote_text;
+    const isAttention = String(msgData?.priority || "normal") === "attention";
+    const srcGroupId = typeof msgData?.src_group_id === "string" ? String(msgData.src_group_id || "").trim() : "";
+    const srcEventId = typeof msgData?.src_event_id === "string" ? String(msgData.src_event_id || "").trim() : "";
+    const hasSource = !!(srcGroupId && srcEventId);
+    const dstGroupId = typeof msgData?.dst_group_id === "string" ? String(msgData.dst_group_id || "").trim() : "";
+    const dstTo = useMemo(() => {
+        const raw = msgData?.dst_to;
+        if (!Array.isArray(raw)) return [];
+        return raw.map((t) => String(t || "").trim()).filter((t) => t);
+    }, [msgData?.dst_to]);
+    const hasDestination = !!dstGroupId;
     const rawAttachments: EventAttachment[] = Array.isArray(msgData?.attachments) ? msgData.attachments : [];
     const blobAttachments = rawAttachments
         .filter((a): a is EventAttachment => a != null && typeof a === "object")
@@ -156,6 +179,7 @@ export const MessageBubble = memo(function MessageBubble({
         .filter((a) => a.path.startsWith("state/blobs/"));
 
     const readStatus = ev._read_status;
+    const ackStatus = ev._ack_status;
     const recipients = msgData?.to;
 
     const visibleReadStatusEntries = useMemo(() => {
@@ -166,12 +190,27 @@ export const MessageBubble = memo(function MessageBubble({
             .map((id) => [id, !!readStatus[id]] as const);
     }, [actors, readStatus]);
 
+    const ackSummary = useMemo(() => {
+        if (!isAttention || !ackStatus || typeof ackStatus !== "object") return null;
+        const ids = Object.keys(ackStatus);
+        if (ids.length === 0) return null;
+        const done = ids.reduce((n, id) => n + (ackStatus[id] ? 1 : 0), 0);
+        const needsUserAck =
+            Object.prototype.hasOwnProperty.call(ackStatus, "user") && !ackStatus["user"] && !isUserMessage;
+        return { done, total: ids.length, needsUserAck };
+    }, [ackStatus, isAttention, isUserMessage]);
+
     const toLabel = useMemo(() => {
+        if (hasDestination) {
+            const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
+            const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
+            return `group: ${dstLabel} · ${dstToLabel}`;
+        }
         if (!recipients || recipients.length === 0) return "@all";
         return recipients
             .map(r => getRecipientDisplayName(r, displayNameMap))
             .join(", ");
-    }, [recipients, displayNameMap]);
+    }, [displayNameMap, dstGroupId, dstTo, groupLabelById, hasDestination, recipients]);
 
     // Sender display name (use title if available)
     const senderDisplayName = useMemo(() => {
@@ -303,8 +342,69 @@ export const MessageBubble = memo(function MessageBubble({
                             : isDark
                                 ? "bg-slate-800 text-slate-200 border border-slate-700 rounded-2xl rounded-tl-none"
                                 : "bg-white text-gray-800 border border-gray-200 rounded-2xl rounded-tl-none"
+                        ,
+                        isAttention ? (isDark ? "ring-1 ring-amber-500/30" : "ring-1 ring-amber-500/25") : ""
+                        ,
+                        isHighlighted
+                            ? isDark
+                                ? "outline outline-2 outline-sky-400/40 outline-offset-2"
+                                : "outline outline-2 outline-sky-500/30 outline-offset-2"
+                            : ""
                     )}
                 >
+                    {isAttention && (
+                        <div
+                            className={classNames(
+                                "absolute -top-2 right-3 text-[10px] font-semibold px-2 py-0.5 rounded-full border shadow-sm",
+                                isDark ? "bg-amber-900/60 text-amber-200 border-amber-700/50" : "bg-amber-50 text-amber-700 border-amber-200"
+                            )}
+                        >
+                            Important
+                        </div>
+                    )}
+
+                    {/* Cross-group relay provenance */}
+                    {hasSource ? (
+                        <button
+                            type="button"
+                            className={classNames(
+                                "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
+                                isDark
+                                    ? "border-white/10 bg-slate-900/40 text-slate-300 hover:bg-slate-900/60"
+                                    : "border-black/10 bg-gray-50 text-gray-700 hover:bg-gray-100",
+                                onOpenSource ? "cursor-pointer" : "cursor-default"
+                            )}
+                            onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
+                            disabled={!onOpenSource}
+                            title="Open original message"
+                        >
+                            <span className="opacity-70">↗</span>
+                            <span className="truncate">
+                                Relayed from {srcGroupId} · {srcEventId.slice(0, 8)}
+                            </span>
+                        </button>
+                    ) : null}
+                    {/* Outbound cross-group send record */}
+                    {hasDestination ? (() => {
+                        const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
+                        const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
+                        return (
+                            <div
+                                className={classNames(
+                                    "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
+                                    isDark
+                                        ? "border-white/10 bg-slate-900/40 text-slate-300"
+                                        : "border-black/10 bg-gray-50 text-gray-700"
+                                )}
+                                title={`Sent to ${dstGroupId} (${dstToLabel})`}
+                            >
+                                <span className="opacity-70">↗</span>
+                                <span className="truncate">
+                                    Sent to {dstLabel} · {dstToLabel}
+                                </span>
+                            </div>
+                        );
+                    })() : null}
                     {/* Reply Context */}
                     {quoteText && (
                         <div
@@ -386,12 +486,37 @@ export const MessageBubble = memo(function MessageBubble({
                 <div
                     className={classNames(
                         "flex items-center gap-3 mt-1 px-1 text-[10px] transition-opacity",
-                        visibleReadStatusEntries.length > 0 ? "justify-between" : "justify-end",
+                        (ackSummary || visibleReadStatusEntries.length > 0) ? "justify-between" : "justify-end",
                         "opacity-70 group-hover:opacity-100",
                         isDark ? "text-slate-500" : "text-gray-500"
                     )}
                 >
-                    {visibleReadStatusEntries.length > 0 && (
+                    {ackSummary ? (
+                        <button
+                            type="button"
+                            className={classNames(
+                                "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
+                                isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
+                            )}
+                            onClick={onShowRecipients}
+                            aria-label="Show acknowledgement status"
+                        >
+                            <span
+                                className={classNames(
+                                    "text-[10px] font-semibold tracking-tight",
+                                    ackSummary.done >= ackSummary.total
+                                        ? isDark
+                                            ? "text-emerald-400"
+                                            : "text-emerald-600"
+                                        : isDark
+                                            ? "text-amber-400"
+                                            : "text-amber-600"
+                                )}
+                            >
+                                Ack {ackSummary.done}/{ackSummary.total}
+                            </span>
+                        </button>
+                    ) : visibleReadStatusEntries.length > 0 ? (
                         <button
                             type="button"
                             className={classNames(
@@ -429,18 +554,63 @@ export const MessageBubble = memo(function MessageBubble({
                                 )}
                             </div>
                         </button>
-                    )}
+                    ) : null}
 
-                    <button
-                        type="button"
-                        className={classNames(
-                            "touch-target-sm px-1 rounded hover:underline transition-colors",
-                            isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                    <div className="flex items-center gap-2">
+                        {ackSummary && ackSummary.needsUserAck && ev.id && !isUserMessage && (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm px-2 py-1 rounded-lg border font-semibold",
+                                    isDark
+                                        ? "border-amber-700/60 bg-amber-900/30 text-amber-200 hover:bg-amber-900/50"
+                                        : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                )}
+                                onClick={() => onAck?.(String(ev.id))}
+                                aria-label="Acknowledge important message"
+                                disabled={!onAck}
+                                title="Acknowledge"
+                            >
+                                Acknowledge
+                            </button>
                         )}
-                        onClick={onReply}
-                    >
-                        Reply
-                    </button>
+                        {ev.id && onCopyLink ? (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm px-1 rounded hover:underline transition-colors",
+                                    isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                                )}
+                                onClick={() => onCopyLink(String(ev.id))}
+                                title="Copy link"
+                            >
+                                Copy link
+                            </button>
+                        ) : null}
+                        {ev.id && onRelay ? (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm px-1 rounded hover:underline transition-colors",
+                                    isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                                )}
+                                onClick={() => onRelay(String(ev.id))}
+                                title="Relay to another group"
+                            >
+                                Relay
+                            </button>
+                        ) : null}
+                        <button
+                            type="button"
+                            className={classNames(
+                                "touch-target-sm px-1 rounded hover:underline transition-colors",
+                                isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                            )}
+                            onClick={onReply}
+                        >
+                            Reply
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -493,6 +663,10 @@ export const MessageBubble = memo(function MessageBubble({
         prevProps.displayNameMap === nextProps.displayNameMap &&
         prevProps.presenceAgent === nextProps.presenceAgent &&
         prevProps.isDark === nextProps.isDark &&
-        prevProps.groupId === nextProps.groupId
+        prevProps.groupId === nextProps.groupId &&
+        prevProps.groupLabelById === nextProps.groupLabelById &&
+        prevProps.isHighlighted === nextProps.isHighlighted &&
+        prevProps.onRelay === nextProps.onRelay &&
+        prevProps.onOpenSource === nextProps.onOpenSource
     );
 });

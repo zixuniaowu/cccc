@@ -1,7 +1,7 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import { useMemo } from "react";
-import { Actor, ReplyTarget } from "../../types";
+import { Actor, GroupMeta, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 
 export interface ChatComposerProps {
@@ -9,6 +9,12 @@ export interface ChatComposerProps {
   isSmallScreen: boolean;
   selectedGroupId: string;
   actors: Actor[];
+  recipientActors: Actor[];
+  recipientActorsBusy?: boolean;
+  groups: GroupMeta[];
+  destGroupId: string;
+  setDestGroupId: (groupId: string) => void;
+  destGroupScopeLabel?: string;
   busy: string;
 
   // Reply
@@ -30,6 +36,8 @@ export interface ChatComposerProps {
   composerRef: RefObject<HTMLTextAreaElement>;
   composerText: string;
   setComposerText: Dispatch<SetStateAction<string>>;
+  priority: "normal" | "attention";
+  setPriority: (priority: "normal" | "attention") => void;
   onSendMessage: () => void;
 
   // Mention menu
@@ -47,6 +55,12 @@ export function ChatComposer({
   isSmallScreen,
   selectedGroupId,
   actors,
+  recipientActors,
+  recipientActorsBusy,
+  groups,
+  destGroupId,
+  setDestGroupId,
+  destGroupScopeLabel,
   busy,
   replyTarget,
   onCancelReply,
@@ -60,6 +74,8 @@ export function ChatComposer({
   composerRef,
   composerText,
   setComposerText,
+  priority,
+  setPriority,
   onSendMessage,
   showMentionMenu,
   setShowMentionMenu,
@@ -69,6 +85,9 @@ export function ChatComposer({
   setMentionFilter,
   onAppendRecipientToken,
 }: ChatComposerProps) {
+  const chipBaseClass =
+    "flex-shrink-0 whitespace-nowrap text-[11px] px-2.5 py-1 rounded-full border transition-all";
+
   // Get display name for reply target
   const replyByDisplayName = useMemo(() => {
     if (!replyTarget?.by) return "";
@@ -203,6 +222,70 @@ export function ChatComposer({
   };
 
   const canSend = composerText.trim() || composerFiles.length > 0;
+  const isAttention = priority === "attention";
+  const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
+  const canChooseDestGroup =
+    !!selectedGroupId && busy !== "send" && !replyTarget && composerFiles.length === 0;
+  const destGroupDisabledReason = (() => {
+    if (!selectedGroupId) return "Select a group first.";
+    if (busy === "send") return "Busy.";
+    if (replyTarget) return "Replies are always in the current group.";
+    if (composerFiles.length > 0) return "Attachments cannot be sent cross-group yet.";
+    return "";
+  })();
+  const fileDisabledReason = (() => {
+    if (!selectedGroupId) return "Select a group first.";
+    if (busy === "send") return "Busy.";
+    if (isCrossGroup) return "Attachments cannot be sent cross-group yet.";
+    return "Attach file";
+  })();
+
+  const groupOptions = useMemo(() => {
+    const cur = String(selectedGroupId || "").trim();
+    const list = (groups || []).filter((g) => String(g.group_id || "").trim());
+    // Prefer showing the current group first.
+    const sorted = list.slice().sort((a, b) => {
+      const aId = String(a.group_id || "");
+      const bId = String(b.group_id || "");
+      if (aId === cur && bId !== cur) return -1;
+      if (bId === cur && aId !== cur) return 1;
+      const aTitle = String(a.title || "").trim().toLowerCase();
+      const bTitle = String(b.title || "").trim().toLowerCase();
+      if (aTitle && bTitle) return aTitle.localeCompare(bTitle);
+      if (aTitle && !bTitle) return -1;
+      if (!aTitle && bTitle) return 1;
+      return aId.localeCompare(bId);
+    });
+    return sorted.map((g) => {
+      const gid = String(g.group_id || "").trim();
+      const title = String(g.title || "").trim();
+      const topic = String(g.topic || "").trim();
+      const label = title || topic || "Untitled group";
+      return { gid, label };
+    });
+  }, [groups, selectedGroupId]);
+
+  const groupSelectClass = useMemo(() => {
+    if (!canChooseDestGroup || groupOptions.length === 0) {
+      return isDark
+        ? "bg-slate-900 text-slate-600 border-slate-800"
+        : "bg-white text-gray-400 border-gray-200";
+    }
+    if (isCrossGroup) {
+      return isDark
+        ? "bg-blue-600/20 text-blue-100 border-blue-500/40 hover:border-blue-400/60"
+        : "bg-blue-50 text-blue-700 border-blue-200 hover:border-blue-300";
+    }
+    return isDark
+      ? "bg-cyan-500/10 text-slate-200 border-cyan-500/30 hover:border-cyan-400/40 hover:bg-cyan-500/15"
+      : "bg-cyan-50 text-gray-800 border-cyan-200 hover:border-cyan-300";
+  }, [canChooseDestGroup, groupOptions.length, isCrossGroup, isDark]);
+
+  const groupCaretClass = useMemo(() => {
+    if (!canChooseDestGroup || groupOptions.length === 0) return isDark ? "text-slate-600" : "text-gray-400";
+    if (isCrossGroup) return isDark ? "text-blue-200" : "text-blue-700";
+    return isDark ? "text-cyan-200" : "text-cyan-800";
+  }, [canChooseDestGroup, groupOptions.length, isCrossGroup, isDark]);
 
   return (
     <footer
@@ -235,9 +318,45 @@ export function ChatComposer({
       )}
 
       {/* Recipient Selector */}
-      <div className="mb-3 flex items-center gap-2">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <div className={classNames("text-xs font-medium flex-shrink-0", isDark ? "text-slate-500" : "text-gray-400")}>To</div>
-        <div className="flex-1 min-w-0 overflow-x-auto scrollbar-hide sm:overflow-visible">
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="relative flex-shrink-0">
+            <select
+              value={destGroupId || selectedGroupId || ""}
+              onChange={(e) => setDestGroupId(e.target.value)}
+              style={{ colorScheme: isDark ? "dark" : "light" }}
+              className={classNames(
+                "appearance-none pr-7 truncate max-w-[200px] sm:max-w-[240px]",
+                "cccc-group-select",
+                chipBaseClass,
+                groupSelectClass
+              )}
+              disabled={!canChooseDestGroup || groupOptions.length === 0}
+              title={
+                destGroupDisabledReason ||
+                (destGroupScopeLabel ? `Destination group • ${destGroupScopeLabel}` : "Destination group")
+              }
+              aria-label="Destination group"
+            >
+              {groupOptions.map((g) => (
+                <option key={g.gid} value={g.gid}>
+                  {g.label}
+                </option>
+              ))}
+            </select>
+            <div
+              className={classNames(
+                "pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[10px]",
+                groupCaretClass
+              )}
+              aria-hidden="true"
+            >
+              ▾
+            </div>
+          </div>
+        </div>
+        <div className={classNames("flex-1 min-w-0 overflow-x-auto scrollbar-hide sm:overflow-visible", recipientActorsBusy ? "opacity-60" : "")}>
           <div className="flex items-center gap-1.5 flex-nowrap sm:flex-wrap">
             {/* Special tokens */}
             {["@all", "@foreman", "@peers"].map((tok) => {
@@ -246,7 +365,7 @@ export function ChatComposer({
                 <button
                   key={tok}
                   className={classNames(
-                    "flex-shrink-0 whitespace-nowrap text-[11px] px-2.5 py-1 rounded-full border transition-all",
+                    chipBaseClass,
                     active
                       ? "bg-emerald-600 text-white border-emerald-500 shadow-sm"
                       : isDark
@@ -263,7 +382,7 @@ export function ChatComposer({
               );
             })}
             {/* Actor tokens - show title but use id as value */}
-            {actors.map((actor) => {
+            {recipientActors.map((actor) => {
               const id = String(actor.id || "");
               if (!id) return null;
               const active = toTokens.includes(id);
@@ -272,7 +391,7 @@ export function ChatComposer({
                 <button
                   key={id}
                   className={classNames(
-                    "flex-shrink-0 whitespace-nowrap text-[11px] px-2.5 py-1 rounded-full border transition-all",
+                    chipBaseClass,
                     active
                       ? "bg-emerald-600 text-white border-emerald-500 shadow-sm"
                       : isDark
@@ -280,7 +399,7 @@ export function ChatComposer({
                         : "bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:text-gray-800"
                   )}
                   onClick={() => onToggleRecipient(id)}
-                  disabled={!selectedGroupId || busy === "send"}
+                  disabled={!selectedGroupId || busy === "send" || !!recipientActorsBusy}
                   title={active ? `Remove ${displayName}` : `Add ${displayName}`}
                   aria-pressed={active}
                 >
@@ -354,8 +473,8 @@ export function ChatComposer({
               : "bg-white border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 hover:border-gray-300"
           )}
           onClick={() => fileInputRef.current?.click()}
-          disabled={!selectedGroupId || busy === "send"}
-          title="Attach file"
+          disabled={!selectedGroupId || busy === "send" || isCrossGroup}
+          title={fileDisabledReason}
         >
           📎
         </button>
@@ -409,6 +528,32 @@ export function ChatComposer({
             ))}
           </div>
         )}
+
+        {/* Importance toggle */}
+        <label
+          className={classNames(
+            "flex items-center gap-1.5 px-2 py-1.5 rounded-lg select-none min-h-[48px] transition-colors",
+            busy === "send" || !selectedGroupId
+              ? isDark
+                ? "text-slate-600"
+                : "text-gray-400"
+              : isDark
+                ? "text-slate-300 hover:bg-slate-800/60"
+                : "text-gray-700 hover:bg-gray-100"
+          )}
+          title="Important message: recipients must acknowledge it"
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 accent-amber-500"
+            checked={isAttention}
+            onChange={(e) => setPriority(e.target.checked ? "attention" : "normal")}
+            disabled={busy === "send" || !selectedGroupId}
+          />
+          <span className={classNames("text-xs font-semibold whitespace-nowrap hidden sm:inline", isAttention ? (isDark ? "text-amber-200" : "text-amber-700") : "")}>
+            Important
+          </span>
+        </label>
 
         {/* Send button */}
         <button

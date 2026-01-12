@@ -89,6 +89,17 @@ class SendRequest(BaseModel):
     by: str = Field(default="user")
     to: list[str] = Field(default_factory=list)
     path: str = Field(default="")
+    priority: Literal["normal", "attention"] = "normal"
+    src_group_id: str = Field(default="")
+    src_event_id: str = Field(default="")
+
+
+class SendCrossGroupRequest(BaseModel):
+    text: str
+    by: str = Field(default="user")
+    dst_group_id: str
+    to: list[str] = Field(default_factory=list)
+    priority: Literal["normal", "attention"] = "normal"
 
 
 class ReplyRequest(BaseModel):
@@ -96,6 +107,7 @@ class ReplyRequest(BaseModel):
     by: str = Field(default="user")
     to: list[str] = Field(default_factory=list)
     reply_to: str
+    priority: Literal["normal", "attention"] = "normal"
 
 
 class DebugClearLogsRequest(BaseModel):
@@ -141,6 +153,10 @@ class ActorUpdateRequest(BaseModel):
 
 class InboxReadRequest(BaseModel):
     event_id: str
+    by: str = Field(default="user")
+
+
+class UserAckRequest(BaseModel):
     by: str = Field(default="user")
 
 class ProjectMdUpdateRequest(BaseModel):
@@ -198,6 +214,7 @@ class IMSetRequest(BaseModel):
     bot_token_env: str = ""  # xoxb- for outbound (Web API)
     app_token_env: str = ""  # xapp- for inbound (Socket Mode)
     # Feishu fields
+    feishu_domain: str = ""
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
     # DingTalk fields
@@ -213,6 +230,43 @@ class IMActionRequest(BaseModel):
 def _is_env_var_name(value: str) -> bool:
     # Shell-friendly env var name (portable).
     return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]*", (value or "").strip()))
+
+
+def _normalize_feishu_domain(value: str) -> str:
+    """
+    Normalize the Feishu/Lark OpenAPI domain.
+
+    Feishu (CN): https://open.feishu.cn
+    Lark (Global): https://open.larkoffice.com
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    v = raw.strip().lower().rstrip("/")
+    if v.endswith("/open-apis"):
+        v = v[: -len("/open-apis")].rstrip("/")
+    if v in ("feishu", "cn", "china", "open.feishu.cn", "https://open.feishu.cn"):
+        return "https://open.feishu.cn"
+    if v in (
+        "lark",
+        "global",
+        "intl",
+        "international",
+        "open.larkoffice.com",
+        "https://open.larkoffice.com",
+        # Historical alias used in some SDKs/docs.
+        "open.larksuite.com",
+        "https://open.larksuite.com",
+    ):
+        return "https://open.larkoffice.com"
+    if not (v.startswith("http://") or v.startswith("https://")):
+        v = "https://" + v
+    # Allow only known domains in the Web UI to avoid surprising network targets.
+    if v in ("https://open.feishu.cn", "https://open.larkoffice.com", "https://open.larksuite.com"):
+        if v == "https://open.larksuite.com":
+            return "https://open.larkoffice.com"
+        return v
+    return ""
 
 
 def _normalize_command(cmd: Union[str, list[str], None]) -> Optional[list[str]]:
@@ -1093,7 +1147,12 @@ def create_app() -> FastAPI:
         return await _daemon({"op": "group_detach_scope", "args": {"group_id": group_id, "scope_key": scope_key, "by": by}})
 
     @app.get("/api/v1/groups/{group_id}/ledger/tail")
-    async def ledger_tail(group_id: str, lines: int = 50, with_read_status: bool = False) -> Dict[str, Any]:
+    async def ledger_tail(
+        group_id: str,
+        lines: int = 50,
+        with_read_status: bool = False,
+        with_ack_status: bool = False,
+    ) -> Dict[str, Any]:
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -1113,6 +1172,15 @@ def create_app() -> FastAPI:
                 event_id = str(ev.get("id") or "")
                 if event_id in status_map:
                     ev["_read_status"] = status_map[event_id]
+
+        # Optionally include ack status for attention chat.message events (batch optimized)
+        if with_ack_status:
+            from ...kernel.inbox import get_ack_status_batch
+            ack_map = get_ack_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in ack_map:
+                    ev["_ack_status"] = ack_map[event_id]
         
         return {"ok": True, "result": {"events": events}}
 
@@ -1126,6 +1194,7 @@ def create_app() -> FastAPI:
         after: str = "",
         limit: int = 50,
         with_read_status: bool = False,
+        with_ack_status: bool = False,
     ) -> Dict[str, Any]:
         """Search and paginate messages in the ledger.
         
@@ -1167,6 +1236,15 @@ def create_app() -> FastAPI:
                 event_id = str(ev.get("id") or "")
                 if event_id in status_map:
                     ev["_read_status"] = status_map[event_id]
+
+        # Optionally include ack status (batch optimized)
+        if with_ack_status:
+            from ...kernel.inbox import get_ack_status_batch
+            ack_map = get_ack_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in ack_map:
+                    ev["_ack_status"] = ack_map[event_id]
         
         return {
             "ok": True,
@@ -1175,6 +1253,87 @@ def create_app() -> FastAPI:
                 "has_more": has_more,
                 "count": len(events),
             }
+        }
+
+    @app.get("/api/v1/groups/{group_id}/ledger/window")
+    async def ledger_window(
+        group_id: str,
+        center: str,
+        kind: str = "chat",
+        before: int = 30,
+        after: int = 30,
+        with_read_status: bool = False,
+        with_ack_status: bool = False,
+    ) -> Dict[str, Any]:
+        """Return a bounded window of events around a center event_id.
+
+        This is used for "jump-to message" deep links and search result navigation.
+        """
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        from ...kernel.inbox import find_event, search_messages, get_read_status_batch
+
+        center_id = str(center or "").strip()
+        if not center_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_center", "message": "missing center event_id"})
+
+        center_event = find_event(group, center_id)
+        if center_event is None:
+            raise HTTPException(status_code=404, detail={"code": "event_not_found", "message": f"event not found: {center_id}"})
+
+        # Validate and clamp window sizes
+        before = max(0, min(200, int(before)))
+        after = max(0, min(200, int(after)))
+
+        kind_filter = kind if kind in ("all", "chat", "notify") else "chat"
+
+        if kind_filter == "chat" and str(center_event.get("kind") or "") != "chat.message":
+            raise HTTPException(status_code=400, detail={"code": "invalid_center_kind", "message": "center event kind must be chat.message for kind=chat"})
+
+        before_events, has_more_before = search_messages(
+            group,
+            query="",
+            kind_filter=kind_filter,  # type: ignore
+            before_id=center_id,
+            limit=before,
+        )
+        after_events, has_more_after = search_messages(
+            group,
+            query="",
+            kind_filter=kind_filter,  # type: ignore
+            after_id=center_id,
+            limit=after,
+        )
+
+        events = [*before_events, center_event, *after_events]
+
+        if with_read_status:
+            status_map = get_read_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in status_map:
+                    ev["_read_status"] = status_map[event_id]
+
+        if with_ack_status:
+            from ...kernel.inbox import get_ack_status_batch
+            ack_map = get_ack_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in ack_map:
+                    ev["_ack_status"] = ack_map[event_id]
+
+        return {
+            "ok": True,
+            "result": {
+                "center_id": center_id,
+                "center_index": len(before_events),
+                "events": events,
+                "has_more_before": has_more_before,
+                "has_more_after": has_more_after,
+                "count": len(events),
+            },
         }
 
     @app.get("/api/v1/groups/{group_id}/events/{event_id}/read_status")
@@ -1207,7 +1366,37 @@ def create_app() -> FastAPI:
         return await _daemon(
             {
                 "op": "send",
-                "args": {"group_id": group_id, "text": req.text, "by": req.by, "to": list(req.to), "path": req.path},
+                "args": {
+                    "group_id": group_id,
+                    "text": req.text,
+                    "by": req.by,
+                    "to": list(req.to),
+                    "path": req.path,
+                    "priority": req.priority,
+                    "src_group_id": req.src_group_id,
+                    "src_event_id": req.src_event_id,
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/send_cross_group")
+    async def send_cross_group(group_id: str, req: SendCrossGroupRequest) -> Dict[str, Any]:
+        """Send a message to another group with provenance.
+
+        This creates a source chat.message in the current group and forwards a copy into the destination group
+        with (src_group_id, src_event_id) set.
+        """
+        return await _daemon(
+            {
+                "op": "send_cross_group",
+                "args": {
+                    "group_id": group_id,
+                    "dst_group_id": req.dst_group_id,
+                    "text": req.text,
+                    "by": req.by,
+                    "to": list(req.to),
+                    "priority": req.priority,
+                },
             }
         )
 
@@ -1216,7 +1405,26 @@ def create_app() -> FastAPI:
         return await _daemon(
             {
                 "op": "reply",
-                "args": {"group_id": group_id, "text": req.text, "by": req.by, "to": list(req.to), "reply_to": req.reply_to},
+                "args": {
+                    "group_id": group_id,
+                    "text": req.text,
+                    "by": req.by,
+                    "to": list(req.to),
+                    "reply_to": req.reply_to,
+                    "priority": req.priority,
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/events/{event_id}/ack")
+    async def chat_ack(group_id: str, event_id: str, req: UserAckRequest) -> Dict[str, Any]:
+        # Web UI can only ACK as user (no impersonation).
+        if str(req.by or "").strip() != "user":
+            raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "ack is only supported as user in the web UI"})
+        return await _daemon(
+            {
+                "op": "chat_ack",
+                "args": {"group_id": group_id, "event_id": event_id, "actor_id": "user", "by": "user"},
             }
         )
 
@@ -1227,6 +1435,7 @@ def create_app() -> FastAPI:
         text: str = Form(""),
         to_json: str = Form("[]"),
         path: str = Form(""),
+        priority: str = Form("normal"),
         files: list[UploadFile] = File(default_factory=list),
     ) -> Dict[str, Any]:
         group = load_group(group_id)
@@ -1263,10 +1472,14 @@ def create_app() -> FastAPI:
             else:
                 msg_text = f"[files] {len(attachments)} attachments"
 
+        prio = str(priority or "normal").strip() or "normal"
+        if prio not in ("normal", "attention"):
+            raise HTTPException(status_code=400, detail={"code": "invalid_priority", "message": "priority must be 'normal' or 'attention'"})
+
         return await _daemon(
             {
                 "op": "send",
-                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "path": path, "attachments": attachments},
+                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "path": path, "attachments": attachments, "priority": prio},
             }
         )
 
@@ -1277,6 +1490,7 @@ def create_app() -> FastAPI:
         text: str = Form(""),
         to_json: str = Form("[]"),
         reply_to: str = Form(""),
+        priority: str = Form("normal"),
         files: list[UploadFile] = File(default_factory=list),
     ) -> Dict[str, Any]:
         group = load_group(group_id)
@@ -1313,10 +1527,14 @@ def create_app() -> FastAPI:
             else:
                 msg_text = f"[files] {len(attachments)} attachments"
 
+        prio = str(priority or "normal").strip() or "normal"
+        if prio not in ("normal", "attention"):
+            raise HTTPException(status_code=400, detail={"code": "invalid_priority", "message": "priority must be 'normal' or 'attention'"})
+
         return await _daemon(
             {
                 "op": "reply",
-                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "reply_to": reply_to, "attachments": attachments},
+                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "reply_to": reply_to, "attachments": attachments, "priority": prio},
             }
         )
 
@@ -1635,6 +1853,15 @@ def create_app() -> FastAPI:
             im_cfg["enabled"] = True
 
         platform = str(req.platform or "").strip().lower()
+        prev_files = prev_im.get("files") if isinstance(prev_im, dict) else None
+        if isinstance(prev_files, dict):
+            # Preserve non-credential settings, if any (so "Set" doesn't silently drop them).
+            im_cfg["files"] = prev_files
+        else:
+            # Default file-transfer policy (also used by CLI).
+            default_max_mb = 20 if platform in ("telegram", "slack") else 10
+            im_cfg["files"] = {"enabled": True, "max_mb": default_max_mb}
+
         token_hint = str(req.bot_token_env or req.token_env or "").strip()
 
         if platform == "slack":
@@ -1659,6 +1886,9 @@ def create_app() -> FastAPI:
                 im_cfg.setdefault("bot_token", str(req.token).strip())
         elif platform == "feishu":
             # Feishu: app_id + app_secret
+            dom = _normalize_feishu_domain(req.feishu_domain)
+            if dom:
+                im_cfg["feishu_domain"] = dom
             app_id = str(req.feishu_app_id or "").strip()
             app_secret = str(req.feishu_app_secret or "").strip()
             if app_id:

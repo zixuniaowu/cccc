@@ -2,7 +2,7 @@
 Entry point for running IM bridge as a module.
 
 Usage:
-    python -m cccc.ports.im.bridge <group_id> [platform]
+    python -m cccc.ports.im <group_id> [platform]
 """
 
 from __future__ import annotations
@@ -15,13 +15,13 @@ from .bridge import start_bridge
 def main() -> int:
     if len(sys.argv) < 2:
         print("Usage: python -m cccc.ports.im <group_id> [platform]")
-        print("  platform: telegram (default), slack, discord, feishu, dingtalk")
+        print("  platform: telegram (default), slack, discord, feishu (Feishu/Lark), dingtalk")
         print("")
         print("Environment variables:")
         print("  Telegram: TELEGRAM_BOT_TOKEN")
         print("  Slack:    SLACK_BOT_TOKEN, SLACK_APP_TOKEN (optional)")
         print("  Discord:  DISCORD_BOT_TOKEN")
-        print("  Feishu:   FEISHU_APP_ID, FEISHU_APP_SECRET")
+        print("  Feishu/Lark: FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_DOMAIN (optional: feishu|lark|https://...)")
         print("  DingTalk: DINGTALK_APP_KEY, DINGTALK_APP_SECRET, DINGTALK_ROBOT_CODE (optional)")
         return 1
 

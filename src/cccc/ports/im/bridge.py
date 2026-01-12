@@ -419,7 +419,7 @@ class IMBridge:
             files_cfg = file_cfg.get("files") if isinstance(file_cfg.get("files"), dict) else {}
             files_enabled = bool(files_cfg.get("enabled", True))
             platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
-            default_max_mb = 20 if platform == "telegram" else 10 if platform == "discord" else 20
+            default_max_mb = 20 if platform in ("telegram", "slack") else 10
             try:
                 max_mb = int(files_cfg.get("max_mb") or default_max_mb)
             except Exception:
@@ -751,9 +751,28 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         print(f"[error] Group configured for {configured_platform}, not {platform}")
         sys.exit(1)
 
-    # Get token(s) based on platform
-    bot_token = None
-    app_token = None  # Slack only (for Socket Mode inbound)
+    # Resolve credentials based on platform.
+    # Note: some platforms support either "store the value in group.yaml" or "store an env var name".
+    bot_token: Optional[str] = None
+    app_token: Optional[str] = None  # Slack only (for Socket Mode inbound)
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    dingtalk_app_key: str = ""
+    dingtalk_app_secret: str = ""
+    dingtalk_robot_code: str = ""
+
+    def _resolve_secret(*, value_key: str, env_key: str, default_env: str) -> str:
+        raw = str(im_config.get(value_key) or "").strip()
+        if raw:
+            return raw
+        env_name_raw = str(im_config.get(env_key) or "").strip()
+        env_name = env_name_raw if _is_env_var_name(env_name_raw) else ""
+        if env_name:
+            return str(os.environ.get(env_name, "") or "").strip()
+        # Common misconfig: raw secret pasted into *_env field.
+        if env_name_raw and not env_name:
+            return env_name_raw
+        return str(os.environ.get(default_env, "") or "").strip()
 
     if platform.lower() == "slack":
         # Slack requires bot_token (xoxb-) for outbound, app_token (xapp-) for inbound
@@ -786,25 +805,80 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         if not app_token:
             print("[warn] No app token configured - inbound messages disabled")
     elif platform.lower() == "feishu":
-        # Feishu uses app_id + app_secret
-        # Read credentials early for lock fingerprint calculation
-        feishu_app_id_cfg = str(im_config.get("feishu_app_id") or "").strip()
-        feishu_app_secret_cfg = str(im_config.get("feishu_app_secret") or "").strip()
-        if not feishu_app_id_cfg or not feishu_app_secret_cfg:
-            print("[error] Feishu app_id and app_secret required in group config")
+        # Feishu/Lark uses app_id + app_secret.
+        # Resolve early so the singleton lock can be keyed by credentials.
+        feishu_app_id = _resolve_secret(
+            value_key="feishu_app_id",
+            env_key="feishu_app_id_env",
+            default_env="FEISHU_APP_ID",
+        )
+        feishu_app_secret = _resolve_secret(
+            value_key="feishu_app_secret",
+            env_key="feishu_app_secret_env",
+            default_env="FEISHU_APP_SECRET",
+        )
+        if not feishu_app_id or not feishu_app_secret:
+            print(
+                "[error] Feishu/Lark requires app_id + app_secret (set via group IM config or FEISHU_APP_ID/FEISHU_APP_SECRET)."
+            )
             sys.exit(1)
-        # Use app_id for lock fingerprint (bot_token slot)
-        bot_token = feishu_app_id_cfg
+
+        # Optional domain override to support Lark (Global).
+        feishu_domain_raw = (
+            str(im_config.get("feishu_domain") or os.environ.get("FEISHU_DOMAIN") or "")
+            .strip()
+            .lower()
+        )
+        feishu_domain_raw = feishu_domain_raw.rstrip("/")
+        if feishu_domain_raw.endswith("/open-apis"):
+            feishu_domain_raw = feishu_domain_raw[: -len("/open-apis")].rstrip("/")
+        if feishu_domain_raw in (
+            "lark",
+            "global",
+            "intl",
+            "international",
+            "https://open.larkoffice.com",
+            "open.larkoffice.com",
+            # Historical alias used in some SDKs/docs.
+            "https://open.larksuite.com",
+            "open.larksuite.com",
+        ):
+            im_config["feishu_domain"] = "https://open.larkoffice.com"
+        elif feishu_domain_raw in (
+            "feishu",
+            "cn",
+            "china",
+            "https://open.feishu.cn",
+            "open.feishu.cn",
+            "",
+        ):
+            im_config["feishu_domain"] = "https://open.feishu.cn"
+        else:
+            # Keep a safe default (do not allow arbitrary domains from env here).
+            im_config["feishu_domain"] = "https://open.feishu.cn"
     elif platform.lower() == "dingtalk":
-        # DingTalk uses app_key + app_secret
-        # Read credentials early for lock fingerprint calculation
-        dingtalk_app_key_cfg = str(im_config.get("dingtalk_app_key") or "").strip()
-        dingtalk_app_secret_cfg = str(im_config.get("dingtalk_app_secret") or "").strip()
-        if not dingtalk_app_key_cfg or not dingtalk_app_secret_cfg:
-            print("[error] DingTalk app_key and app_secret required in group config")
+        # DingTalk uses app_key + app_secret (+ optional robot_code).
+        # Resolve early so the singleton lock can be keyed by credentials.
+        dingtalk_app_key = _resolve_secret(
+            value_key="dingtalk_app_key",
+            env_key="dingtalk_app_key_env",
+            default_env="DINGTALK_APP_KEY",
+        )
+        dingtalk_app_secret = _resolve_secret(
+            value_key="dingtalk_app_secret",
+            env_key="dingtalk_app_secret_env",
+            default_env="DINGTALK_APP_SECRET",
+        )
+        dingtalk_robot_code = _resolve_secret(
+            value_key="dingtalk_robot_code",
+            env_key="dingtalk_robot_code_env",
+            default_env="DINGTALK_ROBOT_CODE",
+        )
+        if not dingtalk_app_key or not dingtalk_app_secret:
+            print(
+                "[error] DingTalk requires app_key + app_secret (set via group IM config or DINGTALK_APP_KEY/DINGTALK_APP_SECRET)."
+            )
             sys.exit(1)
-        # Use app_key for lock fingerprint (bot_token slot)
-        bot_token = dingtalk_app_key_cfg
     else:
         # Telegram/Discord: single token
         token_env_raw = str(im_config.get("token_env") or im_config.get("bot_token_env") or "").strip()
@@ -829,9 +903,18 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
     lock_path = state_dir / "im_bridge.lock"
     pid_path = state_dir / "im_bridge.pid"
 
-    # Acquire global singleton lock per bot token to avoid multiple groups (or
-    # multiple processes) polling the same IM bot token (Telegram getUpdates, etc.).
-    token_material = f"{platform.lower()}|{bot_token or ''}|{app_token or ''}"
+    # Acquire global singleton lock per credential set to avoid multiple groups (or
+    # multiple processes) consuming the same inbound stream (Telegram getUpdates, Slack Socket Mode, etc.).
+    lock_identity = ""
+    if platform.lower() == "slack":
+        lock_identity = f"slack|bot={bot_token or ''}|app={app_token or ''}"
+    elif platform.lower() == "feishu":
+        lock_identity = f"feishu|domain={str(im_config.get('feishu_domain') or '')}|app_id={feishu_app_id}"
+    elif platform.lower() == "dingtalk":
+        lock_identity = f"dingtalk|app_key={dingtalk_app_key}"
+    else:
+        lock_identity = f"{platform.lower()}|token={bot_token or ''}"
+    token_material = lock_identity
     token_fingerprint = hashlib.sha256(token_material.encode("utf-8")).hexdigest()[:12]
     token_lock_path = ensure_home() / "locks" / f"im_bridge_{platform.lower()}_{token_fingerprint}.lock"
     token_lock_file = _acquire_singleton_lock(token_lock_path)
@@ -842,8 +925,8 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         except Exception:
             other_pid = ""
         pid_hint = f" (pid={other_pid})" if other_pid else ""
-        print(f"[error] Another {platform} bridge is already running for this bot token{pid_hint}")
-        print("Stop it before starting a new bridge, or use a different bot token.")
+        print(f"[error] Another {platform} bridge is already running for this credential set{pid_hint}")
+        print("Stop it before starting a new bridge, or use different credentials.")
         sys.exit(1)
 
     # Acquire singleton lock
@@ -869,20 +952,14 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         adapter = DiscordAdapter(token=bot_token, log_path=log_path)
     elif platform.lower() == "feishu":
         from .adapters.feishu import FeishuAdapter
-        feishu_app_id = os.environ.get("FEISHU_APP_ID", "")
-        feishu_app_secret = os.environ.get("FEISHU_APP_SECRET", "")
-        if not feishu_app_id or not feishu_app_secret:
-            print("[error] FEISHU_APP_ID and FEISHU_APP_SECRET environment variables required")
-            sys.exit(1)
-        adapter = FeishuAdapter(app_id=feishu_app_id, app_secret=feishu_app_secret, log_path=log_path)
+        adapter = FeishuAdapter(
+            app_id=feishu_app_id,
+            app_secret=feishu_app_secret,
+            domain=str(im_config.get("feishu_domain") or "https://open.feishu.cn"),
+            log_path=log_path,
+        )
     elif platform.lower() == "dingtalk":
         from .adapters.dingtalk import DingTalkAdapter
-        dingtalk_app_key = os.environ.get("DINGTALK_APP_KEY", "")
-        dingtalk_app_secret = os.environ.get("DINGTALK_APP_SECRET", "")
-        dingtalk_robot_code = os.environ.get("DINGTALK_ROBOT_CODE", "")
-        if not dingtalk_app_key or not dingtalk_app_secret:
-            print("[error] DINGTALK_APP_KEY and DINGTALK_APP_SECRET environment variables required")
-            sys.exit(1)
         adapter = DingTalkAdapter(
             app_key=dingtalk_app_key,
             app_secret=dingtalk_app_secret,
@@ -939,13 +1016,13 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python -m cccc.ports.im.bridge <group_id> [platform]")
-        print("  platform: telegram (default), slack, discord, feishu, dingtalk")
+        print("  platform: telegram (default), slack, discord, feishu (Feishu/Lark), dingtalk")
         print("")
         print("Environment variables:")
         print("  Telegram: TELEGRAM_BOT_TOKEN")
         print("  Slack:    SLACK_BOT_TOKEN, SLACK_APP_TOKEN (optional)")
         print("  Discord:  DISCORD_BOT_TOKEN")
-        print("  Feishu:   FEISHU_APP_ID, FEISHU_APP_SECRET")
+        print("  Feishu/Lark: FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_DOMAIN (optional: feishu|lark|https://...)")
         print("  DingTalk: DINGTALK_APP_KEY, DINGTALK_APP_SECRET, DINGTALK_ROBOT_CODE (optional)")
         sys.exit(1)
 

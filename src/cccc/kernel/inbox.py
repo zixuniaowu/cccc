@@ -96,6 +96,143 @@ def delete_cursor(group: Group, actor_id: str) -> bool:
     return True
 
 
+def _collect_chat_acks(group: Group, *, event_ids: set[str]) -> Dict[str, set[str]]:
+    """Collect acked recipients for a set of message event IDs.
+
+    Ledger is the source of truth: we derive ack status by scanning chat.ack events.
+    """
+    out: Dict[str, set[str]] = {}
+    if not event_ids:
+        return out
+
+    for ev in iter_events(group.ledger_path):
+        if str(ev.get("kind") or "") != "chat.ack":
+            continue
+        data = ev.get("data")
+        if not isinstance(data, dict):
+            continue
+        target_event_id = str(data.get("event_id") or "").strip()
+        if not target_event_id or target_event_id not in event_ids:
+            continue
+        actor_id = str(data.get("actor_id") or "").strip()
+        if not actor_id:
+            continue
+        out.setdefault(target_event_id, set()).add(actor_id)
+
+    return out
+
+
+def has_chat_ack(group: Group, *, event_id: str, actor_id: str) -> bool:
+    """Return True if a chat.ack already exists for (event_id, actor_id)."""
+    eid = str(event_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if not eid or not aid:
+        return False
+    for ev in iter_events(group.ledger_path):
+        if str(ev.get("kind") or "") != "chat.ack":
+            continue
+        data = ev.get("data")
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("event_id") or "").strip() != eid:
+            continue
+        if str(data.get("actor_id") or "").strip() != aid:
+            continue
+        return True
+    return False
+
+
+def get_ack_status_batch(group: Group, events: List[Dict[str, Any]]) -> Dict[str, Dict[str, bool]]:
+    """Compute per-recipient ack status for attention chat messages.
+
+    Returns:
+      { "<message_event_id>": { "<recipient_id>": bool, ... }, ... }
+
+    Notes:
+    - Only includes chat.message events with data.priority == "attention".
+    - Recipient expansion is based on the message "to" tokens and the actor roster,
+      excluding the sender and actors created after the message timestamp.
+    - "user" is included only if explicitly targeted (to includes "user" or "@user").
+    """
+    actors = list_actors(group)
+
+    attention_ids: set[str] = set()
+    for ev in events:
+        if str(ev.get("kind") or "") != "chat.message":
+            continue
+        data = ev.get("data")
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("priority") or "normal").strip() != "attention":
+            continue
+        # Outbound cross-group records are not ACK-tracked in the source group.
+        if str(data.get("dst_group_id") or "").strip():
+            continue
+        event_id = str(ev.get("id") or "").strip()
+        if event_id:
+            attention_ids.add(event_id)
+
+    acked_by_message = _collect_chat_acks(group, event_ids=attention_ids)
+
+    result: Dict[str, Dict[str, bool]] = {}
+
+    for ev in events:
+        if str(ev.get("kind") or "") != "chat.message":
+            continue
+
+        data = ev.get("data")
+        if not isinstance(data, dict):
+            continue
+
+        priority = str(data.get("priority") or "normal").strip()
+        if priority != "attention":
+            continue
+        # Outbound cross-group records are not ACK-tracked in the source group.
+        if str(data.get("dst_group_id") or "").strip():
+            continue
+
+        event_id = str(ev.get("id") or "").strip()
+        if not event_id:
+            continue
+
+        ev_ts = str(ev.get("ts") or "").strip()
+        ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
+        if ev_dt is None:
+            continue
+
+        by = str(ev.get("by") or "").strip()
+
+        to_raw = data.get("to")
+        to_tokens = [str(x).strip() for x in to_raw] if isinstance(to_raw, list) else []
+        to_set = {t for t in to_tokens if t}
+
+        recipients: List[str] = []
+        for actor in actors:
+            if not isinstance(actor, dict):
+                continue
+            aid = str(actor.get("id") or "").strip()
+            if not aid or aid == "user" or aid == by:
+                continue
+            created_ts = str(actor.get("created_at") or "").strip()
+            created_dt = parse_utc_iso(created_ts) if created_ts else None
+            if created_dt is not None and created_dt > ev_dt:
+                continue
+            if not is_message_for_actor(group, actor_id=aid, event=ev):
+                continue
+            recipients.append(aid)
+
+        if by != "user" and ("user" in to_set or "@user" in to_set):
+            recipients.append("user")
+
+        acked_set = acked_by_message.get(event_id, set())
+        status: Dict[str, bool] = {}
+        for rid in recipients:
+            status[rid] = rid in acked_set
+        result[event_id] = status
+
+    return result
+
+
 def _message_targets(event: Dict[str, Any]) -> List[str]:
     """Get the 'to' targets for a chat message event."""
     data = event.get("data")

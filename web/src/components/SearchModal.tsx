@@ -13,6 +13,7 @@ interface SearchModalProps {
   actors: Actor[];
   isDark: boolean;
   onReply: (ev: LedgerEvent) => void;
+  onJumpToMessage?: (eventId: string) => void;
 }
 
 function formatEventText(ev: LedgerEvent): string {
@@ -83,7 +84,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply }: SearchModalProps) {
+export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply, onJumpToMessage }: SearchModalProps) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<KindFilter>("all");
@@ -384,6 +385,21 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply 
                         ↩ Reply
                       </button>
                     )}
+                    {isChat && evId && onJumpToMessage ? (
+                      <button
+                        className={classNames(
+                          "text-[10px] px-2 py-1 rounded border min-h-[36px] transition-colors",
+                          isDark
+                            ? "bg-slate-900 border-slate-800 hover:bg-slate-800/60 text-slate-300 hover:text-slate-100"
+                            : "bg-white border-gray-200 hover:bg-gray-100 text-gray-600 hover:text-gray-900"
+                        )}
+                        onClick={() => onJumpToMessage(evId)}
+                        aria-label="Open message context"
+                        title="Open"
+                      >
+                        ↗ Open
+                      </button>
+                    ) : null}
                     {evId && (
                       <button
                         className={classNames(
