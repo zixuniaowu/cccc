@@ -8,6 +8,7 @@ from .actor import ActorSubmit, AgentRuntime, RunnerKind
 
 
 TerminalTranscriptVisibility = Literal["off", "foreman", "all"]
+DefaultSendTo = Literal["foreman", "broadcast"]
 
 
 class GroupTemplateActor(BaseModel):
@@ -32,6 +33,7 @@ class GroupTemplateActor(BaseModel):
 class GroupTemplateSettings(BaseModel):
     """Group-scoped settings that are safe to carry across projects."""
 
+    default_send_to: DefaultSendTo = "foreman"
     nudge_after_seconds: int = 300
     actor_idle_timeout_seconds: int = 600
     keepalive_delay_seconds: int = 120

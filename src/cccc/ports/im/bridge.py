@@ -21,8 +21,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ...daemon.server import call_daemon
+from ...kernel.actors import list_actors, resolve_recipient_tokens
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import Group, load_group
+from ...kernel.messaging import get_default_send_to
 from ...paths import ensure_home
 from .adapters.base import IMAdapter
 from .adapters.telegram import TelegramAdapter
@@ -631,6 +633,14 @@ class IMBridge:
         """Handle /send message (explicit routing)."""
         _ = from_user
 
+        # Reload group from disk to reflect latest enabled/actor state.
+        group = load_group(self.group.group_id)
+        if group is None:
+            self.adapter.send_message(chat_id, "❌ Failed to send: group not found (bridge stopped).", thread_id=thread_id)
+            self._log(f"[message] chat={chat_id} thread={thread_id} error=group_not_found (stopping bridge)")
+            self.stop()
+            return
+
         # Parse recipients from leading args (supports multiple @targets, comma-separated).
         to: List[str] = []
         args = list(parsed.args or [])
@@ -649,8 +659,88 @@ class IMBridge:
             break
         msg_text = " ".join([str(x) for x in args]).strip()
 
-        # File settings
-        im_cfg = self.group.doc.get("im") if isinstance(self.group.doc.get("im"), dict) else {}
+        if not msg_text and not attachments:
+            # Explicit /send but empty.
+            return
+
+        # If no explicit recipients were provided, try @mentions in the message text first.
+        if not to and msg_text:
+            actors = list_actors(group)
+            actor_ids = {str(a.get("id") or "").strip() for a in actors if isinstance(a, dict)}
+            mention_tokens: List[str] = []
+            for m in re.findall(r"@(\w[\w-]*)", msg_text):
+                if not m:
+                    continue
+                if m in ("all", "peers", "foreman"):
+                    mention_tokens.append(f"@{m}")
+                    continue
+                if m in actor_ids:
+                    mention_tokens.append(m)
+            if mention_tokens:
+                to = mention_tokens
+
+        # If still empty, apply the group policy for empty-recipient sends.
+        if not to and get_default_send_to(group.doc) == "foreman":
+            to = ["@foreman"]
+
+        # Fail fast if the recipient set matches no enabled agents.
+        # IMPORTANT: do this before downloading/storing attachments to avoid leaving orphan blobs.
+        try:
+            canonical_to = resolve_recipient_tokens(group, to)
+        except Exception as e:
+            self.adapter.send_message(chat_id, f"❌ Invalid recipient: {e}", thread_id=thread_id)
+            return
+        if to and not canonical_to:
+            self.adapter.send_message(
+                chat_id,
+                "❌ Invalid recipient. Use /send @<agent> <message>, /send @all <message>, or /send @peers <message>.",
+                thread_id=thread_id,
+            )
+            return
+
+        enabled_actor_ids: List[str] = []
+        for a in list_actors(group):
+            if not isinstance(a, dict):
+                continue
+            if not bool(a.get("enabled", True)):
+                continue
+            aid = str(a.get("id") or "").strip()
+            if aid:
+                enabled_actor_ids.append(aid)
+        enabled_set = set(enabled_actor_ids)
+        foreman_id = enabled_actor_ids[0] if enabled_actor_ids else ""
+
+        matched: set[str] = set()
+        to_set = set(canonical_to)
+        if not to_set:
+            # Empty recipients = broadcast semantics.
+            matched.update(enabled_actor_ids)
+        if "@all" in to_set:
+            matched.update(enabled_actor_ids)
+        if "@foreman" in to_set and foreman_id:
+            matched.add(foreman_id)
+        if "@peers" in to_set:
+            for aid in enabled_actor_ids:
+                if aid != foreman_id:
+                    matched.add(aid)
+        for tok in canonical_to:
+            if not tok or tok.startswith("@") or tok == "user":
+                continue
+            if tok in enabled_set:
+                matched.add(tok)
+
+        if not matched:
+            wanted = " ".join(canonical_to) if canonical_to else "@all"
+            self.adapter.send_message(
+                chat_id,
+                f"⚠️ No enabled agents match the recipient(s): {wanted}. Run /status, then /launch (or enable an agent).",
+                thread_id=thread_id,
+            )
+            self._log(f"[message] chat={chat_id} thread={thread_id} skipped (no enabled targets) to={canonical_to}")
+            return
+
+        # File settings (only after recipients are validated)
+        im_cfg = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
         files_cfg = im_cfg.get("files") if isinstance(im_cfg.get("files"), dict) else {}
         files_enabled = bool(files_cfg.get("enabled", True))
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
@@ -683,7 +773,7 @@ class IMBridge:
                     continue
                 stored_attachments.append(
                     store_blob_bytes(
-                        self.group,
+                        group,
                         data=raw,
                         filename=str(a.get("file_name") or a.get("filename") or "file"),
                         mime_type=str(a.get("mime_type") or a.get("content_type") or ""),
@@ -698,12 +788,8 @@ class IMBridge:
                 msg_text = f"[files] {len(stored_attachments)} attachments"
 
         if not msg_text and not stored_attachments:
-            # Explicit /send but empty.
+            # Nothing left to send (all attachments were ignored / failed).
             return
-
-        # Default to @foreman if no recipients specified
-        if not to:
-            to = ["@foreman"]
 
         resp = self._daemon({
             "op": "send",
@@ -711,7 +797,7 @@ class IMBridge:
                 "group_id": self.group.group_id,
                 "text": msg_text,
                 "by": "user",
-                "to": to,
+                "to": canonical_to,
                 "path": "",
                 "attachments": stored_attachments,
             },
@@ -728,7 +814,9 @@ class IMBridge:
                 # Fatal misconfig: prevent spamming and competing bot pollers.
                 self.stop()
         else:
-            self._log(f"[message] chat={chat_id} thread={thread_id} to={to} len={len(msg_text)} files={len(stored_attachments)}")
+            self._log(
+                f"[message] chat={chat_id} thread={thread_id} to={canonical_to} len={len(msg_text)} files={len(stored_attachments)}"
+            )
 
 
 def start_bridge(group_id: str, platform: str = "telegram") -> None:

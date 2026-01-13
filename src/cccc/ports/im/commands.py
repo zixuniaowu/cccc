@@ -164,9 +164,9 @@ def format_help(platform: str = "telegram") -> str:
   /unsubscribe - stop receiving messages
 
 📨 Messages:
-  /send <message> - send to foreman (default)
-  /send @<actor> <message> - send to a specific actor
-  /send @all <message> - send to all actors
+  /send <message> - send using group default (default: foreman)
+  /send @<agent> <message> - send to a specific agent
+  /send @all <message> - send to all agents
   /send @peers <message> - send to non-foreman agents
 
 👁 Display:

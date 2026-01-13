@@ -195,6 +195,12 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
     """Apply settings to group.doc and return the effective patch we wrote."""
     patch: Dict[str, Any] = {}
 
+    # Messaging policy
+    if "default_send_to" in settings:
+        v = str(settings.get("default_send_to") or "").strip()
+        if v in ("foreman", "broadcast"):
+            patch["default_send_to"] = v
+
     def _int(k: str, *, min_v: int = 0, max_v: Optional[int] = None) -> None:
         if k not in settings:
             return
@@ -241,18 +247,23 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
         "help_nudge_min_messages",
         "standup_interval_seconds",
     }
+    messaging_keys = {"default_send_to"}
 
     delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
     automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
+    messaging = group.doc.get("messaging") if isinstance(group.doc.get("messaging"), dict) else {}
 
     for k, v in patch.items():
         if k in delivery_keys:
             delivery[k] = int(v)
         if k in automation_keys:
             automation[k] = int(v)
+        if k in messaging_keys:
+            messaging["default_send_to"] = str(v)
 
     group.doc["delivery"] = delivery
     group.doc["automation"] = automation
+    group.doc["messaging"] = messaging
 
     tt_patch: Dict[str, Any] = {}
     if "terminal_transcript_visibility" in patch:

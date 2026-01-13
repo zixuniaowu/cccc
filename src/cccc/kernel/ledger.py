@@ -5,7 +5,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Callable, Dict, Iterable, Optional
 
 from ..contracts.v1 import Event
 from ..contracts.v1.event import normalize_event_data
@@ -15,6 +15,30 @@ from ..util.file_lock import acquire_lockfile, release_lockfile
 
 MAX_EVENT_BYTES = 256_000
 MAX_CHAT_TEXT_BYTES = 32_000
+
+AppendHook = Callable[[Dict[str, Any]], None]
+
+_APPEND_HOOK: Optional[AppendHook] = None
+
+
+def set_append_hook(hook: Optional[AppendHook]) -> None:
+    """Set a best-effort callback invoked after a successful append_event().
+
+    This is intended for in-process observers (e.g., daemon streaming) and MUST
+    NOT be used as a correctness dependency (the ledger file is the source of truth).
+    """
+    global _APPEND_HOOK
+    _APPEND_HOOK = hook
+
+
+def _notify_append(event: Dict[str, Any]) -> None:
+    hook = _APPEND_HOOK
+    if hook is None:
+        return
+    try:
+        hook(event)
+    except Exception:
+        return
 
 
 def _spill_text(group_dir: Path, *, event_id: str, text: str) -> Dict[str, Any]:
@@ -73,6 +97,7 @@ def append_event(
             f.write(line + "\n")
     finally:
         release_lockfile(lk)
+    _notify_append(out)
     return out
 
 

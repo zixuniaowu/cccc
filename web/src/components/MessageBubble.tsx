@@ -1,9 +1,21 @@
-import { memo, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { memo, useCallback, useMemo, useState } from "react";
+
+import {
+  useFloating,
+  autoUpdate,
+  offset,
+  flip,
+  shift,
+  useHover,
+  useInteractions,
+  useDismiss,
+  FloatingPortal,
+} from "@floating-ui/react";
 import { LedgerEvent, Actor, PresenceAgent, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
+
 
 function formatEventLine(ev: LedgerEvent): string {
     if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
@@ -103,9 +115,8 @@ export const MessageBubble = memo(function MessageBubble({
     const isUserMessage = ev.by === "user";
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
 
-    const [showPresence, setShowPresence] = useState(false);
-    const [presencePos, setPresencePos] = useState<{ x: number; y: number } | null>(null);
-    const hideTimerRef = useRef<number | null>(null);
+    // Floating UI for Presence Tooltip - replaces manual coordinate calculation
+    const [isPresenceOpen, setIsPresenceOpen] = useState(false);
 
     const canShowPresence = useMemo(() => {
         if (isUserMessage) return false;
@@ -114,43 +125,39 @@ export const MessageBubble = memo(function MessageBubble({
         return true;
     }, [ev.by, isUserMessage]);
 
-    const clearHide = () => {
-        if (hideTimerRef.current != null) {
-            window.clearTimeout(hideTimerRef.current);
-            hideTimerRef.current = null;
-        }
-    };
+    const { refs, floatingStyles, context } = useFloating({
+        open: isPresenceOpen && canShowPresence,
+        onOpenChange: setIsPresenceOpen,
+        placement: "bottom-start",
+        middleware: [
+            offset(10),
+            flip({ fallbackPlacements: ["top-start", "bottom-end", "top-end"] }),
+            shift({ padding: 10 }),
+        ],
+        whileElementsMounted: autoUpdate,
+    });
 
-    const scheduleHide = () => {
-        clearHide();
-        hideTimerRef.current = window.setTimeout(() => {
-            setShowPresence(false);
-            setPresencePos(null);
-            hideTimerRef.current = null;
-        }, 160);
-    };
+    const setPresenceReference = useCallback(
+        (node: HTMLElement | null) => {
+            refs.setReference(node);
+        },
+        [refs]
+    );
 
-    const handlePresenceEnter = (el: HTMLElement) => {
-        if (!canShowPresence) return;
-        clearHide();
-        const rect = el.getBoundingClientRect();
-        const width = 360;
-        const estimatedHeight = 140;
-        const margin = 10;
-        let x = rect.left;
-        x = Math.min(x, window.innerWidth - width - margin);
-        x = Math.max(margin, x);
-        const below = rect.bottom + 10;
-        const above = rect.top - estimatedHeight - 10;
-        let y = below;
-        if (below + estimatedHeight > window.innerHeight - margin && above > margin) {
-            y = above;
-        }
-        y = Math.min(y, window.innerHeight - estimatedHeight - margin);
-        y = Math.max(margin, y);
-        setPresencePos({ x, y });
-        setShowPresence(true);
-    };
+    const setPresenceFloating = useCallback(
+        (node: HTMLElement | null) => {
+            refs.setFloating(node);
+        },
+        [refs]
+    );
+
+    const hover = useHover(context, {
+        delay: { open: 100, close: 150 },
+        enabled: canShowPresence,
+    });
+    const dismiss = useDismiss(context);
+    const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss]);
+
 
     // Treat data as ChatMessageData.
     const msgData = ev.data as ChatMessageData | undefined;
@@ -242,8 +249,8 @@ export const MessageBubble = memo(function MessageBubble({
                             : "bg-white border border-gray-200 text-gray-700",
                     !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                 )}
-                onPointerEnter={(e) => handlePresenceEnter(e.currentTarget)}
-                onPointerLeave={() => scheduleHide()}
+                ref={setPresenceReference}
+                {...getReferenceProps()}
             >
                 {isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
             </div>
@@ -272,8 +279,6 @@ export const MessageBubble = memo(function MessageBubble({
                                     : "bg-white border border-gray-200 text-gray-700",
                             !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                         )}
-                        onPointerEnter={(e) => handlePresenceEnter(e.currentTarget)}
-                        onPointerLeave={() => scheduleHide()}
                     >
                         {isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
                     </div>
@@ -614,19 +619,19 @@ export const MessageBubble = memo(function MessageBubble({
                 </div>
             </div>
 
-            {showPresence && presencePos && canShowPresence && typeof document !== "undefined" &&
-                createPortal(
-                    <div
-                        className={classNames(
-                            "fixed z-[200] w-[360px] rounded-xl border shadow-2xl px-3 py-2",
-                            isDark
-                                ? "bg-slate-900/95 border-white/10 text-slate-200"
-                                : "bg-white/95 border-black/10 text-gray-900"
-                        )}
-                        style={{ left: presencePos.x, top: presencePos.y }}
-                        onPointerEnter={() => clearHide()}
-                        onPointerLeave={() => scheduleHide()}
-                        role="status"
+            {isPresenceOpen && canShowPresence && (
+                    <FloatingPortal>
+                        <div
+                            ref={setPresenceFloating}
+                            style={floatingStyles}
+                            {...getFloatingProps()}
+                            className={classNames(
+                                "z-[200] w-[360px] rounded-xl border shadow-2xl px-3 py-2",
+                                isDark
+                                    ? "bg-slate-900/95 border-white/10 text-slate-200"
+                                    : "bg-white/95 border-black/10 text-gray-900"
+                            )}
+                            role="status"
                     >
                         <div className="flex items-center gap-2">
                             <div
@@ -651,9 +656,9 @@ export const MessageBubble = memo(function MessageBubble({
                         >
                             {presenceAgent?.status ? presenceAgent.status : "No presence yet"}
                         </div>
-                    </div>,
-                    document.body
-                )}
+                    </div>
+                </FloatingPortal>
+            )}
         </div>
     );
 }, (prevProps, nextProps) => {

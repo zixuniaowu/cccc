@@ -560,14 +560,10 @@ export default function App() {
           setDestGroupId(selectedGroupId);
           return;
         }
-        const replyBy = String(replyTarget.by || "").trim();
-        const replyFallbackTo =
-          replyBy && replyBy !== "user" && replyBy !== "unknown" ? [replyBy] : ["@all"];
-        const replyTo = to.length ? to : replyFallbackTo;
         resp = await api.replyMessage(
           selectedGroupId,
           txt,
-          replyTo,
+          to,
           replyTarget.eventId,
           composerFiles.length > 0 ? composerFiles : undefined,
           prio

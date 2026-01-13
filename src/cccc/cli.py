@@ -29,6 +29,7 @@ from .kernel.inbox import find_event, get_cursor, get_quote_text, set_cursor, un
 from .kernel.ledger import append_event, follow, read_last_lines
 from .kernel.ledger_retention import compact as compact_ledger
 from .kernel.ledger_retention import snapshot as snapshot_ledger
+from .kernel.messaging import default_reply_recipients
 from .kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
 from .kernel.registry import load_registry
 from .kernel.scope import detect_scope
@@ -870,12 +871,6 @@ def cmd_reply(args: argparse.Namespace) -> int:
             parts = [p.strip() for p in item.split(",") if p.strip()]
             to_tokens.extend(parts)
 
-    # If no recipients specified, default to original sender
-    if not to_tokens:
-        original_by = str(original.get("by") or "").strip()
-        if original_by and original_by != "user":
-            to_tokens = [original_by]
-
     if _ensure_daemon_running():
         resp = call_daemon(
             {
@@ -894,6 +889,8 @@ def cmd_reply(args: argparse.Namespace) -> int:
             return 0
 
     # Fallback: local execution
+    if not to_tokens:
+        to_tokens = default_reply_recipients(group, by=str(args.by or "user"), original_event=original)
     try:
         to = resolve_recipient_tokens(group, to_tokens)
     except Exception as e:

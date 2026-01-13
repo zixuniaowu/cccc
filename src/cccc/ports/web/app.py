@@ -175,6 +175,7 @@ class GroupUpdateRequest(BaseModel):
 
 
 class GroupSettingsRequest(BaseModel):
+    default_send_to: Optional[Literal["foreman", "broadcast"]] = None
     nudge_after_seconds: Optional[int] = None
     actor_idle_timeout_seconds: Optional[int] = None
     keepalive_delay_seconds: Optional[int] = None
@@ -1076,12 +1077,14 @@ def create_app() -> FastAPI:
         automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
         delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
         from ...kernel.terminal_transcript import get_terminal_transcript_settings
+        from ...kernel.messaging import get_default_send_to
 
         tt = get_terminal_transcript_settings(group.doc)
         return {
             "ok": True,
             "result": {
                 "settings": {
+                    "default_send_to": get_default_send_to(group.doc),
                     "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
                     "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
                     "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
@@ -1102,6 +1105,8 @@ def create_app() -> FastAPI:
     async def group_settings_update(group_id: str, req: GroupSettingsRequest) -> Dict[str, Any]:
         """Update group automation settings."""
         patch: Dict[str, Any] = {}
+        if req.default_send_to is not None:
+            patch["default_send_to"] = str(req.default_send_to)
         if req.nudge_after_seconds is not None:
             patch["nudge_after_seconds"] = max(0, req.nudge_after_seconds)
         if req.actor_idle_timeout_seconds is not None:
@@ -1448,6 +1453,49 @@ def create_app() -> FastAPI:
             parsed_to = []
         to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
 
+        # Preflight recipients before storing attachments (avoid orphan blobs on invalid/no-op sends).
+        from ...kernel.actors import resolve_recipient_tokens, list_actors
+        from ...kernel.messaging import get_default_send_to, enabled_recipient_actor_ids, targets_any_agent
+        try:
+            canonical_to = resolve_recipient_tokens(group, to_list)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
+        if to_list and not canonical_to:
+            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": "invalid recipient"})
+
+        raw_text = str(text or "").strip()
+        if not canonical_to and not to_list and raw_text:
+            import re
+            mention_pattern = re.compile(r"@(\w[\w-]*)")
+            mentions = mention_pattern.findall(raw_text)
+            if mentions:
+                actor_ids = {str(a.get("id") or "").strip() for a in list_actors(group) if isinstance(a, dict)}
+                mention_tokens: list[str] = []
+                for m in mentions:
+                    if not m:
+                        continue
+                    if m in ("all", "peers", "foreman"):
+                        mention_tokens.append(f"@{m}")
+                    elif m in actor_ids:
+                        mention_tokens.append(m)
+                if mention_tokens:
+                    try:
+                        canonical_to = resolve_recipient_tokens(group, mention_tokens)
+                    except Exception:
+                        canonical_to = []
+
+        if not canonical_to and not to_list and get_default_send_to(group.doc) == "foreman":
+            canonical_to = ["@foreman"]
+
+        if targets_any_agent(canonical_to):
+            matched_enabled = enabled_recipient_actor_ids(group, canonical_to)
+            if not matched_enabled:
+                wanted = " ".join(canonical_to) if canonical_to else "@all"
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "no_enabled_recipients", "message": f"no enabled agents match recipients: {wanted}"},
+                )
+
         attachments: list[dict[str, Any]] = []
         for f in files or []:
             raw = await f.read()
@@ -1479,7 +1527,15 @@ def create_app() -> FastAPI:
         return await _daemon(
             {
                 "op": "send",
-                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "path": path, "attachments": attachments, "priority": prio},
+                "args": {
+                    "group_id": group_id,
+                    "text": msg_text,
+                    "by": by,
+                    "to": canonical_to,
+                    "path": path,
+                    "attachments": attachments,
+                    "priority": prio,
+                },
             }
         )
 
@@ -1497,11 +1553,45 @@ def create_app() -> FastAPI:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
+        reply_to_id = str(reply_to or "").strip()
+        if not reply_to_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_reply_to", "message": "missing reply_to"})
+
         try:
             parsed_to = json.loads(to_json or "[]")
         except Exception:
             parsed_to = []
         to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
+
+        # Preflight recipients before storing attachments (avoid orphan blobs on invalid/no-op sends).
+        from ...kernel.actors import resolve_recipient_tokens
+        from ...kernel.inbox import find_event
+        from ...kernel.messaging import default_reply_recipients, enabled_recipient_actor_ids, targets_any_agent
+
+        original = find_event(group, reply_to_id)
+        if original is None:
+            raise HTTPException(status_code=404, detail={"code": "event_not_found", "message": f"event not found: {reply_to_id}"})
+
+        try:
+            canonical_to = resolve_recipient_tokens(group, to_list)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
+        if to_list and not canonical_to:
+            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": "invalid recipient"})
+
+        if not canonical_to and not to_list:
+            canonical_to = resolve_recipient_tokens(group, default_reply_recipients(group, by=by, original_event=original))
+
+        if targets_any_agent(canonical_to):
+            matched_enabled = enabled_recipient_actor_ids(group, canonical_to)
+            if by and by in matched_enabled:
+                matched_enabled = [aid for aid in matched_enabled if aid != by]
+            if not matched_enabled:
+                wanted = " ".join(canonical_to) if canonical_to else "@all"
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "no_enabled_recipients", "message": f"no enabled agents match recipients: {wanted}"},
+                )
 
         attachments: list[dict[str, Any]] = []
         for f in files or []:
@@ -1534,7 +1624,15 @@ def create_app() -> FastAPI:
         return await _daemon(
             {
                 "op": "reply",
-                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "reply_to": reply_to, "attachments": attachments, "priority": prio},
+                "args": {
+                    "group_id": group_id,
+                    "text": msg_text,
+                    "by": by,
+                    "to": canonical_to,
+                    "reply_to": reply_to_id,
+                    "attachments": attachments,
+                    "priority": prio,
+                },
             }
         )
 

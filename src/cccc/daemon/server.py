@@ -31,6 +31,7 @@ from ..kernel.ledger_retention import snapshot as snapshot_ledger
 from ..kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
 from ..kernel.settings import get_observability_settings, update_observability_settings
 from ..kernel.terminal_transcript import apply_terminal_transcript_patch, get_terminal_transcript_settings
+from ..kernel.messaging import get_default_send_to, enabled_recipient_actor_ids, targets_any_agent, default_reply_recipients
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
@@ -1282,7 +1283,21 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
     args = req.args or {}
 
     if op == "ping":
-        return DaemonResponse(ok=True, result={"version": __version__, "pid": os.getpid(), "ts": utc_now_iso()}), False
+        return (
+            DaemonResponse(
+                ok=True,
+                result={
+                    "version": __version__,
+                    "pid": os.getpid(),
+                    "ts": utc_now_iso(),
+                    "ipc_v": 1,
+                    "capabilities": {
+                        "events_stream": True,
+                    },
+                },
+            ),
+            False,
+        )
 
     if op == "shutdown":
         return DaemonResponse(ok=True, result={"message": "shutting down"}), True
@@ -1695,6 +1710,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("group_not_found", f"group not found: {group_id}"), False
         
         # Define allowed keys and their target sections
+        messaging_keys = {"default_send_to"}
         delivery_keys = {"min_interval_seconds"}
         automation_keys = {
             "nudge_after_seconds",
@@ -1711,16 +1727,34 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             "terminal_transcript_notify_tail",
             "terminal_transcript_notify_lines",
         }
-        allowed = delivery_keys | automation_keys | terminal_transcript_keys
+        allowed = messaging_keys | delivery_keys | automation_keys | terminal_transcript_keys
         
         unknown = set(patch.keys()) - allowed
         if unknown:
             return _error("invalid_patch", "invalid patch keys", details={"unknown_keys": sorted(unknown)}), False
         if not patch:
             return _error("invalid_patch", "empty patch"), False
+        if "default_send_to" in patch:
+            v = str(patch.get("default_send_to") or "").strip()
+            if v not in ("foreman", "broadcast"):
+                return (
+                    _error(
+                        "invalid_patch",
+                        "default_send_to must be 'foreman' or 'broadcast'",
+                        details={"default_send_to": v},
+                    ),
+                    False,
+                )
         try:
             require_group_permission(group, by=by, action="group.settings_update")
             
+            # Update messaging policy
+            messaging_patch = {k: v for k, v in patch.items() if k in messaging_keys}
+            if messaging_patch:
+                messaging = group.doc.get("messaging") if isinstance(group.doc.get("messaging"), dict) else {}
+                messaging["default_send_to"] = str(messaging_patch.get("default_send_to") or "foreman").strip()
+                group.doc["messaging"] = messaging
+
             # Update delivery settings
             delivery_patch = {k: v for k, v in patch.items() if k in delivery_keys}
             if delivery_patch:
@@ -1754,6 +1788,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         
         # Return combined settings
         combined_settings = {}
+        combined_settings["default_send_to"] = get_default_send_to(group.doc)
         combined_settings.update(group.doc.get("delivery") or {})
         combined_settings.update(group.doc.get("automation") or {})
         tt = get_terminal_transcript_settings(group.doc)
@@ -3261,6 +3296,27 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     except Exception:
                         pass  # Ignore invalid mentions
 
+        # Apply group policy when no recipients are specified (after mention extraction).
+        if not to:
+            if get_default_send_to(group.doc) == "foreman":
+                to = ["@foreman"]
+
+        # Reject agent-targeted messages that match no enabled agents.
+        if targets_any_agent(to):
+            matched_enabled = enabled_recipient_actor_ids(group, to)
+            if by and by in matched_enabled:
+                matched_enabled = [aid for aid in matched_enabled if aid != by]
+            if not matched_enabled:
+                wanted = " ".join(to) if to else "@all"
+                return (
+                    _error(
+                        "no_enabled_recipients",
+                        f"no enabled agents match recipients: {wanted}",
+                        details={"to": list(to)},
+                    ),
+                    False,
+                )
+
         path = str(args.get("path") or "").strip()
         if path:
             scope = detect_scope(Path(path))
@@ -3457,16 +3513,29 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         # Extract quote text.
         quote_text = get_quote_text(group, reply_to, max_len=100)
 
-        # If recipients are not provided, default to the original sender.
         if not to_tokens:
-            original_by = str(original.get("by") or "").strip()
-            if original_by:
-                to_tokens = ["user"] if original_by == "user" else [original_by]
+            to_tokens = default_reply_recipients(group, by=by, original_event=original)
 
         try:
             to = resolve_recipient_tokens(group, to_tokens)
         except Exception as e:
             return _error("invalid_recipient", str(e)), False
+
+        # Reject agent-targeted messages that match no enabled agents.
+        if targets_any_agent(to):
+            matched_enabled = enabled_recipient_actor_ids(group, to)
+            if by and by in matched_enabled:
+                matched_enabled = [aid for aid in matched_enabled if aid != by]
+            if not matched_enabled:
+                wanted = " ".join(to) if to else "@all"
+                return (
+                    _error(
+                        "no_enabled_recipients",
+                        f"no enabled agents match recipients: {wanted}",
+                        details={"to": list(to)},
+                    ),
+                    False,
+                )
 
         scope_key = str(group.doc.get("active_scope_key") or "").strip()
         try:
@@ -3778,6 +3847,15 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
     stop_event = threading.Event()
 
+    # Best-effort: enable in-process event streaming for SDKs (daemon-owned only).
+    try:
+        from ..kernel.ledger import set_append_hook
+        from .streaming import EVENT_BROADCASTER
+
+        set_append_hook(EVENT_BROADCASTER.on_append)
+    except Exception:
+        pass
+
     # Graceful shutdown on SIGTERM/SIGINT
     def _signal_handler(signum: int, frame: Any) -> None:
         stop_event.set()
@@ -3951,6 +4029,80 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                     if resp.ok:
                         pty_runner.SUPERVISOR.attach(group_id=group_id, actor_id=actor_id, sock=conn)
                         continue
+                except Exception:
+                    pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                continue
+
+            if op == "events_stream":
+                args = req.args or {}
+                group_id = str(args.get("group_id") or "").strip()
+                by = str(args.get("by") or "user").strip() or "user"
+                since_event_id = str(args.get("since_event_id") or "").strip()
+                since_ts = str(args.get("since_ts") or "").strip()
+                kinds_raw = args.get("kinds")
+                kinds: Optional[set[str]] = None
+                kinds_invalid = False
+                if isinstance(kinds_raw, list):
+                    try:
+                        from .streaming import STREAMABLE_KINDS_V1
+
+                        items = {str(x).strip() for x in kinds_raw if isinstance(x, str) and str(x).strip()}
+                        items = {k for k in items if k in STREAMABLE_KINDS_V1}
+                        if items:
+                            kinds = items
+                        elif items == set() and any(isinstance(x, str) and str(x).strip() for x in kinds_raw):
+                            kinds_invalid = True
+                        else:
+                            kinds = None
+                    except Exception:
+                        kinds = None
+
+                if not group_id:
+                    resp = _error("missing_group_id", "missing group_id")
+                elif kinds_invalid:
+                    try:
+                        from .streaming import STREAMABLE_KINDS_V1
+
+                        resp = _error(
+                            "invalid_kinds",
+                            "no supported kinds requested",
+                            details={"supported": sorted(STREAMABLE_KINDS_V1)},
+                        )
+                    except Exception:
+                        resp = _error("invalid_kinds", "no supported kinds requested")
+                else:
+                    group = load_group(group_id)
+                    if group is None:
+                        resp = _error("group_not_found", f"group not found: {group_id}")
+                    else:
+                        resp = DaemonResponse(ok=True, result={"group_id": group_id})
+
+                try:
+                    _send_json(conn, _dump_response(resp))
+                    if resp.ok:
+                        try:
+                            from .streaming import stream_events_to_socket
+
+                            threading.Thread(
+                                target=stream_events_to_socket,
+                                kwargs={
+                                    "sock": conn,
+                                    "group_id": group_id,
+                                    "by": by,
+                                    "kinds": kinds,
+                                    "since_event_id": since_event_id,
+                                    "since_ts": since_ts,
+                                },
+                                daemon=True,
+                                name=f"cccc-events-{group_id[:8]}",
+                            ).start()
+                            continue
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 try:

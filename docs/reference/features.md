@@ -86,14 +86,21 @@ im:
 
 | Command | Description |
 |---------|-------------|
-| Direct message | Send to all agents |
-| `@<actor> message` | Send to specific actor |
+| `/send <message>` | Send using group default (default: foreman) |
+| `/send @<agent> <message>` | Send to a specific agent |
+| `/send @all <message>` | Send to all agents |
+| `/send @peers <message>` | Send to non-foreman agents |
 | `/subscribe` | Subscribe, start receiving messages |
 | `/unsubscribe` | Unsubscribe |
 | `/verbose` | Toggle verbose mode |
 | `/status` | Show group status |
 | `/pause` / `/resume` | Pause/resume message delivery |
 | `/help` | Show help |
+
+Notes:
+- Messaging requires explicit `/send`. Plain chat is ignored.
+- In channels (Slack/Discord), mention the bot and then use `/send` (to avoid platform slash-commands).
+- You can configure the default recipient behavior in Web UI: Settings → Messaging → Default Recipient.
 
 ### CLI Commands
 

@@ -89,15 +89,73 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   const anchorMessageIdRef = useRef<string>("");
   const anchorOffsetRef = useRef(0);
 
+  // Dynamic height estimation based on message content
+  // This reduces layout shift during scrolling by providing better initial estimates
+  const getEstimatedSize = useCallback(
+    (index: number): number => {
+      const message = messages[index];
+      if (!message) return 100;
+
+      const data = message.data as { text?: string; attachments?: unknown[] } | undefined;
+      const text = String(data?.text || "");
+      const attachments = Array.isArray(data?.attachments) ? data.attachments : [];
+
+      // Base height: avatar + header + padding
+      let height = 72;
+
+      // Text content estimation
+      if (text) {
+        const lineCount = text.split("\n").length;
+        // Average ~20 chars per line on mobile, ~60 on desktop
+        const avgCharsPerLine = 40;
+        const wrapLines = Math.ceil(text.length / avgCharsPerLine);
+        const estimatedLines = Math.max(lineCount, wrapLines);
+
+        // ~20px per line of text, with a minimum for short messages
+        height += Math.min(estimatedLines * 20, 400); // Cap at 400px for very long messages
+
+        // Code blocks detection (triple backticks)
+        const codeBlockCount = (text.match(/```/g) || []).length / 2;
+        if (codeBlockCount > 0) {
+          // Code blocks add significant height due to monospace font and padding
+          height += codeBlockCount * 80;
+        }
+      }
+
+      // Attachments add height
+      if (attachments.length > 0) {
+        // Images are ~200px, files are ~48px
+        for (const att of attachments) {
+          const mime = String((att as { mime_type?: string })?.mime_type || "");
+          if (mime.startsWith("image/")) {
+            height += 200;
+          } else {
+            height += 48;
+          }
+        }
+      }
+
+      // Quoted reply adds ~60px
+      const quoteText = (data as { quote_text?: string })?.quote_text;
+      if (quoteText) {
+        height += 60;
+      }
+
+      return height;
+    },
+    [messages]
+  );
+
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer({
     count: messages.length,
     getScrollElement: () => parentRef.current,
     getItemKey: (index) => messages[index]?.id ?? index,
-    estimateSize: () => 120,
+    estimateSize: getEstimatedSize,
     overscan: 5,
     paddingStart: 72,
   });
+
 
   const measureElement = useCallback(
     (node: HTMLDivElement | null) => {
@@ -454,8 +512,8 @@ export const VirtualMessageList = memo(function VirtualMessageList({
           {showScrollButton && (
             <button
               className={`fixed bottom-24 right-6 p-3 rounded-full shadow-xl transition-all z-10 ${isDark
-                  ? "bg-slate-800 text-white hover:bg-slate-700 border border-slate-700"
-                  : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-100"
+                ? "bg-slate-800 text-white hover:bg-slate-700 border border-slate-700"
+                : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-100"
                 }`}
               onClick={() => {
                 scrollToBottom();

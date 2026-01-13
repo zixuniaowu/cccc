@@ -173,6 +173,7 @@ export type ProjectMdInfo = {
 };
 
 export type GroupSettings = {
+  default_send_to: "foreman" | "broadcast";
   nudge_after_seconds: number;
   actor_idle_timeout_seconds: number;
   keepalive_delay_seconds: number;
