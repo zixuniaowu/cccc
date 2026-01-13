@@ -49,6 +49,7 @@ export default function App() {
     chatWindow,
     actors,
     groupContext,
+    groupSettings,
     hasMoreHistory,
     isLoadingHistory,
     isChatWindowLoading,
@@ -682,11 +683,40 @@ export default function App() {
     if (!ev.id || ev.kind !== "chat.message") return;
     const data = ev.data as ChatMessageData | undefined;
     const text = data?.text ? String(data.text) : "";
+
+    // Reply is always in the current group.
+    // Also sync recipient chips immediately to avoid a 1-render lag when switching from cross-group send.
+    if (selectedGroupId) {
+      setDestGroupId(selectedGroupId);
+      setRecipientActors(actors);
+      setRecipientActorsBusy(false);
+    }
+
+    // Pre-fill recipients to match daemon default reply routing:
+    // - Replying to someone else -> reply to the author.
+    // - Replying to yourself -> preserve the original audience (or fall back to group default policy).
+    const by = String(ev.by || "").trim();
+    const authorIsActor = by && by !== "user" && actors.some((a) => String(a.id || "") === by);
+    const originalTo = Array.isArray(data?.to)
+      ? data?.to.map((t) => String(t || "").trim()).filter((t) => t)
+      : [];
+    const policy = groupSettings?.default_send_to || "foreman";
+    const defaultTo =
+      authorIsActor
+        ? [by]
+        : originalTo.length > 0
+          ? originalTo
+          : policy === "foreman"
+            ? ["@foreman"]
+            : [];
+    setToText(defaultTo.join(", "));
+
     setReplyTarget({
       eventId: String(ev.id),
       by: String(ev.by || "unknown"),
       text: text.slice(0, 100) + (text.length > 100 ? "..." : ""),
     });
+    requestAnimationFrame(() => composerRef.current?.focus());
   }
 
   const handleScrollButtonClick = () => {
