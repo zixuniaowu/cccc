@@ -701,6 +701,10 @@ class IMBridge:
             # Explicit /send but empty.
             return
 
+        # Default to @foreman if no recipients specified
+        if not to:
+            to = ["@foreman"]
+
         resp = self._daemon({
             "op": "send",
             "args": {

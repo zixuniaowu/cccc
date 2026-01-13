@@ -225,8 +225,10 @@ Attach files to your message. DingTalk files are downloaded and stored in CCCC's
 |---------|-------------|
 | `/subscribe` | Start receiving messages from CCCC |
 | `/unsubscribe` | Stop receiving messages |
-| `/send <message>` | Send a message to agents |
+| `/send <message>` | Send to foreman (default) |
 | `/send @<actor> <message>` | Send to a specific agent |
+| `/send @all <message>` | Send to all agents |
+| `/send @peers <message>` | Send to non-foreman agents |
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
