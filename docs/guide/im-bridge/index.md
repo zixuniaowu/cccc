@@ -33,8 +33,10 @@ Once subscribed to any platform, these commands work universally:
 
 | Command | Description |
 |---------|-------------|
-| (direct message) | Send to all agents |
-| `@<actor> message` | Send to specific actor |
+| `/send <message>` | Send to foreman (default) |
+| `/send @<actor> <message>` | Send to specific actor |
+| `/send @all <message>` | Send to all agents |
+| `/send @peers <message>` | Send to non-foreman agents |
 | `/subscribe` | Start receiving messages |
 | `/unsubscribe` | Stop receiving messages |
 | `/status` | Show group status |
@@ -42,6 +44,10 @@ Once subscribed to any platform, these commands work universally:
 | `/resume` | Resume message delivery |
 | `/verbose` | Toggle verbose mode |
 | `/help` | Show help |
+
+::: tip Default Recipient
+When using `/send` without specifying a recipient, messages are automatically sent to the **foreman** (team lead agent).
+:::
 
 ## CLI Commands
 
