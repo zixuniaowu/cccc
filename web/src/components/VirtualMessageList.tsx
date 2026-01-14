@@ -22,7 +22,7 @@ export interface VirtualMessageListProps {
   onShowRecipients: (eventId: string) => void;
   onAck?: (eventId: string) => void;
   onCopyLink?: (eventId: string) => void;
-  onRelay?: (eventId: string) => void;
+  onRelay?: (ev: LedgerEvent) => void;
   onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
   showScrollButton: boolean;
   onScrollButtonClick: () => void;

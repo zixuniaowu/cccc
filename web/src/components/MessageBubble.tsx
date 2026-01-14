@@ -92,7 +92,7 @@ export interface MessageBubbleProps {
     onShowRecipients: () => void;
     onAck?: (eventId: string) => void;
     onCopyLink?: (eventId: string) => void;
-    onRelay?: (eventId: string) => void;
+    onRelay?: (ev: LedgerEvent) => void;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
 }
 
@@ -599,7 +599,7 @@ export const MessageBubble = memo(function MessageBubble({
                                     "touch-target-sm px-1 rounded hover:underline transition-colors",
                                     isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
                                 )}
-                                onClick={() => onRelay(String(ev.id))}
+                                onClick={() => onRelay(ev)}
                                 title="Relay to another group"
                             >
                                 Relay

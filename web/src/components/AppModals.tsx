@@ -80,6 +80,7 @@ export function AppModals({
     modals,
     recipientsEventId: _recipientsEventId,
     relayEventId,
+    relaySource,
     editingActor,
     openModal,
     closeModal,

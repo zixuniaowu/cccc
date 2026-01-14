@@ -1,6 +1,11 @@
 // Modal state store.
 import { create } from "zustand";
-import type { Actor } from "../types";
+import type { Actor, LedgerEvent } from "../types";
+
+interface RelaySource {
+  groupId: string;
+  event: LedgerEvent;
+}
 
 interface ModalState {
   // Modal visibility state
@@ -17,13 +22,14 @@ interface ModalState {
   };
   recipientsEventId: string | null;
   relayEventId: string | null;
+  relaySource: RelaySource | null;
   editingActor: Actor | null;
 
   // Actions
   openModal: (name: keyof ModalState["modals"]) => void;
   closeModal: (name: keyof ModalState["modals"]) => void;
   setRecipientsModal: (eventId: string | null) => void;
-  setRelayModal: (eventId: string | null) => void;
+  setRelayModal: (eventId: string | null, groupId?: string, event?: LedgerEvent | null) => void;
   setEditingActor: (actor: Actor | null) => void;
 }
 
@@ -41,6 +47,7 @@ export const useModalStore = create<ModalState>((set) => ({
   },
   recipientsEventId: null,
   relayEventId: null,
+  relaySource: null,
   editingActor: null,
 
   openModal: (name) =>
@@ -54,9 +61,10 @@ export const useModalStore = create<ModalState>((set) => ({
     })),
 
   setRecipientsModal: (eventId) => set({ recipientsEventId: eventId }),
-  setRelayModal: (eventId) =>
+  setRelayModal: (eventId, groupId, event) =>
     set((state) => ({
       relayEventId: eventId,
+      relaySource: eventId && groupId && event ? { groupId, event } : null,
       modals: { ...state.modals, relay: !!eventId },
     })),
   setEditingActor: (actor) => set({ editingActor: actor }),

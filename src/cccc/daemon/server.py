@@ -2211,11 +2211,13 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     actor["runner_effective"] = effective_runner
         # Optionally include unread message count for each actor
         if include_unread:
-            from ..kernel.inbox import unread_count
+            from ..kernel.inbox import batch_unread_counts
+            actor_ids = [str(a.get("id") or "") for a in actors if a.get("id")]
+            counts = batch_unread_counts(group, actor_ids=actor_ids)
             for actor in actors:
                 aid = str(actor.get("id") or "")
                 if aid:
-                    actor["unread_count"] = unread_count(group, actor_id=aid)
+                    actor["unread_count"] = counts.get(aid, 0)
         return DaemonResponse(ok=True, result={"actors": actors}), False
 
     if op == "actor_add":
