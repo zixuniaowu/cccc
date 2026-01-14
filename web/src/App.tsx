@@ -73,6 +73,7 @@ export default function App() {
     chatUnreadCount,
     isSmallScreen,
     chatFilter,
+    webReadOnly,
     setBusy,
     showError,
     dismissError,
@@ -84,6 +85,7 @@ export default function App() {
     setChatUnreadCount,
     setSmallScreen,
     setChatFilter,
+    setWebReadOnly,
   } = useUIStore();
 
   const { recipientsEventId, openModal, setRecipientsModal, setRelayModal } = useModalStore();
@@ -437,6 +439,13 @@ export default function App() {
     void fetchRuntimes();
     void fetchDirSuggestions();
     void useObservabilityStore.getState().load();
+    void api.fetchPing().then((resp) => {
+      if (resp.ok) {
+        setWebReadOnly(Boolean(resp.result?.web?.read_only));
+      }
+    }).catch(() => {
+      /* ignore */
+    });
 
     // Subscribe to global events stream (replaces polling)
     let es: EventSource | null = null;
@@ -894,6 +903,7 @@ export default function App() {
             isDark={isDark}
             theme={theme}
             onThemeChange={setTheme}
+            webReadOnly={webReadOnly}
             selectedGroupId={selectedGroupId}
             groupDoc={groupDoc}
             selectedGroupRunning={selectedGroupRunning}

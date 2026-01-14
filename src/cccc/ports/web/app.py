@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import shlex
+import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Literal, Optional, Union
 
@@ -281,6 +282,24 @@ def _normalize_command(cmd: Union[str, list[str], None]) -> Optional[list[str]]:
     raise HTTPException(status_code=400, detail={"code": "invalid_command", "message": "invalid command"})
 
 
+def _is_truthy_env(value: str) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _web_mode() -> Literal["normal", "exhibit"]:
+    """Return the web server mode.
+
+    - normal: read/write control plane (default)
+    - exhibit: read-only "public console" mode
+    """
+    mode = str(os.environ.get("CCCC_WEB_MODE") or "").strip().lower()
+    if mode in ("exhibit", "readonly", "read-only", "ro"):
+        return "exhibit"
+    if _is_truthy_env(str(os.environ.get("CCCC_WEB_READONLY") or "")):
+        return "exhibit"
+    return "normal"
+
+
 def _require_token_if_configured(request: Request) -> Optional[JSONResponse]:
     token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
     if not token:
@@ -313,6 +332,51 @@ async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
 def create_app() -> FastAPI:
     app = FastAPI(title="cccc web", version=__version__)
     home = ensure_home()
+    web_mode = _web_mode()
+    read_only = web_mode == "exhibit"
+    try:
+        exhibit_cache_ttl_s = float(str(os.environ.get("CCCC_WEB_EXHIBIT_CACHE_SECONDS") or "1.0").strip() or "1.0")
+    except Exception:
+        exhibit_cache_ttl_s = 1.0
+
+    # Tiny in-process cache for high-fanout read endpoints (exhibit mode only).
+    cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+    inflight: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
+    cache_lock = asyncio.Lock()
+
+    async def _cached_json(key: str, ttl_s: float, fetcher) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
+        if not read_only or ttl_s <= 0:
+            return await fetcher()
+        now = time.monotonic()
+        fut: asyncio.Future[Dict[str, Any]] | None = None
+        do_fetch = False
+        async with cache_lock:
+            hit = cache.get(key)
+            if hit is not None and hit[0] > now:
+                return hit[1]
+            fut = inflight.get(key)
+            if fut is None or fut.done():
+                loop = asyncio.get_running_loop()
+                fut = loop.create_future()
+                inflight[key] = fut
+                do_fetch = True
+        if fut is not None and not do_fetch:
+            return await fut
+        try:
+            val = await fetcher()
+            async with cache_lock:
+                cache[key] = (time.monotonic() + ttl_s, val)
+                if fut is not None and not fut.done():
+                    fut.set_result(val)
+            return val
+        except Exception as e:
+            async with cache_lock:
+                if fut is not None and not fut.done():
+                    fut.set_exception(e)
+            raise
+        finally:
+            async with cache_lock:
+                inflight.pop(key, None)
 
     # Some environments don't register the standard PWA manifest extension.
     mimetypes.add_type("application/manifest+json", ".webmanifest")
@@ -396,6 +460,24 @@ def create_app() -> FastAPI:
             )
         return resp
 
+    @app.middleware("http")
+    async def _read_only_guard(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if read_only:
+            m = str(request.method or "").upper()
+            if m not in ("GET", "HEAD", "OPTIONS"):
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "ok": False,
+                        "error": {
+                            "code": "read_only",
+                            "message": "CCCC Web is running in read-only (exhibit) mode.",
+                            "details": {},
+                        },
+                    },
+                )
+        return await call_next(request)
+
     @app.exception_handler(HTTPException)
     async def _handle_fastapi_http_exception(_request: Request, exc: HTTPException) -> JSONResponse:
         detail = exc.detail
@@ -462,7 +544,15 @@ def create_app() -> FastAPI:
     async def ping() -> Dict[str, Any]:
         home = ensure_home()
         resp = await _daemon({"op": "ping"})
-        return {"ok": True, "result": {"home": str(home), "daemon": resp.get("result", {}), "version": __version__}}
+        return {
+            "ok": True,
+            "result": {
+                "home": str(home),
+                "daemon": resp.get("result", {}),
+                "version": __version__,
+                "web": {"mode": web_mode, "read_only": read_only},
+            },
+        }
 
     @app.get("/api/v1/health")
     async def health() -> Dict[str, Any]:
@@ -703,7 +793,11 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups")
     async def groups() -> Dict[str, Any]:
-        return await _daemon({"op": "groups"})
+        async def _fetch() -> Dict[str, Any]:
+            return await _daemon({"op": "groups"})
+
+        ttl = max(0.0, min(5.0, exhibit_cache_ttl_s))
+        return await _cached_json("groups", ttl, _fetch)
 
     @app.post("/api/v1/groups")
     async def group_create(req: CreateGroupRequest) -> Dict[str, Any]:
@@ -1662,7 +1756,12 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups/{group_id}/actors")
     async def actors(group_id: str, include_unread: bool = False) -> Dict[str, Any]:
-        return await _daemon({"op": "actor_list", "args": {"group_id": group_id, "include_unread": include_unread}})
+        gid = str(group_id or "").strip()
+        async def _fetch() -> Dict[str, Any]:
+            return await _daemon({"op": "actor_list", "args": {"group_id": gid, "include_unread": include_unread}})
+
+        ttl = max(0.0, min(5.0, exhibit_cache_ttl_s))
+        return await _cached_json(f"actors:{gid}:{int(bool(include_unread))}", ttl, _fetch)
 
     @app.post("/api/v1/groups/{group_id}/actors")
     async def actor_create(group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:
@@ -1799,6 +1898,8 @@ def create_app() -> FastAPI:
                         continue
                     t = str(obj.get("t") or "")
                     if t == "i":
+                        if read_only:
+                            continue
                         data = str(obj.get("d") or "")
                         if data:
                             writer.write(data.encode("utf-8", errors="replace"))

@@ -1634,6 +1634,10 @@ def cmd_web(args: argparse.Namespace) -> int:
         argv.extend(["--host", str(args.host)])
     if args.port is not None:
         argv.extend(["--port", str(int(args.port))])
+    if bool(getattr(args, "exhibit", False)):
+        argv.append("--exhibit")
+    elif str(getattr(args, "mode", "") or "").strip():
+        argv.extend(["--mode", str(getattr(args, "mode"))])
     if bool(args.reload):
         argv.append("--reload")
     if str(args.log_level or "").strip():
@@ -2738,6 +2742,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_web = sub.add_parser("web", help="Run web server only (requires daemon to be running)")
     p_web.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_web.add_argument("--port", type=int, default=8848, help="Bind port (default: 8848)")
+    p_web.add_argument(
+        "--mode",
+        choices=["normal", "exhibit"],
+        default="normal",
+        help="Web mode: normal (read/write) or exhibit (read-only) (default: normal)",
+    )
+    p_web.add_argument("--exhibit", action="store_true", help="Shortcut for: --mode exhibit")
     p_web.add_argument("--reload", action="store_true", help="Enable autoreload (dev)")
     p_web.add_argument("--log-level", default="info", help="Uvicorn log level (default: info)")
     p_web.set_defaults(func=cmd_web)

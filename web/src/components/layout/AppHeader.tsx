@@ -19,6 +19,7 @@ export interface AppHeaderProps {
   isDark: boolean;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
+  webReadOnly?: boolean;
   selectedGroupId: string;
   groupDoc: GroupDoc | null;
   selectedGroupRunning: boolean;
@@ -44,6 +45,7 @@ export function AppHeader({
   isDark,
   theme,
   onThemeChange,
+  webReadOnly,
   selectedGroupId,
   groupDoc,
   selectedGroupRunning,
@@ -102,6 +104,19 @@ export function AppHeader({
                   />
                 );
               })()}
+            {webReadOnly && (
+              <span
+                className={classNames(
+                  "text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full border",
+                  isDark
+                    ? "text-amber-200 border-amber-400/30 bg-amber-500/10"
+                    : "text-amber-800 border-amber-400/40 bg-amber-50"
+                )}
+                title="Read-only (exhibit) mode"
+              >
+                Read-only
+              </span>
+            )}
           </div>
         </div>
 

@@ -96,6 +96,12 @@ export async function fetchGroups() {
   return apiJson<{ groups: GroupMeta[] }>("/api/v1/groups");
 }
 
+export async function fetchPing() {
+  return apiJson<{ home: string; daemon: unknown; version: string; web?: { mode?: string; read_only?: boolean } }>(
+    "/api/v1/ping"
+  );
+}
+
 export async function fetchGroup(groupId: string) {
   return apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(groupId)}`);
 }
