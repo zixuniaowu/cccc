@@ -338,6 +338,7 @@ def create_app() -> FastAPI:
         exhibit_cache_ttl_s = float(str(os.environ.get("CCCC_WEB_EXHIBIT_CACHE_SECONDS") or "1.0").strip() or "1.0")
     except Exception:
         exhibit_cache_ttl_s = 1.0
+    exhibit_allow_terminal = _is_truthy_env(str(os.environ.get("CCCC_WEB_EXHIBIT_ALLOW_TERMINAL") or ""))
 
     # Tiny in-process cache for high-fanout read endpoints (exhibit mode only).
     cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
@@ -876,7 +877,13 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups/{group_id}")
     async def group_show(group_id: str) -> Dict[str, Any]:
-        return await _daemon({"op": "group_show", "args": {"group_id": group_id}})
+        gid = str(group_id or "").strip()
+
+        async def _fetch() -> Dict[str, Any]:
+            return await _daemon({"op": "group_show", "args": {"group_id": gid}})
+
+        ttl = max(0.0, min(5.0, exhibit_cache_ttl_s))
+        return await _cached_json(f"group:{gid}", ttl, _fetch)
 
     @app.put("/api/v1/groups/{group_id}")
     async def group_update(group_id: str, req: GroupUpdateRequest) -> Dict[str, Any]:
@@ -903,7 +910,13 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/groups/{group_id}/context")
     async def group_context(group_id: str) -> Dict[str, Any]:
         """Get full group context (vision/sketch/milestones/tasks/notes/refs/presence)."""
-        return await _daemon({"op": "context_get", "args": {"group_id": group_id}})
+        gid = str(group_id or "").strip()
+
+        async def _fetch() -> Dict[str, Any]:
+            return await _daemon({"op": "context_get", "args": {"group_id": gid}})
+
+        ttl = max(0.0, min(5.0, exhibit_cache_ttl_s))
+        return await _cached_json(f"context:{gid}", ttl, _fetch)
 
     @app.get("/api/v1/groups/{group_id}/template/export")
     async def group_template_export(group_id: str) -> Dict[str, Any]:
@@ -1838,6 +1851,26 @@ def create_app() -> FastAPI:
                 return
 
         await websocket.accept()
+
+        if read_only and not exhibit_allow_terminal:
+            try:
+                await websocket.send_json(
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": "read_only_terminal",
+                            "message": "Terminal is disabled in read-only (exhibit) mode.",
+                            "details": {},
+                        },
+                    }
+                )
+            except Exception:
+                pass
+            try:
+                await websocket.close(code=1000)
+            except Exception:
+                pass
+            return
 
         group = load_group(group_id)
         if group is None:
