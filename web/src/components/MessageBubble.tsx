@@ -341,7 +341,7 @@ export const MessageBubble = memo(function MessageBubble({
                 {/* Bubble */}
                 <div
                     className={classNames(
-                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85%] sm:max-w-none",
+                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85vw] sm:max-w-none",
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none"
                             : isDark
@@ -421,7 +421,7 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
 
                     {/* Text Content */}
-                    <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{formatEventLine(ev)}</div>
+                    <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] overflow-x-auto max-w-full">{formatEventLine(ev)}</div>
 
                     {/* Attachments */}
                     {blobAttachments.length > 0 && groupId && (() => {
