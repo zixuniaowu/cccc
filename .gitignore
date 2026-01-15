@@ -53,4 +53,8 @@
 
 # Local agent guide (not committed)
 AGENTS.md
-AGENTS_LOCAL.md
+
+.shared/
+.agent/
+.codex/
+.windsurf/

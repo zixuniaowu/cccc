@@ -76,4 +76,4 @@ cccc send "Hello" --to @all      # 发送消息
 
 - 源码：`src/cccc/`
 - 老版本（v0.3.x tmux 版）：https://github.com/ChesterRa/cccc-tmux
-- AGENTS.md：开发规范
+- AGENTS.md（本地文件，不提交）：工作区开发规范/协作约定（可自行维护）

@@ -686,6 +686,15 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/runtimes")
     async def runtimes() -> Dict[str, Any]:
         """List available agent runtimes on the system."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "System discovery endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "runtimes"},
+                },
+            )
         from ...kernel.runtime import detect_all_runtimes, get_runtime_command_with_flags
         
         all_runtimes = detect_all_runtimes(primary_only=False)
@@ -711,6 +720,15 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/fs/list")
     async def fs_list(path: str = "~", show_hidden: bool = False) -> Dict[str, Any]:
         """List directory contents for path picker UI."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "File system endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "fs_list"},
+                },
+            )
         try:
             target = Path(path).expanduser().resolve()
             if not target.exists():
@@ -745,6 +763,15 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/fs/recent")
     async def fs_recent() -> Dict[str, Any]:
         """Get recent/common directories for quick selection."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "File system endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "fs_recent"},
+                },
+            )
         home = Path.home()
         suggestions = []
         
@@ -773,6 +800,15 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/fs/scope_root")
     async def fs_scope_root(path: str = "") -> Dict[str, Any]:
         """Resolve the effective scope root for a path (git root if applicable)."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "File system endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "fs_scope_root"},
+                },
+            )
         p = Path(str(path or "")).expanduser()
         if not str(path or "").strip():
             return {"ok": False, "error": {"code": "missing_path", "message": "missing path"}}
@@ -1939,6 +1975,8 @@ def create_app() -> FastAPI:
                             await writer.drain()
                         continue
                     if t == "r":
+                        if read_only:
+                            continue
                         try:
                             cols = int(obj.get("c") or 0)
                             rows = int(obj.get("r") or 0)

@@ -138,6 +138,7 @@ class _SharedJSONLTailer:
 
     def _broadcast(self, item: bytes) -> None:
         # Protect the daemon/web from slow consumers: if a subscriber queue is full, close it.
+        removed_any = False
         for q in list(self._subscribers):
             try:
                 q.put_nowait(item)
@@ -153,6 +154,12 @@ class _SharedJSONLTailer:
                 except Exception:
                     pass
                 self._subscribers.discard(q)
+                removed_any = True
+
+        # If we removed the last subscriber (e.g. due to slow-consumer eviction), ensure the idle
+        # gate is reset so the tailer can stop after the idle timeout.
+        if removed_any and not self._subscribers:
+            self._has_subscribers.clear()
 
     async def _run(self) -> None:
         try:
