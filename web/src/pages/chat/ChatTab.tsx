@@ -38,7 +38,7 @@ export interface ChatTabProps {
   onShowRecipients: (eventId: string) => void;
   onAckMessage: (eventId: string) => void;
   onCopyMessageLink?: (eventId: string) => void;
-  onRelayMessage?: (eventId: string) => void;
+  onRelayMessage?: (ev: LedgerEvent) => void;
   onOpenSourceMessage?: (srcGroupId: string, srcEventId: string) => void;
 
   // Jump-to window mode (optional)

@@ -370,6 +370,77 @@ def unread_count(group: Group, *, actor_id: str, kind_filter: MessageKindFilter 
     return count
 
 
+def batch_unread_counts(
+    group: Group,
+    *,
+    actor_ids: List[str],
+    kind_filter: MessageKindFilter = "all",
+) -> Dict[str, int]:
+    """Count unread events for multiple actors in a single ledger pass.
+
+    This is O(m) where m = number of events, instead of O(n * m) when calling
+    unread_count() for each actor separately.
+
+    Args:
+        group: Working group
+        actor_ids: List of actor ids to count for
+        kind_filter: Same semantics as unread_messages()
+
+    Returns:
+        Dict mapping actor_id -> unread count
+    """
+    if not actor_ids:
+        return {}
+
+    # Load all cursors at once
+    cursors = load_cursors(group)
+    actor_cursor_dts: Dict[str, Optional[Any]] = {}
+    for aid in actor_ids:
+        cur = cursors.get(aid)
+        if isinstance(cur, dict):
+            cursor_ts = str(cur.get("ts") or "")
+            actor_cursor_dts[aid] = parse_utc_iso(cursor_ts) if cursor_ts else None
+        else:
+            actor_cursor_dts[aid] = None
+
+    # Determine which kinds to include
+    if kind_filter == "chat":
+        allowed_kinds = {"chat.message"}
+    elif kind_filter == "notify":
+        allowed_kinds = {"system.notify"}
+    else:
+        allowed_kinds = {"chat.message", "system.notify"}
+
+    # Initialize counts
+    counts: Dict[str, int] = {aid: 0 for aid in actor_ids}
+
+    # Single pass through the ledger
+    for ev in iter_events(group.ledger_path):
+        ev_kind = str(ev.get("kind") or "")
+        if ev_kind not in allowed_kinds:
+            continue
+
+        ev_by = str(ev.get("by") or "")
+        ev_ts = str(ev.get("ts") or "")
+        ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
+
+        # Check each actor
+        for aid in actor_ids:
+            # Exclude messages sent by the actor itself
+            if ev_kind == "chat.message" and ev_by == aid:
+                continue
+            # Check delivery/visibility rules
+            if not is_message_for_actor(group, actor_id=aid, event=ev):
+                continue
+            # Check read cursor
+            cursor_dt = actor_cursor_dts[aid]
+            if cursor_dt is not None and ev_dt is not None and ev_dt <= cursor_dt:
+                continue
+            counts[aid] += 1
+
+    return counts
+
+
 def latest_unread_event(
     group: Group,
     *,
