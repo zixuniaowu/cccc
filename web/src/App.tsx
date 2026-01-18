@@ -453,7 +453,7 @@ export default function App() {
     let errorCount = 0;
 
     function connectSSE() {
-      es = new EventSource("/api/v1/events/stream");
+      es = new EventSource(api.withAuthToken("/api/v1/events/stream"));
       es.addEventListener("event", (e) => {
         try {
           const ev = JSON.parse((e as MessageEvent).data || "{}");

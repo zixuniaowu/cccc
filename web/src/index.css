@@ -190,14 +190,19 @@
    Base Styles
    ============================================ */
 
-html,
-body,
-#root {
+html {
   height: 100%;
 }
 
 body {
+  /* Height with progressive enhancement for PWA */
+  min-height: 100%;
+  height: 100vh; /* Fallback for older browsers */
+  height: 100dvh; /* Modern browsers: dynamic viewport height (excludes browser UI) */
   margin: 0;
+  /* Top safe area for notch/status bar, bottom handled by components */
+  padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) 0 env(safe-area-inset-left, 0);
+  box-sizing: border-box;
   font-family:
     ui-sans-serif,
     system-ui,
@@ -212,6 +217,10 @@ body {
   color: var(--color-text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  height: 100%;
 }
 
 /* Native select dropdowns are rendered by the OS and are only lightly stylable.
@@ -452,7 +461,12 @@ select,
 
 /* Safe area insets for mobile */
 .safe-area-inset-bottom {
-  padding-bottom: max(8px, env(safe-area-inset-bottom, 8px));
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+/* Compact bottom safe area - reduces visual padding while maintaining touch safety */
+.safe-area-bottom-compact {
+  padding-bottom: calc(env(safe-area-inset-bottom, 0) * 0.6);
 }
 
 .safe-area-inset-top {
