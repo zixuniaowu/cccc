@@ -424,27 +424,54 @@ def bootstrap(
 
 
 def message_send(
-    *, group_id: str, actor_id: str, text: str, to: Optional[List[str]] = None, reply_to: Optional[str] = None
+    *,
+    group_id: str,
+    actor_id: str,
+    text: str,
+    to: Optional[List[str]] = None,
+    reply_to: Optional[str] = None,
+    priority: str = "normal",
+    dst_group_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Send a message"""
+    prio = str(priority or "normal").strip() or "normal"
+    if prio not in ("normal", "attention"):
+        raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
+    dst = str(dst_group_id or "").strip()
+    if dst and dst != str(group_id or "").strip():
+        if reply_to:
+            raise MCPError(code="unsupported", message="cross-group reply is not supported; send a new message instead")
+        return _call_daemon_or_raise({
+            "op": "send_cross_group",
+            "args": {"group_id": group_id, "dst_group_id": dst, "text": text, "by": actor_id, "to": to or [], "priority": prio},
+        })
     if reply_to:
         return _call_daemon_or_raise({
             "op": "reply",
-            "args": {"group_id": group_id, "text": text, "by": actor_id, "reply_to": reply_to, "to": to or []},
+            "args": {"group_id": group_id, "text": text, "by": actor_id, "reply_to": reply_to, "to": to or [], "priority": prio},
         })
     return _call_daemon_or_raise({
         "op": "send",
-        "args": {"group_id": group_id, "text": text, "by": actor_id, "to": to or [], "path": ""},
+        "args": {"group_id": group_id, "text": text, "by": actor_id, "to": to or [], "path": "", "priority": prio},
     })
 
 
 def message_reply(
-    *, group_id: str, actor_id: str, reply_to: str, text: str, to: Optional[List[str]] = None
+    *,
+    group_id: str,
+    actor_id: str,
+    reply_to: str,
+    text: str,
+    to: Optional[List[str]] = None,
+    priority: str = "normal",
 ) -> Dict[str, Any]:
     """Reply to a message"""
+    prio = str(priority or "normal").strip() or "normal"
+    if prio not in ("normal", "attention"):
+        raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
     return _call_daemon_or_raise({
         "op": "reply",
-        "args": {"group_id": group_id, "text": text, "by": actor_id, "reply_to": reply_to, "to": to or []},
+        "args": {"group_id": group_id, "text": text, "by": actor_id, "reply_to": reply_to, "to": to or [], "priority": prio},
     })
 
 
@@ -464,6 +491,7 @@ def file_send(
     path: str,
     text: str = "",
     to: Optional[List[str]] = None,
+    priority: str = "normal",
 ) -> Dict[str, Any]:
     """Send a local file as a chat.message attachment.
 
@@ -508,9 +536,12 @@ def file_send(
     mt, _ = mimetypes.guess_type(src.name)
     att = store_blob_bytes(group, data=raw, filename=src.name, mime_type=str(mt or ""))
     msg = str(text or "").strip() or f"[file] {att.get('title') or src.name}"
+    prio = str(priority or "normal").strip() or "normal"
+    if prio not in ("normal", "attention"):
+        raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
     return _call_daemon_or_raise({
         "op": "send",
-        "args": {"group_id": gid, "text": msg, "by": actor_id, "to": to or [], "path": "", "attachments": [att]},
+        "args": {"group_id": gid, "text": msg, "by": actor_id, "to": to or [], "path": "", "attachments": [att], "priority": prio},
     })
 
 
@@ -574,6 +605,33 @@ def group_info(*, group_id: str) -> Dict[str, Any]:
     res = _call_daemon_or_raise({"op": "group_show", "args": {"group_id": group_id}})
     doc = res.get("group") if isinstance(res, dict) else None
     return {"group": _sanitize_group_doc_for_agent(doc)}
+
+
+def group_list() -> Dict[str, Any]:
+    """List working groups (metadata only)."""
+    res = _call_daemon_or_raise({"op": "groups"})
+    raw = res.get("groups") if isinstance(res, dict) else None
+    if not isinstance(raw, list):
+        raw = []
+    out: List[Dict[str, Any]] = []
+    for g in raw:
+        if not isinstance(g, dict):
+            continue
+        gid = str(g.get("group_id") or "").strip()
+        if not gid:
+            continue
+        out.append(
+            {
+                "group_id": gid,
+                "title": g.get("title") or "",
+                "topic": g.get("topic") or "",
+                "running": bool(g.get("running", False)),
+                "state": g.get("state") or "",
+                "updated_at": g.get("updated_at") or "",
+                "created_at": g.get("created_at") or "",
+            }
+        )
+    return {"groups": out}
 
 
 def actor_list(*, group_id: str) -> Dict[str, Any]:
@@ -1150,20 +1208,22 @@ MCP_TOOLS = [
 	            "required": [],
 	        },
 	    },
-    {
-        "name": "cccc_message_send",
-        "description": "Send a chat message (the only visible communication channel; terminal output is not delivered).",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {
-	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
-	                "actor_id": {"type": "string", "description": "Your actor ID (sender, optional if CCCC_ACTOR_ID is set)"},
-	                "text": {"type": "string", "description": "Message content"},
-	                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients. Options: user, @all, @peers, @foreman, or specific actor_id. Empty=broadcast."},
-	            },
-	            "required": ["text"],
-	        },
-	    },
+	    {
+	        "name": "cccc_message_send",
+	        "description": "Send a chat message (the only visible communication channel; terminal output is not delivered).",
+		        "inputSchema": {
+		            "type": "object",
+		            "properties": {
+		                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
+		                "dst_group_id": {"type": "string", "description": "Optional destination group ID. If set and different from group_id, CCCC will send cross-group with provenance."},
+		                "actor_id": {"type": "string", "description": "Your actor ID (sender, optional if CCCC_ACTOR_ID is set)"},
+		                "text": {"type": "string", "description": "Message content"},
+		                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients. Options: user, @all, @peers, @foreman, or specific actor_id. Empty=broadcast. If dst_group_id is set, this targets the destination group."},
+	                    "priority": {"type": "string", "enum": ["normal", "attention"], "description": "Message priority (default normal)"},
+		            },
+		            "required": ["text"],
+		        },
+		    },
     {
         "name": "cccc_message_reply",
         "description": "Reply to a message via chat (the only visible communication channel). Automatically quotes the original message.",
@@ -1176,6 +1236,7 @@ MCP_TOOLS = [
 	                "reply_to": {"type": "string", "description": "Deprecated alias for event_id"},
 	                "text": {"type": "string", "description": "Reply content"},
 	                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (optional, defaults to original sender)"},
+                    "priority": {"type": "string", "enum": ["normal", "attention"], "description": "Message priority (default normal)"},
 	            },
 	            "required": ["event_id", "text"],
 	        },
@@ -1191,6 +1252,7 @@ MCP_TOOLS = [
 	                "path": {"type": "string", "description": "File path (relative to active scope root, or absolute under it)"},
 	                "text": {"type": "string", "description": "Optional message text (caption)"},
 	                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (same as cccc_message_send)"},
+                    "priority": {"type": "string", "enum": ["normal", "attention"], "description": "Message priority (default normal)"},
 	            },
 	            "required": ["path"],
 	        },
@@ -1207,19 +1269,28 @@ MCP_TOOLS = [
 	            "required": ["rel_path"],
 	        },
 	    },
-    {
-        "name": "cccc_group_info",
-        "description": "Get working group information (title, scopes, actors, etc.).",
-	        "inputSchema": {
-	            "type": "object",
-	            "properties": {"group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"}},
-	            "required": [],
-	        },
-	    },
-    {
-        "name": "cccc_actor_list",
-        "description": "Get list of all actors in the group.",
-	        "inputSchema": {
+	    {
+	        "name": "cccc_group_info",
+	        "description": "Get working group information (title, scopes, actors, etc.).",
+		        "inputSchema": {
+		            "type": "object",
+		            "properties": {"group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"}},
+		            "required": [],
+		        },
+		    },
+	    {
+	        "name": "cccc_group_list",
+	        "description": "List working groups (IDs, titles, and status).",
+		        "inputSchema": {
+		            "type": "object",
+		            "properties": {},
+		            "required": [],
+		        },
+		    },
+	    {
+	        "name": "cccc_actor_list",
+	        "description": "Get list of all actors in the group.",
+		        "inputSchema": {
 	            "type": "object",
 	            "properties": {"group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"}},
 	            "required": [],
@@ -1826,9 +1897,11 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         to_raw = arguments.get("to")
         return message_send(
             group_id=gid,
+            dst_group_id=arguments.get("dst_group_id"),
             actor_id=aid,
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else [],
+            priority=str(arguments.get("priority") or "normal"),
         )
 
     if name == "cccc_message_reply":
@@ -1842,6 +1915,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             reply_to=reply_to,
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else None,
+            priority=str(arguments.get("priority") or "normal"),
         )
 
     if name == "cccc_file_send":
@@ -1854,6 +1928,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             path=str(arguments.get("path") or ""),
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else [],
+            priority=str(arguments.get("priority") or "normal"),
         )
 
     if name == "cccc_blob_path":
@@ -1866,6 +1941,9 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     if name == "cccc_group_info":
         gid = _resolve_group_id(arguments)
         return group_info(group_id=gid)
+
+    if name == "cccc_group_list":
+        return group_list()
 
     if name == "cccc_actor_list":
         gid = _resolve_group_id(arguments)

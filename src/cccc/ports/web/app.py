@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import shlex
+import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Literal, Optional, Union
 
@@ -89,6 +90,17 @@ class SendRequest(BaseModel):
     by: str = Field(default="user")
     to: list[str] = Field(default_factory=list)
     path: str = Field(default="")
+    priority: Literal["normal", "attention"] = "normal"
+    src_group_id: str = Field(default="")
+    src_event_id: str = Field(default="")
+
+
+class SendCrossGroupRequest(BaseModel):
+    text: str
+    by: str = Field(default="user")
+    dst_group_id: str
+    to: list[str] = Field(default_factory=list)
+    priority: Literal["normal", "attention"] = "normal"
 
 
 class ReplyRequest(BaseModel):
@@ -96,6 +108,7 @@ class ReplyRequest(BaseModel):
     by: str = Field(default="user")
     to: list[str] = Field(default_factory=list)
     reply_to: str
+    priority: Literal["normal", "attention"] = "normal"
 
 
 class DebugClearLogsRequest(BaseModel):
@@ -143,6 +156,10 @@ class InboxReadRequest(BaseModel):
     event_id: str
     by: str = Field(default="user")
 
+
+class UserAckRequest(BaseModel):
+    by: str = Field(default="user")
+
 class ProjectMdUpdateRequest(BaseModel):
     content: str = Field(default="")
     by: str = Field(default="user")
@@ -159,6 +176,7 @@ class GroupUpdateRequest(BaseModel):
 
 
 class GroupSettingsRequest(BaseModel):
+    default_send_to: Optional[Literal["foreman", "broadcast"]] = None
     nudge_after_seconds: Optional[int] = None
     actor_idle_timeout_seconds: Optional[int] = None
     keepalive_delay_seconds: Optional[int] = None
@@ -198,6 +216,7 @@ class IMSetRequest(BaseModel):
     bot_token_env: str = ""  # xoxb- for outbound (Web API)
     app_token_env: str = ""  # xapp- for inbound (Socket Mode)
     # Feishu fields
+    feishu_domain: str = ""
     feishu_app_id: str = ""
     feishu_app_secret: str = ""
     # DingTalk fields
@@ -215,6 +234,43 @@ def _is_env_var_name(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]*", (value or "").strip()))
 
 
+def _normalize_feishu_domain(value: str) -> str:
+    """
+    Normalize the Feishu/Lark OpenAPI domain.
+
+    Feishu (CN): https://open.feishu.cn
+    Lark (Global): https://open.larkoffice.com
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    v = raw.strip().lower().rstrip("/")
+    if v.endswith("/open-apis"):
+        v = v[: -len("/open-apis")].rstrip("/")
+    if v in ("feishu", "cn", "china", "open.feishu.cn", "https://open.feishu.cn"):
+        return "https://open.feishu.cn"
+    if v in (
+        "lark",
+        "global",
+        "intl",
+        "international",
+        "open.larkoffice.com",
+        "https://open.larkoffice.com",
+        # Historical alias used in some SDKs/docs.
+        "open.larksuite.com",
+        "https://open.larksuite.com",
+    ):
+        return "https://open.larkoffice.com"
+    if not (v.startswith("http://") or v.startswith("https://")):
+        v = "https://" + v
+    # Allow only known domains in the Web UI to avoid surprising network targets.
+    if v in ("https://open.feishu.cn", "https://open.larkoffice.com", "https://open.larksuite.com"):
+        if v == "https://open.larksuite.com":
+            return "https://open.larkoffice.com"
+        return v
+    return ""
+
+
 def _normalize_command(cmd: Union[str, list[str], None]) -> Optional[list[str]]:
     if cmd is None:
         return None
@@ -224,6 +280,24 @@ def _normalize_command(cmd: Union[str, list[str], None]) -> Optional[list[str]]:
     if isinstance(cmd, list) and all(isinstance(x, str) for x in cmd):
         return [str(x).strip() for x in cmd if str(x).strip()]
     raise HTTPException(status_code=400, detail={"code": "invalid_command", "message": "invalid command"})
+
+
+def _is_truthy_env(value: str) -> bool:
+    return str(value or "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _web_mode() -> Literal["normal", "exhibit"]:
+    """Return the web server mode.
+
+    - normal: read/write control plane (default)
+    - exhibit: read-only "public console" mode
+    """
+    mode = str(os.environ.get("CCCC_WEB_MODE") or "").strip().lower()
+    if mode in ("exhibit", "readonly", "read-only", "ro"):
+        return "exhibit"
+    if _is_truthy_env(str(os.environ.get("CCCC_WEB_READONLY") or "")):
+        return "exhibit"
+    return "normal"
 
 
 def _require_token_if_configured(request: Request) -> Optional[JSONResponse]:
@@ -258,6 +332,52 @@ async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
 def create_app() -> FastAPI:
     app = FastAPI(title="cccc web", version=__version__)
     home = ensure_home()
+    web_mode = _web_mode()
+    read_only = web_mode == "exhibit"
+    try:
+        exhibit_cache_ttl_s = float(str(os.environ.get("CCCC_WEB_EXHIBIT_CACHE_SECONDS") or "1.0").strip() or "1.0")
+    except Exception:
+        exhibit_cache_ttl_s = 1.0
+    exhibit_allow_terminal = _is_truthy_env(str(os.environ.get("CCCC_WEB_EXHIBIT_ALLOW_TERMINAL") or ""))
+
+    # Tiny in-process cache for high-fanout read endpoints (exhibit mode only).
+    cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+    inflight: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
+    cache_lock = asyncio.Lock()
+
+    async def _cached_json(key: str, ttl_s: float, fetcher) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
+        if not read_only or ttl_s <= 0:
+            return await fetcher()
+        now = time.monotonic()
+        fut: asyncio.Future[Dict[str, Any]] | None = None
+        do_fetch = False
+        async with cache_lock:
+            hit = cache.get(key)
+            if hit is not None and hit[0] > now:
+                return hit[1]
+            fut = inflight.get(key)
+            if fut is None or fut.done():
+                loop = asyncio.get_running_loop()
+                fut = loop.create_future()
+                inflight[key] = fut
+                do_fetch = True
+        if fut is not None and not do_fetch:
+            return await fut
+        try:
+            val = await fetcher()
+            async with cache_lock:
+                cache[key] = (time.monotonic() + ttl_s, val)
+                if fut is not None and not fut.done():
+                    fut.set_result(val)
+            return val
+        except Exception as e:
+            async with cache_lock:
+                if fut is not None and not fut.done():
+                    fut.set_exception(e)
+            raise
+        finally:
+            async with cache_lock:
+                inflight.pop(key, None)
 
     # Some environments don't register the standard PWA manifest extension.
     mimetypes.add_type("application/manifest+json", ".webmanifest")
@@ -341,6 +461,24 @@ def create_app() -> FastAPI:
             )
         return resp
 
+    @app.middleware("http")
+    async def _read_only_guard(request: Request, call_next):  # type: ignore[no-untyped-def]
+        if read_only:
+            m = str(request.method or "").upper()
+            if m not in ("GET", "HEAD", "OPTIONS"):
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "ok": False,
+                        "error": {
+                            "code": "read_only",
+                            "message": "CCCC Web is running in read-only (exhibit) mode.",
+                            "details": {},
+                        },
+                    },
+                )
+        return await call_next(request)
+
     @app.exception_handler(HTTPException)
     async def _handle_fastapi_http_exception(_request: Request, exc: HTTPException) -> JSONResponse:
         detail = exc.detail
@@ -407,7 +545,15 @@ def create_app() -> FastAPI:
     async def ping() -> Dict[str, Any]:
         home = ensure_home()
         resp = await _daemon({"op": "ping"})
-        return {"ok": True, "result": {"home": str(home), "daemon": resp.get("result", {}), "version": __version__}}
+        return {
+            "ok": True,
+            "result": {
+                "home": str(home),
+                "daemon": resp.get("result", {}),
+                "version": __version__,
+                "web": {"mode": web_mode, "read_only": read_only},
+            },
+        }
 
     @app.get("/api/v1/health")
     async def health() -> Dict[str, Any]:
@@ -540,6 +686,15 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/runtimes")
     async def runtimes() -> Dict[str, Any]:
         """List available agent runtimes on the system."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "System discovery endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "runtimes"},
+                },
+            )
         from ...kernel.runtime import detect_all_runtimes, get_runtime_command_with_flags
         
         all_runtimes = detect_all_runtimes(primary_only=False)
@@ -565,6 +720,15 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/fs/list")
     async def fs_list(path: str = "~", show_hidden: bool = False) -> Dict[str, Any]:
         """List directory contents for path picker UI."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "File system endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "fs_list"},
+                },
+            )
         try:
             target = Path(path).expanduser().resolve()
             if not target.exists():
@@ -599,6 +763,15 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/fs/recent")
     async def fs_recent() -> Dict[str, Any]:
         """Get recent/common directories for quick selection."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "File system endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "fs_recent"},
+                },
+            )
         home = Path.home()
         suggestions = []
         
@@ -627,6 +800,15 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/fs/scope_root")
     async def fs_scope_root(path: str = "") -> Dict[str, Any]:
         """Resolve the effective scope root for a path (git root if applicable)."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "File system endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "fs_scope_root"},
+                },
+            )
         p = Path(str(path or "")).expanduser()
         if not str(path or "").strip():
             return {"ok": False, "error": {"code": "missing_path", "message": "missing path"}}
@@ -648,7 +830,11 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups")
     async def groups() -> Dict[str, Any]:
-        return await _daemon({"op": "groups"})
+        async def _fetch() -> Dict[str, Any]:
+            return await _daemon({"op": "groups"})
+
+        ttl = max(0.0, min(5.0, exhibit_cache_ttl_s))
+        return await _cached_json("groups", ttl, _fetch)
 
     @app.post("/api/v1/groups")
     async def group_create(req: CreateGroupRequest) -> Dict[str, Any]:
@@ -727,7 +913,13 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups/{group_id}")
     async def group_show(group_id: str) -> Dict[str, Any]:
-        return await _daemon({"op": "group_show", "args": {"group_id": group_id}})
+        gid = str(group_id or "").strip()
+
+        async def _fetch() -> Dict[str, Any]:
+            return await _daemon({"op": "group_show", "args": {"group_id": gid}})
+
+        ttl = max(0.0, min(5.0, exhibit_cache_ttl_s))
+        return await _cached_json(f"group:{gid}", ttl, _fetch)
 
     @app.put("/api/v1/groups/{group_id}")
     async def group_update(group_id: str, req: GroupUpdateRequest) -> Dict[str, Any]:
@@ -754,7 +946,13 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/groups/{group_id}/context")
     async def group_context(group_id: str) -> Dict[str, Any]:
         """Get full group context (vision/sketch/milestones/tasks/notes/refs/presence)."""
-        return await _daemon({"op": "context_get", "args": {"group_id": group_id}})
+        gid = str(group_id or "").strip()
+
+        async def _fetch() -> Dict[str, Any]:
+            return await _daemon({"op": "context_get", "args": {"group_id": gid}})
+
+        ttl = max(0.0, min(5.0, exhibit_cache_ttl_s))
+        return await _cached_json(f"context:{gid}", ttl, _fetch)
 
     @app.get("/api/v1/groups/{group_id}/template/export")
     async def group_template_export(group_id: str) -> Dict[str, Any]:
@@ -1022,12 +1220,14 @@ def create_app() -> FastAPI:
         automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
         delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
         from ...kernel.terminal_transcript import get_terminal_transcript_settings
+        from ...kernel.messaging import get_default_send_to
 
         tt = get_terminal_transcript_settings(group.doc)
         return {
             "ok": True,
             "result": {
                 "settings": {
+                    "default_send_to": get_default_send_to(group.doc),
                     "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
                     "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
                     "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
@@ -1048,6 +1248,8 @@ def create_app() -> FastAPI:
     async def group_settings_update(group_id: str, req: GroupSettingsRequest) -> Dict[str, Any]:
         """Update group automation settings."""
         patch: Dict[str, Any] = {}
+        if req.default_send_to is not None:
+            patch["default_send_to"] = str(req.default_send_to)
         if req.nudge_after_seconds is not None:
             patch["nudge_after_seconds"] = max(0, req.nudge_after_seconds)
         if req.actor_idle_timeout_seconds is not None:
@@ -1093,7 +1295,12 @@ def create_app() -> FastAPI:
         return await _daemon({"op": "group_detach_scope", "args": {"group_id": group_id, "scope_key": scope_key, "by": by}})
 
     @app.get("/api/v1/groups/{group_id}/ledger/tail")
-    async def ledger_tail(group_id: str, lines: int = 50, with_read_status: bool = False) -> Dict[str, Any]:
+    async def ledger_tail(
+        group_id: str,
+        lines: int = 50,
+        with_read_status: bool = False,
+        with_ack_status: bool = False,
+    ) -> Dict[str, Any]:
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
@@ -1113,6 +1320,15 @@ def create_app() -> FastAPI:
                 event_id = str(ev.get("id") or "")
                 if event_id in status_map:
                     ev["_read_status"] = status_map[event_id]
+
+        # Optionally include ack status for attention chat.message events (batch optimized)
+        if with_ack_status:
+            from ...kernel.inbox import get_ack_status_batch
+            ack_map = get_ack_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in ack_map:
+                    ev["_ack_status"] = ack_map[event_id]
         
         return {"ok": True, "result": {"events": events}}
 
@@ -1126,6 +1342,7 @@ def create_app() -> FastAPI:
         after: str = "",
         limit: int = 50,
         with_read_status: bool = False,
+        with_ack_status: bool = False,
     ) -> Dict[str, Any]:
         """Search and paginate messages in the ledger.
         
@@ -1167,6 +1384,15 @@ def create_app() -> FastAPI:
                 event_id = str(ev.get("id") or "")
                 if event_id in status_map:
                     ev["_read_status"] = status_map[event_id]
+
+        # Optionally include ack status (batch optimized)
+        if with_ack_status:
+            from ...kernel.inbox import get_ack_status_batch
+            ack_map = get_ack_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in ack_map:
+                    ev["_ack_status"] = ack_map[event_id]
         
         return {
             "ok": True,
@@ -1175,6 +1401,87 @@ def create_app() -> FastAPI:
                 "has_more": has_more,
                 "count": len(events),
             }
+        }
+
+    @app.get("/api/v1/groups/{group_id}/ledger/window")
+    async def ledger_window(
+        group_id: str,
+        center: str,
+        kind: str = "chat",
+        before: int = 30,
+        after: int = 30,
+        with_read_status: bool = False,
+        with_ack_status: bool = False,
+    ) -> Dict[str, Any]:
+        """Return a bounded window of events around a center event_id.
+
+        This is used for "jump-to message" deep links and search result navigation.
+        """
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        from ...kernel.inbox import find_event, search_messages, get_read_status_batch
+
+        center_id = str(center or "").strip()
+        if not center_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_center", "message": "missing center event_id"})
+
+        center_event = find_event(group, center_id)
+        if center_event is None:
+            raise HTTPException(status_code=404, detail={"code": "event_not_found", "message": f"event not found: {center_id}"})
+
+        # Validate and clamp window sizes
+        before = max(0, min(200, int(before)))
+        after = max(0, min(200, int(after)))
+
+        kind_filter = kind if kind in ("all", "chat", "notify") else "chat"
+
+        if kind_filter == "chat" and str(center_event.get("kind") or "") != "chat.message":
+            raise HTTPException(status_code=400, detail={"code": "invalid_center_kind", "message": "center event kind must be chat.message for kind=chat"})
+
+        before_events, has_more_before = search_messages(
+            group,
+            query="",
+            kind_filter=kind_filter,  # type: ignore
+            before_id=center_id,
+            limit=before,
+        )
+        after_events, has_more_after = search_messages(
+            group,
+            query="",
+            kind_filter=kind_filter,  # type: ignore
+            after_id=center_id,
+            limit=after,
+        )
+
+        events = [*before_events, center_event, *after_events]
+
+        if with_read_status:
+            status_map = get_read_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in status_map:
+                    ev["_read_status"] = status_map[event_id]
+
+        if with_ack_status:
+            from ...kernel.inbox import get_ack_status_batch
+            ack_map = get_ack_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in ack_map:
+                    ev["_ack_status"] = ack_map[event_id]
+
+        return {
+            "ok": True,
+            "result": {
+                "center_id": center_id,
+                "center_index": len(before_events),
+                "events": events,
+                "has_more_before": has_more_before,
+                "has_more_after": has_more_after,
+                "count": len(events),
+            },
         }
 
     @app.get("/api/v1/groups/{group_id}/events/{event_id}/read_status")
@@ -1207,7 +1514,37 @@ def create_app() -> FastAPI:
         return await _daemon(
             {
                 "op": "send",
-                "args": {"group_id": group_id, "text": req.text, "by": req.by, "to": list(req.to), "path": req.path},
+                "args": {
+                    "group_id": group_id,
+                    "text": req.text,
+                    "by": req.by,
+                    "to": list(req.to),
+                    "path": req.path,
+                    "priority": req.priority,
+                    "src_group_id": req.src_group_id,
+                    "src_event_id": req.src_event_id,
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/send_cross_group")
+    async def send_cross_group(group_id: str, req: SendCrossGroupRequest) -> Dict[str, Any]:
+        """Send a message to another group with provenance.
+
+        This creates a source chat.message in the current group and forwards a copy into the destination group
+        with (src_group_id, src_event_id) set.
+        """
+        return await _daemon(
+            {
+                "op": "send_cross_group",
+                "args": {
+                    "group_id": group_id,
+                    "dst_group_id": req.dst_group_id,
+                    "text": req.text,
+                    "by": req.by,
+                    "to": list(req.to),
+                    "priority": req.priority,
+                },
             }
         )
 
@@ -1216,7 +1553,26 @@ def create_app() -> FastAPI:
         return await _daemon(
             {
                 "op": "reply",
-                "args": {"group_id": group_id, "text": req.text, "by": req.by, "to": list(req.to), "reply_to": req.reply_to},
+                "args": {
+                    "group_id": group_id,
+                    "text": req.text,
+                    "by": req.by,
+                    "to": list(req.to),
+                    "reply_to": req.reply_to,
+                    "priority": req.priority,
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/events/{event_id}/ack")
+    async def chat_ack(group_id: str, event_id: str, req: UserAckRequest) -> Dict[str, Any]:
+        # Web UI can only ACK as user (no impersonation).
+        if str(req.by or "").strip() != "user":
+            raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "ack is only supported as user in the web UI"})
+        return await _daemon(
+            {
+                "op": "chat_ack",
+                "args": {"group_id": group_id, "event_id": event_id, "actor_id": "user", "by": "user"},
             }
         )
 
@@ -1227,6 +1583,7 @@ def create_app() -> FastAPI:
         text: str = Form(""),
         to_json: str = Form("[]"),
         path: str = Form(""),
+        priority: str = Form("normal"),
         files: list[UploadFile] = File(default_factory=list),
     ) -> Dict[str, Any]:
         group = load_group(group_id)
@@ -1238,6 +1595,49 @@ def create_app() -> FastAPI:
         except Exception:
             parsed_to = []
         to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
+
+        # Preflight recipients before storing attachments (avoid orphan blobs on invalid/no-op sends).
+        from ...kernel.actors import resolve_recipient_tokens, list_actors
+        from ...kernel.messaging import get_default_send_to, enabled_recipient_actor_ids, targets_any_agent
+        try:
+            canonical_to = resolve_recipient_tokens(group, to_list)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
+        if to_list and not canonical_to:
+            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": "invalid recipient"})
+
+        raw_text = str(text or "").strip()
+        if not canonical_to and not to_list and raw_text:
+            import re
+            mention_pattern = re.compile(r"@(\w[\w-]*)")
+            mentions = mention_pattern.findall(raw_text)
+            if mentions:
+                actor_ids = {str(a.get("id") or "").strip() for a in list_actors(group) if isinstance(a, dict)}
+                mention_tokens: list[str] = []
+                for m in mentions:
+                    if not m:
+                        continue
+                    if m in ("all", "peers", "foreman"):
+                        mention_tokens.append(f"@{m}")
+                    elif m in actor_ids:
+                        mention_tokens.append(m)
+                if mention_tokens:
+                    try:
+                        canonical_to = resolve_recipient_tokens(group, mention_tokens)
+                    except Exception:
+                        canonical_to = []
+
+        if not canonical_to and not to_list and get_default_send_to(group.doc) == "foreman":
+            canonical_to = ["@foreman"]
+
+        if targets_any_agent(canonical_to):
+            matched_enabled = enabled_recipient_actor_ids(group, canonical_to)
+            if not matched_enabled:
+                wanted = " ".join(canonical_to) if canonical_to else "@all"
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "no_enabled_recipients", "message": f"no enabled agents match recipients: {wanted}"},
+                )
 
         attachments: list[dict[str, Any]] = []
         for f in files or []:
@@ -1263,10 +1663,22 @@ def create_app() -> FastAPI:
             else:
                 msg_text = f"[files] {len(attachments)} attachments"
 
+        prio = str(priority or "normal").strip() or "normal"
+        if prio not in ("normal", "attention"):
+            raise HTTPException(status_code=400, detail={"code": "invalid_priority", "message": "priority must be 'normal' or 'attention'"})
+
         return await _daemon(
             {
                 "op": "send",
-                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "path": path, "attachments": attachments},
+                "args": {
+                    "group_id": group_id,
+                    "text": msg_text,
+                    "by": by,
+                    "to": canonical_to,
+                    "path": path,
+                    "attachments": attachments,
+                    "priority": prio,
+                },
             }
         )
 
@@ -1277,17 +1689,52 @@ def create_app() -> FastAPI:
         text: str = Form(""),
         to_json: str = Form("[]"),
         reply_to: str = Form(""),
+        priority: str = Form("normal"),
         files: list[UploadFile] = File(default_factory=list),
     ) -> Dict[str, Any]:
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
+        reply_to_id = str(reply_to or "").strip()
+        if not reply_to_id:
+            raise HTTPException(status_code=400, detail={"code": "missing_reply_to", "message": "missing reply_to"})
+
         try:
             parsed_to = json.loads(to_json or "[]")
         except Exception:
             parsed_to = []
         to_list = [str(x).strip() for x in (parsed_to if isinstance(parsed_to, list) else []) if str(x).strip()]
+
+        # Preflight recipients before storing attachments (avoid orphan blobs on invalid/no-op sends).
+        from ...kernel.actors import resolve_recipient_tokens
+        from ...kernel.inbox import find_event
+        from ...kernel.messaging import default_reply_recipients, enabled_recipient_actor_ids, targets_any_agent
+
+        original = find_event(group, reply_to_id)
+        if original is None:
+            raise HTTPException(status_code=404, detail={"code": "event_not_found", "message": f"event not found: {reply_to_id}"})
+
+        try:
+            canonical_to = resolve_recipient_tokens(group, to_list)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": str(e)})
+        if to_list and not canonical_to:
+            raise HTTPException(status_code=400, detail={"code": "invalid_recipient", "message": "invalid recipient"})
+
+        if not canonical_to and not to_list:
+            canonical_to = resolve_recipient_tokens(group, default_reply_recipients(group, by=by, original_event=original))
+
+        if targets_any_agent(canonical_to):
+            matched_enabled = enabled_recipient_actor_ids(group, canonical_to)
+            if by and by in matched_enabled:
+                matched_enabled = [aid for aid in matched_enabled if aid != by]
+            if not matched_enabled:
+                wanted = " ".join(canonical_to) if canonical_to else "@all"
+                raise HTTPException(
+                    status_code=400,
+                    detail={"code": "no_enabled_recipients", "message": f"no enabled agents match recipients: {wanted}"},
+                )
 
         attachments: list[dict[str, Any]] = []
         for f in files or []:
@@ -1313,10 +1760,22 @@ def create_app() -> FastAPI:
             else:
                 msg_text = f"[files] {len(attachments)} attachments"
 
+        prio = str(priority or "normal").strip() or "normal"
+        if prio not in ("normal", "attention"):
+            raise HTTPException(status_code=400, detail={"code": "invalid_priority", "message": "priority must be 'normal' or 'attention'"})
+
         return await _daemon(
             {
                 "op": "reply",
-                "args": {"group_id": group_id, "text": msg_text, "by": by, "to": to_list, "reply_to": reply_to, "attachments": attachments},
+                "args": {
+                    "group_id": group_id,
+                    "text": msg_text,
+                    "by": by,
+                    "to": canonical_to,
+                    "reply_to": reply_to_id,
+                    "attachments": attachments,
+                    "priority": prio,
+                },
             }
         )
 
@@ -1346,7 +1805,12 @@ def create_app() -> FastAPI:
 
     @app.get("/api/v1/groups/{group_id}/actors")
     async def actors(group_id: str, include_unread: bool = False) -> Dict[str, Any]:
-        return await _daemon({"op": "actor_list", "args": {"group_id": group_id, "include_unread": include_unread}})
+        gid = str(group_id or "").strip()
+        async def _fetch() -> Dict[str, Any]:
+            return await _daemon({"op": "actor_list", "args": {"group_id": gid, "include_unread": include_unread}})
+
+        ttl = max(0.0, min(5.0, exhibit_cache_ttl_s))
+        return await _cached_json(f"actors:{gid}:{int(bool(include_unread))}", ttl, _fetch)
 
     @app.post("/api/v1/groups/{group_id}/actors")
     async def actor_create(group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:
@@ -1424,6 +1888,26 @@ def create_app() -> FastAPI:
 
         await websocket.accept()
 
+        if read_only and not exhibit_allow_terminal:
+            try:
+                await websocket.send_json(
+                    {
+                        "ok": False,
+                        "error": {
+                            "code": "read_only_terminal",
+                            "message": "Terminal is disabled in read-only (exhibit) mode.",
+                            "details": {},
+                        },
+                    }
+                )
+            except Exception:
+                pass
+            try:
+                await websocket.close(code=1000)
+            except Exception:
+                pass
+            return
+
         group = load_group(group_id)
         if group is None:
             await websocket.send_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
@@ -1483,12 +1967,16 @@ def create_app() -> FastAPI:
                         continue
                     t = str(obj.get("t") or "")
                     if t == "i":
+                        if read_only:
+                            continue
                         data = str(obj.get("d") or "")
                         if data:
                             writer.write(data.encode("utf-8", errors="replace"))
                             await writer.drain()
                         continue
                     if t == "r":
+                        if read_only:
+                            continue
                         try:
                             cols = int(obj.get("c") or 0)
                             rows = int(obj.get("r") or 0)
@@ -1635,6 +2123,15 @@ def create_app() -> FastAPI:
             im_cfg["enabled"] = True
 
         platform = str(req.platform or "").strip().lower()
+        prev_files = prev_im.get("files") if isinstance(prev_im, dict) else None
+        if isinstance(prev_files, dict):
+            # Preserve non-credential settings, if any (so "Set" doesn't silently drop them).
+            im_cfg["files"] = prev_files
+        else:
+            # Default file-transfer policy (also used by CLI).
+            default_max_mb = 20 if platform in ("telegram", "slack") else 10
+            im_cfg["files"] = {"enabled": True, "max_mb": default_max_mb}
+
         token_hint = str(req.bot_token_env or req.token_env or "").strip()
 
         if platform == "slack":
@@ -1659,6 +2156,9 @@ def create_app() -> FastAPI:
                 im_cfg.setdefault("bot_token", str(req.token).strip())
         elif platform == "feishu":
             # Feishu: app_id + app_secret
+            dom = _normalize_feishu_domain(req.feishu_domain)
+            if dom:
+                im_cfg["feishu_domain"] = dom
             app_id = str(req.feishu_app_id or "").strip()
             app_secret = str(req.feishu_app_secret or "").strip()
             if app_id:

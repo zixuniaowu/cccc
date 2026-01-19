@@ -44,6 +44,7 @@ DingTalk (钉钉) is ideal for:
 
 1. In your application, go to **Credentials & Basic Info**
 2. Copy **AppKey** and **AppSecret**
+3. (Optional) Copy **RobotCode** if shown in your Robot settings (CCCC can sometimes learn it after the first inbound message, but configuring it upfront is more reliable for attachments)
 
 ::: warning Security
 Keep your AppSecret confidential. Rotate it periodically.
@@ -67,6 +68,7 @@ First set environment variables:
 ```bash
 export DINGTALK_APP_KEY="your_app_key"
 export DINGTALK_APP_SECRET="your_app_secret"
+export DINGTALK_ROBOT_CODE="your_robot_code"  # optional but recommended
 ```
 
 Then configure CCCC:
@@ -74,7 +76,8 @@ Then configure CCCC:
 ```bash
 cccc im set dingtalk \
   --app-key-env DINGTALK_APP_KEY \
-  --app-secret-env DINGTALK_APP_SECRET
+  --app-secret-env DINGTALK_APP_SECRET \
+  --robot-code-env DINGTALK_ROBOT_CODE
 ```
 
 Both methods save to `group.yaml`:
@@ -82,8 +85,9 @@ Both methods save to `group.yaml`:
 ```yaml
 im:
   platform: dingtalk
-  app_key_env: DINGTALK_APP_KEY
-  app_secret_env: DINGTALK_APP_SECRET
+  dingtalk_app_key_env: DINGTALK_APP_KEY
+  dingtalk_app_secret_env: DINGTALK_APP_SECRET
+  dingtalk_robot_code_env: DINGTALK_ROBOT_CODE
 ```
 
 ## Step 4: Start the Bridge
@@ -221,8 +225,10 @@ Attach files to your message. DingTalk files are downloaded and stored in CCCC's
 |---------|-------------|
 | `/subscribe` | Start receiving messages from CCCC |
 | `/unsubscribe` | Stop receiving messages |
-| `/send <message>` | Send a message to agents |
+| `/send <message>` | Send to foreman (default) |
 | `/send @<actor> <message>` | Send to a specific agent |
+| `/send @all <message>` | Send to all agents |
+| `/send @peers <message>` | Send to non-foreman agents |
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
@@ -267,75 +273,14 @@ If using Stream Mode and connection drops:
    cccc im start
    ```
 
-### Webhook verification failed (HTTP Mode)
+## Notes
 
-1. Verify the Token and AES Key are correct
-2. Ensure your webhook URL is accessible
-3. Check the signature verification logic
-
-## Advanced Configuration
-
-### Stream Mode Settings
-
-```yaml
-im:
-  platform: dingtalk
-  app_key_env: DINGTALK_APP_KEY
-  app_secret_env: DINGTALK_APP_SECRET
-  mode: stream  # or 'http'
-```
-
-### HTTP Mode with Verification
-
-```yaml
-im:
-  platform: dingtalk
-  app_key_env: DINGTALK_APP_KEY
-  app_secret_env: DINGTALK_APP_SECRET
-  mode: http
-  webhook_token_env: DINGTALK_WEBHOOK_TOKEN
-  webhook_aes_key_env: DINGTALK_WEBHOOK_AES_KEY
-```
-
-### Custom Robot (Webhook Only)
-
-For simpler outbound-only messaging, use a Custom Robot:
-
-1. In a group chat, click **Group Settings** → **Intelligent Group Assistant**
-2. Add a **Custom Robot**
-3. Copy the Webhook URL
-4. Configure in CCCC:
-
-```yaml
-im:
-  platform: dingtalk
-  mode: webhook
-  webhook_url_env: DINGTALK_WEBHOOK_URL
-  webhook_secret_env: DINGTALK_WEBHOOK_SECRET  # Optional
-```
-
-Note: Custom robots can only send messages, not receive.
-
-### Message Templates
-
-Use predefined templates for consistent formatting:
-
-```yaml
-im:
-  platform: dingtalk
-  app_key_env: DINGTALK_APP_KEY
-  app_secret_env: DINGTALK_APP_SECRET
-  templates:
-    status: actioncard  # Use ActionCard for status messages
-    error: markdown     # Use Markdown for errors
-```
+CCCC currently supports DingTalk Stream mode (persistent connection) for inbound messages and DingTalk Open APIs for outbound messages.
 
 ## Security Notes
 
 - Rotate AppSecret periodically
-- Use IP whitelist for webhook endpoints
-- Enable message encryption for sensitive data
-- Review robot access in admin console
-- Consider using outpost mode for additional security
+- Use the minimal required permissions
+- Review robot/app access regularly
 - Audit message logs regularly
 - Limit robot visibility to necessary employees

@@ -20,9 +20,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="cccc web", description="cccc web port (FastAPI)")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8848, help="Bind port (default: 8848)")
+    parser.add_argument(
+        "--mode",
+        default=str(os.environ.get("CCCC_WEB_MODE") or "normal"),
+        choices=["normal", "exhibit"],
+        help="Web mode: normal (read/write) or exhibit (read-only) (default: normal)",
+    )
+    parser.add_argument("--exhibit", action="store_true", help="Shortcut for: --mode exhibit")
     parser.add_argument("--reload", action="store_true", help="Enable autoreload (dev)")
     parser.add_argument("--log-level", default="info", help="Uvicorn log level (default: info)")
     args = parser.parse_args(argv)
+    if bool(getattr(args, "exhibit", False)):
+        args.mode = "exhibit"
+
+    os.environ["CCCC_WEB_MODE"] = str(args.mode or "normal")
 
     # Check daemon is running (don't auto-start)
     if not _check_daemon_running():
@@ -43,10 +54,6 @@ def main(argv: Optional[list[str]] = None) -> int:
         pass
     
     return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 
 if __name__ == "__main__":

@@ -13,6 +13,8 @@ interface IMBridgeTabProps {
   imAppTokenEnv: string;
   setImAppTokenEnv: (v: string) => void;
   // Feishu fields
+  imFeishuDomain: string;
+  setImFeishuDomain: (v: string) => void;
   imFeishuAppId: string;
   setImFeishuAppId: (v: string) => void;
   imFeishuAppSecret: string;
@@ -22,6 +24,8 @@ interface IMBridgeTabProps {
   setImDingtalkAppKey: (v: string) => void;
   imDingtalkAppSecret: string;
   setImDingtalkAppSecret: (v: string) => void;
+  imDingtalkRobotCode: string;
+  setImDingtalkRobotCode: (v: string) => void;
   // Actions
   imBusy: boolean;
   onSaveConfig: () => void;
@@ -40,6 +44,8 @@ export function IMBridgeTab({
   setImBotTokenEnv,
   imAppTokenEnv,
   setImAppTokenEnv,
+  imFeishuDomain,
+  setImFeishuDomain,
   imFeishuAppId,
   setImFeishuAppId,
   imFeishuAppSecret,
@@ -48,6 +54,8 @@ export function IMBridgeTab({
   setImDingtalkAppKey,
   imDingtalkAppSecret,
   setImDingtalkAppSecret,
+  imDingtalkRobotCode,
+  setImDingtalkRobotCode,
   imBusy,
   onSaveConfig,
   onRemoveConfig,
@@ -91,7 +99,7 @@ export function IMBridgeTab({
       <div>
         <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>IM Bridge</h3>
         <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-          Connect this group to Telegram, Slack, Discord, Feishu, or DingTalk.
+          Connect this group to Telegram, Slack, Discord, Feishu/Lark, or DingTalk.
         </p>
       </div>
 
@@ -129,8 +137,8 @@ export function IMBridgeTab({
             <option value="telegram">Telegram</option>
             <option value="slack">Slack</option>
             <option value="discord">Discord</option>
-            <option value="feishu">Feishu (飞书)</option>
-            <option value="dingtalk">DingTalk (钉钉)</option>
+            <option value="feishu">Feishu/Lark</option>
+            <option value="dingtalk">DingTalk</option>
           </select>
         </div>
 
@@ -174,6 +182,23 @@ export function IMBridgeTab({
         {imPlatform === "feishu" && (
           <>
             <div>
+              <label className={labelClass(isDark)}>API Region</label>
+              <select
+                value={imFeishuDomain}
+                onChange={(e) => setImFeishuDomain(e.target.value)}
+                className={inputClass(isDark)}
+              >
+                <option value="https://open.feishu.cn">Feishu (CN) • open.feishu.cn</option>
+                <option value="https://open.larkoffice.com">Lark (Global) • open.larkoffice.com</option>
+              </select>
+              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                Feishu and Lark share the same APIs but use different domains. Pick the one where your app was created.
+              </p>
+              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                Inbound streaming requires the Python package <code>lark-oapi</code> on the host running CCCC.
+              </p>
+            </div>
+            <div>
               <label className={labelClass(isDark)}>App ID</label>
               <input
                 type="text"
@@ -183,7 +208,7 @@ export function IMBridgeTab({
                 className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
               />
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                飞书应用的 App ID 或环境变量名
+                App ID value or an env var name.
               </p>
             </div>
             <div>
@@ -196,7 +221,7 @@ export function IMBridgeTab({
                 className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
               />
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                飞书应用的 App Secret 或环境变量名
+                App Secret value or an env var name.
               </p>
             </div>
           </>
@@ -215,7 +240,7 @@ export function IMBridgeTab({
                 className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
               />
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                钉钉应用的 AppKey 或环境变量名
+                App Key value or an env var name.
               </p>
             </div>
             <div>
@@ -228,7 +253,23 @@ export function IMBridgeTab({
                 className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
               />
               <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                钉钉应用的 AppSecret 或环境变量名
+                App Secret value or an env var name.
+              </p>
+            </div>
+            <div>
+              <label className={labelClass(isDark)}>Robot Code (optional)</label>
+              <input
+                type="text"
+                value={imDingtalkRobotCode}
+                onChange={(e) => setImDingtalkRobotCode(e.target.value)}
+                placeholder="DINGTALK_ROBOT_CODE (or robotCode)"
+                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+              />
+              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                Optional; used when the session webhook is unavailable or expired.
+              </p>
+              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+                Inbound streaming requires the Python package <code>dingtalk-stream</code> on the host running CCCC.
               </p>
             </div>
           </>

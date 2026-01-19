@@ -7,6 +7,8 @@ interface GroupDraft {
   composerFiles: File[];
   toText: string;
   replyTarget: ReplyTarget;
+  priority: "normal" | "attention";
+  destGroupId: string;
 }
 
 interface ComposerState {
@@ -15,6 +17,8 @@ interface ComposerState {
   composerFiles: File[];
   toText: string;
   replyTarget: ReplyTarget;
+  priority: "normal" | "attention";
+  destGroupId: string;
 
   // Drafts per group (memory only)
   drafts: Record<string, GroupDraft>;
@@ -25,6 +29,8 @@ interface ComposerState {
   appendComposerFiles: (files: File[]) => void;
   setToText: (text: string) => void;
   setReplyTarget: (target: ReplyTarget) => void;
+  setPriority: (priority: "normal" | "attention") => void;
+  setDestGroupId: (groupId: string) => void;
   clearComposer: () => void;
 
   // Group switching: save current draft and load new group's draft
@@ -38,6 +44,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
   composerFiles: [],
   toText: "",
   replyTarget: null,
+  priority: "normal",
+  destGroupId: "",
   drafts: {},
 
   setComposerText: (text) =>
@@ -63,6 +71,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
 
   setToText: (text) => set({ toText: text }),
   setReplyTarget: (target) => set({ replyTarget: target }),
+  setPriority: (priority) => set({ priority }),
+  setDestGroupId: (groupId) => set({ destGroupId: String(groupId || "").trim() }),
 
   clearComposer: () =>
     set({
@@ -70,6 +80,7 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       composerFiles: [],
       toText: "",
       replyTarget: null,
+      priority: "normal",
     }),
 
   switchGroup: (fromGroupId, toGroupId) => {
@@ -90,6 +101,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
           composerFiles: state.composerFiles,
           toText: state.toText,
           replyTarget: state.replyTarget,
+          priority: state.priority,
+          destGroupId: state.destGroupId,
         };
       } else {
         delete newDrafts[fromGroupId];
@@ -105,6 +118,8 @@ export const useComposerStore = create<ComposerState>((set, get) => ({
       composerFiles: draft?.composerFiles || [],
       toText: draft?.toText || "",
       replyTarget: draft?.replyTarget || null,
+      priority: draft?.priority || "normal",
+      destGroupId: draft?.destGroupId || (toGroupId || ""),
     });
   },
 

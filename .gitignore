@@ -36,6 +36,9 @@
 /docs/.vitepress/cache/
 /docs/.vitepress/dist/
 
+# Local iteration notes (not shipped)
+/docs/ITERATION_PLAN.md
+
 # Docs: legacy vnext - whitelist only what we ship
 !/docs/vnext/
 /docs/vnext/*
@@ -47,3 +50,11 @@
 /old_v0.3.28/
 
 # Tests
+
+# Local agent guide (not committed)
+AGENTS.md
+
+.shared/
+.agent/
+.codex/
+.windsurf/

@@ -28,6 +28,82 @@ What we're working on right now.
 
 Agents read this via `cccc_project_info` to understand context.
 
+### Customize the Help Playbook
+
+The help playbook is the collaboration contract that agents follow. You can customize it per-project.
+
+#### File Priority
+
+CCCC loads help content with the following priority:
+
+1. **Repository override**: `CCCC_HELP.md` in your project root (highest priority)
+2. **Built-in default**: `src/cccc/resources/cccc-help.md` (fallback)
+
+To customize, create `CCCC_HELP.md` at your project root:
+
+```bash
+# Copy the default as a starting point
+cp $(python -c "import cccc.resources; print(cccc.resources.__path__[0])")/cccc-help.md ./CCCC_HELP.md
+# Edit to your needs
+```
+
+#### Conditional Content Markers
+
+You can show different content to different roles using conditional markers:
+
+```markdown
+# My Project Help
+
+## General Rules (all roles see this)
+- Follow the coding standards
+- Write tests for new features
+
+## @role: foreman
+### Foreman-Only Section
+- You are responsible for coordinating the team
+- Make final decisions on architecture
+
+## @role: peer
+### Peer-Only Section
+- Focus on your assigned tasks
+- Report blockers to foreman
+
+## @actor: impl-agent
+### This Section Only Visible to impl-agent
+- You handle the core implementation
+```
+
+**Marker syntax:**
+- `## @role: foreman` - Only foreman sees this section
+- `## @role: peer` - Only peers see this section
+- `## @actor: <actor_id>` - Only the specific actor sees this section
+- Sections without markers are visible to all roles
+
+#### How Agents Consume Help
+
+Agents access help content through MCP tools:
+
+1. **`cccc_bootstrap`** - Returns help as part of session initialization
+2. **`cccc_help`** - Returns help content on demand
+
+The help is returned as:
+```json
+{
+  "markdown": "<filtered content based on role/actor>",
+  "source": "CCCC_HELP.md or cccc.resources/cccc-help.md"
+}
+```
+
+Agents read the markdown and follow the rules semantically. There's no special parsing - the content is written in clear, imperative language that AI understands naturally.
+
+#### Tips for Effective Help Content
+
+- Use imperative language: "MUST use MCP" instead of "should consider using MCP"
+- Be specific: "Reply within 30 seconds" instead of "respond quickly"
+- Structure with clear headings for easy navigation
+- Include examples for complex workflows
+- Keep sections focused - one topic per section
+
 ### Choose the Right Agent Combination
 
 | Scenario | Recommended Setup |

@@ -7,12 +7,16 @@ export interface RecipientsModalProps {
   isDark: boolean;
   isSmallScreen: boolean;
   toLabel: string;
+  statusKind: "read" | "ack";
   entries: RecipientEntry[];
   onClose: () => void;
 }
 
-export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, entries, onClose }: RecipientsModalProps) {
+export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, statusKind, entries, onClose }: RecipientsModalProps) {
   if (!isOpen) return null;
+
+  const isAck = statusKind === "ack";
+  const title = isAck ? "Acknowledgements" : "Recipients";
 
   return (
     <div
@@ -31,7 +35,7 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, entrie
       >
         <div className={classNames("px-5 py-4 border-b flex items-center justify-between gap-3", isDark ? "border-slate-800" : "border-gray-200")}>
           <div className="min-w-0">
-            <div className={classNames("text-sm font-semibold truncate", isDark ? "text-slate-100" : "text-gray-900")}>Recipients</div>
+            <div className={classNames("text-sm font-semibold truncate", isDark ? "text-slate-100" : "text-gray-900")}>{title}</div>
             <div className={classNames("text-[11px] truncate", isDark ? "text-slate-500" : "text-gray-500")} title={`to ${toLabel}`}>
               to {toLabel}
             </div>
@@ -60,9 +64,9 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, entrie
                       "text-sm font-semibold tracking-tight",
                       cleared ? (isDark ? "text-emerald-400" : "text-emerald-600") : isDark ? "text-slate-500" : "text-gray-500"
                     )}
-                    aria-label={cleared ? "read" : "pending"}
+                    aria-label={cleared ? (isAck ? "acknowledged" : "read") : "pending"}
                   >
-                    {cleared ? "✓✓" : "✓"}
+                    {isAck ? (cleared ? "✓" : "○") : cleared ? "✓✓" : "✓"}
                   </div>
                 </div>
               ))}
@@ -71,7 +75,9 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, entrie
             <div className={classNames("text-sm py-6 text-center", isDark ? "text-slate-400" : "text-gray-500")}>No recipient tracking for this message.</div>
           )}
 
-          <div className={classNames("text-[11px] mt-3", isDark ? "text-slate-500" : "text-gray-500")}>Legend: ✓ pending · ✓✓ read</div>
+          <div className={classNames("text-[11px] mt-3", isDark ? "text-slate-500" : "text-gray-500")}>
+            {isAck ? "Legend: ○ pending · ✓ acknowledged" : "Legend: ✓ pending · ✓✓ read"}
+          </div>
         </div>
       </div>
     </div>

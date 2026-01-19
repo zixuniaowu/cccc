@@ -2,7 +2,7 @@
 CCCC IM Bridge Port
 
 Provides IM platform integration for CCCC groups.
-Supported platforms: Telegram, Slack, Discord, Feishu, DingTalk.
+Supported platforms: Telegram, Slack, Discord, Feishu/Lark, DingTalk.
 Each group can bind to one IM bot for remote control and notifications.
 
 Architecture:
@@ -17,7 +17,4 @@ Usage:
     cccc im status --group <group_id>
 """
 
-from .bridge import IMBridge, start_bridge
-from .subscribers import SubscriberManager
-
-__all__ = ["IMBridge", "start_bridge", "SubscriberManager"]
+__all__: list[str] = []

@@ -1,5 +1,5 @@
 // AppModals renders all modal components in one place.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ContextModal } from "./ContextModal";
 import { SettingsModal } from "./SettingsModal";
 import { SearchModal } from "./SearchModal";
@@ -9,6 +9,7 @@ import { CreateGroupModal } from "./modals/CreateGroupModal";
 import { EditActorModal } from "./modals/EditActorModal";
 import { GroupEditModal } from "./modals/GroupEditModal";
 import { InboxModal } from "./modals/InboxModal";
+import { RelayMessageModal } from "./modals/RelayMessageModal";
 import { RecipientsModal } from "./modals/RecipientsModal";
 import {
   useGroupStore,
@@ -18,7 +19,7 @@ import {
   useFormStore,
 } from "../stores";
 import * as api from "../services/api";
-import { RUNTIME_INFO, LedgerEvent, GroupSettings } from "../types";
+import { RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData } from "../types";
 
 interface AppModalsProps {
   isDark: boolean;
@@ -48,8 +49,11 @@ export function AppModals({
 }: AppModalsProps) {
   // Stores
   const {
+    groups,
     selectedGroupId,
     groupDoc,
+    events,
+    chatWindow,
     actors,
     groupContext,
     groupSettings,
@@ -61,6 +65,7 @@ export function AppModals({
     refreshGroups,
     refreshActors,
     loadGroup,
+    openChatWindow,
   } = useGroupStore();
 
   const {
@@ -74,10 +79,13 @@ export function AppModals({
   const {
     modals,
     recipientsEventId: _recipientsEventId,
+    relayEventId,
+    relaySource,
     editingActor,
     openModal,
     closeModal,
     setRecipientsModal,
+    setRelayModal,
     setEditingActor,
   } = useModalStore();
 
@@ -171,7 +179,6 @@ export function AppModals({
       })();
     }, 250);
     return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- local helper uses stable api calls only
   }, [modals.createGroup, createGroupTemplateFile, createGroupPath]);
 
   // Computed
@@ -496,6 +503,54 @@ export function AppModals({
     return "";
   })();
 
+  const relaySourceEvent = useMemo(() => {
+    const eid = String(relayEventId || "").trim();
+    if (!eid) return null;
+    const fromWindow =
+      chatWindow && String(chatWindow.groupId || "") === String(selectedGroupId || "")
+        ? (chatWindow.events || []).find((ev) => String(ev.id || "") === eid) || null
+        : null;
+    if (fromWindow) return fromWindow;
+    return (events || []).find((ev) => String(ev.id || "") === eid) || null;
+  }, [chatWindow, events, relayEventId, selectedGroupId]);
+
+  const handleRelayMessage = async (dstGroupId: string, toTokens: string[], note: string) => {
+    const src = relaySourceEvent;
+    const srcGroupId = String(selectedGroupId || "").trim();
+    const dstGroup = String(dstGroupId || "").trim();
+    const srcEventId = src?.id ? String(src.id) : "";
+    if (!srcGroupId || !srcEventId) return;
+    if (!dstGroup) return;
+    if (dstGroup === srcGroupId) {
+      showError("Destination group must be different from the source group.");
+      return;
+    }
+
+    const d = src.data as ChatMessageData | undefined;
+    const srcText = typeof d?.text === "string" ? d.text : "";
+    const noteText = String(note || "").trim();
+    const relayText = (noteText ? noteText + "\n\n" : "") + String(srcText || "");
+    if (!relayText.trim()) {
+      showError("Relay message text is empty.");
+      return;
+    }
+
+    const to = (toTokens || []).map((t) => String(t || "").trim()).filter((t) => t);
+
+    setBusy("relay");
+    try {
+      const resp = await api.relayMessage(dstGroup, relayText, to, { groupId: srcGroupId, eventId: srcEventId });
+      if (!resp.ok) {
+        showError(`${resp.error.code}: ${resp.error.message}`);
+        return;
+      }
+      setRelayModal(null);
+      await refreshGroups();
+    } finally {
+      setBusy("");
+    }
+  };
+
   return (
     <>
       <MobileMenuSheet
@@ -526,6 +581,20 @@ export function AppModals({
         onSetGroupState={onSetGroupState}
       />
 
+      {modals.relay && relayEventId ? (
+        <RelayMessageModal
+          key={`${selectedGroupId}:${relayEventId}`}
+          isOpen={true}
+          isDark={isDark}
+          busy={busy === "relay"}
+          srcGroupId={selectedGroupId}
+          srcEvent={relaySourceEvent}
+          groups={groups}
+          onCancel={() => setRelayModal(null)}
+          onSubmit={(dstGroupId, to, note) => void handleRelayMessage(dstGroupId, to, note)}
+        />
+      ) : null}
+
       <SearchModal
         isOpen={modals.search}
         onClose={() => closeModal("search")}
@@ -537,6 +606,19 @@ export function AppModals({
           setActiveTab("chat");
           closeModal("search");
           window.setTimeout(() => composerRef.current?.focus(), 0);
+        }}
+        onJumpToMessage={(eventId) => {
+          const gid = String(selectedGroupId || "").trim();
+          const eid = String(eventId || "").trim();
+          if (!gid || !eid) return;
+          setActiveTab("chat");
+          closeModal("search");
+          const url = new URL(window.location.href);
+          url.searchParams.set("group", gid);
+          url.searchParams.set("event", eid);
+          url.searchParams.set("tab", "chat");
+          window.history.replaceState({}, "", url.pathname + "?" + url.searchParams.toString());
+          void openChatWindow(gid, eid);
         }}
       />
 
@@ -570,6 +652,7 @@ export function AppModals({
         isDark={isDark}
         isSmallScreen={isSmallScreen}
         toLabel={messageMeta?.toLabel || ""}
+        statusKind={messageMeta?.statusKind || "read"}
         entries={(messageMeta?.entries || []) as [string, boolean][]}
         onClose={() => setRecipientsModal(null)}
       />

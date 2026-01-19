@@ -38,10 +38,21 @@ class ChatMessageData(BaseModel):
     text: str
     format: Literal["plain", "markdown"] = "plain"
 
+    # Priority / workflow semantics
+    priority: Literal["normal", "attention"] = "normal"
+
     # IM semantics
     to: List[str] = Field(default_factory=list)  # @mentions (empty = broadcast)
     reply_to: Optional[str] = None  # The replied-to message event_id
     quote_text: Optional[str] = None  # Quoted snippet for display
+
+    # Cross-group provenance (for relays/forwarding)
+    src_group_id: Optional[str] = None
+    src_event_id: Optional[str] = None
+
+    # Cross-group destination metadata (for "send to other group" source messages)
+    dst_group_id: Optional[str] = None
+    dst_to: Optional[List[str]] = None
 
     # Attachments and references
     refs: List[Dict[str, Any]] = Field(default_factory=list)

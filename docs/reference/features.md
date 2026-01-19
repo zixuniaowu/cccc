@@ -64,8 +64,8 @@ Delivery format:
 | Telegram | ✅ Complete | `token_env` |
 | Slack | ✅ Complete | `bot_token_env` + `app_token_env` |
 | Discord | ✅ Complete | `token_env` |
-| Feishu | ✅ Complete | `app_id_env` + `app_secret_env` |
-| DingTalk | ✅ Complete | `app_key_env` + `app_secret_env` |
+| Feishu/Lark | ✅ Complete | `feishu_app_id_env` + `feishu_app_secret_env` |
+| DingTalk | ✅ Complete | `dingtalk_app_key_env` + `dingtalk_app_secret_env` (+ optional `dingtalk_robot_code_env`) |
 
 ### Configuration
 
@@ -86,14 +86,21 @@ im:
 
 | Command | Description |
 |---------|-------------|
-| Direct message | Send to all agents |
-| `@<actor> message` | Send to specific actor |
+| `/send <message>` | Send using group default (default: foreman) |
+| `/send @<agent> <message>` | Send to a specific agent |
+| `/send @all <message>` | Send to all agents |
+| `/send @peers <message>` | Send to non-foreman agents |
 | `/subscribe` | Subscribe, start receiving messages |
 | `/unsubscribe` | Unsubscribe |
 | `/verbose` | Toggle verbose mode |
 | `/status` | Show group status |
 | `/pause` / `/resume` | Pause/resume message delivery |
 | `/help` | Show help |
+
+Notes:
+- Messaging requires explicit `/send`. Plain chat is ignored.
+- In channels (Slack/Discord), mention the bot and then use `/send` (to avoid platform slash-commands).
+- You can configure the default recipient behavior in Web UI: Settings → Messaging → Default Recipient.
 
 ### CLI Commands
 

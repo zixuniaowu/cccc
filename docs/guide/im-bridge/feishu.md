@@ -54,7 +54,7 @@ Keep your App Secret confidential. Never commit it to version control.
 1. Open the CCCC Web UI at `http://127.0.0.1:8848/`
 2. Go to **Settings** (gear icon in header)
 3. Navigate to the **IM Bridge** tab
-4. Select **Feishu (飞书)** as the platform
+4. Select **Feishu/Lark** as the platform
 5. Enter your credentials:
    - **App ID**: Your Feishu App ID (e.g., `cli_a9e92055a5b89bc6`)
    - **App Secret**: Your Feishu App Secret
@@ -75,7 +75,7 @@ Then configure CCCC:
 
 ```bash
 cccc im set feishu \
-  --app-id-env FEISHU_APP_ID \
+  --app-key-env FEISHU_APP_ID \
   --app-secret-env FEISHU_APP_SECRET
 ```
 
@@ -84,8 +84,8 @@ Both methods save to `group.yaml`:
 ```yaml
 im:
   platform: feishu
-  app_id_env: FEISHU_APP_ID
-  app_secret_env: FEISHU_APP_SECRET
+  feishu_app_id_env: FEISHU_APP_ID
+  feishu_app_secret_env: FEISHU_APP_SECRET
 ```
 
 ## Step 4: Start the Bridge
@@ -106,10 +106,10 @@ Verify it's running:
 cccc im status
 ```
 
-## Step 5: Configure Long Polling
+## Step 5: Enable Persistent Connection (Recommended)
 
 ::: warning Prerequisite
-The CCCC IM Bridge must be running before you can configure event subscriptions. CCCC provides a long polling endpoint that Feishu will connect to.
+The CCCC IM Bridge must be running before you can configure event subscriptions. Enable persistent connection so CCCC can receive events via a long connection (no public callback URL required for this mode).
 :::
 
 1. Go back to [Feishu Open Platform](https://open.feishu.cn/app)
@@ -174,6 +174,10 @@ In direct messages with the bot, you can use `/send` directly:
 /send Please implement the login feature
 ```
 
+::: tip Default Recipient
+When using `/send` without specifying a recipient (like `@foreman` or `@all`), messages are automatically sent to the **foreman** (team lead agent). This simplifies common interactions.
+:::
+
 ::: warning Important
 - In group chats, you must @mention the bot before using commands
 - Plain messages without the `/send` command are ignored
@@ -184,9 +188,9 @@ In direct messages with the bot, you can use `/send` directly:
 Use `@mention` syntax with the `/send` command:
 
 ```
-/send @foreman Please assign today's tasks
 /send @backend Check the API endpoints
 /send @all Status update please
+/send @peers Please review the PR
 ```
 
 ### Receiving Messages
@@ -208,8 +212,10 @@ Attach files to your message. Feishu files are downloaded and stored in CCCC's b
 |---------|-------------|
 | `/subscribe` | Start receiving messages from CCCC |
 | `/unsubscribe` | Stop receiving messages |
-| `/send <message>` | Send a message to agents |
+| `/send <message>` | Send to foreman (default) |
 | `/send @<actor> <message>` | Send to a specific agent |
+| `/send @all <message>` | Send to all agents |
+| `/send @peers <message>` | Send to non-foreman agents |
 | `/status` | Show group and agent status |
 | `/pause` | Pause message delivery |
 | `/resume` | Resume message delivery |
@@ -248,53 +254,17 @@ cccc im start
 
 ## Advanced Configuration
 
-### Webhook Mode
+CCCC currently supports:
 
-For production, use webhooks instead of long polling:
+- Outbound messages via REST APIs
+- Inbound messages via persistent connection (Python `lark-oapi`)
 
-```yaml
-im:
-  platform: feishu
-  app_id_env: FEISHU_APP_ID
-  app_secret_env: FEISHU_APP_SECRET
-  webhook_verification_token: "your-verification-token"
-```
-
-Configure the webhook URL in Feishu Open Platform → Event Subscriptions.
-
-### Message Cards
-
-Enable rich message cards:
-
-```yaml
-im:
-  platform: feishu
-  app_id_env: FEISHU_APP_ID
-  app_secret_env: FEISHU_APP_SECRET
-  use_message_cards: true
-```
-
-### Encryption (Optional)
-
-For sensitive enterprises, enable message encryption:
-
-1. Go to **Encrypt Configuration** in Feishu Open Platform
-2. Enable and configure encryption
-3. Add to CCCC config:
-
-```yaml
-im:
-  platform: feishu
-  app_id_env: FEISHU_APP_ID
-  app_secret_env: FEISHU_APP_SECRET
-  encrypt_key_env: FEISHU_ENCRYPT_KEY
-```
+Webhook callbacks (developer server URL), message cards, and encryption settings are not configured through CCCC at the moment.
 
 ## Security Notes
 
 - Store credentials in environment variables or a secrets manager
 - Use the minimal required permissions
 - Review app access regularly
-- Consider IP whitelisting for webhook endpoints
-- Enable encryption for sensitive communications
+- Enable platform encryption for sensitive communications (optional)
 - Audit app usage through Feishu admin console

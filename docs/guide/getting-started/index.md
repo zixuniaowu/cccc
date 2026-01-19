@@ -46,7 +46,7 @@ Both approaches require:
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc15
+  cccc-pair==0.4.0rc16
 ```
 
 ### From Source

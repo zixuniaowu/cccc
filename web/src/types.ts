@@ -35,7 +35,12 @@ export type EventAttachment = {
 export type ChatMessageData = {
   text?: string;
   to?: string[];
+  priority?: "normal" | "attention";
   quote_text?: string;
+  src_group_id?: string;
+  src_event_id?: string;
+  dst_group_id?: string;
+  dst_to?: string[];
   attachments?: EventAttachment[];
 };
 
@@ -55,6 +60,7 @@ export type LedgerEvent = {
   by?: string;
   data?: LedgerEventData;
   _read_status?: Record<string, boolean>;
+  _ack_status?: Record<string, boolean>;
 };
 
 export type Actor = {
@@ -167,6 +173,7 @@ export type ProjectMdInfo = {
 };
 
 export type GroupSettings = {
+  default_send_to: "foreman" | "broadcast";
   nudge_after_seconds: number;
   actor_idle_timeout_seconds: number;
   keepalive_delay_seconds: number;
@@ -193,11 +200,18 @@ export type IMConfig = {
   bot_token_env?: string;
   app_token_env?: string;
   // Feishu fields
+  feishu_domain?: string;
   feishu_app_id?: string;
+  feishu_app_id_env?: string;
   feishu_app_secret?: string;
+  feishu_app_secret_env?: string;
   // DingTalk fields
   dingtalk_app_key?: string;
+  dingtalk_app_key_env?: string;
   dingtalk_app_secret?: string;
+  dingtalk_app_secret_env?: string;
+  dingtalk_robot_code?: string;
+  dingtalk_robot_code_env?: string;
 };
 
 export type IMStatus = {

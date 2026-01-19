@@ -107,7 +107,7 @@ export function GroupSidebar({
                       return (
                         <div className={classNames(
                           "text-[9px] px-2 py-0.5 rounded-full font-medium backdrop-blur-sm",
-                          status.colorClass
+                          status.pillClass
                         )}>
                           {status.label}
                         </div>

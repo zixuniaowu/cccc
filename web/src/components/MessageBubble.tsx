@@ -1,9 +1,21 @@
-import { memo, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { memo, useCallback, useMemo, useState } from "react";
+
+import {
+  useFloating,
+  autoUpdate,
+  offset,
+  flip,
+  shift,
+  useHover,
+  useInteractions,
+  useDismiss,
+  FloatingPortal,
+} from "@floating-ui/react";
 import { LedgerEvent, Actor, PresenceAgent, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
+
 
 function formatEventLine(ev: LedgerEvent): string {
     if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
@@ -74,8 +86,14 @@ export interface MessageBubbleProps {
     presenceAgent: PresenceAgent | null;
     isDark: boolean;
     groupId: string;
+    groupLabelById: Record<string, string>;
+    isHighlighted?: boolean;
     onReply: () => void;
     onShowRecipients: () => void;
+    onAck?: (eventId: string) => void;
+    onCopyLink?: (eventId: string) => void;
+    onRelay?: (ev: LedgerEvent) => void;
+    onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -85,15 +103,20 @@ export const MessageBubble = memo(function MessageBubble({
     presenceAgent,
     isDark,
     groupId,
+    groupLabelById,
+    isHighlighted,
     onReply,
     onShowRecipients,
+    onAck,
+    onCopyLink,
+    onRelay,
+    onOpenSource,
 }: MessageBubbleProps) {
     const isUserMessage = ev.by === "user";
     const senderAccent = !isUserMessage ? getActorAccentColor(String(ev.by || ""), isDark) : null;
 
-    const [showPresence, setShowPresence] = useState(false);
-    const [presencePos, setPresencePos] = useState<{ x: number; y: number } | null>(null);
-    const hideTimerRef = useRef<number | null>(null);
+    // Floating UI for Presence Tooltip - replaces manual coordinate calculation
+    const [isPresenceOpen, setIsPresenceOpen] = useState(false);
 
     const canShowPresence = useMemo(() => {
         if (isUserMessage) return false;
@@ -102,47 +125,54 @@ export const MessageBubble = memo(function MessageBubble({
         return true;
     }, [ev.by, isUserMessage]);
 
-    const clearHide = () => {
-        if (hideTimerRef.current != null) {
-            window.clearTimeout(hideTimerRef.current);
-            hideTimerRef.current = null;
-        }
-    };
+    const { refs, floatingStyles, context } = useFloating({
+        open: isPresenceOpen && canShowPresence,
+        onOpenChange: setIsPresenceOpen,
+        placement: "bottom-start",
+        middleware: [
+            offset(10),
+            flip({ fallbackPlacements: ["top-start", "bottom-end", "top-end"] }),
+            shift({ padding: 10 }),
+        ],
+        whileElementsMounted: autoUpdate,
+    });
 
-    const scheduleHide = () => {
-        clearHide();
-        hideTimerRef.current = window.setTimeout(() => {
-            setShowPresence(false);
-            setPresencePos(null);
-            hideTimerRef.current = null;
-        }, 160);
-    };
+    const setPresenceReference = useCallback(
+        (node: HTMLElement | null) => {
+            refs.setReference(node);
+        },
+        [refs]
+    );
 
-    const handlePresenceEnter = (el: HTMLElement) => {
-        if (!canShowPresence) return;
-        clearHide();
-        const rect = el.getBoundingClientRect();
-        const width = 360;
-        const estimatedHeight = 140;
-        const margin = 10;
-        let x = rect.left;
-        x = Math.min(x, window.innerWidth - width - margin);
-        x = Math.max(margin, x);
-        const below = rect.bottom + 10;
-        const above = rect.top - estimatedHeight - 10;
-        let y = below;
-        if (below + estimatedHeight > window.innerHeight - margin && above > margin) {
-            y = above;
-        }
-        y = Math.min(y, window.innerHeight - estimatedHeight - margin);
-        y = Math.max(margin, y);
-        setPresencePos({ x, y });
-        setShowPresence(true);
-    };
+    const setPresenceFloating = useCallback(
+        (node: HTMLElement | null) => {
+            refs.setFloating(node);
+        },
+        [refs]
+    );
+
+    const hover = useHover(context, {
+        delay: { open: 100, close: 150 },
+        enabled: canShowPresence,
+    });
+    const dismiss = useDismiss(context);
+    const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss]);
+
 
     // Treat data as ChatMessageData.
     const msgData = ev.data as ChatMessageData | undefined;
     const quoteText = msgData?.quote_text;
+    const isAttention = String(msgData?.priority || "normal") === "attention";
+    const srcGroupId = typeof msgData?.src_group_id === "string" ? String(msgData.src_group_id || "").trim() : "";
+    const srcEventId = typeof msgData?.src_event_id === "string" ? String(msgData.src_event_id || "").trim() : "";
+    const hasSource = !!(srcGroupId && srcEventId);
+    const dstGroupId = typeof msgData?.dst_group_id === "string" ? String(msgData.dst_group_id || "").trim() : "";
+    const dstTo = useMemo(() => {
+        const raw = msgData?.dst_to;
+        if (!Array.isArray(raw)) return [];
+        return raw.map((t) => String(t || "").trim()).filter((t) => t);
+    }, [msgData?.dst_to]);
+    const hasDestination = !!dstGroupId;
     const rawAttachments: EventAttachment[] = Array.isArray(msgData?.attachments) ? msgData.attachments : [];
     const blobAttachments = rawAttachments
         .filter((a): a is EventAttachment => a != null && typeof a === "object")
@@ -156,6 +186,7 @@ export const MessageBubble = memo(function MessageBubble({
         .filter((a) => a.path.startsWith("state/blobs/"));
 
     const readStatus = ev._read_status;
+    const ackStatus = ev._ack_status;
     const recipients = msgData?.to;
 
     const visibleReadStatusEntries = useMemo(() => {
@@ -166,12 +197,27 @@ export const MessageBubble = memo(function MessageBubble({
             .map((id) => [id, !!readStatus[id]] as const);
     }, [actors, readStatus]);
 
+    const ackSummary = useMemo(() => {
+        if (!isAttention || !ackStatus || typeof ackStatus !== "object") return null;
+        const ids = Object.keys(ackStatus);
+        if (ids.length === 0) return null;
+        const done = ids.reduce((n, id) => n + (ackStatus[id] ? 1 : 0), 0);
+        const needsUserAck =
+            Object.prototype.hasOwnProperty.call(ackStatus, "user") && !ackStatus["user"] && !isUserMessage;
+        return { done, total: ids.length, needsUserAck };
+    }, [ackStatus, isAttention, isUserMessage]);
+
     const toLabel = useMemo(() => {
+        if (hasDestination) {
+            const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
+            const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
+            return `group: ${dstLabel} · ${dstToLabel}`;
+        }
         if (!recipients || recipients.length === 0) return "@all";
         return recipients
             .map(r => getRecipientDisplayName(r, displayNameMap))
             .join(", ");
-    }, [recipients, displayNameMap]);
+    }, [displayNameMap, dstGroupId, dstTo, groupLabelById, hasDestination, recipients]);
 
     // Sender display name (use title if available)
     const senderDisplayName = useMemo(() => {
@@ -203,8 +249,8 @@ export const MessageBubble = memo(function MessageBubble({
                             : "bg-white border border-gray-200 text-gray-700",
                     !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                 )}
-                onPointerEnter={(e) => handlePresenceEnter(e.currentTarget)}
-                onPointerLeave={() => scheduleHide()}
+                ref={setPresenceReference}
+                {...getReferenceProps()}
             >
                 {isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
             </div>
@@ -233,8 +279,6 @@ export const MessageBubble = memo(function MessageBubble({
                                     : "bg-white border border-gray-200 text-gray-700",
                             !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                         )}
-                        onPointerEnter={(e) => handlePresenceEnter(e.currentTarget)}
-                        onPointerLeave={() => scheduleHide()}
                     >
                         {isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
                     </div>
@@ -297,14 +341,75 @@ export const MessageBubble = memo(function MessageBubble({
                 {/* Bubble */}
                 <div
                     className={classNames(
-                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85%] sm:max-w-none",
+                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85vw] sm:max-w-none",
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none"
                             : isDark
                                 ? "bg-slate-800 text-slate-200 border border-slate-700 rounded-2xl rounded-tl-none"
                                 : "bg-white text-gray-800 border border-gray-200 rounded-2xl rounded-tl-none"
+                        ,
+                        isAttention ? (isDark ? "ring-1 ring-amber-500/30" : "ring-1 ring-amber-500/25") : ""
+                        ,
+                        isHighlighted
+                            ? isDark
+                                ? "outline outline-2 outline-sky-400/40 outline-offset-2"
+                                : "outline outline-2 outline-sky-500/30 outline-offset-2"
+                            : ""
                     )}
                 >
+                    {isAttention && (
+                        <div
+                            className={classNames(
+                                "absolute -top-2 right-3 text-[10px] font-semibold px-2 py-0.5 rounded-full border shadow-sm",
+                                isDark ? "bg-amber-900/60 text-amber-200 border-amber-700/50" : "bg-amber-50 text-amber-700 border-amber-200"
+                            )}
+                        >
+                            Important
+                        </div>
+                    )}
+
+                    {/* Cross-group relay provenance */}
+                    {hasSource ? (
+                        <button
+                            type="button"
+                            className={classNames(
+                                "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
+                                isDark
+                                    ? "border-white/10 bg-slate-900/40 text-slate-300 hover:bg-slate-900/60"
+                                    : "border-black/10 bg-gray-50 text-gray-700 hover:bg-gray-100",
+                                onOpenSource ? "cursor-pointer" : "cursor-default"
+                            )}
+                            onClick={() => onOpenSource?.(srcGroupId, srcEventId)}
+                            disabled={!onOpenSource}
+                            title="Open original message"
+                        >
+                            <span className="opacity-70">↗</span>
+                            <span className="truncate">
+                                Relayed from {srcGroupId} · {srcEventId.slice(0, 8)}
+                            </span>
+                        </button>
+                    ) : null}
+                    {/* Outbound cross-group send record */}
+                    {hasDestination ? (() => {
+                        const dstLabel = String(groupLabelById?.[dstGroupId] || "").trim() || dstGroupId;
+                        const dstToLabel = dstTo.length > 0 ? dstTo.join(", ") : "@all";
+                        return (
+                            <div
+                                className={classNames(
+                                    "mb-2 inline-flex items-center gap-2 text-xs font-medium rounded-lg px-2 py-1 border",
+                                    isDark
+                                        ? "border-white/10 bg-slate-900/40 text-slate-300"
+                                        : "border-black/10 bg-gray-50 text-gray-700"
+                                )}
+                                title={`Sent to ${dstGroupId} (${dstToLabel})`}
+                            >
+                                <span className="opacity-70">↗</span>
+                                <span className="truncate">
+                                    Sent to {dstLabel} · {dstToLabel}
+                                </span>
+                            </div>
+                        );
+                    })() : null}
                     {/* Reply Context */}
                     {quoteText && (
                         <div
@@ -316,7 +421,7 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
 
                     {/* Text Content */}
-                    <div className="whitespace-pre-wrap break-words">{formatEventLine(ev)}</div>
+                    <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] overflow-x-auto max-w-full">{formatEventLine(ev)}</div>
 
                     {/* Attachments */}
                     {blobAttachments.length > 0 && groupId && (() => {
@@ -386,12 +491,37 @@ export const MessageBubble = memo(function MessageBubble({
                 <div
                     className={classNames(
                         "flex items-center gap-3 mt-1 px-1 text-[10px] transition-opacity",
-                        visibleReadStatusEntries.length > 0 ? "justify-between" : "justify-end",
+                        (ackSummary || visibleReadStatusEntries.length > 0) ? "justify-between" : "justify-end",
                         "opacity-70 group-hover:opacity-100",
                         isDark ? "text-slate-500" : "text-gray-500"
                     )}
                 >
-                    {visibleReadStatusEntries.length > 0 && (
+                    {ackSummary ? (
+                        <button
+                            type="button"
+                            className={classNames(
+                                "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
+                                isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
+                            )}
+                            onClick={onShowRecipients}
+                            aria-label="Show acknowledgement status"
+                        >
+                            <span
+                                className={classNames(
+                                    "text-[10px] font-semibold tracking-tight",
+                                    ackSummary.done >= ackSummary.total
+                                        ? isDark
+                                            ? "text-emerald-400"
+                                            : "text-emerald-600"
+                                        : isDark
+                                            ? "text-amber-400"
+                                            : "text-amber-600"
+                                )}
+                            >
+                                Ack {ackSummary.done}/{ackSummary.total}
+                            </span>
+                        </button>
+                    ) : visibleReadStatusEntries.length > 0 ? (
                         <button
                             type="button"
                             className={classNames(
@@ -429,34 +559,79 @@ export const MessageBubble = memo(function MessageBubble({
                                 )}
                             </div>
                         </button>
-                    )}
+                    ) : null}
 
-                    <button
-                        type="button"
-                        className={classNames(
-                            "touch-target-sm px-1 rounded hover:underline transition-colors",
-                            isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                    <div className="flex items-center gap-2">
+                        {ackSummary && ackSummary.needsUserAck && ev.id && !isUserMessage && (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm px-2 py-1 rounded-lg border font-semibold",
+                                    isDark
+                                        ? "border-amber-700/60 bg-amber-900/30 text-amber-200 hover:bg-amber-900/50"
+                                        : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                )}
+                                onClick={() => onAck?.(String(ev.id))}
+                                aria-label="Acknowledge important message"
+                                disabled={!onAck}
+                                title="Acknowledge"
+                            >
+                                Acknowledge
+                            </button>
                         )}
-                        onClick={onReply}
-                    >
-                        Reply
-                    </button>
+                        {ev.id && onCopyLink ? (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm px-1 rounded hover:underline transition-colors",
+                                    isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                                )}
+                                onClick={() => onCopyLink(String(ev.id))}
+                                title="Copy link"
+                            >
+                                Copy link
+                            </button>
+                        ) : null}
+                        {ev.id && onRelay ? (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm px-1 rounded hover:underline transition-colors",
+                                    isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                                )}
+                                onClick={() => onRelay(ev)}
+                                title="Relay to another group"
+                            >
+                                Relay
+                            </button>
+                        ) : null}
+                        <button
+                            type="button"
+                            className={classNames(
+                                "touch-target-sm px-1 rounded hover:underline transition-colors",
+                                isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                            )}
+                            onClick={onReply}
+                        >
+                            Reply
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            {showPresence && presencePos && canShowPresence && typeof document !== "undefined" &&
-                createPortal(
-                    <div
-                        className={classNames(
-                            "fixed z-[200] w-[360px] rounded-xl border shadow-2xl px-3 py-2",
-                            isDark
-                                ? "bg-slate-900/95 border-white/10 text-slate-200"
-                                : "bg-white/95 border-black/10 text-gray-900"
-                        )}
-                        style={{ left: presencePos.x, top: presencePos.y }}
-                        onPointerEnter={() => clearHide()}
-                        onPointerLeave={() => scheduleHide()}
-                        role="status"
+            {isPresenceOpen && canShowPresence && (
+                    <FloatingPortal>
+                        <div
+                            ref={setPresenceFloating}
+                            style={floatingStyles}
+                            {...getFloatingProps()}
+                            className={classNames(
+                                "z-[200] w-[360px] rounded-xl border shadow-2xl px-3 py-2",
+                                isDark
+                                    ? "bg-slate-900/95 border-white/10 text-slate-200"
+                                    : "bg-white/95 border-black/10 text-gray-900"
+                            )}
+                            role="status"
                     >
                         <div className="flex items-center gap-2">
                             <div
@@ -481,9 +656,9 @@ export const MessageBubble = memo(function MessageBubble({
                         >
                             {presenceAgent?.status ? presenceAgent.status : "No presence yet"}
                         </div>
-                    </div>,
-                    document.body
-                )}
+                    </div>
+                </FloatingPortal>
+            )}
         </div>
     );
 }, (prevProps, nextProps) => {
@@ -493,6 +668,10 @@ export const MessageBubble = memo(function MessageBubble({
         prevProps.displayNameMap === nextProps.displayNameMap &&
         prevProps.presenceAgent === nextProps.presenceAgent &&
         prevProps.isDark === nextProps.isDark &&
-        prevProps.groupId === nextProps.groupId
+        prevProps.groupId === nextProps.groupId &&
+        prevProps.groupLabelById === nextProps.groupLabelById &&
+        prevProps.isHighlighted === nextProps.isHighlighted &&
+        prevProps.onRelay === nextProps.onRelay &&
+        prevProps.onOpenSource === nextProps.onOpenSource
     );
 });

@@ -5,7 +5,7 @@ Each adapter handles platform-specific communication:
 - Telegram: Long-poll getUpdates
 - Slack: Socket Mode + Web API
 - Discord: Gateway
-- Feishu: WebSocket + REST API
+- Feishu/Lark: WebSocket + REST API
 - DingTalk: Stream mode + REST API
 """
 

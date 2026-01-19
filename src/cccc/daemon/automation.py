@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..contracts.v1 import SystemNotifyData
 from ..kernel.actors import list_actors, find_foreman
 from ..kernel.group import Group, load_group, get_group_state
-from ..kernel.inbox import unread_messages, iter_events, is_message_for_actor
+from ..kernel.inbox import iter_events, is_message_for_actor, get_cursor
 from ..kernel.ledger import append_event
 from ..kernel.terminal_transcript import get_terminal_transcript_settings
 from ..kernel.prompt_files import DEFAULT_STANDUP_TEMPLATE, STANDUP_FILENAME, read_repo_prompt_file
@@ -349,8 +349,25 @@ class AutomationManager:
         if cfg.nudge_after_seconds <= 0:
             return
 
+        # Pre-compute per-actor ACKs for attention messages (ledger-derived, best-effort).
+        acked_by_actor: Dict[str, set[str]] = {}
+        try:
+            for ev in iter_events(group.ledger_path):
+                if str(ev.get("kind") or "") != "chat.ack":
+                    continue
+                data = ev.get("data")
+                if not isinstance(data, dict):
+                    continue
+                aid = str(data.get("actor_id") or "").strip()
+                eid = str(data.get("event_id") or "").strip()
+                if not aid or not eid:
+                    continue
+                acked_by_actor.setdefault(aid, set()).add(eid)
+        except Exception:
+            acked_by_actor = {}
+
         resume_dt: Optional[datetime] = None
-        to_nudge: List[Tuple[str, str, str]] = []  # (actor_id, oldest_event_ts, runner_kind)
+        to_nudge: List[Tuple[str, List[Tuple[str, str, str]], str]] = []  # (actor_id, pending[(kind,event_id,ts)], runner_kind)
 
         with self._lock:
             state = _load_state(group)
@@ -372,23 +389,83 @@ class AutomationManager:
                     if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
                         continue
 
-                msgs = unread_messages(group, actor_id=aid, limit=1)
-                if not msgs:
-                    continue
-                oldest = msgs[0]
-                ev_id = str(oldest.get("id") or "").strip()
-                ev_ts = str(oldest.get("ts") or "").strip()
-                if not ev_id or not ev_ts:
+                # Determine oldest unread (cursor-based) and oldest unacked IMPORTANT (ack-based).
+                _, cursor_ts = get_cursor(group, aid)
+                cursor_dt = parse_utc_iso(cursor_ts) if cursor_ts else None
+
+                created_ts = str(actor.get("created_at") or "").strip()
+                created_dt = parse_utc_iso(created_ts) if created_ts else None
+
+                oldest_unread_id = ""
+                oldest_unread_ts = ""
+                oldest_unacked_id = ""
+                oldest_unacked_ts = ""
+
+                acked_set = acked_by_actor.get(aid, set())
+
+                for ev in iter_events(group.ledger_path):
+                    kind = str(ev.get("kind") or "")
+                    if kind not in ("chat.message", "system.notify"):
+                        continue
+                    if kind == "chat.message" and str(ev.get("by") or "") == aid:
+                        # Never nudge someone about their own sent messages.
+                        continue
+                    if not is_message_for_actor(group, actor_id=aid, event=ev):
+                        continue
+
+                    ev_id = str(ev.get("id") or "").strip()
+                    ev_ts = str(ev.get("ts") or "").strip()
+                    if not ev_id or not ev_ts:
+                        continue
+                    ev_dt = parse_utc_iso(ev_ts)
+                    if ev_dt is None:
+                        continue
+
+                    # Oldest unread: any visible event after read cursor.
+                    if not oldest_unread_id:
+                        if cursor_dt is None or ev_dt > cursor_dt:
+                            oldest_unread_id = ev_id
+                            oldest_unread_ts = ev_ts
+
+                    # Oldest unacked IMPORTANT: visible attention chat.message, actor existed, not acked.
+                    if not oldest_unacked_id and kind == "chat.message":
+                        data = ev.get("data")
+                        if isinstance(data, dict) and str(data.get("priority") or "normal").strip() == "attention":
+                            if created_dt is None or created_dt <= ev_dt:
+                                if ev_id not in acked_set:
+                                    oldest_unacked_id = ev_id
+                                    oldest_unacked_ts = ev_ts
+
+                    if oldest_unread_id and oldest_unacked_id:
+                        break
+
+                # Decide which pending item should trigger this nudge (if any).
+                pending: List[Tuple[datetime, str, str, str]] = []  # (base_dt, kind, id, ts)
+
+                def _base_dt(ts: str) -> Optional[datetime]:
+                    dt = parse_utc_iso(ts)
+                    if dt is None:
+                        return None
+                    if resume_dt is not None and dt < resume_dt:
+                        dt = resume_dt
+                    return dt
+
+                if oldest_unread_id and oldest_unread_ts:
+                    dt = _base_dt(oldest_unread_ts)
+                    if dt is not None and (now - dt).total_seconds() >= float(cfg.nudge_after_seconds):
+                        pending.append((dt, "unread", oldest_unread_id, oldest_unread_ts))
+
+                if oldest_unacked_id and oldest_unacked_ts:
+                    dt = _base_dt(oldest_unacked_ts)
+                    if dt is not None and (now - dt).total_seconds() >= float(cfg.nudge_after_seconds):
+                        pending.append((dt, "unacked_important", oldest_unacked_id, oldest_unacked_ts))
+
+                if not pending:
                     continue
 
-                dt = parse_utc_iso(ev_ts)
-                if dt is None:
-                    continue
-                if resume_dt is not None and dt < resume_dt:
-                    dt = resume_dt
-                age_s = (now - dt).total_seconds()
-                if age_s < float(cfg.nudge_after_seconds):
-                    continue
+                pending.sort(key=lambda x: x[0])
+                _, _, primary_id, _ = pending[0]
+                pending_info = [(k, eid, ts) for _, k, eid, ts in pending]
 
                 st = _actor_state(state, aid)
                 last_ev_id = str(st.get("last_nudge_event_id") or "")
@@ -396,23 +473,35 @@ class AutomationManager:
                 # Repeat nudges while the oldest unread message stays unread.
                 # - If the oldest unread changed, send immediately (once it is older than nudge_after_seconds).
                 # - Otherwise, send again every nudge_after_seconds until the message is marked read.
-                if last_ev_id == ev_id and last_nudge_dt is not None:
+                if last_ev_id == primary_id and last_nudge_dt is not None:
                     since_last = (now - last_nudge_dt).total_seconds()
                     if since_last < float(cfg.nudge_after_seconds):
                         continue
-                st["last_nudge_event_id"] = ev_id
+                st["last_nudge_event_id"] = primary_id
                 st["last_nudge_at"] = utc_now_iso()
-                to_nudge.append((aid, ev_ts, runner_kind))
+                to_nudge.append((aid, pending_info, runner_kind))
 
             if to_nudge:
                 _save_state(group, state)
 
-        for aid, ev_ts, runner_kind in to_nudge:
+        for aid, pending_info, runner_kind in to_nudge:
+            parts: List[str] = []
+            title = "Unread messages waiting"
+            for kind, event_id, event_ts in pending_info:
+                if kind == "unacked_important":
+                    title = "Important message needs acknowledgement"
+                    parts.append(
+                        f"IMPORTANT awaiting ACK: event_id={event_id} (since {event_ts}). "
+                        f"To ACK: run cccc_inbox_mark_read(event_id={event_id}) (mark_all_read does not ACK)."
+                    )
+                elif kind == "unread":
+                    parts.append(f"Unread messages: oldest from {event_ts}. Use cccc_inbox_list() to check.")
+
             notify_data = SystemNotifyData(
                 kind="nudge",
                 priority="normal",
-                title="Unread messages waiting",
-                message=f"You have unread messages (oldest from {ev_ts}). Use cccc_inbox_list() to check.",
+                title=title,
+                message="\n".join(parts),
                 target_actor_id=aid,
                 requires_ack=False,
             )

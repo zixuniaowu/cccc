@@ -28,6 +28,7 @@ EventKind = Literal[
     "actor.remove",
     "context.sync",
     "chat.message",
+    "chat.ack",
     "chat.read",
     "chat.reaction",
     "system.notify",
@@ -148,6 +149,15 @@ class ChatReadData(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class ChatAckData(BaseModel):
+    """Acknowledgement for an attention message (per-message, per-recipient)."""
+
+    actor_id: str  # Actor who acknowledged (or "user")
+    event_id: str  # Target message event_id
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class Event(BaseModel):
     v: int = 1
     id: str = Field(default_factory=lambda: uuid.uuid4().hex)
@@ -178,6 +188,7 @@ _KIND_TO_MODEL = {
     "actor.remove": ActorLifecycleData,
     "context.sync": ContextSyncData,
     "chat.message": ChatMessageData,
+    "chat.ack": ChatAckData,
     "chat.read": ChatReadData,
     "chat.reaction": ChatReactionData,
     "system.notify": SystemNotifyData,

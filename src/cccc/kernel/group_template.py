@@ -18,6 +18,7 @@ from .prompt_files import (
     read_repo_prompt_file,
 )
 from .terminal_transcript import get_terminal_transcript_settings
+from .messaging import get_default_send_to
 from ..util.time import utc_now_iso
 
 
@@ -79,8 +80,10 @@ def build_group_template_from_group(group: Group, *, cccc_version: str = "") -> 
     automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
     delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
     tt = get_terminal_transcript_settings(group.doc)
+    default_send_to = get_default_send_to(group.doc)
 
     settings: dict[str, Any] = {
+        "default_send_to": default_send_to,
         "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
         "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
         "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
@@ -176,7 +179,9 @@ def preview_group_template_replace(group: Group, template: GroupTemplate) -> Gro
     automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
     delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
     tt = get_terminal_transcript_settings(group.doc)
+    default_send_to = get_default_send_to(group.doc)
     current_settings: Dict[str, Any] = {
+        "default_send_to": default_send_to,
         "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
         "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
         "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
