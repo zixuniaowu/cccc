@@ -27,6 +27,7 @@ interface AppModalsProps {
   messageMeta: {
     toLabel: string;
     entries: readonly (readonly [string, boolean])[];
+    statusKind: "read" | "ack";
   } | null;
   onStartReply: (ev: LedgerEvent) => void;
   onThemeToggle: () => void;
@@ -519,7 +520,7 @@ export function AppModals({
     const srcGroupId = String(selectedGroupId || "").trim();
     const dstGroup = String(dstGroupId || "").trim();
     const srcEventId = src?.id ? String(src.id) : "";
-    if (!srcGroupId || !srcEventId) return;
+    if (!srcGroupId || !srcEventId || !src) return;
     if (!dstGroup) return;
     if (dstGroup === srcGroupId) {
       showError("Destination group must be different from the source group.");

@@ -887,7 +887,7 @@ export default function App() {
         }}
       />
 
-      <div className={`relative h-full grid grid-cols-1 transition-all duration-300 ${
+      <div className={`relative h-full md:grid transition-all duration-300 ${
         sidebarCollapsed ? "md:grid-cols-[60px_1fr]" : "md:grid-cols-[280px_1fr]"
       }`}>
         <GroupSidebar
@@ -909,7 +909,7 @@ export default function App() {
 
         {/* Main content */}
         <main
-          className={`h-full flex flex-col overflow-hidden backdrop-blur-sm ${isDark ? "bg-slate-950/40" : "bg-white/60"
+          className={`absolute inset-0 md:relative md:inset-auto h-full flex flex-col overflow-hidden backdrop-blur-sm ${isDark ? "bg-slate-950/40" : "bg-white/60"
             }`}
         >
           <AppHeader
@@ -1021,7 +1021,7 @@ export default function App() {
                 onShowRecipients={(eventId) => setRecipientsModal(eventId)}
                 onAckMessage={acknowledgeMessage}
                 onCopyMessageLink={copyMessageLink}
-                onRelayMessage={(eventId) => setRelayModal(eventId)}
+                onRelayMessage={(ev) => setRelayModal(ev.id ?? null, selectedGroupId, ev)}
                 onOpenSourceMessage={(srcGroupId, srcEventId) => openMessageWindow(srcGroupId, srcEventId)}
                 chatWindow={
                   inChatWindow && chatWindow

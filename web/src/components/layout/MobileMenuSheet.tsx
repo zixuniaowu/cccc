@@ -81,7 +81,7 @@ export function MobileMenuSheet({
                 <span
                   className={classNames(
                     "text-xs px-2 py-0.5 rounded-full font-medium",
-                    isDark ? getGroupStatus(selectedGroupRunning, groupDoc.state).colorClass : getGroupStatusLight(selectedGroupRunning, groupDoc.state).colorClass
+                    isDark ? getGroupStatus(selectedGroupRunning, groupDoc.state).pillClass : getGroupStatusLight(selectedGroupRunning, groupDoc.state).pillClass
                   )}
                 >
                   {(isDark ? getGroupStatus(selectedGroupRunning, groupDoc.state) : getGroupStatusLight(selectedGroupRunning, groupDoc.state)).label}
