@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Actor, LedgerEvent } from "../../types";
 import { formatFullTime, formatTime } from "../../utils/time";
+import { MarkdownRenderer } from "../MarkdownRenderer";
 
 function formatEventLine(
   ev: LedgerEvent,
@@ -63,9 +64,8 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
       aria-labelledby="inbox-title"
     >
       <div
-        className={`w-full max-w-2xl mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in ${
-          isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
-        }`}
+        className={`w-full max-w-2xl mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in ${isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
+          }`}
       >
         <div className={`px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
           <div className="min-w-0">
@@ -76,18 +76,16 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
           </div>
           <div className="flex gap-2">
             <button
-              className={`rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] ${
-                isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-              }`}
+              className={`rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] ${isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                }`}
               onClick={onMarkAllRead}
               disabled={!messages.length || busy.startsWith("inbox")}
             >
               Mark all read
             </button>
             <button
-              className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors min-h-[44px] ${
-                isDark ? "bg-slate-600 hover:bg-slate-500 text-white" : "bg-gray-200 hover:bg-gray-300 text-gray-800"
-              }`}
+              className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors min-h-[44px] ${isDark ? "bg-slate-600 hover:bg-slate-500 text-white" : "bg-gray-200 hover:bg-gray-300 text-gray-800"
+                }`}
               onClick={onClose}
             >
               Close
@@ -107,7 +105,13 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
                 </div>
                 <div className={`text-xs font-medium truncate ${isDark ? "text-slate-300" : "text-gray-700"}`}>{getDisplayName(ev.by || "") || "—"}</div>
               </div>
-              <div className={`mt-2 text-sm whitespace-pre-wrap break-words ${isDark ? "text-slate-200" : "text-gray-800"}`}>{formatEventLine(ev, getDisplayName)}</div>
+              <div className="mt-2 text-sm break-words">
+                <MarkdownRenderer
+                  content={formatEventLine(ev, getDisplayName)}
+                  isDark={isDark}
+                  className={isDark ? "text-slate-200" : "text-gray-800"}
+                />
+              </div>
             </div>
           ))}
           {!messages.length && (
