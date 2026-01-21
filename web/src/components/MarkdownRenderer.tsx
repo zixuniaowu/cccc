@@ -31,8 +31,9 @@ export function MarkdownRenderer({ content, isDark, className }: MarkdownRendere
 
     const md = useMemo(() => {
         const instance = new MarkdownIt({
-            html: true,
+            html: false, // Security: Disable raw HTML to prevent XSS
             linkify: true,
+            typographer: true,
             breaks: true,
             highlight: (str: string, langRaw: string): string => {
                 const lang = normalizeLang(langRaw);
