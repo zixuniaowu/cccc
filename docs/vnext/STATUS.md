@@ -41,6 +41,8 @@
 - Telegram adapter 完成
 - Slack adapter 完成（Socket Mode + Web API）
 - Discord adapter 完成（Gateway）
+- Feishu adapter 完成（WebSocket + REST）
+- DingTalk adapter 完成（Stream mode + REST）
 - CLI 命令完成
 - Web UI 配置完成
 
