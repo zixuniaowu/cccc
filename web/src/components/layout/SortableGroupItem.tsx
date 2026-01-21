@@ -91,13 +91,13 @@ export function SortableGroupItem({
         )}
         onClick={onSelect}
       >
-        {/* Drag handle */}
+        {/* Drag handle - hidden on mobile, visible on hover for desktop */}
         <div
           {...listeners}
           className={classNames(
             "flex-shrink-0 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded transition-opacity touch-none",
-            "opacity-0 group-hover/item:opacity-100",
-            isDragging && "opacity-100",
+            "hidden md:block md:opacity-0 md:group-hover/item:opacity-100",
+            isDragging && "!block !opacity-100",
             isDark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"
           )}
           onClick={(e) => e.stopPropagation()}

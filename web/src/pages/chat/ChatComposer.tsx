@@ -489,7 +489,7 @@ export function ChatComposer({
           <textarea
             ref={composerRef}
             className={classNames(
-              "w-full rounded-xl sm:rounded-2xl border px-3 sm:px-4 py-2 sm:py-2.5 text-sm resize-none min-h-[40px] sm:min-h-[44px] max-h-[160px] transition-all",
+              "w-full rounded-xl sm:rounded-2xl border px-3 sm:px-4 py-2 sm:py-2.5 text-base sm:text-sm resize-none min-h-[40px] sm:min-h-[44px] max-h-[160px] transition-all",
               "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center",
               isDark
                 ? "bg-white/5 border-white/5 text-slate-200 placeholder-slate-500 focus:ring-blue-500/40 focus:border-blue-500/50"

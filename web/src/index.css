@@ -411,6 +411,16 @@ select,
    Touch Target Sizing (Mobile)
    ============================================ */
 
+/* Disable iOS 300ms tap delay by indicating no double-tap-to-zoom */
+button,
+[role="button"],
+a,
+input,
+textarea,
+select {
+  touch-action: manipulation;
+}
+
 /* Ensure minimum 44px touch targets on mobile */
 @media (pointer: coarse) {
   button,
@@ -421,7 +431,7 @@ select,
     min-height: 44px;
     min-width: 44px;
   }
-  
+
   /* Allow smaller buttons with explicit class */
   .touch-target-sm {
     min-height: 36px;
@@ -538,8 +548,10 @@ select,
   opacity: 0.5;
 }
 
-.glass:hover {
-  background: var(--glass-bg-hover);
+@media (hover: hover) {
+  .glass:hover {
+    background: var(--glass-bg-hover);
+  }
 }
 
 .glass-lg {
@@ -578,10 +590,12 @@ select,
   border-radius: 16px 16px 0 0;
 }
 
-.glass-card:hover {
-  background: var(--glass-bg-hover);
-  box-shadow: var(--glass-shadow-lg);
-  border-color: var(--glass-border);
+@media (hover: hover) {
+  .glass-card:hover {
+    background: var(--glass-bg-hover);
+    box-shadow: var(--glass-shadow-lg);
+    border-color: var(--glass-border);
+  }
 }
 
 /* Glass button - enhanced */
@@ -595,8 +609,10 @@ select,
   position: relative;
 }
 
-.glass-btn:hover {
-  background: var(--glass-bg-hover);
+@media (hover: hover) {
+  .glass-btn:hover {
+    background: var(--glass-bg-hover);
+  }
 }
 
 .glass-btn:active {
@@ -626,14 +642,16 @@ select,
   pointer-events: none;
 }
 
-.glass-btn-accent:hover {
-  background: var(--glass-accent-bg-hover);
-  box-shadow: var(--glass-accent-shadow), var(--glass-accent-glow);
-  border-color: var(--color-accent-primary);
-}
+@media (hover: hover) {
+  .glass-btn-accent:hover {
+    background: var(--glass-accent-bg-hover);
+    box-shadow: var(--glass-accent-shadow), var(--glass-accent-glow);
+    border-color: var(--color-accent-primary);
+  }
 
-.dark .glass-btn-accent:hover {
-  background: var(--glass-accent-bg-hover);
+  .dark .glass-btn-accent:hover {
+    background: var(--glass-accent-bg-hover);
+  }
 }
 
 /* Glass input - enhanced */
@@ -837,9 +855,11 @@ select,
               box-shadow 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.hover-lift:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--glass-shadow-lg);
+@media (hover: hover) {
+  .hover-lift:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--glass-shadow-lg);
+  }
 }
 
 /* Subtle pulse animation for indicators */
