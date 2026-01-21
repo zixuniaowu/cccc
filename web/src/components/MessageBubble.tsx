@@ -1,19 +1,20 @@
 import { memo, useCallback, useMemo, useState } from "react";
 
 import {
-  useFloating,
-  autoUpdate,
-  offset,
-  flip,
-  shift,
-  useHover,
-  useInteractions,
-  useDismiss,
-  FloatingPortal,
+    useFloating,
+    autoUpdate,
+    offset,
+    flip,
+    shift,
+    useHover,
+    useInteractions,
+    useDismiss,
+    FloatingPortal,
 } from "@floating-ui/react";
 import { LedgerEvent, Actor, PresenceAgent, getActorAccentColor, ChatMessageData, EventAttachment } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
 import { ImageIcon, FileIcon } from "./Icons";
 
@@ -422,7 +423,14 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
 
                     {/* Text Content */}
-                    <div className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] overflow-x-auto max-w-full">{formatEventLine(ev)}</div>
+                    <MarkdownRenderer
+                        content={formatEventLine(ev)}
+                        isDark={isDark}
+                        className={classNames(
+                            "break-words [overflow-wrap:anywhere] overflow-x-auto max-w-full",
+                            isUserMessage ? "text-white" : ""
+                        )}
+                    />
 
                     {/* Attachments */}
                     {blobAttachments.length > 0 && groupId && (() => {
@@ -621,18 +629,18 @@ export const MessageBubble = memo(function MessageBubble({
             </div>
 
             {isPresenceOpen && canShowPresence && (
-                    <FloatingPortal>
-                        <div
-                            ref={setPresenceFloating}
-                            style={floatingStyles}
-                            {...getFloatingProps()}
-                            className={classNames(
-                                "z-tooltip w-[360px] rounded-xl border shadow-2xl px-3 py-2",
-                                isDark
-                                    ? "bg-slate-900/95 border-white/10 text-slate-200"
-                                    : "bg-white/95 border-black/10 text-gray-900"
-                            )}
-                            role="status"
+                <FloatingPortal>
+                    <div
+                        ref={setPresenceFloating}
+                        style={floatingStyles}
+                        {...getFloatingProps()}
+                        className={classNames(
+                            "z-tooltip w-[360px] rounded-xl border shadow-2xl px-3 py-2",
+                            isDark
+                                ? "bg-slate-900/95 border-white/10 text-slate-200"
+                                : "bg-white/95 border-black/10 text-gray-900"
+                        )}
+                        role="status"
                     >
                         <div className="flex items-center gap-2">
                             <div

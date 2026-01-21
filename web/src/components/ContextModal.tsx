@@ -3,6 +3,7 @@ import { apiJson, contextSync, fetchTasks } from "../services/api";
 import { GroupContext, ProjectMdInfo, Task } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
+import { MarkdownRenderer } from "./MarkdownRenderer";
 
 interface ContextModalProps {
   isOpen: boolean;
@@ -377,35 +378,32 @@ export function ContextModal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
       {/* Backdrop */}
-      <div 
-        className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"} 
+      <div
+        className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"}
         onClick={onClose}
         aria-hidden="true"
       />
-      
+
       {/* Modal */}
-      <div 
-        className={`relative rounded-xl border shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-scale-in ${
-          isDark 
-            ? "bg-slate-900 border-slate-700" 
-            : "bg-white border-gray-200"
-        }`}
+      <div
+        className={`relative rounded-xl border shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-scale-in ${isDark
+          ? "bg-slate-900 border-slate-700"
+          : "bg-white border-gray-200"
+          }`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="context-modal-title"
       >
         {/* Header */}
-        <div className={`flex items-center justify-between px-5 py-4 border-b ${
-          isDark ? "border-slate-800" : "border-gray-200"
-        }`}>
+        <div className={`flex items-center justify-between px-5 py-4 border-b ${isDark ? "border-slate-800" : "border-gray-200"
+          }`}>
           <h2 id="context-modal-title" className={`text-lg font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
             📋 Project Context
           </h2>
           <button
             onClick={onClose}
-            className={`text-xl leading-none min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors ${
-              isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-            }`}
+            className={`text-xl leading-none min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors ${isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              }`}
             aria-label="Close context modal"
           >
             ×
@@ -484,32 +482,34 @@ export function ContextModal({
             <div className="mt-2">
               {context?.presence?.agents && context.presence.agents.length > 0 ? (
                 <div className="space-y-2">
-	                  {context.presence.agents.map((a) => (
-	                    <div key={a.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-	                      <div className="flex items-center gap-2">
-	                        <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{a.id}</span>
-	                        {a.updated_at ? (
-	                          <span
-	                            className={classNames(
-	                              "ml-auto text-xs tabular-nums",
-	                              isDark ? "text-slate-400" : "text-gray-500"
-	                            )}
-	                            title={formatFullTime(a.updated_at)}
-	                          >
-	                            Updated {formatTime(a.updated_at)}
-	                          </span>
-	                        ) : null}
-	                      </div>
-	                      {a.status ? (
-	                        <div className={`text-xs mt-1 whitespace-pre-wrap ${isDark ? "text-slate-300" : "text-gray-700"}`}>
-	                          {a.status}
-	                        </div>
-	                      ) : (
-	                        <div className={`text-xs mt-1 italic ${isDark ? "text-slate-500" : "text-gray-500"}`}>No presence yet</div>
-	                      )}
-	                    </div>
-	                  ))}
-	                </div>
+                  {context.presence.agents.map((a) => (
+                    <div key={a.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{a.id}</span>
+                        {a.updated_at ? (
+                          <span
+                            className={classNames(
+                              "ml-auto text-xs tabular-nums",
+                              isDark ? "text-slate-400" : "text-gray-500"
+                            )}
+                            title={formatFullTime(a.updated_at)}
+                          >
+                            Updated {formatTime(a.updated_at)}
+                          </span>
+                        ) : null}
+                      </div>
+                      {a.status ? (
+                        <MarkdownRenderer
+                          content={String(a.status)}
+                          isDark={isDark}
+                          className={classNames("text-xs mt-1", isDark ? "text-slate-300" : "text-gray-700")}
+                        />
+                      ) : (
+                        <div className={`text-xs mt-1 italic ${isDark ? "text-slate-500" : "text-gray-500"}`}>No presence yet</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               ) : (
                 <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
                   No presence
@@ -538,65 +538,63 @@ export function ContextModal({
                       handleEditProject();
                     }}
                     disabled={projectBusy || !groupId}
-                    className={`text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50 ${
-                      isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
-                    }`}
+                    className={`text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50 ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                      }`}
                   >
                     {projectMd?.found ? "✏️ Edit" : "＋ Create"}
                   </button>
                 )}
               </div>
-            {projectError && (
-              <div className={`mb-2 text-xs rounded-lg border px-3 py-2 ${
-                isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
-              }`}>
-                {projectError}
-              </div>
-            )}
-            {editingProject ? (
-              <div className="space-y-2">
-                <textarea
-                  value={projectText}
-                  onChange={(e) => setProjectText(e.target.value)}
-                  className={`w-full h-64 px-3 py-2 border rounded-lg text-sm resize-none font-mono transition-colors ${
-                    isDark
+              {projectError && (
+                <div className={`mb-2 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
+                  }`}>
+                  {projectError}
+                </div>
+              )}
+              {editingProject ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={projectText}
+                    onChange={(e) => setProjectText(e.target.value)}
+                    className={`w-full h-64 px-3 py-2 border rounded-lg text-sm resize-none font-mono transition-colors ${isDark
                       ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
                       : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                  placeholder="Write your project constitution here…"
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleSaveProject}
-                    disabled={projectBusy || !groupId}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
-                  >
-                    {projectBusy ? "Saving..." : "Save"}
-                  </button>
-                  <button
-                    onClick={() => setEditingProject(false)}
-                    disabled={projectBusy}
-                    className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${
-                      isDark
+                      }`}
+                    placeholder="Write your project constitution here…"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveProject}
+                      disabled={projectBusy || !groupId}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
+                    >
+                      {projectBusy ? "Saving..." : "Save"}
+                    </button>
+                    <button
+                      onClick={() => setEditingProject(false)}
+                      disabled={projectBusy}
+                      className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${isDark
                         ? "bg-slate-700 hover:bg-slate-600 text-slate-200"
                         : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-                    }`}
-                  >
-                    Cancel
-                  </button>
+                        }`}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className={`px-3 py-2 rounded-lg text-sm whitespace-pre-wrap min-h-[60px] max-h-[220px] overflow-auto ${
-                isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"
-              }`}>
-                {projectMd?.found && projectMd.content ? (
-                  String(projectMd.content)
-                ) : (
-                  <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>No PROJECT.md found</span>
-                )}
-              </div>
-            )}
+              ) : (
+                <div className={`px-3 py-2 rounded-lg text-sm min-h-[60px] max-h-[220px] overflow-auto ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"
+                  }`}>
+                  {projectMd?.found && projectMd.content ? (
+                    <MarkdownRenderer
+                      content={String(projectMd.content)}
+                      isDark={isDark}
+                    />
+                  ) : (
+                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>No PROJECT.md found</span>
+                  )}
+                </div>
+              )}
             </div>
           </details>
 
@@ -614,53 +612,53 @@ export function ContextModal({
                       e.stopPropagation();
                       handleEditVision();
                     }}
-                    className={`text-xs min-h-[36px] px-2 rounded transition-colors ${
-                      isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
-                    }`}
+                    className={`text-xs min-h-[36px] px-2 rounded transition-colors ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                      }`}
                   >
                     ✏️ Edit
                   </button>
                 </div>
               )}
-            {editingVision ? (
-              <div className="space-y-2">
-                <textarea
-                  value={visionText}
-                  onChange={(e) => setVisionText(e.target.value)}
-                  className={`w-full h-32 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${
-                    isDark 
-                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
+              {editingVision ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={visionText}
+                    onChange={(e) => setVisionText(e.target.value)}
+                    className={`w-full h-32 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark
+                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
                       : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                  placeholder="Describe the project vision..."
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleSaveVision}
-                    disabled={busy}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
-                  >
-                    {busy ? "Saving..." : "Save"}
-                  </button>
-                  <button
-                    onClick={() => setEditingVision(false)}
-                    className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors ${
-                      isDark 
-                        ? "bg-slate-700 hover:bg-slate-600 text-slate-200" 
+                      }`}
+                    placeholder="Describe the project vision..."
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveVision}
+                      disabled={busy}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
+                    >
+                      {busy ? "Saving..." : "Save"}
+                    </button>
+                    <button
+                      onClick={() => setEditingVision(false)}
+                      className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors ${isDark
+                        ? "bg-slate-700 hover:bg-slate-600 text-slate-200"
                         : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-                    }`}
-                  >
-                    Cancel
-                  </button>
+                        }`}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className={`px-3 py-2 rounded-lg text-sm whitespace-pre-wrap min-h-[60px] ${
-                isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"
-              }`}>
-                {context?.vision || <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>No vision set</span>}
-              </div>
-            )}
+              ) : (
+                <div className={`px-3 py-2 rounded-lg text-sm min-h-[60px] ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"
+                  }`}>
+                  {context?.vision ? (
+                    <MarkdownRenderer content={context.vision} isDark={isDark} />
+                  ) : (
+                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>No vision set</span>
+                  )}
+                </div>
+              )}
             </div>
           </details>
 
@@ -678,53 +676,53 @@ export function ContextModal({
                       e.stopPropagation();
                       handleEditSketch();
                     }}
-                    className={`text-xs min-h-[36px] px-2 rounded transition-colors ${
-                      isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
-                    }`}
+                    className={`text-xs min-h-[36px] px-2 rounded transition-colors ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                      }`}
                   >
                     ✏️ Edit
                   </button>
                 </div>
               )}
-            {editingSketch ? (
-              <div className="space-y-2">
-                <textarea
-                  value={sketchText}
-                  onChange={(e) => setSketchText(e.target.value)}
-                  className={`w-full h-32 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${
-                    isDark 
-                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" 
+              {editingSketch ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={sketchText}
+                    onChange={(e) => setSketchText(e.target.value)}
+                    className={`w-full h-32 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark
+                      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
                       : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                  placeholder="Technical sketch or architecture notes..."
-                />
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleSaveSketch}
-                    disabled={busy}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
-                  >
-                    {busy ? "Saving..." : "Save"}
-                  </button>
-                  <button
-                    onClick={() => setEditingSketch(false)}
-                    className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors ${
-                      isDark 
-                        ? "bg-slate-700 hover:bg-slate-600 text-slate-200" 
+                      }`}
+                    placeholder="Technical sketch or architecture notes..."
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveSketch}
+                      disabled={busy}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
+                    >
+                      {busy ? "Saving..." : "Save"}
+                    </button>
+                    <button
+                      onClick={() => setEditingSketch(false)}
+                      className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors ${isDark
+                        ? "bg-slate-700 hover:bg-slate-600 text-slate-200"
                         : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-                    }`}
-                  >
-                    Cancel
-                  </button>
+                        }`}
+                    >
+                      Cancel
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className={`px-3 py-2 rounded-lg text-sm whitespace-pre-wrap min-h-[60px] ${
-                isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"
-              }`}>
-                {context?.sketch || <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>No sketch set</span>}
-              </div>
-            )}
+              ) : (
+                <div className={`px-3 py-2 rounded-lg text-sm min-h-[60px] ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"
+                  }`}>
+                  {context?.sketch ? (
+                    <MarkdownRenderer content={context.sketch} isDark={isDark} />
+                  ) : (
+                    <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>No sketch set</span>
+                  )}
+                </div>
+              )}
             </div>
           </details>
 
@@ -733,231 +731,248 @@ export function ContextModal({
               Milestones
             </summary>
             <div className="mt-2">
-            {(context?.milestones && context.milestones.length > 0) ? (
-              <div className="space-y-2">
-                <details open>
-                  <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                    active ({milestonesByStatus.active.length})
-                  </summary>
-                  <div className="mt-2 space-y-2">
-                    {milestonesByStatus.active.length === 0 ? (
-                      <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                        No active milestones
-                      </div>
-                    ) : (
-                      milestonesByStatus.active.map((m) => (
-                        <div key={m.id} className={`px-3 py-2 rounded-lg space-y-1 ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                          <div className="flex items-start gap-2">
-                            <span className={classNames(
-                              "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0",
-                              isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"
-                            )}>
-                              {m.id}
-                            </span>
-                            <span className={`text-sm font-medium min-w-0 truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.name}</span>
-                            <button
-                              type="button"
-                              disabled={syncBusy}
-                              onClick={() => void handleArchiveMilestone(m.id)}
-                              className={classNames(
-                                "text-[11px] px-2 py-0.5 rounded flex-shrink-0 ml-auto transition-colors disabled:opacity-50",
-                                isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                              )}
-                            >
-                              Archive
-                            </button>
-                          </div>
-                          {(m.started || m.completed) && (
-                            <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                              {m.started ? `started ${m.started}` : ""}
-                              {m.started && m.completed ? " · " : ""}
-                              {m.completed ? `completed ${m.completed}` : ""}
-                            </div>
-                          )}
-                          {m.description && (
-                            <div className={`text-xs whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                              {m.description}
-                            </div>
-                          )}
+              {(context?.milestones && context.milestones.length > 0) ? (
+                <div className="space-y-2">
+                  <details open>
+                    <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+                      active ({milestonesByStatus.active.length})
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {milestonesByStatus.active.length === 0 ? (
+                        <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                          No active milestones
                         </div>
-                      ))
-                    )}
-                  </div>
-                </details>
+                      ) : (
+                        milestonesByStatus.active.map((m) => (
+                          <div key={m.id} className={`px-3 py-2 rounded-lg space-y-1 ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                            <div className="flex items-start gap-2">
+                              <span className={classNames(
+                                "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0",
+                                isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"
+                              )}>
+                                {m.id}
+                              </span>
+                              <span className={`text-sm font-medium min-w-0 truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.name}</span>
+                              <button
+                                type="button"
+                                disabled={syncBusy}
+                                onClick={() => void handleArchiveMilestone(m.id)}
+                                className={classNames(
+                                  "text-[11px] px-2 py-0.5 rounded flex-shrink-0 ml-auto transition-colors disabled:opacity-50",
+                                  isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                )}
+                              >
+                                Archive
+                              </button>
+                            </div>
+                            {(m.started || m.completed) && (
+                              <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                                {m.started ? `started ${m.started}` : ""}
+                                {m.started && m.completed ? " · " : ""}
+                                {m.completed ? `completed ${m.completed}` : ""}
+                              </div>
+                            )}
+                            {m.description && (
+                              <MarkdownRenderer
+                                content={String(m.description)}
+                                isDark={isDark}
+                                className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}
+                              />
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </details>
 
-                <details open>
-                  <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                    planned ({milestonesByStatus.planned.length})
-                  </summary>
-                  <div className="mt-2 space-y-2">
-                    {milestonesByStatus.planned.length === 0 ? (
-                      <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                        No planned milestones
-                      </div>
-                    ) : (
-                      milestonesByStatus.planned.map((m) => (
-                        <div key={m.id} className={`px-3 py-2 rounded-lg space-y-1 ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                          <div className="flex items-start gap-2">
-                            <span className={classNames(
-                              "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0",
-                              isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"
-                            )}>
-                              {m.id}
-                            </span>
-                            <span className={`text-sm font-medium min-w-0 truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.name}</span>
-                            <button
-                              type="button"
-                              disabled={syncBusy}
-                              onClick={() => void handleArchiveMilestone(m.id)}
-                              className={classNames(
-                                "text-[11px] px-2 py-0.5 rounded flex-shrink-0 ml-auto transition-colors disabled:opacity-50",
-                                isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                              )}
-                            >
-                              Archive
-                            </button>
-                          </div>
-                          {(m.started || m.completed) && (
-                            <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                              {m.started ? `started ${m.started}` : ""}
-                              {m.started && m.completed ? " · " : ""}
-                              {m.completed ? `completed ${m.completed}` : ""}
-                            </div>
-                          )}
-                          {m.description && (
-                            <div className={`text-xs whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                              {m.description}
-                            </div>
-                          )}
-                          {m.outcomes && (
-                            <div className={`text-xs whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                              <span className="font-medium">outcomes: </span>
-                              {m.outcomes}
-                            </div>
-                          )}
+                  <details open>
+                    <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+                      planned ({milestonesByStatus.planned.length})
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {milestonesByStatus.planned.length === 0 ? (
+                        <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                          No planned milestones
                         </div>
-                      ))
-                    )}
-                  </div>
-                </details>
+                      ) : (
+                        milestonesByStatus.planned.map((m) => (
+                          <div key={m.id} className={`px-3 py-2 rounded-lg space-y-1 ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                            <div className="flex items-start gap-2">
+                              <span className={classNames(
+                                "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0",
+                                isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"
+                              )}>
+                                {m.id}
+                              </span>
+                              <span className={`text-sm font-medium min-w-0 truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.name}</span>
+                              <button
+                                type="button"
+                                disabled={syncBusy}
+                                onClick={() => void handleArchiveMilestone(m.id)}
+                                className={classNames(
+                                  "text-[11px] px-2 py-0.5 rounded flex-shrink-0 ml-auto transition-colors disabled:opacity-50",
+                                  isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                )}
+                              >
+                                Archive
+                              </button>
+                            </div>
+                            {(m.started || m.completed) && (
+                              <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                                {m.started ? `started ${m.started}` : ""}
+                                {m.started && m.completed ? " · " : ""}
+                                {m.completed ? `completed ${m.completed}` : ""}
+                              </div>
+                            )}
+                            {m.description && (
+                              <MarkdownRenderer
+                                content={String(m.description)}
+                                isDark={isDark}
+                                className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}
+                              />
+                            )}
+                            {m.outcomes && (
+                              <div className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}>
+                                <span className="font-medium">outcomes: </span>
+                                <MarkdownRenderer
+                                  content={String(m.outcomes)}
+                                  isDark={isDark}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </details>
 
-                <details>
-                  <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                    done ({milestonesByStatus.done.length})
-                  </summary>
-                  <div className="mt-2 space-y-2">
-                    {milestonesByStatus.done.length === 0 ? (
-                      <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                        No done milestones
-                      </div>
-                    ) : (
-                      milestonesByStatus.done.map((m) => (
-                        <div key={m.id} className={`px-3 py-2 rounded-lg space-y-1 ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                          <div className="flex items-start gap-2">
-                            <span className={classNames(
-                              "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0",
-                              isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"
-                            )}>
-                              {m.id}
-                            </span>
-                            <span className={`text-sm font-medium min-w-0 truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.name}</span>
-                            <button
-                              type="button"
-                              disabled={syncBusy}
-                              onClick={() => void handleArchiveMilestone(m.id)}
-                              className={classNames(
-                                "text-[11px] px-2 py-0.5 rounded flex-shrink-0 ml-auto transition-colors disabled:opacity-50",
-                                isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                              )}
-                            >
-                              Archive
-                            </button>
-                          </div>
-                          {(m.started || m.completed) && (
-                            <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                              {m.started ? `started ${m.started}` : ""}
-                              {m.started && m.completed ? " · " : ""}
-                              {m.completed ? `completed ${m.completed}` : ""}
-                            </div>
-                          )}
-                          {m.description && (
-                            <div className={`text-xs whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                              {m.description}
-                            </div>
-                          )}
-                          {m.outcomes && (
-                            <div className={`text-xs whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                              <span className="font-medium">outcomes: </span>
-                              {m.outcomes}
-                            </div>
-                          )}
+                  <details>
+                    <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+                      done ({milestonesByStatus.done.length})
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {milestonesByStatus.done.length === 0 ? (
+                        <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                          No done milestones
                         </div>
-                      ))
-                    )}
-                  </div>
-                </details>
+                      ) : (
+                        milestonesByStatus.done.map((m) => (
+                          <div key={m.id} className={`px-3 py-2 rounded-lg space-y-1 ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                            <div className="flex items-start gap-2">
+                              <span className={classNames(
+                                "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0",
+                                isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"
+                              )}>
+                                {m.id}
+                              </span>
+                              <span className={`text-sm font-medium min-w-0 truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.name}</span>
+                              <button
+                                type="button"
+                                disabled={syncBusy}
+                                onClick={() => void handleArchiveMilestone(m.id)}
+                                className={classNames(
+                                  "text-[11px] px-2 py-0.5 rounded flex-shrink-0 ml-auto transition-colors disabled:opacity-50",
+                                  isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                )}
+                              >
+                                Archive
+                              </button>
+                            </div>
+                            {(m.started || m.completed) && (
+                              <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                                {m.started ? `started ${m.started}` : ""}
+                                {m.started && m.completed ? " · " : ""}
+                                {m.completed ? `completed ${m.completed}` : ""}
+                              </div>
+                            )}
+                            {m.description && (
+                              <MarkdownRenderer
+                                content={String(m.description)}
+                                isDark={isDark}
+                                className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}
+                              />
+                            )}
+                            {m.outcomes && (
+                              <div className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}>
+                                <span className="font-medium">outcomes: </span>
+                                <MarkdownRenderer
+                                  content={String(m.outcomes)}
+                                  isDark={isDark}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </details>
 
-                <details>
-                  <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                    archived ({milestonesByStatus.archived.length})
-                  </summary>
-                  <div className="mt-2 space-y-2">
-                    {milestonesByStatus.archived.length === 0 ? (
-                      <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                        No archived milestones
-                      </div>
-                    ) : (
-                      milestonesByStatus.archived.map((m) => (
-                        <div key={m.id} className={`px-3 py-2 rounded-lg space-y-1 ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                          <div className="flex items-start gap-2">
-                            <span className={classNames(
-                              "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0",
-                              isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"
-                            )}>
-                              {m.id}
-                            </span>
-                            <span className={`text-sm font-medium min-w-0 truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.name}</span>
-                            <button
-                              type="button"
-                              disabled={syncBusy}
-                              onClick={() => void handleRestoreMilestone(m.id)}
-                              className={classNames(
-                                "text-[11px] px-2 py-0.5 rounded flex-shrink-0 ml-auto transition-colors disabled:opacity-50",
-                                isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                              )}
-                            >
-                              Restore
-                            </button>
-                          </div>
-                          {(m.started || m.completed) && (
-                            <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                              {m.started ? `started ${m.started}` : ""}
-                              {m.started && m.completed ? " · " : ""}
-                              {m.completed ? `completed ${m.completed}` : ""}
-                            </div>
-                          )}
-                          {m.description && (
-                            <div className={`text-xs whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                              {m.description}
-                            </div>
-                          )}
-                          {m.outcomes && (
-                            <div className={`text-xs whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                              <span className="font-medium">outcomes: </span>
-                              {m.outcomes}
-                            </div>
-                          )}
+                  <details>
+                    <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+                      archived ({milestonesByStatus.archived.length})
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {milestonesByStatus.archived.length === 0 ? (
+                        <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                          No archived milestones
                         </div>
-                      ))
-                    )}
-                  </div>
-                </details>
-              </div>
-            ) : (
-              <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                No milestones
-              </div>
-            )}
+                      ) : (
+                        milestonesByStatus.archived.map((m) => (
+                          <div key={m.id} className={`px-3 py-2 rounded-lg space-y-1 ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                            <div className="flex items-start gap-2">
+                              <span className={classNames(
+                                "text-[11px] px-1.5 py-0.5 rounded flex-shrink-0",
+                                isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"
+                              )}>
+                                {m.id}
+                              </span>
+                              <span className={`text-sm font-medium min-w-0 truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{m.name}</span>
+                              <button
+                                type="button"
+                                disabled={syncBusy}
+                                onClick={() => void handleRestoreMilestone(m.id)}
+                                className={classNames(
+                                  "text-[11px] px-2 py-0.5 rounded flex-shrink-0 ml-auto transition-colors disabled:opacity-50",
+                                  isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                )}
+                              >
+                                Restore
+                              </button>
+                            </div>
+                            {(m.started || m.completed) && (
+                              <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                                {m.started ? `started ${m.started}` : ""}
+                                {m.started && m.completed ? " · " : ""}
+                                {m.completed ? `completed ${m.completed}` : ""}
+                              </div>
+                            )}
+                            {m.description && (
+                              <MarkdownRenderer
+                                content={String(m.description)}
+                                isDark={isDark}
+                                className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}
+                              />
+                            )}
+                            {m.outcomes && (
+                              <div className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-600")}>
+                                <span className="font-medium">outcomes: </span>
+                                <MarkdownRenderer
+                                  content={String(m.outcomes)}
+                                  isDark={isDark}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </details>
+                </div>
+              ) : (
+                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                  No milestones
+                </div>
+              )}
             </div>
           </details>
 
@@ -966,327 +981,345 @@ export function ContextModal({
               Tasks
             </summary>
             <div className="mt-2">
-            {context?.tasks_summary ? (
-              <div className="space-y-2">
-                <div className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"}`}>
-                  total {context.tasks_summary.total} · active {context.tasks_summary.active} · planned {context.tasks_summary.planned} · done {context.tasks_summary.done}
-                </div>
+              {context?.tasks_summary ? (
+                <div className="space-y-2">
+                  <div className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"}`}>
+                    total {context.tasks_summary.total} · active {context.tasks_summary.active} · planned {context.tasks_summary.planned} · done {context.tasks_summary.done}
+                  </div>
 
-                {context.active_task ? (
-                  <div className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                    <div className="flex items-start gap-2">
-                      <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                        {context.active_task.id}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>
-                          {context.active_task.name}
-                        </div>
-                        {context.active_task.goal && (
-                          <div className={`text-xs mt-0.5 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                            {context.active_task.goal}
+                  {context.active_task ? (
+                    <div className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                      <div className="flex items-start gap-2">
+                        <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                          {context.active_task.id}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+                            {context.active_task.name}
                           </div>
-                        )}
-                      </div>
-                      <span className={classNames(
-                        "text-[11px] px-2 py-0.5 rounded flex-shrink-0",
-                        context.active_task.status === "done"
-                          ? isDark ? "bg-emerald-900/50 text-emerald-300" : "bg-emerald-100 text-emerald-700"
-                          : context.active_task.status === "active"
-                            ? isDark ? "bg-blue-900/50 text-blue-300" : "bg-blue-100 text-blue-700"
-                            : isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-600"
-                      )}>
-                        {context.active_task.status || "planned"}
-                      </span>
-                    </div>
-                    {(context.active_task.assignee || context.active_task.milestone) && (
-                      <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                        {context.active_task.milestone ? `milestone ${context.active_task.milestone}` : ""}
-                        {context.active_task.milestone && context.active_task.assignee ? " · " : ""}
-                        {context.active_task.assignee ? `assignee ${context.active_task.assignee}` : ""}
-                      </div>
-                    )}
-                    {Array.isArray(context.active_task.steps) && context.active_task.steps.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {context.active_task.steps.map((s) => (
-                          <div key={s.id} className="flex items-start gap-2">
-                            <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                              {s.id}
-                            </span>
-                            <div className={`text-xs flex-1 ${isDark ? "text-slate-300" : "text-gray-700"}`}>
-                              {s.name}
-                              {s.acceptance ? (
-                                <div className={classNames("mt-0.5 whitespace-pre-wrap", isDark ? "text-slate-500" : "text-gray-500")}>
-                                  {s.acceptance}
-                                </div>
-                              ) : null}
+                          {context.active_task.goal && (
+                            <div className={`text-xs mt-0.5 ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                              {context.active_task.goal}
                             </div>
-                            <span className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>{s.status || ""}</span>
-                          </div>
-                        ))}
+                          )}
+                        </div>
+                        <span className={classNames(
+                          "text-[11px] px-2 py-0.5 rounded flex-shrink-0",
+                          context.active_task.status === "done"
+                            ? isDark ? "bg-emerald-900/50 text-emerald-300" : "bg-emerald-100 text-emerald-700"
+                            : context.active_task.status === "active"
+                              ? isDark ? "bg-blue-900/50 text-blue-300" : "bg-blue-100 text-blue-700"
+                              : isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-600"
+                        )}>
+                          {context.active_task.status || "planned"}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className={`px-3 py-2 rounded-lg text-sm italic ${
-                    isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
+                      {(context.active_task.assignee || context.active_task.milestone) && (
+                        <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                          {context.active_task.milestone ? `milestone ${context.active_task.milestone}` : ""}
+                          {context.active_task.milestone && context.active_task.assignee ? " · " : ""}
+                          {context.active_task.assignee ? `assignee ${context.active_task.assignee}` : ""}
+                        </div>
+                      )}
+                      {Array.isArray(context.active_task.steps) && context.active_task.steps.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {context.active_task.steps.map((s) => (
+                            <div key={s.id} className="flex items-start gap-2">
+                              <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                                {s.id}
+                              </span>
+                              <div className={`text-xs flex-1 ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                                {s.name}
+                                {s.acceptance ? (
+                                  <div className={classNames("mt-0.5", isDark ? "text-slate-500" : "text-gray-500")}>
+                                    {s.acceptance}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <span className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>{s.status || ""}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
+                      }`}>
+                      No active task
+                    </div>
+                  )}
+
+                  {tasksError ? (
+                    <div className={`px-3 py-2 rounded-lg text-sm ${isDark ? "bg-rose-500/10 text-rose-300 border border-rose-500/30" : "bg-rose-50 text-rose-700 border border-rose-300"}`}>
+                      {tasksError}
+                    </div>
+                  ) : tasksBusy ? (
+                    <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                      Loading tasks…
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {(tasksByStatus.active.length + tasksByStatus.planned.length + tasksByStatus.done.length + tasksByStatus.archived.length + tasksByStatus.other.length) === 0 ? (
+                        <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                          No tasks
+                        </div>
+                      ) : (
+                        <>
+                          <details open>
+                            <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+                              active ({tasksByStatus.active.length})
+                            </summary>
+                            <div className="mt-2 space-y-2">
+                              {tasksByStatus.active.length === 0 ? (
+                                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                                  No active tasks
+                                </div>
+                              ) : tasksByStatus.active.map((t) => (
+                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                                  <div className="flex items-start gap-2">
+                                    <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                                      {t.id}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
+                                      {t.goal ? (
+                                        <MarkdownRenderer
+                                          content={String(t.goal)}
+                                          isDark={isDark}
+                                          className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
+                                        />
+                                      ) : null}
+                                      {(t.milestone || t.assignee) ? (
+                                        <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                                          {t.milestone ? `milestone ${t.milestone}` : ""}
+                                          {t.milestone && t.assignee ? " · " : ""}
+                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={syncBusy}
+                                      onClick={() => void handleArchiveTask(t.id)}
+                                      className={classNames(
+                                        "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
+                                        isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                      )}
+                                    >
+                                      Archive
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+
+                          <details open>
+                            <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+                              planned ({tasksByStatus.planned.length})
+                            </summary>
+                            <div className="mt-2 space-y-2">
+                              {tasksByStatus.planned.length === 0 ? (
+                                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                                  No planned tasks
+                                </div>
+                              ) : tasksByStatus.planned.map((t) => (
+                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                                  <div className="flex items-start gap-2">
+                                    <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                                      {t.id}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
+                                      {t.goal ? (
+                                        <MarkdownRenderer
+                                          content={String(t.goal)}
+                                          isDark={isDark}
+                                          className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
+                                        />
+                                      ) : null}
+                                      {(t.milestone || t.assignee) ? (
+                                        <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                                          {t.milestone ? `milestone ${t.milestone}` : ""}
+                                          {t.milestone && t.assignee ? " · " : ""}
+                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={syncBusy}
+                                      onClick={() => void handleArchiveTask(t.id)}
+                                      className={classNames(
+                                        "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
+                                        isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                      )}
+                                    >
+                                      Archive
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+
+                          <details>
+                            <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+                              done ({tasksByStatus.done.length})
+                            </summary>
+                            <div className="mt-2 space-y-2">
+                              {tasksByStatus.done.length === 0 ? (
+                                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                                  No done tasks
+                                </div>
+                              ) : tasksByStatus.done.map((t) => (
+                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                                  <div className="flex items-start gap-2">
+                                    <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                                      {t.id}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
+                                      {t.goal ? (
+                                        <MarkdownRenderer
+                                          content={String(t.goal)}
+                                          isDark={isDark}
+                                          className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
+                                        />
+                                      ) : null}
+                                      {(t.milestone || t.assignee) ? (
+                                        <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                                          {t.milestone ? `milestone ${t.milestone}` : ""}
+                                          {t.milestone && t.assignee ? " · " : ""}
+                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={syncBusy}
+                                      onClick={() => void handleArchiveTask(t.id)}
+                                      className={classNames(
+                                        "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
+                                        isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                      )}
+                                    >
+                                      Archive
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+
+                          <details>
+                            <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+                              archived ({tasksByStatus.archived.length})
+                            </summary>
+                            <div className="mt-2 space-y-2">
+                              {tasksByStatus.archived.length === 0 ? (
+                                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                                  No archived tasks
+                                </div>
+                              ) : tasksByStatus.archived.map((t) => (
+                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                                  <div className="flex items-start gap-2">
+                                    <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                                      {t.id}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
+                                      {t.goal ? (
+                                        <MarkdownRenderer
+                                          content={String(t.goal)}
+                                          isDark={isDark}
+                                          className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
+                                        />
+                                      ) : null}
+                                      {(t.milestone || t.assignee) ? (
+                                        <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                                          {t.milestone ? `milestone ${t.milestone}` : ""}
+                                          {t.milestone && t.assignee ? " · " : ""}
+                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={syncBusy}
+                                      onClick={() => void handleRestoreTask(t.id)}
+                                      className={classNames(
+                                        "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
+                                        isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                      )}
+                                    >
+                                      Restore
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+
+                          <details>
+                            <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+                              other ({tasksByStatus.other.length})
+                            </summary>
+                            <div className="mt-2 space-y-2">
+                              {tasksByStatus.other.length === 0 ? (
+                                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+                                  No other tasks
+                                </div>
+                              ) : tasksByStatus.other.map((t) => (
+                                <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                                  <div className="flex items-start gap-2">
+                                    <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                                      {t.id}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
+                                      {t.goal ? (
+                                        <MarkdownRenderer
+                                          content={String(t.goal)}
+                                          isDark={isDark}
+                                          className={classNames("text-xs mt-0.5", isDark ? "text-slate-400" : "text-gray-600")}
+                                        />
+                                      ) : null}
+                                      {(t.milestone || t.assignee) ? (
+                                        <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                                          {t.milestone ? `milestone ${t.milestone}` : ""}
+                                          {t.milestone && t.assignee ? " · " : ""}
+                                          {t.assignee ? `assignee ${t.assignee}` : ""}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={syncBusy}
+                                      onClick={() => void handleArchiveTask(t.id)}
+                                      className={classNames(
+                                        "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
+                                        isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                      )}
+                                    >
+                                      Archive
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
                   }`}>
-                    No active task
-                  </div>
-                )}
-
-                {tasksError ? (
-                  <div className={`px-3 py-2 rounded-lg text-sm ${isDark ? "bg-rose-500/10 text-rose-300 border border-rose-500/30" : "bg-rose-50 text-rose-700 border border-rose-300"}`}>
-                    {tasksError}
-                  </div>
-                ) : tasksBusy ? (
-                  <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                    Loading tasks…
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {(tasksByStatus.active.length + tasksByStatus.planned.length + tasksByStatus.done.length + tasksByStatus.archived.length + tasksByStatus.other.length) === 0 ? (
-                      <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                        No tasks
-                      </div>
-                    ) : (
-                      <>
-                        <details open>
-                          <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                            active ({tasksByStatus.active.length})
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {tasksByStatus.active.length === 0 ? (
-                              <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                No active tasks
-                              </div>
-                            ) : tasksByStatus.active.map((t) => (
-                              <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                                <div className="flex items-start gap-2">
-                                  <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                    {t.id}
-                                  </span>
-                                  <div className="min-w-0 flex-1">
-                                    <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-                                    {t.goal ? (
-                                      <div className={`text-xs mt-0.5 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t.goal}</div>
-                                    ) : null}
-                                    {(t.milestone || t.assignee) ? (
-                                      <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                        {t.milestone ? `milestone ${t.milestone}` : ""}
-                                        {t.milestone && t.assignee ? " · " : ""}
-                                        {t.assignee ? `assignee ${t.assignee}` : ""}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    disabled={syncBusy}
-                                    onClick={() => void handleArchiveTask(t.id)}
-                                    className={classNames(
-                                      "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
-                                      isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                                    )}
-                                  >
-                                    Archive
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-
-                        <details open>
-                          <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                            planned ({tasksByStatus.planned.length})
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {tasksByStatus.planned.length === 0 ? (
-                              <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                No planned tasks
-                              </div>
-                            ) : tasksByStatus.planned.map((t) => (
-                              <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                                <div className="flex items-start gap-2">
-                                  <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                    {t.id}
-                                  </span>
-                                  <div className="min-w-0 flex-1">
-                                    <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-                                    {t.goal ? (
-                                      <div className={`text-xs mt-0.5 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t.goal}</div>
-                                    ) : null}
-                                    {(t.milestone || t.assignee) ? (
-                                      <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                                        {t.milestone ? `milestone ${t.milestone}` : ""}
-                                        {t.milestone && t.assignee ? " · " : ""}
-                                        {t.assignee ? `assignee ${t.assignee}` : ""}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                  <button
-                                    type="button"
-                                    disabled={syncBusy}
-                                    onClick={() => void handleArchiveTask(t.id)}
-                                    className={classNames(
-                                      "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
-                                      isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                                    )}
-                                  >
-                                    Archive
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-
-                        <details>
-                          <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                            done ({tasksByStatus.done.length})
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {tasksByStatus.done.length === 0 ? (
-                              <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                No done tasks
-                              </div>
-                            ) : tasksByStatus.done.map((t) => (
-                              <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                                <div className="flex items-start gap-2">
-                                  <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                    {t.id}
-                                  </span>
-	                                  <div className="min-w-0 flex-1">
-	                                    <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-	                                    {t.goal ? (
-	                                      <div className={`text-xs mt-0.5 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t.goal}</div>
-	                                    ) : null}
-	                                    {(t.milestone || t.assignee) ? (
-	                                      <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-	                                        {t.milestone ? `milestone ${t.milestone}` : ""}
-	                                        {t.milestone && t.assignee ? " · " : ""}
-	                                        {t.assignee ? `assignee ${t.assignee}` : ""}
-	                                      </div>
-	                                    ) : null}
-	                                  </div>
-	                                  <button
-	                                    type="button"
-	                                    disabled={syncBusy}
-                                    onClick={() => void handleArchiveTask(t.id)}
-                                    className={classNames(
-                                      "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
-                                      isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                                    )}
-                                  >
-                                    Archive
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-
-                        <details>
-                          <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                            archived ({tasksByStatus.archived.length})
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {tasksByStatus.archived.length === 0 ? (
-                              <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                No archived tasks
-                              </div>
-                            ) : tasksByStatus.archived.map((t) => (
-                              <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                                <div className="flex items-start gap-2">
-                                  <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                    {t.id}
-                                  </span>
-	                                  <div className="min-w-0 flex-1">
-	                                    <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-	                                    {t.goal ? (
-	                                      <div className={`text-xs mt-0.5 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t.goal}</div>
-	                                    ) : null}
-	                                    {(t.milestone || t.assignee) ? (
-	                                      <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-	                                        {t.milestone ? `milestone ${t.milestone}` : ""}
-	                                        {t.milestone && t.assignee ? " · " : ""}
-	                                        {t.assignee ? `assignee ${t.assignee}` : ""}
-	                                      </div>
-	                                    ) : null}
-	                                  </div>
-	                                  <button
-	                                    type="button"
-	                                    disabled={syncBusy}
-                                    onClick={() => void handleRestoreTask(t.id)}
-                                    className={classNames(
-                                      "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
-                                      isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                                    )}
-                                  >
-                                    Restore
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-
-                        <details>
-                          <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                            other ({tasksByStatus.other.length})
-                          </summary>
-                          <div className="mt-2 space-y-2">
-                            {tasksByStatus.other.length === 0 ? (
-                              <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                No other tasks
-                              </div>
-                            ) : tasksByStatus.other.map((t) => (
-                              <div key={t.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                                <div className="flex items-start gap-2">
-                                  <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-                                    {t.id}
-                                  </span>
-	                                  <div className="min-w-0 flex-1">
-	                                    <div className={`text-sm font-medium truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t.name}</div>
-	                                    {t.goal ? (
-	                                      <div className={`text-xs mt-0.5 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t.goal}</div>
-	                                    ) : null}
-	                                    {(t.milestone || t.assignee) ? (
-	                                      <div className={`text-[11px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-	                                        {t.milestone ? `milestone ${t.milestone}` : ""}
-	                                        {t.milestone && t.assignee ? " · " : ""}
-	                                        {t.assignee ? `assignee ${t.assignee}` : ""}
-	                                      </div>
-	                                    ) : null}
-	                                  </div>
-	                                  <button
-	                                    type="button"
-	                                    disabled={syncBusy}
-                                    onClick={() => void handleArchiveTask(t.id)}
-                                    className={classNames(
-                                      "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
-                                      isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                                    )}
-                                  >
-                                    Archive
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </details>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : (
-              <div className={`px-3 py-2 rounded-lg text-sm italic ${
-                isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
-              }`}>
-                No task summary
-              </div>
-            )}
+                  No task summary
+                </div>
+              )}
             </div>
           </details>
 
@@ -1295,147 +1328,146 @@ export function ContextModal({
               Notes
             </summary>
             <div className="mt-2">
-            {syncError && (
-              <div className={`mb-2 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"}`}>
-                {syncError}
-              </div>
-            )}
+              {syncError && (
+                <div className={`mb-2 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"}`}>
+                  {syncError}
+                </div>
+              )}
 
-            {!addingNote ? (
-              <div className="flex justify-end mb-2">
-                <button
-                  type="button"
-	                  disabled={syncBusy}
-	                  onClick={() => {
-	                    setAddingNote(true);
-	                    setNewNoteContent("");
-	                  }}
-	                  className={classNames(
-	                    "text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50",
-	                    isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
-                  )}
-                >
-                  ＋ Add
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2 mb-3">
-                <textarea
-                  value={newNoteContent}
-                  onChange={(e) => setNewNoteContent(e.target.value)}
-                  className={`w-full h-28 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${
-                    isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-	                  }`}
-	                  placeholder="Note…"
-	                />
-	                <div className="flex justify-end gap-2">
-	                  <button
-	                    type="button"
-	                    disabled={syncBusy || !newNoteContent.trim()}
-	                    onClick={() => void handleAddNote()}
-	                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
-	                  >
-	                    {syncBusy ? "Saving…" : "Save"}
-	                  </button>
-	                  <button
-	                    type="button"
-	                    disabled={syncBusy}
-	                    onClick={() => setAddingNote(false)}
-	                    className={classNames(
-	                      "px-3 py-1.5 text-xs rounded-lg min-h-[36px] transition-colors disabled:opacity-50",
-	                      isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-	                    )}
-	                  >
-	                    Cancel
-	                  </button>
-	                </div>
-	              </div>
-	            )}
-
-            {context?.notes && context.notes.length > 0 ? (
-              <div className="space-y-2">
-                {context.notes.map((n) => (
-                  <div key={n.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-	                    <div className="flex items-center gap-2">
-	                      <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
-	                        {n.id}
-	                      </span>
-	                      <div className="ml-auto flex items-center gap-2">
-	                        {editingNoteId !== n.id && (
-	                          <>
-                            <button
-                              type="button"
-                              disabled={syncBusy}
-                              onClick={() => handleStartEditNote(n.id)}
-                              className={classNames(
-                                "text-[11px] px-2 py-0.5 rounded transition-colors disabled:opacity-50",
-                                isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                              )}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              disabled={syncBusy}
-                              onClick={() => void handleRemoveNote(n.id)}
-                              className={classNames(
-                                "text-[11px] px-2 py-0.5 rounded transition-colors disabled:opacity-50",
-                                isDark ? "bg-rose-900/30 text-rose-300 hover:bg-rose-900/40" : "bg-rose-100 text-rose-700 hover:bg-rose-200"
-                              )}
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {editingNoteId === n.id ? (
-                      <div className="mt-2 space-y-2">
-                        <textarea
-                          value={editNoteContent}
-                          onChange={(e) => setEditNoteContent(e.target.value)}
-                          className={`w-full h-24 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${
-                            isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                          }`}
-	                        />
-	                        <div className="flex justify-end gap-2">
-	                          <button
-	                            type="button"
-	                            disabled={syncBusy}
-	                            onClick={() => void handleSaveEditNote()}
-	                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
-	                          >
-	                            {syncBusy ? "Saving…" : "Save"}
-	                          </button>
-	                          <button
-	                            type="button"
-	                            disabled={syncBusy}
-	                            onClick={() => setEditingNoteId(null)}
-	                            className={classNames(
-	                              "px-3 py-1.5 text-xs rounded-lg min-h-[36px] transition-colors disabled:opacity-50",
-	                              isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-	                            )}
-	                          >
-	                            Cancel
-	                          </button>
-	                        </div>
-	                      </div>
-	                    ) : (
-                      <div className={`text-xs mt-1 whitespace-pre-wrap ${isDark ? "text-slate-300" : "text-gray-700"}`}>
-                        {n.content}
-                      </div>
+              {!addingNote ? (
+                <div className="flex justify-end mb-2">
+                  <button
+                    type="button"
+                    disabled={syncBusy}
+                    onClick={() => {
+                      setAddingNote(true);
+                      setNewNoteContent("");
+                    }}
+                    className={classNames(
+                      "text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50",
+                      isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
                     )}
+                  >
+                    ＋ Add
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2 mb-3">
+                  <textarea
+                    value={newNoteContent}
+                    onChange={(e) => setNewNoteContent(e.target.value)}
+                    className={`w-full h-28 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                      }`}
+                    placeholder="Note…"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={syncBusy || !newNoteContent.trim()}
+                      onClick={() => void handleAddNote()}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
+                    >
+                      {syncBusy ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={syncBusy}
+                      onClick={() => setAddingNote(false)}
+                      className={classNames(
+                        "px-3 py-1.5 text-xs rounded-lg min-h-[36px] transition-colors disabled:opacity-50",
+                        isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                      )}
+                    >
+                      Cancel
+                    </button>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className={`px-3 py-2 rounded-lg text-sm italic ${
-                isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
-              }`}>
-                No notes
-              </div>
-            )}
+                </div>
+              )}
+
+              {context?.notes && context.notes.length > 0 ? (
+                <div className="space-y-2">
+                  {context.notes.map((n) => (
+                    <div key={n.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
+                          {n.id}
+                        </span>
+                        <div className="ml-auto flex items-center gap-2">
+                          {editingNoteId !== n.id && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={syncBusy}
+                                onClick={() => handleStartEditNote(n.id)}
+                                className={classNames(
+                                  "text-[11px] px-2 py-0.5 rounded transition-colors disabled:opacity-50",
+                                  isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                )}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                disabled={syncBusy}
+                                onClick={() => void handleRemoveNote(n.id)}
+                                className={classNames(
+                                  "text-[11px] px-2 py-0.5 rounded transition-colors disabled:opacity-50",
+                                  isDark ? "bg-rose-900/30 text-rose-300 hover:bg-rose-900/40" : "bg-rose-100 text-rose-700 hover:bg-rose-200"
+                                )}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {editingNoteId === n.id ? (
+                        <div className="mt-2 space-y-2">
+                          <textarea
+                            value={editNoteContent}
+                            onChange={(e) => setEditNoteContent(e.target.value)}
+                            className={`w-full h-24 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                              }`}
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={syncBusy}
+                              onClick={() => void handleSaveEditNote()}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
+                            >
+                              {syncBusy ? "Saving…" : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={syncBusy}
+                              onClick={() => setEditingNoteId(null)}
+                              className={classNames(
+                                "px-3 py-1.5 text-xs rounded-lg min-h-[36px] transition-colors disabled:opacity-50",
+                                isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                              )}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <MarkdownRenderer
+                          content={String(n.content)}
+                          isDark={isDark}
+                          className={classNames("text-xs mt-1", isDark ? "text-slate-300" : "text-gray-700")}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
+                  }`}>
+                  No notes
+                </div>
+              )}
             </div>
           </details>
 
@@ -1444,172 +1476,169 @@ export function ContextModal({
               References
             </summary>
             <div className="mt-2">
-            {syncError && (
-              <div className={`mb-2 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"}`}>
-                {syncError}
-              </div>
-            )}
+              {syncError && (
+                <div className={`mb-2 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"}`}>
+                  {syncError}
+                </div>
+              )}
 
-            {!addingRef ? (
-              <div className="flex justify-end mb-2">
-                <button
-                  type="button"
-                  disabled={syncBusy}
-	                  onClick={() => {
-	                    setAddingRef(true);
-	                    setNewRefUrl("");
-	                    setNewRefNote("");
-	                  }}
-	                  className={classNames(
-	                    "text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50",
-	                    isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
-                  )}
-                >
-                  ＋ Add
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-2 mb-3">
-                <input
-                  value={newRefUrl}
-                  onChange={(e) => setNewRefUrl(e.target.value)}
-                  className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${
-                    isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
-                  placeholder="https://…"
-                />
-                <textarea
-                  value={newRefNote}
-                  onChange={(e) => setNewRefNote(e.target.value)}
-                  className={`w-full h-24 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${
-                    isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-	                  }`}
-	                  placeholder="Note (optional)…"
-	                />
-	                <div className="flex justify-end gap-2">
-	                  <button
-	                    type="button"
-	                    disabled={syncBusy || !newRefUrl.trim()}
-	                    onClick={() => void handleAddRef()}
-	                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
-	                  >
-	                    {syncBusy ? "Saving…" : "Save"}
-	                  </button>
-	                  <button
-	                    type="button"
-	                    disabled={syncBusy}
-	                    onClick={() => setAddingRef(false)}
-	                    className={classNames(
-	                      "px-3 py-1.5 text-xs rounded-lg min-h-[36px] transition-colors disabled:opacity-50",
-	                      isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-	                    )}
-	                  >
-	                    Cancel
-	                  </button>
-	                </div>
-	              </div>
-	            )}
-
-            {context?.references && context.references.length > 0 ? (
-              <div className="space-y-2">
-                {context.references.map((r) => (
-                  <div key={r.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-600"}`}>
-                        {r.id}
-                      </span>
-                      <a 
-                        href={r.url} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className={`text-sm truncate hover:underline ${isDark ? "text-blue-400" : "text-blue-600"}`}
-                        title={r.url}
-                      >
-                        {r.url}
-                      </a>
-                      <div className="ml-auto flex items-center gap-2">
-                        {editingRefId !== r.id && (
-                          <>
-                            <button
-                              type="button"
-                              disabled={syncBusy}
-                              onClick={() => handleStartEditRef(r.id)}
-                              className={classNames(
-                                "text-[11px] px-2 py-0.5 rounded transition-colors disabled:opacity-50",
-                                isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                              )}
-                            >
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              disabled={syncBusy}
-                              onClick={() => void handleRemoveRef(r.id)}
-                              className={classNames(
-                                "text-[11px] px-2 py-0.5 rounded transition-colors disabled:opacity-50",
-                                isDark ? "bg-rose-900/30 text-rose-300 hover:bg-rose-900/40" : "bg-rose-100 text-rose-700 hover:bg-rose-200"
-                              )}
-                            >
-                              Delete
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {editingRefId === r.id ? (
-                      <div className="mt-2 space-y-2">
-                        <input
-                          value={editRefUrl}
-                          onChange={(e) => setEditRefUrl(e.target.value)}
-                          className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${
-                            isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                          }`}
-                        />
-	                        <textarea
-	                          value={editRefNote}
-	                          onChange={(e) => setEditRefNote(e.target.value)}
-	                          className={`w-full h-20 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${
-	                            isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-	                          }`}
-	                        />
-	                        <div className="flex justify-end gap-2">
-	                          <button
-	                            type="button"
-	                            disabled={syncBusy || !editRefUrl.trim()}
-	                            onClick={() => void handleSaveEditRef()}
-	                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
-	                          >
-	                            {syncBusy ? "Saving…" : "Save"}
-	                          </button>
-	                          <button
-	                            type="button"
-	                            disabled={syncBusy}
-	                            onClick={() => setEditingRefId(null)}
-	                            className={classNames(
-	                              "px-3 py-1.5 text-xs rounded-lg min-h-[36px] transition-colors disabled:opacity-50",
-	                              isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-	                            )}
-	                          >
-	                            Cancel
-	                          </button>
-	                        </div>
-	                      </div>
-	                    ) : r.note ? (
-                      <div className={`text-xs mt-1 whitespace-pre-wrap ${isDark ? "text-slate-400" : "text-gray-600"}`}>
-                        {r.note}
-                      </div>
-                    ) : null}
+              {!addingRef ? (
+                <div className="flex justify-end mb-2">
+                  <button
+                    type="button"
+                    disabled={syncBusy}
+                    onClick={() => {
+                      setAddingRef(true);
+                      setNewRefUrl("");
+                      setNewRefNote("");
+                    }}
+                    className={classNames(
+                      "text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50",
+                      isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                    )}
+                  >
+                    ＋ Add
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2 mb-3">
+                  <input
+                    value={newRefUrl}
+                    onChange={(e) => setNewRefUrl(e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                      }`}
+                    placeholder="https://…"
+                  />
+                  <textarea
+                    value={newRefNote}
+                    onChange={(e) => setNewRefNote(e.target.value)}
+                    className={`w-full h-24 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                      }`}
+                    placeholder="Note (optional)…"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={syncBusy || !newRefUrl.trim()}
+                      onClick={() => void handleAddRef()}
+                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
+                    >
+                      {syncBusy ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={syncBusy}
+                      onClick={() => setAddingRef(false)}
+                      className={classNames(
+                        "px-3 py-1.5 text-xs rounded-lg min-h-[36px] transition-colors disabled:opacity-50",
+                        isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                      )}
+                    >
+                      Cancel
+                    </button>
                   </div>
-                ))}
-              </div>
-            ) : (
-              <div className={`px-3 py-2 rounded-lg text-sm italic ${
-                isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
-              }`}>
-                No references
-              </div>
-            )}
+                </div>
+              )}
+
+              {context?.references && context.references.length > 0 ? (
+                <div className="space-y-2">
+                  {context.references.map((r) => (
+                    <div key={r.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-400" : "bg-gray-200 text-gray-600"}`}>
+                          {r.id}
+                        </span>
+                        <a
+                          href={r.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={`text-sm truncate hover:underline ${isDark ? "text-blue-400" : "text-blue-600"}`}
+                          title={r.url}
+                        >
+                          {r.url}
+                        </a>
+                        <div className="ml-auto flex items-center gap-2">
+                          {editingRefId !== r.id && (
+                            <>
+                              <button
+                                type="button"
+                                disabled={syncBusy}
+                                onClick={() => handleStartEditRef(r.id)}
+                                className={classNames(
+                                  "text-[11px] px-2 py-0.5 rounded transition-colors disabled:opacity-50",
+                                  isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                                )}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                disabled={syncBusy}
+                                onClick={() => void handleRemoveRef(r.id)}
+                                className={classNames(
+                                  "text-[11px] px-2 py-0.5 rounded transition-colors disabled:opacity-50",
+                                  isDark ? "bg-rose-900/30 text-rose-300 hover:bg-rose-900/40" : "bg-rose-100 text-rose-700 hover:bg-rose-200"
+                                )}
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {editingRefId === r.id ? (
+                        <div className="mt-2 space-y-2">
+                          <input
+                            value={editRefUrl}
+                            onChange={(e) => setEditRefUrl(e.target.value)}
+                            className={`w-full px-3 py-2 border rounded-lg text-sm transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                              }`}
+                          />
+                          <textarea
+                            value={editRefNote}
+                            onChange={(e) => setEditRefNote(e.target.value)}
+                            className={`w-full h-20 px-3 py-2 border rounded-lg text-sm resize-none transition-colors ${isDark ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                              }`}
+                          />
+                          <div className="flex justify-end gap-2">
+                            <button
+                              type="button"
+                              disabled={syncBusy || !editRefUrl.trim()}
+                              onClick={() => void handleSaveEditRef()}
+                              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg disabled:opacity-50 min-h-[36px] transition-colors"
+                            >
+                              {syncBusy ? "Saving…" : "Save"}
+                            </button>
+                            <button
+                              type="button"
+                              disabled={syncBusy}
+                              onClick={() => setEditingRefId(null)}
+                              className={classNames(
+                                "px-3 py-1.5 text-xs rounded-lg min-h-[36px] transition-colors disabled:opacity-50",
+                                isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                              )}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : r.note ? (
+                        <MarkdownRenderer
+                          content={String(r.note)}
+                          isDark={isDark}
+                          className={classNames("text-xs mt-1", isDark ? "text-slate-400" : "text-gray-600")}
+                        />
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"
+                  }`}>
+                  No references
+                </div>
+              )}
             </div>
           </details>
 
@@ -1632,9 +1661,8 @@ export function ContextModal({
             aria-hidden="true"
           />
           <div
-            className={`relative w-full max-w-md rounded-xl border shadow-2xl p-4 ${
-              isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
-            }`}
+            className={`relative w-full max-w-md rounded-xl border shadow-2xl p-4 ${isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
+              }`}
             role="dialog"
             aria-modal="true"
             aria-label="Project updated"
@@ -1643,9 +1671,8 @@ export function ContextModal({
             <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{projectPathLabel}</div>
 
             {notifyError && (
-              <div className={`mt-3 text-xs rounded-lg border px-3 py-2 ${
-                isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
-              }`}>
+              <div className={`mt-3 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
+                }`}>
                 {notifyError}
               </div>
             )}
@@ -1660,11 +1687,11 @@ export function ContextModal({
               Notify agents in chat (@all)
             </label>
 
-            <div className={`mt-2 text-[11px] rounded-lg px-3 py-2 whitespace-pre-wrap ${
-              isDark ? "bg-slate-800/60 text-slate-300" : "bg-gray-50 text-gray-700"
-            }`}>
-              {notifyMessage}
-            </div>
+            <MarkdownRenderer
+              content={notifyMessage}
+              isDark={isDark}
+              className={classNames("mt-2 text-[11px] rounded-lg px-3 py-2", isDark ? "bg-slate-800/60 text-slate-300" : "bg-gray-50 text-gray-700")}
+            />
 
             <div className="mt-3 flex gap-2">
               <button
@@ -1677,9 +1704,8 @@ export function ContextModal({
               <button
                 onClick={() => setShowNotifyModal(false)}
                 disabled={notifyBusy}
-                className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${
-                  isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-                }`}
+                className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                  }`}
               >
                 Close
               </button>
