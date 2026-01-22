@@ -24,14 +24,14 @@ export function MarkdownRenderer({ content, isDark, className }: MarkdownRendere
                 // 代码块带 Copy 按钮，无语法高亮
                 return (
                     '<div class="code-block-wrapper relative group">' +
-                    '<div class="code-block-header flex items-center justify-between px-4 py-1.5 text-[10px] font-medium border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-white/5 rounded-t-lg">' +
-                    '<span class="text-gray-500 dark:text-gray-400 uppercase">' + finalLang + '</span>' +
-                    '<button class="copy-button transition-all hover:text-blue-500 dark:hover:text-cyan-400 text-gray-400 dark:text-gray-500 flex items-center gap-1 select-none" data-code="' + encodeURIComponent(str) + '">' +
+                    '<div class="code-block-header flex items-center justify-between">' +
+                    '<span class="uppercase">' + finalLang + '</span>' +
+                    '<button class="copy-button flex items-center gap-1 select-none" data-code="' + encodeURIComponent(str) + '">' +
                     '<svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"></path></svg>' +
                     '<span class="pointer-events-none">Copy</span>' +
                     '</button>' +
                     '</div>' +
-                    '<pre class="!mt-0 !rounded-t-none"><code class="language-' + finalLang + '">' + escaped + '</code></pre>' +
+                    '<pre><code class="language-' + finalLang + '">' + escaped + '</code></pre>' +
                     '</div>'
                 );
             },
@@ -104,6 +104,7 @@ export function MarkdownRenderer({ content, isDark, className }: MarkdownRendere
                 'markdown-body prose max-w-none prose-sm sm:prose-base',
                 isDark ? 'prose-invert' : '',
                 '[&_p]:m-0 [&_ul]:my-1 [&_ol]:my-1',
+                '[&_a]:!text-current [&_a]:underline',
                 className
             )}
             style={{ color: 'inherit' }}

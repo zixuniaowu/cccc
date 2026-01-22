@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Markdown styles */
+@import './styles/markdown.css';
+
 /* ============================================
    CCCC Web UI - Theme System with Liquid Glass
    ============================================ */
@@ -987,51 +990,3 @@ select {
   color: var(--color-accent-danger);
   border-color: rgba(239, 68, 68, 0.25);
 }
-
-/* ============================================
-   Markdown & Code Highlighting (highlight.js)
-   ============================================ */
-
-.markdown-body {
-  line-height: 1.6;
-}
-
-.markdown-body pre {
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
-  padding: 1rem;
-  border-radius: 0.75rem;
-  background-color: #f6f8fa;
-  border: 1px solid #e1e4e8;
-  overflow-x: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  font-size: 0.875rem;
-}
-
-.dark .markdown-body pre {
-  background-color: #0d1117;
-  border: 1px solid #30363d;
-}
-
-/* Code Block Wrapper & Header */
-.code-block-wrapper pre {
-  margin: 0 !important;
-}
-
-.code-block-header {
-  user-select: none;
-}
-
-.copy-button {
-  cursor: pointer;
-  opacity: 0.8;
-}
-
-.copy-button:hover {
-  opacity: 1;
-}
-
-.copy-button:active {
-  transform: scale(0.95);
-}
-
