@@ -1,9 +1,9 @@
+/* Markdown styles - @import must be at the top before @tailwind */
+@import './styles/markdown.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* Markdown styles */
-@import './styles/markdown.css';
 
 /* ============================================
    CCCC Web UI - Theme System with Liquid Glass

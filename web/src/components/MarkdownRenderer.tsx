@@ -104,7 +104,7 @@ export function MarkdownRenderer({ content, isDark, className }: MarkdownRendere
                 'markdown-body prose max-w-none prose-sm',
                 isDark ? 'prose-invert' : '',
                 '[&_p]:m-0 [&_ul]:my-1 [&_ol]:my-1',
-                '[&_a]:!text-current [&_a]:underline',
+                '[&_a]:![color:inherit] [&_a]:underline',
                 className
             )}
             style={{ color: 'inherit' }}

@@ -1048,9 +1048,10 @@ export default function App() {
                 chatInitialScrollAnchorId={!inChatWindow ? restoreChatAnchor?.anchorId : undefined}
                 chatInitialScrollAnchorOffsetPx={!inChatWindow ? restoreChatAnchor?.offsetPx : undefined}
                 chatHighlightEventId={inChatWindow && chatWindow ? chatWindow.centerEventId : undefined}
-                onScrollSnapshot={(snap) => {
-                  if (inChatWindow) return;
-                  const gid = String(selectedGroupId || "").trim();
+                onScrollSnapshot={(snap, overrideGroupId) => {
+                  if (inChatWindow && !overrideGroupId) return;
+                  // Use overrideGroupId if provided (from group switch), otherwise use current selectedGroupId
+                  const gid = String(overrideGroupId || selectedGroupId || "").trim();
                   if (!gid) return;
                   chatScrollMemoryRef.current[gid] = snap;
                 }}

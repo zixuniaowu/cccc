@@ -4,6 +4,8 @@
 
 .markdown-body {
   line-height: 1.6;
+  /* Override Tailwind Typography link color variables to inherit */
+  --tw-prose-links: currentColor;
 }
 
 /* Pre/Code Block Base Styles */

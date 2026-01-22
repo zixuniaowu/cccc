@@ -53,7 +53,7 @@ export interface ChatTabProps {
   chatInitialScrollAnchorId?: string;
   chatInitialScrollAnchorOffsetPx?: number;
   chatHighlightEventId?: string;
-  onScrollSnapshot?: (snap: { atBottom: boolean; anchorId: string; offsetPx: number }) => void;
+  onScrollSnapshot?: (snap: { atBottom: boolean; anchorId: string; offsetPx: number }, groupId?: string) => void;
 
   // Composer
   replyTarget: ReplyTarget;
