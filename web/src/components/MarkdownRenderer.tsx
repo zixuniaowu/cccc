@@ -101,7 +101,7 @@ export function MarkdownRenderer({ content, isDark, className }: MarkdownRendere
         <div
             ref={containerRef}
             className={classNames(
-                'markdown-body prose max-w-none prose-sm sm:prose-base',
+                'markdown-body prose max-w-none prose-sm',
                 isDark ? 'prose-invert' : '',
                 '[&_p]:m-0 [&_ul]:my-1 [&_ol]:my-1',
                 '[&_a]:!text-current [&_a]:underline',
