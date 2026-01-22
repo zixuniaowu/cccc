@@ -28,7 +28,7 @@ export interface VirtualMessageListProps {
   onScrollButtonClick: () => void;
   chatUnreadCount: number;
   onScrollChange?: (isAtBottom: boolean) => void;
-  onScrollSnapshot?: (snap: { atBottom: boolean; anchorId: string; offsetPx: number }) => void;
+  onScrollSnapshot?: (snap: { atBottom: boolean; anchorId: string; offsetPx: number }, groupId?: string) => void;
   // History loading
   isLoadingHistory?: boolean;
   hasMoreHistory?: boolean;
@@ -88,6 +88,11 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   const pendingRestoreRef = useRef(false);
   const anchorMessageIdRef = useRef<string>("");
   const anchorOffsetRef = useRef(0);
+
+  // Track previous resetKey for scroll snapshot before group switch
+  const prevResetKeyRef = useRef<string | undefined>(undefined);
+  // Store latest scroll snapshot for saving on group switch
+  const latestSnapshotRef = useRef<{ atBottom: boolean; anchorId: string; offsetPx: number } | null>(null);
 
   // Dynamic height estimation based on message content
   // This reduces layout shift during scrolling by providing better initial estimates
@@ -297,7 +302,9 @@ export const VirtualMessageList = memo(function VirtualMessageList({
       const anchorId = msg?.id ? String(msg.id) : "";
       if (anchorId) {
         const offsetPx = Math.max(0, curTop - anchorItem.start);
-        onScrollSnapshot?.({ atBottom, anchorId, offsetPx });
+        const snap = { atBottom, anchorId, offsetPx };
+        latestSnapshotRef.current = snap;
+        onScrollSnapshot?.(snap);
       }
     }
 
@@ -329,6 +336,26 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   // Important: this must run before the auto-scroll effects below, otherwise it may
   // cancel their scheduled scrolls (breaking deep-link jump precision).
   useEffect(() => {
+    const prevKey = prevResetKeyRef.current;
+
+    // Only reset state when resetKey actually changes (not on re-renders with same key)
+    if (prevKey === resetKey) {
+      return;
+    }
+
+    // Before resetting, save the scroll snapshot from previous group (if any)
+    if (prevKey && latestSnapshotRef.current) {
+      // Extract groupId from prevKey (format: "groupId:live" or "groupId:window:eventId")
+      const prevGroupId = prevKey.split(":")[0];
+      if (prevGroupId) {
+        // Save the last known scroll position for the previous group
+        onScrollSnapshot?.(latestSnapshotRef.current, prevGroupId);
+      }
+    }
+
+    prevResetKeyRef.current = resetKey;
+    latestSnapshotRef.current = null;
+
     scrollTokenRef.current += 1;
     prevMessageCountRef.current = 0;
     isAtBottomRef.current = true;
@@ -338,7 +365,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
     pendingRestoreRef.current = false;
     anchorMessageIdRef.current = "";
     anchorOffsetRef.current = 0;
-  }, [resetKey, cancelScheduledScroll]);
+  }, [resetKey, cancelScheduledScroll, onScrollSnapshot]);
 
   useEffect(() => {
     const prevCount = prevMessageCountRef.current;

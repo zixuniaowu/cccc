@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-> Status: **0.4.0rc16** (Release Candidate). Expect breaking changes while we harden UX and contracts.
+> Status: **0.4.0rc17** (Release Candidate). Expect breaking changes while we harden UX and contracts.
 
 CCCC is a **local-first multi-agent collaboration kernel** that feels like a modern IM, but stays reliable because it is backed by:
 
@@ -108,7 +108,7 @@ RC tags (e.g. `v0.4.0-rc16`) are published to **TestPyPI**. Use PyPI for depende
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc16
+  cccc-pair==0.4.0rc17
 ```
 
 Note: at the moment, the latest stable on PyPI is still the legacy v0.3.x line. Use the command above to install 0.4.x RCs.
