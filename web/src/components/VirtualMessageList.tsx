@@ -336,9 +336,15 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   // Important: this must run before the auto-scroll effects below, otherwise it may
   // cancel their scheduled scrolls (breaking deep-link jump precision).
   useEffect(() => {
-    // Before resetting, save the scroll snapshot from previous group (if any)
     const prevKey = prevResetKeyRef.current;
-    if (prevKey && prevKey !== resetKey && latestSnapshotRef.current) {
+
+    // Only reset state when resetKey actually changes (not on re-renders with same key)
+    if (prevKey === resetKey) {
+      return;
+    }
+
+    // Before resetting, save the scroll snapshot from previous group (if any)
+    if (prevKey && latestSnapshotRef.current) {
       // Extract groupId from prevKey (format: "groupId:live" or "groupId:window:eventId")
       const prevGroupId = prevKey.split(":")[0];
       if (prevGroupId) {
@@ -346,6 +352,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
         onScrollSnapshot?.(latestSnapshotRef.current, prevGroupId);
       }
     }
+
     prevResetKeyRef.current = resetKey;
     latestSnapshotRef.current = null;
 
