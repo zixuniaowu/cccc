@@ -287,6 +287,10 @@ class DingTalkAdapter(IMAdapter):
         1. Verify credentials by getting token
         2. Start Stream mode listener (if available)
         """
+        # Clear message queue on reconnect to avoid duplicate messages
+        with self._queue_lock:
+            self._message_queue.clear()
+
         # Inbound requires the official SDK (dingtalk-stream) for stream mode.
         try:
             import dingtalk_stream  # type: ignore
