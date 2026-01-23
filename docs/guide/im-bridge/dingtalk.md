@@ -34,7 +34,6 @@ DingTalk (钉钉) is ideal for:
 
 | Permission | Purpose |
 |------------|---------|
-| `qyapi_robot_sendmsg` | Send robot messages in conversations |
 | `Robot.SingleChat.ReadWrite` | Single chat robot management |
 | `qyapi_chat_read` | Read group basic info |
 

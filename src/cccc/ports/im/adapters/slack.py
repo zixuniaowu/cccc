@@ -72,6 +72,10 @@ class SlackAdapter(IMAdapter):
 
         Requires slack_sdk package.
         """
+        # Clear message queue on reconnect to avoid duplicate messages
+        with self._queue_lock:
+            self._message_queue.clear()
+
         try:
             from slack_sdk import WebClient
         except ImportError:

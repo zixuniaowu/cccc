@@ -247,6 +247,10 @@ class FeishuAdapter(IMAdapter):
         1. Verify credentials by getting token
         2. Start WebSocket event listener
         """
+        # Clear message queue on reconnect to avoid duplicate messages
+        with self._queue_lock:
+            self._message_queue.clear()
+
         # Inbound requires the official SDK (lark-oapi) for long connection messaging.
         try:
             import lark_oapi as lark  # type: ignore
