@@ -455,8 +455,12 @@ def create_app() -> FastAPI:
             return blocked
 
         resp = await call_next(request)
-        # Set cookie on any successful auth if not already set (enables WebSocket auth)
+        # Set cookie only when the token is actually provided (enables WebSocket auth without leaking the secret).
         if token and str(request.cookies.get("cccc_web_token") or "").strip() != token:
+            auth = str(request.headers.get("authorization") or "").strip()
+            q = str(request.query_params.get("token") or "").strip()
+            if auth != f"Bearer {token}" and q != token:
+                return resp
             # Detect real protocol: env override > proxy header > request scheme
             # Set CCCC_WEB_SECURE=1 when behind HTTPS proxy that doesn't send X-Forwarded-Proto
             force_secure = str(os.environ.get("CCCC_WEB_SECURE") or "").strip().lower() in ("1", "true", "yes")

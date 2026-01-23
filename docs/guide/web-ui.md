@@ -159,3 +159,9 @@ Always set `CCCC_WEB_TOKEN` when exposing the Web UI:
 export CCCC_WEB_TOKEN="your-secret-token"
 cccc
 ```
+
+Then authenticate once to bootstrap the session cookie:
+
+- Open `http://YOUR_HOST:8848/?token=your-secret-token` (or `.../ui/?token=...`)
+
+After that, you can use the Web UI normally without `?token=...`.

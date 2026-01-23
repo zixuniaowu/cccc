@@ -12,6 +12,7 @@ export interface ActorTabProps {
   isDark: boolean;
   isSmallScreen: boolean;
   isVisible: boolean;
+  readOnly?: boolean;
   onToggleEnabled: () => void;
   onRelaunch: () => void;
   onEdit: () => void;
@@ -30,6 +31,7 @@ export function ActorTab({
   isDark,
   isSmallScreen,
   isVisible,
+  readOnly,
   onToggleEnabled,
   onRelaunch,
   onEdit,
@@ -51,6 +53,7 @@ export function ActorTab({
         groupId={groupId}
         presenceAgent={presenceAgent}
         isVisible={isVisible}
+        readOnly={readOnly}
         onQuit={onToggleEnabled}
         onLaunch={onToggleEnabled}
         onRelaunch={onRelaunch}

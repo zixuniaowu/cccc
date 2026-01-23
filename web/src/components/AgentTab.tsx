@@ -26,6 +26,7 @@ interface AgentTabProps {
   groupId: string;
   presenceAgent: PresenceAgent | null;
   isVisible: boolean;
+  readOnly?: boolean;
   onQuit: () => void;
   onLaunch: () => void;
   onRelaunch: () => void;
@@ -44,6 +45,7 @@ export function AgentTab({
   groupId,
   presenceAgent,
   isVisible,
+  readOnly,
   onQuit,
   onLaunch,
   onRelaunch,
@@ -58,6 +60,7 @@ export function AgentTab({
   // Derived state (must be defined before refs that use them)
   const isRunning = actor.running ?? actor.enabled ?? false;
   const isHeadless = actor.runner === "headless";
+  const canControl = !readOnly;
   const terminalScrollbackLines = useObservabilityStore((s) => s.terminalScrollbackLines);
 
   const termRef = useRef<HTMLDivElement>(null);
@@ -148,6 +151,7 @@ export function AgentTab({
 
   // Send interrupt (Ctrl+C)
   const sendInterrupt = () => {
+    if (readOnly) return;
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ t: "i", d: "\x03" }));
@@ -172,13 +176,14 @@ export function AgentTab({
     if (!termRef.current || isHeadless || !isRunning || !activated) return;
 
     const term = new Terminal({
-      cursorBlink: true,
+      cursorBlink: canControl,
       // Avoid an extra blinking "outline" cursor when the terminal isn't focused.
       // Some runtimes render their own cursor; xterm's inactive cursor can look like a second cursor.
       cursorInactiveStyle: "none",
       fontSize: 13,
       fontFamily: '"JetBrains Mono", "Fira Code", "SF Mono", Menlo, Monaco, monospace',
       theme: getTerminalTheme(isDark),
+      disableStdin: !canControl,
       // Bigger scrollback improves history browsing without going "infinite" and hurting perf.
       // Default is 8k lines; the user can override it in Global → Developer settings.
       scrollback: terminalScrollbackLines || 8000,
@@ -218,7 +223,7 @@ export function AgentTab({
           return false; // prevent ^C from reaching the runtime
         }
       }
-      if (isPaste) {
+      if (isPaste && canControl) {
         // xterm.js intentionally doesn't map Ctrl+V to paste by default (to preserve terminal semantics),
         // but for CCCC agents the high-ROI expectation is "Ctrl/Cmd+V pastes text into the PTY".
         const readText = navigator.clipboard?.readText;
@@ -275,7 +280,7 @@ export function AgentTab({
       fitAddonRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled in a dedicated effect; avoid re-creating the terminal.
-  }, [isHeadless, isRunning, activated]);
+  }, [isHeadless, isRunning, activated, canControl]);
 
   // Connect WebSocket when visible and running (with auto-reconnect).
   useEffect(() => {
@@ -343,14 +348,17 @@ export function AgentTab({
           }
         }, TERMINAL_SHOW_DELAY_MS);
 
-        // Send initial resize
-        const term = terminalRef.current;
-        if (term) {
-          ws.send(JSON.stringify({ t: "r", c: term.cols, r: term.rows }));
+        // Send initial resize (ops mode only). Exhibit should be view-only and not affect PTY size.
+        if (canControl) {
+          const term = terminalRef.current;
+          if (term) {
+            ws.send(JSON.stringify({ t: "r", c: term.cols, r: term.rows }));
+          }
         }
       };
 
       const _maybeReplyOpencodeQueries = (data: string) => {
+        if (!canControl) return;
         if (actor.runtime !== "opencode" || ws.readyState !== WebSocket.OPEN || !terminalRef.current) return;
 
         // Prefer the terminal's current theme (keeps replies consistent even after theme toggles).
@@ -504,7 +512,7 @@ export function AgentTab({
 
       // Handle terminal input - send as JSON with type "i" (input)
       const term = terminalRef.current;
-      if (term) {
+      if (term && canControl) {
         disposable = term.onData((data) => {
           if (ws.readyState === WebSocket.OPEN) {
             // xterm.js can emit terminal replies (not user keystrokes), e.g. device attributes / color queries.
@@ -564,7 +572,7 @@ export function AgentTab({
       setTerminalReady(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- Theme changes are handled separately; onStatusChange should not trigger reconnects.
-  }, [activated, isRunning, isHeadless, groupId, actor.id, actor.runtime]);
+  }, [activated, isRunning, isHeadless, groupId, actor.id, actor.runtime, canControl]);
 
   // Fit terminal on visibility change and resize (with debounce to reduce jitter)
   useEffect(() => {
@@ -594,6 +602,25 @@ export function AgentTab({
       if (resizeTimeout) clearTimeout(resizeTimeout);
     };
   }, [isVisible]);
+
+  // UX: when the user switches to an agent tab (ops mode), focus the terminal automatically.
+  // This avoids "typing into nowhere" if the chat composer was previously focused.
+  useEffect(() => {
+    if (!canControl) return;
+    if (!isVisible) return;
+    if (!terminalReady) return;
+    if (isSmallScreen) return;
+    const term = terminalRef.current;
+    if (!term) return;
+    const t = setTimeout(() => {
+      try {
+        term.focus();
+      } catch {
+        // ignore
+      }
+    }, 0);
+    return () => clearTimeout(t);
+  }, [canControl, isVisible, isSmallScreen, terminalReady]);
 
   const isBusy = busy.includes(actor.id);
 
@@ -698,144 +725,148 @@ export function AgentTab({
             <div className="mb-4"><TerminalIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">Agent Not Running</div>
             <div className="text-sm text-center max-w-md mb-4">
-              Click Launch to start this agent's terminal session.
+              This agent is currently stopped.
             </div>
-            <button
-              onClick={onLaunch}
-              disabled={isBusy}
-              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50 min-h-[44px] transition-colors"
-              aria-label="Launch agent"
-            >
-              <PlayIcon size={16} />
-              {isBusy ? "Launching..." : "Launch Agent"}
-            </button>
+            {canControl ? (
+              <button
+                onClick={onLaunch}
+                disabled={isBusy}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium disabled:opacity-50 min-h-[44px] transition-colors"
+                aria-label="Launch agent"
+              >
+                <PlayIcon size={16} />
+                {isBusy ? "Launching..." : "Launch Agent"}
+              </button>
+            ) : null}
           </div>
         )}
       </div>
 
       {/* Action Buttons - Scrollable on mobile to prevent overflow */}
-      <div className={classNames(
-        "flex items-center gap-2 px-4 py-3 border-t overflow-x-auto scrollbar-hide select-none",
-        isDark ? "bg-slate-900/50 border-slate-800" : "bg-gray-100 border-gray-200"
-      )}>
-        {isRunning ? (
-          <>
-            <button
-              onClick={onQuit}
-              disabled={isBusy}
-              className={classNames(
-                "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
-              )}
-              aria-label="Quit agent"
-            >
-              <StopIcon size={16} />
-              {!isSmallScreen && "Quit"}
-            </button>
-            <button
-              onClick={sendInterrupt}
-              disabled={connectionStatus !== 'connected'}
-              className={classNames(
-                "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
-              )}
-              title="Send Ctrl+C to interrupt"
-              aria-label="Send interrupt signal"
-            >
-              ⌃C
-            </button>
-            <button
-              onClick={onRelaunch}
-              disabled={isBusy}
-              className={classNames(
-                "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
-              )}
-              aria-label="Relaunch agent"
-            >
-              <RefreshIcon size={16} />
-              {!isSmallScreen && "Relaunch"}
-            </button>
-            <button
-              onClick={onEdit}
-              disabled={isBusy}
-              className={classNames(
-                "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
-              )}
-              aria-label="Edit agent configuration"
-            >
-              <EditIcon size={16} />
-              {!isSmallScreen && "Edit"}
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              onClick={onLaunch}
-              disabled={isBusy}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap"
-              aria-label="Launch agent"
-            >
-              <PlayIcon size={16} />
-              {isBusy ? "Launching..." : "Launch"}
-            </button>
-            <button
-              onClick={onEdit}
-              disabled={isBusy}
-              className={classNames(
-                "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors",
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
-              )}
-              aria-label="Edit agent configuration"
-            >
-              <EditIcon size={16} /> Edit
-            </button>
-          </>
-        )}
-        <button
-          onClick={onInbox}
-          className={classNames(
-            "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-            unreadCount > 0
-              ? isDark
-                ? "bg-indigo-500/10 text-indigo-200 border border-indigo-500/20 hover:bg-indigo-500/15"
-                : "bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
-              : isDark
-                ? "bg-slate-800 hover:bg-slate-700 text-slate-200"
-                : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+      {canControl ? (
+        <div className={classNames(
+          "flex items-center gap-2 px-4 py-3 border-t overflow-x-auto scrollbar-hide select-none",
+          isDark ? "bg-slate-900/50 border-slate-800" : "bg-gray-100 border-gray-200"
+        )}>
+          {isRunning ? (
+            <>
+              <button
+                onClick={onQuit}
+                disabled={isBusy}
+                className={classNames(
+                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
+                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                )}
+                aria-label="Quit agent"
+              >
+                <StopIcon size={16} />
+                {!isSmallScreen && "Quit"}
+              </button>
+              <button
+                onClick={sendInterrupt}
+                disabled={connectionStatus !== 'connected'}
+                className={classNames(
+                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
+                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                )}
+                title="Send Ctrl+C to interrupt"
+                aria-label="Send interrupt signal"
+              >
+                ⌃C
+              </button>
+              <button
+                onClick={onRelaunch}
+                disabled={isBusy}
+                className={classNames(
+                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
+                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                )}
+                aria-label="Relaunch agent"
+              >
+                <RefreshIcon size={16} />
+                {!isSmallScreen && "Relaunch"}
+              </button>
+              <button
+                onClick={onEdit}
+                disabled={isBusy}
+                className={classNames(
+                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
+                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                )}
+                aria-label="Edit agent configuration"
+              >
+                <EditIcon size={16} />
+                {!isSmallScreen && "Edit"}
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={onLaunch}
+                disabled={isBusy}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-white text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap"
+                aria-label="Launch agent"
+              >
+                <PlayIcon size={16} />
+                {isBusy ? "Launching..." : "Launch"}
+              </button>
+              <button
+                onClick={onEdit}
+                disabled={isBusy}
+                className={classNames(
+                  "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors",
+                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                )}
+                aria-label="Edit agent configuration"
+              >
+                <EditIcon size={16} /> Edit
+              </button>
+            </>
           )}
-          aria-label={`Open inbox${unreadCount > 0 ? `, ${unreadCount} unread messages` : ""}`}
-        >
-          <InboxIcon size={16} />
-          {!isSmallScreen && "Inbox"}
-          {unreadCount > 0 && (
-            <span
-              className={classNames(
-                "text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold tracking-tight shadow-sm",
-                isDark ? "bg-indigo-500" : "bg-indigo-600"
-              )}
-              aria-hidden="true"
-            >
-              {unreadCount > 99 ? "99+" : unreadCount}
-            </span>
-          )}
-        </button>
-        <div className="flex-1" />
-        <button
-          onClick={onRemove}
-          disabled={isBusy || isRunning}
-          className={classNames(
-            "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-            isDark ? "hover:bg-rose-900/30 text-rose-400" : "hover:bg-rose-50 text-rose-600"
-          )}
-          title={isRunning ? "Stop the agent before removing" : "Remove agent"}
-          aria-label="Remove agent"
-        >
-          <TrashIcon size={16} />
-          {!isSmallScreen && "Remove"}
-        </button>
-      </div>
+          <button
+            onClick={onInbox}
+            className={classNames(
+              "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
+              unreadCount > 0
+                ? isDark
+                  ? "bg-indigo-500/10 text-indigo-200 border border-indigo-500/20 hover:bg-indigo-500/15"
+                  : "bg-indigo-50 text-indigo-700 border border-indigo-200 hover:bg-indigo-100"
+                : isDark
+                  ? "bg-slate-800 hover:bg-slate-700 text-slate-200"
+                  : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+            )}
+            aria-label={`Open inbox${unreadCount > 0 ? `, ${unreadCount} unread messages` : ""}`}
+          >
+            <InboxIcon size={16} />
+            {!isSmallScreen && "Inbox"}
+            {unreadCount > 0 && (
+              <span
+                className={classNames(
+                  "text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold tracking-tight shadow-sm",
+                  isDark ? "bg-indigo-500" : "bg-indigo-600"
+                )}
+                aria-hidden="true"
+              >
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={onRemove}
+            disabled={isBusy || isRunning}
+            className={classNames(
+              "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
+              isDark ? "hover:bg-rose-900/30 text-rose-400" : "hover:bg-rose-50 text-rose-600"
+            )}
+            title={isRunning ? "Stop the agent before removing" : "Remove agent"}
+            aria-label="Remove agent"
+          >
+            <TrashIcon size={16} />
+            {!isSmallScreen && "Remove"}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }

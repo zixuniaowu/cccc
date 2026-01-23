@@ -26,8 +26,9 @@ export interface GroupSidebarProps {
   isOpen: boolean;
   isCollapsed: boolean;
   isDark: boolean;
+  readOnly?: boolean;
   onSelectGroup: (groupId: string) => void;
-  onCreateGroup: () => void;
+  onCreateGroup?: () => void;
   onClose: () => void;
   onToggleCollapse: () => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
@@ -40,6 +41,7 @@ export function GroupSidebar({
   isOpen,
   isCollapsed,
   isDark,
+  readOnly,
   onSelectGroup,
   onCreateGroup,
   onClose,
@@ -93,15 +95,13 @@ export function GroupSidebar({
       >
         {/* Header */}
         <div className={`p-4 border-b ${isDark ? "border-white/5" : "border-black/5"}`}>
-          <div className={classNames(
-            "flex items-center",
-            isCollapsed ? "justify-center" : "justify-between"
-          )}>
-            {/* Logo */}
-            <div className={classNames(
+          <div
+            className={classNames(
               "flex items-center",
-              isCollapsed ? "" : "gap-3"
-            )}>
+              isCollapsed ? "justify-center" : "justify-between"
+            )}
+          >
+            <div className={classNames("flex items-center", isCollapsed ? "" : "gap-3")}>
               <div className={classNames(
                 "w-9 h-9 rounded-xl flex items-center justify-center glass-btn",
                 isDark ? "text-cyan-400" : "text-cyan-600"
@@ -113,20 +113,21 @@ export function GroupSidebar({
               )}
             </div>
 
-            {/* Header buttons */}
             {!isCollapsed && (
               <div className="flex items-center gap-2">
-                <button
-                  className={classNames(
-                    "text-xs px-4 py-2 rounded-xl font-medium transition-all min-h-[36px] glass-btn-accent",
-                    isDark ? "text-cyan-300" : "text-cyan-700"
-                  )}
-                  onClick={onCreateGroup}
-                  title="Create new working group"
-                  aria-label="Create new working group"
-                >
-                  + New
-                </button>
+                {!readOnly && onCreateGroup && (
+                  <button
+                    className={classNames(
+                      "text-xs px-4 py-2 rounded-xl font-medium transition-all min-h-[36px] glass-btn-accent",
+                      isDark ? "text-cyan-300" : "text-cyan-700"
+                    )}
+                    onClick={onCreateGroup}
+                    title="Create new working group"
+                    aria-label="Create new working group"
+                  >
+                    + New
+                  </button>
+                )}
                 {/* Collapse button - desktop only */}
                 <button
                   className={classNames(
@@ -169,17 +170,19 @@ export function GroupSidebar({
             >
               <ChevronRightIcon size={18} />
             </button>
-            <button
-              className={classNames(
-                "w-10 h-10 rounded-xl flex items-center justify-center transition-all glass-btn-accent",
-                isDark ? "text-cyan-300" : "text-cyan-700"
-              )}
-              onClick={onCreateGroup}
-              aria-label="Create new working group"
-              title="Create new working group"
-            >
-              <PlusIcon size={18} />
-            </button>
+            {!readOnly && onCreateGroup && (
+              <button
+                className={classNames(
+                  "w-10 h-10 rounded-xl flex items-center justify-center transition-all glass-btn-accent",
+                  isDark ? "text-cyan-300" : "text-cyan-700"
+                )}
+                onClick={onCreateGroup}
+                aria-label="Create new working group"
+                title="Create new working group"
+              >
+                <PlusIcon size={18} />
+              </button>
+            )}
           </div>
         )}
 
@@ -216,6 +219,7 @@ export function GroupSidebar({
                       isActive={active}
                       isDark={isDark}
                       isCollapsed={isCollapsed}
+                      dragDisabled={!!readOnly}
                       onSelect={() => {
                         onSelectGroup(gid);
                         if (window.matchMedia("(max-width: 767px)").matches) onClose();
@@ -240,15 +244,17 @@ export function GroupSidebar({
               <div className={`text-xs mb-5 max-w-[200px] mx-auto leading-relaxed ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                 A working group is a collaboration space where multiple AI agents work together on a project.
               </div>
-              <button
-                className={classNames(
-                  "text-sm px-5 py-2.5 rounded-xl font-medium min-h-[44px] transition-all glass-btn-accent",
-                  isDark ? "text-cyan-300" : "text-cyan-700"
-                )}
-                onClick={onCreateGroup}
-              >
-                Create Your First Group
-              </button>
+              {!readOnly && onCreateGroup && (
+                <button
+                  className={classNames(
+                    "text-sm px-5 py-2.5 rounded-xl font-medium min-h-[44px] transition-all glass-btn-accent",
+                    isDark ? "text-cyan-300" : "text-cyan-700"
+                  )}
+                  onClick={onCreateGroup}
+                >
+                  Create Your First Group
+                </button>
+              )}
             </div>
           )}
         </div>

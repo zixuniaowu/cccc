@@ -378,8 +378,8 @@ def batch_unread_counts(
 ) -> Dict[str, int]:
     """Count unread events for multiple actors in a single ledger pass.
 
-    This is O(m) where m = number of events, instead of O(n * m) when calling
-    unread_count() for each actor separately.
+    This remains O(n * m) where n = actors and m = events, but it avoids
+    re-reading/parsing the ledger for each actor and loads cursors once.
 
     Args:
         group: Working group

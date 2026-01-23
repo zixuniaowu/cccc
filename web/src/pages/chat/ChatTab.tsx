@@ -9,6 +9,7 @@ import { ChatComposer } from "./ChatComposer";
 export interface ChatTabProps {
   isDark: boolean;
   isSmallScreen: boolean;
+  readOnly?: boolean;
   selectedGroupId: string;
   groupLabelById: Record<string, string>;
   actors: Actor[];
@@ -98,6 +99,7 @@ export interface ChatTabProps {
 export function ChatTab({
   isDark,
   isSmallScreen,
+  readOnly,
   selectedGroupId,
   groupLabelById,
   actors,
@@ -174,64 +176,72 @@ export function ChatTab({
           role="log"
           aria-label="Chat messages"
         >
-          <div className="flex flex-col items-center justify-center h-full text-center pb-20">
-            <div className={classNames("w-full max-w-md", isDark ? "text-slate-200" : "text-gray-800")}>
-              <div className="text-4xl mb-4">🧭</div>
-              <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
-                Next steps
-              </div>
-              <SetupChecklist
-                isDark={isDark}
-                selectedGroupId={selectedGroupId}
-                busy={busy}
-                needsScope={needsScope}
-                needsActors={needsActors}
-                needsStart={needsStart}
-                onAddAgent={onAddAgent}
-                onStartGroup={onStartGroup}
-                variant="full"
-              />
-            </div>
-          </div>
-        </div>
-        <ChatComposer
-          isDark={isDark}
-          isSmallScreen={isSmallScreen}
-          selectedGroupId={selectedGroupId}
-          actors={actors}
-          recipientActors={recipientActors}
-          recipientActorsBusy={recipientActorsBusy}
-          groups={groups}
-          destGroupId={destGroupId}
-          setDestGroupId={setDestGroupId}
-          destGroupScopeLabel={destGroupScopeLabel}
-          busy={busy}
-          replyTarget={replyTarget}
-          onCancelReply={onCancelReply}
-          toTokens={toTokens}
-          onToggleRecipient={onToggleRecipient}
-          onClearRecipients={onClearRecipients}
-          composerFiles={composerFiles}
-          onRemoveComposerFile={onRemoveComposerFile}
-          appendComposerFiles={appendComposerFiles}
-          fileInputRef={fileInputRef}
-          composerRef={composerRef}
-          composerText={composerText}
-          setComposerText={setComposerText}
-          priority={priority}
-          setPriority={setPriority}
-          onSendMessage={onSendMessage}
-          showMentionMenu={showMentionMenu}
-          setShowMentionMenu={setShowMentionMenu}
-          mentionSuggestions={mentionSuggestions}
-          mentionSelectedIndex={mentionSelectedIndex}
-          setMentionSelectedIndex={setMentionSelectedIndex}
-          setMentionFilter={setMentionFilter}
-          onAppendRecipientToken={onAppendRecipientToken}
-        />
-      </>
-    );
-  }
+	          <div className="flex flex-col items-center justify-center h-full text-center pb-20">
+	            <div className={classNames("w-full max-w-md", isDark ? "text-slate-200" : "text-gray-800")}>
+	              <div className="text-4xl mb-4">🧭</div>
+	              <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
+	                Next steps
+	              </div>
+	              {readOnly ? (
+	                <div className={classNames("mt-3 text-sm", isDark ? "text-slate-400" : "text-gray-600")}>
+	                  No messages yet.
+	                </div>
+	              ) : (
+	                <SetupChecklist
+	                  isDark={isDark}
+	                  selectedGroupId={selectedGroupId}
+	                  busy={busy}
+	                  needsScope={needsScope}
+	                  needsActors={needsActors}
+	                  needsStart={needsStart}
+	                  onAddAgent={onAddAgent}
+	                  onStartGroup={onStartGroup}
+	                  variant="full"
+	                />
+	              )}
+	            </div>
+	          </div>
+	        </div>
+	        {!readOnly && (
+	          <ChatComposer
+	            isDark={isDark}
+	            isSmallScreen={isSmallScreen}
+	            selectedGroupId={selectedGroupId}
+	            actors={actors}
+	            recipientActors={recipientActors}
+	            recipientActorsBusy={recipientActorsBusy}
+	            groups={groups}
+	            destGroupId={destGroupId}
+	            setDestGroupId={setDestGroupId}
+	            destGroupScopeLabel={destGroupScopeLabel}
+	            busy={busy}
+	            replyTarget={replyTarget}
+	            onCancelReply={onCancelReply}
+	            toTokens={toTokens}
+	            onToggleRecipient={onToggleRecipient}
+	            onClearRecipients={onClearRecipients}
+	            composerFiles={composerFiles}
+	            onRemoveComposerFile={onRemoveComposerFile}
+	            appendComposerFiles={appendComposerFiles}
+	            fileInputRef={fileInputRef}
+	            composerRef={composerRef}
+	            composerText={composerText}
+	            setComposerText={setComposerText}
+	            priority={priority}
+	            setPriority={setPriority}
+	            onSendMessage={onSendMessage}
+	            showMentionMenu={showMentionMenu}
+	            setShowMentionMenu={setShowMentionMenu}
+	            mentionSuggestions={mentionSuggestions}
+	            mentionSelectedIndex={mentionSelectedIndex}
+	            setMentionSelectedIndex={setMentionSelectedIndex}
+	            setMentionFilter={setMentionFilter}
+	            onAppendRecipientToken={onAppendRecipientToken}
+	          />
+	        )}
+	      </>
+	    );
+	  }
 
   return (
     <div className="flex flex-col h-full w-full overflow-hidden bg-transparent">
@@ -260,24 +270,26 @@ export function ChatTab({
                       : "Context loaded."}
                 </div>
               </div>
-              <button
-                type="button"
-                className={classNames(
-                  "flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors",
-                  isDark
-                    ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
-                    : "border-gray-200 text-gray-800 hover:bg-gray-100"
-                )}
-                onClick={() => onExitChatWindow?.()}
-              >
-                Return to latest
-              </button>
+              {!readOnly && (
+                <button
+                  type="button"
+                  className={classNames(
+                    "flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors",
+                    isDark
+                      ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
+                      : "border-gray-200 text-gray-800 hover:bg-gray-100"
+                  )}
+                  onClick={() => onExitChatWindow?.()}
+                >
+                  Return to latest
+                </button>
+              )}
             </div>
           </div>
         )}
 
         {/* Compact setup card */}
-        {showSetupCard && chatMessages.length > 0 && (
+        {!readOnly && showSetupCard && chatMessages.length > 0 && (
           <div className="px-4 pt-4 pb-2">
             <div
               className={classNames(
@@ -309,7 +321,7 @@ export function ChatTab({
       {/* 2. Body Area: Contains the List + the Floating Filter Pill */}
       <main className="flex-1 min-h-0 relative flex flex-col">
         {/* Space-efficient Floating Filter Pill */}
-        {!chatWindow && hasAnyChatMessages && (
+        {!readOnly && !chatWindow && hasAnyChatMessages && (
           <div
             className="absolute top-4 left-4 z-20 pointer-events-none"
             style={{ width: "calc(100% - 32px)" }}
@@ -354,13 +366,14 @@ export function ChatTab({
           </div>
         )}
 
-        <VirtualMessageList
-          messages={chatMessages}
-          actors={actors}
-          presenceAgents={presenceAgents}
-          isDark={isDark}
-          groupId={selectedGroupId}
-          groupLabelById={groupLabelById}
+	        <VirtualMessageList
+	          messages={chatMessages}
+	          actors={actors}
+	          presenceAgents={presenceAgents}
+	          isDark={isDark}
+	          readOnly={readOnly}
+	          groupId={selectedGroupId}
+	          groupLabelById={groupLabelById}
           viewKey={chatViewKey}
           initialScrollTargetId={chatInitialScrollTargetId}
           initialScrollAnchorId={chatInitialScrollAnchorId}
@@ -382,46 +395,48 @@ export function ChatTab({
           hasMoreHistory={hasMoreHistory}
           onLoadMore={onLoadMore}
         />
-      </main>
+	      </main>
 
-      {/* 3. Footer Area: Composer */}
-      <footer className="flex-shrink-0 w-full bg-transparent">
-        <ChatComposer
-          isDark={isDark}
-          isSmallScreen={isSmallScreen}
-          selectedGroupId={selectedGroupId}
-          actors={actors}
-          recipientActors={recipientActors}
-          recipientActorsBusy={recipientActorsBusy}
-          groups={groups}
-          destGroupId={destGroupId}
-          setDestGroupId={setDestGroupId}
-          destGroupScopeLabel={destGroupScopeLabel}
-          busy={busy}
-          replyTarget={replyTarget}
-          onCancelReply={onCancelReply}
-          toTokens={toTokens}
-          onToggleRecipient={onToggleRecipient}
-          onClearRecipients={onClearRecipients}
-          composerFiles={composerFiles}
-          onRemoveComposerFile={onRemoveComposerFile}
-          appendComposerFiles={appendComposerFiles}
-          fileInputRef={fileInputRef}
-          composerRef={composerRef}
-          composerText={composerText}
-          setComposerText={setComposerText}
-          priority={priority}
-          setPriority={setPriority}
-          onSendMessage={onSendMessage}
-          showMentionMenu={showMentionMenu}
-          setShowMentionMenu={setShowMentionMenu}
-          mentionSuggestions={mentionSuggestions}
-          mentionSelectedIndex={mentionSelectedIndex}
-          setMentionSelectedIndex={setMentionSelectedIndex}
-          setMentionFilter={setMentionFilter}
-          onAppendRecipientToken={onAppendRecipientToken}
-        />
-      </footer>
-    </div>
-  );
-}
+	      {/* 3. Footer Area: Composer */}
+	      {!readOnly && (
+	        <footer className="flex-shrink-0 w-full bg-transparent">
+	          <ChatComposer
+	            isDark={isDark}
+	            isSmallScreen={isSmallScreen}
+	            selectedGroupId={selectedGroupId}
+	            actors={actors}
+	            recipientActors={recipientActors}
+	            recipientActorsBusy={recipientActorsBusy}
+	            groups={groups}
+	            destGroupId={destGroupId}
+	            setDestGroupId={setDestGroupId}
+	            destGroupScopeLabel={destGroupScopeLabel}
+	            busy={busy}
+	            replyTarget={replyTarget}
+	            onCancelReply={onCancelReply}
+	            toTokens={toTokens}
+	            onToggleRecipient={onToggleRecipient}
+	            onClearRecipients={onClearRecipients}
+	            composerFiles={composerFiles}
+	            onRemoveComposerFile={onRemoveComposerFile}
+	            appendComposerFiles={appendComposerFiles}
+	            fileInputRef={fileInputRef}
+	            composerRef={composerRef}
+	            composerText={composerText}
+	            setComposerText={setComposerText}
+	            priority={priority}
+	            setPriority={setPriority}
+	            onSendMessage={onSendMessage}
+	            showMentionMenu={showMentionMenu}
+	            setShowMentionMenu={setShowMentionMenu}
+	            mentionSuggestions={mentionSuggestions}
+	            mentionSelectedIndex={mentionSelectedIndex}
+	            setMentionSelectedIndex={setMentionSelectedIndex}
+	            setMentionFilter={setMentionFilter}
+	            onAppendRecipientToken={onAppendRecipientToken}
+	          />
+	        </footer>
+	      )}
+	    </div>
+	  );
+	}

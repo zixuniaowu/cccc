@@ -61,7 +61,7 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "display_name": "Droid CLI",
         "command": "droid",
         "capabilities": "MCP; MCP setup: auto",
-        "mcp_add_pattern": "droid mcp add {name} -- {cmd}",
+        "mcp_add_pattern": "droid mcp add --type stdio {name} {cmd}",
     },
     "gemini": {
         "display_name": "Gemini CLI",

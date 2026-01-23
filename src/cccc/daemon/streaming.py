@@ -297,9 +297,23 @@ def stream_events_to_socket(
         except Exception:
             heartbeat_seconds = 30
 
+        group = None
+        if sub.is_actor_view:
+            group = load_group(sub.group_id)
+
         for ev in _resume_candidates(group_id, since_event_id=since_event_id, since_ts=since_ts, kinds=sub.kinds):
             if _seen(str(ev.get("id") or "")):
                 continue
+            if sub.is_actor_view:
+                kind = str(ev.get("kind") or "").strip()
+                if kind not in ("chat.message", "system.notify"):
+                    continue
+                if kind == "chat.message" and str(ev.get("by") or "").strip() == sub.by:
+                    continue
+                if group is None:
+                    continue
+                if not is_message_for_actor(group, actor_id=sub.by, event=ev):
+                    continue
             _send_ndjson(sock, {"t": "event", "event": ev})
 
         while True:

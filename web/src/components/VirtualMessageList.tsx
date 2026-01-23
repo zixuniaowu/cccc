@@ -10,6 +10,7 @@ export interface VirtualMessageListProps {
   actors: Actor[];
   presenceAgents: PresenceAgent[];
   isDark: boolean;
+  readOnly?: boolean;
   groupId: string;
   groupLabelById: Record<string, string>;
   viewKey?: string;
@@ -40,6 +41,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   actors,
   presenceAgents,
   isDark,
+  readOnly,
   groupId,
   groupLabelById,
   viewKey,
@@ -516,6 +518,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
                     displayNameMap={displayNameMap}
                     presenceAgent={presenceById.get(String(message.by || "")) || null}
                     isDark={isDark}
+                    readOnly={readOnly}
                     groupId={groupId}
                     groupLabelById={groupLabelById}
                     isHighlighted={!!highlightEventId && String(message.id || "") === String(highlightEventId)}
@@ -536,7 +539,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
           </div>
 
           {/* Scroll Button */}
-          {showScrollButton && (
+          {!readOnly && showScrollButton && (
             <button
               className={`fixed bottom-24 right-6 p-3 rounded-full shadow-xl transition-all z-10 ${isDark
                 ? "bg-slate-800 text-white hover:bg-slate-700 border border-slate-700"

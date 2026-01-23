@@ -64,6 +64,7 @@ from ...daemon.server import call_daemon
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.actors import get_effective_role
 from ...kernel.group import load_group
+from ...kernel.inbox import is_message_for_actor
 from ...kernel.ledger import read_last_lines
 from ...kernel.prompt_files import HELP_FILENAME, load_builtin_help_markdown as _load_builtin_help_markdown, read_repo_prompt_file
 
@@ -361,6 +362,11 @@ def bootstrap(
                         continue
                     if not isinstance(ev, dict) or str(ev.get("kind") or "") != "chat.message":
                         continue
+                    # Respect delivery semantics: only include messages visible to the caller (or sent by the caller).
+                    # This prevents leaking directed messages via the convenience "ledger_tail" bootstrap field.
+                    by = str(ev.get("by") or "").strip()
+                    if by != str(actor_id or "").strip() and not is_message_for_actor(g, actor_id=actor_id, event=ev):
+                        continue
                     data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
                     text = data.get("text") if isinstance(data, dict) else None
                     if not isinstance(text, str) or not text:
@@ -371,7 +377,7 @@ def bootstrap(
                         {
                             "id": str(ev.get("id") or ""),
                             "ts": str(ev.get("ts") or ""),
-                            "by": str(ev.get("by") or ""),
+                            "by": by,
                             "to": to_list,
                             "text": text,
                         }

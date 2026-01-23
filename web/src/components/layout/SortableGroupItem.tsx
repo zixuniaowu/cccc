@@ -10,6 +10,7 @@ interface SortableGroupItemProps {
   isActive: boolean;
   isDark: boolean;
   isCollapsed: boolean;
+  dragDisabled?: boolean;
   onSelect: () => void;
 }
 
@@ -18,6 +19,7 @@ export function SortableGroupItem({
   isActive,
   isDark,
   isCollapsed,
+  dragDisabled = false,
   onSelect,
 }: SortableGroupItemProps) {
   const gid = String(group.group_id || "");
@@ -29,7 +31,7 @@ export function SortableGroupItem({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: gid });
+  } = useSortable({ id: gid, disabled: dragDisabled });
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -92,18 +94,20 @@ export function SortableGroupItem({
         onClick={onSelect}
       >
         {/* Drag handle - hidden on mobile, visible on hover for desktop */}
-        <div
-          {...listeners}
-          className={classNames(
-            "flex-shrink-0 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded transition-opacity touch-none",
-            "hidden md:block md:opacity-0 md:group-hover/item:opacity-100",
-            isDragging && "!block !opacity-100",
-            isDark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"
-          )}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <GripIcon size={14} />
-        </div>
+        {!dragDisabled && (
+          <div
+            {...listeners}
+            className={classNames(
+              "flex-shrink-0 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded transition-opacity touch-none",
+              "hidden md:block md:opacity-0 md:group-hover/item:opacity-100",
+              isDragging && "!block !opacity-100",
+              isDark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"
+            )}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <GripIcon size={14} />
+          </div>
+        )}
 
         <div className="flex-1 min-w-0 flex items-center justify-between">
           <div

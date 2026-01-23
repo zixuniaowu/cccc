@@ -1337,8 +1337,9 @@ def cmd_actor_update(args: argparse.Namespace) -> int:
     patch: dict[str, Any] = {}
     if args.title is not None:
         patch["title"] = str(args.title or "")
-    if args.role:
-        patch["role"] = str(args.role)
+    role = getattr(args, "role", None)
+    if role:
+        patch["role"] = str(role)
     if args.command is not None:
         cmd: list[str] = []
         if str(args.command).strip():
@@ -1741,7 +1742,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 results["notes"].append("codex: CLI not found; run the command shown in result.mcp.codex.command")
 
         elif rt == "droid":
-            cmd = ["droid", "mcp", "add", "cccc", "--", *cccc_cmd]
+            cmd = ["droid", "mcp", "add", "--type", "stdio", "cccc", *cccc_cmd]
             try:
                 result = subprocess.run(
                     cmd,

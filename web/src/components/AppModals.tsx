@@ -504,7 +504,14 @@ export function AppModals({
     return "";
   })();
 
+  const relaySourceGroupId = useMemo(() => {
+    const fromStore = relaySource?.groupId ? String(relaySource.groupId) : "";
+    if (fromStore.trim()) return fromStore.trim();
+    return String(selectedGroupId || "").trim();
+  }, [relaySource, selectedGroupId]);
+
   const relaySourceEvent = useMemo(() => {
+    if (relaySource?.event) return relaySource.event;
     const eid = String(relayEventId || "").trim();
     if (!eid) return null;
     const fromWindow =
@@ -513,14 +520,14 @@ export function AppModals({
         : null;
     if (fromWindow) return fromWindow;
     return (events || []).find((ev) => String(ev.id || "") === eid) || null;
-  }, [chatWindow, events, relayEventId, selectedGroupId]);
+  }, [chatWindow, events, relayEventId, relaySource, selectedGroupId]);
 
   const handleRelayMessage = async (dstGroupId: string, toTokens: string[], note: string) => {
     const src = relaySourceEvent;
-    const srcGroupId = String(selectedGroupId || "").trim();
+     const srcGroupId = relaySourceGroupId;
     const dstGroup = String(dstGroupId || "").trim();
     const srcEventId = src?.id ? String(src.id) : "";
-    if (!srcGroupId || !srcEventId || !src) return;
+    if (!src || !srcGroupId || !srcEventId) return;
     if (!dstGroup) return;
     if (dstGroup === srcGroupId) {
       showError("Destination group must be different from the source group.");
@@ -588,7 +595,7 @@ export function AppModals({
           isOpen={true}
           isDark={isDark}
           busy={busy === "relay"}
-          srcGroupId={selectedGroupId}
+          srcGroupId={relaySourceGroupId}
           srcEvent={relaySourceEvent}
           groups={groups}
           onCancel={() => setRelayModal(null)}

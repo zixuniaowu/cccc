@@ -104,23 +104,10 @@ export function AppHeader({
                   />
                 );
               })()}
-            {webReadOnly && (
-              <span
-                className={classNames(
-                  "text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full border",
-                  isDark
-                    ? "text-amber-200 border-amber-400/30 bg-amber-500/10"
-                    : "text-amber-800 border-amber-400/40 bg-amber-50"
-                )}
-                title="Read-only (exhibit) mode"
-              >
-                Read-only
-              </span>
-            )}
           </div>
         </div>
 
-        {selectedGroupId && (
+        {selectedGroupId && !webReadOnly && (
           <button
             className={classNames(
               "hidden sm:inline-flex items-center justify-center gap-1 text-xs px-2.5 py-1.5 rounded-xl transition-all glass-btn",
@@ -137,124 +124,127 @@ export function AppHeader({
 
       {/* Right Actions */}
       <div className="flex items-center gap-1">
-        {/* Desktop Actions - subtle */}
-        <div className="hidden sm:flex items-center gap-1.5 mr-2">
-          <button
-            onClick={onOpenSearch}
-            disabled={!selectedGroupId}
-            className={classNames(
-              "p-2 rounded-xl transition-all glass-btn",
-              isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"
-            )}
-            title="Search messages"
-          >
-            <span className="sr-only">Search</span>
-            <SearchIcon size={18} />
-          </button>
+        {!webReadOnly && (
+          <>
+            {/* Desktop Actions */}
+            <div className="hidden sm:flex items-center gap-1.5 mr-2">
+              <button
+                onClick={onOpenSearch}
+                disabled={!selectedGroupId}
+                className={classNames(
+                  "p-2 rounded-xl transition-all glass-btn",
+                  isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"
+                )}
+                title="Search messages"
+              >
+                <span className="sr-only">Search</span>
+                <SearchIcon size={18} />
+              </button>
 
-          <button
-            onClick={onOpenContext}
-            disabled={!selectedGroupId}
-            className={classNames(
-              "p-2 rounded-xl transition-all glass-btn",
-              isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"
-            )}
-            title="Context (Clipboard)"
-          >
-            <span className="sr-only">Context</span>
-            <ClipboardIcon size={18} />
-          </button>
+              <button
+                onClick={onOpenContext}
+                disabled={!selectedGroupId}
+                className={classNames(
+                  "p-2 rounded-xl transition-all glass-btn",
+                  isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"
+                )}
+                title="Context (Clipboard)"
+              >
+                <span className="sr-only">Context</span>
+                <ClipboardIcon size={18} />
+              </button>
 
-          <div className={`w-px h-4 mx-1 ${isDark ? "bg-white/10" : "bg-black/10"}`} />
+              <div className={`w-px h-4 mx-1 ${isDark ? "bg-white/10" : "bg-black/10"}`} />
 
-          <button
-            onClick={onStartGroup}
-            disabled={!selectedGroupId || busy === "group-start" || actors.length === 0}
-            className={classNames(
-              "p-2 rounded-xl transition-all",
-              isDark 
-                ? "text-emerald-400 hover:bg-emerald-500/15 glass-btn" 
-                : "text-emerald-600 hover:bg-emerald-50/80 glass-btn"
-            )}
-            title="Launch All Agents"
-          >
-            <span className="sr-only">Launch</span>
-            <RocketIcon size={18} />
-          </button>
+              <button
+                onClick={onStartGroup}
+                disabled={!selectedGroupId || busy === "group-start" || actors.length === 0}
+                className={classNames(
+                  "p-2 rounded-xl transition-all",
+                  isDark
+                    ? "text-emerald-400 hover:bg-emerald-500/15 glass-btn"
+                    : "text-emerald-600 hover:bg-emerald-50/80 glass-btn"
+                )}
+                title="Launch All Agents"
+              >
+                <span className="sr-only">Launch</span>
+                <RocketIcon size={18} />
+              </button>
 
-          {groupDoc?.state === "paused" ? (
-            <button
-              onClick={() => void onSetGroupState("active")}
-              disabled={!selectedGroupId || busy === "group-state"}
-              className={classNames(
-                "p-2 rounded-xl transition-all glass-btn",
-                isDark ? "text-amber-400" : "text-amber-600"
+              {groupDoc?.state === "paused" ? (
+                <button
+                  onClick={() => void onSetGroupState("active")}
+                  disabled={!selectedGroupId || busy === "group-state"}
+                  className={classNames(
+                    "p-2 rounded-xl transition-all glass-btn",
+                    isDark ? "text-amber-400" : "text-amber-600"
+                  )}
+                  title="Resume Delivery"
+                >
+                  <span className="sr-only">Resume</span>
+                  <PlayIcon size={18} />
+                </button>
+              ) : (
+                <button
+                  onClick={() => void onSetGroupState("paused")}
+                  disabled={!selectedGroupId || busy === "group-state"}
+                  className={classNames(
+                    "p-2 rounded-xl transition-all glass-btn",
+                    isDark ? "text-slate-400 hover:text-amber-300" : "text-gray-400 hover:text-amber-600"
+                  )}
+                  title="Pause Delivery"
+                >
+                  <span className="sr-only">Pause</span>
+                  <PauseIcon size={18} />
+                </button>
               )}
-              title="Resume Delivery"
-            >
-              <span className="sr-only">Resume</span>
-              <PlayIcon size={18} />
-            </button>
-          ) : (
+
+              <button
+                onClick={onStopGroup}
+                disabled={!selectedGroupId || busy === "group-stop"}
+                className={classNames(
+                  "p-2 rounded-xl transition-all glass-btn",
+                  isDark ? "text-slate-400 hover:text-rose-400" : "text-gray-400 hover:text-rose-600"
+                )}
+                title="Stop All Agents"
+              >
+                <span className="sr-only">Stop</span>
+                <StopIcon size={18} />
+              </button>
+            </div>
+
+            <div className="hidden sm:block">
+              <ThemeToggleCompact theme={theme} onThemeChange={onThemeChange} isDark={isDark} />
+            </div>
+
             <button
-              onClick={() => void onSetGroupState("paused")}
-              disabled={!selectedGroupId || busy === "group-state"}
+              onClick={onOpenSettings}
+              disabled={!selectedGroupId}
               className={classNames(
-                "p-2 rounded-xl transition-all glass-btn",
-                isDark ? "text-slate-400 hover:text-amber-300" : "text-gray-400 hover:text-amber-600"
+                "hidden sm:flex p-2 rounded-xl transition-all glass-btn",
+                isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-400 hover:text-gray-600"
               )}
-              title="Pause Delivery"
+              title="Settings"
             >
-              <span className="sr-only">Pause</span>
-              <PauseIcon size={18} />
+              <SettingsIcon size={18} />
             </button>
-          )}
 
-          <button
-            onClick={onStopGroup}
-            disabled={!selectedGroupId || busy === "group-stop"}
-            className={classNames(
-              "p-2 rounded-xl transition-all glass-btn",
-              isDark ? "text-slate-400 hover:text-rose-400" : "text-gray-400 hover:text-rose-600"
-            )}
-            title="Stop All Agents"
-          >
-            <span className="sr-only">Stop</span>
-            <StopIcon size={18} />
-          </button>
-          <div className={`w-px h-4 mx-1 ${isDark ? "bg-white/10" : "bg-black/10"}`} />
-        </div>
-
-        <div className="hidden sm:block">
-          <ThemeToggleCompact theme={theme} onThemeChange={onThemeChange} isDark={isDark} />
-        </div>
-
-        <button
-          onClick={onOpenSettings}
-          disabled={!selectedGroupId}
-          className={classNames(
-            "hidden sm:flex p-2 rounded-xl transition-all glass-btn",
-            isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-400 hover:text-gray-600"
-          )}
-          title="Settings"
-        >
-          <SettingsIcon size={18} />
-        </button>
-
-        <button
-          className={classNames(
-            "sm:hidden flex items-center justify-center w-8 h-8 rounded-xl transition-all glass-btn",
-            isDark ? "text-slate-400" : "text-gray-400"
-          )}
-          onClick={onOpenMobileMenu}
-          title="Menu"
-        >
-          <MoreIcon size={18} />
-        </button>
+            <button
+              className={classNames(
+                "sm:hidden flex items-center justify-center w-8 h-8 rounded-xl transition-all glass-btn",
+                isDark ? "text-slate-400" : "text-gray-400"
+              )}
+              onClick={onOpenMobileMenu}
+              title="Menu"
+            >
+              <MoreIcon size={18} />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Error Toast - Floating below header now */}
-      {errorMsg && (
+      {errorMsg && !webReadOnly && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 animate-slide-up">
           <div
             className={classNames(
@@ -279,7 +269,7 @@ export function AppHeader({
         </div>
       )}
 
-      {notice && (
+      {notice && !webReadOnly && (
         <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 animate-slide-up">
           <div
             className={classNames(

@@ -897,11 +897,16 @@ export default function App() {
           isOpen={sidebarOpen}
           isCollapsed={sidebarCollapsed}
           isDark={isDark}
+          readOnly={webReadOnly}
           onSelectGroup={(gid) => setSelectedGroupId(gid)}
-          onCreateGroup={() => {
-            openModal("createGroup");
-            void fetchDirSuggestions();
-          }}
+          onCreateGroup={
+            webReadOnly
+              ? undefined
+              : () => {
+                openModal("createGroup");
+                void fetchDirSuggestions();
+              }
+          }
           onClose={() => setSidebarOpen(false)}
           onToggleCollapse={toggleSidebarCollapsed}
           onReorder={reorderGroups}
@@ -960,11 +965,15 @@ export default function App() {
               onTabChange={handleTabChange}
               unreadChatCount={chatUnreadCount}
               isDark={isDark}
-              onAddAgent={() => {
-                setNewActorRole(hasForeman ? "peer" : "foreman");
-                openModal("addActor");
-              }}
-              canAddAgent={!!selectedGroupId}
+              onAddAgent={
+                webReadOnly
+                  ? undefined
+                  : () => {
+                    setNewActorRole(hasForeman ? "peer" : "foreman");
+                    openModal("addActor");
+                  }
+              }
+              canAddAgent={!webReadOnly && !!selectedGroupId}
             />
           )}
 
@@ -983,6 +992,7 @@ export default function App() {
               <ChatTab
                 isDark={isDark}
                 isSmallScreen={isSmallScreen}
+                readOnly={webReadOnly}
                 selectedGroupId={selectedGroupId}
                 groupLabelById={groupLabelById}
                 actors={actors}
@@ -1107,6 +1117,7 @@ export default function App() {
                       isDark={isDark}
                       isSmallScreen={isSmallScreen}
                       isVisible={isVisible}
+                      readOnly={webReadOnly}
                       onToggleEnabled={() => actor && toggleActorEnabled(actor)}
                       onRelaunch={() => actor && relaunchActor(actor)}
                       onEdit={() => actor && editActor(actor)}

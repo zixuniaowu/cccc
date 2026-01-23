@@ -198,14 +198,21 @@ def _is_mcp_installed(runtime: str) -> bool:
             return result.returncode == 0
         
         elif runtime == "droid":
-            # droid doesn't have 'get', use list and grep
-            result = subprocess.run(
-                ["droid", "mcp", "list"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            return result.returncode == 0 and "cccc" in (result.stdout or "")
+            # Droid stores MCP servers in a local JSON config; its CLI does not
+            # expose a stable `get/list` across versions.
+            for p in (
+                Path.home() / ".factory" / "mcp.json",
+                Path.home() / ".config" / "droid" / "mcp.json",
+                Path.home() / ".droid" / "mcp.json",
+            ):
+                cfg = read_json(p)
+                servers = cfg.get("mcpServers") if isinstance(cfg, dict) else None
+                if not isinstance(servers, dict):
+                    continue
+                entry = servers.get("cccc")
+                if isinstance(entry, dict):
+                    return not bool(entry.get("disabled", False))
+            return False
 
         elif runtime == "amp":
             settings_path = Path.home() / ".config" / "amp" / "settings.json"
@@ -304,7 +311,7 @@ def _ensure_mcp_installed(runtime: str, cwd: Path) -> bool:
         elif runtime == "droid":
             # Droid: user level
             result = subprocess.run(
-                ["droid", "mcp", "add", "cccc", "--", "cccc", "mcp"],
+                ["droid", "mcp", "add", "--type", "stdio", "cccc", "cccc", "mcp"],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -4114,6 +4121,8 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                     group = load_group(group_id)
                     if group is None:
                         resp = _error("group_not_found", f"group not found: {group_id}")
+                    elif by != "user" and not isinstance(find_actor(group, by), dict):
+                        resp = _error("unknown_actor", f"unknown actor: {by}")
                     else:
                         resp = DaemonResponse(ok=True, result={"group_id": group_id})
 

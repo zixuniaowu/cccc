@@ -87,6 +87,7 @@ export interface MessageBubbleProps {
     displayNameMap: Map<string, string>;
     presenceAgent: PresenceAgent | null;
     isDark: boolean;
+    readOnly?: boolean;
     groupId: string;
     groupLabelById: Record<string, string>;
     isHighlighted?: boolean;
@@ -104,6 +105,7 @@ export const MessageBubble = memo(function MessageBubble({
     displayNameMap,
     presenceAgent,
     isDark,
+    readOnly,
     groupId,
     groupLabelById,
     isHighlighted,
@@ -506,71 +508,123 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 >
                     {ackSummary ? (
-                        <button
-                            type="button"
-                            className={classNames(
-                                "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
-                                isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
-                            )}
-                            onClick={onShowRecipients}
-                            aria-label="Show acknowledgement status"
-                        >
-                            <span
-                                className={classNames(
-                                    "text-[10px] font-semibold tracking-tight",
-                                    ackSummary.done >= ackSummary.total
-                                        ? isDark
-                                            ? "text-emerald-400"
-                                            : "text-emerald-600"
-                                        : isDark
-                                            ? "text-amber-400"
-                                            : "text-amber-600"
-                                )}
-                            >
-                                Ack {ackSummary.done}/{ackSummary.total}
-                            </span>
-                        </button>
-                    ) : visibleReadStatusEntries.length > 0 ? (
-                        <button
-                            type="button"
-                            className={classNames(
-                                "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
-                                isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
-                            )}
-                            onClick={onShowRecipients}
-                            aria-label="Show recipient status"
-                        >
-                            <div className="flex items-center gap-2 min-w-0">
-                                {readPreviewEntries.map(([id, cleared]) => (
-                                    <span key={id} className="inline-flex items-center gap-1 min-w-0">
-                                        <span className="truncate max-w-[10ch]">{displayNameMap.get(id) || id}</span>
-                                        <span
-                                            className={classNames(
-                                                "text-[10px] font-semibold tracking-tight",
-                                                cleared
-                                                    ? isDark
-                                                        ? "text-emerald-400"
-                                                        : "text-emerald-600"
-                                                    : isDark
-                                                        ? "text-slate-500"
-                                                        : "text-gray-500"
-                                            )}
-                                            aria-label={cleared ? "read" : "pending"}
-                                        >
-                                            {cleared ? "✓✓" : "✓"}
-                                        </span>
-                                    </span>
-                                ))}
-                                {readPreviewOverflow > 0 && (
-                                    <span className={classNames("text-[10px]", isDark ? "text-slate-500" : "text-gray-500")}>
-                                        +{readPreviewOverflow}
-                                    </span>
-                                )}
+                        readOnly ? (
+                            <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
+                                <span
+                                    className={classNames(
+                                        "text-[10px] font-semibold tracking-tight",
+                                        ackSummary.done >= ackSummary.total
+                                            ? isDark
+                                                ? "text-emerald-400"
+                                                : "text-emerald-600"
+                                            : isDark
+                                                ? "text-amber-400"
+                                                : "text-amber-600"
+                                    )}
+                                >
+                                    Ack {ackSummary.done}/{ackSummary.total}
+                                </span>
                             </div>
-                        </button>
+                        ) : (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
+                                    isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
+                                )}
+                                onClick={onShowRecipients}
+                                aria-label="Show acknowledgement status"
+                            >
+                                <span
+                                    className={classNames(
+                                        "text-[10px] font-semibold tracking-tight",
+                                        ackSummary.done >= ackSummary.total
+                                            ? isDark
+                                                ? "text-emerald-400"
+                                                : "text-emerald-600"
+                                            : isDark
+                                                ? "text-amber-400"
+                                                : "text-amber-600"
+                                    )}
+                                >
+                                    Ack {ackSummary.done}/{ackSummary.total}
+                                </span>
+                            </button>
+                        )
+                    ) : visibleReadStatusEntries.length > 0 ? (
+                        readOnly ? (
+                            <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    {readPreviewEntries.map(([id, cleared]) => (
+                                        <span key={id} className="inline-flex items-center gap-1 min-w-0">
+                                            <span className="truncate max-w-[10ch]">{displayNameMap.get(id) || id}</span>
+                                            <span
+                                                className={classNames(
+                                                    "text-[10px] font-semibold tracking-tight",
+                                                    cleared
+                                                        ? isDark
+                                                            ? "text-emerald-400"
+                                                            : "text-emerald-600"
+                                                        : isDark
+                                                            ? "text-slate-500"
+                                                            : "text-gray-500"
+                                                )}
+                                                aria-label={cleared ? "read" : "pending"}
+                                            >
+                                                {cleared ? "✓✓" : "✓"}
+                                            </span>
+                                        </span>
+                                    ))}
+                                    {readPreviewOverflow > 0 && (
+                                        <span className={classNames("text-[10px]", isDark ? "text-slate-500" : "text-gray-500")}>
+                                            +{readPreviewOverflow}
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
+                                    isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
+                                )}
+                                onClick={onShowRecipients}
+                                aria-label="Show recipient status"
+                            >
+                                <div className="flex items-center gap-2 min-w-0">
+                                    {readPreviewEntries.map(([id, cleared]) => (
+                                        <span key={id} className="inline-flex items-center gap-1 min-w-0">
+                                            <span className="truncate max-w-[10ch]">{displayNameMap.get(id) || id}</span>
+                                            <span
+                                                className={classNames(
+                                                    "text-[10px] font-semibold tracking-tight",
+                                                    cleared
+                                                        ? isDark
+                                                            ? "text-emerald-400"
+                                                            : "text-emerald-600"
+                                                        : isDark
+                                                            ? "text-slate-500"
+                                                            : "text-gray-500"
+                                                )}
+                                                aria-label={cleared ? "read" : "pending"}
+                                            >
+                                                {cleared ? "✓✓" : "✓"}
+                                            </span>
+                                        </span>
+                                    ))}
+                                    {readPreviewOverflow > 0 && (
+                                        <span className={classNames("text-[10px]", isDark ? "text-slate-500" : "text-gray-500")}>
+                                            +{readPreviewOverflow}
+                                        </span>
+                                    )}
+                                </div>
+                            </button>
+                        )
                     ) : null}
 
-                    <div className="flex items-center gap-2">
+                    {!readOnly && (
+                      <div className="flex items-center gap-2">
                         {ackSummary && ackSummary.needsUserAck && ev.id && !isUserMessage && (
                             <button
                                 type="button"
@@ -624,7 +678,8 @@ export const MessageBubble = memo(function MessageBubble({
                         >
                             Reply
                         </button>
-                    </div>
+                      </div>
+                    )}
                 </div>
             </div>
 

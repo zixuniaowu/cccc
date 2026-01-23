@@ -221,6 +221,8 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         if (
           kind === "chat.message" ||
           kind === "chat.read" ||
+          kind === "system.notify" ||
+          kind === "system.notify_ack" ||
           kind.startsWith("actor.") ||
           kind === "group.start" ||
           kind === "group.stop" ||
