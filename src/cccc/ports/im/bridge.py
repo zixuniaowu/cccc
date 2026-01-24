@@ -26,6 +26,7 @@ from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import Group, load_group
 from ...kernel.messaging import get_default_send_to
 from ...paths import ensure_home
+from ...util.conv import coerce_bool
 from .adapters.base import IMAdapter
 from .adapters.telegram import TelegramAdapter
 from .adapters.slack import SlackAdapter
@@ -405,7 +406,7 @@ class IMBridge:
                 attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
                 self._handle_message(chat_id, parsed, from_user, attachments=attachments, thread_id=thread_id)
             elif parsed.type == CommandType.MESSAGE:
-                routed = bool(msg.get("routed") or False)
+                routed = coerce_bool(msg.get("routed"), default=False)
 
                 # Unknown slash commands should not be forwarded as chat content.
                 # (Telegram groups may contain unrelated /commands; we only reply when routed/private.)
@@ -468,7 +469,7 @@ class IMBridge:
             sent_any_file = False
             file_cfg = (self.group.doc.get("im") or {}) if isinstance(self.group.doc.get("im"), dict) else {}
             files_cfg = file_cfg.get("files") if isinstance(file_cfg.get("files"), dict) else {}
-            files_enabled = bool(files_cfg.get("enabled", True))
+            files_enabled = coerce_bool(files_cfg.get("enabled"), default=True)
             platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
             default_max_mb = 20 if platform in ("telegram", "slack") else 10
             try:
@@ -751,7 +752,7 @@ class IMBridge:
         for a in list_actors(group):
             if not isinstance(a, dict):
                 continue
-            if not bool(a.get("enabled", True)):
+            if not coerce_bool(a.get("enabled"), default=True):
                 continue
             aid = str(a.get("id") or "").strip()
             if aid:
@@ -791,7 +792,7 @@ class IMBridge:
         # File settings (only after recipients are validated)
         im_cfg = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
         files_cfg = im_cfg.get("files") if isinstance(im_cfg.get("files"), dict) else {}
-        files_enabled = bool(files_cfg.get("enabled", True))
+        files_enabled = coerce_bool(files_cfg.get("enabled"), default=True)
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
         default_max_mb = 20 if platform == "telegram" else 10 if platform == "discord" else 20
         try:
@@ -1113,7 +1114,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
 
     # Read skip_pending_on_start option from config
     # When True, bridge will skip messages that accumulated during downtime
-    skip_pending = bool(im_config.get("skip_pending_on_start", False))
+    skip_pending = coerce_bool(im_config.get("skip_pending_on_start"), default=False)
 
     # Create and start bridge
     bridge = IMBridge(

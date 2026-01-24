@@ -28,6 +28,7 @@ from ..kernel.prompt_files import DEFAULT_STANDUP_TEMPLATE, STANDUP_FILENAME, re
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
 from .delivery import flush_pending_messages, queue_system_notify
+from ..util.conv import coerce_bool
 from ..util.fs import atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
 
@@ -63,20 +64,10 @@ def _cfg(group: Group) -> AutomationConfig:
             v = int(default)
         return max(0, v)
 
-    def _bool(key: str, default: bool) -> bool:
-        if key not in d:
-            return default
-        v = d.get(key)
-        if isinstance(v, bool):
-            return v
-        if isinstance(v, str):
-            return v.lower() in ("true", "1", "yes", "on")
-        return bool(v)
-
     return AutomationConfig(
         # Level 1
         nudge_after_seconds=_int("nudge_after_seconds", 300),
-        auto_mark_on_delivery=_bool("auto_mark_on_delivery", False),
+        auto_mark_on_delivery=coerce_bool(d.get("auto_mark_on_delivery"), default=False),
         # Level 2
         actor_idle_timeout_seconds=_int("actor_idle_timeout_seconds", 600),
         keepalive_delay_seconds=_int("keepalive_delay_seconds", 120),
@@ -390,7 +381,7 @@ class AutomationManager:
                 aid = str(actor.get("id") or "").strip()
                 if not aid:
                     continue
-                if not bool(actor.get("enabled", True)):
+                if not coerce_bool(actor.get("enabled"), default=True):
                     continue
                 # Check if actor is running
                 runner_kind = str(actor.get("runner") or "pty").strip()
@@ -547,7 +538,7 @@ class AutomationManager:
                 aid = str(actor.get("id") or "").strip()
                 if not aid:
                     continue
-                if not bool(actor.get("enabled", True)):
+                if not coerce_bool(actor.get("enabled"), default=True):
                     continue
                 # Skip foreman itself
                 if aid == foreman_id:
@@ -629,7 +620,7 @@ class AutomationManager:
                 aid = str(actor.get("id") or "").strip()
                 if not aid:
                     continue
-                if not bool(actor.get("enabled", True)):
+                if not coerce_bool(actor.get("enabled"), default=True):
                     continue
                 # Check if actor is running
                 runner_kind = str(actor.get("runner") or "pty").strip()
@@ -838,7 +829,7 @@ class AutomationManager:
             aid = str(actor.get("id") or "").strip()
             if not aid or aid == "user":
                 continue
-            if not bool(actor.get("enabled", True)):
+            if not coerce_bool(actor.get("enabled"), default=True):
                 continue
             runner_kind = str(actor.get("runner") or "pty").strip()
             if runner_kind == "headless":

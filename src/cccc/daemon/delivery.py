@@ -39,6 +39,7 @@ from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
 from ..util.fs import atomic_write_text, atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
+from ..util.conv import coerce_bool
 
 
 # ============================================================================
@@ -68,12 +69,7 @@ def _get_auto_mark_on_delivery(group: Group) -> bool:
     automation = group.doc.get("automation")
     if not isinstance(automation, dict):
         return False
-    v = automation.get("auto_mark_on_delivery", False)
-    if isinstance(v, bool):
-        return v
-    if isinstance(v, str):
-        return v.lower() in ("true", "1", "yes", "on")
-    return bool(v)
+    return coerce_bool(automation.get("auto_mark_on_delivery"), default=False)
 
 
 # ============================================================================

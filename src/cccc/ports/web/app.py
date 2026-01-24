@@ -42,6 +42,7 @@ from ...kernel.prompt_files import (
 from ...kernel.group_template import parse_group_template
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
+from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_text
 
 logger = logging.getLogger("cccc.web")
@@ -1219,7 +1220,7 @@ def create_app() -> FastAPI:
         
         ops = body.get("ops") if isinstance(body.get("ops"), list) else []
         by = str(body.get("by") or "user")
-        dry_run = bool(body.get("dry_run", False))
+        dry_run = coerce_bool(body.get("dry_run"), default=False)
         
         return await _daemon({
             "op": "context_sync",
@@ -1253,9 +1254,9 @@ def create_app() -> FastAPI:
                     "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
                     "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
                     "standup_interval_seconds": int(automation.get("standup_interval_seconds", 900)),
-                    "auto_mark_on_delivery": bool(automation.get("auto_mark_on_delivery", False)),
+                    "auto_mark_on_delivery": coerce_bool(automation.get("auto_mark_on_delivery"), default=False),
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
-                    "terminal_transcript_notify_tail": bool(tt.get("notify_tail", False)),
+                    "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
                 }
             }
@@ -2132,7 +2133,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
 
         prev_im = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
-        prev_enabled = bool(prev_im.get("enabled", False)) if isinstance(prev_im, dict) else False
+        prev_enabled = coerce_bool(prev_im.get("enabled"), default=False) if isinstance(prev_im, dict) else False
 
         # Build IM config.
         # Note: Web UI historically used bot_token_env/app_token_env as a single input.

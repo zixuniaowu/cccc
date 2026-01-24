@@ -35,6 +35,7 @@ from ..kernel.messaging import get_default_send_to, enabled_recipient_actor_ids,
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
+from ..util.conv import coerce_bool
 from ..util.obslog import setup_root_json_logging
 from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.time import utc_now_iso
@@ -89,7 +90,7 @@ def _get_observability() -> Dict[str, Any]:
 
 def _developer_mode_enabled() -> bool:
     obs = _get_observability()
-    return bool(obs.get("developer_mode", False))
+    return coerce_bool(obs.get("developer_mode"), default=False)
 
 
 def _apply_observability_settings(home: Path, obs: Dict[str, Any]) -> None:
@@ -102,7 +103,7 @@ def _apply_observability_settings(home: Path, obs: Dict[str, Any]) -> None:
 
     # Logging: keep simple; configure root JSONL logger to stderr.
     level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"
-    if obs.get("developer_mode"):
+    if coerce_bool(obs.get("developer_mode"), default=False):
         # Developer mode typically wants more detail.
         if level == "INFO":
             level = "DEBUG"
@@ -211,7 +212,7 @@ def _is_mcp_installed(runtime: str) -> bool:
                     continue
                 entry = servers.get("cccc")
                 if isinstance(entry, dict):
-                    return not bool(entry.get("disabled", False))
+                    return not coerce_bool(entry.get("disabled"), default=False)
             return False
 
         elif runtime == "amp":
@@ -939,7 +940,7 @@ def _maybe_autostart_enabled_im_bridges() -> None:
             continue
 
         im_cfg = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else None
-        if not isinstance(im_cfg, dict) or not bool(im_cfg.get("enabled", False)):
+        if not isinstance(im_cfg, dict) or not coerce_bool(im_cfg.get("enabled"), default=False):
             continue
 
         platform = str(im_cfg.get("platform") or "telegram").strip() or "telegram"
@@ -1007,7 +1008,7 @@ def _maybe_autostart_running_groups() -> None:
         group = load_group(gid)
         if group is None:
             continue
-        if not bool(group.doc.get("running", False)):
+        if not coerce_bool(group.doc.get("running"), default=False):
             continue
         group_scope_key = str(group.doc.get("active_scope_key") or "").strip()
         if not group_scope_key:
@@ -1023,7 +1024,7 @@ def _maybe_autostart_running_groups() -> None:
             aid = str(actor.get("id") or "").strip()
             if not aid:
                 continue
-            if not bool(actor.get("enabled", True)):
+            if not coerce_bool(actor.get("enabled"), default=True):
                 continue
             runner_kind = str(actor.get("runner") or "pty").strip()
             effective_runner = _effective_runner_kind(runner_kind)
@@ -1131,7 +1132,7 @@ def _maybe_compact_ledgers(home: Path) -> None:
         group = load_group(gid)
         if group is None:
             continue
-        if not bool(group.doc.get("running", False)):
+        if not coerce_bool(group.doc.get("running"), default=False):
             continue
         try:
             _ = compact_ledger(group, reason="auto", force=False)
@@ -1504,7 +1505,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                             "runtime": str(a.get("runtime") or ""),
                             "runner": runner_kind,
                             "runner_effective": (effective_runner if effective_runner != runner_kind else runner_kind),
-                            "enabled": bool(a.get("enabled", True)),
+                            "enabled": coerce_bool(a.get("enabled"), default=True),
                             "running": bool(running),
                             "unread_count": int(a.get("unread_count") or 0),
                         }
@@ -1523,8 +1524,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         actor_id = str(args.get("actor_id") or "").strip()
         by = str(args.get("by") or "user").strip()
         max_chars = int(args.get("max_chars") or 8000)
-        strip_ansi = bool(args.get("strip_ansi", True))
-        compact = bool(args.get("compact", True))
+        strip_ansi = coerce_bool(args.get("strip_ansi"), default=True)
+        compact = coerce_bool(args.get("compact"), default=True)
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
         if not actor_id:
@@ -1897,7 +1898,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
                 for k, v in automation_patch.items():
                     if k == "auto_mark_on_delivery":
-                        automation[k] = bool(v)
+                        automation[k] = coerce_bool(v, default=False)
                     else:
                         automation[k] = int(v)
                 group.doc["automation"] = automation
@@ -2318,7 +2319,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
 
     if op == "actor_list":
         group_id = str(args.get("group_id") or "").strip()
-        include_unread = bool(args.get("include_unread", False))
+        include_unread = coerce_bool(args.get("include_unread"), default=False)
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
         group = load_group(group_id)
@@ -2530,7 +2531,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         # Update running flag if no enabled actors remain.
         try:
             any_enabled = any(
-                bool(a.get("enabled", True))
+                coerce_bool(a.get("enabled"), default=True)
                 for a in list_actors(group)
                 if isinstance(a, dict) and str(a.get("id") or "").strip()
             )
@@ -2574,8 +2575,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         except Exception as e:
             return _error("actor_update_failed", str(e)), False
         if enabled_patched:
-            if bool(actor.get("enabled", False)):
-                if bool(group.doc.get("running", False)):
+            if coerce_bool(actor.get("enabled"), default=False):
+                if coerce_bool(group.doc.get("running"), default=False):
                     group_scope_key = str(group.doc.get("active_scope_key") or "").strip()
                     if not group_scope_key:
                         return (
@@ -2698,7 +2699,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 # If no enabled actors remain, mark group as not running.
                 try:
                     any_enabled = any(
-                        bool(a.get("enabled", True))
+                        coerce_bool(a.get("enabled"), default=True)
                         for a in list_actors(group)
                         if isinstance(a, dict) and str(a.get("id") or "").strip()
                     )
@@ -2790,7 +2791,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             return _error("actor_stop_failed", str(e)), False
         try:
             any_enabled = any(
-                bool(a.get("enabled", True))
+                coerce_bool(a.get("enabled"), default=True)
                 for a in list_actors(group)
                 if isinstance(a, dict) and str(a.get("id") or "").strip()
             )
@@ -2840,7 +2841,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             THROTTLE.reset_actor(group.group_id, actor_id, keep_pending=True)
         except Exception as e:
             return _error("actor_restart_failed", str(e)), False
-        if bool(group.doc.get("running", False)):
+        if coerce_bool(group.doc.get("running"), default=False):
             group_scope_key = str(group.doc.get("active_scope_key") or "").strip()
             if not group_scope_key:
                 return (
@@ -3168,7 +3169,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         group_id = str(args.get("group_id") or "").strip()
         by = str(args.get("by") or "user").strip()
         reason = str(args.get("reason") or "auto").strip()
-        force = bool(args.get("force", False))
+        force = coerce_bool(args.get("force"), default=False)
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
         group = load_group(group_id)
@@ -3739,7 +3740,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         title = str(args.get("title") or "").strip()
         message = str(args.get("message") or "").strip()
         target_actor_id = str(args.get("target_actor_id") or "").strip() or None
-        requires_ack = bool(args.get("requires_ack", False))
+        requires_ack = coerce_bool(args.get("requires_ack"), default=False)
         context = args.get("context") if isinstance(args.get("context"), dict) else {}
 
         if not group_id:
