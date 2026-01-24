@@ -465,7 +465,8 @@ export default function App() {
         try {
           const ev = JSON.parse((e as MessageEvent).data || "{}");
           const kind = typeof ev?.kind === "string" ? ev.kind : "";
-          if (kind.startsWith("group.")) {
+          // Refresh groups on group or actor events to keep sidebar status in sync
+          if (kind.startsWith("group.") || kind.startsWith("actor.")) {
             refreshGroups();
           }
         } catch {
