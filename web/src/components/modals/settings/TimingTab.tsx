@@ -23,6 +23,8 @@ interface TimingTabProps {
   setDeliveryInterval: (v: number) => void;
   standupInterval: number;
   setStandupInterval: (v: number) => void;
+  autoMarkOnDelivery: boolean;
+  setAutoMarkOnDelivery: (v: boolean) => void;
   onSave: () => void;
 }
 
@@ -153,6 +155,55 @@ const TimingSection = ({
   </div>
 );
 
+const ToggleRow = ({
+  label,
+  checked,
+  onChange,
+  isDark,
+  helperText,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (val: boolean) => void;
+  isDark: boolean;
+  helperText?: React.ReactNode;
+}) => (
+  <div className="w-full">
+    <label className="flex items-center justify-between cursor-pointer">
+      <span className={labelClass(isDark)}>{label}</span>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className={`
+          relative inline-flex h-6 w-11 items-center rounded-full transition-colors
+          focus:outline-none focus:ring-2 focus:ring-offset-2
+          ${checked
+            ? "bg-emerald-500 focus:ring-emerald-500"
+            : isDark
+              ? "bg-slate-600 focus:ring-slate-500"
+              : "bg-gray-300 focus:ring-gray-400"
+          }
+          ${isDark ? "focus:ring-offset-slate-900" : "focus:ring-offset-white"}
+        `}
+      >
+        <span
+          className={`
+            inline-block h-4 w-4 rounded-full bg-white shadow-sm transform transition-transform
+            ${checked ? "translate-x-6" : "translate-x-1"}
+          `}
+        />
+      </button>
+    </label>
+    {helperText && (
+      <div className={`mt-1.5 text-[11px] leading-snug ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        {helperText}
+      </div>
+    )}
+  </div>
+);
+
 const NumberInputRow = ({
   label,
   value,
@@ -229,6 +280,13 @@ export function TimingTab(props: TimingTabProps) {
           value={props.deliveryInterval}
           onChange={props.setDeliveryInterval}
           helperText="Minimum delay between message deliveries (throttling)."
+        />
+        <ToggleRow
+          isDark={isDark}
+          label="Auto-mark as read on delivery"
+          checked={props.autoMarkOnDelivery}
+          onChange={props.setAutoMarkOnDelivery}
+          helperText="Automatically mark messages as read after successful delivery to PTY."
         />
       </TimingSection>
 

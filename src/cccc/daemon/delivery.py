@@ -32,7 +32,7 @@ logger = logging.getLogger("cccc.delivery")
 
 from ..kernel.actors import find_actor, list_actors
 from ..kernel.group import Group, get_group_state, set_group_state
-from ..kernel.inbox import is_message_for_actor
+from ..kernel.inbox import is_message_for_actor, set_cursor
 from ..kernel.system_prompt import render_system_prompt
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
@@ -61,6 +61,19 @@ def _get_delivery_config(group: Group) -> Dict[str, Any]:
     return {
         "min_interval_seconds": int(delivery.get("min_interval_seconds", DEFAULT_DELIVERY_MIN_INTERVAL_SECONDS)),
     }
+
+
+def _get_auto_mark_on_delivery(group: Group) -> bool:
+    """Get auto_mark_on_delivery setting from group.yaml automation config."""
+    automation = group.doc.get("automation")
+    if not isinstance(automation, dict):
+        return False
+    v = automation.get("auto_mark_on_delivery", False)
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.lower() in ("true", "1", "yes", "on")
+    return bool(v)
 
 
 # ============================================================================
@@ -851,6 +864,14 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
             if ok:
                 THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
                 THROTTLE.mark_delivered(gid, aid)
+                # Auto-mark as read if enabled
+                if _get_auto_mark_on_delivery(group) and deliverable:
+                    last_msg = deliverable[-1]
+                    try:
+                        set_cursor(group, aid, event_id=last_msg.event_id, ts=last_msg.ts)
+                        logger.debug(f"[flush] {gid}/{aid} auto-marked {len(deliverable)} messages as read")
+                    except Exception as e:
+                        logger.warning(f"[flush] {gid}/{aid} auto-mark failed: {e}")
                 if requeue:
                     THROTTLE.requeue_front(gid, aid, requeue)
             else:
@@ -868,6 +889,14 @@ def flush_pending_messages(group: Group, *, actor_id: str) -> bool:
         if delivered:
             THROTTLE.add_delivered_chat_count(gid, aid, chat_total)
             THROTTLE.mark_delivered(gid, aid)
+            # Auto-mark as read if enabled
+            if _get_auto_mark_on_delivery(group) and deliverable:
+                last_msg = deliverable[-1]
+                try:
+                    set_cursor(group, aid, event_id=last_msg.event_id, ts=last_msg.ts)
+                    logger.debug(f"[flush] {gid}/{aid} auto-marked {len(deliverable)} messages as read")
+                except Exception as e:
+                    logger.warning(f"[flush] {gid}/{aid} auto-mark failed: {e}")
             # Keep blocked messages queued for later.
             if requeue:
                 THROTTLE.requeue_front(gid, aid, requeue)
