@@ -20,7 +20,6 @@ import {
   useFormStore,
   useObservabilityStore,
 } from "./stores";
-import { handlePwaNoticeAction } from "./pwa";
 import * as api from "./services/api";
 import type { GroupDoc, LedgerEvent, Actor, ChatMessageData } from "./types";
 
@@ -926,11 +925,8 @@ export default function App() {
             errorMsg={errorMsg}
             notice={notice}
             onDismissError={dismissError}
-            onNoticeAction={(actionId) => {
-              void handlePwaNoticeAction(actionId, {
-                showNotice,
-                dismissNotice,
-              });
+            onNoticeAction={() => {
+              dismissNotice();
             }}
             onDismissNotice={dismissNotice}
             onOpenSidebar={() => setSidebarOpen(true)}
