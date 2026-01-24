@@ -95,7 +95,9 @@ export function getTerminalTheme(isDark: boolean) {
     cursor: isDark ? "#e2e8f0" : "#1e293b",
     cursorAccent: isDark ? "#0f172a" : "#fafafa",
     selectionBackground: isDark ? "#334155" : "#bfdbfe",
-    black: isDark ? "#1e293b" : "#64748b",
+    // In dark mode, use a visible gray instead of near-black to ensure
+    // ANSI color 30 (black) text remains readable against dark background.
+    black: isDark ? "#64748b" : "#64748b",
     red: isDark ? "#f87171" : "#dc2626",
     green: isDark ? "#4ade80" : "#16a34a",
     yellow: isDark ? "#facc15" : "#ca8a04",
@@ -103,7 +105,8 @@ export function getTerminalTheme(isDark: boolean) {
     magenta: isDark ? "#c084fc" : "#9333ea",
     cyan: isDark ? "#22d3ee" : "#0891b2",
     white: isDark ? "#f1f5f9" : "#f1f5f9",
-    brightBlack: isDark ? "#475569" : "#94a3b8",
+    // brightBlack should be brighter than black for visibility
+    brightBlack: isDark ? "#94a3b8" : "#94a3b8",
     brightRed: isDark ? "#fca5a5" : "#ef4444",
     brightGreen: isDark ? "#86efac" : "#22c55e",
     brightYellow: isDark ? "#fde047" : "#eab308",
