@@ -82,10 +82,16 @@ class LedgerWatcher:
     - Resumes from last position on restart
     """
 
-    def __init__(self, group: Group, cursor_name: str = "im_bridge"):
+    def __init__(
+        self,
+        group: Group,
+        cursor_name: str = "im_bridge",
+        log_fn: Optional[Callable[[str], None]] = None,
+    ):
         self.group = group
         self.ledger_path = group.ledger_path
         self.cursor_path = group.path / "state" / f"{cursor_name}_cursor.json"
+        self._log_fn = log_fn
 
         self._offset = 0
         self._dev: Optional[int] = None
@@ -93,6 +99,11 @@ class LedgerWatcher:
         self._buf = ""
 
         self._load_cursor()
+
+    def _log(self, msg: str) -> None:
+        """Log message if log function is configured."""
+        if self._log_fn:
+            self._log_fn(msg)
 
     def _load_cursor(self) -> None:
         """Load cursor from disk."""
@@ -107,8 +118,8 @@ class LedgerWatcher:
             self._ino = None
             self._offset = 0
 
-    def _save_cursor(self, dev: int, ino: int, offset: int) -> None:
-        """Save cursor to disk."""
+    def _save_cursor(self, dev: int, ino: int, offset: int) -> bool:
+        """Save cursor to disk. Returns True on success."""
         try:
             self.cursor_path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self.cursor_path.with_suffix(".tmp")
@@ -117,8 +128,37 @@ class LedgerWatcher:
                 encoding="utf-8",
             )
             tmp.replace(self.cursor_path)
-        except Exception:
-            pass
+            return True
+        except Exception as e:
+            self._log(f"[watcher] Failed to save cursor: {e}")
+            return False
+
+    def seek_to_end(self) -> bool:
+        """
+        Move cursor to the end of ledger file.
+
+        Use this on startup to skip pending messages (skip-on-restart behavior).
+        Returns True on success.
+        """
+        if not self.ledger_path.exists():
+            return True
+
+        try:
+            st = os.stat(self.ledger_path)
+            dev, ino, size = st.st_dev, st.st_ino, st.st_size
+
+            self._dev = dev
+            self._ino = ino
+            self._offset = size
+            self._buf = ""
+
+            if self._save_cursor(dev, ino, size):
+                self._log(f"[watcher] Cursor moved to end (offset={size})")
+                return True
+            return False
+        except Exception as e:
+            self._log(f"[watcher] Failed to seek to end: {e}")
+            return False
 
     def poll(self) -> List[Dict[str, Any]]:
         """
@@ -212,13 +252,15 @@ class IMBridge:
         group: Group,
         adapter: IMAdapter,
         log_path: Optional[Path] = None,
+        skip_pending_on_start: bool = False,
     ):
         self.group = group
         self.adapter = adapter
         self.log_path = log_path
+        self.skip_pending_on_start = skip_pending_on_start
 
         self.subscribers = SubscriberManager(group.path / "state")
-        self.watcher = LedgerWatcher(group)
+        self.watcher = LedgerWatcher(group, log_fn=self._log)
 
         self._running = False
         self._last_outbound_check = 0.0
@@ -275,6 +317,13 @@ class IMBridge:
         if not self.adapter.connect():
             self._log("[start] Failed to connect adapter")
             return False
+
+        # Skip pending messages if configured (move cursor to end of ledger)
+        if self.skip_pending_on_start:
+            if self.watcher.seek_to_end():
+                self._log("[start] Skipped pending messages (cursor moved to end)")
+            else:
+                self._log("[start] Warning: failed to skip pending messages")
 
         self._running = True
         self._log(f"[start] Bridge started for group {self.group.group_id}")
@@ -1062,8 +1111,17 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
         print(f"[error] Unsupported platform: {platform}")
         sys.exit(1)
 
+    # Read skip_pending_on_start option from config
+    # When True, bridge will skip messages that accumulated during downtime
+    skip_pending = bool(im_config.get("skip_pending_on_start", False))
+
     # Create and start bridge
-    bridge = IMBridge(group=group, adapter=adapter, log_path=log_path)
+    bridge = IMBridge(
+        group=group,
+        adapter=adapter,
+        log_path=log_path,
+        skip_pending_on_start=skip_pending,
+    )
 
     # Setup signal handlers
     def handle_signal(signum: int, frame: Any) -> None:

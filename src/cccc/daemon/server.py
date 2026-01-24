@@ -1848,6 +1848,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             "standup_interval_seconds",
             "help_nudge_interval_seconds",
             "help_nudge_min_messages",
+            "auto_mark_on_delivery",
         }
         terminal_transcript_keys = {
             "terminal_transcript_visibility",
@@ -1895,7 +1896,10 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if automation_patch:
                 automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
                 for k, v in automation_patch.items():
-                    automation[k] = int(v)
+                    if k == "auto_mark_on_delivery":
+                        automation[k] = bool(v)
+                    else:
+                        automation[k] = int(v)
                 group.doc["automation"] = automation
 
             # Update terminal transcript settings

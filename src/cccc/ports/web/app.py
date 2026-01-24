@@ -186,6 +186,7 @@ class GroupSettingsRequest(BaseModel):
     help_nudge_min_messages: Optional[int] = None
     min_interval_seconds: Optional[int] = None  # delivery throttle
     standup_interval_seconds: Optional[int] = None  # periodic review interval
+    auto_mark_on_delivery: Optional[bool] = None  # auto-mark messages as read after delivery
 
     # Terminal transcript (group-scoped policy)
     terminal_transcript_visibility: Optional[Literal["off", "foreman", "all"]] = None
@@ -1252,6 +1253,7 @@ def create_app() -> FastAPI:
                     "help_nudge_min_messages": int(automation.get("help_nudge_min_messages", 10)),
                     "min_interval_seconds": int(delivery.get("min_interval_seconds", 0)),
                     "standup_interval_seconds": int(automation.get("standup_interval_seconds", 900)),
+                    "auto_mark_on_delivery": bool(automation.get("auto_mark_on_delivery", False)),
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
                     "terminal_transcript_notify_tail": bool(tt.get("notify_tail", False)),
                     "terminal_transcript_notify_lines": int(tt.get("notify_lines", 20)),
@@ -1283,6 +1285,8 @@ def create_app() -> FastAPI:
             patch["min_interval_seconds"] = max(0, req.min_interval_seconds)
         if req.standup_interval_seconds is not None:
             patch["standup_interval_seconds"] = max(0, req.standup_interval_seconds)
+        if req.auto_mark_on_delivery is not None:
+            patch["auto_mark_on_delivery"] = bool(req.auto_mark_on_delivery)
 
         # Terminal transcript policy (group-scoped)
         if req.terminal_transcript_visibility is not None:

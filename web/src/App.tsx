@@ -20,7 +20,6 @@ import {
   useFormStore,
   useObservabilityStore,
 } from "./stores";
-import { handlePwaNoticeAction } from "./pwa";
 import * as api from "./services/api";
 import type { GroupDoc, LedgerEvent, Actor, ChatMessageData } from "./types";
 
@@ -465,7 +464,8 @@ export default function App() {
         try {
           const ev = JSON.parse((e as MessageEvent).data || "{}");
           const kind = typeof ev?.kind === "string" ? ev.kind : "";
-          if (kind.startsWith("group.")) {
+          // Refresh groups on group or actor events to keep sidebar status in sync
+          if (kind.startsWith("group.") || kind.startsWith("actor.")) {
             refreshGroups();
           }
         } catch {
@@ -930,11 +930,8 @@ export default function App() {
             errorMsg={errorMsg}
             notice={notice}
             onDismissError={dismissError}
-            onNoticeAction={(actionId) => {
-              void handlePwaNoticeAction(actionId, {
-                showNotice,
-                dismissNotice,
-              });
+            onNoticeAction={() => {
+              dismissNotice();
             }}
             onDismissNotice={dismissNotice}
             onOpenSidebar={() => setSidebarOpen(true)}
