@@ -26,6 +26,7 @@ interface TimingTabProps {
   autoMarkOnDelivery: boolean;
   setAutoMarkOnDelivery: (v: boolean) => void;
   onSave: () => void;
+  onAutoSave?: (field: string, value: number | boolean) => void;
 }
 
 // --- Icons ---
@@ -161,12 +162,14 @@ const ToggleRow = ({
   onChange,
   isDark,
   helperText,
+  onAutoSave,
 }: {
   label: string;
   checked: boolean;
   onChange: (val: boolean) => void;
   isDark: boolean;
   helperText?: React.ReactNode;
+  onAutoSave?: (newValue: boolean) => void;
 }) => (
   <div className="w-full">
     <label className="flex items-center justify-between cursor-pointer">
@@ -175,7 +178,11 @@ const ToggleRow = ({
         type="button"
         role="switch"
         aria-checked={checked}
-        onClick={() => onChange(!checked)}
+        onClick={() => {
+          const newValue = !checked;
+          onChange(newValue);
+          onAutoSave?.(newValue);
+        }}
         className={`
           relative inline-flex h-6 w-11 items-center rounded-full transition-colors
           focus:outline-none focus:ring-2 focus:ring-offset-2
@@ -212,6 +219,7 @@ const NumberInputRow = ({
   min = 0,
   helperText,
   formatValue = true,
+  onAutoSave,
 }: {
   label: string;
   value: number;
@@ -220,6 +228,7 @@ const NumberInputRow = ({
   min?: number;
   helperText?: React.ReactNode;
   formatValue?: boolean;
+  onAutoSave?: () => void;
 }) => (
   <div className="w-full">
     <label className={labelClass(isDark)}>{label}</label>
@@ -229,6 +238,7 @@ const NumberInputRow = ({
         min={min}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
+        onBlur={() => onAutoSave?.()}
         className={inputClass(isDark)}
       />
       {formatValue && (
@@ -254,7 +264,15 @@ const NumberInputRow = ({
 // --- Main Export ---
 
 export function TimingTab(props: TimingTabProps) {
-  const { isDark, busy, onSave } = props;
+  const { isDark, busy, onSave, onAutoSave } = props;
+
+  // Create auto-save handlers for each field
+  const autoSave = (field: string, getValue: () => number | boolean) => {
+    if (onAutoSave) {
+      // Use setTimeout to ensure state is updated before saving
+      setTimeout(() => onAutoSave(field, getValue()), 0);
+    }
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -280,6 +298,7 @@ export function TimingTab(props: TimingTabProps) {
           value={props.deliveryInterval}
           onChange={props.setDeliveryInterval}
           helperText="Minimum delay between message deliveries (throttling)."
+          onAutoSave={() => autoSave("min_interval_seconds", () => props.deliveryInterval)}
         />
         <ToggleRow
           isDark={isDark}
@@ -287,6 +306,7 @@ export function TimingTab(props: TimingTabProps) {
           checked={props.autoMarkOnDelivery}
           onChange={props.setAutoMarkOnDelivery}
           helperText="Automatically mark messages as read after successful delivery to PTY."
+          onAutoSave={(newValue) => onAutoSave?.("auto_mark_on_delivery", newValue)}
         />
       </TimingSection>
 
@@ -303,6 +323,7 @@ export function TimingTab(props: TimingTabProps) {
           value={props.nudgeSeconds}
           onChange={props.setNudgeSeconds}
           helperText="Nudge actor when unread messages exceed this age."
+          onAutoSave={() => autoSave("nudge_after_seconds", () => props.nudgeSeconds)}
         />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -312,6 +333,7 @@ export function TimingTab(props: TimingTabProps) {
             value={props.keepaliveSeconds}
             onChange={props.setKeepaliveSeconds}
             helperText="Wait time after an actor says 'Next:'."
+            onAutoSave={() => autoSave("keepalive_delay_seconds", () => props.keepaliveSeconds)}
           />
           <NumberInputRow
             isDark={isDark}
@@ -320,6 +342,7 @@ export function TimingTab(props: TimingTabProps) {
             onChange={props.setKeepaliveMax}
             formatValue={false}
             helperText={props.keepaliveMax <= 0 ? "Infinite retries" : `Retry up to ${props.keepaliveMax} times`}
+            onAutoSave={() => autoSave("keepalive_max_per_actor", () => props.keepaliveMax)}
           />
         </div>
 
@@ -330,6 +353,7 @@ export function TimingTab(props: TimingTabProps) {
             value={props.helpNudgeIntervalSeconds}
             onChange={props.setHelpNudgeIntervalSeconds}
             helperText="Time since last reminder."
+            onAutoSave={() => autoSave("help_nudge_interval_seconds", () => props.helpNudgeIntervalSeconds)}
           />
           <NumberInputRow
             isDark={isDark}
@@ -338,6 +362,7 @@ export function TimingTab(props: TimingTabProps) {
             onChange={props.setHelpNudgeMinMessages}
             formatValue={false}
             helperText="Minimum accumulated messages."
+            onAutoSave={() => autoSave("help_nudge_min_messages", () => props.helpNudgeMinMessages)}
           />
         </div>
       </TimingSection>
@@ -355,6 +380,7 @@ export function TimingTab(props: TimingTabProps) {
           value={props.idleSeconds}
           onChange={props.setIdleSeconds}
           helperText="Alert foreman if actor is inactive for this long."
+          onAutoSave={() => autoSave("actor_idle_timeout_seconds", () => props.idleSeconds)}
         />
 
         <NumberInputRow
@@ -363,6 +389,7 @@ export function TimingTab(props: TimingTabProps) {
           value={props.silenceSeconds}
           onChange={props.setSilenceSeconds}
           helperText="Alert foreman if the entire group is silent."
+          onAutoSave={() => autoSave("silence_timeout_seconds", () => props.silenceSeconds)}
         />
 
         <NumberInputRow
@@ -371,6 +398,7 @@ export function TimingTab(props: TimingTabProps) {
           value={props.standupInterval}
           onChange={props.setStandupInterval}
           helperText="Periodic reminder for foreman to review group status."
+          onAutoSave={() => autoSave("standup_interval_seconds", () => props.standupInterval)}
         />
       </TimingSection>
 

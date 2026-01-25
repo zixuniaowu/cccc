@@ -329,6 +329,10 @@ export function SettingsModal({
     });
   };
 
+  const handleAutoSave = async (field: string, value: number | boolean) => {
+    await onUpdateSettings({ [field]: value });
+  };
+
   const handleSaveTranscriptSettings = async () => {
     await onUpdateSettings({
       terminal_transcript_visibility: terminalVisibility,
@@ -879,6 +883,7 @@ export function SettingsModal({
                   autoMarkOnDelivery={autoMarkOnDelivery}
                   setAutoMarkOnDelivery={setAutoMarkOnDelivery}
                   onSave={handleSaveSettings}
+                  onAutoSave={handleAutoSave}
                 />
               )}
 
