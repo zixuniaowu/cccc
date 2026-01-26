@@ -990,26 +990,3 @@ select {
   color: var(--color-accent-danger);
   border-color: rgba(239, 68, 68, 0.25);
 }
-
-/* ============================================
-   xterm.js Terminal Overrides
-   ============================================ */
-
-/* Ensure xterm fills its container and uses theme background */
-.xterm {
-  height: 100% !important;
-  width: 100% !important;
-}
-
-.xterm-viewport {
-  background-color: var(--term-bg) !important;
-}
-
-.xterm-screen {
-  background-color: var(--term-bg) !important;
-}
-
-/* Fix any remaining black gaps */
-.xterm .xterm-screen canvas {
-  background-color: transparent !important;
-}

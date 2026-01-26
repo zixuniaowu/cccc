@@ -14,7 +14,8 @@ Run `cccc_help` anytime to refresh the effective playbook for this group.
 6) **Inbox hygiene.** Read via `cccc_inbox_list`. Mark handled items read via `cccc_inbox_mark_read` / `cccc_inbox_mark_all_read`.
    - “Unread” means “after your read cursor”, not “unprocessed”. Use mark-read intentionally.
 7) **Shared memory lives in Context.** Commitments, decisions, progress, and risk notes go into tasks/notes/presence.
-8) **No empty agreement.** If you endorse someone’s result, say what you checked (or name one concrete risk/question).
+8) **No empty agreement.** If you endorse someone's result, say what you checked (or name one concrete risk/question).
+9) **Task completion.** After finishing work, always message the requester with your result or status.
 
 ## 1) Collaboration model (all roles)
 

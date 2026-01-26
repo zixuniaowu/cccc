@@ -710,7 +710,6 @@ export function AgentTab({
           // PTY agent - show terminal
           // contain: layout paint isolates layout/paint calculations to prevent jitter when terminal content updates
           // opacity transition hides initial backlog replay scrolling
-          // Background color matches xterm theme to prevent black gaps during resize/fit
           <div
             ref={termRef}
             className="h-full w-full transition-opacity duration-100"
@@ -718,7 +717,6 @@ export function AgentTab({
               contain: 'layout paint',
               overflow: 'hidden',
               opacity: terminalReady ? 1 : 0,
-              backgroundColor: isDark ? '#0f172a' : '#fafafa',
             }}
           />
         ) : (
