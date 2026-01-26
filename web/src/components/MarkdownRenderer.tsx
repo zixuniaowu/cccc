@@ -24,13 +24,16 @@ export function MarkdownRenderer({ content, isDark, className, invertText }: Mar
                 const escaped = instance.utils.escapeHtml(str);
 
                 // 代码块带 Copy 按钮，无语法高亮
+                // 使用 CSS 类切换显示状态，避免直接修改 innerHTML 与 React reconciliation 冲突
                 return (
                     '<div class="code-block-wrapper relative group">' +
                     '<div class="code-block-header flex items-center justify-between">' +
                     '<span class="uppercase">' + finalLang + '</span>' +
                     '<button class="copy-button flex items-center gap-1 select-none" data-code="' + encodeURIComponent(str) + '">' +
-                    '<svg class="w-3.5 h-3.5 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"></path></svg>' +
-                    '<span class="pointer-events-none">Copy</span>' +
+                    '<span class="copy-icon pointer-events-none"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7v8a2 2 0 002 2h6M8 7V5a2 2 0 012-2h4.586a1 1 0 01.707.293l4.414 4.414a1 1 0 01.293.707V15a2 2 0 01-2 2h-2M8 7H6a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2v-2"></path></svg></span>' +
+                    '<span class="copy-text pointer-events-none">Copy</span>' +
+                    '<span class="copied-icon pointer-events-none hidden text-green-500 dark:text-emerald-400"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg></span>' +
+                    '<span class="copied-text pointer-events-none hidden text-green-500 dark:text-emerald-400">Copied!</span>' +
                     '</button>' +
                     '</div>' +
                     '<pre><code class="language-' + finalLang + '">' + escaped + '</code></pre>' +
@@ -81,14 +84,23 @@ export function MarkdownRenderer({ content, isDark, className, invertText }: Mar
                 }
                 console.log('Copied code:', code.substring(0, 50) + '...');
 
-                // 简单的反馈效果
-                const originalContent = button.innerHTML;
-                button.innerHTML = '<span class="text-green-500 dark:text-emerald-400 flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>Copied!</span>';
-                button.classList.add('pointer-events-none');
+                // 使用 CSS 类切换显示状态，避免修改 innerHTML 导致 React DOM 同步错误
+                button.classList.add('copied', 'pointer-events-none');
+                const copyIcon = button.querySelector('.copy-icon');
+                const copyText = button.querySelector('.copy-text');
+                const copiedIcon = button.querySelector('.copied-icon');
+                const copiedText = button.querySelector('.copied-text');
+                if (copyIcon) copyIcon.classList.add('hidden');
+                if (copyText) copyText.classList.add('hidden');
+                if (copiedIcon) copiedIcon.classList.remove('hidden');
+                if (copiedText) copiedText.classList.remove('hidden');
 
                 setTimeout(() => {
-                    button.innerHTML = originalContent;
-                    button.classList.remove('pointer-events-none');
+                    button.classList.remove('copied', 'pointer-events-none');
+                    if (copyIcon) copyIcon.classList.remove('hidden');
+                    if (copyText) copyText.classList.remove('hidden');
+                    if (copiedIcon) copiedIcon.classList.add('hidden');
+                    if (copiedText) copiedText.classList.add('hidden');
                 }, 2000);
             } catch (err) {
                 console.error('Failed to copy code:', err);
