@@ -6,9 +6,11 @@ interface MarkdownRendererProps {
     content: string;
     isDark: boolean;
     className?: string;
+    /** Force light text (for colored backgrounds like user messages) */
+    invertText?: boolean;
 }
 
-export function MarkdownRenderer({ content, isDark, className }: MarkdownRendererProps) {
+export function MarkdownRenderer({ content, isDark, className, invertText }: MarkdownRendererProps) {
     const containerRef = useRef<HTMLDivElement>(null);
 
     const md = useMemo(() => {
@@ -102,7 +104,7 @@ export function MarkdownRenderer({ content, isDark, className }: MarkdownRendere
             ref={containerRef}
             className={classNames(
                 'markdown-body prose max-w-none prose-sm',
-                isDark ? 'prose-invert' : '',
+                (isDark || invertText) ? 'prose-invert' : '',
                 '[&_p]:m-0 [&_ul]:my-1 [&_ol]:my-1',
                 '[&_a]:![color:inherit] [&_a]:underline',
                 className

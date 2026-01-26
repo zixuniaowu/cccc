@@ -428,10 +428,8 @@ export const MessageBubble = memo(function MessageBubble({
                     <MarkdownRenderer
                         content={formatEventLine(ev)}
                         isDark={isDark}
-                        className={classNames(
-                            "break-words [overflow-wrap:anywhere] overflow-x-auto max-w-full",
-                            isUserMessage ? "text-white" : ""
-                        )}
+                        invertText={isUserMessage}
+                        className="break-words [overflow-wrap:anywhere] overflow-x-auto max-w-full"
                     />
 
                     {/* Attachments */}
