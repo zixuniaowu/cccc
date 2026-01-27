@@ -247,7 +247,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     const gid = String(groupId || "").trim();
     if (!gid) return;
     clearActorWarmupTimers();
-    const delaysMs = [1000, 2500, 5000, 10000, 15000];
+    const delaysMs = [3000, 8000, 15000];
     for (const ms of delaysMs) {
       const t = window.setTimeout(() => {
         if (selectedGroupIdRef.current !== gid) return;

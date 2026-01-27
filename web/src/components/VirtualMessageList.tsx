@@ -179,7 +179,9 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   const checkIsAtBottom = useCallback(() => {
     const el = parentRef.current;
     if (!el) return true;
-    const threshold = 100;
+    // Increased threshold to reduce false negatives when near bottom
+    // (e.g., during layout shifts or when switching groups)
+    const threshold = 200;
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   }, []);
 
@@ -541,7 +543,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
           {/* Scroll Button */}
           {!readOnly && showScrollButton && (
             <button
-              className={`fixed bottom-24 right-6 p-3 rounded-full shadow-xl transition-all z-10 ${isDark
+              className={`fixed bottom-36 right-6 p-3 rounded-full shadow-xl transition-all z-10 ${isDark
                 ? "bg-slate-800 text-white hover:bg-slate-700 border border-slate-700"
                 : "bg-white text-gray-600 hover:bg-gray-50 border border-gray-100"
                 }`}

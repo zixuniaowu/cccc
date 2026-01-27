@@ -3391,6 +3391,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             attachments = _normalize_attachments(group, args.get("attachments"))
         except Exception as e:
             return _error("invalid_attachments", str(e)), False
+
+        # Reject empty messages (no text and no attachments)
+        if not text.strip() and not attachments:
+            return _error("empty_message", "message text cannot be empty"), False
+
         ev = append_event(
             group.ledger_path,
             kind="chat.message",
@@ -3590,6 +3595,11 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             attachments = _normalize_attachments(group, args.get("attachments"))
         except Exception as e:
             return _error("invalid_attachments", str(e)), False
+
+        # Reject empty messages (no text and no attachments)
+        if not text.strip() and not attachments:
+            return _error("empty_message", "message text cannot be empty"), False
+
         ev = append_event(
             group.ledger_path,
             kind="chat.message",
