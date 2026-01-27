@@ -739,6 +739,10 @@ export default function App() {
     chatAtBottomRef.current = true;
     setShowScrollButton(false);
     setChatUnreadCount(0);
+    // Clear saved scroll position so switching back scrolls to bottom
+    if (selectedGroupId) {
+      chatScrollMemoryRef.current[selectedGroupId] = { atBottom: true, anchorId: "", offsetPx: 0 };
+    }
   };
 
   // ============ Computed for Modals ============

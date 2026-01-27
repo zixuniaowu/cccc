@@ -179,7 +179,9 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   const checkIsAtBottom = useCallback(() => {
     const el = parentRef.current;
     if (!el) return true;
-    const threshold = 100;
+    // Increased threshold to reduce false negatives when near bottom
+    // (e.g., during layout shifts or when switching groups)
+    const threshold = 200;
     return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
   }, []);
 
