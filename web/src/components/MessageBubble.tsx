@@ -189,6 +189,9 @@ export const MessageBubble = memo(function MessageBubble({
         }))
         .filter((a) => a.path.startsWith("state/blobs/"));
 
+    // Use event's group_id for blob URLs (attachments are stored in the event's original group)
+    const blobGroupId = String(ev.group_id || "").trim() || groupId;
+
     const readStatus = ev._read_status;
     const ackStatus = ev._ack_status;
     const recipients = msgData?.to;
@@ -433,7 +436,7 @@ export const MessageBubble = memo(function MessageBubble({
                     />
 
                     {/* Attachments */}
-                    {blobAttachments.length > 0 && groupId && (() => {
+                    {blobAttachments.length > 0 && blobGroupId && (() => {
                         const imageAttachments = blobAttachments.filter((a) =>
                             a.mime_type.startsWith("image/")
                         );
@@ -448,7 +451,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         {imageAttachments.map((a, i) => {
                                             const parts = a.path.split("/");
                                             const blobName = parts[parts.length - 1] || "";
-                                            const href = `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`;
+                                            const href = `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
                                             const label = a.title || blobName;
                                             return (
                                                 <ImagePreview
@@ -468,7 +471,7 @@ export const MessageBubble = memo(function MessageBubble({
                                         {fileAttachments.map((a, i) => {
                                             const parts = a.path.split("/");
                                             const blobName = parts[parts.length - 1] || "";
-                                            const href = `/api/v1/groups/${encodeURIComponent(groupId)}/blobs/${encodeURIComponent(blobName)}`;
+                                            const href = `/api/v1/groups/${encodeURIComponent(blobGroupId)}/blobs/${encodeURIComponent(blobName)}`;
                                             const label = a.title || blobName || "file";
                                             return (
                                                 <a
