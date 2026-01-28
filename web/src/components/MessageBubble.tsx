@@ -265,7 +265,7 @@ export const MessageBubble = memo(function MessageBubble({
             {/* Message Content */}
             <div
                 className={classNames(
-                    "flex flex-col w-full sm:w-auto sm:max-w-[75%]",
+                    "flex flex-col w-full sm:w-auto sm:max-w-[75%] min-w-0",
                     isUserMessage ? "items-end" : "items-start"
                 )}
             >
@@ -348,7 +348,7 @@ export const MessageBubble = memo(function MessageBubble({
                 {/* Bubble */}
                 <div
                     className={classNames(
-                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85vw] sm:max-w-none",
+                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85vw] sm:max-w-full min-w-0 overflow-hidden",
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none"
                             : isDark
@@ -432,7 +432,7 @@ export const MessageBubble = memo(function MessageBubble({
                         content={formatEventLine(ev)}
                         isDark={isDark}
                         invertText={isUserMessage}
-                        className="break-words [overflow-wrap:anywhere] overflow-x-auto max-w-full"
+                        className="break-words [overflow-wrap:anywhere] max-w-full"
                     />
 
                     {/* Attachments */}
