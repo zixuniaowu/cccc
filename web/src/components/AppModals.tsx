@@ -680,6 +680,17 @@ export function AppModals({
         isOpen={modals.groupEdit}
         isDark={isDark}
         busy={busy}
+        groupId={selectedGroupId || groupDoc?.group_id || ""}
+        activeScopeKey={groupDoc?.active_scope_key || ""}
+        projectRoot={
+          (() => {
+            const key = String(groupDoc?.active_scope_key || "").trim();
+            const scopes = Array.isArray(groupDoc?.scopes) ? groupDoc?.scopes : [];
+            const active = scopes.find((s) => String(s?.scope_key || "").trim() === key);
+            const url = String(active?.url || scopes[0]?.url || "").trim();
+            return url;
+          })()
+        }
         title={editGroupTitle}
         topic={editGroupTopic}
         onChangeTitle={setEditGroupTitle}

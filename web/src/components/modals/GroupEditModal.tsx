@@ -2,6 +2,9 @@ export interface GroupEditModalProps {
   isOpen: boolean;
   isDark: boolean;
   busy: string;
+  groupId: string;
+  activeScopeKey: string;
+  projectRoot: string;
   title: string;
   topic: string;
   onChangeTitle: (title: string) => void;
@@ -15,6 +18,9 @@ export function GroupEditModal({
   isOpen,
   isDark,
   busy,
+  groupId,
+  activeScopeKey,
+  projectRoot,
   title,
   topic,
   onChangeTitle,
@@ -24,6 +30,25 @@ export function GroupEditModal({
   onDelete,
 }: GroupEditModalProps) {
   if (!isOpen) return null;
+
+  async function copyToClipboard(text: string): Promise<boolean> {
+    const t = String(text || "").trim();
+    if (!t) return false;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(t);
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      window.prompt("Copy to clipboard:", t);
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   return (
     <div
@@ -46,6 +71,52 @@ export function GroupEditModal({
           </div>
         </div>
         <div className="p-6 space-y-4">
+          <div className={`rounded-xl border p-4 ${isDark ? "border-slate-700/50 bg-slate-900/40" : "border-gray-200 bg-gray-50"}`}>
+            <div className={`text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Workspace</div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>Group ID</div>
+                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                  {groupId || "—"}
+                </div>
+                <button
+                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(groupId);
+                    if (!ok) return;
+                  }}
+                  disabled={!groupId}
+                  title="Copy group_id"
+                  type="button"
+                >
+                  Copy
+                </button>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>Project root</div>
+                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                  {projectRoot || "— (no scope attached)"}
+                </div>
+                <button
+                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  onClick={async () => {
+                    const ok = await copyToClipboard(projectRoot);
+                    if (!ok) return;
+                  }}
+                  disabled={!projectRoot}
+                  title="Copy project root path"
+                  type="button"
+                >
+                  Copy
+                </button>
+              </div>
+              {activeScopeKey ? (
+                <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  Active scope: <span className="font-mono">{activeScopeKey}</span>
+                </div>
+              ) : null}
+            </div>
+          </div>
           <div>
             <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Name</label>
             <input
@@ -103,4 +174,3 @@ export function GroupEditModal({
     </div>
   );
 }
-
