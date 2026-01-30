@@ -966,37 +966,30 @@ def _maybe_autostart_enabled_im_bridges() -> None:
             pass
         log_path = state_dir / "im_bridge.log"
 
-        log_file = None
         try:
-            log_file = log_path.open("a", encoding="utf-8")
-            env = os.environ.copy()
-            env["CCCC_HOME"] = str(home)
-            proc = subprocess.Popen(
-                [sys.executable, "-m", "cccc.ports.im.bridge", gid, platform],
-                env=env,
-                stdout=log_file,
-                stderr=log_file,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                cwd=str(home),
-            )
-            time.sleep(0.25)
-            rc = proc.poll()
-            if rc is not None:
-                logger.warning("IM bridge autostart failed for %s (platform=%s, code=%s). See log: %s", gid, platform, rc, log_path)
-                continue
-            try:
-                pid_path.write_text(str(proc.pid), encoding="utf-8")
-            except Exception:
-                pass
+            with log_path.open("a", encoding="utf-8") as log_file:
+                env = os.environ.copy()
+                env["CCCC_HOME"] = str(home)
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "cccc.ports.im.bridge", gid, platform],
+                    env=env,
+                    stdout=log_file,
+                    stderr=log_file,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    cwd=str(home),
+                )
+                time.sleep(0.25)
+                rc = proc.poll()
+                if rc is not None:
+                    logger.warning("IM bridge autostart failed for %s (platform=%s, code=%s). See log: %s", gid, platform, rc, log_path)
+                    continue
+                try:
+                    pid_path.write_text(str(proc.pid), encoding="utf-8")
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning("IM bridge autostart failed for %s (platform=%s): %s", gid, platform, e)
-        finally:
-            try:
-                if log_file:
-                    log_file.close()
-            except Exception:
-                pass
 
 
 def _maybe_autostart_running_groups() -> None:

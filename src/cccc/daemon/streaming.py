@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import queue
 import socket
 import threading
@@ -11,6 +12,8 @@ from typing import Any, Dict, Iterable, Optional, Set
 from ..kernel.group import load_group
 from ..kernel.inbox import is_message_for_actor
 from ..util.time import parse_utc_iso, utc_now_iso
+
+logger = logging.getLogger(__name__)
 
 
 STREAMABLE_KINDS_V1: Set[str] = {
@@ -178,7 +181,26 @@ class EventBroadcaster:
             try:
                 sub.q.put_nowait(event)
             except queue.Full:
-                self.close(sub)
+                # Backpressure: drop oldest events instead of closing the connection
+                dropped = 0
+                try:
+                    # Drop up to 10% of queue capacity to make room
+                    drop_count = max(1, sub.q.maxsize // 10)
+                    for _ in range(drop_count):
+                        try:
+                            sub.q.get_nowait()
+                            dropped += 1
+                        except queue.Empty:
+                            break
+                    sub.q.put_nowait(event)
+                except queue.Full:
+                    # Still full after dropping, give up on this event
+                    dropped += 1
+                if dropped > 0:
+                    logger.warning(
+                        "Event stream backpressure: dropped %d event(s) for sub %s (group=%s, by=%s)",
+                        dropped, sub.sub_id, sub.group_id, sub.by
+                    )
 
 
 EVENT_BROADCASTER = EventBroadcaster()
