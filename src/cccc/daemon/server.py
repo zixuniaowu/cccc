@@ -38,6 +38,7 @@ from ..runners import headless as headless_runner
 from ..util.conv import coerce_bool
 from ..util.obslog import setup_root_json_logging
 from ..util.fs import atomic_write_json, atomic_write_text, read_json
+from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
 from ..util.time import utc_now_iso
 from .automation import AutomationManager
 from .delivery import (
@@ -965,37 +966,30 @@ def _maybe_autostart_enabled_im_bridges() -> None:
             pass
         log_path = state_dir / "im_bridge.log"
 
-        log_file = None
         try:
-            log_file = log_path.open("a", encoding="utf-8")
-            env = os.environ.copy()
-            env["CCCC_HOME"] = str(home)
-            proc = subprocess.Popen(
-                [sys.executable, "-m", "cccc.ports.im.bridge", gid, platform],
-                env=env,
-                stdout=log_file,
-                stderr=log_file,
-                stdin=subprocess.DEVNULL,
-                start_new_session=True,
-                cwd=str(home),
-            )
-            time.sleep(0.25)
-            rc = proc.poll()
-            if rc is not None:
-                logger.warning("IM bridge autostart failed for %s (platform=%s, code=%s). See log: %s", gid, platform, rc, log_path)
-                continue
-            try:
-                pid_path.write_text(str(proc.pid), encoding="utf-8")
-            except Exception:
-                pass
+            with log_path.open("a", encoding="utf-8") as log_file:
+                env = os.environ.copy()
+                env["CCCC_HOME"] = str(home)
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "cccc.ports.im.bridge", gid, platform],
+                    env=env,
+                    stdout=log_file,
+                    stderr=log_file,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    cwd=str(home),
+                )
+                time.sleep(0.25)
+                rc = proc.poll()
+                if rc is not None:
+                    logger.warning("IM bridge autostart failed for %s (platform=%s, code=%s). See log: %s", gid, platform, rc, log_path)
+                    continue
+                try:
+                    pid_path.write_text(str(proc.pid), encoding="utf-8")
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning("IM bridge autostart failed for %s (platform=%s): %s", gid, platform, e)
-        finally:
-            try:
-                if log_file:
-                    log_file.close()
-            except Exception:
-                pass
 
 
 def _maybe_autostart_running_groups() -> None:
@@ -3857,6 +3851,15 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
     p = paths or default_paths()
     p.daemon_dir.mkdir(parents=True, exist_ok=True)
 
+    # Acquire exclusive lock to prevent multiple daemon instances (race condition fix).
+    # The lock is held for the lifetime of the daemon process.
+    lock_path = p.daemon_dir / "ccccd.lock"
+    try:
+        lock_handle = acquire_lockfile(lock_path, blocking=False)
+    except LockUnavailableError:
+        # Another daemon already holds the lock
+        return 0
+
     # Apply global observability settings early (logging + developer mode gating).
     try:
         _apply_observability_settings(p.home, get_observability_settings())
@@ -3865,6 +3868,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
     _cleanup_stale_daemon_endpoints(p)
     if _is_daemon_alive(p):
+        release_lockfile(lock_handle)
         return 0
 
     # Cleanup stale IM bridge state from previous runs/crashes.
@@ -4231,6 +4235,13 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
             p.pid_path.unlink()
     except Exception:
         pass
+
+    # Release the daemon lock
+    try:
+        release_lockfile(lock_handle)
+    except Exception:
+        pass
+
     return 0
 
 

@@ -1140,7 +1140,7 @@ MCP_TOOLS = [
 	            "properties": {
 	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
 	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
-	                "inbox_limit": {"type": "integer", "description": "Max unread messages to return (default 50)", "default": 50},
+	                "inbox_limit": {"type": "integer", "description": "Max unread messages to return (default 50)", "default": 50, "minimum": 1, "maximum": 1000},
 	                "inbox_kind_filter": {
 	                    "type": "string",
 	                    "enum": ["all", "chat", "notify"],
@@ -1151,11 +1151,15 @@ MCP_TOOLS = [
                         "type": "integer",
                         "description": "Number of recent chat messages to include from the ledger (default 10; 0=disable)",
                         "default": 10,
+                        "minimum": 0,
+                        "maximum": 1000,
                     },
                     "ledger_tail_max_chars": {
                         "type": "integer",
                         "description": "Max total characters across returned ledger_tail[].text (default 8000)",
                         "default": 8000,
+                        "minimum": 0,
+                        "maximum": 100000,
                     },
 	            },
 	            "required": [],
@@ -1169,7 +1173,7 @@ MCP_TOOLS = [
 	            "properties": {
 	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
 	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
-	                "limit": {"type": "integer", "description": "Max messages to return (default 50)", "default": 50},
+	                "limit": {"type": "integer", "description": "Max messages to return (default 50)", "default": 50, "minimum": 1, "maximum": 1000},
 	                "kind_filter": {
 	                    "type": "string",
                     "enum": ["all", "chat", "notify"],
@@ -1784,7 +1788,7 @@ MCP_TOOLS = [
 	                "group_id": {"type": "string", "description": "Working group ID (optional if CCCC_GROUP_ID is set)"},
 	                "actor_id": {"type": "string", "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)"},
 	                "target_actor_id": {"type": "string", "description": "Actor ID whose transcript to read"},
-	                "max_chars": {"type": "integer", "description": "Max characters of transcript to return (default 8000)", "default": 8000},
+	                "max_chars": {"type": "integer", "description": "Max characters of transcript to return (default 8000)", "default": 8000, "minimum": 1, "maximum": 100000},
 	                "strip_ansi": {"type": "boolean", "description": "Strip ANSI control sequences (default true)", "default": True},
 	            },
 	            "required": ["target_actor_id"],
@@ -1817,7 +1821,7 @@ MCP_TOOLS = [
 	                    "enum": ["daemon", "web", "im"],
 	                    "description": "Which component logs to tail",
 	                },
-	                "lines": {"type": "integer", "description": "Max lines to return (default 200)", "default": 200},
+	                "lines": {"type": "integer", "description": "Max lines to return (default 200)", "default": 200, "minimum": 1, "maximum": 10000},
 	            },
 	            "required": ["component"],
 	        },
@@ -1863,7 +1867,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return inbox_list(
             group_id=gid,
             actor_id=aid,
-            limit=int(arguments.get("limit") or 50),
+            limit=min(max(int(arguments.get("limit") or 50), 1), 1000),
             kind_filter=str(arguments.get("kind_filter") or "all"),
         )
 
@@ -1873,10 +1877,10 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return bootstrap(
             group_id=gid,
             actor_id=aid,
-            inbox_limit=int(arguments.get("inbox_limit") or 50),
+            inbox_limit=min(max(int(arguments.get("inbox_limit") or 50), 1), 1000),
             inbox_kind_filter=str(arguments.get("inbox_kind_filter") or "all"),
-            ledger_tail_limit=int(arguments.get("ledger_tail_limit") or 10),
-            ledger_tail_max_chars=int(arguments.get("ledger_tail_max_chars") or 8000),
+            ledger_tail_limit=min(max(int(arguments.get("ledger_tail_limit") or 10), 0), 1000),
+            ledger_tail_max_chars=min(max(int(arguments.get("ledger_tail_max_chars") or 8000), 0), 100000),
         )
 
     if name == "cccc_inbox_mark_read":
@@ -2243,7 +2247,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             group_id=gid,
             actor_id=aid,
             target_actor_id=str(arguments.get("target_actor_id") or ""),
-            max_chars=int(arguments.get("max_chars") or 8000),
+            max_chars=min(max(int(arguments.get("max_chars") or 8000), 1), 100000),
             strip_ansi=bool(arguments.get("strip_ansi", True)),
         )
 
@@ -2263,7 +2267,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             group_id=gid,
             actor_id=aid,
             component=str(arguments.get("component") or ""),
-            lines=int(arguments.get("lines") or 200),
+            lines=min(max(int(arguments.get("lines") or 200), 1), 10000),
         )
 
     raise MCPError(code="unknown_tool", message=f"unknown tool: {name}")

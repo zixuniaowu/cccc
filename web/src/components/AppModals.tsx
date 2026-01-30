@@ -18,17 +18,13 @@ import {
   useInboxStore,
   useFormStore,
 } from "../stores";
+import { getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import * as api from "../services/api";
 import { RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData } from "../types";
 
 interface AppModalsProps {
   isDark: boolean;
   composerRef: React.RefObject<HTMLTextAreaElement>;
-  messageMeta: {
-    toLabel: string;
-    entries: readonly (readonly [string, boolean])[];
-    statusKind: "read" | "ack";
-  } | null;
   onStartReply: (ev: LedgerEvent) => void;
   onThemeToggle: () => void;
   onStartGroup: () => Promise<void>;
@@ -40,7 +36,6 @@ interface AppModalsProps {
 export function AppModals({
   isDark,
   composerRef,
-  messageMeta,
   onStartReply,
   onThemeToggle,
   onStartGroup,
@@ -187,6 +182,65 @@ export function AppModals({
     (s) => s.groups.find((g) => String(g.group_id || "") === s.selectedGroupId)?.running ?? false
   );
   const hasForeman = actors.some((a) => a.role === "foreman");
+
+  // Compute messageMeta for RecipientsModal (moved from App.tsx)
+  const messageMetaEvent = useMemo(() => {
+    if (!_recipientsEventId) return null;
+    return (
+      events.find(
+        (x) => x.kind === "chat.message" && String(x.id || "") === _recipientsEventId
+      ) || null
+    );
+  }, [events, _recipientsEventId]);
+
+  const messageMeta = useMemo(() => {
+    if (!messageMetaEvent) return null;
+    // Type guard: ensure data.to is an array.
+    const metaData = messageMetaEvent.data as { to?: unknown[] } | undefined;
+    const toRaw = metaData && Array.isArray(metaData.to) ? metaData.to : [];
+    const toTokensList = toRaw
+      .map((x) => String(x || "").trim())
+      .filter((s) => s.length > 0);
+    const toLabel = toTokensList.length > 0 ? toTokensList.join(", ") : "@all";
+
+    const msgData = messageMetaEvent.data as ChatMessageData | undefined;
+    const isAttention = String(msgData?.priority || "normal") === "attention";
+
+    if (isAttention) {
+      const as =
+        messageMetaEvent._ack_status && typeof messageMetaEvent._ack_status === "object"
+          ? messageMetaEvent._ack_status
+          : null;
+      const recipientIds = as
+        ? Object.keys(as)
+        : getAckRecipientIdsForEvent(messageMetaEvent, actors);
+      const recipientIdSet = new Set(recipientIds);
+      const entries = [
+        ...actors
+          .map((a) => String(a.id || ""))
+          .filter((id) => id && recipientIdSet.has(id))
+          .map((id) => [id, !!(as && as[id])] as const),
+        recipientIdSet.has("user") ? (["user", !!(as && as["user"])] as const) : null,
+      ].filter(Boolean) as Array<readonly [string, boolean]>;
+
+      return { toLabel, entries, statusKind: "ack" as const };
+    }
+
+    const rs =
+      messageMetaEvent._read_status && typeof messageMetaEvent._read_status === "object"
+        ? messageMetaEvent._read_status
+        : null;
+    const recipientIds = rs
+      ? Object.keys(rs)
+      : getRecipientActorIdsForEvent(messageMetaEvent, actors);
+    const recipientIdSet = new Set(recipientIds);
+    const entries = actors
+      .map((a) => String(a.id || ""))
+      .filter((id) => id && recipientIdSet.has(id))
+      .map((id) => [id, !!(rs && rs[id])] as const);
+
+    return { toLabel, entries, statusKind: "read" as const };
+  }, [actors, messageMetaEvent]);
 
   // Handlers
   const handleUpdateVision = async (vision: string) => {
