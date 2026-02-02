@@ -269,6 +269,10 @@ class IMBridge:
         # retry delivery or emit multiple events for the same message (e.g., edits).
         self._seen_inbound: Dict[str, float] = {}
 
+        # Typing indicator state: chat_id -> (message_id, reaction_id)
+        # Used to show a "processing" emoji on the user's message while agents work.
+        self._typing_indicators: Dict[str, Tuple[str, str]] = {}
+
     def _should_process_inbound(self, *, chat_id: str, thread_id: int, message_id: str) -> bool:
         """
         Return True if this inbound message should be processed.
@@ -404,7 +408,7 @@ class IMBridge:
                 self._handle_help(chat_id, thread_id=thread_id)
             elif parsed.type == CommandType.SEND:
                 attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
-                self._handle_message(chat_id, parsed, from_user, attachments=attachments, thread_id=thread_id)
+                self._handle_message(chat_id, parsed, from_user, attachments=attachments, thread_id=thread_id, message_id=message_id)
             elif parsed.type == CommandType.MESSAGE:
                 routed = coerce_bool(msg.get("routed"), default=False)
 
@@ -454,6 +458,10 @@ class IMBridge:
 
         # Forward to subscribed chats
         subscribed = self.subscribers.get_subscribed_targets()
+
+        # Remove typing indicators for chats that are about to receive a reply.
+        for sub in subscribed:
+            self._remove_typing_indicator(sub.chat_id)
 
         for sub in subscribed:
             verbose = bool(sub.verbose)
@@ -671,6 +679,21 @@ class IMBridge:
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
         self.adapter.send_message(chat_id, format_help(platform=platform), thread_id=thread_id)
 
+    def _add_typing_indicator(self, chat_id: str, message_id: str) -> None:
+        """Add a typing indicator (emoji reaction) to the user's message."""
+        if not message_id:
+            return
+        reaction_id = self.adapter.add_reaction(message_id)
+        if reaction_id:
+            self._typing_indicators[chat_id] = (message_id, reaction_id)
+
+    def _remove_typing_indicator(self, chat_id: str) -> None:
+        """Remove the typing indicator for a chat, if any."""
+        indicator = self._typing_indicators.pop(chat_id, None)
+        if indicator:
+            message_id, reaction_id = indicator
+            self.adapter.remove_reaction(message_id, reaction_id)
+
     def _handle_message(
         self,
         chat_id: str,
@@ -679,6 +702,7 @@ class IMBridge:
         *,
         attachments: List[Dict[str, Any]],
         thread_id: int = 0,
+        message_id: str = "",
     ) -> None:
         """Handle /send message (explicit routing)."""
         _ = from_user
@@ -864,6 +888,8 @@ class IMBridge:
                 # Fatal misconfig: prevent spamming and competing bot pollers.
                 self.stop()
         else:
+            # Add typing indicator to show that the message is being processed.
+            self._add_typing_indicator(chat_id, message_id)
             self._log(
                 f"[message] chat={chat_id} thread={thread_id} to={canonical_to} len={len(msg_text)} files={len(stored_attachments)}"
             )

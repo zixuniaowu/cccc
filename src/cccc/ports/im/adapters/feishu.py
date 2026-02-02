@@ -742,6 +742,53 @@ class FeishuAdapter(IMAdapter):
         self._log(f"[send_file] Send failed: {resp.get('msg', 'unknown')}")
         return False
 
+    # ===== Typing Indicator (emoji reaction) =====
+
+    TYPING_EMOJI = "OnIt"
+
+    def add_reaction(self, message_id: str, emoji_type: str = "") -> Optional[str]:
+        """
+        Add an emoji reaction to a message.
+
+        Feishu does not have a native typing indicator, so we simulate one
+        by reacting to the user's message with an emoji.
+
+        Returns reaction_id on success (for later removal), None on failure.
+        """
+        if not message_id or not self._connected:
+            return None
+
+        emoji = emoji_type or self.TYPING_EMOJI
+        resp = self._api("POST", f"/im/v1/messages/{message_id}/reactions", {
+            "reaction_type": {"emoji_type": emoji},
+        })
+
+        if resp.get("code") == 0:
+            reaction_id = (resp.get("data") or {}).get("reaction_id", "")
+            self._log(f"[reaction] Added {emoji} to {message_id} -> {reaction_id}")
+            return reaction_id or None
+
+        self._log(f"[reaction] Failed to add {emoji} to {message_id}: {resp.get('msg', 'unknown')}")
+        return None
+
+    def remove_reaction(self, message_id: str, reaction_id: str) -> bool:
+        """
+        Remove a previously added emoji reaction.
+
+        Returns True on success.
+        """
+        if not message_id or not reaction_id or not self._connected:
+            return False
+
+        resp = self._api("DELETE", f"/im/v1/messages/{message_id}/reactions/{reaction_id}")
+
+        if resp.get("code") == 0:
+            self._log(f"[reaction] Removed {reaction_id} from {message_id}")
+            return True
+
+        self._log(f"[reaction] Failed to remove {reaction_id} from {message_id}: {resp.get('msg', 'unknown')}")
+        return False
+
     def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
         """Format message for Feishu display."""
         formatted = super().format_outbound(by, to, text, is_system)
