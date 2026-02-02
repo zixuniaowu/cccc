@@ -10,7 +10,7 @@ Frequently asked questions about CCCC.
 # From TestPyPI (RC version)
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc17
+  cccc-pair==0.4.0rc18
 
 # From source
 git clone https://github.com/dweb-channel/cccc

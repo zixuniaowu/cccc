@@ -2,7 +2,7 @@
 
 **English** | [中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-> **Status**: 0.4.0rc17 (Release Candidate)
+> **Status**: 0.4.0rc18 (Release Candidate)
 
 [![Documentation](https://img.shields.io/badge/docs-online-blue)](https://dweb-channel.github.io/cccc/)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
@@ -27,7 +27,7 @@ CCCC is a **local-first multi-agent collaboration kernel** that coordinates AI a
 # Install
 pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc17
+  cccc-pair==0.4.0rc18
 
 # Start
 cccc
@@ -57,7 +57,7 @@ Copy this prompt to your AI assistant (Claude, ChatGPT, etc.):
 >    ```
 >    pip install --index-url https://pypi.org/simple \
 >      --extra-index-url https://test.pypi.org/simple \
->      cccc-pair==0.4.0rc17
+>      cccc-pair==0.4.0rc18
 >    ```
 >
 > 2. After installation, start CCCC:
@@ -91,7 +91,7 @@ rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
 ```bash
 pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc17
+  cccc-pair==0.4.0rc18
 ```
 
 ### From source

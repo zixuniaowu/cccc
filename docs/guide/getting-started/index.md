@@ -65,7 +65,7 @@ Version 0.4.x has a completely different command structure from 0.3.x. The old `
 ```bash
 python -m pip install --index-url https://pypi.org/simple \
   --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc17
+  cccc-pair==0.4.0rc18
 ```
 
 ### From Source
