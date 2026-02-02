@@ -78,6 +78,24 @@ class IMAdapter(ABC):
             # Agent to user message
             return f"[{by}] {text}"
 
+    def add_reaction(self, message_id: str, emoji_type: str) -> Optional[str]:
+        """
+        Add an emoji reaction to a message.
+
+        Returns reaction_id on success (for later removal), None on failure.
+        Default: no-op (not all platforms support reactions).
+        """
+        return None
+
+    def remove_reaction(self, message_id: str, reaction_id: str) -> bool:
+        """
+        Remove a previously added emoji reaction.
+
+        Returns True on success.
+        Default: no-op.
+        """
+        return False
+
     def download_attachment(self, attachment: Dict[str, Any]) -> bytes:
         """Download an inbound attachment to bytes (platform-specific)."""
         raise NotImplementedError
