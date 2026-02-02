@@ -26,9 +26,9 @@ from typing import Any, Dict, List, Optional
 from .base import IMAdapter
 
 # Feishu API limits
-FEISHU_MAX_MESSAGE_LENGTH = 4096
-DEFAULT_MAX_CHARS = 4096
-DEFAULT_MAX_LINES = 64
+FEISHU_MAX_MESSAGE_LENGTH = 30720  # 30 KB (Safe limit for Posts, well within 150 KB for Text)
+DEFAULT_MAX_CHARS = 30720
+DEFAULT_MAX_LINES = 1024
 
 # API domains:
 # - Feishu (CN): https://open.feishu.cn
