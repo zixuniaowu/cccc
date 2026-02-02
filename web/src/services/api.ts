@@ -29,7 +29,12 @@ function getAuthToken(): string | null {
   if (urlToken) {
     cachedToken = urlToken;
     // Store in sessionStorage for page refreshes (dev mode only)
-    try { sessionStorage.setItem("cccc_dev_token", urlToken); } catch {}
+    try {
+      sessionStorage.setItem("cccc_dev_token", urlToken);
+    } catch {
+      // Storage might be unavailable (private mode / disabled cookies).
+      void 0;
+    }
     return urlToken;
   }
 
@@ -40,7 +45,10 @@ function getAuthToken(): string | null {
       cachedToken = stored;
       return stored;
     }
-  } catch {}
+  } catch {
+    // Storage might be unavailable (private mode / disabled cookies).
+    void 0;
+  }
 
   cachedToken = "";
   return null;
@@ -336,9 +344,10 @@ export async function addActor(
   actorId: string,
   role: "peer" | "foreman",
   runtime: string,
-  command: string
+  command: string,
+  envPrivate?: Record<string, string>
 ) {
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/actors`, {
+  return apiJson<{ actor: Actor }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors`, {
     method: "POST",
     body: JSON.stringify({
       actor_id: actorId,
@@ -347,6 +356,7 @@ export async function addActor(
       runtime,
       command,
       env: {},
+      env_private: envPrivate && Object.keys(envPrivate).length ? envPrivate : undefined,
       default_scope_key: "",
       by: "user",
     }),
@@ -399,6 +409,28 @@ export async function restartActor(groupId: string, actorId: string) {
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/restart?by=user`,
     { method: "POST" }
+  );
+}
+
+export async function fetchActorPrivateEnvKeys(groupId: string, actorId: string) {
+  return apiJson<{ group_id: string; actor_id: string; keys: string[] }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/env_private?by=user`
+  );
+}
+
+export async function updateActorPrivateEnv(
+  groupId: string,
+  actorId: string,
+  setVars: Record<string, string>,
+  unsetKeys: string[],
+  clear: boolean
+) {
+  return apiJson<{ group_id: string; actor_id: string; keys: string[] }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/env_private`,
+    {
+      method: "POST",
+      body: JSON.stringify({ by: "user", set: setVars, unset: unsetKeys, clear }),
+    }
   );
 }
 

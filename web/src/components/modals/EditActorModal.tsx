@@ -1,10 +1,13 @@
 import { RuntimeInfo, SupportedRuntime, SUPPORTED_RUNTIMES, RUNTIME_INFO } from "../../types";
 import { BASIC_MCP_CONFIG_SNIPPET, COPILOT_MCP_CONFIG_SNIPPET, OPENCODE_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
+import { useEffect, useMemo, useState } from "react";
+import * as api from "../../services/api";
 
 export interface EditActorModalProps {
   isOpen: boolean;
   isDark: boolean;
   busy: string;
+  groupId: string;
   actorId: string;
   isRunning: boolean;
   runtimes: RuntimeInfo[];
@@ -14,8 +17,7 @@ export interface EditActorModalProps {
   onChangeCommand: (command: string) => void;
   title: string;
   onChangeTitle: (title: string) => void;
-  onSave: () => void;
-  onSaveAndRestart?: () => void;
+  onSaveAndRestart: (secrets: { setVars: Record<string, string>; unsetKeys: string[]; clear: boolean }) => Promise<void>;
   onCancel: () => void;
 }
 
@@ -23,6 +25,7 @@ export function EditActorModal({
   isOpen,
   isDark,
   busy,
+  groupId,
   actorId,
   isRunning,
   runtimes,
@@ -32,16 +35,102 @@ export function EditActorModal({
   onChangeCommand,
   title,
   onChangeTitle,
-  onSave,
   onSaveAndRestart,
   onCancel,
 }: EditActorModalProps) {
+  const [secretKeys, setSecretKeys] = useState<string[]>([]);
+  const [secretsSetText, setSecretsSetText] = useState("");
+  const [secretsUnsetText, setSecretsUnsetText] = useState("");
+  const [secretsClearAll, setSecretsClearAll] = useState(false);
+  const [secretsError, setSecretsError] = useState("");
+  const [secretsBusy, setSecretsBusy] = useState(false);
+
+  const envKeyRe = useMemo(() => /^[A-Za-z_][A-Za-z0-9_]*$/, []);
+
+  const refreshSecretKeys = async () => {
+    if (!groupId || !actorId) return;
+    const resp = await api.fetchActorPrivateEnvKeys(groupId, actorId);
+    if (!resp.ok) {
+      setSecretsError(resp.error?.message || "Failed to load secret env metadata");
+      return;
+    }
+    setSecretKeys(Array.isArray(resp.result?.keys) ? resp.result.keys : []);
+  };
+
+  useEffect(() => {
+    setSecretsError("");
+    setSecretsSetText("");
+    setSecretsUnsetText("");
+    setSecretsClearAll(false);
+    if (isOpen) void refreshSecretKeys();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupId, actorId, isOpen]);
+
   if (!isOpen) return null;
 
   const rtInfo = runtimes.find((r) => r.name === runtime);
   const available = rtInfo?.available ?? false;
   const defaultCommand = rtInfo?.recommended_command || "";
   const requireCommand = runtime === "custom" || !available;
+
+  const parseSecretsSet = (text: string): { setVars: Record<string, string>; error: string } => {
+    const out: Record<string, string> = {};
+    const lines = String(text || "").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const line = raw.trim();
+      if (!line) continue;
+      if (line.startsWith("#")) continue;
+      const idx = line.indexOf("=");
+      if (idx <= 0) return { setVars: {}, error: `Set line ${i + 1}: expected KEY=VALUE` };
+      const key = line.slice(0, idx).trim();
+      if (!key || !envKeyRe.test(key)) return { setVars: {}, error: `Set line ${i + 1}: invalid env key` };
+      const value = line.slice(idx + 1);
+      out[key] = value;
+    }
+    return { setVars: out, error: "" };
+  };
+
+  const parseSecretsUnset = (text: string): { unsetKeys: string[]; error: string } => {
+    const out: string[] = [];
+    const lines = String(text || "").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const raw = lines[i];
+      const line = raw.trim();
+      if (!line) continue;
+      if (line.startsWith("#")) continue;
+      if (!envKeyRe.test(line)) return { unsetKeys: [], error: `Unset line ${i + 1}: invalid env key` };
+      out.push(line);
+    }
+    return { unsetKeys: out, error: "" };
+  };
+
+  const saveAndRestart = async () => {
+    if (!groupId || !actorId) return;
+    if (busy === "actor-update") return;
+    setSecretsError("");
+
+    const { setVars, error: setErr } = parseSecretsSet(secretsSetText);
+    if (setErr) {
+      setSecretsError(setErr);
+      return;
+    }
+    const { unsetKeys, error: unsetErr } = parseSecretsUnset(secretsUnsetText);
+    if (unsetErr) {
+      setSecretsError(unsetErr);
+      return;
+    }
+
+    setSecretsBusy(true);
+    try {
+      await onSaveAndRestart({ setVars, unsetKeys, clear: secretsClearAll });
+    } catch (e) {
+      setSecretsError(e instanceof Error ? e.message : "Save failed");
+      return;
+    } finally {
+      setSecretsBusy(false);
+    }
+  };
 
   return (
     <div
@@ -201,26 +290,89 @@ export function EditActorModal({
               </div>
             ) : null}
           </div>
+
+          <div>
+            <div className="flex items-center justify-between gap-3">
+              <label className={`block text-xs font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>Secrets (write-only)</label>
+              <button
+                className={`text-xs px-2 py-1 rounded-lg border transition-colors ${
+                  isDark ? "border-slate-600/50 text-slate-300 hover:bg-slate-800" : "border-gray-200 text-gray-700 hover:bg-gray-50"
+                }`}
+                onClick={() => void refreshSecretKeys()}
+                disabled={secretsBusy}
+                title="Refresh configured keys"
+              >
+                Refresh
+              </button>
+            </div>
+            <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              Stored locally under <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>CCCC_HOME/state/…</code> (not in group ledger).{" "}
+              {secretKeys.length ? (
+                <>
+                  Configured keys:{" "}
+                  <span className={isDark ? "text-slate-300" : "text-gray-700"}>{secretKeys.join(", ")}</span>
+                </>
+              ) : (
+                <>No keys configured.</>
+              )}
+            </div>
+            <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              Secrets are applied when you click <span className={isDark ? "text-slate-300" : "text-gray-700"}>Save &amp; Restart</span> below.
+            </div>
+
+            <label className={`block text-[11px] font-medium mt-3 mb-1.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+              Set / Update (KEY=VALUE, one per line)
+            </label>
+            <textarea
+              className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[96px] transition-colors ${
+                isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+              }`}
+              value={secretsSetText}
+              onChange={(e) => setSecretsSetText(e.target.value)}
+              placeholder={"OPENAI_API_KEY=...\nANTHROPIC_API_KEY=..."}
+            />
+
+            <label className={`block text-[11px] font-medium mt-3 mb-1.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+              Unset (KEY, one per line)
+            </label>
+            <textarea
+              className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[72px] transition-colors ${
+                isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+              }`}
+              value={secretsUnsetText}
+              onChange={(e) => setSecretsUnsetText(e.target.value)}
+              placeholder={"OPENAI_API_KEY\nANTHROPIC_API_KEY"}
+            />
+
+            <label className={`flex items-center gap-2 text-[11px] font-medium mt-3 ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+              <input
+                type="checkbox"
+                checked={secretsClearAll}
+                onChange={(e) => setSecretsClearAll(e.target.checked)}
+                disabled={secretsBusy || busy === "actor-update"}
+              />
+              Clear all secret keys on save
+            </label>
+
+            {secretsError ? (
+              <div
+                className={`mt-2 rounded-xl border px-3 py-2 text-xs ${
+                  isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
+                }`}
+                role="alert"
+              >
+                {secretsError}
+              </div>
+            ) : null}
+          </div>
           <div className="flex gap-3 pt-2">
             <button
               className="flex-1 rounded-xl bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 text-sm font-semibold shadow-lg disabled:opacity-50 transition-all min-h-[44px]"
-              onClick={onSave}
-              disabled={busy === "actor-update" || (requireCommand && !command.trim())}
+              onClick={() => void saveAndRestart()}
+              disabled={busy === "actor-update" || secretsBusy || (requireCommand && !command.trim())}
             >
-              Save
+              Save & Restart
             </button>
-            {isRunning && onSaveAndRestart ? (
-              <button
-                className={`px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors min-h-[44px] disabled:opacity-50 ${
-                  isDark ? "bg-amber-500/15 text-amber-200 hover:bg-amber-500/20 border border-amber-500/20" : "bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200"
-                }`}
-                onClick={onSaveAndRestart}
-                disabled={busy === "actor-update" || (requireCommand && !command.trim())}
-                title="Restart is required for runtime/command changes to take effect"
-              >
-                Save & Restart
-              </button>
-            ) : null}
             <button
               className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${
                 isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"

@@ -488,11 +488,16 @@ Args:
   runner?: "pty" | "headless"
   command?: string[]
   env?: Record<string, string>
+  env_private?: Record<string, string> // write-only secrets (stored under CCCC_HOME/state; never persisted into ledger)
   default_scope_key?: string
   submit?: "enter" | "newline" | "none"
   by?: string
 }
 ```
+
+Notes:
+- `env_private` is restricted to `by="user"` and values are never returned.
+- If `env_private` is provided (even empty), it is treated as authoritative for this create: it clears any existing private keys for that actor_id, then sets the provided keys.
 
 Result:
 ```ts
@@ -540,6 +545,47 @@ Args:
 Result:
 ```ts
 { actor: Record<string, unknown>; event: CCCSEventV1 }
+```
+
+#### `actor_env_private_keys`
+
+List configured **private** env keys for an actor (keys only; never returns values).
+
+Notes:
+- Private env is **runtime-only** and MUST NOT be persisted into the append-only group ledger.
+- Intended for secrets like API keys/tokens that may vary per actor.
+- Effective env at process start is: `daemon_env` (inherited) → `actor.env` → `private_env` → injected `CCCC_GROUP_ID`/`CCCC_ACTOR_ID`.
+- This operation is restricted to `by="user"` (agents should not be able to read/inspect secrets metadata).
+
+Args:
+```ts
+{ group_id: string; actor_id: string; by?: string }
+```
+
+Result:
+```ts
+{ group_id: string; actor_id: string; keys: string[] }
+```
+
+#### `actor_env_private_update`
+
+Update an actor's private env map (set/unset/clear). Values are **never** returned.
+
+Args:
+```ts
+{
+  group_id: string
+  actor_id: string
+  by?: string
+  set?: Record<string, string>  // set/overwrite keys
+  unset?: string[]              // remove keys
+  clear?: boolean               // remove all keys (wins)
+}
+```
+
+Result:
+```ts
+{ group_id: string; actor_id: string; keys: string[] }
 ```
 
 ### 8.5 Chat Messaging

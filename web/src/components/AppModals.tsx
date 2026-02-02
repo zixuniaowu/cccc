@@ -102,12 +102,14 @@ export function AppModals({
     newActorRole,
     newActorRuntime,
     newActorCommand,
+    newActorSecretsSetText,
     showAdvancedActor,
     addActorError,
     setNewActorId,
     setNewActorRole,
     setNewActorRuntime,
     setNewActorCommand,
+    setNewActorSecretsSetText,
     setShowAdvancedActor,
     setAddActorError,
     resetAddActorForm,
@@ -364,10 +366,19 @@ export function AppModals({
     }
   };
 
-  const handleSaveEditActorAndRestart = async () => {
+  const handleSaveEditActorAndRestart = async (secrets: { setVars: Record<string, string>; unsetKeys: string[]; clear: boolean }) => {
     if (!selectedGroupId || !editingActor) return;
     const label = editingActor.title || editingActor.id;
-    if (!window.confirm(`Save changes and restart "${label}" now? This will interrupt any running work.`)) return;
+
+    const setKeys = Object.keys(secrets?.setVars || {});
+    const unsetKeys = Array.isArray(secrets?.unsetKeys) ? secrets.unsetKeys : [];
+    const clear = !!secrets?.clear;
+
+    const willChangeSecrets = clear || setKeys.length > 0 || unsetKeys.length > 0;
+    const msg = willChangeSecrets
+      ? `Save changes, apply secrets, and restart "${label}" now? This will interrupt any running work.`
+      : `Save changes and restart "${label}" now? This will interrupt any running work.`;
+    if (!window.confirm(msg)) return;
     setBusy("actor-update");
     try {
       const resp = await api.updateActor(
@@ -380,6 +391,14 @@ export function AppModals({
       if (!resp.ok) {
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
+      }
+
+      if (willChangeSecrets) {
+        const envResp = await api.updateActorPrivateEnv(selectedGroupId, editingActor.id, secrets.setVars || {}, unsetKeys, clear);
+        if (!envResp.ok) {
+          showError(`${envResp.error.code}: ${envResp.error.message}`);
+          return;
+        }
       }
 
       const restartResp = await api.restartActor(selectedGroupId, editingActor.id);
@@ -503,6 +522,31 @@ export function AppModals({
   const handleAddActor = async () => {
     if (!selectedGroupId) return;
     const actorId = newActorId.trim();
+    const secretsText = String(newActorSecretsSetText || "");
+
+    const envKeyRe = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    const secretsSetVars: Record<string, string> = {};
+    if (secretsText.trim()) {
+      const lines = secretsText.split("\n");
+      for (let i = 0; i < lines.length; i++) {
+        const raw = lines[i].trim();
+        if (!raw) continue;
+        if (raw.startsWith("#")) continue;
+        const idx = raw.indexOf("=");
+        if (idx <= 0) {
+          setAddActorError(`Secrets line ${i + 1}: expected KEY=VALUE`);
+          return;
+        }
+        const key = raw.slice(0, idx).trim();
+        if (!envKeyRe.test(key)) {
+          setAddActorError(`Secrets line ${i + 1}: invalid env key`);
+          return;
+        }
+        const value = raw.slice(idx + 1);
+        secretsSetVars[key] = value;
+      }
+    }
+
     setBusy("actor-add");
     setAddActorError("");
     try {
@@ -511,12 +555,14 @@ export function AppModals({
         actorId,
         newActorRole,
         newActorRuntime,
-        newActorCommand
+        newActorCommand,
+        Object.keys(secretsSetVars).length ? secretsSetVars : undefined
       );
       if (!resp.ok) {
         setAddActorError(resp.error?.message || "Failed to add agent");
         return;
       }
+
       closeModal("addActor");
       resetAddActorForm();
       await refreshActors();
@@ -758,6 +804,7 @@ export function AppModals({
         isOpen={!!editingActor}
         isDark={isDark}
         busy={busy}
+        groupId={selectedGroupId || groupDoc?.group_id || ""}
         actorId={editingActor?.id || ""}
         isRunning={!!(editingActor && (editingActor.running ?? editingActor.enabled ?? false))}
         runtimes={runtimes}
@@ -767,7 +814,6 @@ export function AppModals({
         onChangeCommand={setEditActorCommand}
         title={editActorTitle}
         onChangeTitle={setEditActorTitle}
-        onSave={handleSaveEditActor}
         onSaveAndRestart={handleSaveEditActorAndRestart}
         onCancel={() => setEditingActor(null)}
       />
@@ -820,6 +866,8 @@ export function AppModals({
         setNewActorRuntime={setNewActorRuntime}
         newActorCommand={newActorCommand}
         setNewActorCommand={setNewActorCommand}
+        newActorSecretsSetText={newActorSecretsSetText}
+        setNewActorSecretsSetText={setNewActorSecretsSetText}
         showAdvancedActor={showAdvancedActor}
         setShowAdvancedActor={setShowAdvancedActor}
         addActorError={addActorError}

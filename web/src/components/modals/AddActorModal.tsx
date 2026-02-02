@@ -27,6 +27,9 @@ export interface AddActorModalProps {
   newActorCommand: string;
   setNewActorCommand: (cmd: string) => void;
 
+  newActorSecretsSetText: string;
+  setNewActorSecretsSetText: (v: string) => void;
+
   showAdvancedActor: boolean;
   setShowAdvancedActor: (show: boolean) => void;
 
@@ -56,6 +59,8 @@ export function AddActorModal({
   setNewActorRuntime,
   newActorCommand,
   setNewActorCommand,
+  newActorSecretsSetText,
+  setNewActorSecretsSetText,
   showAdvancedActor,
   setShowAdvancedActor,
   addActorError,
@@ -315,6 +320,24 @@ export function AddActorModal({
                     <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{defaultCommand}</code>
                   </div>
                 ) : null}
+              </div>
+
+              <div>
+                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Secrets (write-only)</label>
+                <textarea
+                  className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[96px] transition-colors ${
+                    isDark
+                      ? "bg-slate-900/80 border-slate-600/50 text-white placeholder-slate-500 focus:border-blue-500"
+                      : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 focus:border-blue-500"
+                  }`}
+                  value={newActorSecretsSetText}
+                  onChange={(e) => setNewActorSecretsSetText(e.target.value)}
+                  placeholder={"OPENAI_API_KEY=...\nANTHROPIC_API_KEY=..."}
+                />
+                <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  Stored locally under{" "}
+                  <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>CCCC_HOME/state/…</code> (not in group ledger). Values are never shown again.
+                </div>
               </div>
             </div>
           )}

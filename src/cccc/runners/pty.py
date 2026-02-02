@@ -87,6 +87,7 @@ class PtySession:
         self._backlog: deque[bytes] = deque()
         self._backlog_bytes = 0
         self._mode_tail = b""
+        self._query_tail = b""
         self._bracketed_paste = False
         self._bracketed_paste_changed_at: Optional[float] = None
 
@@ -384,6 +385,7 @@ class PtySession:
                 self._running = False
                 return
 
+            self._maybe_reply_to_terminal_queries(chunk)
             self._update_input_modes(chunk)
             with self._lock:
                 self._append_backlog(chunk)
@@ -416,6 +418,34 @@ class PtySession:
                     self._bracketed_paste_changed_at = time.monotonic()
             keep = max(len(enable), len(disable)) - 1
             self._mode_tail = data[-keep:] if keep > 0 else b""
+
+    def _maybe_reply_to_terminal_queries(self, chunk: bytes) -> None:
+        """Best-effort responses for programs that expect a terminal emulator.
+
+        Our PTY runner is usually driven by a browser terminal (xterm.js). When no terminal client
+        is attached, TUI programs that rely on Device Status Reports (DSR) can hang or exit.
+
+        We only emulate a tiny subset of queries to keep headless operation workable.
+        """
+        if not chunk:
+            return
+        with self._lock:
+            # If a real terminal is attached, let it handle DSR replies (avoid duplicate responses).
+            if self._writer_fd is not None:
+                return
+            data = (self._query_tail or b"") + chunk
+
+            # DSR: "Report Cursor Position" (CPR). Reply "ESC[{row};{col}R".
+            # We do not attempt to track an actual cursor; a stable 1;1 is enough to unblock many TUIs.
+            query = b"\x1b[6n"
+            if query in data:
+                try:
+                    os.write(self._master_fd, b"\x1b[1;1R")
+                except Exception:
+                    pass
+
+            keep = len(query) - 1
+            self._query_tail = data[-keep:] if keep > 0 else b""
 
     def _on_cmd_readable(self) -> None:
         try:

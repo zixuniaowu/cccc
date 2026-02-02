@@ -37,7 +37,7 @@ from ..kernel.system_prompt import render_system_prompt
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
-from ..util.fs import atomic_write_text, atomic_write_json, read_json
+from ..util.fs import atomic_write_text, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
 from ..util.conv import coerce_bool
 
@@ -52,6 +52,9 @@ PTY_SUBMIT_DELAY_SECONDS = 1.5  # Empirically reliable for CLI readline timing (
 PREAMBLE_TO_MESSAGE_DELAY_SECONDS = 2.0  # Wait for preamble submit + a small buffer
 PTY_STARTUP_MAX_WAIT_SECONDS = 10.0  # Max wait for a fresh runtime to become ready before first PTY injection
 PTY_STARTUP_READY_GRACE_SECONDS = 1.0  # Extra safety delay after readiness is detected (user request)
+### NOTE
+# Delivery is intentionally daemon-driven (single-writer). If a service needs to notify actors, it
+# should call the daemon IPC and retry on transient failures rather than writing directly to ledgers.
 
 
 def _get_delivery_config(group: Group) -> Dict[str, Any]:

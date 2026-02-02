@@ -190,7 +190,9 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         "amp": ["amp"],
         "auggie": ["auggie"],
         "claude": ["claude", "--dangerously-skip-permissions"],
-        "codex": ["codex", "--dangerously-bypass-approvals-and-sandbox", "--search"],
+        # Codex spawns MCP servers as subprocesses; ensure it inherits actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID)
+        # so MCP tools can resolve "self" context reliably.
+        "codex": ["codex", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "--search"],
         "cursor": ["cursor-agent"],
         "droid": ["droid", "--auto", "high"],
         "gemini": ["gemini", "--yolo"],

@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import copy
 import logging
+import hashlib
 import os
+import re
 import socket
 import sys
 import time
@@ -78,6 +80,11 @@ from .ops.template_ops import (
 )
 
 import subprocess
+
+
+_PRIVATE_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PRIVATE_ENV_MAX_KEYS = 256
+_PRIVATE_ENV_MAX_VALUE_CHARS = 200_000
 
 
 _OBS_LOCK = threading.Lock()
@@ -178,6 +185,35 @@ SUPPORTED_RUNTIMES = (
 )
 
 AUTO_MCP_RUNTIMES = ("claude", "codex", "droid", "amp", "auggie", "neovate", "gemini")
+
+
+def _normalize_runtime_command(runtime: str, command: list[str]) -> list[str]:
+    """Return a runtime-safe command line used for process start.
+
+    Important: This MUST NOT mutate the stored actor.command (ledger). It's runtime-only.
+
+    Rationale:
+    Some runtimes spawn MCP servers/tools as subprocesses and may not inherit the full actor env by
+    default. CCCC injects critical context into actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID); if a runtime
+    drops these, MCP tools cannot resolve "self" and agent matches can stall.
+    """
+    rt = str(runtime or "").strip()
+    cmd = [str(x) for x in (command or []) if str(x).strip()]
+    if not cmd:
+        return []
+
+    if rt == "codex":
+        try:
+            exe = Path(str(cmd[0] or "")).name
+        except Exception:
+            exe = str(cmd[0] or "")
+        if exe == "codex":
+            # Ensure MCP servers inherit actor env (CCCC_* / ARENA_*).
+            has_env_inherit = any("shell_environment_policy.inherit" in str(x) for x in cmd)
+            if not has_env_inherit:
+                cmd = [cmd[0], "-c", "shell_environment_policy.inherit=all", *cmd[1:]]
+
+    return cmd
 
 
 def _is_mcp_installed(runtime: str) -> bool:
@@ -408,6 +444,173 @@ def _inject_actor_context_env(env: Dict[str, Any], *, group_id: str, actor_id: s
     out["CCCC_GROUP_ID"] = str(group_id or "").strip()
     out["CCCC_ACTOR_ID"] = str(actor_id or "").strip()
     return out
+
+
+def _private_env_root(home: Path) -> Path:
+    return home / "state" / "secrets" / "actors"
+
+
+def _private_env_group_dir(home: Path, *, group_id: str) -> Path:
+    gid = str(group_id or "").strip()
+    if not gid:
+        raise ValueError("missing group_id")
+    # Defense-in-depth against path traversal.
+    if "/" in gid or "\\" in gid or ".." in gid:
+        raise ValueError("invalid group_id")
+    return _private_env_root(home) / gid
+
+
+def _private_env_actor_filename(actor_id: str) -> str:
+    raw = str(actor_id or "").strip()
+    digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "_", raw).strip("._-")
+    if not slug:
+        slug = "actor"
+    slug = slug[:24]
+    return f"{slug}.{digest}.json"
+
+
+def _ensure_private_env_dir(path: Path) -> None:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(path, 0o700)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _validate_private_env_key(key: Any) -> str:
+    k = str(key or "").strip()
+    if not k:
+        raise ValueError("missing env key")
+    if not _PRIVATE_ENV_KEY_RE.match(k):
+        raise ValueError(f"invalid env key: {k}")
+    return k
+
+
+def _coerce_private_env_value(value: Any) -> str:
+    if value is None:
+        raise ValueError("missing env value")
+    v = str(value)
+    if len(v) > _PRIVATE_ENV_MAX_VALUE_CHARS:
+        raise ValueError("env value too large")
+    return v
+
+
+def _private_env_path(group_id: str, actor_id: str) -> Path:
+    home = ensure_home()
+    gdir = _private_env_group_dir(home, group_id=group_id)
+    return gdir / _private_env_actor_filename(actor_id)
+
+
+def _load_actor_private_env(group_id: str, actor_id: str) -> dict[str, str]:
+    """Load runtime-only private env for (group_id, actor_id).
+
+    Security: values are never written to ledger and should not be returned to clients.
+    """
+    try:
+        path = _private_env_path(group_id, actor_id)
+    except Exception:
+        return {}
+    raw = read_json(path)
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        if not isinstance(k, str):
+            continue
+        kk = k.strip()
+        if not kk or not _PRIVATE_ENV_KEY_RE.match(kk):
+            continue
+        if v is None:
+            continue
+        out[kk] = str(v)
+    return out
+
+
+def _update_actor_private_env(
+    group_id: str,
+    actor_id: str,
+    *,
+    set_vars: dict[str, str],
+    unset_keys: list[str],
+    clear: bool,
+) -> dict[str, str]:
+    current: dict[str, str] = {} if clear else _load_actor_private_env(group_id, actor_id)
+    for k in unset_keys:
+        current.pop(k, None)
+    for k, v in set_vars.items():
+        current[k] = v
+
+    try:
+        home = ensure_home()
+        root = _private_env_root(home)
+        gdir = _private_env_group_dir(home, group_id=group_id)
+        path = gdir / _private_env_actor_filename(actor_id)
+    except Exception:
+        # Don't leak details (keys/values) in exception strings.
+        raise RuntimeError("invalid private env path")
+
+    if not current:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            if gdir.exists() and gdir.is_dir() and not any(gdir.iterdir()):
+                gdir.rmdir()
+        except Exception:
+            pass
+        return {}
+
+    _ensure_private_env_dir(root)
+    _ensure_private_env_dir(gdir)
+    atomic_write_json(path, current, indent=2)
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+    return dict(current)
+
+
+def _delete_actor_private_env(group_id: str, actor_id: str) -> None:
+    try:
+        home = ensure_home()
+        gdir = _private_env_group_dir(home, group_id=group_id)
+        path = gdir / _private_env_actor_filename(actor_id)
+        path.unlink(missing_ok=True)
+        if gdir.exists() and gdir.is_dir() and not any(gdir.iterdir()):
+            try:
+                gdir.rmdir()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def _delete_group_private_env(group_id: str) -> None:
+    try:
+        home = ensure_home()
+        gdir = _private_env_group_dir(home, group_id=group_id)
+        if gdir.exists():
+            import shutil
+
+            shutil.rmtree(gdir, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def _merge_actor_env_with_private(group_id: str, actor_id: str, env: Dict[str, Any]) -> Dict[str, Any]:
+    base = dict(env or {})
+    try:
+        private_env = _load_actor_private_env(group_id, actor_id)
+        if private_env:
+            base.update(private_env)
+    except Exception:
+        pass
+    return base
 
 
 AUTOMATION = AutomationManager()
@@ -1068,19 +1271,22 @@ def _maybe_autostart_running_groups() -> None:
                             gid,
                             aid,
                         )
+                    effective_env = _merge_actor_env_with_private(group.group_id, aid, env)
                     headless_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
                         actor_id=aid,
                         cwd=cwd,
-                        env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
+                        env=dict(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=aid)),
                     )
                 else:
+                    effective_env = _merge_actor_env_with_private(group.group_id, aid, env)
+                    effective_cmd = _normalize_runtime_command(runtime, list(cmd or []))
                     session = pty_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
                         actor_id=aid,
                         cwd=cwd,
-                        command=list(cmd or []),
-                        env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
+                        command=effective_cmd,
+                        env=_prepare_pty_env(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=aid)),
                         max_backlog_bytes=_pty_backlog_bytes(),
                     )
             except Exception as e:
@@ -1294,9 +1500,15 @@ def _start_actor_process(
 
     effective_runner = _effective_runner_kind(runner)
 
+    # Merge runtime-only private env (CCCC_HOME/state/...) on top of actor.env.
+    # Private env must never be persisted into the group ledger.
+    effective_env = _merge_actor_env_with_private(group.group_id, actor_id, env)
+
     # Validate custom runtime
     if runtime == "custom" and effective_runner != "headless" and not command:
         return {"success": False, "error": "custom runtime requires a command (PTY runner)"}
+
+    effective_cmd = _normalize_runtime_command(runtime, list(command or []))
 
     # Ensure MCP is installed for the runtime
     try:
@@ -1312,7 +1524,7 @@ def _start_actor_process(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 cwd=cwd,
-                env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                env=dict(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
             )
             try:
                 _write_headless_state(group.group_id, actor_id)
@@ -1324,8 +1536,8 @@ def _start_actor_process(
                 group_id=group.group_id,
                 actor_id=actor_id,
                 cwd=cwd,
-                command=list(command or []),
-                env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                command=effective_cmd,
+                env=_prepare_pty_env(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
                 max_backlog_bytes=_pty_backlog_bytes(),
             )
             try:
@@ -1976,6 +2188,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             _stop_im_bridges_for_group(ensure_home(), group_id=group_id)
             pty_runner.SUPERVISOR.stop_group(group_id=group_id)
             headless_runner.SUPERVISOR.stop_group(group_id=group_id)
+            _delete_group_private_env(group_id)
             reg = load_registry()
             delete_group(reg, group_id=group_id)
             active = load_active()
@@ -2158,25 +2371,29 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                         False,
                     )
                 _ensure_mcp_installed(runtime, cwd)
+
+                # Merge runtime-only private env (CCCC_HOME/state/...) on top of actor.env.
+                effective_env = _merge_actor_env_with_private(group.group_id, aid, env)
                 
                 if effective_runner == "headless":
                     headless_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
                         actor_id=aid,
                         cwd=cwd,
-                        env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
+                        env=dict(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=aid)),
                     )
                     try:
                         _write_headless_state(group.group_id, aid)
                     except Exception:
                         pass
                 else:
+                    effective_cmd = _normalize_runtime_command(runtime, list(cmd or []))
                     session = pty_runner.SUPERVISOR.start_actor(
                         group_id=group.group_id,
                         actor_id=aid,
                         cwd=cwd,
-                        command=cmd,
-                        env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=aid)),
+                        command=effective_cmd,
+                        env=_prepare_pty_env(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=aid)),
                         max_backlog_bytes=_pty_backlog_bytes(),
                     )
                     try:
@@ -2362,6 +2579,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         by = str(args.get("by") or "user").strip()
         command_raw = args.get("command")
         env_raw = args.get("env")
+        env_private_raw = args.get("env_private")
         default_scope_key = str(args.get("default_scope_key") or "").strip()
         if not group_id:
             return _error("missing_group_id", "missing group_id"), False
@@ -2376,6 +2594,21 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 raise ValueError("invalid runner (must be 'pty' or 'headless')")
             if runtime not in SUPPORTED_RUNTIMES:
                 raise ValueError("invalid runtime")
+
+            # Private env (write-only). This is stored under CCCC_HOME/state/... and is never persisted into the group ledger.
+            # Only allow operator/user to set secrets; agents must not be able to set or read them.
+            env_private_set: dict[str, str] = {}
+            if env_private_raw is not None:
+                if by != "user":
+                    raise ValueError("env_private is only allowed for by=user")
+                if not isinstance(env_private_raw, dict):
+                    raise ValueError("env_private must be an object")
+                for k, v in env_private_raw.items():
+                    kk = _validate_private_env_key(k)
+                    vv = _coerce_private_env_value(v)
+                    env_private_set[kk] = vv
+                if len(env_private_set) > _PRIVATE_ENV_MAX_KEYS:
+                    raise ValueError("too many env_private keys")
             
             # Foreman safety policy (agent-driven actor.add):
             # Foreman may only create peers by strict-cloning their own runtime config.
@@ -2452,6 +2685,30 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 runner=runner,  # type: ignore
                 runtime=runtime,  # type: ignore
             )
+
+            # If env_private was provided, write it before starting the actor so the first start sees it.
+            # Treat presence of env_private as authoritative (clear then set) to avoid stale keys.
+            if env_private_raw is not None:
+                effective_actor_id = str(actor.get("id") or actor_id).strip() or actor_id
+                try:
+                    _update_actor_private_env(
+                        group.group_id,
+                        effective_actor_id,
+                        set_vars=env_private_set,
+                        unset_keys=[],
+                        clear=True,
+                    )
+                except Exception:
+                    # Roll back the actor creation (no ledger event has been appended yet).
+                    try:
+                        remove_actor(group, effective_actor_id)
+                    except Exception:
+                        pass
+                    try:
+                        _delete_actor_private_env(group.group_id, effective_actor_id)
+                    except Exception:
+                        pass
+                    raise RuntimeError("failed to store env_private")
         except Exception as e:
             return _error("actor_add_failed", str(e)), False
         if forced_headless:
@@ -2520,6 +2777,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             headless_runner.SUPERVISOR.stop_actor(group_id=group.group_id, actor_id=actor_id)
             _remove_headless_state(group.group_id, actor_id)
             THROTTLE.clear_actor(group.group_id, actor_id)
+            _delete_actor_private_env(group.group_id, actor_id)
         except Exception as e:
             return _error("actor_remove_failed", str(e)), False
         # Update running flag if no enabled actors remain.
@@ -2650,23 +2908,26 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                     _ensure_mcp_installed(runtime, cwd)
 
                     if effective_runner == "headless":
+                        effective_env = _merge_actor_env_with_private(group.group_id, actor_id, env)
                         headless_runner.SUPERVISOR.start_actor(
                             group_id=group.group_id,
                             actor_id=actor_id,
                             cwd=cwd,
-                            env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                            env=dict(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
                         )
                         try:
                             _write_headless_state(group.group_id, actor_id)
                         except Exception:
                             pass
                     else:
+                        effective_env = _merge_actor_env_with_private(group.group_id, actor_id, env)
+                        effective_cmd = _normalize_runtime_command(runtime, list(cmd or []))
                         session = pty_runner.SUPERVISOR.start_actor(
                             group_id=group.group_id,
                             actor_id=actor_id,
                             cwd=cwd,
-                            command=list(cmd or []),
-                            env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                            command=effective_cmd,
+                            env=_prepare_pty_env(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
                             max_backlog_bytes=_pty_backlog_bytes(),
                         )
                         try:
@@ -2882,25 +3143,27 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
             runner_kind = str(actor.get("runner") or "pty").strip()
             effective_runner = _effective_runner_kind(runner_kind)
+            effective_env = _merge_actor_env_with_private(group.group_id, actor_id, env)
 
             if effective_runner == "headless":
                 headless_runner.SUPERVISOR.start_actor(
                     group_id=group.group_id,
                     actor_id=actor_id,
                     cwd=cwd,
-                    env=dict(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                    env=dict(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
                 )
                 try:
                     _write_headless_state(group.group_id, actor_id)
                 except Exception:
                     pass
             else:
+                effective_cmd = _normalize_runtime_command(str(actor.get("runtime") or "codex"), list(cmd or []))
                 session = pty_runner.SUPERVISOR.start_actor(
                     group_id=group.group_id,
                     actor_id=actor_id,
                     cwd=cwd,
-                    command=list(cmd or []),
-                    env=_prepare_pty_env(_inject_actor_context_env(env, group_id=group.group_id, actor_id=actor_id)),
+                    command=effective_cmd,
+                    env=_prepare_pty_env(_inject_actor_context_env(effective_env, group_id=group.group_id, actor_id=actor_id)),
                     max_backlog_bytes=_pty_backlog_bytes(),
                 )
                 try:
@@ -2918,6 +3181,92 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             data={"actor_id": actor_id, "runner": str(actor.get("runner") or "pty")},
         )
         return DaemonResponse(ok=True, result={"actor": actor, "event": ev}), False
+
+    if op == "actor_env_private_keys":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        if by and by != "user":
+            return _error("permission_denied", "only user can access private env metadata"), False
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not actor_id:
+            return _error("missing_actor_id", "missing actor_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        if find_actor(group, actor_id) is None:
+            return _error("actor_not_found", f"actor not found: {actor_id}"), False
+        keys = sorted(_load_actor_private_env(group_id, actor_id).keys())
+        return DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id, "keys": keys}), False
+
+    if op == "actor_env_private_update":
+        group_id = str(args.get("group_id") or "").strip()
+        actor_id = str(args.get("actor_id") or "").strip()
+        by = str(args.get("by") or "user").strip()
+        if by and by != "user":
+            return _error("permission_denied", "only user can update private env"), False
+        if not group_id:
+            return _error("missing_group_id", "missing group_id"), False
+        if not actor_id:
+            return _error("missing_actor_id", "missing actor_id"), False
+        group = load_group(group_id)
+        if group is None:
+            return _error("group_not_found", f"group not found: {group_id}"), False
+        if find_actor(group, actor_id) is None:
+            return _error("actor_not_found", f"actor not found: {actor_id}"), False
+
+        clear = coerce_bool(args.get("clear"), default=False)
+        set_raw = args.get("set")
+        unset_raw = args.get("unset")
+
+        set_vars: dict[str, str] = {}
+        unset_keys: list[str] = []
+
+        try:
+            if set_raw is not None:
+                if not isinstance(set_raw, dict):
+                    raise ValueError("set must be an object")
+                for k, v in set_raw.items():
+                    kk = _validate_private_env_key(k)
+                    vv = _coerce_private_env_value(v)
+                    set_vars[kk] = vv
+
+            if unset_raw is not None:
+                if not isinstance(unset_raw, list):
+                    raise ValueError("unset must be a list")
+                for item in unset_raw:
+                    unset_keys.append(_validate_private_env_key(item))
+        except ValueError as e:
+            # Never include values in error responses.
+            return _error("invalid_request", str(e)), False
+
+        if len(set_vars) > _PRIVATE_ENV_MAX_KEYS:
+            return _error("too_many_keys", "too many env keys to set in one request"), False
+        if len(unset_keys) > _PRIVATE_ENV_MAX_KEYS:
+            return _error("too_many_keys", "too many env keys to unset in one request"), False
+
+        try:
+            updated = _update_actor_private_env(
+                group_id,
+                actor_id,
+                set_vars=set_vars,
+                unset_keys=unset_keys,
+                clear=clear,
+            )
+        except Exception:
+            return _error("actor_env_private_update_failed", "failed to update private env"), False
+
+        if len(updated) > _PRIVATE_ENV_MAX_KEYS:
+            # Refuse to persist oversized config.
+            try:
+                _update_actor_private_env(group_id, actor_id, set_vars={}, unset_keys=list(updated.keys()), clear=True)
+            except Exception:
+                pass
+            return _error("too_many_keys", "too many private env keys configured"), False
+
+        keys = sorted(updated.keys())
+        return DaemonResponse(ok=True, result={"group_id": group_id, "actor_id": actor_id, "keys": keys}), False
 
     if op == "term_resize":
         group_id = str(args.get("group_id") or "").strip()

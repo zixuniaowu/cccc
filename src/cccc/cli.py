@@ -1414,6 +1414,73 @@ def cmd_actor_update(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_actor_secrets(args: argparse.Namespace) -> int:
+    """Manage per-actor runtime-only secrets env (stored under CCCC_HOME/state, not in ledger)."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+
+    actor_id = str(args.actor_id or "").strip()
+    by = str(args.by or "user").strip() or "user"
+
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+
+    if getattr(args, "keys", False):
+        resp = call_daemon({"op": "actor_env_private_keys", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+        _print_json(resp)
+        return 0 if resp.get("ok") else 2
+
+    set_vars: dict[str, str] = {}
+    for item in (args.set or []):
+        if not isinstance(item, str) or "=" not in item:
+            continue
+        k, v = item.split("=", 1)
+        k = k.strip()
+        if not k:
+            continue
+        set_vars[k] = v
+
+    unset_keys: list[str] = []
+    for item in (args.unset or []):
+        k = str(item or "").strip()
+        if k:
+            unset_keys.append(k)
+
+    clear = bool(getattr(args, "clear", False))
+    restart = bool(getattr(args, "restart", False))
+
+    resp = call_daemon(
+        {
+            "op": "actor_env_private_update",
+            "args": {
+                "group_id": group_id,
+                "actor_id": actor_id,
+                "by": by,
+                "set": set_vars,
+                "unset": unset_keys,
+                "clear": clear,
+            },
+        }
+    )
+    if not resp.get("ok"):
+        _print_json(resp)
+        return 2
+
+    if restart:
+        r = call_daemon({"op": "actor_restart", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+        if not r.get("ok"):
+            _print_json(r)
+            return 2
+        _print_json({"ok": True, "result": {"secrets": resp.get("result", {}), "restart": r.get("result", {})}})
+        return 0
+
+    _print_json(resp)
+    return 0
+
+
 def cmd_inbox(args: argparse.Namespace) -> int:
     group_id = _resolve_group_id(getattr(args, "group", ""))
     actor_id = str(args.actor_id or "").strip()
@@ -2640,6 +2707,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_actor_update.add_argument("--by", default="user", help="Requester (default: user)")
     p_actor_update.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_actor_update.set_defaults(func=cmd_actor_update)
+
+    p_actor_secrets = actor_sub.add_parser("secrets", help="Manage runtime-only secrets env (not in ledger)")
+    p_actor_secrets.add_argument("actor_id", help="Actor id")
+    p_actor_secrets.add_argument("--set", action="append", default=[], help="Set secret env (KEY=VALUE), repeatable")
+    p_actor_secrets.add_argument("--unset", action="append", default=[], help="Unset secret key (KEY), repeatable")
+    p_actor_secrets.add_argument("--clear", action="store_true", help="Clear all secrets for this actor")
+    p_actor_secrets.add_argument("--keys", action="store_true", help="List configured keys (no values)")
+    p_actor_secrets.add_argument("--restart", action="store_true", help="Restart actor after updating secrets")
+    p_actor_secrets.add_argument("--by", default="user", help="Requester (default: user)")
+    p_actor_secrets.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_actor_secrets.set_defaults(func=cmd_actor_secrets)
 
     p_inbox = sub.add_parser("inbox", help="List unread messages for an actor (chat messages + system notifications)")
     p_inbox.add_argument("--actor-id", required=True, help="Target actor id")

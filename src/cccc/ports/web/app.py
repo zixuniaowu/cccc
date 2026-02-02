@@ -135,6 +135,9 @@ class ActorCreateRequest(BaseModel):
     title: str = Field(default="")
     command: Union[str, list[str]] = Field(default="")
     env: Dict[str, str] = Field(default_factory=dict)
+    # Write-only runtime-only secrets (stored under CCCC_HOME/state; never persisted into ledger).
+    # Values are never returned by the daemon; only keys can be listed via the dedicated endpoints.
+    env_private: Optional[Dict[str, str]] = None
     default_scope_key: str = Field(default="")
     submit: ActorSubmit = Field(default="enter")
     by: str = Field(default="user")
@@ -517,9 +520,23 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def _handle_request_validation_error(_request: Request, exc: RequestValidationError) -> JSONResponse:
+        # Never echo request inputs back to the client in validation errors (could include secrets).
+        safe: list[dict[str, Any]] = []
+        try:
+            for err in exc.errors():
+                if not isinstance(err, dict):
+                    continue
+                out: dict[str, Any] = {}
+                for k in ("loc", "msg", "type"):
+                    if k in err:
+                        out[k] = err.get(k)
+                if out:
+                    safe.append(out)
+        except Exception:
+            safe = []
         return JSONResponse(
             status_code=422,
-            content={"ok": False, "error": {"code": "validation_error", "message": "invalid request", "details": exc.errors()}},
+            content={"ok": False, "error": {"code": "validation_error", "message": "invalid request", "details": safe}},
         )
 
     @app.exception_handler(Exception)
@@ -1835,6 +1852,7 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/groups/{group_id}/actors")
     async def actor_create(group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:
         command = _normalize_command(req.command) or []
+        env_private = dict(req.env_private) if isinstance(req.env_private, dict) else None
         return await _daemon(
             {
                 "op": "actor_add",
@@ -1847,6 +1865,7 @@ def create_app() -> FastAPI:
                     "title": req.title,
                     "command": command,
                     "env": dict(req.env),
+                    "env_private": env_private,
                     "default_scope_key": req.default_scope_key,
                     "submit": req.submit,
                     "by": req.by,
@@ -1891,6 +1910,82 @@ def create_app() -> FastAPI:
     @app.post("/api/v1/groups/{group_id}/actors/{actor_id}/restart")
     async def actor_restart(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
         return await _daemon({"op": "actor_restart", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+
+    @app.get("/api/v1/groups/{group_id}/actors/{actor_id}/env_private")
+    async def actor_env_private_keys(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
+        """List configured private env keys (never returns values)."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Private env endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "actor_env_private_keys"},
+                },
+            )
+        return await _daemon({"op": "actor_env_private_keys", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+
+    @app.post("/api/v1/groups/{group_id}/actors/{actor_id}/env_private")
+    async def actor_env_private_update(request: Request, group_id: str, actor_id: str) -> Dict[str, Any]:
+        """Update private env (runtime-only). Values are never returned."""
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Private env endpoints are disabled in read-only (exhibit) mode.",
+                    "details": {"endpoint": "actor_env_private_update"},
+                },
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "invalid JSON body", "details": {}})
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object", "details": {}})
+
+        by = str(payload.get("by") or "user").strip() or "user"
+        clear = bool(payload.get("clear") is True)
+
+        set_raw = payload.get("set")
+        unset_raw = payload.get("unset")
+
+        if set_raw is not None and not isinstance(set_raw, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "set must be an object", "details": {}})
+        if unset_raw is not None and not isinstance(unset_raw, list):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "unset must be a list", "details": {}})
+
+        set_vars: Dict[str, str] = {}
+        if isinstance(set_raw, dict):
+            for k, v in set_raw.items():
+                kk = str(k or "").strip()
+                if not kk:
+                    continue
+                # Keep value as string; never echo it back.
+                if v is None:
+                    continue
+                set_vars[kk] = str(v)
+
+        unset_keys: list[str] = []
+        if isinstance(unset_raw, list):
+            for item in unset_raw:
+                kk = str(item or "").strip()
+                if kk:
+                    unset_keys.append(kk)
+
+        return await _daemon(
+            {
+                "op": "actor_env_private_update",
+                "args": {
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "by": by,
+                    "set": set_vars,
+                    "unset": unset_keys,
+                    "clear": clear,
+                },
+            }
+        )
 
     @app.websocket("/api/v1/groups/{group_id}/actors/{actor_id}/term")
     async def actor_terminal(websocket: WebSocket, group_id: str, actor_id: str) -> None:
