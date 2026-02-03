@@ -36,6 +36,7 @@ DingTalk (钉钉) is ideal for:
 |------------|---------|
 | `Robot.SingleChat.ReadWrite` | Single chat robot management |
 | `qyapi_chat_read` | Read group basic info |
+| `qyapi_chat_manage` | Manage group chats (create, update, send messages) |
 
 3. Click to enable each permission (no approval needed for internal apps)
 

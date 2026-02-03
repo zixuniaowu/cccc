@@ -22,6 +22,30 @@ class IMAdapter(ABC):
 
     platform: str = "unknown"
 
+    def _log(self, msg: str) -> None:
+        """Log a message. Subclasses should override with actual logging."""
+        pass
+
+    def _disable_proxies(self) -> None:
+        """
+        Disable all proxies for WebSocket-based SDKs.
+
+        Many IM SDKs (Feishu, DingTalk) use websockets which don't support
+        SOCKS proxy without python-socks. Setting no_proxy=* and clearing
+        proxy environment variables ensures reliable WebSocket connections.
+        """
+        import os
+        os.environ["no_proxy"] = "*"
+        os.environ["NO_PROXY"] = "*"
+        self._log("[connect] Set no_proxy=* to bypass all proxies")
+
+        proxy_vars = ["ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy",
+                      "HTTPS_PROXY", "https_proxy", "SOCKS_PROXY", "socks_proxy"]
+        for var in proxy_vars:
+            if var in os.environ:
+                del os.environ[var]
+                self._log(f"[connect] Cleared {var} environment variable")
+
     @abstractmethod
     def connect(self) -> bool:
         """

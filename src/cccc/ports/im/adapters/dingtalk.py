@@ -291,6 +291,9 @@ class DingTalkAdapter(IMAdapter):
         with self._queue_lock:
             self._message_queue.clear()
 
+        # Disable all proxies BEFORE importing dingtalk-stream SDK
+        self._disable_proxies()
+
         # Inbound requires the official SDK (dingtalk-stream) for stream mode.
         try:
             import dingtalk_stream  # type: ignore
