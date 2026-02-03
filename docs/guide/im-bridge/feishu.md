@@ -32,12 +32,16 @@ Feishu (飞书, also known as Lark internationally) is ideal for:
 3. Search for `im:message` in the search box
 4. Select the **Tenant token scopes** tab
 5. Click **All** to select all `im:message` related scopes
-6. Click **Confirm and Apply**
+6. Also search for `im:chat:readonly` and enable it (for displaying chat titles)
+7. Click **Confirm and Apply**
 
 ![Feishu Permissions Configuration](/images/feishu-permissions.png)
 
-::: tip Quick Setup
-Selecting all `im:message` scopes ensures the bot has full messaging capabilities including sending, receiving, and managing messages.
+::: tip Required Permissions
+| Permission | Purpose |
+|------------|---------|
+| `im:message` (all) | Send and receive messages |
+| `im:chat:readonly` | Display chat/group titles (optional, falls back to chat ID if missing) |
 :::
 
 ## Step 3: Configure CCCC

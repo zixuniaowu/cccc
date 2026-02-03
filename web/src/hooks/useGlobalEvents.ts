@@ -23,7 +23,27 @@ export function useGlobalEvents({ refreshGroups }: UseGlobalEventsOptions): void
   useEffect(() => {
     let es: EventSource | null = null;
     let fallbackTimer: number | null = null;
+    let fallbackDelayMs = 10000;
     let errorCount = 0;
+
+    function clearFallbackTimer() {
+      if (fallbackTimer) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+    }
+
+    function scheduleFallbackPoll() {
+      if (fallbackTimer) return;
+      fallbackTimer = window.setTimeout(() => {
+        fallbackTimer = null;
+        if (!document.hidden) {
+          refreshGroupsRef.current();
+        }
+        fallbackDelayMs = Math.min(fallbackDelayMs * 2, 60000);
+        scheduleFallbackPoll();
+      }, fallbackDelayMs);
+    }
 
     function connectSSE() {
       es = new EventSource(api.withAuthToken("/api/v1/events/stream"));
@@ -41,6 +61,8 @@ export function useGlobalEvents({ refreshGroups }: UseGlobalEventsOptions): void
       });
       es.onopen = () => {
         errorCount = 0; // Reset on successful connection
+        fallbackDelayMs = 10000;
+        clearFallbackTimer();
         refreshGroupsRef.current(); // Re-sync after reconnects (best-effort)
       };
       es.onerror = () => {
@@ -49,7 +71,7 @@ export function useGlobalEvents({ refreshGroups }: UseGlobalEventsOptions): void
         if (errorCount >= 3 && !fallbackTimer) {
           es?.close();
           es = null;
-          fallbackTimer = window.setInterval(() => refreshGroupsRef.current(), 10000);
+          scheduleFallbackPoll();
         }
       };
     }
@@ -58,7 +80,7 @@ export function useGlobalEvents({ refreshGroups }: UseGlobalEventsOptions): void
 
     return () => {
       es?.close();
-      if (fallbackTimer) window.clearInterval(fallbackTimer);
+      clearFallbackTimer();
     };
   }, []); // Empty deps - only run on mount/unmount
 }

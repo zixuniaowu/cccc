@@ -21,6 +21,27 @@ export interface EditActorModalProps {
   onCancel: () => void;
 }
 
+/** Runtime-specific placeholder hints for secret environment variables */
+const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
+  claude: {
+    set: "ANTHROPIC_API_KEY=...\nANTHROPIC_BASE_URL=...",
+    unset: "ANTHROPIC_API_KEY\nANTHROPIC_BASE_URL",
+  },
+  codex: {
+    set: "OPENAI_API_KEY=...\nOPENAI_BASE_URL=...",
+    unset: "OPENAI_API_KEY\nOPENAI_BASE_URL",
+  },
+  gemini: {
+    set: "GOOGLE_API_KEY=...",
+    unset: "GOOGLE_API_KEY",
+  },
+};
+
+const DEFAULT_SECRETS_PLACEHOLDER = {
+  set: "OPENAI_API_KEY=...\nANTHROPIC_API_KEY=...\nANTHROPIC_BASE_URL=...",
+  unset: "OPENAI_API_KEY\nANTHROPIC_API_KEY\nANTHROPIC_BASE_URL",
+};
+
 export function EditActorModal({
   isOpen,
   isDark,
@@ -46,6 +67,8 @@ export function EditActorModal({
   const [secretsBusy, setSecretsBusy] = useState(false);
 
   const envKeyRe = useMemo(() => /^[A-Za-z_][A-Za-z0-9_]*$/, []);
+
+  const secretsPlaceholder = SECRETS_PLACEHOLDER[runtime] ?? DEFAULT_SECRETS_PLACEHOLDER;
 
   const refreshSecretKeys = async () => {
     if (!groupId || !actorId) return;
@@ -143,7 +166,7 @@ export function EditActorModal({
       aria-labelledby="edit-actor-title"
     >
       <div
-        className={`w-full max-w-md mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in ${
+        className={`w-full max-w-md mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in flex flex-col max-h-[calc(100vh-4rem)] sm:max-h-[calc(100vh-8rem)] ${
           isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
         }`}
       >
@@ -153,7 +176,7 @@ export function EditActorModal({
           </div>
           <div className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Change settings for this agent</div>
         </div>
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-5 overflow-y-auto flex-1 min-h-0">
           <div>
             <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Display Name</label>
             <input
@@ -329,7 +352,7 @@ export function EditActorModal({
               }`}
               value={secretsSetText}
               onChange={(e) => setSecretsSetText(e.target.value)}
-              placeholder={"OPENAI_API_KEY=...\nANTHROPIC_API_KEY=..."}
+              placeholder={secretsPlaceholder.set}
             />
 
             <label className={`block text-[11px] font-medium mt-3 mb-1.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
@@ -341,7 +364,7 @@ export function EditActorModal({
               }`}
               value={secretsUnsetText}
               onChange={(e) => setSecretsUnsetText(e.target.value)}
-              placeholder={"OPENAI_API_KEY\nANTHROPIC_API_KEY"}
+              placeholder={secretsPlaceholder.unset}
             />
 
             <label className={`flex items-center gap-2 text-[11px] font-medium mt-3 ${isDark ? "text-slate-400" : "text-gray-600"}`}>
