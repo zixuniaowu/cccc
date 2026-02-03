@@ -83,6 +83,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   const scrollRafRef = useRef<number | null>(null);
   const followupScrollTimeoutRef = useRef<number | null>(null);
   const scrollTokenRef = useRef(0);
+  const scrollRafScheduledRef = useRef(false);
   const resetKey = viewKey ?? groupId;
 
   // For history loading scroll position preservation (prepend older messages)
@@ -287,6 +288,12 @@ export const VirtualMessageList = memo(function VirtualMessageList({
   );
 
   const handleScroll = useCallback(() => {
+    if (scrollRafScheduledRef.current) return;
+    scrollRafScheduledRef.current = true;
+
+    window.requestAnimationFrame(() => {
+      scrollRafScheduledRef.current = false;
+
     const el = parentRef.current;
     if (!el) return;
 
@@ -333,6 +340,7 @@ export const VirtualMessageList = memo(function VirtualMessageList({
 
       onLoadMore();
     }
+    });
   }, [checkIsAtBottom, hasMoreHistory, isLoadingHistory, messages, onLoadMore, onScrollChange, onScrollSnapshot, virtualizer]);
 
   // When switching views (group or window-mode), reset internal scroll bookkeeping.

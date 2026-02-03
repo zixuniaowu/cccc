@@ -1,6 +1,6 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { Actor, GroupMeta, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { AlertIcon, AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon } from "../../components/Icons";
@@ -86,6 +86,7 @@ export function ChatComposer({
   setMentionFilter,
   onAppendRecipientToken,
 }: ChatComposerProps) {
+  const composerHeightRef = useRef(0);
   const chipBaseClass =
     "flex-shrink-0 whitespace-nowrap text-[10px] sm:text-[11px] px-2.5 sm:px-3 rounded-full border transition-all flex items-center justify-center font-medium";
 
@@ -147,7 +148,10 @@ export function ChatComposer({
     // Use requestAnimationFrame to avoid forced reflow during layout.
     requestAnimationFrame(() => {
       target.style.height = "auto";
-      target.style.height = Math.min(target.scrollHeight, 140) + "px";
+      const nextHeight = Math.min(target.scrollHeight, 140);
+      if (composerHeightRef.current === nextHeight) return;
+      target.style.height = `${nextHeight}px`;
+      composerHeightRef.current = nextHeight;
     });
 
     // Detect @ mentions for the recipient helper menu.
