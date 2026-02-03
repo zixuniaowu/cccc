@@ -128,6 +128,8 @@ class FeishuAdapter(IMAdapter):
         self._connected = False
         self._ws_thread: Optional[threading.Thread] = None
         self._ws_running = False
+        self._ws_connect_error: Optional[str] = None  # Error message if WS connection fails
+        self._ws_started = threading.Event()  # Signals when WS connection attempt completes
 
         # Cache for chat titles
         self._chat_title_cache: Dict[str, str] = {}
@@ -269,8 +271,37 @@ class FeishuAdapter(IMAdapter):
             self._log("[connect] Failed to get token")
             return False
 
+        # Clear proxy environment variables before starting WebSocket
+        # lark-oapi SDK doesn't support SOCKS proxy without python-socks
+        import os
+        proxy_vars = ["ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy",
+                      "HTTPS_PROXY", "https_proxy", "SOCKS_PROXY", "socks_proxy"]
+        for var in proxy_vars:
+            if var in os.environ:
+                del os.environ[var]
+                self._log(f"[connect] Cleared {var} environment variable")
+
         # Start WebSocket listener for events
+        self._ws_connect_error = None
+        self._ws_started.clear()
         self._start_ws_listener()
+
+        # Wait for WebSocket connection attempt to complete (with timeout)
+        # This ensures we detect early connection failures (e.g., proxy issues)
+        if not self._ws_started.wait(timeout=5.0):
+            self._log("[connect] Timeout waiting for WebSocket to start")
+            return False
+
+        # Check if connection failed
+        if self._ws_connect_error:
+            self._log(f"[connect] WebSocket connection failed: {self._ws_connect_error}")
+            return False
+
+        # Give SDK a moment to establish connection, then verify thread is still alive
+        time.sleep(0.5)
+        if self._ws_thread and not self._ws_thread.is_alive():
+            self._log("[connect] WebSocket thread died unexpectedly")
+            return False
 
         self._connected = True
         self._log(f"[connect] Connected (domain={self.domain}, app_id={self.app_id[:8]}...)")
@@ -368,13 +399,21 @@ class FeishuAdapter(IMAdapter):
 
                 self._log("[ws] Starting Feishu SDK WebSocket client...")
 
+                # Signal that we're about to start (no error yet)
+                self._ws_connect_error = None
+                self._ws_started.set()
+
                 # start() is blocking, runs until stopped
                 self._ws_client.start()
 
             except Exception as e:
-                self._log(f"[ws] SDK error: {e}")
+                error_msg = str(e)
+                self._log(f"[ws] SDK error: {error_msg}")
                 import traceback
                 self._log(f"[ws] Traceback: {traceback.format_exc()}")
+                # Record the error so connect() can detect it
+                self._ws_connect_error = error_msg
+                self._ws_started.set()  # Signal completion (with error)
 
             self._log("[ws] Event listener stopped")
 
