@@ -253,6 +253,22 @@ class FeishuAdapter(IMAdapter):
         with self._queue_lock:
             self._message_queue.clear()
 
+        # Disable all proxies BEFORE importing lark SDK
+        # lark-oapi SDK doesn't support SOCKS proxy without python-socks
+        # Setting no_proxy=* tells most libraries to bypass proxy for all hosts
+        import os
+        os.environ["no_proxy"] = "*"
+        os.environ["NO_PROXY"] = "*"
+        self._log("[connect] Set no_proxy=* to bypass all proxies")
+
+        # Also clear any existing proxy variables
+        proxy_vars = ["ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy",
+                      "HTTPS_PROXY", "https_proxy", "SOCKS_PROXY", "socks_proxy"]
+        for var in proxy_vars:
+            if var in os.environ:
+                del os.environ[var]
+                self._log(f"[connect] Cleared {var} environment variable")
+
         # Inbound requires the official SDK (lark-oapi) for long connection messaging.
         try:
             import lark_oapi as lark  # type: ignore
@@ -270,16 +286,6 @@ class FeishuAdapter(IMAdapter):
         if not self._refresh_token():
             self._log("[connect] Failed to get token")
             return False
-
-        # Clear proxy environment variables before starting WebSocket
-        # lark-oapi SDK doesn't support SOCKS proxy without python-socks
-        import os
-        proxy_vars = ["ALL_PROXY", "all_proxy", "HTTP_PROXY", "http_proxy",
-                      "HTTPS_PROXY", "https_proxy", "SOCKS_PROXY", "socks_proxy"]
-        for var in proxy_vars:
-            if var in os.environ:
-                del os.environ[var]
-                self._log(f"[connect] Cleared {var} environment variable")
 
         # Start WebSocket listener for events
         self._ws_connect_error = None
