@@ -184,6 +184,7 @@ export type GroupSettings = {
   help_nudge_min_messages: number;
   min_interval_seconds: number;
   standup_interval_seconds: number;
+  auto_mark_on_delivery: boolean;
 
   terminal_transcript_visibility: "off" | "foreman" | "all";
   terminal_transcript_notify_tail: boolean;

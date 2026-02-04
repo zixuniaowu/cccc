@@ -38,6 +38,7 @@ class AutomationConfig:
     """Automation configuration for a group."""
     # Level 1: Message-level
     nudge_after_seconds: int          # Nudge actor if unread message older than this
+    auto_mark_on_delivery: bool       # Auto-mark messages as read after PTY delivery
 
     # Level 2: Session-level
     actor_idle_timeout_seconds: int   # Notify foreman if actor idle for this long
@@ -66,6 +67,7 @@ def _cfg(group: Group) -> AutomationConfig:
     return AutomationConfig(
         # Level 1
         nudge_after_seconds=_int("nudge_after_seconds", 300),
+        auto_mark_on_delivery=coerce_bool(d.get("auto_mark_on_delivery"), default=False),
         # Level 2
         actor_idle_timeout_seconds=_int("actor_idle_timeout_seconds", 600),
         keepalive_delay_seconds=_int("keepalive_delay_seconds", 120),

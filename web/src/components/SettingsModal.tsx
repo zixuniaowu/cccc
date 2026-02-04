@@ -117,6 +117,7 @@ export function SettingsModal({
   const [helpNudgeMinMessages, setHelpNudgeMinMessages] = useState(10);
   const [deliveryInterval, setDeliveryInterval] = useState(0);
   const [standupInterval, setStandupInterval] = useState(900);
+  const [autoMarkOnDelivery, setAutoMarkOnDelivery] = useState(false);
 
   // Messaging policy
   const [defaultSendTo, setDefaultSendTo] = useState<"foreman" | "broadcast">("foreman");
@@ -198,6 +199,7 @@ export function SettingsModal({
       setHelpNudgeMinMessages(settings.help_nudge_min_messages ?? 10);
       setDeliveryInterval(settings.min_interval_seconds);
       setStandupInterval(settings.standup_interval_seconds ?? 900);
+      setAutoMarkOnDelivery(Boolean(settings.auto_mark_on_delivery));
       setDefaultSendTo(settings.default_send_to || "foreman");
       setTerminalVisibility(settings.terminal_transcript_visibility || "foreman");
       setTerminalNotifyTail(Boolean(settings.terminal_transcript_notify_tail));
@@ -336,6 +338,7 @@ export function SettingsModal({
       help_nudge_min_messages: helpNudgeMinMessages,
       min_interval_seconds: deliveryInterval,
       standup_interval_seconds: standupInterval,
+      auto_mark_on_delivery: autoMarkOnDelivery,
     });
   };
 
@@ -944,6 +947,8 @@ export function SettingsModal({
                   setDeliveryInterval={setDeliveryInterval}
                   standupInterval={standupInterval}
                   setStandupInterval={setStandupInterval}
+                  autoMarkOnDelivery={autoMarkOnDelivery}
+                  setAutoMarkOnDelivery={setAutoMarkOnDelivery}
                   onSave={handleSaveSettings}
                   onAutoSave={handleAutoSave}
                 />

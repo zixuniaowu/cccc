@@ -23,6 +23,8 @@ interface TimingTabProps {
   setDeliveryInterval: (v: number) => void;
   standupInterval: number;
   setStandupInterval: (v: number) => void;
+  autoMarkOnDelivery: boolean;
+  setAutoMarkOnDelivery: (v: boolean) => void;
   onSave: () => void;
   onAutoSave?: (field: string, value: number | boolean) => void;
 }
@@ -297,6 +299,14 @@ export function TimingTab(props: TimingTabProps) {
           onChange={props.setDeliveryInterval}
           helperText="Minimum delay between message deliveries (throttling)."
           onAutoSave={() => autoSave("min_interval_seconds", () => props.deliveryInterval)}
+        />
+        <ToggleRow
+          isDark={isDark}
+          label="Auto-mark as read on delivery"
+          checked={props.autoMarkOnDelivery}
+          onChange={props.setAutoMarkOnDelivery}
+          helperText="Automatically mark messages as read after successful delivery to PTY."
+          onAutoSave={(newValue) => onAutoSave?.("auto_mark_on_delivery", newValue)}
         />
       </TimingSection>
 
