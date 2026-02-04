@@ -153,6 +153,19 @@ export function SettingsModal({
   const [imBusy, setImBusy] = useState(false);
   const imLoadSeq = useRef(0);
 
+  // IM config drafts cache (per-platform local edits, not yet saved to server)
+  type IMConfigDraft = {
+    botTokenEnv: string;
+    appTokenEnv: string;
+    feishuDomain: string;
+    feishuAppId: string;
+    feishuAppSecret: string;
+    dingtalkAppKey: string;
+    dingtalkAppSecret: string;
+    dingtalkRobotCode: string;
+  };
+  const [imConfigDrafts, setImConfigDrafts] = useState<Partial<Record<IMPlatform, IMConfigDraft>>>({});
+
   // Global observability (developer mode)
   const [developerMode, setDeveloperMode] = useState(false);
   const [logLevel, setLogLevel] = useState<"INFO" | "DEBUG">("INFO");
@@ -424,6 +437,60 @@ export function SettingsModal({
     } finally {
       setTailBusy(false);
     }
+  };
+
+  // Get current IM config as a draft object
+  const getCurrentIMConfigDraft = (): IMConfigDraft => ({
+    botTokenEnv: imBotTokenEnv,
+    appTokenEnv: imAppTokenEnv,
+    feishuDomain: imFeishuDomain,
+    feishuAppId: imFeishuAppId,
+    feishuAppSecret: imFeishuAppSecret,
+    dingtalkAppKey: imDingtalkAppKey,
+    dingtalkAppSecret: imDingtalkAppSecret,
+    dingtalkRobotCode: imDingtalkRobotCode,
+  });
+
+  // Apply a draft to current IM config fields
+  const applyIMConfigDraft = (draft: IMConfigDraft) => {
+    setImBotTokenEnv(draft.botTokenEnv);
+    setImAppTokenEnv(draft.appTokenEnv);
+    setImFeishuDomain(draft.feishuDomain);
+    setImFeishuAppId(draft.feishuAppId);
+    setImFeishuAppSecret(draft.feishuAppSecret);
+    setImDingtalkAppKey(draft.dingtalkAppKey);
+    setImDingtalkAppSecret(draft.dingtalkAppSecret);
+    setImDingtalkRobotCode(draft.dingtalkRobotCode);
+  };
+
+  // Handle platform change with config caching
+  const handlePlatformChange = (newPlatform: IMPlatform) => {
+    if (newPlatform === imPlatform) return;
+
+    // 1. Save current platform config to drafts
+    setImConfigDrafts((prev) => ({
+      ...prev,
+      [imPlatform]: getCurrentIMConfigDraft(),
+    }));
+
+    // 2. Load new platform's cached draft (if exists)
+    const cachedDraft = imConfigDrafts[newPlatform];
+    if (cachedDraft) {
+      applyIMConfigDraft(cachedDraft);
+    } else {
+      // Reset to empty if no cached draft (new platform)
+      setImBotTokenEnv("");
+      setImAppTokenEnv("");
+      setImFeishuDomain("https://open.feishu.cn");
+      setImFeishuAppId("");
+      setImFeishuAppSecret("");
+      setImDingtalkAppKey("");
+      setImDingtalkAppSecret("");
+      setImDingtalkRobotCode("");
+    }
+
+    // 3. Set new platform
+    setImPlatform(newPlatform);
   };
 
   const handleSaveIMConfig = async () => {
@@ -898,7 +965,7 @@ export function SettingsModal({
                   groupId={groupId}
                   imStatus={imStatus}
                   imPlatform={imPlatform}
-                  setImPlatform={setImPlatform}
+                  onPlatformChange={handlePlatformChange}
                   imBotTokenEnv={imBotTokenEnv}
                   setImBotTokenEnv={setImBotTokenEnv}
                   imAppTokenEnv={imAppTokenEnv}

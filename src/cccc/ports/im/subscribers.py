@@ -23,6 +23,7 @@ class Subscriber:
         subscribed_at: Optional[str] = None,
         chat_title: str = "",
         thread_id: int = 0,
+        platform: str = "",
     ):
         self.chat_id = str(chat_id)
         self.subscribed = subscribed
@@ -30,6 +31,7 @@ class Subscriber:
         self.subscribed_at = subscribed_at or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.chat_title = chat_title
         self.thread_id = int(thread_id or 0)
+        self.platform = str(platform or "").strip().lower()  # Platform that created this subscription
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -38,6 +40,7 @@ class Subscriber:
             "subscribed_at": self.subscribed_at,
             "chat_title": self.chat_title,
             "thread_id": self.thread_id,
+            "platform": self.platform,
         }
 
     @classmethod
@@ -49,6 +52,7 @@ class Subscriber:
             subscribed_at=data.get("subscribed_at"),
             chat_title=str(data.get("chat_title", "")),
             thread_id=int(data.get("thread_id") or 0),
+            platform=str(data.get("platform") or ""),
         )
 
 
@@ -115,7 +119,7 @@ class SubscriberManager:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self.subscribers_path)
 
-    def subscribe(self, chat_id: str, chat_title: str = "", thread_id: int = 0) -> Subscriber:
+    def subscribe(self, chat_id: str, chat_title: str = "", thread_id: int = 0, platform: str = "") -> Subscriber:
         """Subscribe a chat. Returns the subscriber."""
         key = self._key(chat_id, thread_id)
         if key in self._subscribers:
@@ -123,8 +127,10 @@ class SubscriberManager:
             sub.subscribed = True
             if chat_title:
                 sub.chat_title = chat_title
+            if platform:
+                sub.platform = str(platform).strip().lower()
         else:
-            sub = Subscriber(chat_id=str(chat_id), chat_title=chat_title, thread_id=thread_id)
+            sub = Subscriber(chat_id=str(chat_id), chat_title=chat_title, thread_id=thread_id, platform=platform)
             self._subscribers[key] = sub
         self._save()
         return sub
@@ -171,9 +177,30 @@ class SubscriberManager:
         """Get subscriber info."""
         return self._subscribers.get(self._key(chat_id, thread_id))
 
-    def get_subscribed_targets(self) -> List[Subscriber]:
-        """Get list of subscribed chat targets."""
-        return [sub for sub in self._subscribers.values() if sub.subscribed]
+    def get_subscribed_targets(self, platform: Optional[str] = None) -> List[Subscriber]:
+        """Get list of subscribed chat targets, optionally filtered by platform.
+
+        Args:
+            platform: If provided, only return subscribers for this platform.
+                      Subscribers with empty platform match all platforms (backward compat).
+        """
+        result = []
+        platform_filter = str(platform or "").strip().lower()
+        for sub in self._subscribers.values():
+            if not sub.subscribed:
+                continue
+            # If no platform filter, return all
+            if not platform_filter:
+                result.append(sub)
+                continue
+            # Subscriber with empty platform matches all (backward compat for legacy data)
+            if not sub.platform:
+                result.append(sub)
+                continue
+            # Match only if platform matches
+            if sub.platform == platform_filter:
+                result.append(sub)
+        return result
 
     def count(self) -> int:
         """Count subscribed chats."""

@@ -242,6 +242,10 @@ class TelegramAdapter(IMAdapter):
                     from_user = msg.get("from", {})
                     username = from_user.get("username") or from_user.get("first_name") or "user"
 
+                    # Use "chat_id:msg_id" format for message_id to support reactions
+                    raw_msg_id = msg.get("message_id", 0)
+                    composite_msg_id = f"{chat_id}:{raw_msg_id}"
+
                     messages.append({
                         "chat_id": str(chat_id),
                         "chat_title": chat_title,
@@ -250,7 +254,7 @@ class TelegramAdapter(IMAdapter):
                         "text": text,
                         "attachments": attachments,
                         "from_user": username,
-                        "message_id": msg.get("message_id", 0),
+                        "message_id": composite_msg_id,
                         "update_id": update_id,
                     })
                 except Exception as e:
@@ -420,6 +424,93 @@ class TelegramAdapter(IMAdapter):
             chat = resp.get("result", {})
             return chat.get("title") or chat.get("first_name") or str(chat_id)
         return str(chat_id)
+
+    # ===== Typing Indicator (emoji reaction) =====
+
+    TYPING_EMOJI = "👀"
+
+    def _parse_message_id(self, message_id: str) -> Optional[Tuple[str, int]]:
+        """
+        Parse composite message_id "chat_id:msg_id" into (chat_id, msg_id).
+
+        Returns None if the format is invalid.
+        """
+        parts = str(message_id).split(":", 1)
+        if len(parts) != 2:
+            self._log(f"[reaction] Invalid message_id format: {message_id}")
+            return None
+        try:
+            return (parts[0], int(parts[1]))
+        except (ValueError, TypeError):
+            self._log(f"[reaction] Cannot parse msg_id from: {message_id}")
+            return None
+
+    def add_reaction(self, message_id: str, emoji_type: str = "") -> Optional[str]:
+        """
+        Add an emoji reaction to a message.
+
+        Uses Telegram Bot API setMessageReaction.
+        Returns a synthetic reaction_id "chat_id:msg_id:emoji" on success, None on failure.
+        """
+        if not message_id or not self._connected:
+            return None
+
+        parsed = self._parse_message_id(message_id)
+        if not parsed:
+            return None
+
+        chat_id, msg_id = parsed
+        emoji = emoji_type or self.TYPING_EMOJI
+
+        resp = self._api("setMessageReaction", {
+            "chat_id": chat_id,
+            "message_id": msg_id,
+            "reaction": [{"type": "emoji", "emoji": emoji}],
+        }, timeout=10)
+
+        if resp.get("ok"):
+            reaction_id = f"{chat_id}:{msg_id}:{emoji}"
+            self._log(f"[reaction] Added {emoji} to {message_id} -> {reaction_id}")
+            return reaction_id
+
+        self._log(f"[reaction] Failed to add {emoji} to {message_id}: {resp.get('error', 'unknown')}")
+        return None
+
+    def remove_reaction(self, message_id: str, reaction_id: str) -> bool:
+        """
+        Remove a previously added emoji reaction.
+
+        Parses reaction_id "chat_id:msg_id:emoji" and calls setMessageReaction
+        with an empty list to clear the bot's reaction.
+        Returns True on success.
+        """
+        if not message_id or not reaction_id or not self._connected:
+            return False
+
+        # Parse reaction_id to extract chat_id and msg_id
+        parts = str(reaction_id).split(":", 2)
+        if len(parts) < 2:
+            self._log(f"[reaction] Invalid reaction_id format: {reaction_id}")
+            return False
+        try:
+            chat_id = parts[0]
+            msg_id = int(parts[1])
+        except (ValueError, TypeError):
+            self._log(f"[reaction] Cannot parse reaction_id: {reaction_id}")
+            return False
+
+        resp = self._api("setMessageReaction", {
+            "chat_id": chat_id,
+            "message_id": msg_id,
+            "reaction": [],
+        }, timeout=10)
+
+        if resp.get("ok"):
+            self._log(f"[reaction] Removed {reaction_id} from {message_id}")
+            return True
+
+        self._log(f"[reaction] Failed to remove {reaction_id} from {message_id}: {resp.get('error', 'unknown')}")
+        return False
 
     def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
         """Format message for Telegram display."""

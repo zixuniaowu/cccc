@@ -456,8 +456,9 @@ class IMBridge:
         if not text and not attachments:
             return
 
-        # Forward to subscribed chats
-        subscribed = self.subscribers.get_subscribed_targets()
+        # Forward to subscribed chats (filtered by platform to avoid cross-platform sends)
+        platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
+        subscribed = self.subscribers.get_subscribed_targets(platform=platform)
 
         # Remove typing indicators for chats that are about to receive a reply.
         for sub in subscribed:
@@ -551,7 +552,8 @@ class IMBridge:
 
     def _handle_subscribe(self, chat_id: str, chat_title: str, thread_id: int = 0) -> None:
         """Handle /subscribe command."""
-        sub = self.subscribers.subscribe(chat_id, chat_title, thread_id=thread_id)
+        platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
+        sub = self.subscribers.subscribe(chat_id, chat_title, thread_id=thread_id, platform=platform)
         verbose_str = "on" if sub.verbose else "off"
         platform = str(getattr(self.adapter, "platform", "") or "").strip().lower() or "telegram"
         if platform == "telegram":

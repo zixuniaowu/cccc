@@ -1,6 +1,6 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Actor, GroupMeta, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { AlertIcon, AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon } from "../../components/Icons";
@@ -87,6 +87,27 @@ export function ChatComposer({
   onAppendRecipientToken,
 }: ChatComposerProps) {
   const composerHeightRef = useRef(0);
+
+  // Auto-adjust textarea height when composerText changes programmatically
+  // Use requestAnimationFrame to ensure browser has completed layout calculation
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+
+    // Wait for next frame to ensure content is rendered and layout is calculated
+    const rafId = requestAnimationFrame(() => {
+      // Double RAF for Safari/Firefox to ensure layout is complete
+      requestAnimationFrame(() => {
+        el.style.height = "auto";
+        const nextHeight = Math.min(el.scrollHeight, 140);
+        el.style.height = `${nextHeight}px`;
+        composerHeightRef.current = nextHeight;
+      });
+    });
+
+    return () => cancelAnimationFrame(rafId);
+  }, [composerText, composerRef]);
+
   const chipBaseClass =
     "flex-shrink-0 whitespace-nowrap text-[10px] sm:text-[11px] px-2.5 sm:px-3 rounded-full border transition-all flex items-center justify-center font-medium";
 

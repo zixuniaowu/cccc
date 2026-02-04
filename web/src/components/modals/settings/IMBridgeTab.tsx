@@ -7,7 +7,7 @@ interface IMBridgeTabProps {
   groupId?: string; // Reserved for future use.
   imStatus: IMStatus | null;
   imPlatform: IMPlatform;
-  setImPlatform: (v: IMPlatform) => void;
+  onPlatformChange: (v: IMPlatform) => void;
   imBotTokenEnv: string;
   setImBotTokenEnv: (v: string) => void;
   imAppTokenEnv: string;
@@ -39,7 +39,7 @@ export function IMBridgeTab({
   groupId: _groupId,
   imStatus,
   imPlatform,
-  setImPlatform,
+  onPlatformChange,
   imBotTokenEnv,
   setImBotTokenEnv,
   imAppTokenEnv,
@@ -131,7 +131,7 @@ export function IMBridgeTab({
           <label className={labelClass(isDark)}>Platform</label>
           <select
             value={imPlatform}
-            onChange={(e) => setImPlatform(e.target.value as IMPlatform)}
+            onChange={(e) => onPlatformChange(e.target.value as IMPlatform)}
             className={inputClass(isDark)}
           >
             <option value="telegram">Telegram</option>
