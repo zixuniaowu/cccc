@@ -165,8 +165,6 @@ export default function App() {
     recipientActors,
     recipientActorsBusy,
     destGroupScopeLabel,
-    setRecipientActors,
-    setRecipientActorsBusy,
   } = useCrossGroupRecipients({
     actors,
     groupDoc,

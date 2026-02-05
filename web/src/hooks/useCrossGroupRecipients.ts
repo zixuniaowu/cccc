@@ -1,7 +1,7 @@
 // useCrossGroupRecipients - Manage recipient actors for cross-group messaging
 // Extracts recipientActors, recipientActorsBusy, destGroupScopeLabel state and sync logic
 
-import { useState, useRef, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import * as api from "../services/api";
 import type { Actor, GroupDoc } from "../types";
 
@@ -23,10 +23,6 @@ interface UseCrossGroupRecipientsResult {
   recipientActorsBusy: boolean;
   /** Label for the target group's active scope */
   destGroupScopeLabel: string;
-  /** Set recipientActors (for direct updates like startReply) */
-  setRecipientActors: React.Dispatch<React.SetStateAction<Actor[]>>;
-  /** Set recipientActorsBusy (for direct updates like startReply) */
-  setRecipientActorsBusy: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 function getActiveScopeLabel(doc: GroupDoc | null): string {
@@ -46,118 +42,78 @@ export function useCrossGroupRecipients({
   selectedGroupId,
   sendGroupId,
 }: UseCrossGroupRecipientsOptions): UseCrossGroupRecipientsResult {
-  // State
-  const [recipientActors, setRecipientActors] = useState<Actor[]>([]);
-  const [recipientActorsBusy, setRecipientActorsBusy] = useState(false);
-  const [destGroupScopeLabel, setDestGroupScopeLabel] = useState("");
+  const selectedGid = String(selectedGroupId || "").trim();
+  const sendGid = String(sendGroupId || "").trim();
 
-  // Caches
-  const recipientActorsCacheRef = useRef<Record<string, Actor[]>>({});
-  const groupDocCacheRef = useRef<Record<string, GroupDoc>>({});
+  // Remote fetch caches (state drives re-render).
+  const [remoteActorsByGroup, setRemoteActorsByGroup] = useState<Record<string, Actor[]>>({});
+  const [remoteGroupDocsByGroup, setRemoteGroupDocsByGroup] = useState<Record<string, GroupDoc>>({});
 
-  // Cache current group's actors
+  const remoteDocForSend =
+    sendGid && selectedGid && sendGid !== selectedGid ? remoteGroupDocsByGroup[sendGid] : undefined;
   useEffect(() => {
-    const gid = String(selectedGroupId || "").trim();
-    if (!gid) return;
-    recipientActorsCacheRef.current[gid] = actors;
-  }, [actors, selectedGroupId]);
+    if (!sendGid || !selectedGid) return;
+    if (sendGid === selectedGid) return;
+    if (remoteDocForSend) return;
 
-  // Sync destGroupScopeLabel based on sendGroupId
-  useEffect(() => {
-    const gid = String(sendGroupId || "").trim();
-    if (!gid) {
-      setDestGroupScopeLabel("");
-      return;
-    }
-
-    // Same group - use current groupDoc
-    if (gid === String(selectedGroupId || "").trim()) {
-      setDestGroupScopeLabel(getActiveScopeLabel(groupDoc));
-      if (groupDoc) groupDocCacheRef.current[gid] = groupDoc;
-      return;
-    }
-
-    // Different group - check cache first
-    const cached = groupDocCacheRef.current[gid];
-    if (cached) {
-      setDestGroupScopeLabel(getActiveScopeLabel(cached));
-      return;
-    }
-
-    // Fetch from API
     let cancelled = false;
-    setDestGroupScopeLabel("");
-    void api.fetchGroup(gid).then((resp) => {
+    void api.fetchGroup(sendGid).then((resp) => {
       if (cancelled) return;
-      if (!resp.ok) {
-        setDestGroupScopeLabel("");
-        return;
-      }
+      if (!resp.ok) return;
       const doc = resp.result.group;
-      groupDocCacheRef.current[gid] = doc;
-      setDestGroupScopeLabel(getActiveScopeLabel(doc));
+      setRemoteGroupDocsByGroup((prev) => ({ ...prev, [sendGid]: doc }));
     });
 
     return () => {
       cancelled = true;
     };
-  }, [groupDoc, selectedGroupId, sendGroupId]);
+  }, [remoteDocForSend, selectedGid, sendGid]);
 
-  // Sync recipientActors based on sendGroupId
+  const remoteActorsForSend =
+    sendGid && selectedGid && sendGid !== selectedGid ? remoteActorsByGroup[sendGid] : undefined;
   useEffect(() => {
-    const gid = String(sendGroupId || "").trim();
-    if (!gid) {
-      setRecipientActors([]);
-      setRecipientActorsBusy(false);
-      return;
-    }
+    if (!sendGid || !selectedGid) return;
+    if (sendGid === selectedGid) return;
+    if (remoteActorsForSend) return;
 
-    // Same group - use current actors
-    if (gid === String(selectedGroupId || "").trim()) {
-      setRecipientActors(actors);
-      setRecipientActorsBusy(false);
-      return;
-    }
-
-    // Different group - check cache first
-    const cached = recipientActorsCacheRef.current[gid];
-    if (cached) {
-      setRecipientActors(cached);
-      setRecipientActorsBusy(false);
-      return;
-    }
-
-    // Fetch from API
     let cancelled = false;
-    setRecipientActorsBusy(true);
-    setRecipientActors([]);
-    void api
-      .fetchActors(gid)
-      .then((resp) => {
-        if (cancelled) return;
-        if (!resp.ok) {
-          setRecipientActors([]);
-          return;
-        }
-        const next = resp.result.actors || [];
-        recipientActorsCacheRef.current[gid] = next;
-        setRecipientActors(next);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setRecipientActorsBusy(false);
-      });
+    void api.fetchActors(sendGid).then((resp) => {
+      if (cancelled) return;
+      if (!resp.ok) {
+        setRemoteActorsByGroup((prev) => {
+          if (Object.prototype.hasOwnProperty.call(prev, sendGid)) return prev;
+          return { ...prev, [sendGid]: [] };
+        });
+        return;
+      }
+      const next = resp.result.actors || [];
+      setRemoteActorsByGroup((prev) => ({ ...prev, [sendGid]: next }));
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [actors, selectedGroupId, sendGroupId]);
+  }, [remoteActorsForSend, selectedGid, sendGid]);
 
-  return {
-    recipientActors,
-    recipientActorsBusy,
-    destGroupScopeLabel,
-    setRecipientActors,
-    setRecipientActorsBusy,
-  };
+  const destGroupScopeLabel = useMemo(() => {
+    if (!sendGid) return "";
+    if (sendGid === selectedGid) return getActiveScopeLabel(groupDoc);
+    const doc = remoteGroupDocsByGroup[sendGid] ?? null;
+    return getActiveScopeLabel(doc);
+  }, [groupDoc, remoteGroupDocsByGroup, selectedGid, sendGid]);
+
+  const recipientActors = useMemo(() => {
+    if (!sendGid) return [];
+    if (sendGid === selectedGid) return actors;
+    return remoteActorsByGroup[sendGid] ?? [];
+  }, [actors, remoteActorsByGroup, selectedGid, sendGid]);
+
+  const recipientActorsBusy = useMemo(() => {
+    if (!sendGid) return false;
+    if (!selectedGid) return false;
+    if (sendGid === selectedGid) return false;
+    return !Object.prototype.hasOwnProperty.call(remoteActorsByGroup, sendGid);
+  }, [remoteActorsByGroup, selectedGid, sendGid]);
+
+  return { recipientActors, recipientActorsBusy, destGroupScopeLabel };
 }
