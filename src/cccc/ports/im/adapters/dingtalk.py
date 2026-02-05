@@ -122,6 +122,10 @@ class DingTalkAdapter(IMAdapter):
         # Cache for session webhooks (conversation_id -> (webhook_url, expires_at))
         self._session_webhook_cache: Dict[str, tuple[str, float]] = {}
 
+        # Cache for seen message IDs (survives reconnect to deduplicate SDK-resent messages)
+        # Key: "{conversation_id}:{msg_id}", Value: timestamp
+        self._seen_msg_ids: Dict[str, float] = {}
+
     def _log(self, msg: str) -> None:
         """Append to log file if configured."""
         if self.log_path:
@@ -476,6 +480,10 @@ class DingTalkAdapter(IMAdapter):
             sender_id = event.get("senderStaffId", "") or event.get("senderId", "")
             sender_nick = event.get("senderNick", "user")
             msg_id = event.get("msgId", "")
+
+            # Deduplicate: skip if we've already processed this message
+            if not self._should_enqueue_message(conversation_id, msg_id):
+                return False
 
             # Extract text based on message type
             if msg_type == "text":
