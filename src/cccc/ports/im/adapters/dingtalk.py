@@ -295,6 +295,9 @@ class DingTalkAdapter(IMAdapter):
         with self._queue_lock:
             self._message_queue.clear()
 
+        # Record connect time for discarding historical messages
+        self._connect_time = time.time()
+
         # Disable all proxies BEFORE importing dingtalk-stream SDK
         self._disable_proxies()
 
@@ -387,6 +390,12 @@ class DingTalkAdapter(IMAdapter):
                             "conversationTitle": data.get('conversationTitle', ''),
                             "sessionWebhook": data.get('sessionWebhook', ''),
                             "sessionWebhookExpiredTime": data.get('sessionWebhookExpiredTime', 0),
+                            "createAt": data.get('createAt', 0),
+                            # richText content is inside content.richText (not top-level)
+                            "richText": data.get('content', {}).get('richText', []),
+                            # picture/file fields
+                            "downloadCode": data.get('downloadCode', ''),
+                            "fileName": data.get('fileName', ''),
                         }
 
                         # Extract text content (text is also a dict)
@@ -396,8 +405,10 @@ class DingTalkAdapter(IMAdapter):
                             adapter._log("[stream] text message received")
 
                         # Enqueue the message
-                        adapter._enqueue_message(event)
-                        adapter._log("[stream] Message enqueued successfully")
+                        if adapter._enqueue_message(event):
+                            adapter._log("[stream] Message enqueued successfully")
+                        else:
+                            adapter._log("[stream] Message was not enqueued (filtered/duplicate/error)")
 
                         return AckMessage.STATUS_OK, 'OK'
 
@@ -466,7 +477,38 @@ class DingTalkAdapter(IMAdapter):
 
         return messages
 
-    def _enqueue_message(self, event: Dict[str, Any]) -> None:
+    def _should_enqueue_message(self, conversation_id: str, msg_id: str) -> bool:
+        """
+        Check if message should be enqueued (deduplication).
+
+        Returns True if message should be processed, False if it's a duplicate.
+        """
+        mid = str(msg_id or "").strip()
+        if not mid:
+            # No msgId means we can't deduplicate; allow processing
+            return True
+
+        now = time.time()
+        key = f"{conversation_id}:{mid}"
+
+        if key in self._seen_msg_ids:
+            self._log(f"[dedup] Skipping duplicate message: {key}")
+            return False
+
+        self._seen_msg_ids[key] = now
+
+        # Opportunistic pruning (keep memory bounded)
+        if len(self._seen_msg_ids) > 2048:
+            cutoff = now - 3600.0  # 1h
+            self._seen_msg_ids = {k: ts for k, ts in self._seen_msg_ids.items() if ts >= cutoff}
+            if len(self._seen_msg_ids) > 4096:
+                # Extreme case: clear old half
+                sorted_items = sorted(self._seen_msg_ids.items(), key=lambda x: x[1])
+                self._seen_msg_ids = dict(sorted_items[len(sorted_items) // 2:])
+
+        return True
+
+    def _enqueue_message(self, event: Dict[str, Any]) -> bool:
         """
         Process incoming event and enqueue normalized message.
 
@@ -486,11 +528,19 @@ class DingTalkAdapter(IMAdapter):
                 return False
 
             # Extract text based on message type
+            # Track attachments extracted from richText (populated below if applicable)
+            rich_text_attachments: List[Dict[str, Any]] = []
+
             if msg_type == "text":
                 content = event.get("text", {})
                 text = content.get("content", "")
             elif msg_type == "richText":
-                text = self._extract_rich_text(event.get("richText", []))
+                raw_rich_text = event.get("richText", [])
+                self._log(f"[enqueue] richText raw: {raw_rich_text}")
+                text, rich_text_attachments = self._extract_rich_text(raw_rich_text)
+                # If text is empty but we have images, use placeholder
+                if not text.strip() and rich_text_attachments:
+                    text = "[image]"
             elif msg_type == "picture":
                 text = "[image]"
             elif msg_type == "file":
@@ -499,7 +549,8 @@ class DingTalkAdapter(IMAdapter):
                 text = f"[{msg_type}]"
 
             if not text.strip():
-                return
+                self._log(f"[enqueue] Discarding message with empty text: msg_type={msg_type}")
+                return False
 
             # Build attachments list
             attachments: List[Dict[str, Any]] = []
@@ -517,6 +568,9 @@ class DingTalkAdapter(IMAdapter):
                     "download_code": event.get("downloadCode", ""),
                     "file_name": event.get("fileName", "file"),
                 })
+            elif msg_type == "richText" and rich_text_attachments:
+                # Add attachments extracted from richText content
+                attachments.extend(rich_text_attachments)
 
             # Determine chat type
             conversation_type = event.get("conversationType", "")
@@ -564,20 +618,43 @@ class DingTalkAdapter(IMAdapter):
 
             with self._queue_lock:
                 self._message_queue.append(normalized)
+            return True
 
         except Exception as e:
             self._log(f"[enqueue] Error: {e}")
+            return False
 
-    def _extract_rich_text(self, rich_text: List[Dict[str, Any]]) -> str:
-        """Extract plain text from rich text content."""
-        texts = []
+    def _extract_rich_text(self, rich_text: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
+        """Extract text and attachments from rich text content.
+
+        DingTalk richText structure:
+        [
+            {"text": "some text"},
+            {"type": "picture", "downloadCode": "xxx", "pictureDownloadCode": "xxx"}
+        ]
+
+        Returns:
+            tuple of (text, attachments list)
+        """
+        texts: List[str] = []
+        attachments: List[Dict[str, Any]] = []
         try:
             for item in rich_text:
                 if item.get("text"):
                     texts.append(item["text"])
+                elif item.get("type") == "picture":
+                    # Extract picture attachment from richText element
+                    download_code = item.get("downloadCode") or item.get("pictureDownloadCode", "")
+                    if download_code:
+                        attachments.append({
+                            "provider": "dingtalk",
+                            "kind": "image",
+                            "download_code": download_code,
+                            "file_name": "image.png",
+                        })
         except Exception:
             pass
-        return " ".join(texts)
+        return " ".join(texts), attachments
 
     def _get_conversation_title_cached(self, conversation_id: str) -> str:
         """Get conversation title with caching."""
@@ -763,47 +840,55 @@ class DingTalkAdapter(IMAdapter):
         except Exception as e:
             raise ValueError(f"Download failed: {e}")
 
-    def send_file(
-        self,
-        chat_id: str,
-        *,
-        file_path: Path,
-        filename: str,
-        caption: str = "",
-        thread_id: Optional[int] = None,
-    ) -> bool:
-        """Send a file to a conversation."""
-        _ = thread_id  # DingTalk doesn't support threading
+    def _is_image_file(self, filename: str) -> bool:
+        """Check if file is an image based on extension."""
+        image_extensions = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
+        ext = Path(filename).suffix.lower()
+        return ext in image_extensions
 
-        if not self._connected:
-            return False
+    def _upload_media(self, raw: bytes, filename: str, media_type: str = "file") -> Optional[str]:
+        """
+        Upload file to DingTalk and return media_id.
 
+        Args:
+            raw: File content bytes
+            filename: Original filename
+            media_type: "file" or "image"
+
+        Returns:
+            media_id if successful, None otherwise
+        """
         token = self._get_token()
         if not token:
-            return False
+            return None
 
-        # Rate limit
-        self._rate_limiter.wait_and_acquire(chat_id)
-
-        try:
-            raw = file_path.read_bytes()
-        except Exception as e:
-            self._log(f"[send_file] Read failed: {e}")
-            return False
-
-        # Step 1: Upload file to get media_id
         boundary = "----cccc" + uuid.uuid4().hex
         upload_url = f"{DINGTALK_API_OLD}/media/upload"
-        upload_url = f"{upload_url}?access_token={token}&type=file"
+        upload_url = f"{upload_url}?access_token={token}&type={media_type}"
 
-        safe_fn = (filename or file_path.name or "file").replace("\\", "_").replace("/", "_")
+        safe_fn = (filename or "file").replace("\\", "_").replace("/", "_")
+
+        # Determine content type based on media type
+        if media_type == "image":
+            ext = Path(filename).suffix.lower()
+            content_type_map = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".gif": "image/gif",
+                ".bmp": "image/bmp",
+                ".webp": "image/webp",
+            }
+            content_type = content_type_map.get(ext, "application/octet-stream")
+        else:
+            content_type = "application/octet-stream"
 
         # Build multipart form data
         body = b""
         body += (
             f"--{boundary}\r\n"
             f'Content-Disposition: form-data; name="media"; filename="{safe_fn}"\r\n'
-            f"Content-Type: application/octet-stream\r\n\r\n"
+            f"Content-Type: {content_type}\r\n\r\n"
         ).encode("utf-8")
         body += raw
         body += f"\r\n--{boundary}--\r\n".encode("utf-8")
@@ -816,38 +901,198 @@ class DingTalkAdapter(IMAdapter):
                 result = json.loads(resp.read().decode("utf-8", errors="replace"))
 
             if result.get("errcode") != 0:
-                self._log(f"[send_file] Upload failed: {result.get('errmsg', 'unknown')}")
-                return False
+                self._log(f"[upload_media] Upload failed: {result.get('errmsg', 'unknown')}")
+                return None
 
             media_id = result.get("media_id", "")
             if not media_id:
-                self._log("[send_file] No media_id in response")
-                return False
+                self._log("[upload_media] No media_id in response")
+                return None
+
+            return media_id
 
         except Exception as e:
-            self._log(f"[send_file] Upload error: {e}")
+            self._log(f"[upload_media] Upload error: {e}")
+            return None
+
+    def _send_file_via_webhook(
+        self,
+        webhook_url: str,
+        raw: bytes,
+        filename: str,
+        is_image: bool = False,
+    ) -> bool:
+        """
+        Send file via sessionWebhook.
+
+        For images, uploads to DingTalk media API and sends image message.
+        For files, uploads and sends file message.
+
+        Args:
+            webhook_url: Session webhook URL
+            raw: File content bytes
+            filename: Original filename
+            is_image: Whether to send as image type
+
+        Returns:
+            True if successful, False otherwise
+        """
+        # Upload media first
+        media_type = "image" if is_image else "file"
+        media_id = self._upload_media(raw, filename, media_type)
+        if not media_id:
             return False
 
-        # Step 2: Send file message
-        msg_body: Dict[str, Any] = {
-            "chatid": chat_id,
-            "msg": {
+        # Build webhook message body
+        if is_image:
+            body = {
+                "msgtype": "image",
+                "image": {
+                    "mediaId": media_id
+                }
+            }
+        else:
+            body = {
                 "msgtype": "file",
                 "file": {
-                    "media_id": media_id,
-                },
-            },
+                    "mediaId": media_id
+                }
+            }
+
+        data = json.dumps(body, ensure_ascii=False).encode('utf-8')
+
+        req = urllib.request.Request(webhook_url, data=data, method="POST")
+        req.add_header("Content-Type", "application/json; charset=utf-8")
+
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                result = json.loads(resp.read().decode('utf-8', errors='replace'))
+                if result.get('errcode') == 0:
+                    self._log(f"[send_file_webhook] Sent successfully via webhook")
+                    return True
+                self._log(f"[send_file_webhook] Failed: {result}")
+                return False
+        except Exception as e:
+            self._log(f"[send_file_webhook] Error: {e}")
+            return False
+
+    def _send_file_via_api(
+        self,
+        chat_id: str,
+        raw: bytes,
+        filename: str,
+        is_image: bool = False,
+    ) -> bool:
+        """
+        Send file via new robot API (/v1.0/robot/groupMessages/send).
+
+        Args:
+            chat_id: DingTalk conversationId
+            raw: File content bytes
+            filename: Original filename
+            is_image: Whether to send as image type
+
+        Returns:
+            True if successful, False otherwise
+        """
+        if not self.robot_code:
+            self._log("[send_file_api] Missing robot_code; cannot use new API.")
+            return False
+
+        # Upload media first
+        media_type = "image" if is_image else "file"
+        media_id = self._upload_media(raw, filename, media_type)
+        if not media_id:
+            return False
+
+        # Build API request body
+        if is_image:
+            msg_key = "sampleImageMsg"
+            msg_param = json.dumps({"photoURL": f"@lADPD{media_id}"}, ensure_ascii=False)
+        else:
+            msg_key = "sampleFile"
+            msg_param = json.dumps({"mediaId": media_id, "fileName": filename}, ensure_ascii=False)
+
+        body: Dict[str, Any] = {
+            "robotCode": self.robot_code,
+            "msgKey": msg_key,
+            "msgParam": msg_param,
         }
 
-        resp = self._api_old("POST", "/chat/send", msg_body)
+        # Determine endpoint based on chat type
+        if chat_id.startswith("cid"):
+            # Group conversation
+            body["openConversationId"] = chat_id
+            endpoint = "/v1.0/robot/groupMessages/send"
+        else:
+            # 1:1 conversation
+            body["userIds"] = [chat_id]
+            endpoint = "/v1.0/robot/oToMessages/batchSend"
 
-        if resp.get("errcode") == 0:
-            # Send caption as separate message if provided
+        resp = self._api_new("POST", endpoint, body)
+
+        if resp.get("processQueryKey") or resp.get("sendResults"):
+            self._log(f"[send_file_api] Sent successfully via API")
+            return True
+
+        self._log(f"[send_file_api] Failed: {resp}")
+        return False
+
+    def send_file(
+        self,
+        chat_id: str,
+        *,
+        file_path: Path,
+        filename: str,
+        caption: str = "",
+        thread_id: Optional[int] = None,
+    ) -> bool:
+        """
+        Send a file to a conversation.
+
+        Uses sessionWebhook first (most reliable for groups), falls back to
+        new robot API (/v1.0/robot/groupMessages/send).
+        """
+        _ = thread_id  # DingTalk doesn't support threading
+
+        if not self._connected:
+            return False
+
+        # Rate limit
+        self._rate_limiter.wait_and_acquire(chat_id)
+
+        try:
+            raw = file_path.read_bytes()
+        except Exception as e:
+            self._log(f"[send_file] Read failed: {e}")
+            return False
+
+        safe_fn = (filename or file_path.name or "file").replace("\\", "_").replace("/", "_")
+        is_image = self._is_image_file(safe_fn)
+
+        # Try sessionWebhook first (most reliable for group messages)
+        if chat_id in self._session_webhook_cache:
+            webhook_url, expires_at = self._session_webhook_cache[chat_id]
+            current_time = time.time()
+            if current_time < expires_at:
+                if self._send_file_via_webhook(webhook_url, raw, safe_fn, is_image):
+                    if caption:
+                        self.send_message(chat_id, caption)
+                    return True
+                self._log("[send_file] Webhook failed, falling back to API...")
+            else:
+                # Webhook expired, remove from cache
+                del self._session_webhook_cache[chat_id]
+        else:
+            self._log("[send_file] No cached sessionWebhook; using API.")
+
+        # Fallback to new robot API
+        if self._send_file_via_api(chat_id, raw, safe_fn, is_image):
             if caption:
                 self.send_message(chat_id, caption)
             return True
 
-        self._log(f"[send_file] Send failed: {resp.get('errmsg', 'unknown')}")
+        self._log(f"[send_file] All methods failed for chat {chat_id}")
         return False
 
     def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
