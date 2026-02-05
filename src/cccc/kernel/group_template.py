@@ -85,6 +85,7 @@ def build_group_template_from_group(group: Group, *, cccc_version: str = "") -> 
     settings: dict[str, Any] = {
         "default_send_to": default_send_to,
         "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
+        "auto_mark_on_delivery": bool(automation.get("auto_mark_on_delivery", False)),
         "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
         "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
         "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
@@ -183,6 +184,7 @@ def preview_group_template_replace(group: Group, template: GroupTemplate) -> Gro
     current_settings: Dict[str, Any] = {
         "default_send_to": default_send_to,
         "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
+        "auto_mark_on_delivery": bool(automation.get("auto_mark_on_delivery", False)),
         "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
         "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
         "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),

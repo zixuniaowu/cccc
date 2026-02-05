@@ -35,6 +35,7 @@ class GroupTemplateSettings(BaseModel):
 
     default_send_to: DefaultSendTo = "foreman"
     nudge_after_seconds: int = 300
+    auto_mark_on_delivery: bool = False
     actor_idle_timeout_seconds: int = 600
     keepalive_delay_seconds: int = 120
     keepalive_max_per_actor: int = 3

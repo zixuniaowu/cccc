@@ -224,6 +224,10 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
     _int("min_interval_seconds", min_v=0)
     _int("standup_interval_seconds", min_v=0)
 
+    # Automation toggles
+    if "auto_mark_on_delivery" in settings:
+        patch["auto_mark_on_delivery"] = bool(settings.get("auto_mark_on_delivery"))
+
     # Terminal transcript policy
     if "terminal_transcript_visibility" in settings:
         patch["terminal_transcript_visibility"] = str(settings.get("terminal_transcript_visibility") or "").strip()
@@ -239,6 +243,7 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
     delivery_keys = {"min_interval_seconds"}
     automation_keys = {
         "nudge_after_seconds",
+        "auto_mark_on_delivery",
         "actor_idle_timeout_seconds",
         "keepalive_delay_seconds",
         "keepalive_max_per_actor",
@@ -257,7 +262,10 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
         if k in delivery_keys:
             delivery[k] = int(v)
         if k in automation_keys:
-            automation[k] = int(v)
+            if k == "auto_mark_on_delivery":
+                automation[k] = bool(v)
+            else:
+                automation[k] = int(v)
         if k in messaging_keys:
             messaging["default_send_to"] = str(v)
 
