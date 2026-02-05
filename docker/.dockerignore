@@ -1,0 +1,16 @@
+.git
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+dist/
+build/
+web/node_modules
+tests/
+docs/
+*.md
+.claude
+.github
+screenshots/
+uv.lock

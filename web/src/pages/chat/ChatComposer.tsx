@@ -87,16 +87,19 @@ export function ChatComposer({
   onAppendRecipientToken,
 }: ChatComposerProps) {
   const composerHeightRef = useRef(0);
+  const isUserInputRef = useRef(false);
 
   // Auto-adjust textarea height when composerText changes programmatically
-  // Use requestAnimationFrame to ensure browser has completed layout calculation
+  // (e.g. mention selection). Skips when handleChange already handled resize.
   useEffect(() => {
+    if (isUserInputRef.current) {
+      isUserInputRef.current = false;
+      return;
+    }
     const el = composerRef.current;
     if (!el) return;
 
-    // Wait for next frame to ensure content is rendered and layout is calculated
     const rafId = requestAnimationFrame(() => {
-      // Double RAF for Safari/Firefox to ensure layout is complete
       requestAnimationFrame(() => {
         el.style.height = "auto";
         const nextHeight = Math.min(el.scrollHeight, 140);
@@ -164,13 +167,13 @@ export function ChatComposer({
   // Handle text changes.
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
+    isUserInputRef.current = true;
     setComposerText(val);
     const target = e.target;
     // Use requestAnimationFrame to avoid forced reflow during layout.
     requestAnimationFrame(() => {
       target.style.height = "auto";
       const nextHeight = Math.min(target.scrollHeight, 140);
-      if (composerHeightRef.current === nextHeight) return;
       target.style.height = `${nextHeight}px`;
       composerHeightRef.current = nextHeight;
     });
@@ -514,7 +517,7 @@ export function ChatComposer({
           <textarea
             ref={composerRef}
             className={classNames(
-              "w-full rounded-xl sm:rounded-2xl border px-3 sm:px-4 py-2 sm:py-2.5 text-base sm:text-sm resize-none min-h-[40px] sm:min-h-[44px] max-h-[160px] transition-all",
+              "w-full rounded-xl sm:rounded-2xl border px-3 sm:px-4 py-2 sm:py-2.5 text-base sm:text-sm resize-none min-h-[40px] sm:min-h-[44px] max-h-[160px] transition",
               "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center",
               isDark
                 ? "bg-white/5 border-white/5 text-slate-200 placeholder-slate-500 focus:ring-blue-500/40 focus:border-blue-500/50"
