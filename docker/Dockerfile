@@ -27,17 +27,17 @@ RUN npm install -g \
 
 # Install CCCC
 WORKDIR /app
-COPY pyproject.toml ./
+COPY pyproject.toml MANIFEST.in LICENSE README.md README.zh-CN.md README.ja.md ./
 COPY src/ ./src/
-
-RUN pip install --no-cache-dir .
 
 # Copy built WebUI (vite outputs to ../src/cccc/ports/web/dist)
 COPY --from=web-builder /src/cccc/ports/web/dist ./src/cccc/ports/web/dist
 
+RUN pip install --no-cache-dir .
+
 # Workspace for project files (mount volumes here)
-RUN mkdir -p /workspace
 WORKDIR /workspace
+RUN rm -rf /app
 
 # Configuration
 ENV CCCC_HOME=/data
