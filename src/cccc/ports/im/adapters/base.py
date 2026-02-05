@@ -35,6 +35,11 @@ class IMAdapter(ABC):
         proxy environment variables ensures reliable WebSocket connections.
         """
         import os
+        raw = str(os.getenv("CCCC_IM_DISABLE_PROXIES", "")).strip().lower()
+        if raw in ("0", "false", "no", "off"):
+            self._log("[connect] Keeping proxy environment variables (CCCC_IM_DISABLE_PROXIES=0)")
+            return
+
         os.environ["no_proxy"] = "*"
         os.environ["NO_PROXY"] = "*"
         self._log("[connect] Set no_proxy=* to bypass all proxies")
