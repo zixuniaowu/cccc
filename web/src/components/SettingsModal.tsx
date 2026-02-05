@@ -1,5 +1,5 @@
 // SettingsModal renders the settings modal.
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform } from "../types";
 import * as api from "../services/api";
 import { useObservabilityStore } from "../stores";
@@ -20,7 +20,6 @@ import { InfoIcon } from "./Icons";
 import {
   useFloating,
   useHover,
-  useClick,
   useDismiss,
   useRole,
   useInteractions,
@@ -71,13 +70,21 @@ function ScopeTooltip({
 
   const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss, role]);
 
+  const setReference = useCallback((node: HTMLElement | null) => {
+    refs.setReference(node);
+  }, [refs]);
+
+  const setFloating = useCallback((node: HTMLElement | null) => {
+    refs.setFloating(node);
+  }, [refs]);
+
   return (
     <>
-      {children(getReferenceProps, refs.setReference)}
+      {children(getReferenceProps, setReference)}
       <FloatingPortal>
         {isOpen && (
           <div
-            ref={refs.setFloating}
+            ref={setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
             className={`z-max w-max max-w-[220px] rounded-lg border shadow-xl px-3 py-2 text-[11px] transition-opacity duration-150 ${isPositioned ? "opacity-100" : "opacity-0"
