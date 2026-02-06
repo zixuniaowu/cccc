@@ -119,7 +119,9 @@ export function ChatTab({
     clearRecipients,
     appendRecipientToken,
     priority,
+    replyRequired,
     setPriority,
+    setReplyRequired,
     destGroupId,
     setDestGroupId,
     mentionSuggestions,
@@ -212,7 +214,9 @@ export function ChatTab({
             composerText={composerText}
             setComposerText={setComposerText}
             priority={priority}
+            replyRequired={replyRequired}
             setPriority={setPriority}
+            setReplyRequired={setReplyRequired}
             onSendMessage={sendMessage}
             showMentionMenu={showMentionMenu}
             setShowMentionMenu={setShowMentionMenu}
@@ -324,8 +328,9 @@ export function ChatTab({
                 ["all", "All"],
                 ["to_user", "To user"],
                 ["attention", "Important"],
+                ["task", "Task"],
               ].map(([key, label]) => {
-                const k = key as "all" | "to_user" | "attention";
+                const k = key as "all" | "to_user" | "attention" | "task";
                 const active = chatFilter === k;
                 return (
                   <button

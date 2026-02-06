@@ -74,12 +74,14 @@ export function useChatTab({
     toText,
     replyTarget,
     priority,
+    replyRequired,
     destGroupId,
     setComposerText,
     setComposerFiles,
     setToText,
     setReplyTarget,
     setPriority,
+    setReplyRequired,
     setDestGroupId,
     clearComposer,
     clearDraft,
@@ -168,6 +170,12 @@ export function useChatTab({
       return all.filter((ev) => {
         const d = ev.data as ChatMessageData | undefined;
         return String(d?.priority || "normal") === "attention";
+      });
+    }
+    if (chatFilter === "task") {
+      return all.filter((ev) => {
+        const d = ev.data as ChatMessageData | undefined;
+        return !!d?.reply_required;
       });
     }
     if (chatFilter === "to_user") {
@@ -271,9 +279,12 @@ export function useChatTab({
     const dstGroup = String(sendGroupId || "").trim();
     const isCrossGroup = !!dstGroup && dstGroup !== selectedGroupId;
 
-    const prio = priority || "normal";
-    if (prio === "attention") {
-      const ok = window.confirm("Send as an IMPORTANT message? Recipients must acknowledge it.");
+  const prio = priority || "normal";
+    if (replyRequired) {
+      const ok = window.confirm("Send as a TASK message (reply required)?");
+      if (!ok) return;
+    } else if (prio === "attention") {
+      const ok = window.confirm("Send as an IMPORTANT message? Recipients should acknowledge it.");
       if (!ok) return;
     }
 
@@ -287,13 +298,14 @@ export function useChatTab({
           setDestGroupId(selectedGroupId);
           return;
         }
-        resp = await api.replyMessage(
+      resp = await api.replyMessage(
           selectedGroupId,
           txt,
           to,
           replyTarget.eventId,
           composerFiles.length > 0 ? composerFiles : undefined,
-          prio
+          prio,
+          replyRequired
         );
       } else {
         if (isCrossGroup) {
@@ -301,14 +313,15 @@ export function useChatTab({
             showError("Cross-group send does not support attachments yet.");
             return;
           }
-          resp = await api.sendCrossGroupMessage(selectedGroupId, dstGroup, txt, to, prio);
+          resp = await api.sendCrossGroupMessage(selectedGroupId, dstGroup, txt, to, prio, replyRequired);
         } else {
           resp = await api.sendMessage(
             selectedGroupId,
             txt,
             to,
             composerFiles.length > 0 ? composerFiles : undefined,
-            prio
+            prio,
+            replyRequired
           );
         }
       }
@@ -337,6 +350,7 @@ export function useChatTab({
     selectedGroupId,
     sendGroupId,
     priority,
+    replyRequired,
     toTokens,
     replyTarget,
     inChatWindow,
@@ -561,7 +575,9 @@ export function useChatTab({
     clearRecipients,
     appendRecipientToken,
     priority,
+    replyRequired,
     setPriority,
+    setReplyRequired,
     destGroupId: sendGroupId,
     setDestGroupId,
     mentionSuggestions,

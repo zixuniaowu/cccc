@@ -2048,6 +2048,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         delivery_keys = {"min_interval_seconds"}
         automation_keys = {
             "nudge_after_seconds",
+            "reply_required_nudge_after_seconds",
+            "attention_ack_nudge_after_seconds",
+            "unread_nudge_after_seconds",
+            "nudge_digest_min_interval_seconds",
+            "nudge_max_repeats_per_obligation",
+            "nudge_escalate_after_repeats",
             "actor_idle_timeout_seconds",
             "keepalive_delay_seconds",
             "keepalive_max_per_actor",
@@ -3531,6 +3537,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         text = str(args.get("text") or "")
         by = str(args.get("by") or "user").strip() or "user"
         priority = str(args.get("priority") or "normal").strip() or "normal"
+        reply_required = coerce_bool(args.get("reply_required"), default=False)
         to_raw = args.get("to")
         dst_to_tokens: list[str] = []
         if isinstance(to_raw, list):
@@ -3574,6 +3581,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 "by": by,
                 "to": ["user"],
                 "priority": priority,
+                "reply_required": reply_required,
                 "dst_group_id": dst_group_id,
                 "dst_to": dst_to_canon,
             },
@@ -3596,6 +3604,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 "by": by,
                 "to": dst_to_canon,
                 "priority": priority,
+                "reply_required": reply_required,
                 "src_group_id": src_group_id,
                 "src_event_id": src_event_id,
             },
@@ -3611,6 +3620,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         text = str(args.get("text") or "")
         by = str(args.get("by") or "user").strip()
         priority = str(args.get("priority") or "normal").strip() or "normal"
+        reply_required = coerce_bool(args.get("reply_required"), default=False)
         src_group_id = str(args.get("src_group_id") or "").strip()
         src_event_id = str(args.get("src_event_id") or "").strip()
         dst_group_id = str(args.get("dst_group_id") or "").strip()
@@ -3749,6 +3759,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 text=text,
                 format="plain",
                 priority=priority,
+                reply_required=reply_required,
                 to=to,
                 attachments=attachments,
                 src_group_id=src_group_id or None,
@@ -3776,6 +3787,8 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         prefix_lines: list[str] = []
         if priority == "attention" and event_id:
             prefix_lines.append(f"[cccc] IMPORTANT (event_id={event_id}):")
+        if reply_required and event_id:
+            prefix_lines.append(f"[cccc] REPLY REQUIRED (event_id={event_id}): reply via cccc_message_reply.")
         if src_group_id and src_event_id:
             prefix_lines.append(f"[cccc] RELAYED FROM (group_id={src_group_id}, event_id={src_event_id}):")
         if prefix_lines:
@@ -3824,8 +3837,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             ev_for_headless["data"] = dict(ev.get("data") or {})
             ev_for_headless["data"]["to"] = effective_to
             headless_targets = get_headless_targets_for_message(group, event=ev_for_headless, by=by)
-            notify_title = "Important message" if priority == "attention" else "New message"
-            notify_priority = "urgent" if priority == "attention" else "high"
+            if reply_required:
+                notify_title = "Task message"
+                notify_priority = "urgent" if priority == "attention" else "high"
+            else:
+                notify_title = "Important message" if priority == "attention" else "New message"
+                notify_priority = "urgent" if priority == "attention" else "high"
             for aid in headless_targets:
                 append_event(
                     group.ledger_path,
@@ -3863,6 +3880,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         by = str(args.get("by") or "user").strip()
         reply_to = str(args.get("reply_to") or "").strip()
         priority = str(args.get("priority") or "normal").strip() or "normal"
+        reply_required = coerce_bool(args.get("reply_required"), default=False)
         to_raw = args.get("to")
         to_tokens: list[str] = []
         if isinstance(to_raw, list):
@@ -3953,12 +3971,34 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 text=text,
                 format="plain",
                 priority=priority,
+                reply_required=reply_required,
                 to=to,
                 reply_to=reply_to,
                 quote_text=quote_text,
                 attachments=attachments,
             ).model_dump(),
         )
+
+        ack_ev: Optional[dict[str, Any]] = None
+        try:
+            if str(original.get("kind") or "") == "chat.message":
+                original_by = str(original.get("by") or "").strip()
+                original_data = original.get("data") if isinstance(original.get("data"), dict) else {}
+                original_priority = str(original_data.get("priority") or "normal").strip()
+                if by and by != original_by and original_priority == "attention":
+                    if is_message_for_actor(group, actor_id=by, event=original):
+                        target_event_id = str(original.get("id") or "").strip()
+                        if target_event_id and not has_chat_ack(group, event_id=target_event_id, actor_id=by):
+                            ack_ev = append_event(
+                                group.ledger_path,
+                                kind="chat.ack",
+                                group_id=group.group_id,
+                                scope_key="",
+                                by=by,
+                                data={"actor_id": by, "event_id": target_event_id},
+                            )
+        except Exception:
+            ack_ev = None
 
         # Update group "last active" timestamp.
         try:
@@ -3980,8 +4020,13 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         event_id = str(ev.get("id") or "").strip()
         event_ts = str(ev.get("ts") or "").strip()
         delivery_text = text
+        prefix_lines: list[str] = []
         if priority == "attention" and event_id:
-            delivery_text = f"[cccc] IMPORTANT (event_id={event_id}):\n" + delivery_text
+            prefix_lines.append(f"[cccc] IMPORTANT (event_id={event_id}):")
+        if reply_required and event_id:
+            prefix_lines.append(f"[cccc] REPLY REQUIRED (event_id={event_id}): reply via cccc_message_reply.")
+        if prefix_lines:
+            delivery_text = "\n".join(prefix_lines) + "\n" + delivery_text
         if attachments:
             lines = ["[cccc] Attachments:"]
             for a in attachments[:8]:
@@ -4019,8 +4064,12 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         # Headless runners: notify via system.notify event (daemon writes to ledger)
         try:
             headless_targets = get_headless_targets_for_message(group, event=ev_with_effective_to, by=by)
-            notify_title = "Important message" if priority == "attention" else "New message"
-            notify_priority = "urgent" if priority == "attention" else "high"
+            if reply_required:
+                notify_title = "Task message"
+                notify_priority = "urgent" if priority == "attention" else "high"
+            else:
+                notify_title = "Important message" if priority == "attention" else "New message"
+                notify_priority = "urgent" if priority == "attention" else "high"
             for aid in headless_targets:
                 append_event(
                     group.ledger_path,
@@ -4050,7 +4099,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         # Delivery is handled by the background tick. Do not flush synchronously here:
         # PTY writes can block and would stall the daemon request loop, freezing the UI.
 
-        return DaemonResponse(ok=True, result={"event": ev}), False
+        return DaemonResponse(ok=True, result={"event": ev, "ack_event": ack_ev}), False
 
     # ==========================================================================
     # Context Operations (delegated to ops/context_ops.py)

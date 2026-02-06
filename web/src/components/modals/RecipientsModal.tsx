@@ -7,7 +7,7 @@ export interface RecipientsModalProps {
   isDark: boolean;
   isSmallScreen: boolean;
   toLabel: string;
-  statusKind: "read" | "ack";
+  statusKind: "read" | "ack" | "reply";
   entries: RecipientEntry[];
   onClose: () => void;
 }
@@ -16,7 +16,8 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, status
   if (!isOpen) return null;
 
   const isAck = statusKind === "ack";
-  const title = isAck ? "Acknowledgements" : "Recipients";
+  const isReply = statusKind === "reply";
+  const title = isReply ? "Reply Status" : isAck ? "Acknowledgements" : "Recipients";
 
   return (
     <div
@@ -64,9 +65,9 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, status
                       "text-sm font-semibold tracking-tight",
                       cleared ? (isDark ? "text-emerald-400" : "text-emerald-600") : isDark ? "text-slate-500" : "text-gray-500"
                     )}
-                    aria-label={cleared ? (isAck ? "acknowledged" : "read") : "pending"}
+                    aria-label={cleared ? (isReply ? "replied" : isAck ? "acknowledged" : "read") : "pending"}
                   >
-                    {isAck ? (cleared ? "✓" : "○") : cleared ? "✓✓" : "✓"}
+                    {isReply ? (cleared ? "↩" : "○") : isAck ? (cleared ? "✓" : "○") : cleared ? "✓✓" : "✓"}
                   </div>
                 </div>
               ))}
@@ -76,7 +77,11 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, status
           )}
 
           <div className={classNames("text-[11px] mt-3", isDark ? "text-slate-500" : "text-gray-500")}>
-            {isAck ? "Legend: ○ pending · ✓ acknowledged" : "Legend: ✓ pending · ✓✓ read"}
+            {isReply
+              ? "Legend: ○ pending · ↩ replied"
+              : isAck
+                ? "Legend: ○ pending · ✓ acknowledged"
+                : "Legend: ✓ pending · ✓✓ read"}
           </div>
         </div>
       </div>

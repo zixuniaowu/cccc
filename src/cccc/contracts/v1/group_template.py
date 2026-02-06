@@ -35,6 +35,12 @@ class GroupTemplateSettings(BaseModel):
 
     default_send_to: DefaultSendTo = "foreman"
     nudge_after_seconds: int = 300
+    reply_required_nudge_after_seconds: int = 300
+    attention_ack_nudge_after_seconds: int = 600
+    unread_nudge_after_seconds: int = 900
+    nudge_digest_min_interval_seconds: int = 120
+    nudge_max_repeats_per_obligation: int = 3
+    nudge_escalate_after_repeats: int = 2
     auto_mark_on_delivery: bool = False
     actor_idle_timeout_seconds: int = 600
     keepalive_delay_seconds: int = 120

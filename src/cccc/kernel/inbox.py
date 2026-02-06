@@ -122,6 +122,33 @@ def _collect_chat_acks(group: Group, *, event_ids: set[str]) -> Dict[str, set[st
     return out
 
 
+def _collect_chat_replies(group: Group, *, event_ids: set[str]) -> Dict[str, set[str]]:
+    """Collect replied recipients for a set of message event IDs.
+
+    A recipient is considered replied when they send a chat.message with
+    data.reply_to == target_event_id.
+    """
+    out: Dict[str, set[str]] = {}
+    if not event_ids:
+        return out
+
+    for ev in iter_events(group.ledger_path):
+        if str(ev.get("kind") or "") != "chat.message":
+            continue
+        data = ev.get("data")
+        if not isinstance(data, dict):
+            continue
+        target_event_id = str(data.get("reply_to") or "").strip()
+        if not target_event_id or target_event_id not in event_ids:
+            continue
+        actor_id = str(ev.get("by") or "").strip()
+        if not actor_id:
+            continue
+        out.setdefault(target_event_id, set()).add(actor_id)
+
+    return out
+
+
 def has_chat_ack(group: Group, *, event_id: str, actor_id: str) -> bool:
     """Return True if a chat.ack already exists for (event_id, actor_id)."""
     eid = str(event_id or "").strip()
@@ -228,6 +255,122 @@ def get_ack_status_batch(group: Group, events: List[Dict[str, Any]]) -> Dict[str
         status: Dict[str, bool] = {}
         for rid in recipients:
             status[rid] = rid in acked_set
+        result[event_id] = status
+
+    return result
+
+
+def get_obligation_status_batch(group: Group, events: List[Dict[str, Any]]) -> Dict[str, Dict[str, Dict[str, bool]]]:
+    """Compute per-recipient obligation status for chat messages.
+
+    Returns:
+      {
+        "<message_event_id>": {
+          "<recipient_id>": {
+            "read": bool,
+            "acked": bool,
+            "replied": bool,
+            "reply_required": bool,
+          },
+          ...
+        },
+        ...
+      }
+
+    Notes:
+    - Includes only local-group chat.message events (dst_group_id empty).
+    - Recipients are resolved from current roster with message-time existence checks.
+    - "user" is included only when explicitly targeted.
+    """
+    actors = list_actors(group)
+    cursors = load_cursors(group)
+
+    target_ids: set[str] = set()
+    for ev in events:
+        if str(ev.get("kind") or "") != "chat.message":
+            continue
+        data = ev.get("data")
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("dst_group_id") or "").strip():
+            continue
+        event_id = str(ev.get("id") or "").strip()
+        if event_id:
+            target_ids.add(event_id)
+
+    acked_by_message = _collect_chat_acks(group, event_ids=target_ids)
+    replied_by_message = _collect_chat_replies(group, event_ids=target_ids)
+
+    result: Dict[str, Dict[str, Dict[str, bool]]] = {}
+
+    for ev in events:
+        if str(ev.get("kind") or "") != "chat.message":
+            continue
+
+        data = ev.get("data")
+        if not isinstance(data, dict):
+            continue
+        if str(data.get("dst_group_id") or "").strip():
+            continue
+
+        event_id = str(ev.get("id") or "").strip()
+        if not event_id:
+            continue
+
+        ev_ts = str(ev.get("ts") or "").strip()
+        ev_dt = parse_utc_iso(ev_ts) if ev_ts else None
+        if ev_dt is None:
+            continue
+
+        by = str(ev.get("by") or "").strip()
+        is_attention = str(data.get("priority") or "normal").strip() == "attention"
+        reply_required = bool(data.get("reply_required") is True)
+
+        to_raw = data.get("to")
+        to_tokens = [str(x).strip() for x in to_raw] if isinstance(to_raw, list) else []
+        to_set = {t for t in to_tokens if t}
+
+        recipients: List[str] = []
+        for actor in actors:
+            if not isinstance(actor, dict):
+                continue
+            aid = str(actor.get("id") or "").strip()
+            if not aid or aid == "user" or aid == by:
+                continue
+            created_ts = str(actor.get("created_at") or "").strip()
+            created_dt = parse_utc_iso(created_ts) if created_ts else None
+            if created_dt is not None and created_dt > ev_dt:
+                continue
+            if not is_message_for_actor(group, actor_id=aid, event=ev):
+                continue
+            recipients.append(aid)
+
+        if by != "user" and ("user" in to_set or "@user" in to_set):
+            recipients.append("user")
+
+        acked_set = acked_by_message.get(event_id, set())
+        replied_set = replied_by_message.get(event_id, set())
+
+        status: Dict[str, Dict[str, bool]] = {}
+        for rid in recipients:
+            cur = cursors.get(rid)
+            cur_ts = str(cur.get("ts") or "") if isinstance(cur, dict) else ""
+            cur_dt = parse_utc_iso(cur_ts) if cur_ts else None
+            read = bool(cur_dt is not None and cur_dt >= ev_dt)
+
+            replied = rid in replied_set
+            acked = replied or (rid in acked_set)
+            if is_attention and read:
+                # mark_read on attention is treated as ack gesture for recipients.
+                acked = True
+
+            status[rid] = {
+                "read": read,
+                "acked": acked,
+                "replied": replied,
+                "reply_required": reply_required,
+            }
+
         result[event_id] = status
 
     return result

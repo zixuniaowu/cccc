@@ -265,6 +265,7 @@ export async function fetchLedgerTail(groupId: string, lines = 120) {
     limit: String(lines),
     with_read_status: "true",
     with_ack_status: "true",
+    with_obligation_status: "true",
   });
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`
@@ -282,6 +283,7 @@ export async function fetchOlderMessages(
     limit: String(limit),
     with_read_status: "true",
     with_ack_status: "true",
+    with_obligation_status: "true",
   });
   return apiJson<{ events: LedgerEvent[]; has_more: boolean; count: number }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/ledger/search?${params.toString()}`
@@ -300,6 +302,7 @@ export async function fetchMessageWindow(
     after: String(opts?.after ?? 30),
     with_read_status: "true",
     with_ack_status: "true",
+    with_obligation_status: "true",
   });
   return apiJson<{
     center_id: string;
@@ -322,6 +325,7 @@ export async function searchChatMessages(
     limit: String(opts?.limit ?? 50),
     with_read_status: "true",
     with_ack_status: "true",
+    with_obligation_status: "true",
   });
   if (opts?.before) params.set("before", opts.before);
   if (opts?.after) params.set("after", opts.after);
@@ -507,7 +511,8 @@ export async function sendMessage(
   text: string,
   to: string[],
   files?: File[],
-  priority: "normal" | "attention" = "normal"
+  priority: "normal" | "attention" = "normal",
+  replyRequired = false
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -516,12 +521,13 @@ export async function sendMessage(
     form.append("to_json", JSON.stringify(to));
     form.append("path", "");
     form.append("priority", priority);
+    form.append("reply_required", replyRequired ? "true" : "false");
     for (const f of files) form.append("files", f);
     return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/send_upload`, form);
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/send`, {
     method: "POST",
-    body: JSON.stringify({ text, by: "user", to, path: "", priority }),
+    body: JSON.stringify({ text, by: "user", to, path: "", priority, reply_required: replyRequired }),
   });
 }
 
@@ -531,7 +537,8 @@ export async function replyMessage(
   to: string[],
   replyTo: string,
   files?: File[],
-  priority: "normal" | "attention" = "normal"
+  priority: "normal" | "attention" = "normal",
+  replyRequired = false
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -540,12 +547,13 @@ export async function replyMessage(
     form.append("to_json", JSON.stringify(to));
     form.append("reply_to", replyTo);
     form.append("priority", priority);
+    form.append("reply_required", replyRequired ? "true" : "false");
     for (const f of files) form.append("files", f);
     return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/reply_upload`, form);
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/reply`, {
     method: "POST",
-    body: JSON.stringify({ text, by: "user", to, reply_to: replyTo, priority }),
+    body: JSON.stringify({ text, by: "user", to, reply_to: replyTo, priority, reply_required: replyRequired }),
   });
 }
 
@@ -574,7 +582,8 @@ export async function sendCrossGroupMessage(
   dstGroupId: string,
   text: string,
   to: string[],
-  priority: "normal" | "attention" = "normal"
+  priority: "normal" | "attention" = "normal",
+  replyRequired = false
 ) {
   return apiJson(`/api/v1/groups/${encodeURIComponent(srcGroupId)}/send_cross_group`, {
     method: "POST",
@@ -584,6 +593,7 @@ export async function sendCrossGroupMessage(
       dst_group_id: dstGroupId,
       to,
       priority,
+      reply_required: replyRequired,
     }),
   });
 }

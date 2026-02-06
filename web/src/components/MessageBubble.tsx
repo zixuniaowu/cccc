@@ -167,6 +167,7 @@ export const MessageBubble = memo(function MessageBubble({
     const msgData = ev.data as ChatMessageData | undefined;
     const quoteText = msgData?.quote_text;
     const isAttention = String(msgData?.priority || "normal") === "attention";
+    const replyRequired = !!msgData?.reply_required;
     const srcGroupId = typeof msgData?.src_group_id === "string" ? String(msgData.src_group_id || "").trim() : "";
     const srcEventId = typeof msgData?.src_event_id === "string" ? String(msgData.src_event_id || "").trim() : "";
     const hasSource = !!(srcGroupId && srcEventId);
@@ -205,14 +206,29 @@ export const MessageBubble = memo(function MessageBubble({
     }, [actors, readStatus]);
 
     const ackSummary = useMemo(() => {
-        if (!isAttention || !ackStatus || typeof ackStatus !== "object") return null;
+        if ((!isAttention && !replyRequired) || !ackStatus || typeof ackStatus !== "object") return null;
         const ids = Object.keys(ackStatus);
         if (ids.length === 0) return null;
         const done = ids.reduce((n, id) => n + (ackStatus[id] ? 1 : 0), 0);
         const needsUserAck =
             Object.prototype.hasOwnProperty.call(ackStatus, "user") && !ackStatus["user"] && !isUserMessage;
         return { done, total: ids.length, needsUserAck };
-    }, [ackStatus, isAttention, isUserMessage]);
+    }, [ackStatus, isAttention, isUserMessage, replyRequired]);
+
+    const obligationSummary = useMemo(() => {
+        const os = ev._obligation_status;
+        if (!os || typeof os !== "object") return null;
+        const ids = Object.keys(os);
+        if (ids.length === 0) return null;
+
+        const requiresReply = ids.some((id) => !!os[id]?.reply_required);
+        if (requiresReply) {
+            const done = ids.reduce((n, id) => n + (os[id]?.replied ? 1 : 0), 0);
+            return { kind: "reply" as const, done, total: ids.length };
+        }
+        const done = ids.reduce((n, id) => n + (os[id]?.acked ? 1 : 0), 0);
+        return { kind: "ack" as const, done, total: ids.length };
+    }, [ev._obligation_status]);
 
     const toLabel = useMemo(() => {
         if (hasDestination) {
@@ -503,12 +519,56 @@ export const MessageBubble = memo(function MessageBubble({
                 <div
                     className={classNames(
                         "flex items-center gap-3 mt-1 px-1 text-[10px] transition-opacity",
-                        (ackSummary || visibleReadStatusEntries.length > 0) ? "justify-between" : "justify-end",
+                        (obligationSummary || ackSummary || visibleReadStatusEntries.length > 0 || replyRequired) ? "justify-between" : "justify-end",
                         "opacity-70 group-hover:opacity-100",
                         isDark ? "text-slate-500" : "text-gray-500"
                     )}
                 >
-                    {ackSummary ? (
+                    {obligationSummary ? (
+                        readOnly ? (
+                            <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
+                                <span
+                                    className={classNames(
+                                        "text-[10px] font-semibold tracking-tight",
+                                        obligationSummary.done >= obligationSummary.total
+                                            ? isDark
+                                                ? "text-emerald-400"
+                                                : "text-emerald-600"
+                                            : isDark
+                                                ? "text-amber-400"
+                                                : "text-amber-600"
+                                    )}
+                                >
+                                    {obligationSummary.kind === "reply" ? "Reply" : "Ack"} {obligationSummary.done}/{obligationSummary.total}
+                                </span>
+                            </div>
+                        ) : (
+                            <button
+                                type="button"
+                                className={classNames(
+                                    "touch-target-sm flex items-center gap-2 min-w-0 rounded-lg px-2 py-1",
+                                    isDark ? "hover:bg-slate-800/60" : "hover:bg-gray-100"
+                                )}
+                                onClick={onShowRecipients}
+                                aria-label="Show obligation status"
+                            >
+                                <span
+                                    className={classNames(
+                                        "text-[10px] font-semibold tracking-tight",
+                                        obligationSummary.done >= obligationSummary.total
+                                            ? isDark
+                                                ? "text-emerald-400"
+                                                : "text-emerald-600"
+                                            : isDark
+                                                ? "text-amber-400"
+                                                : "text-amber-600"
+                                    )}
+                                >
+                                    {obligationSummary.kind === "reply" ? "Reply" : "Ack"} {obligationSummary.done}/{obligationSummary.total}
+                                </span>
+                            </button>
+                        )
+                    ) : ackSummary ? (
                         readOnly ? (
                             <div className="flex items-center gap-2 min-w-0 rounded-lg px-2 py-1">
                                 <span
@@ -624,9 +684,20 @@ export const MessageBubble = memo(function MessageBubble({
                         )
                     ) : null}
 
+                    {!obligationSummary && !ackSummary && replyRequired && (
+                        <span
+                            className={classNames(
+                                "text-[10px] font-semibold tracking-tight",
+                                isDark ? "text-violet-300" : "text-violet-700"
+                            )}
+                        >
+                            Task
+                        </span>
+                    )}
+
                     {!readOnly && (
                       <div className="flex items-center gap-2">
-                        {ackSummary && ackSummary.needsUserAck && ev.id && !isUserMessage && (
+                        {ackSummary && ackSummary.needsUserAck && ev.id && !isUserMessage && !replyRequired && (
                             <button
                                 type="button"
                                 className={classNames(

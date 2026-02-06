@@ -206,8 +206,27 @@ export function AppModals({
     const toLabel = toTokensList.length > 0 ? toTokensList.join(", ") : "@all";
 
     const msgData = messageMetaEvent.data as ChatMessageData | undefined;
-    const isAttention = String(msgData?.priority || "normal") === "attention";
+    const os =
+      messageMetaEvent._obligation_status && typeof messageMetaEvent._obligation_status === "object"
+        ? messageMetaEvent._obligation_status
+        : null;
+    if (os) {
+      const recipientIds = Object.keys(os);
+      const recipientIdSet = new Set(recipientIds);
+      const entries = [
+        ...actors
+          .map((a) => String(a.id || ""))
+          .filter((id) => id && recipientIdSet.has(id))
+          .map((id) => [id, !!(os[id]?.reply_required ? os[id]?.replied : os[id]?.acked)] as const),
+        recipientIdSet.has("user")
+          ? (["user", !!(os["user"]?.reply_required ? os["user"]?.replied : os["user"]?.acked)] as const)
+          : null,
+      ].filter(Boolean) as Array<readonly [string, boolean]>;
+      const anyReplyRequired = recipientIds.some((id) => !!os[id]?.reply_required);
+      return { toLabel, entries, statusKind: anyReplyRequired ? ("reply" as const) : ("ack" as const) };
+    }
 
+    const isAttention = String(msgData?.priority || "normal") === "attention";
     if (isAttention) {
       const as =
         messageMetaEvent._ack_status && typeof messageMetaEvent._ack_status === "object"

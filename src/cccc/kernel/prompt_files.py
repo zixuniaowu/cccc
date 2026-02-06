@@ -22,6 +22,7 @@ DEFAULT_PREAMBLE_BODY = """Quick start (recommended):
 
 Intent: collaborate rigorously (if peers exist) and keep pushing the task forward with evidence-based steps.
 Mechanics: use MCP for visible chat; keep commitments/decisions/progress in Context; keep the inbox clean.
+Message modes: choose intentionally (normal / attention / task[reply_required]); avoid both overuse and underuse.
 """
 
 DEFAULT_STANDUP_TEMPLATE = """{{interval_minutes}} minutes have passed. Stand-up reminder (foreman only).

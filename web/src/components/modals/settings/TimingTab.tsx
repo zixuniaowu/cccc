@@ -7,6 +7,18 @@ interface TimingTabProps {
   busy: boolean;
   nudgeSeconds: number;
   setNudgeSeconds: (v: number) => void;
+  replyRequiredNudgeSeconds: number;
+  setReplyRequiredNudgeSeconds: (v: number) => void;
+  attentionAckNudgeSeconds: number;
+  setAttentionAckNudgeSeconds: (v: number) => void;
+  unreadNudgeSeconds: number;
+  setUnreadNudgeSeconds: (v: number) => void;
+  nudgeDigestMinIntervalSeconds: number;
+  setNudgeDigestMinIntervalSeconds: (v: number) => void;
+  nudgeMaxRepeatsPerObligation: number;
+  setNudgeMaxRepeatsPerObligation: (v: number) => void;
+  nudgeEscalateAfterRepeats: number;
+  setNudgeEscalateAfterRepeats: (v: number) => void;
   idleSeconds: number;
   setIdleSeconds: (v: number) => void;
   keepaliveSeconds: number;
@@ -325,6 +337,65 @@ export function TimingTab(props: TimingTabProps) {
           helperText="Nudge actor when unread messages exceed this age."
           onAutoSave={() => autoSave("nudge_after_seconds", () => props.nudgeSeconds)}
         />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <NumberInputRow
+            isDark={isDark}
+            label="Task Reply Reminder (sec)"
+            value={props.replyRequiredNudgeSeconds}
+            onChange={props.setReplyRequiredNudgeSeconds}
+            helperText="For messages with reply_required=true."
+            onAutoSave={() => autoSave("reply_required_nudge_after_seconds", () => props.replyRequiredNudgeSeconds)}
+          />
+          <NumberInputRow
+            isDark={isDark}
+            label="Attention ACK Reminder (sec)"
+            value={props.attentionAckNudgeSeconds}
+            onChange={props.setAttentionAckNudgeSeconds}
+            helperText="For important messages awaiting acknowledgement."
+            onAutoSave={() => autoSave("attention_ack_nudge_after_seconds", () => props.attentionAckNudgeSeconds)}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <NumberInputRow
+            isDark={isDark}
+            label="Unread Digest Reminder (sec)"
+            value={props.unreadNudgeSeconds}
+            onChange={props.setUnreadNudgeSeconds}
+            helperText="For plain unread backlog nudges."
+            onAutoSave={() => autoSave("unread_nudge_after_seconds", () => props.unreadNudgeSeconds)}
+          />
+          <NumberInputRow
+            isDark={isDark}
+            label="Digest Min Interval (sec)"
+            value={props.nudgeDigestMinIntervalSeconds}
+            onChange={props.setNudgeDigestMinIntervalSeconds}
+            helperText="Minimum spacing between digest nudges per actor."
+            onAutoSave={() => autoSave("nudge_digest_min_interval_seconds", () => props.nudgeDigestMinIntervalSeconds)}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <NumberInputRow
+            isDark={isDark}
+            label="Max Nudge Repeats"
+            value={props.nudgeMaxRepeatsPerObligation}
+            onChange={props.setNudgeMaxRepeatsPerObligation}
+            formatValue={false}
+            helperText="Max reminders per pending obligation item."
+            onAutoSave={() => autoSave("nudge_max_repeats_per_obligation", () => props.nudgeMaxRepeatsPerObligation)}
+          />
+          <NumberInputRow
+            isDark={isDark}
+            label="Escalate After Repeats"
+            value={props.nudgeEscalateAfterRepeats}
+            onChange={props.setNudgeEscalateAfterRepeats}
+            formatValue={false}
+            helperText="Escalate to foreman when repeats reach this count."
+            onAutoSave={() => autoSave("nudge_escalate_after_repeats", () => props.nudgeEscalateAfterRepeats)}
+          />
+        </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <NumberInputRow

@@ -42,6 +42,12 @@ actors: []
 settings:
   default_send_to: foreman
   nudge_after_seconds: 300
+  reply_required_nudge_after_seconds: 111
+  attention_ack_nudge_after_seconds: 222
+  unread_nudge_after_seconds: 333
+  nudge_digest_min_interval_seconds: 44
+  nudge_max_repeats_per_obligation: 5
+  nudge_escalate_after_repeats: 3
   auto_mark_on_delivery: true
   min_interval_seconds: 0
   standup_interval_seconds: 900
@@ -66,6 +72,12 @@ prompts: {{}}
                 self.assertIsNotNone(group)
                 automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
                 self.assertTrue(bool(automation.get("auto_mark_on_delivery")))
+                self.assertEqual(int(automation.get("reply_required_nudge_after_seconds", -1)), 111)
+                self.assertEqual(int(automation.get("attention_ack_nudge_after_seconds", -1)), 222)
+                self.assertEqual(int(automation.get("unread_nudge_after_seconds", -1)), 333)
+                self.assertEqual(int(automation.get("nudge_digest_min_interval_seconds", -1)), 44)
+                self.assertEqual(int(automation.get("nudge_max_repeats_per_obligation", -1)), 5)
+                self.assertEqual(int(automation.get("nudge_escalate_after_repeats", -1)), 3)
         finally:
             if old_home is None:
                 os.environ.pop("CCCC_HOME", None)

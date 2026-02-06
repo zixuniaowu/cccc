@@ -92,6 +92,7 @@ class SendRequest(BaseModel):
     to: list[str] = Field(default_factory=list)
     path: str = Field(default="")
     priority: Literal["normal", "attention"] = "normal"
+    reply_required: bool = False
     src_group_id: str = Field(default="")
     src_event_id: str = Field(default="")
 
@@ -102,6 +103,7 @@ class SendCrossGroupRequest(BaseModel):
     dst_group_id: str
     to: list[str] = Field(default_factory=list)
     priority: Literal["normal", "attention"] = "normal"
+    reply_required: bool = False
 
 
 class ReplyRequest(BaseModel):
@@ -110,6 +112,7 @@ class ReplyRequest(BaseModel):
     to: list[str] = Field(default_factory=list)
     reply_to: str
     priority: Literal["normal", "attention"] = "normal"
+    reply_required: bool = False
 
 
 class DebugClearLogsRequest(BaseModel):
@@ -182,6 +185,12 @@ class GroupUpdateRequest(BaseModel):
 class GroupSettingsRequest(BaseModel):
     default_send_to: Optional[Literal["foreman", "broadcast"]] = None
     nudge_after_seconds: Optional[int] = None
+    reply_required_nudge_after_seconds: Optional[int] = None
+    attention_ack_nudge_after_seconds: Optional[int] = None
+    unread_nudge_after_seconds: Optional[int] = None
+    nudge_digest_min_interval_seconds: Optional[int] = None
+    nudge_max_repeats_per_obligation: Optional[int] = None
+    nudge_escalate_after_repeats: Optional[int] = None
     actor_idle_timeout_seconds: Optional[int] = None
     keepalive_delay_seconds: Optional[int] = None
     keepalive_max_per_actor: Optional[int] = None
@@ -197,6 +206,23 @@ class GroupSettingsRequest(BaseModel):
     terminal_transcript_notify_tail: Optional[bool] = None
     terminal_transcript_notify_lines: Optional[int] = None
     by: str = Field(default="user")
+
+
+def _normalize_reply_required(v: Any) -> bool:
+    """Normalize reply_required values from JSON/form payloads.
+
+    Accepts bool/int/string values; defaults to False for unknown values.
+    """
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, (int, float)):
+        return bool(v)
+    s = str(v or "").strip().lower()
+    if s in ("1", "true", "yes", "on"):
+        return True
+    if s in ("0", "false", "no", "off", ""):
+        return False
+    return False
 
 class ObservabilityUpdateRequest(BaseModel):
     by: str = Field(default="user")
@@ -1263,6 +1289,12 @@ def create_app() -> FastAPI:
                 "settings": {
                     "default_send_to": get_default_send_to(group.doc),
                     "nudge_after_seconds": int(automation.get("nudge_after_seconds", 300)),
+                    "reply_required_nudge_after_seconds": int(automation.get("reply_required_nudge_after_seconds", 300)),
+                    "attention_ack_nudge_after_seconds": int(automation.get("attention_ack_nudge_after_seconds", 600)),
+                    "unread_nudge_after_seconds": int(automation.get("unread_nudge_after_seconds", 900)),
+                    "nudge_digest_min_interval_seconds": int(automation.get("nudge_digest_min_interval_seconds", 120)),
+                    "nudge_max_repeats_per_obligation": int(automation.get("nudge_max_repeats_per_obligation", 3)),
+                    "nudge_escalate_after_repeats": int(automation.get("nudge_escalate_after_repeats", 2)),
                     "actor_idle_timeout_seconds": int(automation.get("actor_idle_timeout_seconds", 600)),
                     "keepalive_delay_seconds": int(automation.get("keepalive_delay_seconds", 120)),
                     "keepalive_max_per_actor": int(automation.get("keepalive_max_per_actor", 3)),
@@ -1287,6 +1319,18 @@ def create_app() -> FastAPI:
             patch["default_send_to"] = str(req.default_send_to)
         if req.nudge_after_seconds is not None:
             patch["nudge_after_seconds"] = max(0, req.nudge_after_seconds)
+        if req.reply_required_nudge_after_seconds is not None:
+            patch["reply_required_nudge_after_seconds"] = max(0, req.reply_required_nudge_after_seconds)
+        if req.attention_ack_nudge_after_seconds is not None:
+            patch["attention_ack_nudge_after_seconds"] = max(0, req.attention_ack_nudge_after_seconds)
+        if req.unread_nudge_after_seconds is not None:
+            patch["unread_nudge_after_seconds"] = max(0, req.unread_nudge_after_seconds)
+        if req.nudge_digest_min_interval_seconds is not None:
+            patch["nudge_digest_min_interval_seconds"] = max(0, req.nudge_digest_min_interval_seconds)
+        if req.nudge_max_repeats_per_obligation is not None:
+            patch["nudge_max_repeats_per_obligation"] = max(0, req.nudge_max_repeats_per_obligation)
+        if req.nudge_escalate_after_repeats is not None:
+            patch["nudge_escalate_after_repeats"] = max(0, req.nudge_escalate_after_repeats)
         if req.actor_idle_timeout_seconds is not None:
             patch["actor_idle_timeout_seconds"] = max(0, req.actor_idle_timeout_seconds)
         if req.keepalive_delay_seconds is not None:
@@ -1337,6 +1381,7 @@ def create_app() -> FastAPI:
         lines: int = 50,
         with_read_status: bool = False,
         with_ack_status: bool = False,
+        with_obligation_status: bool = False,
     ) -> Dict[str, Any]:
         group = load_group(group_id)
         if group is None:
@@ -1366,6 +1411,14 @@ def create_app() -> FastAPI:
                 event_id = str(ev.get("id") or "")
                 if event_id in ack_map:
                     ev["_ack_status"] = ack_map[event_id]
+
+        if with_obligation_status:
+            from ...kernel.inbox import get_obligation_status_batch
+            obligation_map = get_obligation_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in obligation_map:
+                    ev["_obligation_status"] = obligation_map[event_id]
         
         return {"ok": True, "result": {"events": events}}
 
@@ -1380,6 +1433,7 @@ def create_app() -> FastAPI:
         limit: int = 50,
         with_read_status: bool = False,
         with_ack_status: bool = False,
+        with_obligation_status: bool = False,
     ) -> Dict[str, Any]:
         """Search and paginate messages in the ledger.
         
@@ -1430,6 +1484,14 @@ def create_app() -> FastAPI:
                 event_id = str(ev.get("id") or "")
                 if event_id in ack_map:
                     ev["_ack_status"] = ack_map[event_id]
+
+        if with_obligation_status:
+            from ...kernel.inbox import get_obligation_status_batch
+            obligation_map = get_obligation_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in obligation_map:
+                    ev["_obligation_status"] = obligation_map[event_id]
         
         return {
             "ok": True,
@@ -1449,6 +1511,7 @@ def create_app() -> FastAPI:
         after: int = 30,
         with_read_status: bool = False,
         with_ack_status: bool = False,
+        with_obligation_status: bool = False,
     ) -> Dict[str, Any]:
         """Return a bounded window of events around a center event_id.
 
@@ -1509,6 +1572,14 @@ def create_app() -> FastAPI:
                 if event_id in ack_map:
                     ev["_ack_status"] = ack_map[event_id]
 
+        if with_obligation_status:
+            from ...kernel.inbox import get_obligation_status_batch
+            obligation_map = get_obligation_status_batch(group, events)
+            for ev in events:
+                event_id = str(ev.get("id") or "")
+                if event_id in obligation_map:
+                    ev["_obligation_status"] = obligation_map[event_id]
+
         return {
             "ok": True,
             "result": {
@@ -1558,6 +1629,7 @@ def create_app() -> FastAPI:
                     "to": list(req.to),
                     "path": req.path,
                     "priority": req.priority,
+                    "reply_required": _normalize_reply_required(req.reply_required),
                     "src_group_id": req.src_group_id,
                     "src_event_id": req.src_event_id,
                 },
@@ -1581,6 +1653,7 @@ def create_app() -> FastAPI:
                     "by": req.by,
                     "to": list(req.to),
                     "priority": req.priority,
+                    "reply_required": _normalize_reply_required(req.reply_required),
                 },
             }
         )
@@ -1597,6 +1670,7 @@ def create_app() -> FastAPI:
                     "to": list(req.to),
                     "reply_to": req.reply_to,
                     "priority": req.priority,
+                    "reply_required": _normalize_reply_required(req.reply_required),
                 },
             }
         )
@@ -1621,6 +1695,7 @@ def create_app() -> FastAPI:
         to_json: str = Form("[]"),
         path: str = Form(""),
         priority: str = Form("normal"),
+        reply_required: str = Form("false"),
         files: list[UploadFile] = File(default_factory=list),
     ) -> Dict[str, Any]:
         group = load_group(group_id)
@@ -1715,6 +1790,7 @@ def create_app() -> FastAPI:
                     "path": path,
                     "attachments": attachments,
                     "priority": prio,
+                    "reply_required": _normalize_reply_required(reply_required),
                 },
             }
         )
@@ -1727,6 +1803,7 @@ def create_app() -> FastAPI:
         to_json: str = Form("[]"),
         reply_to: str = Form(""),
         priority: str = Form("normal"),
+        reply_required: str = Form("false"),
         files: list[UploadFile] = File(default_factory=list),
     ) -> Dict[str, Any]:
         group = load_group(group_id)
@@ -1812,6 +1889,7 @@ def create_app() -> FastAPI:
                     "reply_to": reply_to_id,
                     "attachments": attachments,
                     "priority": prio,
+                    "reply_required": _normalize_reply_required(reply_required),
                 },
             }
         )

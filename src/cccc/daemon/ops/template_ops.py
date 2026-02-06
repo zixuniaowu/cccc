@@ -215,6 +215,12 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
         patch[k] = v
 
     _int("nudge_after_seconds", min_v=0)
+    _int("reply_required_nudge_after_seconds", min_v=0)
+    _int("attention_ack_nudge_after_seconds", min_v=0)
+    _int("unread_nudge_after_seconds", min_v=0)
+    _int("nudge_digest_min_interval_seconds", min_v=0)
+    _int("nudge_max_repeats_per_obligation", min_v=0)
+    _int("nudge_escalate_after_repeats", min_v=0)
     _int("actor_idle_timeout_seconds", min_v=0)
     _int("keepalive_delay_seconds", min_v=0)
     _int("keepalive_max_per_actor", min_v=0)
@@ -243,6 +249,12 @@ def _apply_settings_replace(group: Group, settings: Dict[str, Any]) -> Dict[str,
     delivery_keys = {"min_interval_seconds"}
     automation_keys = {
         "nudge_after_seconds",
+        "reply_required_nudge_after_seconds",
+        "attention_ack_nudge_after_seconds",
+        "unread_nudge_after_seconds",
+        "nudge_digest_min_interval_seconds",
+        "nudge_max_repeats_per_obligation",
+        "nudge_escalate_after_repeats",
         "auto_mark_on_delivery",
         "actor_idle_timeout_seconds",
         "keepalive_delay_seconds",

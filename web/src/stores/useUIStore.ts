@@ -19,7 +19,7 @@ interface UIState {
   showScrollButton: boolean;
   chatUnreadCount: number;
   isSmallScreen: boolean;
-  chatFilter: "all" | "to_user" | "attention";
+  chatFilter: "all" | "to_user" | "attention" | "task";
   webReadOnly: boolean;
 
   // Actions
@@ -38,7 +38,7 @@ interface UIState {
   setChatUnreadCount: (v: number) => void;
   incrementChatUnread: () => void;
   setSmallScreen: (v: boolean) => void;
-  setChatFilter: (v: "all" | "to_user" | "attention") => void;
+  setChatFilter: (v: "all" | "to_user" | "attention" | "task") => void;
   setWebReadOnly: (v: boolean) => void;
 }
 

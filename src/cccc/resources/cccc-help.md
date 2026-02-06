@@ -13,6 +13,7 @@ Run `cccc_help` anytime to refresh the effective playbook for this group.
 5) **Visible chat must use MCP.** Use `cccc_message_send` / `cccc_message_reply`. Terminal output is not delivered as chat.
 6) **Inbox hygiene.** Read via `cccc_inbox_list`. Mark handled items read via `cccc_inbox_mark_read` / `cccc_inbox_mark_all_read`.
    - “Unread” means “after your read cursor”, not “unprocessed”. Use mark-read intentionally.
+   - `mark_all_read` only moves unread cursor; it does **not** clear pending reply-required obligations.
 7) **Shared memory lives in Context.** Commitments, decisions, progress, and risk notes go into tasks/notes/presence.
 8) **No empty agreement.** If you endorse someone's result, say what you checked (or name one concrete risk/question).
 9) **Task completion.** After finishing work, always message the requester with your result or status.
@@ -32,6 +33,11 @@ CCCC is a collaboration hub, not an orchestration engine:
 - Use MCP for visible messages: `cccc_message_send` / `cccc_message_reply`.
 - Targets: `@all`, `@foreman`, `@peers`, `user`, or a specific actor id (e.g. `claude-1`). Empty `to` = broadcast.
 - Put decisions, requests, and summaries in chat so everyone can align.
+- Choose sending mode intentionally:
+  - Normal: routine updates.
+  - Attention: important message that should be noticed/acknowledged.
+  - Task (`reply_required=true`): requires a concrete reply/action outcome.
+- Do not overuse attention/task, and do not avoid them when the message truly requires urgency/accountability.
 
 ### Context (shared memory)
 
@@ -42,6 +48,7 @@ CCCC is a collaboration hub, not an orchestration engine:
 
 - Inbox is for “messages since cursor”, not a reliable “to-do list”.
 - Mark read only when you intentionally acknowledge handling (or intentionally bulk-ack).
+- For task messages (`reply_required=true`), do not stop at mark-read: send a reply tied to the original event.
 
 ### Terminal (local runtime I/O)
 

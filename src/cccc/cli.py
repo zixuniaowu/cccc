@@ -789,6 +789,12 @@ def cmd_send(args: argparse.Namespace) -> int:
                 continue
             parts = [p.strip() for p in item.split(",") if p.strip()]
             to_tokens.extend(parts)
+    priority = str(getattr(args, "priority", "normal") or "normal").strip() or "normal"
+    if priority not in ("normal", "attention"):
+        _print_json({"ok": False, "error": {"code": "invalid_priority", "message": "priority must be 'normal' or 'attention'"}})
+        return 2
+    reply_required = bool(getattr(args, "reply_required", False))
+
     if _ensure_daemon_running():
         resp = call_daemon(
             {
@@ -799,6 +805,8 @@ def cmd_send(args: argparse.Namespace) -> int:
                     "by": str(args.by or "user"),
                     "path": str(args.path or ""),
                     "to": to_tokens,
+                    "priority": priority,
+                    "reply_required": reply_required,
                 },
             }
         )
@@ -840,7 +848,13 @@ def cmd_send(args: argparse.Namespace) -> int:
         group_id=group.group_id,
         scope_key=scope_key,
         by=str(args.by or "user"),
-        data=ChatMessageData(text=args.text, format="plain", to=to).model_dump(),
+        data=ChatMessageData(
+            text=args.text,
+            format="plain",
+            to=to,
+            priority=priority,
+            reply_required=reply_required,
+        ).model_dump(),
     )
     try:
         reg = load_registry()
@@ -889,6 +903,12 @@ def cmd_reply(args: argparse.Namespace) -> int:
             parts = [p.strip() for p in item.split(",") if p.strip()]
             to_tokens.extend(parts)
 
+    priority = str(getattr(args, "priority", "normal") or "normal").strip() or "normal"
+    if priority not in ("normal", "attention"):
+        _print_json({"ok": False, "error": {"code": "invalid_priority", "message": "priority must be 'normal' or 'attention'"}})
+        return 2
+    reply_required = bool(getattr(args, "reply_required", False))
+
     if _ensure_daemon_running():
         resp = call_daemon(
             {
@@ -899,6 +919,8 @@ def cmd_reply(args: argparse.Namespace) -> int:
                     "by": str(args.by or "user"),
                     "reply_to": reply_to,
                     "to": to_tokens,
+                    "priority": priority,
+                    "reply_required": reply_required,
                 },
             }
         )
@@ -926,6 +948,8 @@ def cmd_reply(args: argparse.Namespace) -> int:
             text=args.text,
             format="plain",
             to=to,
+            priority=priority,
+            reply_required=reply_required,
             reply_to=reply_to,
             quote_text=quote_text,
         ).model_dump(),
@@ -2750,6 +2774,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Recipients/selectors (repeatable, supports comma-separated, e.g. --to peer-a --to @foreman,@peers)",
     )
+    p_send.add_argument("--priority", choices=["normal", "attention"], default="normal", help="Message priority")
+    p_send.add_argument("--reply-required", action="store_true", help="Require recipients to reply")
     p_send.add_argument("--path", default="", help="Send message under this scope (path inside repo/scope)")
     p_send.set_defaults(func=cmd_send)
 
@@ -2764,6 +2790,8 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Recipients (default: original sender); repeatable, comma-separated",
     )
+    p_reply.add_argument("--priority", choices=["normal", "attention"], default="normal", help="Message priority")
+    p_reply.add_argument("--reply-required", action="store_true", help="Require recipients to reply")
     p_reply.set_defaults(func=cmd_reply)
 
     p_tail = sub.add_parser("tail", help="Tail the active group's ledger (or --group)")

@@ -36,12 +36,20 @@ export type ChatMessageData = {
   text?: string;
   to?: string[];
   priority?: "normal" | "attention";
+  reply_required?: boolean;
   quote_text?: string;
   src_group_id?: string;
   src_event_id?: string;
   dst_group_id?: string;
   dst_to?: string[];
   attachments?: EventAttachment[];
+};
+
+export type ObligationStatus = {
+  read: boolean;
+  acked: boolean;
+  replied: boolean;
+  reply_required: boolean;
 };
 
 // Chat read receipt payload
@@ -62,6 +70,7 @@ export type LedgerEvent = {
   data?: LedgerEventData;
   _read_status?: Record<string, boolean>;
   _ack_status?: Record<string, boolean>;
+  _obligation_status?: Record<string, ObligationStatus>;
 };
 
 export type Actor = {
@@ -176,6 +185,12 @@ export type ProjectMdInfo = {
 export type GroupSettings = {
   default_send_to: "foreman" | "broadcast";
   nudge_after_seconds: number;
+  reply_required_nudge_after_seconds: number;
+  attention_ack_nudge_after_seconds: number;
+  unread_nudge_after_seconds: number;
+  nudge_digest_min_interval_seconds: number;
+  nudge_max_repeats_per_obligation: number;
+  nudge_escalate_after_repeats: number;
   actor_idle_timeout_seconds: number;
   keepalive_delay_seconds: number;
   keepalive_max_per_actor: number;

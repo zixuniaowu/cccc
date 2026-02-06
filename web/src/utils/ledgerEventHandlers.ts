@@ -196,6 +196,34 @@ export function initializeAckStatus(ev: LedgerEvent, actors: Actor[]): void {
 }
 
 /**
+ * Initialize obligation status for chat messages.
+ * Mutates the event object to add _obligation_status.
+ */
+export function initializeObligationStatus(ev: LedgerEvent, actors: Actor[]): void {
+  if (!isChatMessageEvent(ev)) return;
+  if (ev._obligation_status) return;
+
+  const msgData = ev.data as ChatMessageData | undefined;
+  const recipients = getAckRecipientIdsForEvent(ev, actors);
+  if (recipients.length <= 0) return;
+
+  const status: Record<string, { read: boolean; acked: boolean; replied: boolean; reply_required: boolean }> = {};
+  const isAttention = String(msgData?.priority || "normal") === "attention";
+  const replyRequired = !!msgData?.reply_required;
+
+  for (const rid of recipients) {
+    status[rid] = {
+      read: false,
+      acked: !isAttention,
+      replied: false,
+      reply_required: replyRequired,
+    };
+  }
+
+  ev._obligation_status = status;
+}
+
+/**
  * Check if a chat message should increment unread count.
  */
 export function shouldIncrementUnread(

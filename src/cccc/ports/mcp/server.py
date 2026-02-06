@@ -437,6 +437,7 @@ def message_send(
     to: Optional[List[str]] = None,
     reply_to: Optional[str] = None,
     priority: str = "normal",
+    reply_required: bool = False,
     dst_group_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Send a message"""
@@ -449,16 +450,40 @@ def message_send(
             raise MCPError(code="unsupported", message="cross-group reply is not supported; send a new message instead")
         return _call_daemon_or_raise({
             "op": "send_cross_group",
-            "args": {"group_id": group_id, "dst_group_id": dst, "text": text, "by": actor_id, "to": to or [], "priority": prio},
+            "args": {
+                "group_id": group_id,
+                "dst_group_id": dst,
+                "text": text,
+                "by": actor_id,
+                "to": to or [],
+                "priority": prio,
+                "reply_required": bool(reply_required),
+            },
         })
     if reply_to:
         return _call_daemon_or_raise({
             "op": "reply",
-            "args": {"group_id": group_id, "text": text, "by": actor_id, "reply_to": reply_to, "to": to or [], "priority": prio},
+            "args": {
+                "group_id": group_id,
+                "text": text,
+                "by": actor_id,
+                "reply_to": reply_to,
+                "to": to or [],
+                "priority": prio,
+                "reply_required": bool(reply_required),
+            },
         })
     return _call_daemon_or_raise({
         "op": "send",
-        "args": {"group_id": group_id, "text": text, "by": actor_id, "to": to or [], "path": "", "priority": prio},
+        "args": {
+            "group_id": group_id,
+            "text": text,
+            "by": actor_id,
+            "to": to or [],
+            "path": "",
+            "priority": prio,
+            "reply_required": bool(reply_required),
+        },
     })
 
 
@@ -470,6 +495,7 @@ def message_reply(
     text: str,
     to: Optional[List[str]] = None,
     priority: str = "normal",
+    reply_required: bool = False,
 ) -> Dict[str, Any]:
     """Reply to a message"""
     prio = str(priority or "normal").strip() or "normal"
@@ -477,7 +503,15 @@ def message_reply(
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
     return _call_daemon_or_raise({
         "op": "reply",
-        "args": {"group_id": group_id, "text": text, "by": actor_id, "reply_to": reply_to, "to": to or [], "priority": prio},
+        "args": {
+            "group_id": group_id,
+            "text": text,
+            "by": actor_id,
+            "reply_to": reply_to,
+            "to": to or [],
+            "priority": prio,
+            "reply_required": bool(reply_required),
+        },
     })
 
 
@@ -498,6 +532,7 @@ def file_send(
     text: str = "",
     to: Optional[List[str]] = None,
     priority: str = "normal",
+    reply_required: bool = False,
 ) -> Dict[str, Any]:
     """Send a local file as a chat.message attachment.
 
@@ -547,7 +582,16 @@ def file_send(
         raise MCPError(code="invalid_priority", message="priority must be 'normal' or 'attention'")
     return _call_daemon_or_raise({
         "op": "send",
-        "args": {"group_id": gid, "text": msg, "by": actor_id, "to": to or [], "path": "", "attachments": [att], "priority": prio},
+        "args": {
+            "group_id": gid,
+            "text": msg,
+            "by": actor_id,
+            "to": to or [],
+            "path": "",
+            "attachments": [att],
+            "priority": prio,
+            "reply_required": bool(reply_required),
+        },
     })
 
 
@@ -1229,7 +1273,8 @@ MCP_TOOLS = [
 		                "actor_id": {"type": "string", "description": "Your actor ID (sender, optional if CCCC_ACTOR_ID is set)"},
 		                "text": {"type": "string", "description": "Message content"},
 		                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients. Options: user, @all, @peers, @foreman, or specific actor_id. Empty=broadcast. If dst_group_id is set, this targets the destination group."},
-	                    "priority": {"type": "string", "enum": ["normal", "attention"], "description": "Message priority (default normal)"},
+	                    "priority": {"type": "string", "enum": ["normal", "attention"], "description": "Message priority (default normal). Use attention when the message is materially important."},
+	                    "reply_required": {"type": "boolean", "description": "Whether recipients must reply to this message (default false). Use for concrete action/result requests.", "default": False},
 		            },
 		            "required": ["text"],
 		        },
@@ -1246,7 +1291,8 @@ MCP_TOOLS = [
 	                "reply_to": {"type": "string", "description": "Deprecated alias for event_id"},
 	                "text": {"type": "string", "description": "Reply content"},
 	                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (optional, defaults to original sender)"},
-                    "priority": {"type": "string", "enum": ["normal", "attention"], "description": "Message priority (default normal)"},
+	                    "priority": {"type": "string", "enum": ["normal", "attention"], "description": "Message priority (default normal). Use attention when the message is materially important."},
+	                "reply_required": {"type": "boolean", "description": "Whether recipients must reply to this message (default false). Use for concrete action/result requests.", "default": False},
 	            },
 	            "required": ["event_id", "text"],
 	        },
@@ -1262,7 +1308,8 @@ MCP_TOOLS = [
 	                "path": {"type": "string", "description": "File path (relative to active scope root, or absolute under it)"},
 	                "text": {"type": "string", "description": "Optional message text (caption)"},
 	                "to": {"type": "array", "items": {"type": "string"}, "description": "Recipients (same as cccc_message_send)"},
-                    "priority": {"type": "string", "enum": ["normal", "attention"], "description": "Message priority (default normal)"},
+	                    "priority": {"type": "string", "enum": ["normal", "attention"], "description": "Message priority (default normal). Use attention when the message is materially important."},
+	                "reply_required": {"type": "boolean", "description": "Whether recipients must reply to this message (default false). Use for concrete action/result requests.", "default": False},
 	            },
 	            "required": ["path"],
 	        },
@@ -1912,6 +1959,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else [],
             priority=str(arguments.get("priority") or "normal"),
+            reply_required=coerce_bool(arguments.get("reply_required"), default=False),
         )
 
     if name == "cccc_message_reply":
@@ -1926,6 +1974,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else None,
             priority=str(arguments.get("priority") or "normal"),
+            reply_required=coerce_bool(arguments.get("reply_required"), default=False),
         )
 
     if name == "cccc_file_send":
@@ -1939,6 +1988,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
             text=str(arguments.get("text") or ""),
             to=list(to_raw) if isinstance(to_raw, list) else [],
             priority=str(arguments.get("priority") or "normal"),
+            reply_required=coerce_bool(arguments.get("reply_required"), default=False),
         )
 
     if name == "cccc_blob_path":

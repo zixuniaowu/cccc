@@ -11,6 +11,7 @@ import {
   extractChatAckData,
   initializeReadStatus,
   initializeAckStatus,
+  initializeObligationStatus,
   shouldIncrementUnread,
   shouldRefreshActors,
   // Re-export for consumers
@@ -33,6 +34,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     appendEvent,
     updateReadStatus,
     updateAckStatus,
+    updateReplyStatus,
     setGroupContext,
     refreshActors,
   } = useGroupStore();
@@ -125,8 +127,19 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         // Initialize read/ack status for new messages
         initializeReadStatus(ev, actorsRef.current);
         initializeAckStatus(ev, actorsRef.current);
+        initializeObligationStatus(ev, actorsRef.current);
 
         appendEvent(ev);
+
+        // Reply to an earlier message updates its obligation status in-place.
+        if (isChatMessageEvent(ev)) {
+          const msgData = ev.data && typeof ev.data === "object" ? (ev.data as { reply_to?: unknown }) : null;
+          const replyTo = msgData && typeof msgData.reply_to === "string" ? String(msgData.reply_to || "").trim() : "";
+          const replyBy = String(ev.by || "").trim();
+          if (replyTo && replyBy) {
+            updateReplyStatus(replyTo, replyBy);
+          }
+        }
 
         // Update unread count
         if (shouldIncrementUnread(ev, activeTabRef.current === "chat", chatAtBottomRef.current)) {

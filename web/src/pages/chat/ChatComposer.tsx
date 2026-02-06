@@ -38,7 +38,9 @@ export interface ChatComposerProps {
   composerText: string;
   setComposerText: Dispatch<SetStateAction<string>>;
   priority: "normal" | "attention";
+  replyRequired: boolean;
   setPriority: (priority: "normal" | "attention") => void;
+  setReplyRequired: (value: boolean) => void;
   onSendMessage: () => void;
 
   // Mention menu
@@ -76,7 +78,9 @@ export function ChatComposer({
   composerText,
   setComposerText,
   priority,
+  replyRequired,
   setPriority,
+  setReplyRequired,
   onSendMessage,
   showMentionMenu,
   setShowMentionMenu,
@@ -252,6 +256,7 @@ export function ChatComposer({
 
   const canSend = composerText.trim() || composerFiles.length > 0;
   const isAttention = priority === "attention";
+  const isTask = replyRequired;
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
   const canChooseDestGroup =
     !!selectedGroupId && busy !== "send" && !replyTarget && composerFiles.length === 0;
@@ -566,7 +571,7 @@ export function ChatComposer({
           )}
         </div>
 
-        {/* Importance Toggle - Modern Icon-based toggle */}
+        {/* Importance Toggle */}
         <button
           className={classNames(
             "w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 border group",
@@ -580,9 +585,32 @@ export function ChatComposer({
           )}
           onClick={() => setPriority(isAttention ? "normal" : "attention")}
           disabled={busy === "send" || !selectedGroupId}
-          title="Mark as important (requires acknowledgement)"
+          title={isAttention ? "Important message" : "Normal message"}
         >
           <AlertIcon size={18} className={classNames("sm:w-5 sm:h-5 transition-transform group-active:scale-95", isAttention ? "animate-pulse" : "opacity-60")} />
+        </button>
+
+        {/* Reply Required Toggle */}
+        <button
+          className={classNames(
+            "h-10 sm:h-11 px-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 border text-xs sm:text-sm font-semibold",
+            isTask
+              ? isDark
+                ? "bg-violet-500/20 border-violet-500/40 text-violet-200"
+                : "bg-violet-100 border-violet-200 text-violet-700"
+              : isDark
+                ? "bg-slate-900 border-white/5 text-slate-400 hover:text-slate-200"
+                : "bg-white border-black/5 text-gray-500 hover:text-gray-700"
+          )}
+          onClick={() => {
+            const next = !replyRequired;
+            setReplyRequired(next);
+            if (next) setPriority("attention");
+          }}
+          disabled={busy === "send" || !selectedGroupId}
+          title={isTask ? "Task mode (reply required)" : "Mark as task (reply required)"}
+        >
+          Task
         </button>
 
         {/* Send button - Using icon for modern feel */}

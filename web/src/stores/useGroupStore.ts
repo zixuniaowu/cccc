@@ -51,6 +51,7 @@ interface GroupState {
   setRuntimes: (runtimes: RuntimeInfo[]) => void;
   updateReadStatus: (eventId: string, actorId: string) => void;
   updateAckStatus: (eventId: string, actorId: string) => void;
+  updateReplyStatus: (eventId: string, actorId: string) => void;
   setHasMoreHistory: (v: boolean) => void;
   setIsLoadingHistory: (v: boolean) => void;
   setIsChatWindowLoading: (v: boolean) => void;
@@ -201,11 +202,20 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           if (!m || m.kind !== "chat.message") continue;
           const rs: Record<string, boolean> | null =
             m._read_status && typeof m._read_status === "object" ? { ...m._read_status } : null;
+          const os =
+            m._obligation_status && typeof m._obligation_status === "object"
+              ? { ...m._obligation_status }
+              : null;
           // Only mark for actual recipients; never add keys for non-recipients.
           if (!rs || !Object.prototype.hasOwnProperty.call(rs, actorId)) continue;
           if (rs[actorId] === true) continue;
           rs[actorId] = true;
-          next[i] = { ...m, _read_status: rs };
+          if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
+            os[actorId] = { ...os[actorId], read: true };
+            next[i] = { ...m, _read_status: rs, _obligation_status: os };
+          } else {
+            next[i] = { ...m, _read_status: rs };
+          }
           didChange = true;
         }
       }
@@ -220,10 +230,19 @@ export const useGroupStore = create<GroupState>((set, get) => ({
             if (!m || m.kind !== "chat.message") continue;
             const rs: Record<string, boolean> | null =
               m._read_status && typeof m._read_status === "object" ? { ...m._read_status } : null;
+            const os =
+              m._obligation_status && typeof m._obligation_status === "object"
+                ? { ...m._obligation_status }
+                : null;
             if (!rs || !Object.prototype.hasOwnProperty.call(rs, actorId)) continue;
             if (rs[actorId] === true) continue;
             rs[actorId] = true;
-            wNext[i] = { ...m, _read_status: rs };
+            if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
+              os[actorId] = { ...os[actorId], read: true };
+              wNext[i] = { ...m, _read_status: rs, _obligation_status: os };
+            } else {
+              wNext[i] = { ...m, _read_status: rs };
+            }
             didChange = true;
           }
           nextWindow = { ...state.chatWindow, events: wNext };
@@ -249,9 +268,18 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       if (msg && msg.kind === "chat.message") {
         const as: Record<string, boolean> | null =
           msg._ack_status && typeof msg._ack_status === "object" ? { ...msg._ack_status } : null;
+        const os =
+          msg._obligation_status && typeof msg._obligation_status === "object"
+            ? { ...msg._obligation_status }
+            : null;
         if (as && Object.prototype.hasOwnProperty.call(as, actorId) && as[actorId] !== true) {
           as[actorId] = true;
-          next[idx] = { ...msg, _ack_status: as };
+          if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
+            os[actorId] = { ...os[actorId], acked: true };
+            next[idx] = { ...msg, _ack_status: as, _obligation_status: os };
+          } else {
+            next[idx] = { ...msg, _ack_status: as };
+          }
           didChange = true;
         }
       }
@@ -266,11 +294,91 @@ export const useGroupStore = create<GroupState>((set, get) => ({
             wMsg && wMsg.kind === "chat.message" && wMsg._ack_status && typeof wMsg._ack_status === "object"
               ? { ...wMsg._ack_status }
               : null;
+          const os =
+            wMsg && wMsg.kind === "chat.message" && wMsg._obligation_status && typeof wMsg._obligation_status === "object"
+              ? { ...wMsg._obligation_status }
+              : null;
           if (as && Object.prototype.hasOwnProperty.call(as, actorId) && as[actorId] !== true) {
             as[actorId] = true;
-            wNext[wIdx] = { ...wMsg, _ack_status: as };
+            if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
+              os[actorId] = { ...os[actorId], acked: true };
+              wNext[wIdx] = { ...wMsg, _ack_status: as, _obligation_status: os };
+            } else {
+              wNext[wIdx] = { ...wMsg, _ack_status: as };
+            }
             nextWindow = { ...state.chatWindow, events: wNext };
             didChange = true;
+          }
+        }
+      }
+
+      if (!didChange) return state;
+      return { events: next, chatWindow: nextWindow };
+    }),
+
+  updateReplyStatus: (eventId, actorId) =>
+    set((state) => {
+      const idx = state.events.findIndex(
+        (x) => x.kind === "chat.message" && String(x.id || "") === eventId
+      );
+      if (idx < 0 && !state.chatWindow) return state;
+
+      const next = state.events.slice();
+      const msg = idx >= 0 ? next[idx] : null;
+
+      let didChange = false;
+
+      if (msg && msg.kind === "chat.message") {
+        const as: Record<string, boolean> | null =
+          msg._ack_status && typeof msg._ack_status === "object" ? { ...msg._ack_status } : null;
+        const os =
+          msg._obligation_status && typeof msg._obligation_status === "object"
+            ? { ...msg._obligation_status }
+            : null;
+        if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
+          const prev = os[actorId];
+          const changed = !prev.replied || !prev.acked;
+          if (changed) {
+            os[actorId] = { ...prev, replied: true, acked: true };
+            if (as && Object.prototype.hasOwnProperty.call(as, actorId)) {
+              as[actorId] = true;
+              next[idx] = { ...msg, _ack_status: as, _obligation_status: os };
+            } else {
+              next[idx] = { ...msg, _obligation_status: os };
+            }
+            didChange = true;
+          }
+        }
+      }
+
+      let nextWindow = state.chatWindow;
+      if (state.chatWindow && String(state.chatWindow.groupId || "") === String(state.selectedGroupId || "")) {
+        const wNext = state.chatWindow.events.slice();
+        const wIdx = wNext.findIndex((x) => x.kind === "chat.message" && String(x.id || "") === eventId);
+        if (wIdx >= 0) {
+          const wMsg = wNext[wIdx];
+          const as: Record<string, boolean> | null =
+            wMsg && wMsg.kind === "chat.message" && wMsg._ack_status && typeof wMsg._ack_status === "object"
+              ? { ...wMsg._ack_status }
+              : null;
+          const os =
+            wMsg && wMsg.kind === "chat.message" && wMsg._obligation_status && typeof wMsg._obligation_status === "object"
+              ? { ...wMsg._obligation_status }
+              : null;
+          if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
+            const prev = os[actorId];
+            const changed = !prev.replied || !prev.acked;
+            if (changed) {
+              os[actorId] = { ...prev, replied: true, acked: true };
+              if (as && Object.prototype.hasOwnProperty.call(as, actorId)) {
+                as[actorId] = true;
+                wNext[wIdx] = { ...wMsg, _ack_status: as, _obligation_status: os };
+              } else {
+                wNext[wIdx] = { ...wMsg, _obligation_status: os };
+              }
+              nextWindow = { ...state.chatWindow, events: wNext };
+              didChange = true;
+            }
           }
         }
       }

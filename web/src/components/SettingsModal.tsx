@@ -116,6 +116,12 @@ export function SettingsModal({
 
   // Timing settings state
   const [nudgeSeconds, setNudgeSeconds] = useState(300);
+  const [replyRequiredNudgeSeconds, setReplyRequiredNudgeSeconds] = useState(300);
+  const [attentionAckNudgeSeconds, setAttentionAckNudgeSeconds] = useState(600);
+  const [unreadNudgeSeconds, setUnreadNudgeSeconds] = useState(900);
+  const [nudgeDigestMinIntervalSeconds, setNudgeDigestMinIntervalSeconds] = useState(120);
+  const [nudgeMaxRepeatsPerObligation, setNudgeMaxRepeatsPerObligation] = useState(3);
+  const [nudgeEscalateAfterRepeats, setNudgeEscalateAfterRepeats] = useState(2);
   const [idleSeconds, setIdleSeconds] = useState(600);
   const [keepaliveSeconds, setKeepaliveSeconds] = useState(120);
   const [keepaliveMax, setKeepaliveMax] = useState(3);
@@ -198,6 +204,12 @@ export function SettingsModal({
   useEffect(() => {
     if (isOpen && settings) {
       setNudgeSeconds(settings.nudge_after_seconds);
+      setReplyRequiredNudgeSeconds(settings.reply_required_nudge_after_seconds ?? 300);
+      setAttentionAckNudgeSeconds(settings.attention_ack_nudge_after_seconds ?? 600);
+      setUnreadNudgeSeconds(settings.unread_nudge_after_seconds ?? 900);
+      setNudgeDigestMinIntervalSeconds(settings.nudge_digest_min_interval_seconds ?? 120);
+      setNudgeMaxRepeatsPerObligation(settings.nudge_max_repeats_per_obligation ?? 3);
+      setNudgeEscalateAfterRepeats(settings.nudge_escalate_after_repeats ?? 2);
       setIdleSeconds(settings.actor_idle_timeout_seconds);
       setKeepaliveSeconds(settings.keepalive_delay_seconds);
       setKeepaliveMax(settings.keepalive_max_per_actor ?? 3);
@@ -337,6 +349,12 @@ export function SettingsModal({
   const handleSaveSettings = async () => {
     await onUpdateSettings({
       nudge_after_seconds: nudgeSeconds,
+      reply_required_nudge_after_seconds: replyRequiredNudgeSeconds,
+      attention_ack_nudge_after_seconds: attentionAckNudgeSeconds,
+      unread_nudge_after_seconds: unreadNudgeSeconds,
+      nudge_digest_min_interval_seconds: nudgeDigestMinIntervalSeconds,
+      nudge_max_repeats_per_obligation: nudgeMaxRepeatsPerObligation,
+      nudge_escalate_after_repeats: nudgeEscalateAfterRepeats,
       actor_idle_timeout_seconds: idleSeconds,
       keepalive_delay_seconds: keepaliveSeconds,
       keepalive_max_per_actor: keepaliveMax,
@@ -938,6 +956,18 @@ export function SettingsModal({
                   busy={busy}
                   nudgeSeconds={nudgeSeconds}
                   setNudgeSeconds={setNudgeSeconds}
+                  replyRequiredNudgeSeconds={replyRequiredNudgeSeconds}
+                  setReplyRequiredNudgeSeconds={setReplyRequiredNudgeSeconds}
+                  attentionAckNudgeSeconds={attentionAckNudgeSeconds}
+                  setAttentionAckNudgeSeconds={setAttentionAckNudgeSeconds}
+                  unreadNudgeSeconds={unreadNudgeSeconds}
+                  setUnreadNudgeSeconds={setUnreadNudgeSeconds}
+                  nudgeDigestMinIntervalSeconds={nudgeDigestMinIntervalSeconds}
+                  setNudgeDigestMinIntervalSeconds={setNudgeDigestMinIntervalSeconds}
+                  nudgeMaxRepeatsPerObligation={nudgeMaxRepeatsPerObligation}
+                  setNudgeMaxRepeatsPerObligation={setNudgeMaxRepeatsPerObligation}
+                  nudgeEscalateAfterRepeats={nudgeEscalateAfterRepeats}
+                  setNudgeEscalateAfterRepeats={setNudgeEscalateAfterRepeats}
                   idleSeconds={idleSeconds}
                   setIdleSeconds={setIdleSeconds}
                   keepaliveSeconds={keepaliveSeconds}
