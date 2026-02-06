@@ -67,6 +67,7 @@ from ...kernel.group import load_group
 from ...kernel.inbox import is_message_for_actor
 from ...kernel.ledger import read_last_lines
 from ...kernel.prompt_files import HELP_FILENAME, load_builtin_help_markdown as _load_builtin_help_markdown, read_repo_prompt_file
+from ...util.conv import coerce_bool
 
 
 class MCPError(Exception):
