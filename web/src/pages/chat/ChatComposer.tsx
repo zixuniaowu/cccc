@@ -1,9 +1,9 @@
 // ChatComposer renders the chat message composer.
 import type { Dispatch, RefObject, SetStateAction } from "react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Actor, GroupMeta, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
-import { AlertIcon, AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon } from "../../components/Icons";
+import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon } from "../../components/Icons";
 
 export interface ChatComposerProps {
   isDark: boolean;
@@ -63,7 +63,7 @@ export function ChatComposer({
   groups,
   destGroupId,
   setDestGroupId,
-  destGroupScopeLabel,
+  destGroupScopeLabel: _destGroupScopeLabel,
   busy,
   replyTarget,
   onCancelReply,
@@ -92,6 +92,8 @@ export function ChatComposer({
 }: ChatComposerProps) {
   const composerHeightRef = useRef(0);
   const isUserInputRef = useRef(false);
+  const [showModeMenu, setShowModeMenu] = useState(false);
+  const modeMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-adjust textarea height when composerText changes programmatically
   // (e.g. mention selection). Skips when handleChange already handled resize.
@@ -114,6 +116,26 @@ export function ChatComposer({
 
     return () => cancelAnimationFrame(rafId);
   }, [composerText, composerRef]);
+
+  useEffect(() => {
+    if (!showModeMenu) return;
+
+    const onPointerDown = (event: MouseEvent | TouchEvent) => {
+      const node = modeMenuRef.current;
+      if (!node) return;
+      const target = event.target;
+      if (target instanceof Node && !node.contains(target)) {
+        setShowModeMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("touchstart", onPointerDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("touchstart", onPointerDown);
+    };
+  }, [showModeMenu]);
 
   const chipBaseClass =
     "flex-shrink-0 whitespace-nowrap text-[10px] sm:text-[11px] px-2.5 sm:px-3 rounded-full border transition-all flex items-center justify-center font-medium";
@@ -235,6 +257,7 @@ export function ChatComposer({
       }
     } else if (e.key === "Escape") {
       setShowMentionMenu(false);
+      setShowModeMenu(false);
       onCancelReply();
     }
   };
@@ -256,17 +279,38 @@ export function ChatComposer({
 
   const canSend = composerText.trim() || composerFiles.length > 0;
   const isAttention = priority === "attention";
-  const isTask = replyRequired;
   const isCrossGroup = !!destGroupId && destGroupId !== selectedGroupId;
   const canChooseDestGroup =
     !!selectedGroupId && busy !== "send" && !replyTarget && composerFiles.length === 0;
-  const destGroupDisabledReason = (() => {
-    if (!selectedGroupId) return "Select a group first.";
-    if (busy === "send") return "Busy.";
-    if (replyTarget) return "Replies are always in the current group.";
-    if (composerFiles.length > 0) return "Attachments cannot be sent cross-group yet.";
-    return "";
-  })();
+
+  type MessageMode = "normal" | "attention" | "task";
+  const modeOptions: Array<{ key: MessageMode; label: string; description: string }> = [
+    { key: "normal", label: "Normal", description: "Routine update" },
+    { key: "attention", label: "Important", description: "Needs acknowledgement" },
+    { key: "task", label: "Need Reply", description: "Needs concrete response" },
+  ];
+
+  const messageMode: MessageMode = replyRequired
+    ? "task"
+    : isAttention
+      ? "attention"
+      : "normal";
+  const setMessageMode = (mode: MessageMode) => {
+    if (mode === "normal") {
+      setPriority("normal");
+      setReplyRequired(false);
+      return;
+    }
+    if (mode === "attention") {
+      setPriority("attention");
+      setReplyRequired(false);
+      return;
+    }
+    setPriority("attention");
+    setReplyRequired(true);
+  };
+  const activeMode = modeOptions.find((opt) => opt.key === messageMode) || modeOptions[0];
+
   const fileDisabledReason = (() => {
     if (!selectedGroupId) return "Select a group first.";
     if (busy === "send") return "Busy.";
@@ -522,7 +566,7 @@ export function ChatComposer({
           <textarea
             ref={composerRef}
             className={classNames(
-              "w-full rounded-xl sm:rounded-2xl border px-3 sm:px-4 py-2 sm:py-2.5 text-base sm:text-sm resize-none min-h-[40px] sm:min-h-[44px] max-h-[160px] transition",
+              "w-full rounded-xl sm:rounded-2xl border px-3 sm:px-4 pr-11 sm:pr-12 py-2 sm:py-2.5 text-base sm:text-sm resize-none min-h-[40px] sm:min-h-[44px] max-h-[160px] transition",
               "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center",
               isDark
                 ? "bg-white/5 border-white/5 text-slate-200 placeholder-slate-500 focus:ring-blue-500/40 focus:border-blue-500/50"
@@ -537,6 +581,116 @@ export function ChatComposer({
             onBlur={() => setTimeout(() => setShowMentionMenu(false), 150)}
             aria-label="Message input"
           />
+
+          {/* Message Type Selector */}
+          <div ref={modeMenuRef} className="absolute right-2 top-1/2 -translate-y-1/2 z-20">
+            <button
+              type="button"
+              className={classNames(
+                "w-7 h-7 sm:w-8 sm:h-8 rounded-full transition-colors flex items-center justify-center",
+                busy === "send" || !selectedGroupId
+                  ? isDark
+                    ? "text-slate-500"
+                    : "text-gray-400"
+                  : messageMode === "task"
+                    ? isDark
+                      ? "bg-violet-500/20 text-violet-200 hover:bg-violet-500/30"
+                      : "bg-violet-100 text-violet-700 hover:bg-violet-200"
+                    : messageMode === "attention"
+                      ? isDark
+                        ? "bg-amber-500/20 text-amber-200 hover:bg-amber-500/30"
+                        : "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                      : isDark
+                        ? "text-slate-300 hover:bg-white/10"
+                        : "text-gray-500 hover:bg-gray-100"
+              )}
+              disabled={busy === "send" || !selectedGroupId}
+              onClick={() => setShowModeMenu((v) => !v)}
+              aria-label="Message type"
+              aria-haspopup="menu"
+              aria-expanded={showModeMenu}
+              title={`Message mode: ${activeMode.label}`}
+            >
+              {messageMode === "task" ? (
+                <ReplyIcon size={12} className="opacity-95" />
+              ) : messageMode === "attention" ? (
+                <AlertIcon size={12} className="opacity-95" />
+              ) : (
+                <span className={classNames("w-2 h-2 rounded-full", isDark ? "bg-slate-300" : "bg-gray-500")} />
+              )}
+            </button>
+
+            {showModeMenu && (
+              <div
+                className={classNames(
+                  "absolute bottom-full right-0 mb-2 z-40 w-56 sm:w-64 rounded-2xl border p-1.5 shadow-2xl backdrop-blur-xl pointer-events-auto",
+                  isDark ? "bg-slate-900/95 border-white/10" : "bg-white/95 border-black/10"
+                )}
+                role="menu"
+                aria-label="Message type options"
+              >
+                {modeOptions.map((opt) => {
+                  const active = messageMode === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      className={classNames(
+                        "w-full rounded-xl px-3 py-2.5 text-left flex items-center gap-2.5 transition-colors",
+                        active
+                          ? isDark
+                            ? "bg-white/10"
+                            : "bg-black/5"
+                          : isDark
+                            ? "hover:bg-white/5"
+                            : "hover:bg-black/5"
+                      )}
+                      role="menuitemradio"
+                      aria-checked={active}
+                      onClick={() => {
+                        setMessageMode(opt.key);
+                        setShowModeMenu(false);
+                      }}
+                    >
+                      <span
+                        className={classNames(
+                          "w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0",
+                          opt.key === "task"
+                            ? isDark
+                              ? "bg-violet-500/25 text-violet-200"
+                              : "bg-violet-100 text-violet-700"
+                            : opt.key === "attention"
+                              ? isDark
+                                ? "bg-amber-500/25 text-amber-200"
+                                : "bg-amber-100 text-amber-700"
+                              : isDark
+                                ? "bg-slate-700 text-slate-200"
+                                : "bg-gray-100 text-gray-700"
+                        )}
+                      >
+                        {opt.key === "task" ? (
+                          <ReplyIcon size={13} />
+                        ) : opt.key === "attention" ? (
+                          <AlertIcon size={13} />
+                        ) : (
+                          <span className={classNames("w-1.5 h-1.5 rounded-full", isDark ? "bg-slate-200" : "bg-gray-500")} />
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className={classNames("block text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
+                          {opt.label}
+                        </span>
+                        <span className={classNames("block text-[11px]", isDark ? "text-slate-400" : "text-gray-500")}>
+                          {opt.description}
+                        </span>
+                      </span>
+                      {active && <span className={classNames("text-xs font-semibold", isDark ? "text-emerald-300" : "text-emerald-600")}>✓</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
 
           {/* Mention menu */}
           {showMentionMenu && mentionSuggestions.length > 0 && (
@@ -570,48 +724,6 @@ export function ChatComposer({
             </div>
           )}
         </div>
-
-        {/* Importance Toggle */}
-        <button
-          className={classNames(
-            "w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 border group",
-            isAttention
-              ? isDark
-                ? "bg-amber-500/20 border-amber-500/30 text-amber-500"
-                : "bg-amber-100 border-amber-200 text-amber-600"
-              : isDark
-                ? "bg-slate-900 border-white/5 text-slate-500 hover:text-slate-300"
-                : "bg-white border-black/5 text-gray-400 hover:text-gray-600"
-          )}
-          onClick={() => setPriority(isAttention ? "normal" : "attention")}
-          disabled={busy === "send" || !selectedGroupId}
-          title={isAttention ? "Important message" : "Normal message"}
-        >
-          <AlertIcon size={18} className={classNames("sm:w-5 sm:h-5 transition-transform group-active:scale-95", isAttention ? "animate-pulse" : "opacity-60")} />
-        </button>
-
-        {/* Reply Required Toggle */}
-        <button
-          className={classNames(
-            "h-10 sm:h-11 px-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 border text-xs sm:text-sm font-semibold",
-            isTask
-              ? isDark
-                ? "bg-violet-500/20 border-violet-500/40 text-violet-200"
-                : "bg-violet-100 border-violet-200 text-violet-700"
-              : isDark
-                ? "bg-slate-900 border-white/5 text-slate-400 hover:text-slate-200"
-                : "bg-white border-black/5 text-gray-500 hover:text-gray-700"
-          )}
-          onClick={() => {
-            const next = !replyRequired;
-            setReplyRequired(next);
-            if (next) setPriority("attention");
-          }}
-          disabled={busy === "send" || !selectedGroupId}
-          title={isTask ? "Task mode (reply required)" : "Mark as task (reply required)"}
-        >
-          Task
-        </button>
 
         {/* Send button - Using icon for modern feel */}
         <button

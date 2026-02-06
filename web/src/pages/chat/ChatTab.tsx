@@ -328,7 +328,7 @@ export function ChatTab({
                 ["all", "All"],
                 ["to_user", "To user"],
                 ["attention", "Important"],
-                ["task", "Task"],
+                ["task", "Need Reply"],
               ].map(([key, label]) => {
                 const k = key as "all" | "to_user" | "attention" | "task";
                 const active = chatFilter === k;
@@ -414,7 +414,9 @@ export function ChatTab({
             composerText={composerText}
             setComposerText={setComposerText}
             priority={priority}
+            replyRequired={replyRequired}
             setPriority={setPriority}
+            setReplyRequired={setReplyRequired}
             onSendMessage={sendMessage}
             showMentionMenu={showMentionMenu}
             setShowMentionMenu={setShowMentionMenu}

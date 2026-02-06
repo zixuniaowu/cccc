@@ -279,9 +279,9 @@ export function useChatTab({
     const dstGroup = String(sendGroupId || "").trim();
     const isCrossGroup = !!dstGroup && dstGroup !== selectedGroupId;
 
-  const prio = priority || "normal";
+    const prio = replyRequired ? "attention" : (priority || "normal");
     if (replyRequired) {
-      const ok = window.confirm("Send as a TASK message (reply required)?");
+      const ok = window.confirm("Send as a NEED REPLY message? Recipients are expected to reply.");
       if (!ok) return;
     } else if (prio === "attention") {
       const ok = window.confirm("Send as an IMPORTANT message? Recipients should acknowledge it.");
@@ -298,7 +298,7 @@ export function useChatTab({
           setDestGroupId(selectedGroupId);
           return;
         }
-      resp = await api.replyMessage(
+        resp = await api.replyMessage(
           selectedGroupId,
           txt,
           to,

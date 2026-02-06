@@ -341,7 +341,7 @@ export function TimingTab(props: TimingTabProps) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <NumberInputRow
             isDark={isDark}
-            label="Task Reply Reminder (sec)"
+            label="Need Reply Reminder (sec)"
             value={props.replyRequiredNudgeSeconds}
             onChange={props.setReplyRequiredNudgeSeconds}
             helperText="For messages with reply_required=true."

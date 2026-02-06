@@ -691,7 +691,7 @@ export const MessageBubble = memo(function MessageBubble({
                                 isDark ? "text-violet-300" : "text-violet-700"
                             )}
                         >
-                            Task
+                            Need Reply
                         </span>
                     )}
 
