@@ -1,6 +1,13 @@
 export type GroupStatus = { label: string; pillClass: string; dotClass: string };
 
 export function getGroupStatus(running: boolean, state?: string): GroupStatus {
+  if (!running) {
+    return {
+      label: "○ STOP",
+      pillClass: "bg-slate-700/50 text-slate-500",
+      dotClass: "bg-slate-500",
+    };
+  }
   switch (state) {
     case "paused":
       return {
@@ -17,13 +24,6 @@ export function getGroupStatus(running: boolean, state?: string): GroupStatus {
     default:
       break;
   }
-  if (!running) {
-    return {
-      label: "○ STOP",
-      pillClass: "bg-slate-700/50 text-slate-500",
-      dotClass: "bg-slate-500",
-    };
-  }
   return {
     label: "● RUN",
     pillClass: "bg-emerald-500/20 text-emerald-500",
@@ -32,6 +32,13 @@ export function getGroupStatus(running: boolean, state?: string): GroupStatus {
 }
 
 export function getGroupStatusLight(running: boolean, state?: string): GroupStatus {
+  if (!running) {
+    return {
+      label: "○ STOP",
+      pillClass: "bg-gray-200 text-gray-500",
+      dotClass: "bg-gray-400",
+    };
+  }
   switch (state) {
     case "paused":
       return {
@@ -47,13 +54,6 @@ export function getGroupStatusLight(running: boolean, state?: string): GroupStat
       };
     default:
       break;
-  }
-  if (!running) {
-    return {
-      label: "○ STOP",
-      pillClass: "bg-gray-200 text-gray-500",
-      dotClass: "bg-gray-400",
-    };
   }
   return {
     label: "● RUN",
