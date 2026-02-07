@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Actor, LedgerEvent } from "../../types";
 import { formatFullTime, formatTime } from "../../utils/time";
 import { MarkdownRenderer } from "../MarkdownRenderer";
+import { useModalA11y } from "../../hooks/useModalA11y";
 
 function formatEventLine(
   ev: LedgerEvent,
@@ -38,6 +39,7 @@ export interface InboxModalProps {
 }
 
 export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, onClose, onMarkAllRead }: InboxModalProps) {
+  const { modalRef } = useModalA11y(isOpen, onClose);
   // Helper to get display name for actor
   const getDisplayName = useMemo(() => {
     const map = new Map<string, string>();
@@ -55,7 +57,7 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
 
   return (
     <div
-      className={`fixed inset-0 backdrop-blur-sm flex items-start justify-center p-4 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
+      className={`fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -64,10 +66,11 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
       aria-labelledby="inbox-title"
     >
       <div
-        className={`w-full max-w-2xl mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in ${isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
+        ref={modalRef}
+        className={`w-full h-full sm:h-auto sm:max-w-2xl sm:mt-16 border shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl ${isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
           }`}
       >
-        <div className={`px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
+        <div className={`px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
           <div className="min-w-0">
             <div id="inbox-title" className={`text-lg font-semibold truncate ${isDark ? "text-white" : "text-gray-900"}`}>
               Inbox · {actorId}
@@ -93,7 +96,7 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
           </div>
         </div>
 
-        <div className="max-h-[60vh] overflow-auto p-4 space-y-2">
+        <div className="flex-1 min-h-0 overflow-auto p-4 space-y-2">
           {messages.map((ev, idx) => (
             <div
               key={String(ev.id || idx)}

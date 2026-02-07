@@ -13,7 +13,7 @@ if ("serviceWorker" in navigator && typeof navigator.serviceWorker.getRegistrati
   void navigator.serviceWorker.getRegistrations().then((registrations) => {
     for (const r of registrations) {
       try {
-        const scope = String((r as any)?.scope || "");
+        const scope = String(r.scope || "");
         // Only touch our own scope to avoid impacting unrelated SWs on the same origin.
         if (scope.includes("/ui/")) {
           void r.unregister();

@@ -24,6 +24,7 @@ export interface AppHeaderProps {
   groupDoc: GroupDoc | null;
   selectedGroupRunning: boolean;
   actors: Actor[];
+  sseStatus: "connected" | "connecting" | "disconnected";
   busy: string;
   errorMsg: string;
   notice: { message: string; actionLabel?: string; actionId?: string } | null;
@@ -65,6 +66,7 @@ export function AppHeader({
   onSetGroupState,
   onOpenSettings,
   onOpenMobileMenu,
+  sseStatus,
 }: AppHeaderProps) {
   return (
     <header
@@ -87,6 +89,15 @@ export function AppHeader({
             <h1 className={`text-sm font-semibold truncate ${isDark ? "text-slate-100" : "text-gray-900"}`}>
               {groupDoc?.title || (selectedGroupId ? selectedGroupId : "Select a group")}
             </h1>
+            {selectedGroupId && sseStatus !== "connected" && (
+              <span
+                className={classNames(
+                  "flex-shrink-0 w-2 h-2 rounded-full",
+                  sseStatus === "connecting" ? "bg-amber-400 animate-pulse" : "bg-rose-500"
+                )}
+                title={sseStatus === "connecting" ? "Reconnecting…" : "Disconnected"}
+              />
+            )}
             {selectedGroupId &&
               groupDoc &&
               (() => {
@@ -110,7 +121,7 @@ export function AppHeader({
         {selectedGroupId && !webReadOnly && (
           <button
             className={classNames(
-              "hidden sm:inline-flex items-center justify-center gap-1 text-xs px-2.5 py-1.5 rounded-xl transition-all glass-btn",
+              "hidden md:inline-flex items-center justify-center gap-1 text-xs px-2.5 py-1.5 rounded-xl transition-all glass-btn",
               isDark ? "text-slate-200" : "text-gray-700"
             )}
             onClick={onOpenGroupEdit}
@@ -127,7 +138,7 @@ export function AppHeader({
         {!webReadOnly && (
           <>
             {/* Desktop Actions */}
-            <div className="hidden sm:flex items-center gap-1.5 mr-2">
+            <div className="hidden md:flex items-center gap-1.5 mr-2">
               <button
                 onClick={onOpenSearch}
                 disabled={!selectedGroupId}
@@ -213,7 +224,7 @@ export function AppHeader({
               </button>
             </div>
 
-            <div className="hidden sm:block">
+            <div className="hidden md:block">
               <ThemeToggleCompact theme={theme} onThemeChange={onThemeChange} isDark={isDark} />
             </div>
 
@@ -221,7 +232,7 @@ export function AppHeader({
               onClick={onOpenSettings}
               disabled={!selectedGroupId}
               className={classNames(
-                "hidden sm:flex p-2 rounded-xl transition-all glass-btn",
+                "hidden md:flex p-2 rounded-xl transition-all glass-btn",
                 isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-400 hover:text-gray-600"
               )}
               title="Settings"
@@ -231,7 +242,7 @@ export function AppHeader({
 
             <button
               className={classNames(
-                "sm:hidden flex items-center justify-center w-8 h-8 rounded-xl transition-all glass-btn",
+                "md:hidden flex items-center justify-center w-11 h-11 rounded-xl transition-all glass-btn",
                 isDark ? "text-slate-400" : "text-gray-400"
               )}
               onClick={onOpenMobileMenu}
@@ -258,10 +269,11 @@ export function AppHeader({
             <span>{errorMsg}</span>
             <button 
               className={classNames(
-                "p-1 rounded-lg transition-all glass-btn",
+                "p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg transition-all glass-btn",
                 isDark ? "text-rose-400" : "text-rose-600"
               )} 
               onClick={onDismissError}
+              aria-label="Dismiss error"
             >
               ×
             </button>
@@ -293,7 +305,7 @@ export function AppHeader({
             )}
             <button
               className={classNames(
-                "p-1 rounded-lg transition-all glass-btn",
+                "p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg transition-all glass-btn",
                 isDark ? "text-slate-300" : "text-gray-600"
               )}
               onClick={onDismissNotice}

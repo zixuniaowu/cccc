@@ -2,7 +2,7 @@
 // Refactored to use useChatTab hook for business logic, reducing prop drilling.
 
 import type { MutableRefObject, RefObject } from "react";
-import { Actor, GroupMeta, LedgerEvent, PresenceAgent } from "../../types";
+import { Actor, GroupMeta } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
 import { SetupChecklist } from "./SetupChecklist";
@@ -262,7 +262,7 @@ export function ChatTab({
                 <button
                   type="button"
                   className={classNames(
-                    "flex-shrink-0 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors",
+                    "flex-shrink-0 text-xs font-semibold px-3 py-1.5 min-h-[36px] flex items-center rounded-full border transition-colors",
                     isDark
                       ? "border-slate-600 text-slate-200 hover:bg-slate-800/60"
                       : "border-gray-200 text-gray-800 hover:bg-gray-100"
@@ -308,51 +308,98 @@ export function ChatTab({
 
       {/* 2. Body Area: Contains the List + the Floating Filter Pill */}
       <main className="flex-1 min-h-0 relative flex flex-col">
-        {/* Space-efficient Floating Filter Pill */}
+        {/* Chat Filter Pill — inline on mobile, floating on sm+ */}
         {!readOnly && !chatWindowProps && hasAnyChatMessages && (
-          <div
-            className="absolute top-4 left-4 z-20 pointer-events-none"
-            style={{ width: "calc(100% - 32px)" }}
-          >
+          <>
+            {/* Mobile: inline scrollable bar */}
             <div
               className={classNames(
-                "inline-flex items-center gap-1 rounded-full border p-1 shadow-lg pointer-events-auto backdrop-blur-md transition-all",
-                isDark
-                  ? "border-slate-700/60 bg-slate-900/60 shadow-black/20"
-                  : "border-gray-200/80 bg-white/70 shadow-gray-200/50"
+                "sm:hidden flex-shrink-0 overflow-x-auto scrollbar-hide px-3 py-2 border-b",
+                isDark ? "border-white/5" : "border-black/5"
               )}
               role="tablist"
               aria-label="Chat filters"
             >
-              {[
-                ["all", "All"],
-                ["to_user", "To user"],
-                ["attention", "Important"],
-                ["task", "Need Reply"],
-              ].map(([key, label]) => {
-                const k = key as "all" | "to_user" | "attention" | "task";
-                const active = chatFilter === k;
-                return (
-                  <button
-                    key={k}
-                    type="button"
-                    className={classNames(
-                      "text-xs px-4 py-1.5 rounded-full transition-all font-medium",
-                      active
-                        ? "bg-blue-600 text-white shadow-sm"
-                        : isDark
-                          ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                          : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
-                    )}
-                    onClick={() => setChatFilter(k)}
-                    aria-pressed={active}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
+              <div className={classNames(
+                "inline-flex items-center gap-1 rounded-full border p-1 backdrop-blur-md",
+                isDark
+                  ? "border-slate-700/60 bg-slate-900/60"
+                  : "border-gray-200/80 bg-white/70"
+              )}>
+                {[
+                  ["all", "All"],
+                  ["to_user", "To user"],
+                  ["attention", "Important"],
+                  ["task", "Need Reply"],
+                ].map(([key, label]) => {
+                  const k = key as "all" | "to_user" | "attention" | "task";
+                  const active = chatFilter === k;
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      className={classNames(
+                        "text-xs px-3 py-1.5 rounded-full transition-all font-medium whitespace-nowrap flex-shrink-0",
+                        active
+                          ? "bg-blue-600 text-white shadow-sm"
+                          : isDark
+                            ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                            : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+                      )}
+                      onClick={() => setChatFilter(k)}
+                      aria-pressed={active}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+            {/* Desktop: floating pill over message list */}
+            <div
+              className="hidden sm:block absolute top-4 left-4 z-20 pointer-events-none"
+              style={{ width: "calc(100% - 32px)" }}
+            >
+              <div
+                className={classNames(
+                  "inline-flex items-center gap-1 rounded-full border p-1 shadow-lg pointer-events-auto backdrop-blur-md transition-all",
+                  isDark
+                    ? "border-slate-700/60 bg-slate-900/60 shadow-black/20"
+                    : "border-gray-200/80 bg-white/70 shadow-gray-200/50"
+                )}
+                role="tablist"
+                aria-label="Chat filters"
+              >
+                {[
+                  ["all", "All"],
+                  ["to_user", "To user"],
+                  ["attention", "Important"],
+                  ["task", "Need Reply"],
+                ].map(([key, label]) => {
+                  const k = key as "all" | "to_user" | "attention" | "task";
+                  const active = chatFilter === k;
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      className={classNames(
+                        "text-xs px-4 py-1.5 rounded-full transition-all font-medium",
+                        active
+                          ? "bg-blue-600 text-white shadow-sm"
+                          : isDark
+                            ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                            : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
+                      )}
+                      onClick={() => setChatFilter(k)}
+                      aria-pressed={active}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </>
         )}
 
         <VirtualMessageList

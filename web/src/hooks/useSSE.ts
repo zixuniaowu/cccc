@@ -7,6 +7,7 @@ import {
   isContextSyncEvent,
   isChatReadEvent,
   isChatAckEvent,
+  isChatMessageEvent,
   extractChatReadData,
   extractChatAckData,
   initializeReadStatus,
@@ -39,7 +40,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     refreshActors,
   } = useGroupStore();
 
-  const { incrementChatUnread } = useUIStore();
+  const { incrementChatUnread, setSSEStatus } = useUIStore();
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const contextRefreshTimerRef = useRef<number | null>(null);
@@ -69,15 +70,18 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
       eventSourceRef.current = null;
     }
 
+    setSSEStatus("connecting");
     const es = new EventSource(api.withAuthToken(`/api/v1/groups/${encodeURIComponent(groupId)}/ledger/stream`));
 
     es.onopen = () => {
       reconnectDelayRef.current = 1000;
+      setSSEStatus("connected");
     };
 
     es.onerror = () => {
       es.close();
       eventSourceRef.current = null;
+      setSSEStatus("disconnected");
 
       const delay = reconnectDelayRef.current;
       reconnectTimerRef.current = window.setTimeout(() => {
@@ -191,6 +195,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     }
     clearActorWarmupTimers();
     reconnectDelayRef.current = 1000;
+    setSSEStatus("disconnected");
   }
 
   return {

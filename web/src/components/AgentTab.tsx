@@ -10,6 +10,7 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { useObservabilityStore } from "../stores";
 import { withAuthToken } from "../services/api";
 import { StopIcon, RefreshIcon, InboxIcon, TrashIcon, PlayIcon, EditIcon, RocketIcon, TerminalIcon } from "./Icons";
+import { ScrollFade } from "./ScrollFade";
 
 type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
@@ -651,6 +652,18 @@ export function AgentTab({
               {rtInfo?.label || "Custom"} • {isRunning ? "Running" : "Stopped"}
               {isHeadless && " • Headless"}
             </div>
+            {/* Mobile-only: condensed single-line presence */}
+            <div
+              className={classNames(
+                "sm:hidden mt-1 text-[11px] truncate leading-tight",
+                presenceAgent?.status
+                  ? isDark ? "text-slate-300" : "text-gray-600"
+                  : isDark ? "text-slate-500 italic" : "text-gray-400 italic"
+              )}
+              title={presenceAgent?.status || "No presence yet"}
+            >
+              {presenceAgent?.status || "No presence yet"}
+            </div>
           </div>
 
           <div
@@ -694,14 +707,14 @@ export function AgentTab({
       <div className={classNames("flex-1 min-h-0", isDark ? "bg-slate-950" : "bg-gray-50")} style={{ contain: 'layout', overflow: 'hidden' }}>
         {isHeadless ? (
           // Headless agent - show status
-          <div className="flex flex-col items-center justify-center h-full text-slate-400 dark:text-slate-400 p-8">
+          <div className={classNames("flex flex-col items-center justify-center h-full p-8", isDark ? "text-slate-400" : "text-slate-500")}>
             <div className="mb-4"><RocketIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">Headless Agent</div>
             <div className="text-sm text-center max-w-md">
               This agent runs without a terminal. It communicates via MCP tools and the inbox system.
             </div>
             {isRunning && (
-              <div className="mt-4 px-3 py-1.5 rounded bg-emerald-900/30 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-300 text-sm">
+              <div className={classNames("mt-4 px-3 py-1.5 rounded text-sm", isDark ? "bg-emerald-900/30 text-emerald-300" : "bg-emerald-50 text-emerald-600")}>
                 Status: Running
               </div>
             )}
@@ -721,7 +734,7 @@ export function AgentTab({
           />
         ) : (
           // Stopped agent
-          <div className="flex flex-col items-center justify-center h-full text-slate-500 dark:text-slate-400 p-8">
+          <div className={classNames("flex flex-col items-center justify-center h-full p-8", isDark ? "text-slate-400" : "text-slate-500")}>
             <div className="mb-4"><TerminalIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">Agent Not Running</div>
             <div className="text-sm text-center max-w-md mb-4">
@@ -742,12 +755,16 @@ export function AgentTab({
         )}
       </div>
 
-      {/* Action Buttons - Scrollable on mobile to prevent overflow */}
+      {/* Action Buttons - Scrollable on mobile with fade edges */}
       {canControl ? (
-        <div className={classNames(
-          "flex items-center gap-2 px-4 py-3 border-t overflow-x-auto scrollbar-hide select-none",
-          isDark ? "bg-slate-900/50 border-slate-800" : "bg-gray-100 border-gray-200"
-        )}>
+        <ScrollFade
+          className={classNames(
+            "border-t select-none",
+            isDark ? "bg-slate-900/50 border-slate-800" : "bg-gray-100 border-gray-200"
+          )}
+          innerClassName="flex items-center gap-2 px-4 py-3"
+          fadeWidth={20}
+        >
           {isRunning ? (
             <>
               <button
@@ -865,7 +882,7 @@ export function AgentTab({
             <TrashIcon size={16} />
             {!isSmallScreen && "Remove"}
           </button>
-        </div>
+        </ScrollFade>
       ) : null}
     </div>
   );

@@ -49,7 +49,7 @@ export function SortableGroupItem({
       <div ref={setNodeRef} style={style} {...attributes}>
         <button
           className={classNames(
-            "w-10 h-10 rounded-xl flex items-center justify-center transition-all",
+            "w-11 h-11 rounded-xl flex items-center justify-center transition-all",
             isDragging && "opacity-50 shadow-lg",
             isActive
               ? "glass-btn-accent glow-pulse"

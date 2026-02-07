@@ -15,6 +15,7 @@ import { useCrossGroupRecipients } from "./hooks/useCrossGroupRecipients";
 import { useChatTab } from "./hooks/useChatTab";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useGlobalEvents } from "./hooks/useGlobalEvents";
+import { useViewportHeight } from "./hooks/useViewportHeight";
 import { ActorTab } from "./pages/ActorTab";
 import { ChatTab } from "./pages/chat";
 import {
@@ -26,17 +27,7 @@ import {
   useObservabilityStore,
 } from "./stores";
 import * as api from "./services/api";
-import type { GroupDoc, LedgerEvent, Actor } from "./types";
-
-// Helper function
-function getProjectRoot(group: GroupDoc | null): string {
-  if (!group) return "";
-  const key = String(group.active_scope_key || "");
-  if (!key) return "";
-  const scopes = Array.isArray(group.scopes) ? group.scopes : [];
-  const hit = scopes.find((s) => String(s.scope_key || "") === key);
-  return String(hit?.url || "");
-}
+import type { Actor } from "./types";
 
 // ============ Main App Component ============
 
@@ -44,25 +35,21 @@ export default function App() {
   // Theme
   const { theme, setTheme, isDark } = useTheme();
 
+  // Virtual keyboard viewport adjustment for mobile
+  useViewportHeight();
+
   // Zustand stores
   const {
     groups,
     groupOrder,
     selectedGroupId,
     groupDoc,
-    events,
-    chatWindow,
     actors,
     groupContext,
-    groupSettings,
-    hasMoreHistory,
-    isLoadingHistory,
-    isChatWindowLoading,
     setSelectedGroupId,
     refreshGroups,
     refreshActors,
     loadGroup,
-    loadMoreHistory,
     openChatWindow,
     closeChatWindow,
     reorderGroups,
@@ -77,43 +64,30 @@ export default function App() {
     sidebarOpen,
     sidebarCollapsed,
     activeTab,
-    showScrollButton,
     chatUnreadCount,
     isSmallScreen,
     webReadOnly,
-    setBusy,
     showError,
     dismissError,
     dismissNotice,
-    showNotice,
     setSidebarOpen,
     toggleSidebarCollapsed,
     setActiveTab,
     setShowScrollButton,
     setChatUnreadCount,
     setSmallScreen,
-    setChatFilter,
     setWebReadOnly,
+    sseStatus,
   } = useUIStore();
 
   const { openModal } = useModalStore();
 
   const {
-    composerText,
-    composerFiles,
-    toText,
-    replyTarget,
-    priority,
     destGroupId,
-    setComposerText,
-    setComposerFiles,
-    setToText,
-    setReplyTarget,
-    setPriority,
+    composerFiles,
+    replyTarget,
     setDestGroupId,
-    clearComposer,
     switchGroup,
-    clearDraft,
   } = useComposerStore();
 
   const { setNewActorRole, setEditGroupTitle, setEditGroupTopic, setDirSuggestions } = useFormStore();
@@ -140,7 +114,7 @@ export default function App() {
   const prevGroupIdRef = useRef<string | null>(null);
   // Local state
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
-  const [mentionFilter, setMentionFilter] = React.useState("");
+  const [_mentionFilter, setMentionFilter] = React.useState("");
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
   const [mountedActorIds, setMountedActorIds] = React.useState<string[]>([]);
 
@@ -177,8 +151,6 @@ export default function App() {
     startReply,
     destGroupId: sendGroupId,
     inChatWindow,
-    chatMessages,
-    hasAnyChatMessages,
   } = useChatTab({
     selectedGroupId,
     actors,
@@ -190,7 +162,7 @@ export default function App() {
   });
 
   // Deep link hook
-  const { openMessageWindow, parseUrlDeepLink } = useDeepLink({
+  const { parseUrlDeepLink } = useDeepLink({
     groups,
     selectedGroupId,
     setSelectedGroupId,
@@ -261,7 +233,6 @@ export default function App() {
   }, [setSmallScreen]);
 
   // Computed values
-  const projectRoot = useMemo(() => getProjectRoot(groupDoc), [groupDoc]);
   const hasForeman = useMemo(() => actors.some((a) => a.role === "foreman"), [actors]);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- groups and groupOrder trigger recalculation
   const orderedGroups = useMemo(() => getOrderedGroups(), [groups, groupOrder]);
@@ -285,15 +256,6 @@ export default function App() {
     return out;
   }, [groups]);
 
-  const mentionSuggestions = useMemo(() => {
-    const base = ["@all", "@foreman", "@peers"];
-    const actorIds = recipientActors.map((a) => String(a.id || "")).filter((id) => id);
-    const all = [...base, ...actorIds];
-    if (!mentionFilter) return all;
-    const lower = mentionFilter.toLowerCase();
-    return all.filter((s) => s.toLowerCase().includes(lower));
-  }, [recipientActors, mentionFilter]);
-
   React.useEffect(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return;
@@ -302,15 +264,18 @@ export default function App() {
     }
   }, [destGroupId, selectedGroupId, setDestGroupId]);
 
+  const hasReplyTarget = !!replyTarget;
+  const hasComposerFiles = composerFiles.length > 0;
+
   React.useEffect(() => {
     const gid = String(selectedGroupId || "").trim();
     if (!gid) return;
-    if (replyTarget || composerFiles.length > 0) {
+    if (hasReplyTarget || hasComposerFiles) {
       if (sendGroupId && sendGroupId !== gid) {
         setDestGroupId(gid);
       }
     }
-  }, [composerFiles.length, replyTarget, selectedGroupId, sendGroupId, setDestGroupId]);
+  }, [hasComposerFiles, hasReplyTarget, selectedGroupId, sendGroupId, setDestGroupId]);
 
   const renderedActorIds = useMemo(() => {
     if (activeTab !== "chat" && !mountedActorIds.includes(activeTab)) {
@@ -381,16 +346,6 @@ export default function App() {
 
   // ============ Actions ============
 
-  const handleScrollButtonClick = () => {
-    chatAtBottomRef.current = true;
-    setShowScrollButton(false);
-    setChatUnreadCount(0);
-    // Clear saved scroll position so switching back scrolls to bottom
-    if (selectedGroupId) {
-      chatScrollMemoryRef.current[selectedGroupId] = { atBottom: true, anchorId: "", offsetPx: 0 };
-    }
-  };
-
   // ============ Computed for ChatTab ============
 
   const restoreChatAnchor = useMemo(() => {
@@ -402,48 +357,44 @@ export default function App() {
     return snap;
   }, [inChatWindow, selectedGroupId]);
 
-  const needsScope = !!selectedGroupId && !projectRoot;
-  const needsActors = !!selectedGroupId && actors.length === 0;
-  const needsStart = !!selectedGroupId && actors.length > 0 && !selectedGroupRunning;
-  const showSetupCard = needsScope || needsActors || needsStart;
-
   // ============ Render ============
 
   return (
     <div
-      className={`h-full w-full relative overflow-hidden ${isDark
+      className={`w-full relative overflow-hidden ${isDark
           ? "bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
           : "bg-gradient-to-br from-slate-50 via-white to-slate-100"
         }`}
+      style={{ height: "calc(100% - var(--vk-offset, 0px))" }}
     >
-      {/* Background orbs */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      {/* Background orbs — hidden on mobile for GPU performance */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden hidden md:block">
         <div
           className={`absolute -top-32 -left-32 w-96 h-96 rounded-full liquid-blob ${isDark
               ? "bg-gradient-to-br from-cyan-500/20 via-cyan-600/10 to-transparent"
               : "bg-gradient-to-br from-cyan-400/25 via-cyan-500/15 to-transparent"
             }`}
-          style={{ filter: "blur(60px)" }}
+          style={{ filter: "blur(60px)", willChange: "transform" }}
         />
         <div
           className={`absolute top-1/4 -right-24 w-80 h-80 rounded-full liquid-blob ${isDark
               ? "bg-gradient-to-bl from-purple-500/15 via-indigo-600/10 to-transparent"
               : "bg-gradient-to-bl from-purple-400/20 via-indigo-500/10 to-transparent"
             }`}
-          style={{ filter: "blur(50px)", animationDelay: "-3s" }}
+          style={{ filter: "blur(50px)", animationDelay: "-3s", willChange: "transform" }}
         />
         <div
           className={`absolute -bottom-20 left-1/3 w-72 h-72 rounded-full liquid-blob ${isDark
               ? "bg-gradient-to-tr from-blue-500/12 via-sky-600/8 to-transparent"
               : "bg-gradient-to-tr from-blue-400/15 via-sky-500/10 to-transparent"
             }`}
-          style={{ filter: "blur(45px)", animationDelay: "-5s" }}
+          style={{ filter: "blur(45px)", animationDelay: "-5s", willChange: "transform" }}
         />
       </div>
 
-      {/* Noise texture */}
+      {/* Noise texture — hidden on mobile for GPU performance */}
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.015]"
+        className="pointer-events-none absolute inset-0 opacity-[0.015] hidden md:block"
         style={{
           backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
         }}
@@ -488,6 +439,7 @@ export default function App() {
             groupDoc={groupDoc}
             selectedGroupRunning={selectedGroupRunning}
             actors={actors}
+            sseStatus={sseStatus}
             busy={busy}
             errorMsg={errorMsg}
             notice={notice}

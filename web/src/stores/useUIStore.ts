@@ -21,6 +21,7 @@ interface UIState {
   isSmallScreen: boolean;
   chatFilter: "all" | "to_user" | "attention" | "task";
   webReadOnly: boolean;
+  sseStatus: "connected" | "connecting" | "disconnected";
 
   // Actions
   setActiveTab: (tab: string) => void;
@@ -40,6 +41,7 @@ interface UIState {
   setSmallScreen: (v: boolean) => void;
   setChatFilter: (v: "all" | "to_user" | "attention" | "task") => void;
   setWebReadOnly: (v: boolean) => void;
+  setSSEStatus: (v: "connected" | "connecting" | "disconnected") => void;
 }
 
 let errorTimeoutId: number | null = null;
@@ -77,6 +79,7 @@ export const useUIStore = create<UIState>((set) => ({
   isSmallScreen: false,
   chatFilter: "all",
   webReadOnly: false,
+  sseStatus: "disconnected" as const,
 
   // Actions
   setActiveTab: (tab) => set({ activeTab: tab }),
@@ -121,4 +124,5 @@ export const useUIStore = create<UIState>((set) => ({
   setSmallScreen: (v) => set({ isSmallScreen: v }),
   setChatFilter: (v) => set({ chatFilter: v }),
   setWebReadOnly: (v) => set({ webReadOnly: v }),
+  setSSEStatus: (v) => set({ sseStatus: v }),
 }));

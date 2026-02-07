@@ -1,3 +1,5 @@
+import { useModalA11y } from "../../hooks/useModalA11y";
+
 export interface GroupEditModalProps {
   isOpen: boolean;
   isDark: boolean;
@@ -29,6 +31,7 @@ export function GroupEditModal({
   onCancel,
   onDelete,
 }: GroupEditModalProps) {
+  const { modalRef } = useModalA11y(isOpen, onCancel);
   if (!isOpen) return null;
 
   async function copyToClipboard(text: string): Promise<boolean> {
@@ -52,7 +55,7 @@ export function GroupEditModal({
 
   return (
     <div
-      className={`fixed inset-0 backdrop-blur-sm flex items-start justify-center p-4 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
+      className={`fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}
@@ -61,16 +64,17 @@ export function GroupEditModal({
       aria-labelledby="group-edit-title"
     >
       <div
-        className={`w-full max-w-md mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in ${
+        ref={modalRef}
+        className={`w-full h-full sm:h-auto sm:max-w-md sm:mt-16 border shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl ${
           isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
         }`}
       >
-        <div className={`px-6 py-4 border-b ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
+        <div className={`px-6 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
           <div id="group-edit-title" className={`text-lg font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
             Edit Group
           </div>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-4 flex-1 overflow-y-auto">
           <div>
             <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>Name</label>
             <input

@@ -6,6 +6,7 @@ import {
 } from "../../types";
 import { BASIC_MCP_CONFIG_SNIPPET, COPILOT_MCP_CONFIG_SNIPPET, OPENCODE_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
 import { classNames } from "../../utils/classNames";
+import { useModalA11y } from "../../hooks/useModalA11y";
 
 export interface AddActorModalProps {
   isOpen: boolean;
@@ -71,13 +72,14 @@ export function AddActorModal({
   onClose,
   onCancelAndReset,
 }: AddActorModalProps) {
+  const { modalRef } = useModalA11y(isOpen, onClose);
   if (!isOpen) return null;
 
   const defaultCommand = runtimes.find((r) => r.name === newActorRuntime)?.recommended_command || "";
 
   return (
     <div
-      className={`fixed inset-0 backdrop-blur-sm flex items-start justify-center p-4 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
+      className={`fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -86,11 +88,12 @@ export function AddActorModal({
       aria-labelledby="add-actor-title"
     >
       <div
-        className={`w-full max-w-lg mt-8 sm:mt-16 rounded-2xl border shadow-2xl max-h-[80vh] overflow-y-auto animate-scale-in ${
+        ref={modalRef}
+        className={`w-full h-full sm:h-auto sm:max-w-lg sm:mt-16 sm:max-h-[80vh] overflow-y-auto border shadow-2xl animate-scale-in rounded-none sm:rounded-2xl ${
           isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
         }`}
       >
-        <div className={`px-6 py-4 border-b sticky top-0 ${isDark ? "border-slate-700/50 bg-slate-800" : "border-gray-200 bg-white"}`}>
+        <div className={`px-6 py-4 border-b sticky top-0 safe-area-inset-top ${isDark ? "border-slate-700/50 bg-slate-800" : "border-gray-200 bg-white"}`}>
           <div id="add-actor-title" className={`text-lg font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
             Add AI Agent
           </div>

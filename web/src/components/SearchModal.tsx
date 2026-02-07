@@ -3,6 +3,7 @@ import { apiJson } from "../services/api";
 import { Actor, LedgerEvent } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
+import { useModalA11y } from "../hooks/useModalA11y";
 
 type KindFilter = "all" | "chat" | "notify";
 
@@ -85,6 +86,7 @@ async function copyToClipboard(text: string): Promise<boolean> {
 }
 
 export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply, onJumpToMessage }: SearchModalProps) {
+  const { modalRef } = useModalA11y(isOpen, onClose);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<KindFilter>("all");
@@ -185,6 +187,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
           "rounded-none sm:rounded-xl",
           isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
         )}
+        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="search-modal-title"
@@ -244,8 +247,8 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
             </div>
           </div>
 
-          <div className="flex gap-3">
-            <div>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div className="min-w-0">
               <label className={classNames("block text-xs font-medium mb-1", isDark ? "text-slate-300" : "text-gray-700")}>
                 Kind
               </label>
@@ -276,7 +279,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
               </div>
             </div>
 
-            <div>
+            <div className="min-w-0 flex-1 sm:flex-none">
               <label className={classNames("block text-xs font-medium mb-1", isDark ? "text-slate-300" : "text-gray-700")}>
                 By
               </label>
@@ -284,7 +287,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                 value={by}
                 onChange={(e) => setBy(e.target.value)}
                 className={classNames(
-                  "px-3 py-2 border rounded-lg text-sm min-h-[44px] min-w-[140px]",
+                  "w-full sm:w-auto px-3 py-2 border rounded-lg text-sm min-h-[44px] sm:min-w-[140px]",
                   isDark ? "bg-slate-800 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"
                 )}
               >

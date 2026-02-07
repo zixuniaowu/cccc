@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Actor, GroupMeta, ReplyTarget } from "../../types";
 import { classNames } from "../../utils/classNames";
 import { AttachmentIcon, SendIcon, ChevronDownIcon, ReplyIcon, CloseIcon, AlertIcon } from "../../components/Icons";
+import { ScrollFade } from "../../components/ScrollFade";
 
 export interface ChatComposerProps {
   isDark: boolean;
@@ -389,7 +390,7 @@ export function ChatComposer({
           </span>
           <button
             className={classNames(
-              "p-1 rounded-full transition-colors",
+              "p-2.5 -m-1.5 rounded-full transition-colors",
               isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-black/10 text-gray-400 hover:text-gray-600"
             )}
             onClick={onCancelReply}
@@ -403,7 +404,7 @@ export function ChatComposer({
 
       {/* Recipient Selector Row */}
       <div className="mb-3 sm:mb-4 flex flex-col sm:flex-row sm:items-center gap-2">
-        <div className="flex items-center gap-1.5 sm:gap-2 overflow-x-auto scrollbar-hide -mx-4 px-4 sm:mx-0 sm:px-0">
+        <ScrollFade className="-mx-4 sm:mx-0" innerClassName="flex items-center gap-1.5 sm:gap-2 px-4 sm:px-0" fadeWidth={20}>
           <div className={classNames("text-[10px] font-medium uppercase tracking-wide flex-shrink-0 opacity-50", isDark ? "text-slate-400" : "text-gray-500")}>To</div>
 
           {/* Group Selector - Styled to match buttons */}
@@ -502,7 +503,7 @@ export function ChatComposer({
               </button>
             )}
           </div>
-        </div>
+        </ScrollFade>
       </div>
 
       {/* File list */}
@@ -520,7 +521,7 @@ export function ChatComposer({
               <span className="truncate">{f.name}</span>
               <button
                 className={classNames(
-                  "flex-shrink-0 p-0.5 rounded-full",
+                  "flex-shrink-0 p-1.5 -mr-1 rounded-full",
                   isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-black/10 text-gray-400 hover:text-gray-700"
                 )}
                 onClick={() => onRemoveComposerFile(idx)}
@@ -549,7 +550,7 @@ export function ChatComposer({
         {/* Attachment Button */}
         <button
           className={classNames(
-            "w-10 h-10 sm:w-11 sm:h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 border group",
+            "w-11 h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 border group",
             isDark
               ? "bg-slate-900 border-white/5 text-slate-400 hover:text-white hover:bg-slate-800"
               : "bg-white border-black/5 text-gray-500 hover:text-gray-900 hover:bg-gray-50"
@@ -728,7 +729,7 @@ export function ChatComposer({
         {/* Send button - Using icon for modern feel */}
         <button
           className={classNames(
-            "w-10 h-10 sm:w-20 sm:h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-50",
+            "w-11 h-11 sm:w-20 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-50",
             busy === "send" || !canSend
               ? isDark ? "bg-slate-800 text-slate-500" : "bg-gray-100 text-gray-400"
               : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/30 group active:scale-95"

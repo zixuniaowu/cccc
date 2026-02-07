@@ -1,4 +1,5 @@
 import { classNames } from "../../utils/classNames";
+import { useModalA11y } from "../../hooks/useModalA11y";
 
 export type RecipientEntry = readonly [string, boolean];
 
@@ -13,6 +14,7 @@ export interface RecipientsModalProps {
 }
 
 export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, statusKind, entries, onClose }: RecipientsModalProps) {
+  const { modalRef } = useModalA11y(isOpen, onClose);
   if (!isOpen) return null;
 
   const isAck = statusKind === "ack";
@@ -28,6 +30,7 @@ export function RecipientsModal({ isOpen, isDark, isSmallScreen, toLabel, status
     >
       <div className={classNames("absolute inset-0", isDark ? "bg-black/60" : "bg-black/40")} onClick={onClose} aria-hidden="true" />
       <div
+        ref={modalRef}
         className={classNames(
           "relative w-full border shadow-2xl",
           isSmallScreen ? "rounded-t-2xl max-h-[80vh] animate-slide-up safe-area-inset-bottom" : "max-w-md rounded-2xl animate-scale-in",

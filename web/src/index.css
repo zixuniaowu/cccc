@@ -315,6 +315,32 @@ select,
               opacity 0.15s ease-out;
 }
 
+/* ============================================
+   Touch Feedback (Active/Pressed States)
+   ============================================ */
+
+/* Universal press feedback — subtle scale + opacity for all buttons */
+button:active:not(:disabled),
+[role="button"]:active:not(:disabled) {
+  opacity: 0.85;
+  transform: scale(0.97);
+}
+
+/* Colored background buttons get a brightness shift instead of opacity */
+button[class*="bg-blue"]:active:not(:disabled),
+button[class*="bg-emerald"]:active:not(:disabled),
+button[class*="bg-green"]:active:not(:disabled),
+button[class*="bg-rose"]:active:not(:disabled),
+button[class*="bg-red"]:active:not(:disabled),
+button[class*="bg-amber"]:active:not(:disabled),
+button[class*="bg-violet"]:active:not(:disabled),
+button[class*="bg-indigo"]:active:not(:disabled),
+button[class*="bg-cyan"]:active:not(:disabled) {
+  opacity: 1;
+  filter: brightness(0.88);
+  transform: scale(0.97);
+}
+
 /* Reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
   *,

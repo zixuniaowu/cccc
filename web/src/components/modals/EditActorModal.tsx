@@ -2,6 +2,7 @@ import { RuntimeInfo, SupportedRuntime, SUPPORTED_RUNTIMES, RUNTIME_INFO } from 
 import { BASIC_MCP_CONFIG_SNIPPET, COPILOT_MCP_CONFIG_SNIPPET, OPENCODE_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
 import { useEffect, useMemo, useState } from "react";
 import * as api from "../../services/api";
+import { useModalA11y } from "../../hooks/useModalA11y";
 
 export interface EditActorModalProps {
   isOpen: boolean;
@@ -59,6 +60,7 @@ export function EditActorModal({
   onSaveAndRestart,
   onCancel,
 }: EditActorModalProps) {
+  const { modalRef } = useModalA11y(isOpen, onCancel);
   const [secretKeys, setSecretKeys] = useState<string[]>([]);
   const [secretsSetText, setSecretsSetText] = useState("");
   const [secretsUnsetText, setSecretsUnsetText] = useState("");
@@ -157,7 +159,7 @@ export function EditActorModal({
 
   return (
     <div
-      className={`fixed inset-0 flex items-start justify-center p-4 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/60" : "bg-black/40"}`}
+      className={`fixed inset-0 flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/60" : "bg-black/40"}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}
@@ -166,11 +168,12 @@ export function EditActorModal({
       aria-labelledby="edit-actor-title"
     >
       <div
-        className={`w-full max-w-md mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in flex flex-col max-h-[calc(100vh-4rem)] sm:max-h-[calc(100vh-8rem)] ${
+        ref={modalRef}
+        className={`w-full h-full sm:h-auto sm:max-w-md sm:mt-16 border shadow-2xl animate-scale-in flex flex-col sm:max-h-[calc(100vh-8rem)] rounded-none sm:rounded-2xl ${
           isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
         }`}
       >
-        <div className={`px-6 py-4 border-b ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
+        <div className={`px-6 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
           <div id="edit-actor-title" className={`text-lg font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
             Edit Agent: {actorId}
           </div>

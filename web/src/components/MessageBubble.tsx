@@ -696,12 +696,12 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
 
                     {!readOnly && (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         {ackSummary && ackSummary.needsUserAck && ev.id && !isUserMessage && !replyRequired && (
                             <button
                                 type="button"
                                 className={classNames(
-                                    "touch-target-sm px-2 py-1 rounded-lg border font-semibold",
+                                    "touch-target-sm px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors",
                                     isDark
                                         ? "border-amber-700/60 bg-amber-900/30 text-amber-200 hover:bg-amber-900/50"
                                         : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
@@ -718,8 +718,8 @@ export const MessageBubble = memo(function MessageBubble({
                             <button
                                 type="button"
                                 className={classNames(
-                                    "touch-target-sm px-1 rounded hover:underline transition-colors",
-                                    isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                                    "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                                    isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
                                 )}
                                 onClick={() => onCopyLink(String(ev.id))}
                                 title="Copy link"
@@ -731,8 +731,8 @@ export const MessageBubble = memo(function MessageBubble({
                             <button
                                 type="button"
                                 className={classNames(
-                                    "touch-target-sm px-1 rounded hover:underline transition-colors",
-                                    isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                                    "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                                    isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
                                 )}
                                 onClick={() => onRelay(ev)}
                                 title="Relay to another group"
@@ -743,8 +743,8 @@ export const MessageBubble = memo(function MessageBubble({
                         <button
                             type="button"
                             className={classNames(
-                                "touch-target-sm px-1 rounded hover:underline transition-colors",
-                                isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                                "touch-target-sm px-2 py-1 rounded-lg text-[11px] font-medium transition-colors",
+                                isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
                             )}
                             onClick={onReply}
                         >
@@ -762,7 +762,7 @@ export const MessageBubble = memo(function MessageBubble({
                         style={floatingStyles}
                         {...getFloatingProps()}
                         className={classNames(
-                            "z-tooltip w-[360px] rounded-xl border shadow-2xl px-3 py-2",
+                            "z-tooltip w-[min(360px,calc(100vw-32px))] rounded-xl border shadow-2xl px-3 py-2",
                             isDark
                                 ? "bg-slate-900/95 border-white/10 text-slate-200"
                                 : "bg-white/95 border-black/10 text-gray-900"

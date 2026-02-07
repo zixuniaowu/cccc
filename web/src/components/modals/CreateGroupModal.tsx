@@ -1,5 +1,7 @@
 import { DirItem, DirSuggestion } from "../../types";
 import { TemplatePreviewDetails } from "../TemplatePreviewDetails";
+import type { TemplatePreviewDetailsProps } from "../TemplatePreviewDetails";
+import { useModalA11y } from "../../hooks/useModalA11y";
 
 export interface CreateGroupModalProps {
   isOpen: boolean;
@@ -17,7 +19,7 @@ export interface CreateGroupModalProps {
   createGroupName: string;
   setCreateGroupName: (name: string) => void;
   createGroupTemplateFile: File | null;
-  templatePreview: unknown | null;
+  templatePreview: TemplatePreviewDetailsProps["template"] | null;
   scopeRoot: string;
   promptOverwriteFiles: string[];
   templateError: string;
@@ -55,11 +57,12 @@ export function CreateGroupModal({
   onClose,
   onCancelAndReset,
 }: CreateGroupModalProps) {
+  const { modalRef } = useModalA11y(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
     <div
-      className={`fixed inset-0 backdrop-blur-sm flex items-start justify-center p-4 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
+      className={`fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -68,11 +71,12 @@ export function CreateGroupModal({
       aria-labelledby="create-group-title"
     >
       <div
-        className={`w-full max-w-lg mt-8 sm:mt-16 rounded-2xl border shadow-2xl animate-scale-in overflow-hidden flex flex-col max-h-[calc(100vh-4rem)] sm:max-h-[calc(100vh-8rem)] ${
+        ref={modalRef}
+        className={`w-full h-full sm:h-auto sm:max-w-lg sm:mt-16 border shadow-2xl animate-scale-in overflow-hidden flex flex-col sm:max-h-[calc(100vh-8rem)] rounded-none sm:rounded-2xl ${
           isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
         }`}
       >
-        <div className={`px-6 py-4 border-b ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
+        <div className={`px-6 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
           <div id="create-group-title" className={`text-lg font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
             Create Working Group
           </div>
@@ -242,7 +246,7 @@ export function CreateGroupModal({
                 <div className="mt-3">
                   <TemplatePreviewDetails
                     isDark={isDark}
-                    template={templatePreview as any}
+                    template={templatePreview}
                     scopeRoot={scopeRoot}
                     promptOverwriteFiles={promptOverwriteFiles}
                     detailsOpenByDefault={true}

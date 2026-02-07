@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState, useCallback, type CSSProperties } from "react";
 import { Actor } from "../types";
 import { classNames } from "../utils/classNames";
 
@@ -19,6 +19,8 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
   const addButtonRef = useRef<HTMLButtonElement>(null);
   const activeTabRef = useRef<HTMLButtonElement>(null);
   const [isOverflowing, setIsOverflowing] = useState(false);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
 
   // Check if content overflows
   const checkOverflow = useCallback(() => {
@@ -45,6 +47,14 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
     const newValue = required > available;
     // Only update state if value actually changed to avoid unnecessary re-renders
     setIsOverflowing(prev => prev === newValue ? prev : newValue);
+
+    // Check scroll fade edges
+    const tol = 2;
+    const sl = scrollEl.scrollLeft;
+    const sw = scrollEl.scrollWidth;
+    const cw = scrollEl.clientWidth;
+    setCanScrollLeft(sl > tol);
+    setCanScrollRight(sl + cw < sw - tol);
   }, [onAddAgent]);
 
   // Check overflow on mount, resize, and when content changes
@@ -95,7 +105,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
       onClick={onAddAgent}
       disabled={!canAddAgent}
       className={classNames(
-        "flex-shrink-0 flex items-center justify-center w-8 h-8 rounded-lg text-sm font-medium transition-all disabled:opacity-30 focus:outline-none border",
+        "flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-lg text-sm font-medium transition-all disabled:opacity-30 focus:outline-none border",
         isDark
           ? "border-white/10 text-slate-300 hover:bg-white/5 hover:text-white"
           : "border-black/10 text-gray-600 hover:bg-black/5 hover:text-gray-900"
@@ -121,7 +131,17 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
       <div
         ref={scrollRef}
         className="flex-1 flex items-center gap-1.5 px-3 py-1.5 overflow-x-auto min-w-0 scrollbar-hide"
-        style={{ WebkitOverflowScrolling: "touch" }}
+        style={{
+          WebkitOverflowScrolling: "touch",
+          ...(canScrollLeft && canScrollRight
+            ? { WebkitMaskImage: "linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)", maskImage: "linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent)" } as CSSProperties
+            : canScrollLeft
+              ? { WebkitMaskImage: "linear-gradient(to right, transparent, black 20px)", maskImage: "linear-gradient(to right, transparent, black 20px)" } as CSSProperties
+              : canScrollRight
+                ? { WebkitMaskImage: "linear-gradient(to left, transparent, black 20px)", maskImage: "linear-gradient(to left, transparent, black 20px)" } as CSSProperties
+                : {}),
+        }}
+        onScroll={checkOverflow}
       >
         <div ref={tabsRef} className="flex items-center gap-1.5 min-w-0">
           {/* Chat Tab */}

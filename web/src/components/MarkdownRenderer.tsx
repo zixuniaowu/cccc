@@ -82,8 +82,6 @@ export function MarkdownRenderer({ content, isDark, className, invertText }: Mar
                     document.execCommand('copy');
                     document.body.removeChild(textArea);
                 }
-                console.log('Copied code:', code.substring(0, 50) + '...');
-
                 // 使用 CSS 类切换显示状态，避免修改 innerHTML 导致 React DOM 同步错误
                 button.classList.add('copied', 'pointer-events-none');
                 const copyIcon = button.querySelector('.copy-icon');

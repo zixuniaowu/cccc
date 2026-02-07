@@ -1,6 +1,7 @@
 import { Actor, GroupDoc } from "../../types";
 import { getGroupStatus, getGroupStatusLight } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
+import { useModalA11y } from "../../hooks/useModalA11y";
 import {
   SearchIcon,
   ClipboardIcon,
@@ -51,10 +52,11 @@ export function MobileMenuSheet({
   onStopGroup,
   onSetGroupState,
 }: MobileMenuSheetProps) {
+  const { modalRef } = useModalA11y(isOpen, onClose);
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 sm:hidden animate-fade-in">
+    <div className="fixed inset-0 z-50 md:hidden animate-fade-in">
       <div
         className="absolute inset-0 glass-overlay"
         onClick={onClose}
@@ -62,6 +64,7 @@ export function MobileMenuSheet({
       />
 
       <div
+        ref={modalRef}
         className="absolute bottom-0 left-0 right-0 rounded-t-3xl glass-modal animate-slide-up transform transition-transform"
         role="dialog"
         aria-modal="true"

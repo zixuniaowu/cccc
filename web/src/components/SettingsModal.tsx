@@ -17,6 +17,8 @@ import {
   GlobalTabId,
 } from "./modals/settings";
 import { InfoIcon } from "./Icons";
+import { ScrollFade } from "./ScrollFade";
+import { useModalA11y } from "../hooks/useModalA11y";
 import {
   useFloating,
   useHover,
@@ -110,6 +112,7 @@ export function SettingsModal({
   groupId,
   groupDoc,
 }: SettingsModalProps) {
+  const { modalRef } = useModalA11y(isOpen, onClose);
   const [scope, setScope] = useState<SettingsScope>(groupId ? "group" : "global");
   const [groupTab, setGroupTab] = useState<GroupTabId>("timing");
   const [globalTab, setGlobalTab] = useState<GlobalTabId>("remote");
@@ -720,7 +723,7 @@ export function SettingsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
       {/* Backdrop */}
       <div
         className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"}
@@ -730,14 +733,15 @@ export function SettingsModal({
 
       {/* Modal */}
       <div
-        className={`relative rounded-xl border shadow-2xl w-full max-w-lg sm:max-w-4xl max-h-[85vh] sm:h-[640px] flex flex-col animate-scale-in ${isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
+        className={`relative w-full h-full sm:h-[640px] sm:max-w-4xl sm:max-h-[85vh] flex flex-col border shadow-2xl animate-scale-in rounded-none sm:rounded-xl ${isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
           }`}
+        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-modal-title"
       >
         {/* Header */}
-        <div className={`flex flex-shrink-0 items-center justify-between px-5 py-4 border-b ${isDark ? "border-slate-800" : "border-gray-200"}`}>
+        <div className={`flex flex-shrink-0 items-center justify-between px-5 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-800" : "border-gray-200"}`}>
           <h2 id="settings-modal-title" className={`text-lg font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
             ⚙️ Settings
           </h2>
@@ -926,8 +930,12 @@ export function SettingsModal({
               </div>
             </div>
 
-            {/* Mobile Tabs - Horizontally scrollable */}
-            <div className={`flex flex-shrink-0 w-full min-h-[48px] overflow-x-auto scrollbar-hide border-b ${isDark ? "border-slate-800" : "border-gray-200"}`}>
+            {/* Mobile Tabs - Horizontally scrollable with fade edges */}
+            <ScrollFade
+              className={`flex-shrink-0 w-full border-b ${isDark ? "border-slate-800" : "border-gray-200"}`}
+              innerClassName="flex min-h-[48px]"
+              fadeWidth={20}
+            >
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
@@ -944,7 +952,7 @@ export function SettingsModal({
                   {tab.label}
                 </button>
               ))}
-            </div>
+            </ScrollFade>
           </div>
 
           {/* Main Content Area */}

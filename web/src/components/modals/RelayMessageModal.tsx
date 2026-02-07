@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Actor, ChatMessageData, GroupMeta, LedgerEvent } from "../../types";
 import { classNames } from "../../utils/classNames";
 import * as api from "../../services/api";
+import { useModalA11y } from "../../hooks/useModalA11y";
 
 export interface RelayMessageModalProps {
   isOpen: boolean;
@@ -89,13 +90,15 @@ export function RelayMessageModal({
     });
   };
 
+  const { modalRef } = useModalA11y(isOpen, onCancel);
+
   if (!isOpen) return null;
 
   const canSubmit = !!dstGroupId && !!srcEventId && !!(srcText || note).trim() && !busy;
 
   return (
     <div
-      className={`fixed inset-0 backdrop-blur-sm flex items-start justify-center p-4 sm:p-6 z-50 animate-fade-in ${
+      className={`fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${
         isDark ? "bg-black/50" : "bg-black/30"
       }`}
       onMouseDown={(e) => {
@@ -106,12 +109,13 @@ export function RelayMessageModal({
       aria-labelledby="relay-modal-title"
     >
       <div
+        ref={modalRef}
         className={classNames(
-          "w-full max-w-2xl mt-6 sm:mt-14 rounded-2xl border shadow-2xl animate-scale-in overflow-hidden",
+          "w-full h-full sm:h-auto sm:max-w-2xl sm:mt-14 border shadow-2xl animate-scale-in overflow-hidden flex flex-col rounded-none sm:rounded-2xl",
           isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
         )}
       >
-        <div className={classNames("px-6 py-4 border-b", isDark ? "border-slate-700/50" : "border-gray-200")}>
+        <div className={classNames("px-6 py-4 border-b safe-area-inset-top", isDark ? "border-slate-700/50" : "border-gray-200")}>
           <div id="relay-modal-title" className={classNames("text-lg font-semibold", isDark ? "text-white" : "text-gray-900")}>
             Relay Message
           </div>
@@ -120,7 +124,7 @@ export function RelayMessageModal({
           </div>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-5 flex-1 overflow-y-auto min-h-0">
           {/* Source preview */}
           <div className={classNames("rounded-xl border p-4", isDark ? "border-white/10 bg-slate-900/40" : "border-black/10 bg-gray-50")}>
             <div className={classNames("text-xs font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>

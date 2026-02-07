@@ -4,6 +4,7 @@ import { GroupContext, ProjectMdInfo, Task } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { MarkdownRenderer } from "./MarkdownRenderer";
+import { useModalA11y } from "../hooks/useModalA11y";
 
 interface ContextModalProps {
   isOpen: boolean;
@@ -30,6 +31,7 @@ export function ContextModal({
   busy,
   isDark,
 }: ContextModalProps) {
+  const { modalRef } = useModalA11y(isOpen, onClose);
   const [editingVision, setEditingVision] = useState(false);
   const [editingSketch, setEditingSketch] = useState(false);
   const [visionText, setVisionText] = useState("");
@@ -376,7 +378,7 @@ export function ContextModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 animate-fade-in">
+    <div className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
       {/* Backdrop */}
       <div
         className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"}
@@ -386,16 +388,17 @@ export function ContextModal({
 
       {/* Modal */}
       <div
-        className={`relative rounded-xl border shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-scale-in ${isDark
+        className={`relative w-full h-full sm:h-auto sm:max-h-[80vh] sm:max-w-2xl flex flex-col border shadow-2xl animate-scale-in rounded-none sm:rounded-xl ${isDark
           ? "bg-slate-900 border-slate-700"
           : "bg-white border-gray-200"
           }`}
+        ref={modalRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="context-modal-title"
       >
         {/* Header */}
-        <div className={`flex items-center justify-between px-5 py-4 border-b ${isDark ? "border-slate-800" : "border-gray-200"
+        <div className={`flex items-center justify-between px-5 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-800" : "border-gray-200"
           }`}>
           <h2 id="context-modal-title" className={`text-lg font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
             📋 Project Context

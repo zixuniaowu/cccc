@@ -2,7 +2,7 @@
 import { useCallback, useState } from "react";
 import { useGroupStore, useUIStore, useModalStore, useInboxStore, useFormStore } from "../stores";
 import * as api from "../services/api";
-import type { Actor } from "../types";
+import type { Actor, SupportedRuntime } from "../types";
 
 export function useActorActions(groupId: string) {
   const { refreshActors, loadGroup } = useGroupStore();
@@ -63,12 +63,13 @@ export function useActorActions(groupId: string) {
     (actor: Actor) => {
       if (!actor) return;
       // Initialize form state with actor's current values
-      setEditActorRuntime((actor.runtime as any) || "codex");
+      const runtime = String(actor.runtime || "").trim();
+      setEditActorRuntime((runtime || "codex") as SupportedRuntime);
       setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
       setEditActorTitle(actor.title || "");
       setEditingActor(actor);
     },
-    [setEditingActor, showError, setEditActorRuntime, setEditActorCommand, setEditActorTitle]
+    [setEditingActor, setEditActorRuntime, setEditActorCommand, setEditActorTitle]
   );
 
   // Remove actor

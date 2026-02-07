@@ -2,12 +2,19 @@ import { useState } from "react";
 import * as api from "../../../services/api";
 import { cardClass, labelClass, primaryButtonClass } from "./types";
 import { TemplatePreviewDetails } from "../../TemplatePreviewDetails";
+import type { TemplatePreviewDetailsProps } from "../../TemplatePreviewDetails";
 
 interface TemplateTabProps {
   isDark: boolean;
   groupId?: string;
   groupTitle?: string;
 }
+
+type TemplatePreviewResult = {
+  template?: TemplatePreviewDetailsProps["template"];
+  diff?: NonNullable<TemplatePreviewDetailsProps["diff"]>;
+  scope_root?: string;
+};
 
 function downloadTextFile(filename: string, text: string) {
   const blob = new Blob([text], { type: "text/yaml;charset=utf-8" });
@@ -23,7 +30,7 @@ function downloadTextFile(filename: string, text: string) {
 
 export function TemplateTab({ isDark, groupId, groupTitle }: TemplateTabProps) {
   const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<any | null>(null);
+  const [preview, setPreview] = useState<TemplatePreviewResult | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [exportInfo, setExportInfo] = useState("");
@@ -41,7 +48,7 @@ export function TemplateTab({ isDark, groupId, groupTitle }: TemplateTabProps) {
         setErr(resp.error?.message || "Failed to preview template");
         return;
       }
-      setPreview(resp.result);
+      setPreview(resp.result as TemplatePreviewResult);
     } catch {
       setErr("Failed to preview template");
     } finally {

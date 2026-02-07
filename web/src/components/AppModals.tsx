@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ContextModal } from "./ContextModal";
 import { SettingsModal } from "./SettingsModal";
 import { SearchModal } from "./SearchModal";
+import type { TemplatePreviewDetailsProps } from "./TemplatePreviewDetails";
 import { MobileMenuSheet } from "./layout/MobileMenuSheet";
 import { AddActorModal } from "./modals/AddActorModal";
 import { CreateGroupModal } from "./modals/CreateGroupModal";
@@ -31,6 +32,13 @@ interface AppModalsProps {
   onStopGroup: () => Promise<void>;
   onSetGroupState: (state: "active" | "idle" | "paused") => Promise<void>;
   fetchContext: (groupId: string) => Promise<void>;
+}
+
+function getErrorDetailGroupId(err: unknown): string {
+  if (!err || typeof err !== "object") return "";
+  const details = (err as { details?: unknown }).details;
+  if (!details || typeof details !== "object") return "";
+  return String((details as { group_id?: unknown }).group_id || "").trim();
 }
 
 export function AppModals({
@@ -131,7 +139,7 @@ export function AppModals({
     resetCreateGroupForm,
   } = useFormStore();
 
-  const [createTemplatePreview, setCreateTemplatePreview] = useState<any | null>(null);
+  const [createTemplatePreview, setCreateTemplatePreview] = useState<TemplatePreviewDetailsProps["template"] | null>(null);
   const [createTemplateScopeRoot, setCreateTemplateScopeRoot] = useState("");
   const [createTemplatePromptOverwriteFiles, setCreateTemplatePromptOverwriteFiles] = useState<string[]>([]);
   const [createTemplateError, setCreateTemplateError] = useState("");
@@ -154,7 +162,14 @@ export function AppModals({
       const resp = await api.fetchDirContents(root);
       if (!resp.ok) return { scopeRoot: root, files: [] };
       const items = Array.isArray(resp.result?.items) ? resp.result.items : [];
-      const names = new Set(items.map((it: any) => String(it?.name || "").trim()).filter((s: string) => s));
+      const names = new Set(
+        items
+          .map((it: unknown) => {
+            if (!it || typeof it !== "object") return "";
+            return String((it as { name?: unknown }).name || "").trim();
+          })
+          .filter((s) => s)
+      );
       const wanted = ["CCCC_PREAMBLE.md", "CCCC_HELP.md", "CCCC_STANDUP.md"];
       return { scopeRoot: root, files: wanted.filter((n) => names.has(n)) };
     } catch {
@@ -363,28 +378,6 @@ export function AppModals({
     }
   };
 
-  const handleSaveEditActor = async () => {
-    if (!selectedGroupId || !editingActor) return;
-    setBusy("actor-update");
-    try {
-      const resp = await api.updateActor(
-        selectedGroupId,
-        editingActor.id,
-        editActorRuntime,
-        editActorCommand,
-        editActorTitle
-      );
-      if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
-        return;
-      }
-      setEditingActor(null);
-      await refreshActors();
-    } finally {
-      setBusy("");
-    }
-  };
-
   const handleSaveEditActorAndRestart = async (secrets: { setVars: Record<string, string>; unsetKeys: string[]; clear: boolean }) => {
     if (!selectedGroupId || !editingActor) return;
     const label = editingActor.title || editingActor.id;
@@ -494,8 +487,8 @@ export function AppModals({
         }
         const resp = await api.createGroupFromTemplate(path, title, "", createGroupTemplateFile);
         if (!resp.ok) {
-          if (resp.error?.code === "scope_already_attached" && (resp.error as any)?.details?.group_id) {
-            const existing = String((resp.error as any).details.group_id || "");
+          if (resp.error?.code === "scope_already_attached") {
+            const existing = getErrorDetailGroupId(resp.error);
             if (existing) {
               showError("This directory already has a working group. Opening it instead.");
               closeModal("createGroup");

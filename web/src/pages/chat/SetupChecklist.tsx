@@ -76,7 +76,7 @@ export function SetupChecklist({
             <button
               type="button"
               className={classNames(
-                "flex-shrink-0 rounded-lg px-2 py-1 text-[11px] font-medium border",
+                "flex-shrink-0 rounded-lg px-2 py-1 min-h-[36px] flex items-center text-[11px] font-medium border",
                 isDark ? "border-slate-700 text-slate-300 hover:bg-slate-800" : "border-gray-200 text-gray-700 hover:bg-gray-50"
               )}
               onClick={() => copyCommand(attachCmd)}
@@ -115,7 +115,7 @@ export function SetupChecklist({
             type="button"
             className={classNames(
               "flex-shrink-0 font-semibold bg-blue-600 hover:bg-blue-500 text-white",
-              isCompact ? "rounded-xl px-3 py-1.5 text-[11px]" : "mt-3 w-full rounded-xl px-4 py-2 text-sm"
+              isCompact ? "rounded-xl px-3 py-1.5 min-h-[36px] flex items-center text-[11px]" : "mt-3 w-full rounded-xl px-4 py-2 text-sm"
             )}
             onClick={onAddAgent}
           >
@@ -152,7 +152,7 @@ export function SetupChecklist({
             type="button"
             className={classNames(
               "flex-shrink-0 font-semibold bg-emerald-600 hover:bg-emerald-500 text-white",
-              isCompact ? "rounded-xl px-3 py-1.5 text-[11px]" : "mt-3 w-full rounded-xl px-4 py-2 text-sm",
+              isCompact ? "rounded-xl px-3 py-1.5 min-h-[36px] flex items-center text-[11px]" : "mt-3 w-full rounded-xl px-4 py-2 text-sm",
               busy === "group-start" ? "opacity-60" : ""
             )}
             onClick={onStartGroup}
