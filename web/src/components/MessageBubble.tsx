@@ -361,10 +361,22 @@ export const MessageBubble = memo(function MessageBubble({
                     </span>
                 </div>
 
-                {/* Bubble */}
+                {/* Bubble wrapper (allows badge to overflow) */}
+                <div className="relative max-w-[85vw] sm:max-w-full min-w-0">
+                    {isAttention && (
+                        <span
+                            className={classNames(
+                                "absolute -top-2 z-10 text-[10px] font-semibold px-2 py-0.5 rounded-full border shadow-sm",
+                                isUserMessage ? "left-3" : "right-3",
+                                isDark ? "bg-amber-900/60 text-amber-200 border-amber-700/50" : "bg-amber-50 text-amber-700 border-amber-200"
+                            )}
+                        >
+                            Important
+                        </span>
+                    )}
                 <div
                     className={classNames(
-                        "relative px-4 py-2.5 shadow-sm text-sm leading-relaxed max-w-[85vw] sm:max-w-full min-w-0 overflow-hidden",
+                        "px-4 py-2.5 shadow-sm text-sm leading-relaxed overflow-hidden",
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none"
                             : isDark
@@ -380,16 +392,6 @@ export const MessageBubble = memo(function MessageBubble({
                             : ""
                     )}
                 >
-                    {isAttention && (
-                        <div
-                            className={classNames(
-                                "absolute -top-2 right-3 text-[10px] font-semibold px-2 py-0.5 rounded-full border shadow-sm",
-                                isDark ? "bg-amber-900/60 text-amber-200 border-amber-700/50" : "bg-amber-50 text-amber-700 border-amber-200"
-                            )}
-                        >
-                            Important
-                        </div>
-                    )}
 
                     {/* Cross-group relay provenance */}
                     {hasSource ? (
@@ -514,6 +516,7 @@ export const MessageBubble = memo(function MessageBubble({
                             </>
                         );
                     })()}
+                </div>
                 </div>
 
                 <div

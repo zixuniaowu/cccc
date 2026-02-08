@@ -307,7 +307,7 @@ export function ChatComposer({
       setReplyRequired(false);
       return;
     }
-    setPriority("attention");
+    setPriority("normal");
     setReplyRequired(true);
   };
   const activeMode = modeOptions.find((opt) => opt.key === messageMode) || modeOptions[0];
