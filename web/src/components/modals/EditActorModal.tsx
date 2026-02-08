@@ -1,8 +1,9 @@
 import { RuntimeInfo, SupportedRuntime, SUPPORTED_RUNTIMES, RUNTIME_INFO } from "../../types";
 import { BASIC_MCP_CONFIG_SNIPPET, COPILOT_MCP_CONFIG_SNIPPET, OPENCODE_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
+import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../utils/privateEnvInput";
 
 export interface EditActorModalProps {
   isOpen: boolean;
@@ -25,22 +26,22 @@ export interface EditActorModalProps {
 /** Runtime-specific placeholder hints for secret environment variables */
 const SECRETS_PLACEHOLDER: Record<string, { set: string; unset: string }> = {
   claude: {
-    set: "ANTHROPIC_API_KEY=...\nANTHROPIC_BASE_URL=...",
-    unset: "ANTHROPIC_API_KEY\nANTHROPIC_BASE_URL",
+    set: 'export ANTHROPIC_API_KEY="...";\nexport ANTHROPIC_BASE_URL="...";',
+    unset: "unset ANTHROPIC_API_KEY;\nunset ANTHROPIC_BASE_URL;",
   },
   codex: {
-    set: "OPENAI_API_KEY=...\nOPENAI_BASE_URL=...",
-    unset: "OPENAI_API_KEY\nOPENAI_BASE_URL",
+    set: 'export OPENAI_API_KEY="...";\nexport OPENAI_BASE_URL="...";',
+    unset: "unset OPENAI_API_KEY;\nunset OPENAI_BASE_URL;",
   },
   gemini: {
-    set: "GOOGLE_API_KEY=...",
-    unset: "GOOGLE_API_KEY",
+    set: 'export GOOGLE_API_KEY="...";',
+    unset: "unset GOOGLE_API_KEY;",
   },
 };
 
 const DEFAULT_SECRETS_PLACEHOLDER = {
-  set: "OPENAI_API_KEY=...\nANTHROPIC_API_KEY=...\nANTHROPIC_BASE_URL=...",
-  unset: "OPENAI_API_KEY\nANTHROPIC_API_KEY\nANTHROPIC_BASE_URL",
+  set: 'export OPENAI_API_KEY="...";\nexport ANTHROPIC_API_KEY="...";\nexport ANTHROPIC_BASE_URL="...";',
+  unset: "unset OPENAI_API_KEY;\nunset ANTHROPIC_API_KEY;\nunset ANTHROPIC_BASE_URL;",
 };
 
 export function EditActorModal({
@@ -67,8 +68,6 @@ export function EditActorModal({
   const [secretsClearAll, setSecretsClearAll] = useState(false);
   const [secretsError, setSecretsError] = useState("");
   const [secretsBusy, setSecretsBusy] = useState(false);
-
-  const envKeyRe = useMemo(() => /^[A-Za-z_][A-Za-z0-9_]*$/, []);
 
   const secretsPlaceholder = SECRETS_PLACEHOLDER[runtime] ?? DEFAULT_SECRETS_PLACEHOLDER;
 
@@ -98,57 +97,29 @@ export function EditActorModal({
   const defaultCommand = rtInfo?.recommended_command || "";
   const requireCommand = runtime === "custom" || !available;
 
-  const parseSecretsSet = (text: string): { setVars: Record<string, string>; error: string } => {
-    const out: Record<string, string> = {};
-    const lines = String(text || "").split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const raw = lines[i];
-      const line = raw.trim();
-      if (!line) continue;
-      if (line.startsWith("#")) continue;
-      const idx = line.indexOf("=");
-      if (idx <= 0) return { setVars: {}, error: `Set line ${i + 1}: expected KEY=VALUE` };
-      const key = line.slice(0, idx).trim();
-      if (!key || !envKeyRe.test(key)) return { setVars: {}, error: `Set line ${i + 1}: invalid env key` };
-      const value = line.slice(idx + 1);
-      out[key] = value;
-    }
-    return { setVars: out, error: "" };
-  };
-
-  const parseSecretsUnset = (text: string): { unsetKeys: string[]; error: string } => {
-    const out: string[] = [];
-    const lines = String(text || "").split("\n");
-    for (let i = 0; i < lines.length; i++) {
-      const raw = lines[i];
-      const line = raw.trim();
-      if (!line) continue;
-      if (line.startsWith("#")) continue;
-      if (!envKeyRe.test(line)) return { unsetKeys: [], error: `Unset line ${i + 1}: invalid env key` };
-      out.push(line);
-    }
-    return { unsetKeys: out, error: "" };
-  };
-
   const saveAndRestart = async () => {
     if (!groupId || !actorId) return;
     if (busy === "actor-update") return;
     setSecretsError("");
 
-    const { setVars, error: setErr } = parseSecretsSet(secretsSetText);
-    if (setErr) {
-      setSecretsError(setErr);
+    const setParsed = parsePrivateEnvSetText(secretsSetText);
+    if (!setParsed.ok) {
+      setSecretsError(setParsed.error);
       return;
     }
-    const { unsetKeys, error: unsetErr } = parseSecretsUnset(secretsUnsetText);
-    if (unsetErr) {
-      setSecretsError(unsetErr);
+    const unsetParsed = parsePrivateEnvUnsetText(secretsUnsetText);
+    if (!unsetParsed.ok) {
+      setSecretsError(unsetParsed.error);
       return;
     }
 
     setSecretsBusy(true);
     try {
-      await onSaveAndRestart({ setVars, unsetKeys, clear: secretsClearAll });
+      await onSaveAndRestart({
+        setVars: setParsed.setVars,
+        unsetKeys: unsetParsed.unsetKeys,
+        clear: secretsClearAll,
+      });
     } catch (e) {
       setSecretsError(e instanceof Error ? e.message : "Save failed");
       return;
@@ -347,7 +318,7 @@ export function EditActorModal({
             </div>
 
             <label className={`block text-[11px] font-medium mt-3 mb-1.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Set / Update (KEY=VALUE, one per line)
+              Set / Update (supports KEY=VALUE, export, quotes, semicolons)
             </label>
             <textarea
               className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[96px] transition-colors ${
@@ -359,7 +330,7 @@ export function EditActorModal({
             />
 
             <label className={`block text-[11px] font-medium mt-3 mb-1.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
-              Unset (KEY, one per line)
+              Unset (supports unset KEY / KEY / KEY=, with semicolons)
             </label>
             <textarea
               className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[72px] transition-colors ${

@@ -335,11 +335,14 @@ export function AddActorModal({
                   }`}
                   value={newActorSecretsSetText}
                   onChange={(e) => setNewActorSecretsSetText(e.target.value)}
-                  placeholder={"OPENAI_API_KEY=...\nANTHROPIC_API_KEY=..."}
+                  placeholder={'export OPENAI_API_KEY="...";\nexport ANTHROPIC_API_KEY="...";'}
                 />
                 <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
                   Stored locally under{" "}
                   <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>CCCC_HOME/state/…</code> (not in group ledger). Values are never shown again.
+                </div>
+                <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  Supports <code>KEY=VALUE</code> and shell-style <code>export KEY=VALUE</code> (quotes / semicolons / inline comments).
                 </div>
               </div>
             </div>

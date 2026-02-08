@@ -280,11 +280,10 @@ export function useChatTab({
     const isCrossGroup = !!dstGroup && dstGroup !== selectedGroupId;
 
     const prio = replyRequired ? "attention" : (priority || "normal");
-    if (replyRequired) {
-      const ok = window.confirm("Send as a NEED REPLY message? Recipients are expected to reply.");
-      if (!ok) return;
-    } else if (prio === "attention") {
-      const ok = window.confirm("Send as an IMPORTANT message? Recipients should acknowledge it.");
+    const isExplicitAll = toTokens.includes("@all");
+    if (isExplicitAll && (replyRequired || prio === "attention")) {
+      const modeLabel = replyRequired ? "NEED REPLY" : "IMPORTANT";
+      const ok = window.confirm(`Send ${modeLabel} to @all?`);
       if (!ok) return;
     }
 
@@ -341,6 +340,11 @@ export function useChatTab({
         window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
       }
       onMessageSent?.();
+      if (replyRequired) {
+        showNotice({ message: "Need Reply sent. Recipients are expected to reply." });
+      } else if (prio === "attention") {
+        showNotice({ message: "Important message sent. Recipients are expected to acknowledge." });
+      }
     } finally {
       setBusy("");
     }
@@ -356,6 +360,7 @@ export function useChatTab({
     inChatWindow,
     setBusy,
     showError,
+    showNotice,
     setDestGroupId,
     clearComposer,
     clearDraft,

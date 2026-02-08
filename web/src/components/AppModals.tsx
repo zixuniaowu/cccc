@@ -12,6 +12,7 @@ import { GroupEditModal } from "./modals/GroupEditModal";
 import { InboxModal } from "./modals/InboxModal";
 import { RelayMessageModal } from "./modals/RelayMessageModal";
 import { RecipientsModal } from "./modals/RecipientsModal";
+import { parsePrivateEnvSetText } from "../utils/privateEnvInput";
 import {
   useGroupStore,
   useUIStore,
@@ -536,28 +537,12 @@ export function AppModals({
     const actorId = newActorId.trim();
     const secretsText = String(newActorSecretsSetText || "");
 
-    const envKeyRe = /^[A-Za-z_][A-Za-z0-9_]*$/;
-    const secretsSetVars: Record<string, string> = {};
-    if (secretsText.trim()) {
-      const lines = secretsText.split("\n");
-      for (let i = 0; i < lines.length; i++) {
-        const raw = lines[i].trim();
-        if (!raw) continue;
-        if (raw.startsWith("#")) continue;
-        const idx = raw.indexOf("=");
-        if (idx <= 0) {
-          setAddActorError(`Secrets line ${i + 1}: expected KEY=VALUE`);
-          return;
-        }
-        const key = raw.slice(0, idx).trim();
-        if (!envKeyRe.test(key)) {
-          setAddActorError(`Secrets line ${i + 1}: invalid env key`);
-          return;
-        }
-        const value = raw.slice(idx + 1);
-        secretsSetVars[key] = value;
-      }
+    const parsedSecrets = parsePrivateEnvSetText(secretsText);
+    if (!parsedSecrets.ok) {
+      setAddActorError(parsedSecrets.error);
+      return;
     }
+    const secretsSetVars = parsedSecrets.setVars;
 
     setBusy("actor-add");
     setAddActorError("");

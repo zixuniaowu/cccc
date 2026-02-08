@@ -311,6 +311,16 @@ export function ChatComposer({
     setReplyRequired(true);
   };
   const activeMode = modeOptions.find((opt) => opt.key === messageMode) || modeOptions[0];
+  const modeNotice = messageMode === "task"
+    ? "Need Reply: recipients are expected to send a concrete reply."
+    : messageMode === "attention"
+      ? "Important: recipients are expected to acknowledge this message."
+      : "";
+  const sendButtonLabel = messageMode === "task"
+    ? "Need Reply"
+    : messageMode === "attention"
+      ? "Important"
+      : "Send";
 
   const fileDisabledReason = (() => {
     if (!selectedGroupId) return "Select a group first.";
@@ -533,6 +543,25 @@ export function ChatComposer({
         </div>
       )}
 
+      {modeNotice ? (
+        <div
+          className={classNames(
+            "mb-2.5 rounded-lg border px-3 py-2 text-[11px] leading-5",
+            messageMode === "task"
+              ? isDark
+                ? "border-violet-500/30 bg-violet-500/10 text-violet-200"
+                : "border-violet-200 bg-violet-50 text-violet-700"
+              : isDark
+                ? "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                : "border-amber-200 bg-amber-50 text-amber-700"
+          )}
+          role="status"
+          aria-live="polite"
+        >
+          {modeNotice}
+        </div>
+      ) : null}
+
       {/* Main Input Area - Perfectly Centered for Better Alignment */}
       <div className="flex gap-2 sm:gap-2.5 relative items-center">
         <input
@@ -729,21 +758,22 @@ export function ChatComposer({
         {/* Send button - Using icon for modern feel */}
         <button
           className={classNames(
-            "w-11 h-11 sm:w-20 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-50",
+            "w-11 h-11 sm:min-w-[6.25rem] sm:px-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-50",
             busy === "send" || !canSend
               ? isDark ? "bg-slate-800 text-slate-500" : "bg-gray-100 text-gray-400"
               : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/30 group active:scale-95"
           )}
           onClick={onSendMessage}
           disabled={busy === "send" || !canSend}
-          aria-label="Send message"
+          aria-label={`Send message (${activeMode.label})`}
+          title={`Send message (${activeMode.label})`}
         >
           {busy === "send" ? (
             <div className="w-4 h-4 sm:w-5 sm:h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
           ) : (
             <>
               <SendIcon size={18} className="sm:hidden" />
-              <span className="hidden sm:inline font-bold">Send</span>
+              <span className="hidden sm:inline font-bold">{sendButtonLabel}</span>
             </>
           )}
         </button>
