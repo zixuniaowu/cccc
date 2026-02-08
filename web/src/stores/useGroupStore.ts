@@ -467,9 +467,27 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     const gid = String(groupId || "").trim();
     if (!gid) return;
 
+    // First check if the group exists (goes through daemon, won't 404)
+    const show = await api.fetchGroup(gid);
+
+    // Guard against out-of-order resolves when the user switches groups quickly.
+    if (get().selectedGroupId !== gid) return;
+
+    // If group not found (orphaned registry entry), clear state and bail out
+    if (!show.ok) {
+      set({
+        groupDoc: null,
+        events: [],
+        actors: [],
+        groupContext: null,
+        groupSettings: null,
+        hasMoreHistory: false,
+      });
+      return;
+    }
+
     // Fast initial load: skip unread counts for snappy group switching
-    const [show, tail, a, ctx, settings] = await Promise.all([
-      api.fetchGroup(gid),
+    const [tail, a, ctx, settings] = await Promise.all([
       api.fetchLedgerTail(gid),
       api.fetchActors(gid, false),
       api.fetchContext(gid),
@@ -480,7 +498,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     if (get().selectedGroupId !== gid) return;
 
     set({
-      groupDoc: show.ok ? show.result.group : null,
+      groupDoc: show.result.group,
       events: tail.ok
         ? (tail.result.events || []).filter((ev) => ev && ev.kind !== "context.sync")
         : [],

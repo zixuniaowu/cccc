@@ -2246,6 +2246,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         groups = list(reg.groups.values())
         groups.sort(key=lambda g: (g.get("updated_at") or "", g.get("created_at") or ""), reverse=True)
         out = []
+        orphaned_ids: list[str] = []
         for g in groups:
             if not isinstance(g, dict):
                 continue
@@ -2261,7 +2262,19 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
                 full_group = load_group(gid)
                 if full_group is not None:
                     item["state"] = full_group.doc.get("state", "active")
+                else:
+                    # group.yaml missing — registry orphan; skip from listing
+                    orphaned_ids.append(gid)
+                    continue
             out.append(item)
+        # Auto-clean orphaned registry entries
+        if orphaned_ids:
+            for oid in orphaned_ids:
+                reg.groups.pop(oid, None)
+                for k, v in list(reg.defaults.items()):
+                    if v == oid:
+                        reg.defaults.pop(k, None)
+            reg.save()
         return DaemonResponse(ok=True, result={"groups": out}), False
 
     if op == "group_start":
