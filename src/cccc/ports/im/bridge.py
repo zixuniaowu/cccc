@@ -24,7 +24,7 @@ from ...daemon.server import call_daemon
 from ...kernel.actors import list_actors, resolve_recipient_tokens
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import Group, load_group
-from ...kernel.messaging import get_default_send_to
+from ...kernel.messaging import disabled_recipient_actor_ids, get_default_send_to
 from ...paths import ensure_home
 from ...util.conv import coerce_bool
 from .adapters.base import IMAdapter
@@ -806,14 +806,18 @@ class IMBridge:
                 matched.add(tok)
 
         if not matched:
-            wanted = " ".join(canonical_to) if canonical_to else "@all"
-            self.adapter.send_message(
-                chat_id,
-                f"⚠️ No enabled agents match the recipient(s): {wanted}. Run /status, then /launch (or enable an agent).",
-                thread_id=thread_id,
-            )
-            self._log(f"[message] chat={chat_id} thread={thread_id} skipped (no enabled targets) to={canonical_to}")
-            return
+            # Check if disabled actors match — daemon will auto-wake them.
+            disabled_matches = disabled_recipient_actor_ids(group, canonical_to)
+            if not disabled_matches:
+                wanted = " ".join(canonical_to) if canonical_to else "@all"
+                self.adapter.send_message(
+                    chat_id,
+                    f"⚠️ No agents match the recipient(s): {wanted}. Run /status to check available agents.",
+                    thread_id=thread_id,
+                )
+                self._log(f"[message] chat={chat_id} thread={thread_id} skipped (no targets) to={canonical_to}")
+                return
+            self._log(f"[message] chat={chat_id} thread={thread_id} auto-wake candidates: {disabled_matches}")
 
         # File settings (only after recipients are validated)
         im_cfg = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
