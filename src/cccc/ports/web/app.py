@@ -1710,7 +1710,7 @@ def create_app() -> FastAPI:
 
         # Preflight recipients before storing attachments (avoid orphan blobs on invalid/no-op sends).
         from ...kernel.actors import resolve_recipient_tokens, list_actors
-        from ...kernel.messaging import get_default_send_to, enabled_recipient_actor_ids, targets_any_agent
+        from ...kernel.messaging import get_default_send_to
         try:
             canonical_to = resolve_recipient_tokens(group, to_list)
         except Exception as e:
@@ -1742,14 +1742,7 @@ def create_app() -> FastAPI:
         if not canonical_to and not to_list and get_default_send_to(group.doc) == "foreman":
             canonical_to = ["@foreman"]
 
-        if targets_any_agent(canonical_to):
-            matched_enabled = enabled_recipient_actor_ids(group, canonical_to)
-            if not matched_enabled:
-                wanted = " ".join(canonical_to) if canonical_to else "@all"
-                raise HTTPException(
-                    status_code=400,
-                    detail={"code": "no_enabled_recipients", "message": f"no enabled agents match recipients: {wanted}"},
-                )
+        # Note: enabled-recipient validation + auto-wake is handled by the daemon.
 
         attachments: list[dict[str, Any]] = []
         for f in files or []:
@@ -1823,7 +1816,7 @@ def create_app() -> FastAPI:
         # Preflight recipients before storing attachments (avoid orphan blobs on invalid/no-op sends).
         from ...kernel.actors import resolve_recipient_tokens
         from ...kernel.inbox import find_event
-        from ...kernel.messaging import default_reply_recipients, enabled_recipient_actor_ids, targets_any_agent
+        from ...kernel.messaging import default_reply_recipients
 
         original = find_event(group, reply_to_id)
         if original is None:
@@ -1839,16 +1832,7 @@ def create_app() -> FastAPI:
         if not canonical_to and not to_list:
             canonical_to = resolve_recipient_tokens(group, default_reply_recipients(group, by=by, original_event=original))
 
-        if targets_any_agent(canonical_to):
-            matched_enabled = enabled_recipient_actor_ids(group, canonical_to)
-            if by and by in matched_enabled:
-                matched_enabled = [aid for aid in matched_enabled if aid != by]
-            if not matched_enabled:
-                wanted = " ".join(canonical_to) if canonical_to else "@all"
-                raise HTTPException(
-                    status_code=400,
-                    detail={"code": "no_enabled_recipients", "message": f"no enabled agents match recipients: {wanted}"},
-                )
+        # Note: enabled-recipient validation + auto-wake is handled by the daemon.
 
         attachments: list[dict[str, Any]] = []
         for f in files or []:

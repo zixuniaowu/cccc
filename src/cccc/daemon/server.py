@@ -33,7 +33,7 @@ from ..kernel.ledger_retention import snapshot as snapshot_ledger
 from ..kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
 from ..kernel.settings import get_observability_settings, update_observability_settings
 from ..kernel.terminal_transcript import apply_terminal_transcript_patch, get_terminal_transcript_settings
-from ..kernel.messaging import get_default_send_to, enabled_recipient_actor_ids, targets_any_agent, default_reply_recipients
+from ..kernel.messaging import get_default_send_to, enabled_recipient_actor_ids, disabled_recipient_actor_ids, targets_any_agent, default_reply_recipients
 from ..paths import ensure_home
 from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
@@ -1578,6 +1578,38 @@ def _start_actor_process(
         "effective_runner": effective_runner,
         "error": None,
     }
+
+
+def _auto_wake_recipients(group: Any, to: List[str], by: str) -> List[str]:
+    """Auto-start disabled actors that match the recipient list.
+
+    Returns list of actor IDs that were successfully woken up.
+    """
+    woken: List[str] = []
+    disabled_ids = disabled_recipient_actor_ids(group, to)
+    for actor_id in disabled_ids:
+        actor = find_actor(group, actor_id)
+        if actor is None:
+            continue
+        try:
+            update_actor(group, actor_id, {"enabled": True})
+            cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
+            env = actor.get("env") if isinstance(actor.get("env"), dict) else {}
+            runner_kind = str(actor.get("runner") or "pty").strip()
+            runtime = str(actor.get("runtime") or "codex").strip()
+            result = _start_actor_process(
+                group, actor_id,
+                command=list(cmd or []),
+                env=dict(env or {}),
+                runner=runner_kind,
+                runtime=runtime,
+                by=by,
+            )
+            if result["success"]:
+                woken.append(actor_id)
+        except Exception:
+            pass
+    return woken
 
 
 def _normalize_attachments(group: Any, raw: Any) -> list[dict[str, Any]]:
@@ -3715,21 +3747,23 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
             if get_default_send_to(group.doc) == "foreman":
                 to = ["@foreman"]
 
-        # Reject agent-targeted messages that match no enabled agents.
+        # Auto-wake disabled agents if no enabled agents match.
         if targets_any_agent(to):
             matched_enabled = enabled_recipient_actor_ids(group, to)
             if by and by in matched_enabled:
                 matched_enabled = [aid for aid in matched_enabled if aid != by]
             if not matched_enabled:
-                wanted = " ".join(to) if to else "@all"
-                return (
-                    _error(
-                        "no_enabled_recipients",
-                        f"no enabled agents match recipients: {wanted}",
-                        details={"to": list(to)},
-                    ),
-                    False,
-                )
+                woken = _auto_wake_recipients(group, to, by=by)
+                if not woken:
+                    wanted = " ".join(to) if to else "@all"
+                    return (
+                        _error(
+                            "no_enabled_recipients",
+                            f"no enabled agents match recipients: {wanted}",
+                            details={"to": list(to)},
+                        ),
+                        False,
+                    )
 
         path = str(args.get("path") or "").strip()
         if path:
@@ -3948,21 +3982,23 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         except Exception as e:
             return _error("invalid_recipient", str(e)), False
 
-        # Reject agent-targeted messages that match no enabled agents.
+        # Auto-wake disabled agents if no enabled agents match.
         if targets_any_agent(to):
             matched_enabled = enabled_recipient_actor_ids(group, to)
             if by and by in matched_enabled:
                 matched_enabled = [aid for aid in matched_enabled if aid != by]
             if not matched_enabled:
-                wanted = " ".join(to) if to else "@all"
-                return (
-                    _error(
-                        "no_enabled_recipients",
-                        f"no enabled agents match recipients: {wanted}",
-                        details={"to": list(to)},
-                    ),
-                    False,
-                )
+                woken = _auto_wake_recipients(group, to, by=by)
+                if not woken:
+                    wanted = " ".join(to) if to else "@all"
+                    return (
+                        _error(
+                            "no_enabled_recipients",
+                            f"no enabled agents match recipients: {wanted}",
+                            details={"to": list(to)},
+                        ),
+                        False,
+                    )
 
         scope_key = str(group.doc.get("active_scope_key") or "").strip()
         try:

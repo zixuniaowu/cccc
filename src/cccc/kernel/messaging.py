@@ -34,6 +34,19 @@ def _enabled_actor_ids(group: Group) -> List[str]:
     return out
 
 
+def _disabled_actor_ids(group: Group) -> List[str]:
+    out: List[str] = []
+    for a in list_actors(group):
+        if not isinstance(a, dict):
+            continue
+        if bool(a.get("enabled", True)):
+            continue
+        aid = str(a.get("id") or "").strip()
+        if aid:
+            out.append(aid)
+    return out
+
+
 def targets_any_agent(to: List[str]) -> bool:
     """Return True if the to-list targets any agents (actors) vs user-only."""
     if not to:
@@ -61,6 +74,19 @@ def enabled_recipient_actor_ids(group: Group, to: List[str]) -> List[str]:
 
     ev = {"kind": "chat.message", "data": {"to": list(to)}}
     return [aid for aid in enabled_ids if is_message_for_actor(group, actor_id=aid, event=ev)]
+
+
+def disabled_recipient_actor_ids(group: Group, to: List[str]) -> List[str]:
+    """Return disabled actor ids that would receive a chat.message with the given to-list.
+
+    Used by auto-wake: when no enabled actors match, check if disabled ones do.
+    """
+    disabled_ids = _disabled_actor_ids(group)
+    if not disabled_ids:
+        return []
+
+    ev = {"kind": "chat.message", "data": {"to": list(to)}}
+    return [aid for aid in disabled_ids if is_message_for_actor(group, actor_id=aid, event=ev)]
 
 
 def default_reply_recipients(group: Group, *, by: str, original_event: Dict[str, Any]) -> List[str]:

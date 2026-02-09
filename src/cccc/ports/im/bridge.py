@@ -1142,7 +1142,7 @@ def start_bridge(group_id: str, platform: str = "telegram") -> None:
 
     # Read skip_pending_on_start option from config
     # When True, bridge will skip messages that accumulated during downtime
-    skip_pending = coerce_bool(im_config.get("skip_pending_on_start"), default=False)
+    skip_pending = coerce_bool(im_config.get("skip_pending_on_start"), default=True)
 
     # Create and start bridge
     bridge = IMBridge(
