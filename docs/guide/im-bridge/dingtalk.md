@@ -37,6 +37,7 @@ CCCC uses DingTalk Stream mode (persistent WebSocket connection) for inbound mes
 | Permission | Purpose |
 |------------|---------|
 | `Robot.SingleChat.ReadWrite` | Single chat robot management |
+| `qyapi_robot_sendmsg` | Robot proactive message sending |
 | `qyapi_chat_read` | Read group basic info |
 | `qyapi_chat_manage` | Manage group chats (create, update, send messages) |
 
@@ -125,21 +126,23 @@ im:
 
 ### Sending Messages to Agents
 
-In group chats, @mention the bot first, then use the `/send` command:
+DingTalk supports two ways to send messages:
+
+**Direct message (implicit send)** — just type your message:
 
 ```
-@YourBotName /send Please check the code quality
+请检查一下代码质量
 ```
 
-In direct messages with the bot, you can use `/send` directly:
+**Explicit `/send` command** — for specifying recipients:
 
 ```
-/send Please check the code quality
+/send @foreman Please check the code quality
+/send @all Status update please
 ```
 
-::: warning Important
-- In group chats, you must @mention the bot before using commands
-- Plain messages without the `/send` command are ignored
+::: tip Implicit Send
+DingTalk messages are always directed at the bot (via @mention in groups or direct chat), so plain text is automatically treated as `/send` to the foreman. You only need the explicit `/send` command when targeting specific agents.
 :::
 
 ### Targeting Specific Agents

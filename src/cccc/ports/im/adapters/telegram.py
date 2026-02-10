@@ -246,10 +246,24 @@ class TelegramAdapter(IMAdapter):
                     raw_msg_id = msg.get("message_id", 0)
                     composite_msg_id = f"{chat_id}:{raw_msg_id}"
 
+                    # Detect bot mention in entities
+                    mentioned = False
+                    if self._bot_username:
+                        raw_text = msg.get("text") or msg.get("caption") or ""
+                        for entity in (msg.get("entities") or msg.get("caption_entities") or []):
+                            if isinstance(entity, dict) and entity.get("type") == "mention":
+                                offset = int(entity.get("offset", 0))
+                                length = int(entity.get("length", 0))
+                                entity_text = raw_text[offset:offset + length]
+                                if entity_text.lower() == f"@{self._bot_username.lower()}":
+                                    mentioned = True
+                                    break
+
                     messages.append({
                         "chat_id": str(chat_id),
                         "chat_title": chat_title,
                         "chat_type": chat_type,
+                        "routed": bool(chat_type == "private" or mentioned),
                         "thread_id": thread_id,
                         "text": text,
                         "attachments": attachments,

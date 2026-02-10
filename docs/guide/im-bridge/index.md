@@ -45,8 +45,8 @@ Once subscribed to any platform, these commands work universally:
 | `/verbose` | Toggle verbose mode |
 | `/help` | Show help |
 
-::: tip Default Recipient
-When using `/send` without specifying a recipient, messages are automatically sent to the **foreman** (team lead agent).
+::: tip Implicit Send
+On all platforms, @mentioning the bot (in groups) or sending a direct message with plain text is automatically treated as `/send` to the **foreman**. You only need the explicit `/send` command when targeting specific agents.
 :::
 
 ## CLI Commands

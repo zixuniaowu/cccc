@@ -419,8 +419,21 @@ class IMBridge:
                         self.adapter.send_message(chat_id, "❓ Unknown command. Use /help.", thread_id=thread_id)
                     continue
 
-                # All non-command messages are ignored (even in DM) to enforce explicit routing.
-                _ = routed
+                # When routed (@bot or DM), treat plain text as implicit /send.
+                if routed or chat_type in ("private",):
+                    attachments = msg.get("attachments") if isinstance(msg.get("attachments"), list) else []
+                    # Build a SEND-like ParsedCommand so _handle_message can extract @targets from args.
+                    implicit_args = parsed.text.split() if parsed.text else []
+                    implicit_send = ParsedCommand(
+                        type=CommandType.SEND,
+                        text=parsed.text,
+                        mentions=parsed.mentions,
+                        args=implicit_args,
+                    )
+                    self._handle_message(chat_id, implicit_send, from_user, attachments=attachments, thread_id=thread_id, message_id=message_id)
+                    continue
+
+                # Non-routed messages are ignored.
                 continue
 
     def _process_outbound(self) -> None:
@@ -720,18 +733,24 @@ class IMBridge:
         # Parse recipients from leading args (supports multiple @targets, comma-separated).
         to: List[str] = []
         args = list(parsed.args or [])
+        # Known-recipient set for validating @targets in args.
+        _actor_ids = {str(a.get("id") or "").strip() for a in list_actors(group) if isinstance(a, dict)}
+        _valid_selectors = {"@all", "@peers", "@foreman", "user"}
         while args:
             head = str(args[0] or "").strip()
             if not head:
                 args.pop(0)
                 continue
             if head.startswith("@") or head in ("user",):
-                args.pop(0)
-                for tok in head.split(","):
-                    t = tok.strip()
-                    if t:
-                        to.append(t)
-                continue
+                # Only consume tokens that are known CCCC actors/selectors.
+                # Unknown @tokens (e.g. IM bot mentions like @BotName) stop consumption
+                # so they fall through to message text instead of failing as invalid recipients.
+                tokens = [t.strip() for t in head.split(",") if t.strip()]
+                if all(t in _valid_selectors or t.lstrip("@") in _actor_ids for t in tokens):
+                    args.pop(0)
+                    to.extend(tokens)
+                    continue
+                break
             break
         msg_text = " ".join([str(x) for x in args]).strip()
 
@@ -741,8 +760,6 @@ class IMBridge:
 
         # If no explicit recipients were provided, try @mentions in the message text first.
         if not to and msg_text:
-            actors = list_actors(group)
-            actor_ids = {str(a.get("id") or "").strip() for a in actors if isinstance(a, dict)}
             mention_tokens: List[str] = []
             for m in re.findall(r"@(\w[\w-]*)", msg_text):
                 if not m:
@@ -750,7 +767,7 @@ class IMBridge:
                 if m in ("all", "peers", "foreman"):
                     mention_tokens.append(f"@{m}")
                     continue
-                if m in actor_ids:
+                if m in _actor_ids:
                     mention_tokens.append(m)
             if mention_tokens:
                 to = mention_tokens

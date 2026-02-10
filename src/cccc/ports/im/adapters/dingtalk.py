@@ -607,6 +607,7 @@ class DingTalkAdapter(IMAdapter):
                 "chat_id": conversation_id,
                 "chat_title": chat_title,
                 "chat_type": chat_type,
+                "routed": True,  # ChatbotHandler only receives messages directed at the bot
                 "thread_id": 0,  # DingTalk doesn't have threading like this
                 "text": text,
                 "attachments": attachments,

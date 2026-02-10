@@ -114,25 +114,28 @@ For group chats:
 
 ### Sending Messages to Agents
 
-In group chats, @mention the bot first, then use the `/send` command:
+Telegram supports two ways to send messages:
+
+**In group chats** — @mention the bot and type your message directly:
 
 ```
-@YourBotName /send Please implement the login feature
+@YourBotName Please implement the login feature
 ```
 
-In direct messages with the bot, you can use `/send` directly:
+Or use the explicit `/send` command:
 
 ```
-/send Please implement the login feature
+@YourBotName /send @all Status update please
 ```
 
-::: tip Default Recipient
-When using `/send` without specifying a recipient (like `@foreman` or `@all`), messages are automatically sent to the **foreman** (team lead agent). This simplifies common interactions.
-:::
+**In direct messages** — just type your message:
 
-::: warning Important
-- In group chats, you must @mention the bot before using commands
-- Plain messages without the `/send` command are ignored
+```
+Please implement the login feature
+```
+
+::: tip Implicit Send
+When you @mention the bot (in groups) or send a direct message, plain text is automatically treated as `/send` to the foreman. You only need the explicit `/send` command when targeting specific agents like `@all` or `@peers`.
 :::
 
 ### Targeting Specific Agents

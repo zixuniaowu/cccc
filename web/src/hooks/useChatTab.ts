@@ -340,11 +340,6 @@ export function useChatTab({
         window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
       }
       onMessageSent?.();
-      if (replyRequired) {
-        showNotice({ message: "Need Reply sent. Recipients are expected to reply." });
-      } else if (prio === "attention") {
-        showNotice({ message: "Important message sent. Recipients are expected to acknowledge." });
-      }
     } finally {
       setBusy("");
     }

@@ -341,6 +341,22 @@ class FeishuAdapter(IMAdapter):
 
                         if hasattr(event_obj, 'message') and event_obj.message:
                             msg = event_obj.message
+                            # Serialize SDK MentionEvent objects to dicts
+                            mentions_raw = getattr(msg, 'mentions', None)
+                            mentions_list = None
+                            if mentions_raw:
+                                mentions_list = []
+                                for m in mentions_raw:
+                                    md = {
+                                        "key": getattr(m, 'key', ''),
+                                        "name": getattr(m, 'name', ''),
+                                    }
+                                    if hasattr(m, 'id') and m.id:
+                                        md["id"] = {
+                                            "open_id": getattr(m.id, 'open_id', ''),
+                                            "user_id": getattr(m.id, 'user_id', ''),
+                                        }
+                                    mentions_list.append(md)
                             event_data["message"] = {
                                 "message_id": getattr(msg, 'message_id', '') or '',
                                 "chat_id": getattr(msg, 'chat_id', '') or '',
@@ -348,6 +364,7 @@ class FeishuAdapter(IMAdapter):
                                 "message_type": getattr(msg, 'message_type', '') or '',
                                 "content": getattr(msg, 'content', '{}') or '{}',
                                 "root_id": getattr(msg, 'root_id', '') or '',
+                                "mentions": mentions_list,
                             }
                             self._log(f"[ws] Chat: {event_data['message']['chat_id']} type={event_data['message']['message_type']}")
 
@@ -483,6 +500,15 @@ class FeishuAdapter(IMAdapter):
             else:
                 text = f"[{msg_type}]"
 
+            # Replace Feishu mention placeholders (@_user_1 etc.) with display names.
+            msg_mentions = message.get("mentions") or []
+            if isinstance(msg_mentions, list):
+                for m in msg_mentions:
+                    key = m.get("key", "")    # e.g. "@_user_1"
+                    name = m.get("name", "")  # e.g. "张三"
+                    if key and name:
+                        text = text.replace(key, f"@{name}")
+
             if not text.strip():
                 return
 
@@ -516,10 +542,16 @@ class FeishuAdapter(IMAdapter):
             chat_id = message.get("chat_id", "")
             chat_type = message.get("chat_type", "")  # p2p, group
 
+            # Detect bot mention: in standard Feishu event subscription,
+            # group messages are only delivered when the bot is @mentioned.
+            mentions = message.get("mentions") or []
+            is_at_bot = isinstance(mentions, list) and len(mentions) > 0
+
             normalized = {
                 "chat_id": chat_id,
                 "chat_title": self._get_chat_title_cached(chat_id),
                 "chat_type": chat_type,
+                "routed": bool(chat_type == "p2p" or is_at_bot),
                 "thread_id": message.get("root_id", 0) or 0,
                 "text": text,
                 "attachments": attachments,
