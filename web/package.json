@@ -15,6 +15,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@floating-ui/react": "^0.27.16",
+    "@mediapipe/tasks-vision": "^0.10.32",
     "@tanstack/react-virtual": "3.13.12",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

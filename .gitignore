@@ -61,3 +61,10 @@ AGENTS.md
 .agent/
 .codex/
 .windsurf/
+
+# MediaPipe model/wasm assets (large binaries, download separately)
+web/public/mediapipe/
+
+# Misc artifacts
+build.log
+nul

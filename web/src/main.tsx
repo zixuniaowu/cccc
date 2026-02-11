@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import TelepresenceEyes, { TelepresenceEyesBoundary } from "./pages/TelepresenceEyes";
 import "./index.css";
 import "@xterm/xterm/css/xterm.css";
 
@@ -25,8 +26,21 @@ if ("serviceWorker" in navigator && typeof navigator.serviceWorker.getRegistrati
   });
 }
 
+const search = new URLSearchParams(window.location.search);
+const path = window.location.pathname.toLowerCase();
+const isEyesMode =
+  path.includes("/eyes") ||
+  search.get("mode") === "eyes" ||
+  search.get("view") === "eyes";
+
+const Root = isEyesMode ? () => (
+  <TelepresenceEyesBoundary>
+    <TelepresenceEyes />
+  </TelepresenceEyesBoundary>
+) : App;
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <Root />
   </React.StrictMode>,
 );
