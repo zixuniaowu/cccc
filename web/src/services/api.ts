@@ -697,6 +697,35 @@ export async function stopIMBridge(groupId: string) {
   });
 }
 
+// ============ News Agent ============
+
+export interface NewsAgentStatus {
+  group_id: string;
+  enabled: boolean;
+  running: boolean;
+  pid: number;
+  interests: string;
+  schedule: string;
+}
+
+export async function fetchNewsStatus(groupId: string) {
+  return apiJson<NewsAgentStatus>(`/api/news/status?group_id=${encodeURIComponent(groupId)}`);
+}
+
+export async function startNewsAgent(groupId: string, interests = "AI,科技,编程", schedule = "8,11,14,17,20") {
+  return apiJson<{ group_id: string; pid: number }>("/api/news/start", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId, interests, schedule }),
+  });
+}
+
+export async function stopNewsAgent(groupId: string) {
+  return apiJson<{ group_id: string; stopped: number }>("/api/news/stop", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId }),
+  });
+}
+
 // ============ Observability ============
 
 export interface Observability {

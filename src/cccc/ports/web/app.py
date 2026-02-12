@@ -2506,4 +2506,149 @@ def create_app() -> FastAPI:
 
         return {"ok": True, "result": {"group_id": req.group_id, "stopped": stopped}}
 
+    # ── News Agent endpoints ──
+
+    class NewsAgentConfigRequest(BaseModel):
+        group_id: str
+        interests: str = "AI,科技,编程"
+        schedule: str = "8,11,14,17,20"
+
+    @app.get("/api/news/status")
+    async def news_status(group_id: str = "") -> Dict[str, Any]:
+        """Check news agent status for a group."""
+        if not group_id:
+            return {"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id"}}
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+
+        news_cfg = group.doc.get("news_agent") or {}
+        enabled = bool(news_cfg.get("enabled"))
+        running = False
+        pid = 0
+
+        pid_path = group.path / "state" / "news_agent.pid"
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                os.kill(pid, 0)
+                running = True
+            except (ValueError, ProcessLookupError, PermissionError):
+                running = False
+                pid = 0
+
+        return {
+            "ok": True,
+            "result": {
+                "group_id": group_id,
+                "enabled": enabled,
+                "running": running,
+                "pid": pid,
+                "interests": news_cfg.get("interests", "AI,科技,编程"),
+                "schedule": news_cfg.get("schedule", "8,11,14,17,20"),
+            },
+        }
+
+    @app.post("/api/news/start")
+    async def news_start(req: NewsAgentConfigRequest) -> Dict[str, Any]:
+        """Start news agent for a group."""
+        import subprocess as sp
+
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        pid_path = group.path / "state" / "news_agent.pid"
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                os.kill(pid, 0)
+                return {"ok": False, "error": {"code": "already_running", "message": f"news agent already running (pid={pid})"}}
+            except (ValueError, ProcessLookupError, PermissionError):
+                try:
+                    pid_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+        # Persist config
+        news_cfg = group.doc.get("news_agent") or {}
+        if not isinstance(news_cfg, dict):
+            news_cfg = {}
+        news_cfg["enabled"] = True
+        news_cfg["interests"] = req.interests
+        news_cfg["schedule"] = req.schedule
+        group.doc["news_agent"] = news_cfg
+        group.save()
+
+        state_dir = group.path / "state"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        log_path = state_dir / "news_agent.log"
+
+        try:
+            import sys as _sys
+            env = os.environ.copy()
+            env["CCCC_GROUP_ID"] = req.group_id
+            env["CCCC_API"] = f"http://127.0.0.1:{env.get('CCCC_PORT', '8848')}/api/v1"
+            env["NEWS_AGENT_PID_PATH"] = str(pid_path)
+            env["PYTHONUTF8"] = "1"
+
+            log_file = log_path.open("a", encoding="utf-8")
+            proc = sp.Popen(
+                [_sys.executable, "-m", "cccc.ports.news", req.group_id, req.interests, req.schedule],
+                env=env,
+                stdout=log_file,
+                stderr=log_file,
+                stdin=sp.DEVNULL,
+                start_new_session=True,
+            )
+            await asyncio.sleep(0.25)
+            exit_code = proc.poll()
+            if exit_code is not None:
+                return {"ok": False, "error": {"code": "agent_exited", "message": f"news agent exited early (code={exit_code}). Check log: {log_path}"}}
+
+            pid_path.write_text(str(proc.pid), encoding="utf-8")
+            return {"ok": True, "result": {"group_id": req.group_id, "pid": proc.pid}}
+        except Exception as e:
+            return {"ok": False, "error": {"code": "start_failed", "message": str(e)}}
+
+    @app.post("/api/news/stop")
+    async def news_stop(req: IMActionRequest) -> Dict[str, Any]:
+        """Stop news agent for a group."""
+        import signal as sig
+
+        group = load_group(req.group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+
+        news_cfg = group.doc.get("news_agent")
+        if isinstance(news_cfg, dict):
+            news_cfg["enabled"] = False
+            group.doc["news_agent"] = news_cfg
+            try:
+                group.save()
+            except Exception:
+                pass
+
+        stopped = 0
+        pid_path = group.path / "state" / "news_agent.pid"
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                try:
+                    os.killpg(os.getpgid(pid), sig.SIGTERM)
+                except Exception:
+                    try:
+                        os.kill(pid, sig.SIGTERM)
+                    except Exception:
+                        pass
+                stopped += 1
+            except Exception:
+                pass
+            try:
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        return {"ok": True, "result": {"group_id": req.group_id, "stopped": stopped}}
+
     return app

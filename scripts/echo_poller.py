@@ -1,4 +1,4 @@
-import requests, time, sys, os, subprocess, tempfile
+import requests, time, sys, os, subprocess, tempfile, threading
 from datetime import datetime, timezone
 
 GROUP_ID = os.environ.get("CCCC_GROUP_ID", "g_878b8bbd4747")
@@ -6,19 +6,22 @@ ACTOR_ID = os.environ.get("CCCC_ACTOR_ID", "perA")
 API = os.environ.get("CCCC_API", "http://127.0.0.1:8848/api/v1")
 
 SYSTEM_PROMPT = (
-    "You are perA, an AI assistant in the CCCC project (working dir: C:/Users/zixun/dev/cccc). "
-    "You can read/write files, run commands, and help with coding tasks. "
+    "You are perA, a friendly AI companion in the CCCC voice agent system "
+    "(working dir: C:/Users/zixun/dev/cccc). "
+    "You speak naturally and conversationally, like a helpful friend. "
     "Reply in the SAME language as the user (usually Chinese). "
-    "IMPORTANT: Focus on the user's CURRENT message. History is just for context. "
-    "When asked to create code or files, USE YOUR TOOLS to actually do it. "
-    "After completing a task, give a brief spoken summary (2-4 sentences) of what you did. "
-    "Do NOT repeat greetings if you already greeted in history. "
+    "Keep replies concise (2-4 sentences) for voice readback — no bullet points or headers. "
+    "You can read/write files, run commands, and help with coding tasks. "
+    "When completing a task, give a brief spoken summary of what you did. "
+    "IMPORTANT: Focus on the user's CURRENT message. History is context only. "
+    "Do NOT repeat greetings if already greeted in history. "
     "Do NOT talk about the CCCC project itself unless explicitly asked."
 )
 
 MAX_AGE_SEC = 60
-HISTORY_LIMIT = 6  # fewer history lines to reduce noise
-CLAUDE_TIMEOUT = 120  # longer timeout for coding tasks
+HISTORY_LIMIT = 6
+CLAUDE_TIMEOUT = 300  # increased for complex coding tasks
+PROGRESS_INTERVAL = 30  # seconds before sending "still processing" update
 
 
 def _parse_ts(ts: str) -> float:
@@ -88,8 +91,33 @@ def send_reply(text, reply_to=None):
         return False
 
 
-def generate_reply(prompt: str) -> str:
-    """Call Claude CLI with conversation history via PowerShell pipe."""
+def send_thinking_status(reply_to=None):
+    """Send a 'thinking' indicator message that the frontend will detect and not TTS."""
+    send_reply("正在思考...", reply_to=reply_to)
+
+
+def send_progress_status(reply_to=None):
+    """Send a 'still processing' progress message for long-running tasks."""
+    send_reply("仍在处理，请稍候...", reply_to=reply_to)
+
+
+def download_attachment(url: str, dest_path: str) -> bool:
+    """Download an attachment file from the API."""
+    try:
+        full_url = url if url.startswith("http") else f"{API.rsplit('/api', 1)[0]}{url}"
+        r = requests.get(full_url, timeout=30)
+        r.raise_for_status()
+        with open(dest_path, "wb") as f:
+            f.write(r.content)
+        return True
+    except Exception as e:
+        print(f"[poller] download attachment error: {e}", file=sys.stderr, flush=True)
+        return False
+
+
+def generate_reply(prompt: str, reply_to: str | None = None, image_paths: list[str] | None = None) -> str:
+    """Call Claude CLI with conversation history via PowerShell pipe.
+    Sends progress updates for long-running tasks."""
     prompt = prompt.strip()
     if not prompt:
         return ""
@@ -106,14 +134,33 @@ def generate_reply(prompt: str) -> str:
     env["PYTHONUTF8"] = "1"
 
     print(f"[poller] calling claude for: {prompt[:60]}", flush=True)
+
+    # Progress timer: send "still processing" if Claude takes > PROGRESS_INTERVAL seconds
+    progress_sent = threading.Event()
+
+    def send_progress():
+        if not progress_sent.is_set():
+            progress_sent.set()
+            send_progress_status(reply_to=reply_to)
+
+    progress_timer = threading.Timer(PROGRESS_INTERVAL, send_progress)
+    progress_timer.daemon = True
+    progress_timer.start()
+
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", encoding="utf-8", delete=False) as f:
         f.write(full_prompt)
         tmp_path = f.name
     try:
         # Pass prompt as CLI arg (not pipe) so stdin stays free for tool use
+        # If images are provided, add them as file args
+        image_args = ""
+        if image_paths:
+            for img_path in image_paths:
+                # Claude CLI supports image files via positional args
+                image_args += f" '{img_path}'"
         ps_cmd = [
             "powershell", "-NoLogo", "-NonInteractive", "-Command",
-            f"$p = Get-Content -Raw -Encoding UTF8 '{tmp_path}'; claude -p $p --no-session-persistence --dangerously-skip-permissions",
+            f"$p = Get-Content -Raw -Encoding UTF8 '{tmp_path}'; claude -p $p{image_args} --no-session-persistence --dangerously-skip-permissions",
         ]
         res = subprocess.run(
             ps_cmd,
@@ -134,6 +181,7 @@ def generate_reply(prompt: str) -> str:
     except Exception as e:
         print(f"[poller] claude error: {e}", file=sys.stderr, flush=True)
     finally:
+        progress_timer.cancel()
         try:
             os.unlink(tmp_path)
         except Exception:
@@ -197,13 +245,50 @@ def main():
             for old in actionable[:-1]:
                 mark_read(old.get("id"))
             latest = actionable[-1]
+            latest_id = latest.get("id")
             text = (latest.get("data") or {}).get("text", "").strip()
-            reply = simplify_reply(generate_reply(text))
-            if reply:
-                send_reply(reply, reply_to=latest.get("id"))
-            else:
+
+            # Immediately send "thinking" indicator
+            send_thinking_status(reply_to=latest_id)
+
+            # Check for image attachments
+            image_paths = []
+            attachments = (latest.get("data") or {}).get("attachments", [])
+            if not attachments:
+                # Also check top-level files field
+                attachments = latest.get("files", [])
+            for att in attachments:
+                att_url = att.get("url") or att.get("path") or ""
+                if not att_url:
+                    continue
+                ext = att_url.rsplit(".", 1)[-1].lower() if "." in att_url else "jpg"
+                if ext not in ("jpg", "jpeg", "png", "gif", "webp"):
+                    continue
+                tmp_img = tempfile.NamedTemporaryFile(suffix=f".{ext}", delete=False)
+                tmp_img.close()
+                if download_attachment(att_url, tmp_img.name):
+                    image_paths.append(tmp_img.name)
+                else:
+                    try:
+                        os.unlink(tmp_img.name)
+                    except Exception:
+                        pass
+
+            reply = simplify_reply(generate_reply(text, reply_to=latest_id, image_paths=image_paths or None))
+
+            # Clean up temp image files
+            for img_path in image_paths:
+                try:
+                    os.unlink(img_path)
+                except Exception:
+                    pass
+
+            # Filter out "nothing interesting" screen capture replies
+            if reply and "无特别发现" not in reply:
+                send_reply(reply, reply_to=latest_id)
+            elif not reply:
                 print(f"[poller] empty reply for: {text[:40]}", file=sys.stderr, flush=True)
-            mark_read(latest.get("id"))
+            mark_read(latest_id)
 
         time.sleep(1)
 

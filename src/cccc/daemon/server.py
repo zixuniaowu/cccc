@@ -1195,6 +1195,92 @@ def _maybe_autostart_enabled_im_bridges() -> None:
             logger.warning("IM bridge autostart failed for %s (platform=%s): %s", gid, platform, e)
 
 
+def _stop_news_agent_for_group(home: Path, *, group_id: str) -> int:
+    """Stop news agent process for a specific group_id. Returns number of pids signaled."""
+    gid = str(group_id or "").strip()
+    if not gid:
+        return 0
+    killed: set[int] = set()
+    pid_path = home / "groups" / gid / "state" / "news_agent.pid"
+    if pid_path.exists():
+        try:
+            pid = int(pid_path.read_text(encoding="utf-8").strip())
+            if pid > 0:
+                _best_effort_killpg(pid, signal.SIGTERM)
+                killed.add(pid)
+        except Exception:
+            pass
+        try:
+            pid_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+    return len(killed)
+
+
+def _maybe_autostart_enabled_news_agents() -> None:
+    """Autostart news agents that are marked enabled in group.yaml."""
+    home = ensure_home()
+    base = home / "groups"
+    if not base.exists():
+        return
+    for p in base.glob("*/group.yaml"):
+        gid = p.parent.name
+        group = load_group(gid)
+        if group is None:
+            continue
+        news_cfg = group.doc.get("news_agent") if isinstance(group.doc.get("news_agent"), dict) else None
+        if not isinstance(news_cfg, dict) or not coerce_bool(news_cfg.get("enabled"), default=False):
+            continue
+        interests = str(news_cfg.get("interests") or "AI,科技,编程").strip()
+        schedule = str(news_cfg.get("schedule") or "8,11,14,17,20").strip()
+        pid_path = group.path / "state" / "news_agent.pid"
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+            except Exception:
+                pid = 0
+            if pid > 0 and _pid_alive(pid):
+                continue
+            try:
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        state_dir = group.path / "state"
+        try:
+            state_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        log_path = state_dir / "news_agent.log"
+        try:
+            with log_path.open("a", encoding="utf-8") as log_file:
+                env = os.environ.copy()
+                env["CCCC_HOME"] = str(home)
+                env["CCCC_GROUP_ID"] = gid
+                env["CCCC_API"] = f"http://127.0.0.1:{env.get('CCCC_PORT', '8848')}/api/v1"
+                env["NEWS_AGENT_PID_PATH"] = str(pid_path)
+                env["PYTHONUTF8"] = "1"
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "cccc.ports.news", gid, interests, schedule],
+                    env=env,
+                    stdout=log_file,
+                    stderr=log_file,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                    cwd=str(home),
+                )
+                time.sleep(0.25)
+                rc = proc.poll()
+                if rc is not None:
+                    logger.warning("News agent autostart failed for %s (code=%s). See log: %s", gid, rc, log_path)
+                    continue
+                try:
+                    pid_path.write_text(str(proc.pid), encoding="utf-8")
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning("News agent autostart failed for %s: %s", gid, e)
+
+
 def _maybe_autostart_running_groups() -> None:
     home = ensure_home()
     base = home / "groups"
@@ -2186,6 +2272,7 @@ def handle_request(req: DaemonRequest) -> Tuple[DaemonResponse, bool]:
         try:
             require_group_permission(group, by=by, action="group.delete")
             _stop_im_bridges_for_group(ensure_home(), group_id=group_id)
+            _stop_news_agent_for_group(ensure_home(), group_id=group_id)
             pty_runner.SUPERVISOR.stop_group(group_id=group_id)
             headless_runner.SUPERVISOR.stop_group(group_id=group_id)
             _delete_group_private_env(group_id)
@@ -4393,6 +4480,10 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                 pass
             try:
                 _maybe_autostart_enabled_im_bridges()
+            except Exception:
+                pass
+            try:
+                _maybe_autostart_enabled_news_agents()
             except Exception:
                 pass
 

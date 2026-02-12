@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import TelepresenceEyes, { TelepresenceEyesBoundary } from "./pages/TelepresenceEyes";
+import TelepresenceEyes, { TelepresenceEyesBoundary } from "./pages/eyes";
 import "./index.css";
 import "@xterm/xterm/css/xterm.css";
 
