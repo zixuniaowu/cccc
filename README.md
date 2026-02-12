@@ -1,246 +1,109 @@
-# CCCC — Multi-Agent Collaboration Kernel
+<div align="center">
 
-**English** | [中文](README.zh-CN.md) | [日本語](README.ja.md)
+# AI 语音伴侣 — Telepresence Eyes
 
-> **Status**: 0.4.0rc18 (Release Candidate)
+**一对会动的眼睛，随时跟你对话。**<br>
+手机上随身携带，桌面上观察你的工作，自动播报新闻。
 
-[![Documentation](https://img.shields.io/badge/docs-online-blue)](https://dweb-channel.github.io/cccc/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+<br>
 
-CCCC is a **local-first multi-agent collaboration kernel** that coordinates AI agents like a modern IM.
+<img src="docs/screenshots/eyes-closeup.png" alt="AI Eyes" width="600">
 
-**Key features**:
-- 🤖 **Multi-runtime support** — Claude Code, Codex CLI, Droid, OpenCode, Copilot, and more
-- 📝 **Append-only ledger** — Durable history as single source of truth
-- 🌐 **Web-first console** — Mobile-friendly control plane
-- 💬 **IM-grade messaging** — @mentions, reply/quote, read receipts
-- 🔧 **MCP tool surface** — 38+ tools for reliable agent operations
-- 🔌 **IM Bridge** — Telegram, Slack, Discord, Feishu, DingTalk
+<br><br>
 
-![CCCC Chat UI](screenshots/chat.png)
+`feat/voice-agent` · 26 files · +3,818 / −1,331 lines
+
+</div>
 
 ---
 
-## Quick Start
+## 这是什么？
 
-```bash
-# Install
-pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
+一个跑在浏览器里的 AI 伴侣界面。两只逼真的眼睛会跟随你的鼠标、面部、手机倾斜而转动，能听你说话、用语音回答、观察你的桌面内容、定时播报新闻。
 
-# Start
-cccc
+<table>
+<tr>
+<td width="65%">
+<img src="docs/screenshots/desktop-viewport.png" alt="桌面端" width="100%">
+<p align="center"><b>桌面端</b> — 完整控制面板</p>
+</td>
+<td width="35%">
+<img src="docs/screenshots/mobile-companion.png" alt="手机端" width="100%">
+<p align="center"><b>手机端</b> — 全屏伴侣模式</p>
+</td>
+</tr>
+</table>
+
+---
+
+## 能做什么？
+
+| | 功能 | 说明 |
+|---|---|---|
+| 🎤 | **语音对话** | 对着麦克风说话，AI 实时听懂后语音回答。支持自动聆听模式 |
+| 👀 | **逼真眼睛** | Canvas2D 逐帧渲染：虹膜纤维、瞳孔缩放、微跳视、自然眨眼，5 种情绪表情 |
+| 📱 | **手机随身伴侣** | 全屏黑色背景，点击任意处说话。防息屏、和桌面共享同一工作组 |
+| 💻 | **桌面截屏观察** | 每隔 30 秒截取桌面发给 AI 分析，发现有趣内容会主动评论 |
+| 📰 | **新闻自动播报** | 配置感兴趣的话题，AI 定时搜索最新新闻，整理成中文摘要语音朗读 |
+| 🎬 | **面部跟随** | 摄像头捕捉面部位置，眼睛跟着你转，像在真的看着你 |
+
+---
+
+## 表情系统
+
+眼睛不只是装饰。瞳孔大小、虹膜发光、眼皮形态都会根据 AI 当前状态变化：
+
+<table>
+<tr>
+<td width="50%">
+<img src="docs/screenshots/eyes-closeup.png" alt="Eyes" width="100%">
+</td>
+<td width="50%">
+
+**聆听时** — 瞳孔放大 1.25x，眼睛睁大，像在认真听你说话
+
+**思考时** — 瞳孔缩小 0.75x，目光偏左上，微微眯眼
+
+**播报时** — 虹膜发光脉动，瞳孔边缘柔光
+
+**出错时** — 瞳孔大张 1.35x，血丝加重，眼皮下垂
+
+</td>
+</tr>
+</table>
+
+7 层渲染：眼窝阴影 → 巩膜+血丝 → 虹膜（60 根纤维+发光环） → 瞳孔 → 3 个高光点 → 贝塞尔曲线眼皮 → 情绪光晕。每只眼睛 60fps 实时绘制。
+
+---
+
+## 怎么运作的？
+
+```
+你说话 ──→ CCCC 后端 ──→ Claude AI ──→ 实时推回浏览器 ──→ 语音朗读
+ (语音识别)    (消息路由)    (思考/回复)    (SSE 推送)       (TTS 分句播报)
 ```
 
-Open `http://127.0.0.1:8848/` to access the Web UI.
+- 浏览器语音识别转文字，发送到 CCCC 后端
+- Claude AI 处理，眼睛自动切换到「思考」表情
+- SSE 实时推送回复（不是轮询），延迟极低
+- TTS 分句朗读回答，不会因为文字太长而截断
 
 ---
 
-## Documentation
+## 桌面 + 手机，同一个 AI
 
-📚 **[Read the Docs](https://dweb-channel.github.io/cccc/)** — Full guides, reference, and API documentation.
+桌面端有完整控制面板：语音、摄像头、截屏、新闻。<br>
+手机端是极简全屏模式：点一下就说话，上滑打开设置。<br>
+两端可以连同一个工作组，共享对话。
 
----
+<img src="docs/screenshots/desktop-full.png" alt="桌面完整界面" width="100%">
 
-## Installation
-
-### Install with AI Assistant
-
-Copy this prompt to your AI assistant (Claude, ChatGPT, etc.):
-
-> Please help me install and start CCCC (Claude Code Collaboration Context) multi-agent collaboration system.
->
-> Steps:
->
-> 1. Install cccc-pair:
->    ```
->    pip install --index-url https://pypi.org/simple \
->      --extra-index-url https://test.pypi.org/simple \
->      cccc-pair==0.4.0rc18
->    ```
->
-> 2. After installation, start CCCC:
->    ```
->    cccc
->    ```
->
-> 3. Tell me the access URL (usually http://localhost:8848/ui/)
->
-> If you encounter any errors, please help me diagnose and resolve them.
-
-### Upgrading from older versions
-
-If you have an older version of cccc-pair installed (e.g., 0.3.x), you must uninstall it first:
-
-```bash
-# For pipx users
-pipx uninstall cccc-pair
-
-# For pip users
-pip uninstall cccc-pair
-
-# Remove any leftover binaries if needed
-rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
-```
-
-> **Note**: Version 0.4.x has a completely different command structure from 0.3.x. The old `init`, `run`, `bridge` commands are replaced with `attach`, `daemon`, `mcp`, etc.
-
-### From TestPyPI (recommended)
-
-```bash
-pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
-```
-
-### From source
-
-```bash
-git clone https://github.com/dweb-channel/cccc
-cd cccc
-pip install -e .
-```
-
-### Using uv (recommended for Windows)
-
-```bash
-uv venv -p 3.11 .venv
-uv pip install -e .
-uv run cccc --help
-```
-
-**Requirements**: Python 3.9+, macOS / Linux / Windows
+<p align="center">桌面端 — 眼睛 + 控制按钮 + 摄像头预览 + 对话记录</p>
 
 ---
 
-## Core Concepts
+<div align="center">
 
-| Concept | Description |
-|---------|-------------|
-| **Working Group** | Collaboration unit with durable history (like a group chat) |
-| **Actor** | An agent session (PTY or headless) |
-| **Scope** | A directory attached to a group |
-| **Ledger** | Append-only event stream |
-| **CCCC_HOME** | Runtime home, default `~/.cccc/` |
+基于 [CCCC](https://github.com/aspect-build/cccc) 多智能体协作内核 · [完整 HTML 报告](docs/voice-agent-upgrade-report.html)
 
----
-
-## Runtimes & MCP
-
-CCCC supports multiple agent runtimes:
-
-```bash
-cccc runtime list --all    # List available runtimes
-cccc setup --runtime <name> # Configure MCP
-```
-
-**Auto MCP setup**: `claude`, `codex`, `droid`, `amp`, `auggie`, `neovate`, `gemini`
-**Manual setup**: `cursor`, `kilocode`, `opencode`, `copilot`, `custom`
-
----
-
-## Multi-Agent Setup
-
-To set up multi-agent collaboration on a project:
-
-```bash
-# Attach to your project directory
-cd /path/to/repo
-cccc attach .
-
-# Setup MCP for your runtime
-cccc setup --runtime claude
-
-# Add actors (first enabled actor becomes foreman)
-cccc actor add foreman --runtime claude
-cccc actor add peer-1  --runtime codex
-
-# Start the group
-cccc group start
-```
-
----
-
-## Web UI
-
-The bundled Web UI provides:
-
-- Multi-group navigation
-- Actor management (add/start/stop/restart)
-- Chat with @mentions and reply
-- Embedded terminal per actor
-- Context & automation settings
-- IM Bridge configuration
-
----
-
-## IM Bridge
-
-Bridge your working group to IM platforms:
-
-```bash
-cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
-cccc im start
-```
-
-Supported: **Telegram** | **Slack** | **Discord** | **Feishu/Lark** | **DingTalk**
-
----
-
-## CLI Cheat Sheet
-
-```bash
-cccc doctor              # Check environment
-cccc groups              # List groups
-cccc use <group_id>      # Switch group
-cccc send "msg" --to @all
-cccc inbox --mark-read
-cccc tail -n 50 -f
-cccc daemon status|start|stop
-```
-
----
-
-## PROJECT.md
-
-Place `PROJECT.md` at your repo root as the project constitution. Agents read it via `cccc_project_info` MCP tool.
-
----
-
-## Security Notes
-
-The Web UI has high privilege. For remote access:
-- Set `CCCC_WEB_TOKEN` environment variable
-- Use an access gateway (Cloudflare Access, Tailscale, WireGuard)
-
----
-
-## Why a Rewrite?
-
-<details>
-<summary>History: v0.3.x → v0.4.x</summary>
-
-v0.3.x (tmux-first) proved the concept but hit limits:
-
-1. **No unified ledger** — Messages in multiple files caused latency
-2. **Actor count limit** — tmux layout limited to 1–2 actors
-3. **Weak agent control surface** — Limited autonomy
-4. **No first-class remote access** — Web control plane needed
-
-v0.4.x introduces:
-- Unified append-only ledger
-- N-actor model
-- MCP control plane with 38+ tools
-- Web-first console
-- IM-grade messaging
-
-Legacy version: [cccc-tmux](https://github.com/ChesterRa/cccc-tmux)
-
-</details>
-
----
-
-## License
-
-Apache-2.0
+</div>
