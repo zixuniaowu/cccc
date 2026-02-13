@@ -11,6 +11,8 @@ export interface DrawEyeParams {
   ambient: number; // 0 = dark, 1 = bright
   mood: Mood;
   t: number; // elapsed seconds for procedural animation
+  /** Override mood color with interpolated RGB for smooth transitions */
+  moodColorRgb?: [number, number, number];
 }
 
 // ── Mood-dependent parameters ──
@@ -93,10 +95,12 @@ function rgbToStr(r: number, g: number, b: number, a = 1): string {
 // ── Main draw function ──
 
 export function drawEye(p: DrawEyeParams) {
-  const { ctx, cx, cy, radius: r, pupilOffset, blink, ambient, mood, t } = p;
+  const { ctx, cx, cy, radius: r, pupilOffset, blink, ambient, mood, t, moodColorRgb } = p;
   const lidPreset = LID_PRESETS[mood];
-  const moodColor = MOOD_COLOR[mood];
-  const [mR, mG, mB] = hexToRgb(moodColor);
+  const moodColor = moodColorRgb
+    ? `#${moodColorRgb.map(c => Math.round(c).toString(16).padStart(2, "0")).join("")}`
+    : MOOD_COLOR[mood];
+  const [mR, mG, mB] = moodColorRgb ?? hexToRgb(MOOD_COLOR[mood]);
   const pupilMult = PUPIL_SCALE[mood];
   const glowIntensity = IRIS_GLOW[mood];
   const redness = SCLERA_REDNESS[mood];
@@ -187,8 +191,8 @@ export function drawEye(p: DrawEyeParams) {
 
   // ── 3. Iris ──
   const irisR = r * 0.36;
-  const irisX = cx + pupilOffset.x * r * 0.22;
-  const irisY = cy + pupilOffset.y * r * 0.18;
+  const irisX = cx + pupilOffset.x * r * 0.38;
+  const irisY = cy + pupilOffset.y * r * 0.30;
 
   // Iris base gradient — color shifts with mood
   const irisGrad = ctx.createRadialGradient(irisX, irisY, irisR * 0.15, irisX, irisY, irisR);

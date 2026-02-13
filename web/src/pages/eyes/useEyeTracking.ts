@@ -1,8 +1,9 @@
 import type { Dispatch, SetStateAction } from "react";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clamp, IS_MOBILE } from "./constants";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
+type DetectorStatus = "idle" | "loading" | "ready" | "error";
 
 interface UseEyeTrackingReturn {
   camVec: { x: number; y: number };
@@ -15,16 +16,71 @@ interface UseEyeTrackingReturn {
   setCamFollow: Setter<boolean>;
   meshEnabled: boolean;
   setMeshEnabled: Setter<boolean>;
-  meshStatus: "idle" | "loading" | "ready" | "error";
+  meshStatus: DetectorStatus;
   mirrorEnabled: boolean;
   setMirrorEnabled: Setter<boolean>;
+  handEnabled: boolean;
+  setHandEnabled: Setter<boolean>;
+  handStatus: DetectorStatus;
+  poseEnabled: boolean;
+  setPoseEnabled: Setter<boolean>;
+  poseStatus: DetectorStatus;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   overlayRef: React.RefObject<HTMLCanvasElement | null>;
 }
 
+// ── Hand landmark connections (21 points) ──
+const HAND_CONNECTIONS: [number, number][] = [
+  [0, 1], [1, 2], [2, 3], [3, 4],       // thumb
+  [0, 5], [5, 6], [6, 7], [7, 8],       // index
+  [0, 9], [9, 10], [10, 11], [11, 12],  // middle
+  [0, 13], [13, 14], [14, 15], [15, 16],// ring
+  [0, 17], [17, 18], [18, 19], [19, 20],// pinky
+  [5, 9], [9, 13], [13, 17],            // palm
+];
+
+// ── Pose landmark connections (33 points) ──
+const POSE_CONNECTIONS: [number, number][] = [
+  // Face
+  [0, 1], [1, 2], [2, 3], [3, 7],
+  [0, 4], [4, 5], [5, 6], [6, 8],
+  // Torso
+  [9, 10],
+  [11, 12], [11, 23], [12, 24], [23, 24],
+  // Left arm
+  [11, 13], [13, 15], [15, 17], [15, 19], [15, 21], [17, 19],
+  // Right arm
+  [12, 14], [14, 16], [16, 18], [16, 20], [16, 22], [18, 20],
+  // Left leg
+  [23, 25], [25, 27], [27, 29], [27, 31], [29, 31],
+  // Right leg
+  [24, 26], [26, 28], [28, 30], [28, 32], [30, 32],
+];
+
+// ── Face mesh polyline indices ──
+const FACE_OUTLINE = [
+  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365,
+  379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93,
+  234, 127, 162, 21, 54, 103, 67, 109, 10,
+];
+const FACE_LIPS = [
+  61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318,
+  402, 317, 14, 87, 178, 88, 95, 185, 40, 39, 37, 0, 267, 269, 270,
+  409, 415, 310, 311, 312, 13, 82, 81, 80, 191, 78, 95, 62, 61,
+];
+const FACE_EYE_LEFT = [
+  33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160,
+  161, 246, 33,
+];
+const FACE_EYE_RIGHT = [
+  263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386,
+  387, 388, 466, 263,
+];
+const FACE_KEY_POINTS = [1, 33, 263, 61, 291, 13];
+
 /**
- * Camera stream management, ambient light sampling, and face/motion tracking.
- * Supports MediaPipe face landmarker, FaceDetector API, and motion-diff fallback.
+ * Camera stream management, ambient light sampling, and multi-detector tracking.
+ * Supports face mesh, hand landmarks, and pose landmarks via MediaPipe.
  */
 export function useEyeTracking(): UseEyeTrackingReturn {
   const [camVec, setCamVec] = useState({ x: 0, y: 0 });
@@ -34,15 +90,19 @@ export function useEyeTracking(): UseEyeTrackingReturn {
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [camFollow, setCamFollow] = useState(true);
   const [meshEnabled, setMeshEnabled] = useState(!IS_MOBILE);
-  const [meshStatus, setMeshStatus] = useState<
-    "idle" | "loading" | "ready" | "error"
-  >("idle");
+  const [meshStatus, setMeshStatus] = useState<DetectorStatus>("idle");
   const [mirrorEnabled, setMirrorEnabled] = useState(true);
+  const [handEnabled, setHandEnabled] = useState(false);
+  const [handStatus, setHandStatus] = useState<DetectorStatus>("idle");
+  const [poseEnabled, setPoseEnabled] = useState(false);
+  const [poseStatus, setPoseStatus] = useState<DetectorStatus>("idle");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const landmarkerRef = useRef<any>(null);
+  const handLandmarkerRef = useRef<any>(null);
+  const poseLandmarkerRef = useRef<any>(null);
   const lastFrameRef = useRef<Float32Array | null>(null);
   const missCountRef = useRef(0);
   const currentDelegateRef = useRef<"GPU" | "CPU">("GPU");
@@ -168,22 +228,229 @@ export function useEyeTracking(): UseEyeTrackingReturn {
       }
     };
     void load();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [meshEnabled]);
 
-  // ── Face/motion tracking loop ──
+  // ── Lazy-load MediaPipe hand landmarker ──
+  useEffect(() => {
+    if (!handEnabled) return;
+    if (handLandmarkerRef.current) return;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        setHandStatus("loading");
+        const vision = await import("@mediapipe/tasks-vision");
+        const { FilesetResolver, HandLandmarker } = vision as any;
+        const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
+        const fileset = await FilesetResolver.forVisionTasks(
+          `${assetBase}/wasm`
+        );
+        const landmarker = await HandLandmarker.createFromOptions(fileset, {
+          baseOptions: {
+            modelAssetPath: `${assetBase}/hand_landmarker.task`,
+          },
+          runningMode: "VIDEO",
+          numHands: 2,
+          minHandDetectionConfidence: 0.4,
+          minHandPresenceConfidence: 0.4,
+          minTrackingConfidence: 0.4,
+        });
+        if (!cancelled) {
+          handLandmarkerRef.current = landmarker;
+          setHandStatus("ready");
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setHandStatus("error");
+          console.error("Hand landmarker load failed", e);
+        }
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [handEnabled]);
+
+  // ── Lazy-load MediaPipe pose landmarker ──
+  useEffect(() => {
+    if (!poseEnabled) return;
+    if (poseLandmarkerRef.current) return;
+    let cancelled = false;
+
+    const load = async () => {
+      try {
+        setPoseStatus("loading");
+        const vision = await import("@mediapipe/tasks-vision");
+        const { FilesetResolver, PoseLandmarker } = vision as any;
+        const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
+        const fileset = await FilesetResolver.forVisionTasks(
+          `${assetBase}/wasm`
+        );
+        const landmarker = await PoseLandmarker.createFromOptions(fileset, {
+          baseOptions: {
+            modelAssetPath: `${assetBase}/pose_landmarker_lite.task`,
+          },
+          runningMode: "VIDEO",
+          numPoses: 1,
+          minPoseDetectionConfidence: 0.4,
+          minPosePresenceConfidence: 0.4,
+          minTrackingConfidence: 0.4,
+        });
+        if (!cancelled) {
+          poseLandmarkerRef.current = landmarker;
+          setPoseStatus("ready");
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setPoseStatus("error");
+          console.error("Pose landmarker load failed", e);
+        }
+      }
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [poseEnabled]);
+
+  // ── Drawing helpers ──
+  const drawFace = (
+    ctx: CanvasRenderingContext2D,
+    pts: Array<{ x: number; y: number }>,
+    cw: number,
+    ch: number
+  ) => {
+    const drawPolyline = (idxs: number[]) => {
+      ctx.beginPath();
+      idxs.forEach((idx, i) => {
+        const p = pts[idx];
+        if (!p) return;
+        const x = p.x * cw;
+        const y = p.y * ch;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+    };
+
+    // Outline, lips, eyes
+    ctx.strokeStyle = "rgba(34,211,238,0.8)"; // cyan
+    ctx.lineWidth = 1.2;
+    drawPolyline(FACE_OUTLINE);
+    drawPolyline(FACE_LIPS);
+    drawPolyline(FACE_EYE_LEFT);
+    drawPolyline(FACE_EYE_RIGHT);
+
+    // All points
+    ctx.fillStyle = "rgba(34,211,238,0.6)";
+    for (const p of pts) {
+      ctx.beginPath();
+      ctx.arc(p.x * cw, p.y * ch, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Key landmarks
+    ctx.fillStyle = "rgba(34,211,238,0.95)";
+    for (const idx of FACE_KEY_POINTS) {
+      const p = pts[idx];
+      if (!p) continue;
+      ctx.beginPath();
+      ctx.arc(p.x * cw, p.y * ch, 2.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Nose highlight
+    const nose = pts[1];
+    if (nose) {
+      ctx.fillStyle = "rgba(34,211,238,0.9)";
+      ctx.beginPath();
+      ctx.arc(nose.x * cw, nose.y * ch, 3.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+
+  const drawHands = (
+    ctx: CanvasRenderingContext2D,
+    handsLandmarks: Array<Array<{ x: number; y: number }>>,
+    cw: number,
+    ch: number
+  ) => {
+    for (const pts of handsLandmarks) {
+      // Connections
+      ctx.strokeStyle = "rgba(52,211,153,0.8)"; // emerald
+      ctx.lineWidth = 1.5;
+      for (const [a, b] of HAND_CONNECTIONS) {
+        const pa = pts[a];
+        const pb = pts[b];
+        if (!pa || !pb) continue;
+        ctx.beginPath();
+        ctx.moveTo(pa.x * cw, pa.y * ch);
+        ctx.lineTo(pb.x * cw, pb.y * ch);
+        ctx.stroke();
+      }
+
+      // Points
+      ctx.fillStyle = "rgba(52,211,153,0.9)";
+      for (const p of pts) {
+        ctx.beginPath();
+        ctx.arc(p.x * cw, p.y * ch, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Fingertips larger
+      ctx.fillStyle = "rgba(110,231,183,0.95)";
+      for (const idx of [4, 8, 12, 16, 20]) {
+        const p = pts[idx];
+        if (!p) continue;
+        ctx.beginPath();
+        ctx.arc(p.x * cw, p.y * ch, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  };
+
+  const drawPose = (
+    ctx: CanvasRenderingContext2D,
+    pts: Array<{ x: number; y: number; visibility?: number }>,
+    cw: number,
+    ch: number
+  ) => {
+    const VIS_THRESH = 0.5;
+
+    // Connections
+    ctx.strokeStyle = "rgba(251,191,36,0.7)"; // amber
+    ctx.lineWidth = 2;
+    for (const [a, b] of POSE_CONNECTIONS) {
+      const pa = pts[a];
+      const pb = pts[b];
+      if (!pa || !pb) continue;
+      if ((pa.visibility ?? 1) < VIS_THRESH || (pb.visibility ?? 1) < VIS_THRESH) continue;
+      ctx.beginPath();
+      ctx.moveTo(pa.x * cw, pa.y * ch);
+      ctx.lineTo(pb.x * cw, pb.y * ch);
+      ctx.stroke();
+    }
+
+    // Points
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      if (!p || (p.visibility ?? 1) < VIS_THRESH) continue;
+      ctx.fillStyle = "rgba(251,191,36,0.9)";
+      ctx.beginPath();
+      ctx.arc(p.x * cw, p.y * ch, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+
+  // ── Tracking loop ──
   useEffect(() => {
     if (!camFollow || !cameraReady || !videoRef.current) return;
     const video = videoRef.current;
     const overlay = overlayRef.current;
     const w = 96;
     const h = 72;
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
+    const diffCanvas = document.createElement("canvas");
+    diffCanvas.width = w;
+    diffCanvas.height = h;
+    const diffCtx = diffCanvas.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | null;
     let detector: any = null;
     if ((window as any).FaceDetector) {
       try {
@@ -194,126 +461,52 @@ export function useEyeTracking(): UseEyeTrackingReturn {
     }
     let stopped = false;
 
-    const drawGrid = (
-      box: DOMRect | null,
-      hint: { x: number; y: number } | null,
-      meshPoints?: Array<{ x: number; y: number }>
-    ) => {
-      if (!overlay) return;
-      const ctxOv = overlay.getContext("2d");
-      if (!ctxOv) return;
-      const vw = video.videoWidth || 640;
-      const vh = video.videoHeight || 480;
-      overlay.width = vw;
-      overlay.height = vh;
-      ctxOv.clearRect(0, 0, vw, vh);
-
-      // Base crosshair
-      ctxOv.strokeStyle = "rgba(148,163,184,0.4)";
-      ctxOv.lineWidth = 1;
-      ctxOv.beginPath();
-      ctxOv.moveTo(vw / 2 - 12, vh / 2);
-      ctxOv.lineTo(vw / 2 + 12, vh / 2);
-      ctxOv.moveTo(vw / 2, vh / 2 - 12);
-      ctxOv.lineTo(vw / 2, vh / 2 + 12);
-      ctxOv.stroke();
-
-      if (box) {
-        ctxOv.strokeStyle = "rgba(56,189,248,0.9)";
-        ctxOv.lineWidth = 1.2;
-        ctxOv.beginPath();
-        ctxOv.ellipse(
-          box.x + box.width / 2,
-          box.y + box.height / 2,
-          box.width * 0.55,
-          box.height * 0.65,
-          0,
-          0,
-          Math.PI * 2
-        );
-        ctxOv.stroke();
-      }
-
-      if (meshPoints && meshPoints.length) {
-        const outlineIdx = [
-          10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365,
-          379, 378, 400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93,
-          234, 127, 162, 21, 54, 103, 67, 109, 10,
-        ];
-        const lipsOuter = [
-          61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 308, 324, 318,
-          402, 317, 14, 87, 178, 88, 95, 185, 40, 39, 37, 0, 267, 269, 270,
-          409, 415, 310, 311, 312, 13, 82, 81, 80, 191, 78, 95, 62, 61,
-        ];
-        const eyeLeft = [
-          33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160,
-          161, 246, 33,
-        ];
-        const eyeRight = [
-          263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386,
-          387, 388, 466, 263,
-        ];
-
-        const drawPolyline = (idxs: number[]) => {
-          ctxOv.beginPath();
-          idxs.forEach((idx, i) => {
-            const p = meshPoints[idx];
-            const x = p.x * vw;
-            const y = p.y * vh;
-            if (i === 0) ctxOv.moveTo(x, y);
-            else ctxOv.lineTo(x, y);
-          });
-          ctxOv.stroke();
-        };
-
-        ctxOv.strokeStyle = "rgba(56,189,248,0.7)";
-        ctxOv.lineWidth = 1.2;
-        drawPolyline(outlineIdx);
-        drawPolyline(lipsOuter);
-        drawPolyline(eyeLeft);
-        drawPolyline(eyeRight);
-
-        ctxOv.fillStyle = "rgba(56,189,248,0.7)";
-        const nose = meshPoints[1];
-        if (nose) {
-          ctxOv.beginPath();
-          ctxOv.arc(nose.x * vw, nose.y * vh, 3.6, 0, Math.PI * 2);
-          ctxOv.fill();
-        }
-        for (const p of meshPoints) {
-          ctxOv.beginPath();
-          ctxOv.arc(p.x * vw, p.y * vh, 1.6, 0, Math.PI * 2);
-          ctxOv.fill();
-        }
-      }
-
-      if (hint) {
-        ctxOv.fillStyle = "rgba(56,189,248,0.85)";
-        ctxOv.beginPath();
-        ctxOv.arc(hint.x * vw, hint.y * vh, 6, 0, Math.PI * 2);
-        ctxOv.fill();
-      }
-    };
-
     const loop = async () => {
-      if (stopped || !ctx) return;
+      if (stopped || !diffCtx) return;
       if ((video.videoWidth || 0) === 0 || (video.videoHeight || 0) === 0) {
         requestAnimationFrame(loop);
         return;
       }
-      ctx.drawImage(video, 0, 0, w, h);
-      const { data } = ctx.getImageData(0, 0, w, h);
+
+      diffCtx.drawImage(video, 0, 0, w, h);
+      const { data } = diffCtx.getImageData(0, 0, w, h);
       const nowMs = performance.now();
 
-      // ── MediaPipe landmarker (highest fidelity) ──
+      // Canvas dimensions for the mesh overlay
+      const vw = video.videoWidth || 640;
+      const vh = video.videoHeight || 480;
+
+      // Prepare overlay canvas (black background, separate from video)
+      let ctxOv: CanvasRenderingContext2D | null = null;
+      if (overlay) {
+        overlay.width = vw;
+        overlay.height = vh;
+        ctxOv = overlay.getContext("2d");
+        if (ctxOv) {
+          ctxOv.fillStyle = "#020617";
+          ctxOv.fillRect(0, 0, vw, vh);
+
+          // Crosshair
+          ctxOv.strokeStyle = "rgba(148,163,184,0.3)";
+          ctxOv.lineWidth = 1;
+          ctxOv.beginPath();
+          ctxOv.moveTo(vw / 2 - 12, vh / 2);
+          ctxOv.lineTo(vw / 2 + 12, vh / 2);
+          ctxOv.moveTo(vw / 2, vh / 2 - 12);
+          ctxOv.lineTo(vw / 2, vh / 2 + 12);
+          ctxOv.stroke();
+        }
+      }
+
+      let faceDetected = false;
+
+      // ── MediaPipe face landmarker ──
       if (meshEnabled && meshStatus === "ready" && landmarkerRef.current) {
         try {
           const result = landmarkerRef.current.detectForVideo(video, nowMs);
           if (result?.faceLandmarks?.length) {
             const ptsRaw = result.faceLandmarks[0] as Array<{
-              x: number;
-              y: number;
-              z: number;
+              x: number; y: number; z: number;
             }>;
             const pts = mirrorEnabled
               ? ptsRaw.map((p) => ({ x: 1 - p.x, y: p.y, z: p.z }))
@@ -329,205 +522,170 @@ export function useEyeTracking(): UseEyeTrackingReturn {
             const faceCy = (foreheadPt.y + chinPt.y) / 2;
             const faceW = Math.abs(rightEar.x - leftEar.x) || 0.15;
             const faceH = Math.abs(chinPt.y - foreheadPt.y) || 0.15;
-            const yaw = clamp(
-              (-(noseR.x - faceCx) / faceW) * 3.5,
-              -1,
-              1
-            );
-            const pitch = clamp(
-              ((noseR.y - faceCy) / faceH) * 2.5,
-              -1,
-              1
-            );
+            const yaw = clamp((-(noseR.x - faceCx) / faceW) * 5.0, -1, 1);
+            const pitch = clamp(((noseR.y - faceCy) / faceH) * 4.0, -1, 1);
             setCamVec((prev) => ({
-              x: clamp(prev.x * 0.3 + yaw * 0.7, -1, 1),
-              y: clamp(prev.y * 0.3 + pitch * 0.7, -1, 1),
+              x: clamp(prev.x * 0.15 + yaw * 0.85, -1, 1),
+              y: clamp(prev.y * 0.15 + pitch * 0.85, -1, 1),
             }));
 
-            const nosePt = pts[1];
-            drawGrid(
-              null,
-              nosePt
-                ? {
-                    x: mirrorEnabled ? 1 - nosePt.x : nosePt.x,
-                    y: nosePt.y,
-                  }
-                : null,
-              pts
-            );
+            if (ctxOv) {
+              drawFace(ctxOv, pts, vw, vh);
+            }
 
-            // Key landmarks overlay
-            if (overlay) {
-              const ctxOv = overlay.getContext("2d");
-              if (ctxOv) {
-                const vw = overlay.width;
-                const vh = overlay.height;
-                ctxOv.strokeStyle = "rgba(56,189,248,0.6)";
-                ctxOv.lineWidth = 0.8;
-                const outlineIdx = [
-                  10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
-                  397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
-                  172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109, 10,
-                ];
-                ctxOv.beginPath();
-                outlineIdx.forEach((idx, i) => {
-                  const p = pts[idx];
-                  const x = p.x * vw;
-                  const y = p.y * vh;
-                  if (i === 0) ctxOv.moveTo(x, y);
-                  else ctxOv.lineTo(x, y);
+            faceDetected = true;
+            missCountRef.current = 0;
+          } else {
+            // GPU fallback to CPU if too many misses
+            missCountRef.current += 1;
+            if (missCountRef.current > 15 && currentDelegateRef.current === "GPU") {
+              landmarkerRef.current = null;
+              setMeshStatus("loading");
+              try {
+                const vision = await import("@mediapipe/tasks-vision");
+                const { FilesetResolver, FaceLandmarker } = vision as any;
+                const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
+                const fileset = await FilesetResolver.forVisionTasks(`${assetBase}/wasm`);
+                const lm = await FaceLandmarker.createFromOptions(fileset, {
+                  baseOptions: {
+                    modelAssetPath: `${assetBase}/face_landmarker.task`,
+                  },
+                  runningMode: "VIDEO",
+                  numFaces: 1,
+                  minFaceDetectionConfidence: 0.1,
+                  minFacePresenceConfidence: 0.2,
+                  minTrackingConfidence: 0.2,
+                  delegate: "CPU",
                 });
-                ctxOv.stroke();
-                ctxOv.fillStyle = "rgba(56,189,248,0.9)";
-                [1, 33, 263, 61, 291, 13].forEach((idx) => {
-                  const p = pts[idx];
-                  ctxOv.beginPath();
-                  ctxOv.arc(p.x * vw, p.y * vh, 2.5, 0, Math.PI * 2);
-                  ctxOv.fill();
-                });
+                landmarkerRef.current = lm;
+                currentDelegateRef.current = "CPU";
+                setMeshStatus("ready");
+                missCountRef.current = 0;
+              } catch (e) {
+                setMeshStatus("error");
+                console.error("Face mesh CPU fallback failed", e);
               }
             }
-            missCountRef.current = 0;
-            requestAnimationFrame(loop);
-            return;
           }
+        } catch {
+          // fall through
+        }
+      }
 
-          // GPU fallback to CPU if too many misses
-          missCountRef.current += 1;
-          if (
-            missCountRef.current > 15 &&
-            currentDelegateRef.current === "GPU"
-          ) {
-            landmarkerRef.current = null;
-            setMeshStatus("loading");
-            try {
-              const vision = await import("@mediapipe/tasks-vision");
-              const { FilesetResolver, FaceLandmarker } = vision as any;
-              const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
-              const fileset = await FilesetResolver.forVisionTasks(
-                `${assetBase}/wasm`
-              );
-              const lm = await FaceLandmarker.createFromOptions(fileset, {
-                baseOptions: {
-                  modelAssetPath: `${assetBase}/face_landmarker.task`,
-                },
-                runningMode: "VIDEO",
-                numFaces: 1,
-                minFaceDetectionConfidence: 0.1,
-                minFacePresenceConfidence: 0.2,
-                minTrackingConfidence: 0.2,
-                delegate: "CPU",
-              });
-              landmarkerRef.current = lm;
-              currentDelegateRef.current = "CPU";
-              setMeshStatus("ready");
-              missCountRef.current = 0;
-            } catch (e) {
-              setMeshStatus("error");
-              console.error("Face mesh CPU fallback failed", e);
+      // ── MediaPipe hand landmarker ──
+      if (handEnabled && handStatus === "ready" && handLandmarkerRef.current) {
+        try {
+          const result = handLandmarkerRef.current.detectForVideo(video, nowMs + 0.1);
+          if (result?.landmarks?.length && ctxOv) {
+            const allHands = (result.landmarks as Array<Array<{ x: number; y: number; z: number }>>).map(
+              (hand) => mirrorEnabled
+                ? hand.map((p) => ({ x: 1 - p.x, y: p.y }))
+                : hand.map((p) => ({ x: p.x, y: p.y }))
+            );
+            drawHands(ctxOv, allHands, vw, vh);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // ── MediaPipe pose landmarker ──
+      if (poseEnabled && poseStatus === "ready" && poseLandmarkerRef.current) {
+        try {
+          const result = poseLandmarkerRef.current.detectForVideo(video, nowMs + 0.2);
+          if (result?.landmarks?.length && ctxOv) {
+            const ptsRaw = result.landmarks[0] as Array<{
+              x: number; y: number; z: number; visibility?: number;
+            }>;
+            const pts = mirrorEnabled
+              ? ptsRaw.map((p) => ({ x: 1 - p.x, y: p.y, visibility: p.visibility }))
+              : ptsRaw.map((p) => ({ x: p.x, y: p.y, visibility: p.visibility }));
+            drawPose(ctxOv, pts, vw, vh);
+          }
+        } catch {
+          // ignore
+        }
+      }
+
+      // ── Fallback face detection (when mesh disabled) ──
+      if (!faceDetected && !meshEnabled) {
+        if (detector) {
+          try {
+            const faces = await detector.detect(diffCanvas);
+            if (faces && faces[0]?.boundingBox) {
+              const box = faces[0].boundingBox as DOMRect;
+              const nx = clamp(((box.x + box.width / 2) / w) * 2 - 1, -1, 1);
+              const ny = clamp(((box.y + box.height / 2) / h) * 2 - 1, -1, 1);
+              setCamVec((prev) => ({
+                x: clamp(prev.x * 0.6 + nx * 0.4, -1, 1),
+                y: clamp(prev.y * 0.6 + ny * 0.4, -1, 1),
+              }));
+              faceDetected = true;
+
+              if (ctxOv) {
+                const cxNorm = (box.x + box.width / 2) / w;
+                const cyNorm = (box.y + box.height / 2) / h;
+                const dx = mirrorEnabled ? 1 - cxNorm : cxNorm;
+                ctxOv.strokeStyle = "rgba(56,189,248,0.9)";
+                ctxOv.lineWidth = 1.2;
+                ctxOv.beginPath();
+                ctxOv.ellipse(
+                  dx * vw, cyNorm * vh,
+                  (box.width / w) * vw * 0.55,
+                  (box.height / h) * vh * 0.65,
+                  0, 0, Math.PI * 2
+                );
+                ctxOv.stroke();
+                ctxOv.fillStyle = "rgba(56,189,248,0.85)";
+                ctxOv.beginPath();
+                ctxOv.arc(dx * vw, cyNorm * vh, 6, 0, Math.PI * 2);
+                ctxOv.fill();
+              }
+            }
+          } catch {
+            // fall through to motion diff
+          }
+        }
+
+        // ── Motion difference centroid (ultimate fallback) ──
+        if (!faceDetected) {
+          const prev = lastFrameRef.current;
+          const gray = new Float32Array(w * h);
+          for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+            gray[p] = (data[i] + data[i + 1] + data[i + 2]) / 3;
+          }
+          if (prev) {
+            let sum = 0;
+            let cx = 0;
+            let cy = 0;
+            const thresh = 18;
+            for (let p = 0; p < gray.length; p++) {
+              const d = Math.abs(gray[p] - prev[p]);
+              if (d > thresh) {
+                sum += d;
+                cx += d * (p % w);
+                cy += d * Math.floor(p / w);
+              }
+            }
+            if (sum > 1200) {
+              const nx = clamp((cx / sum / (w - 1)) * 2 - 1, -1, 1);
+              const ny = clamp((cy / sum / (h - 1)) * 2 - 1, -1, 1);
+              setCamVec((prevVec) => ({
+                x: clamp(prevVec.x * 0.7 + nx * 0.3, -1, 1),
+                y: clamp(prevVec.y * 0.7 + ny * 0.3, -1, 1),
+              }));
             }
           }
-        } catch {
-          // fall through to other detectors
+          lastFrameRef.current = gray;
         }
       }
 
-      // ── FaceDetector API ──
-      if (detector) {
-        try {
-          const faces = await detector.detect(canvas);
-          if (faces && faces[0]?.boundingBox) {
-            const box = faces[0].boundingBox as DOMRect;
-            const nx = clamp(
-              ((box.x + box.width / 2) / w) * 2 - 1,
-              -1,
-              1
-            );
-            const ny = clamp(
-              ((box.y + box.height / 2) / h) * 2 - 1,
-              -1,
-              1
-            );
-            setCamVec((prev) => ({
-              x: clamp(prev.x * 0.6 + nx * 0.4, -1, 1),
-              y: clamp(prev.y * 0.6 + ny * 0.4, -1, 1),
-            }));
-            const vw = video.videoWidth || 640;
-            const vh = video.videoHeight || 480;
-            const scaled = new DOMRect(
-              (box.x / w) * vw,
-              (box.y / h) * vh,
-              (box.width / w) * vw,
-              (box.height / h) * vh
-            );
-            const cxNorm = (box.x + box.width / 2) / w;
-            const cyNorm = (box.y + box.height / 2) / h;
-            drawGrid(scaled, {
-              x: mirrorEnabled ? 1 - cxNorm : cxNorm,
-              y: cyNorm,
-            });
-            requestAnimationFrame(loop);
-            return;
-          }
-        } catch {
-          // fall back to motion diff
-        }
-      }
-
-      // ── Motion difference centroid (fallback) ──
-      const prev = lastFrameRef.current;
-      const gray = new Float32Array(w * h);
-      for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-        gray[p] = (data[i] + data[i + 1] + data[i + 2]) / 3;
-      }
-      if (prev) {
-        let sum = 0;
-        let cx = 0;
-        let cy = 0;
-        const thresh = 18;
-        for (let p = 0; p < gray.length; p++) {
-          const d = Math.abs(gray[p] - prev[p]);
-          if (d > thresh) {
-            sum += d;
-            cx += d * (p % w);
-            cy += d * Math.floor(p / w);
-          }
-        }
-        if (sum > 1200) {
-          const nx = clamp(
-            (cx / sum / (w - 1)) * 2 - 1,
-            -1,
-            1
-          );
-          const ny = clamp(
-            (cy / sum / (h - 1)) * 2 - 1,
-            -1,
-            1
-          );
-          setCamVec((prevVec) => ({
-            x: clamp(prevVec.x * 0.7 + nx * 0.3, -1, 1),
-            y: clamp(prevVec.y * 0.7 + ny * 0.3, -1, 1),
-          }));
-          drawGrid(
-            new DOMRect(
-              (cx / sum / (w - 1)) * (video.videoWidth || 640) - 60,
-              (cy / sum / (h - 1)) * (video.videoHeight || 480) - 60,
-              120,
-              120
-            ),
-            { x: cx / sum / (w - 1), y: cy / sum / (h - 1) }
-          );
-        }
-      }
-      lastFrameRef.current = gray;
       requestAnimationFrame(loop);
     };
 
     requestAnimationFrame(loop);
-    return () => {
-      stopped = true;
-    };
-  }, [camFollow, cameraReady, meshEnabled, meshStatus, mirrorEnabled]);
+    return () => { stopped = true; };
+  }, [camFollow, cameraReady, meshEnabled, meshStatus, mirrorEnabled, handEnabled, handStatus, poseEnabled, poseStatus]);
 
   return {
     camVec,
@@ -543,6 +701,12 @@ export function useEyeTracking(): UseEyeTrackingReturn {
     meshStatus,
     mirrorEnabled,
     setMirrorEnabled,
+    handEnabled,
+    setHandEnabled,
+    handStatus,
+    poseEnabled,
+    setPoseEnabled,
+    poseStatus,
     videoRef,
     overlayRef,
   };

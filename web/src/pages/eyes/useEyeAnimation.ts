@@ -27,36 +27,36 @@ export function useBlink() {
   return blink;
 }
 
-/** Idle drift: gentle sine-based wandering gaze */
+/** Idle drift: organic sine-based wandering gaze */
 export function useIdleDrift() {
   const [drift, setDrift] = useState({ x: 0, y: 0 });
   useEffect(() => {
     const timer = setInterval(() => {
       const t = performance.now() / 1000;
       setDrift({
-        x: Math.sin(t * 0.7) * 0.2 + Math.sin(t * 1.3) * 0.1,
-        y: Math.cos(t * 0.5) * 0.15 + Math.sin(t * 1.1 + 2) * 0.08,
+        x: Math.sin(t * 0.7) * 0.3 + Math.sin(t * 1.3) * 0.15 + Math.sin(t * 2.7) * 0.05,
+        y: Math.cos(t * 0.5) * 0.22 + Math.sin(t * 1.1 + 2) * 0.12 + Math.cos(t * 3.1) * 0.04,
       });
-    }, 110);
+    }, 50);
     return () => clearInterval(timer);
   }, []);
   return drift;
 }
 
-/** Micro-saccades: tiny rapid eye jumps (real eyes do this) */
+/** Micro-saccades: rapid eye jumps (real eyes do this 1-3x per second) */
 export function useSaccade() {
   const [saccade, setSaccade] = useState({ x: 0, y: 0 });
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>;
     const fire = () => {
       setSaccade({
-        x: (Math.random() - 0.5) * 0.15,
-        y: (Math.random() - 0.5) * 0.1,
+        x: (Math.random() - 0.5) * 0.25,
+        y: (Math.random() - 0.5) * 0.18,
       });
-      setTimeout(() => setSaccade({ x: 0, y: 0 }), 90);
-      timeout = setTimeout(fire, 1800 + Math.random() * 3200);
+      setTimeout(() => setSaccade({ x: 0, y: 0 }), 60 + Math.random() * 50);
+      timeout = setTimeout(fire, 600 + Math.random() * 1800);
     };
-    timeout = setTimeout(fire, 800 + Math.random() * 1500);
+    timeout = setTimeout(fire, 400 + Math.random() * 800);
     return () => clearTimeout(timeout);
   }, []);
   return saccade;
@@ -69,14 +69,14 @@ export function useGazeShift() {
     let timeout: ReturnType<typeof setTimeout>;
     const doShift = () => {
       setShift({
-        x: (Math.random() - 0.5) * 0.6,
-        y: (Math.random() - 0.5) * 0.4,
+        x: (Math.random() - 0.5) * 0.8,
+        y: (Math.random() - 0.5) * 0.55,
       });
-      // Hold the glance for 0.8-2s then return
-      setTimeout(() => setShift({ x: 0, y: 0 }), 800 + Math.random() * 1200);
-      timeout = setTimeout(doShift, 4000 + Math.random() * 7000);
+      // Hold the glance for 0.6-1.8s then return
+      setTimeout(() => setShift({ x: 0, y: 0 }), 600 + Math.random() * 1200);
+      timeout = setTimeout(doShift, 2500 + Math.random() * 5000);
     };
-    timeout = setTimeout(doShift, 2500 + Math.random() * 3500);
+    timeout = setTimeout(doShift, 1500 + Math.random() * 2500);
     return () => clearTimeout(timeout);
   }, []);
   return shift;

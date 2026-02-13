@@ -1,9 +1,11 @@
 import React, { useCallback, useMemo, useRef, useState, useEffect } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import * as api from "../../services/api";
 import type { GroupMeta } from "../../types";
 import { classNames } from "../../utils/classNames";
 import type { Mood, LogLine } from "./types";
-import { MOOD_COLOR, THINKING_PREFIXES, SCREEN_CAPTURE_NOOP, NEWS_PREFIXES, clamp, IS_MOBILE } from "./constants";
+import { MOOD_COLOR, THINKING_PREFIXES, SCREEN_CAPTURE_NOOP, NEWS_PREFIXES, clamp, IS_MOBILE, IS_LOCALHOST, buildShareUrl, getLanIp, setLanIp, RIGHT_EYE_PARALLAX } from "./constants";
+import { fetchLanIp } from "../../services/api";
 import { EyeCanvas } from "./EyeCanvas";
 import { usePointerVector } from "./usePointerVector";
 import {
@@ -20,6 +22,7 @@ import { useSSEMessages } from "./useSSEMessages";
 import { MobileCompanionLayout } from "./MobileCompanionLayout";
 import { useScreenCapture } from "./useScreenCapture";
 import { usePreferences } from "./usePreferences";
+import { useDeviceTilt } from "./useDeviceTilt";
 
 // ────────────────────────────────────────────
 //  Orchestrator
@@ -38,6 +41,9 @@ export default function TelepresenceEyes() {
   const [tiltEnabled, setTiltEnabled] = useState(false);
   const emptyReplyCountRef = useRef(0);
   const [healthWarning, setHealthWarning] = useState(false);
+  const [lastAgentReply, setLastAgentReply] = useState("");
+  const chatEndRef = useRef<HTMLDivElement>(null);
+  const [connectTimeoutReached, setConnectTimeoutReached] = useState(false);
 
   // ── Persistent preferences ──
   const { prefs, update: updatePrefs } = usePreferences();
@@ -137,6 +143,16 @@ export default function TelepresenceEyes() {
     void connectGroup();
   }, [connectGroup]);
 
+  // 1.5: Connection timeout — show error if no group after 10s
+  useEffect(() => {
+    if (group) { setConnectTimeoutReached(false); return; }
+    const timer = setTimeout(() => {
+      if (!group) setConnectTimeoutReached(true);
+    }, 10000);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [group]);
+
   const ensureGroupId = async (): Promise<string | null> => {
     if (group) return group.group_id;
     return connectGroup();
@@ -207,6 +223,7 @@ export default function TelepresenceEyes() {
       const isNews = NEWS_PREFIXES.some((p) => text.startsWith(p));
 
       pushLog({ who: "agent", text, ts: Date.now() });
+      setLastAgentReply(text);
       window.dispatchEvent(
         new CustomEvent("cccc:agent-reply", { detail: text })
       );
@@ -227,7 +244,7 @@ export default function TelepresenceEyes() {
     [voiceEnabled, tts, pushLog]
   );
 
-  const { connected: sseConnected } = useSSEMessages({
+  const { connected: sseConnected, mode: sseMode, reconnecting: sseReconnecting } = useSSEMessages({
     groupId: group?.group_id ?? null,
     onAgentMessage,
   });
@@ -249,6 +266,24 @@ export default function TelepresenceEyes() {
   // ── News agent status ──
   const [newsRunning, setNewsRunning] = useState(false);
   const [newsBusy, setNewsBusy] = useState(false);
+
+  // ── LAN IP for QR code (when on localhost) ──
+  const [lanIp, setLanIpState] = useState(() => getLanIp());
+  const handleLanIpChange = useCallback((ip: string) => {
+    setLanIpState(ip);
+    setLanIp(ip);
+  }, []);
+
+  // Auto-detect LAN IP from backend on mount
+  useEffect(() => {
+    if (!IS_LOCALHOST) return;
+    if (getLanIp()) return; // Already have a saved IP
+    fetchLanIp().then((resp) => {
+      if (resp.ok && resp.result.lan_ip) {
+        handleLanIpChange(resp.result.lan_ip);
+      }
+    }).catch(() => {});
+  }, [handleLanIpChange]);
 
   // Poll news agent status when group is connected
   useEffect(() => {
@@ -297,6 +332,9 @@ export default function TelepresenceEyes() {
     }
   };
 
+  // ── Device tilt (gyroscope) ──
+  const tiltVec = useDeviceTilt(tiltEnabled);
+
   // ── Compute eye mood + pupil offset ──
   const eyeMood: Mood = speech.listening ? "listening" : mood;
   const moodOffset = useMoodOffset(eyeMood);
@@ -307,23 +345,30 @@ export default function TelepresenceEyes() {
     const rm = prefersReducedMotion;
     return {
       x: clamp(
-        tracking.camVec.x * 0.45 +
+        tracking.camVec.x * 0.7 +
           pointerVec.x * 0.15 +
+          tiltVec.x * 0.5 +
           (rm ? 0 : idleDrift.x + saccade.x + gazeShift.x) +
           moodOffset.x,
         -1,
         1
       ),
       y: clamp(
-        tracking.camVec.y * 0.45 +
+        tracking.camVec.y * 0.7 +
           pointerVec.y * 0.15 +
+          tiltVec.y * 0.5 +
           (rm ? 0 : idleDrift.y + saccade.y + gazeShift.y) +
           moodOffset.y,
         -1,
         1
       ),
     };
-  }, [pointerVec, tracking.camVec, idleDrift, saccade, gazeShift, moodOffset, prefersReducedMotion]);
+  }, [pointerVec, tracking.camVec, tiltVec, idleDrift, saccade, gazeShift, moodOffset, prefersReducedMotion]);
+
+  // ── Auto-scroll chat log on new messages ──
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [log]);
 
   // ── Keyboard shortcut: Space = toggle listening ──
   useEffect(() => {
@@ -364,6 +409,9 @@ export default function TelepresenceEyes() {
         autoListen={speech.autoListen}
         onSetAutoListen={speech.setAutoListen}
         speechSupported={speech.supported}
+        onRequestTilt={requestTiltPermission}
+        interimText={speech.interimText}
+        lastAgentReply={lastAgentReply}
       />
     );
   }
@@ -371,10 +419,15 @@ export default function TelepresenceEyes() {
   return (
     <div
       ref={stageRef}
-      className="min-h-screen eyes-stage text-white"
+      className="min-h-screen eyes-stage text-white relative"
       style={{ "--eye-accent": accent } as React.CSSProperties}
     >
-      <div className="max-w-4xl mx-auto px-4 py-6 flex flex-col gap-6">
+      {/* Mood ambient overlay — smooth color transition */}
+      <div
+        className="absolute inset-0 pointer-events-none transition-[background-color] duration-700"
+        style={{ backgroundColor: `${accent}0a` }}
+      />
+      <div className="relative max-w-4xl mx-auto px-4 py-6 flex flex-col gap-6">
         {/* Header */}
         <header className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3">
@@ -385,17 +438,23 @@ export default function TelepresenceEyes() {
               <span className="px-2 py-1 rounded-full bg-white/10 border border-white/10">
                 {group
                   ? `连接工作组: ${group.title || group.group_id}`
-                  : "正在寻找工作组..."}
+                  : connectTimeoutReached
+                    ? "无法连接后端"
+                    : "正在寻找工作组..."}
               </span>
               <span
                 className={classNames(
                   "px-2 py-1 rounded-full border text-xs",
                   sseConnected
                     ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-100"
-                    : "bg-white/5 border-white/20"
+                    : sseReconnecting
+                      ? "bg-amber-500/20 border-amber-400/50 text-amber-100 animate-pulse"
+                      : "bg-white/5 border-white/20"
                 )}
               >
-                {sseConnected ? "SSE 已连" : "SSE 未连"}
+                {sseConnected
+                  ? sseMode === "polling" ? "轮询中" : "SSE 已连"
+                  : sseReconnecting ? "重连中…" : "SSE 未连"}
               </span>
               <span
                 className={classNames(
@@ -448,6 +507,25 @@ export default function TelepresenceEyes() {
 
         {/* Eyes */}
         <section className="flex flex-col items-center gap-4">
+          {/* Mood status pill */}
+          <div
+            className="px-3 py-1 rounded-full text-xs font-medium transition-colors duration-500"
+            style={{
+              backgroundColor: `${accent}22`,
+              color: accent,
+              border: `1px solid ${accent}44`,
+            }}
+          >
+            {eyeMood === "listening"
+              ? "聆听中…"
+              : eyeMood === "thinking"
+                ? "思考中…"
+                : eyeMood === "speaking"
+                  ? `播报中${tts.ttsProgress[1] > 1 ? ` (${tts.ttsProgress[0]}/${tts.ttsProgress[1]})` : "…"}`
+                  : eyeMood === "error"
+                    ? "错误"
+                    : "待命"}
+          </div>
           <div className="eyes-pair" aria-label="Animated eyes">
             <EyeCanvas
               mood={eyeMood}
@@ -459,7 +537,7 @@ export default function TelepresenceEyes() {
               mood={eyeMood}
               blink={blink}
               pupilOffset={{
-                x: combinedOffset.x * 0.9,
+                x: combinedOffset.x * RIGHT_EYE_PARALLAX,
                 y: combinedOffset.y,
               }}
               ambient={tracking.ambient}
@@ -511,12 +589,6 @@ export default function TelepresenceEyes() {
               重置表情
             </button>
             <button
-              onClick={() => void requestTiltPermission()}
-              className="px-3 py-2 rounded-xl bg-white/5 border border-white/15 text-white/80 hover:bg-white/10 transition"
-            >
-              {tiltEnabled ? "体感已开" : "启用体感跟随"}
-            </button>
-            <button
               onClick={() => tracking.setCamFollow((v) => !v)}
               className={classNames(
                 "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
@@ -562,6 +634,36 @@ export default function TelepresenceEyes() {
               {tracking.mirrorEnabled ? "镜像视图" : "正常视图"}
             </button>
             <button
+              onClick={() => tracking.setHandEnabled((v) => !v)}
+              className={classNames(
+                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                tracking.handEnabled
+                  ? "bg-emerald-500/20 border-emerald-400/60"
+                  : "bg-white/5 border-white/15"
+              )}
+            >
+              {tracking.handEnabled
+                ? "关闭手部"
+                : tracking.handStatus === "loading"
+                  ? "手部加载中..."
+                  : "开启手部"}
+            </button>
+            <button
+              onClick={() => tracking.setPoseEnabled((v) => !v)}
+              className={classNames(
+                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                tracking.poseEnabled
+                  ? "bg-amber-500/20 border-amber-400/60"
+                  : "bg-white/5 border-white/15"
+              )}
+            >
+              {tracking.poseEnabled
+                ? "关闭身体"
+                : tracking.poseStatus === "loading"
+                  ? "身体加载中..."
+                  : "开启身体"}
+            </button>
+            <button
               onClick={() =>
                 screenCapture.capturing
                   ? screenCapture.stop()
@@ -592,6 +694,16 @@ export default function TelepresenceEyes() {
           {screenCapture.error && (
             <div className="text-xs text-red-400 text-center mt-2">
               {screenCapture.error}
+            </div>
+          )}
+          {/* Screen capture last-capture time (2.2) */}
+          {screenCapture.capturing && screenCapture.lastCaptureTs && (
+            <ScreenCaptureTimer lastTs={screenCapture.lastCaptureTs} />
+          )}
+          {/* TTS error feedback */}
+          {tts.ttsError && (
+            <div className="text-xs text-amber-400 text-center mt-1">
+              播报超时已停止
             </div>
           )}
           {/* Screen capture settings */}
@@ -631,11 +743,11 @@ export default function TelepresenceEyes() {
           )}
         </section>
 
-        {/* Camera preview */}
+        {/* Camera + Mesh preview */}
         <section className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur">
           <div className="flex items-center justify-between gap-3 mb-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-white/90">
-              摄像头预览 / 网格
+            <div className="flex items-center gap-2 text-sm font-semibold text-white/90 flex-wrap">
+              摄像头 / 识别网格
               <span
                 className={classNames(
                   "px-2 py-0.5 rounded-full text-[11px] border",
@@ -646,38 +758,27 @@ export default function TelepresenceEyes() {
               >
                 {tracking.camFollow ? "跟随中" : "未跟随"}
               </span>
-              <span
-                className={classNames(
-                  "px-2 py-0.5 rounded-full text-[11px] border",
-                  tracking.meshStatus === "ready"
-                    ? "bg-emerald-500/20 border-emerald-400/60 text-emerald-50"
-                    : tracking.meshStatus === "loading"
-                      ? "bg-amber-500/20 border-amber-400/60 text-amber-50"
-                      : tracking.meshStatus === "error"
-                        ? "bg-red-500/20 border-red-400/60 text-red-50"
-                        : "bg-white/5 border-white/20 text-white/70"
-                )}
-              >
-                {tracking.meshStatus === "ready"
-                  ? "Face mesh 就绪"
-                  : tracking.meshStatus === "loading"
-                    ? "Face mesh 加载中"
-                    : "Face mesh 未启用"}
-              </span>
+              <DetectorStatusPill label="Face" status={tracking.meshStatus} color="cyan" />
+              <DetectorStatusPill label="Hand" status={tracking.handStatus} color="emerald" />
+              <DetectorStatusPill label="Pose" status={tracking.poseStatus} color="amber" />
             </div>
             <div className="text-xs text-white/60">
               若未显示视频，请确认摄像头权限。
             </div>
           </div>
-          <div className="camera-frame">
-            <video
-              ref={tracking.videoRef as React.RefObject<HTMLVideoElement>}
-              className="camera-video"
-              muted
-              playsInline
-              autoPlay
-            />
-            <canvas ref={tracking.overlayRef as React.RefObject<HTMLCanvasElement>} className="camera-overlay" />
+          <div className="camera-pair">
+            <div className="camera-frame">
+              <video
+                ref={tracking.videoRef as React.RefObject<HTMLVideoElement>}
+                className="camera-video"
+                muted
+                playsInline
+                autoPlay
+              />
+            </div>
+            <div className="mesh-frame">
+              <canvas ref={tracking.overlayRef as React.RefObject<HTMLCanvasElement>} className="mesh-canvas" />
+            </div>
           </div>
         </section>
 
@@ -687,6 +788,12 @@ export default function TelepresenceEyes() {
             文字/语音 转发到 Agent
           </div>
           <div className="flex flex-col gap-3">
+            {/* 1.1: Interim speech text */}
+            {speech.interimText && (
+              <div className="text-sm text-white/50 italic px-1 animate-bubble-in">
+                {speech.interimText}
+              </div>
+            )}
             <textarea
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
@@ -696,7 +803,7 @@ export default function TelepresenceEyes() {
                   handleSend(textInput);
                 }
               }}
-              placeholder="直接输入或用语音提问… (Enter 发送, Shift+Enter 换行, Space 切换聆听)"
+              placeholder="输入消息… (Space 聆听)"
               className="w-full min-h-[88px] rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-white/90 placeholder:text-white/40 focus:outline-none focus:ring-2 focus:ring-cyan-400/60"
             />
             <div className="flex items-center justify-between gap-3">
@@ -705,7 +812,13 @@ export default function TelepresenceEyes() {
               </div>
               <button
                 onClick={() => handleSend(textInput)}
-                className="px-4 py-2 rounded-xl bg-cyan-500 text-black font-semibold hover:bg-cyan-400 transition"
+                disabled={!textInput.trim()}
+                className={classNames(
+                  "px-4 py-2 rounded-xl font-semibold transition",
+                  textInput.trim()
+                    ? "bg-cyan-500 text-black hover:bg-cyan-400"
+                    : "bg-cyan-500/40 text-black/50 cursor-not-allowed"
+                )}
               >
                 发送
               </button>
@@ -732,17 +845,70 @@ export default function TelepresenceEyes() {
                   "rounded-xl px-3 py-2 text-sm",
                   line.who === "me"
                     ? "bg-cyan-500/15 text-cyan-100 self-end"
-                    : "bg-white/8 text-white/90 self-start"
+                    : line.text.startsWith("发送失败")
+                      ? "bg-red-500/15 text-red-200 self-start"
+                      : "bg-white/8 text-white/90 self-start"
                 )}
               >
                 <span className="text-xs uppercase tracking-wide opacity-60 mr-2">
                   {line.who === "me" ? "ME" : "AGENT"}
                 </span>
+                <span className="text-[10px] text-white/40 mr-2">
+                  {new Date(line.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </span>
                 {line.text}
               </div>
             ))}
+            <div ref={chatEndRef} />
           </div>
         </section>
+
+        {/* Mobile companion QR code */}
+        {group?.group_id && (() => {
+          const shareUrl = buildShareUrl(group.group_id);
+          return (
+            <section className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur">
+              <div className="text-sm font-semibold text-white/90 mb-3">
+                手机扫码连接
+              </div>
+              {IS_LOCALHOST && (
+                <div className="mb-3 flex items-center gap-2">
+                  <span className="text-xs text-white/50">局域网 IP:</span>
+                  <input
+                    type="text"
+                    value={lanIp}
+                    onChange={(e) => handleLanIpChange(e.target.value)}
+                    placeholder="自动检测中..."
+                    className="w-40 px-2 py-1 rounded-lg bg-black/40 border border-white/15 text-white/90 text-xs font-mono placeholder:text-white/30 focus:outline-none focus:ring-1 focus:ring-cyan-400/60"
+                  />
+                  <span className="text-[10px] text-white/40">:{window.location.port || "80"}</span>
+                </div>
+              )}
+              <div className="flex items-center gap-6">
+                {shareUrl ? (
+                  <>
+                    <div className="bg-white rounded-xl p-3 flex-shrink-0">
+                      <QRCodeSVG value={shareUrl} size={120} level="M" />
+                    </div>
+                    <div className="flex flex-col gap-2">
+                      <p className="text-sm text-white/70">
+                        用手机扫描二维码，打开全屏伴侣模式。
+                        两端共享同一工作组，对话实时同步。
+                      </p>
+                      <div className="text-[10px] text-white/40 font-mono break-all">
+                        {shareUrl}
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-sm text-white/50">
+                    请先输入局域网 IP 以生成二维码。
+                  </p>
+                )}
+              </div>
+            </section>
+          );
+        })()}
 
         {/* External device hook info */}
         <section className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur">
@@ -760,6 +926,77 @@ export default function TelepresenceEyes() {
           </p>
         </section>
       </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────────
+//  Detector status pill
+// ────────────────────────────────────────────
+function DetectorStatusPill({
+  label,
+  status,
+  color,
+}: {
+  label: string;
+  status: "idle" | "loading" | "ready" | "error";
+  color: "cyan" | "emerald" | "amber";
+}) {
+  const colorMap = {
+    cyan: {
+      ready: "bg-cyan-500/20 border-cyan-400/60 text-cyan-50",
+      loading: "bg-amber-500/20 border-amber-400/60 text-amber-50",
+      error: "bg-red-500/20 border-red-400/60 text-red-50",
+      idle: "bg-white/5 border-white/20 text-white/70",
+    },
+    emerald: {
+      ready: "bg-emerald-500/20 border-emerald-400/60 text-emerald-50",
+      loading: "bg-amber-500/20 border-amber-400/60 text-amber-50",
+      error: "bg-red-500/20 border-red-400/60 text-red-50",
+      idle: "bg-white/5 border-white/20 text-white/70",
+    },
+    amber: {
+      ready: "bg-amber-500/20 border-amber-400/60 text-amber-50",
+      loading: "bg-amber-500/20 border-amber-400/60 text-amber-50 animate-pulse",
+      error: "bg-red-500/20 border-red-400/60 text-red-50",
+      idle: "bg-white/5 border-white/20 text-white/70",
+    },
+  };
+  const statusLabel = {
+    ready: "就绪",
+    loading: "加载中",
+    error: "错误",
+    idle: "未启用",
+  };
+  return (
+    <span
+      className={classNames(
+        "px-2 py-0.5 rounded-full text-[11px] border",
+        colorMap[color][status]
+      )}
+    >
+      {label} {statusLabel[status]}
+    </span>
+  );
+}
+
+// ────────────────────────────────────────────
+//  Screen capture timer (2.2)
+// ────────────────────────────────────────────
+function ScreenCaptureTimer({ lastTs }: { lastTs: number }) {
+  const [ago, setAgo] = React.useState("");
+  React.useEffect(() => {
+    const tick = () => {
+      const s = Math.round((Date.now() - lastTs) / 1000);
+      setAgo(s < 60 ? `${s}秒前` : `${Math.floor(s / 60)}分钟前`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [lastTs]);
+  return (
+    <div className="text-[10px] text-white/40 text-center mt-1">
+      上次截屏: {ago}
     </div>
   );
 }
