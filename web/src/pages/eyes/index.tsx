@@ -238,6 +238,13 @@ export default function TelepresenceEyes() {
     [playNextInQueue]
   );
 
+  const stopSpeechNow = useCallback(() => {
+    ttsQueueRef.current = [];
+    ttsPlayingRef.current = false;
+    tts.cancel();
+    setMood("idle");
+  }, [tts]);
+
   // ── SSE messages (replaces 3.5s polling) ──
   const onAgentMessage = useCallback(
     (text: string, _eventId: string) => {
@@ -340,6 +347,7 @@ export default function TelepresenceEyes() {
     setNewsBusy(true);
     try {
       if (newsRunning) {
+        stopSpeechNow();
         await api.stopNewsAgent(group.group_id);
         setNewsRunning(false);
       } else {
@@ -349,7 +357,7 @@ export default function TelepresenceEyes() {
     } finally {
       setNewsBusy(false);
     }
-  }, [group?.group_id, newsRunning, newsBusy]);
+  }, [group?.group_id, newsRunning, newsBusy, stopSpeechNow]);
 
   // ── Tilt permission ──
   const requestTiltPermission = async () => {

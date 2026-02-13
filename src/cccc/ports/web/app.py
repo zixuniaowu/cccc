@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import shlex
+import signal
 import time
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Literal, Optional, Union
@@ -344,6 +345,139 @@ async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
     if not resp.get("ok") and isinstance(resp.get("error"), dict) and resp["error"].get("code") == "daemon_unavailable":
         raise HTTPException(status_code=503, detail={"code": "daemon_unavailable", "message": "ccccd unavailable"})
     return resp
+
+
+def _pid_alive(pid: int) -> bool:
+    if int(pid or 0) <= 0:
+        return False
+    try:
+        os.kill(int(pid), 0)
+        return True
+    except Exception:
+        return False
+
+
+def _best_effort_terminate_pid(pid: int) -> None:
+    pid = int(pid or 0)
+    if pid <= 0:
+        return
+    try:
+        os.killpg(os.getpgid(pid), signal.SIGTERM)
+        return
+    except Exception:
+        pass
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+
+
+def _proc_cccc_home(pid: int) -> Optional[Path]:
+    """Best-effort CCCC_HOME lookup on Linux /proc."""
+    if int(pid or 0) <= 0:
+        return None
+    try:
+        raw = (Path("/proc") / str(int(pid)) / "environ").read_bytes()
+    except Exception:
+        return None
+    cccc_home = None
+    try:
+        for item in raw.split(b"\x00"):
+            if item.startswith(b"CCCC_HOME="):
+                cccc_home = item.split(b"=", 1)[1].decode("utf-8", "ignore").strip()
+                break
+    except Exception:
+        cccc_home = None
+    if cccc_home:
+        try:
+            return Path(cccc_home).expanduser().resolve()
+        except Exception:
+            return None
+    try:
+        return (Path.home() / ".cccc").resolve()
+    except Exception:
+        return None
+
+
+def _find_group_module_pids(*, home: Path, module: str, group_id: str) -> list[int]:
+    """Find pids by python module + group id. Works on Linux (/proc) and Windows (CIM)."""
+    mod = str(module or "").strip()
+    gid = str(group_id or "").strip()
+    if not mod or not gid:
+        return []
+
+    found: set[int] = set()
+    proc = Path("/proc")
+    if proc.exists():
+        for d in proc.iterdir():
+            if not d.is_dir() or not d.name.isdigit():
+                continue
+            try:
+                pid = int(d.name)
+            except Exception:
+                continue
+            try:
+                cmdline = (d / "cmdline").read_bytes().decode("utf-8", "ignore")
+            except Exception:
+                continue
+            if mod not in cmdline or gid not in cmdline:
+                continue
+            ph = _proc_cccc_home(pid)
+            if ph is None:
+                continue
+            try:
+                if ph != home.resolve():
+                    continue
+            except Exception:
+                continue
+            found.add(pid)
+        return sorted(found)
+
+    if os.name != "nt":
+        return sorted(found)
+
+    try:
+        import subprocess as sp
+
+        ps = sp.run(
+            [
+                "powershell",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$ErrorActionPreference='SilentlyContinue';"
+                "Get-CimInstance Win32_Process | "
+                "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=3.0,
+        )
+        if ps.returncode != 0:
+            return sorted(found)
+        raw = str(ps.stdout or "").strip()
+        if not raw:
+            return sorted(found)
+        doc = json.loads(raw)
+        rows = doc if isinstance(doc, list) else [doc]
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            cmdline = str(row.get("CommandLine") or "")
+            if not cmdline or mod not in cmdline or gid not in cmdline:
+                continue
+            try:
+                pid = int(row.get("ProcessId") or 0)
+            except Exception:
+                pid = 0
+            if pid > 0:
+                found.add(pid)
+    except Exception:
+        pass
+    return sorted(found)
 
 
 def create_app() -> FastAPI:
@@ -2553,6 +2687,16 @@ def create_app() -> FastAPI:
             except (ValueError, ProcessLookupError, PermissionError):
                 running = False
                 pid = 0
+        if not running:
+            orphan_pids = [p for p in _find_group_module_pids(home=home, module="cccc.ports.news", group_id=group_id) if _pid_alive(p)]
+            if orphan_pids:
+                pid = int(orphan_pids[0])
+                running = True
+                try:
+                    pid_path.parent.mkdir(parents=True, exist_ok=True)
+                    pid_path.write_text(str(pid), encoding="utf-8")
+                except Exception:
+                    pass
 
         return {
             "ok": True,
@@ -2586,6 +2730,15 @@ def create_app() -> FastAPI:
                     pid_path.unlink(missing_ok=True)
                 except Exception:
                     pass
+        orphan_pids = [p for p in _find_group_module_pids(home=home, module="cccc.ports.news", group_id=req.group_id) if _pid_alive(p)]
+        if orphan_pids:
+            pid = int(orphan_pids[0])
+            try:
+                pid_path.parent.mkdir(parents=True, exist_ok=True)
+                pid_path.write_text(str(pid), encoding="utf-8")
+            except Exception:
+                pass
+            return {"ok": False, "error": {"code": "already_running", "message": f"news agent already running (pid={pid})"}}
 
         # Persist config
         news_cfg = group.doc.get("news_agent") or {}
@@ -2635,8 +2788,6 @@ def create_app() -> FastAPI:
     @app.post("/api/news/stop")
     async def news_stop(req: IMActionRequest) -> Dict[str, Any]:
         """Stop news agent for a group."""
-        import signal as sig
-
         group = load_group(req.group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
@@ -2650,26 +2801,26 @@ def create_app() -> FastAPI:
             except Exception:
                 pass
 
-        stopped = 0
+        killed: set[int] = set()
         pid_path = group.path / "state" / "news_agent.pid"
         if pid_path.exists():
             try:
                 pid = int(pid_path.read_text(encoding="utf-8").strip())
-                try:
-                    os.killpg(os.getpgid(pid), sig.SIGTERM)
-                except Exception:
-                    try:
-                        os.kill(pid, sig.SIGTERM)
-                    except Exception:
-                        pass
-                stopped += 1
+                if pid > 0:
+                    _best_effort_terminate_pid(pid)
+                    killed.add(pid)
             except Exception:
                 pass
             try:
                 pid_path.unlink(missing_ok=True)
             except Exception:
                 pass
+        for pid in _find_group_module_pids(home=home, module="cccc.ports.news", group_id=req.group_id):
+            if pid in killed:
+                continue
+            _best_effort_terminate_pid(pid)
+            killed.add(pid)
 
-        return {"ok": True, "result": {"group_id": req.group_id, "stopped": stopped}}
+        return {"ok": True, "result": {"group_id": req.group_id, "stopped": len(killed)}}
 
     return app
