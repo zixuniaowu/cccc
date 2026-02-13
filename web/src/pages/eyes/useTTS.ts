@@ -25,7 +25,18 @@ function splitForTTS(s: string, maxLen = 150): string[] {
  */
 export function useTTS(lang = "zh-CN") {
   const [speaking, setSpeaking] = useState(false);
+  const [ttsError, setTtsError] = useState(false);
+  /** Progress: [current 1-based chunk index, total chunks] */
+  const [ttsProgress, setTtsProgress] = useState<[number, number]>([0, 0]);
   const speakingRef = useRef(false);
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearWatchdog = useCallback(() => {
+    if (watchdogRef.current) {
+      clearTimeout(watchdogRef.current);
+      watchdogRef.current = null;
+    }
+  }, []);
 
   const speak = useCallback(
     (text: string, onDone?: () => void) => {
@@ -34,22 +45,29 @@ export function useTTS(lang = "zh-CN") {
         return;
       }
 
+      clearWatchdog();
       window.speechSynthesis.cancel();
       const chunks = splitForTTS(text);
 
       setSpeaking(true);
+      setTtsError(false);
+      setTtsProgress([1, chunks.length]);
       speakingRef.current = true;
 
       const resetAfterSpeak = () => {
+        clearWatchdog();
         speakingRef.current = false;
         setSpeaking(false);
+        setTtsProgress([0, 0]);
         onDone?.();
       };
 
       // Watchdog: force-reset if TTS stalls
-      const watchdog = setTimeout(() => {
+      watchdogRef.current = setTimeout(() => {
         if (speakingRef.current) {
           window.speechSynthesis.cancel();
+          setTtsError(true);
+          setTimeout(() => setTtsError(false), 5000); // auto-dismiss
           resetAfterSpeak();
         }
       }, 30000);
@@ -57,29 +75,31 @@ export function useTTS(lang = "zh-CN") {
       let i = 0;
       const speakNext = () => {
         if (i >= chunks.length) {
-          clearTimeout(watchdog);
           resetAfterSpeak();
           return;
         }
         const u = new SpeechSynthesisUtterance(chunks[i]);
         u.lang = lang;
         i++;
+        setTtsProgress([i, chunks.length]);
         u.onend = () => speakNext();
         u.onerror = () => speakNext();
         window.speechSynthesis.speak(u);
       };
       speakNext();
     },
-    [lang]
+    [clearWatchdog, lang]
   );
 
   const cancel = useCallback(() => {
+    clearWatchdog();
     if ("speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
     speakingRef.current = false;
     setSpeaking(false);
-  }, []);
+    setTtsProgress([0, 0]);
+  }, [clearWatchdog]);
 
-  return { speak, cancel, speaking };
+  return { speak, cancel, speaking, ttsError, ttsProgress };
 }

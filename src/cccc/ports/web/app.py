@@ -122,6 +122,12 @@ class GroupTemplatePreviewRequest(BaseModel):
     by: str = Field(default="user")
 
 
+class NewsAgentConfigRequest(BaseModel):
+    group_id: str
+    interests: str = "AI,科技,编程,股市,美股,A股"
+    schedule: str = "8,11,14,17,20"
+
+
 WEB_MAX_FILE_MB = 20
 WEB_MAX_FILE_BYTES = WEB_MAX_FILE_MB * 1024 * 1024
 WEB_MAX_TEMPLATE_BYTES = 2 * 1024 * 1024  # safety bound for template uploads
@@ -588,6 +594,22 @@ def create_app() -> FastAPI:
                 "web": {"mode": web_mode, "read_only": read_only},
             },
         }
+
+    @app.get("/api/v1/server/lan-ip")
+    async def lan_ip() -> Dict[str, Any]:
+        """Return the server's LAN IP address for cross-device access."""
+        import socket
+
+        ip = None
+        try:
+            # UDP connect trick — finds the outbound interface IP without sending data
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+        except Exception:
+            pass
+        return {"ok": True, "result": {"lan_ip": ip}}
 
     @app.get("/api/v1/health")
     async def health() -> Dict[str, Any]:
@@ -2508,11 +2530,6 @@ def create_app() -> FastAPI:
 
     # ── News Agent endpoints ──
 
-    class NewsAgentConfigRequest(BaseModel):
-        group_id: str
-        interests: str = "AI,科技,编程"
-        schedule: str = "8,11,14,17,20"
-
     @app.get("/api/news/status")
     async def news_status(group_id: str = "") -> Dict[str, Any]:
         """Check news agent status for a group."""
@@ -2544,7 +2561,7 @@ def create_app() -> FastAPI:
                 "enabled": enabled,
                 "running": running,
                 "pid": pid,
-                "interests": news_cfg.get("interests", "AI,科技,编程"),
+                "interests": news_cfg.get("interests", "AI,科技,编程,股市,美股,A股"),
                 "schedule": news_cfg.get("schedule", "8,11,14,17,20"),
             },
         }
@@ -2590,7 +2607,11 @@ def create_app() -> FastAPI:
             env["CCCC_GROUP_ID"] = req.group_id
             env["CCCC_API"] = f"http://127.0.0.1:{env.get('CCCC_PORT', '8848')}/api/v1"
             env["NEWS_AGENT_PID_PATH"] = str(pid_path)
+            env["NEWS_AGENT_RUNTIME"] = "gemini"
             env["PYTHONUTF8"] = "1"
+            env["PYTHONIOENCODING"] = "utf-8"
+            # Remove CLAUDECODE to avoid nested-session rejection in claude CLI
+            env.pop("CLAUDECODE", None)
 
             log_file = log_path.open("a", encoding="utf-8")
             proc = sp.Popen(

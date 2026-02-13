@@ -846,6 +846,86 @@ def _proc_cccc_home(pid: int) -> Optional[Path]:
         return None
 
 
+def _find_group_module_pids(home: Path, *, module: str, group_id: str) -> set[int]:
+    """Best-effort scan for module processes with group_id under this CCCC_HOME."""
+    mod = str(module or "").strip()
+    gid = str(group_id or "").strip()
+    if not mod or not gid:
+        return set()
+
+    found: set[int] = set()
+
+    proc = Path("/proc")
+    if proc.exists():
+        for d in proc.iterdir():
+            if not d.is_dir() or not d.name.isdigit():
+                continue
+            try:
+                pid = int(d.name)
+            except Exception:
+                continue
+            try:
+                cmdline = (d / "cmdline").read_bytes().decode("utf-8", "ignore")
+            except Exception:
+                continue
+            if mod not in cmdline or gid not in cmdline:
+                continue
+            ph = _proc_cccc_home(pid)
+            if ph is None:
+                continue
+            try:
+                if ph != home.resolve():
+                    continue
+            except Exception:
+                continue
+            found.add(pid)
+        return found
+
+    if os.name != "nt":
+        return found
+
+    try:
+        ps = subprocess.run(
+            [
+                "powershell",
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$ErrorActionPreference='SilentlyContinue';"
+                "Get-CimInstance Win32_Process | "
+                "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            timeout=3.0,
+        )
+        if ps.returncode != 0:
+            return found
+        raw = str(ps.stdout or "").strip()
+        if not raw:
+            return found
+        doc = json.loads(raw)
+        rows = doc if isinstance(doc, list) else [doc]
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            cmdline = str(row.get("CommandLine") or "")
+            if not cmdline or mod not in cmdline or gid not in cmdline:
+                continue
+            try:
+                pid = int(row.get("ProcessId") or 0)
+            except Exception:
+                pid = 0
+            if pid > 0:
+                found.add(pid)
+    except Exception:
+        return found
+    return found
+
+
 def _stop_im_bridges_for_group(home: Path, *, group_id: str) -> int:
     """Stop IM bridge processes for a specific group_id. Returns number of pids signaled."""
     gid = str(group_id or "").strip()
@@ -1214,6 +1294,11 @@ def _stop_news_agent_for_group(home: Path, *, group_id: str) -> int:
             pid_path.unlink(missing_ok=True)
         except Exception:
             pass
+    for pid in _find_group_module_pids(home, module="cccc.ports.news", group_id=gid):
+        if pid in killed:
+            continue
+        _best_effort_killpg(pid, signal.SIGTERM)
+        killed.add(pid)
     return len(killed)
 
 
@@ -1231,7 +1316,7 @@ def _maybe_autostart_enabled_news_agents() -> None:
         news_cfg = group.doc.get("news_agent") if isinstance(group.doc.get("news_agent"), dict) else None
         if not isinstance(news_cfg, dict) or not coerce_bool(news_cfg.get("enabled"), default=False):
             continue
-        interests = str(news_cfg.get("interests") or "AI,科技,编程").strip()
+        interests = str(news_cfg.get("interests") or "AI,科技,编程,股市,美股,A股").strip()
         schedule = str(news_cfg.get("schedule") or "8,11,14,17,20").strip()
         pid_path = group.path / "state" / "news_agent.pid"
         if pid_path.exists():
@@ -1245,6 +1330,13 @@ def _maybe_autostart_enabled_news_agents() -> None:
                 pid_path.unlink(missing_ok=True)
             except Exception:
                 pass
+        orphan_news = [pid for pid in _find_group_module_pids(home, module="cccc.ports.news", group_id=gid) if _pid_alive(pid)]
+        if orphan_news:
+            try:
+                pid_path.write_text(str(orphan_news[0]), encoding="utf-8")
+            except Exception:
+                pass
+            continue
         state_dir = group.path / "state"
         try:
             state_dir.mkdir(parents=True, exist_ok=True)
@@ -1258,7 +1350,9 @@ def _maybe_autostart_enabled_news_agents() -> None:
                 env["CCCC_GROUP_ID"] = gid
                 env["CCCC_API"] = f"http://127.0.0.1:{env.get('CCCC_PORT', '8848')}/api/v1"
                 env["NEWS_AGENT_PID_PATH"] = str(pid_path)
+                env["NEWS_AGENT_RUNTIME"] = "gemini"
                 env["PYTHONUTF8"] = "1"
+                env["PYTHONIOENCODING"] = "utf-8"
                 proc = subprocess.Popen(
                     [sys.executable, "-m", "cccc.ports.news", gid, interests, schedule],
                     env=env,

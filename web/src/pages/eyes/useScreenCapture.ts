@@ -30,6 +30,7 @@ export function useScreenCapture(opts: UseScreenCaptureOptions) {
 
   const [capturing, setCapturing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [lastCaptureTs, setLastCaptureTs] = useState<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -100,6 +101,7 @@ export function useScreenCapture(opts: UseScreenCaptureOptions) {
       );
 
       await api.sendMessage(groupId, prompt, [], [file]);
+      setLastCaptureTs(Date.now());
     } catch (e) {
       console.error("[screen-capture] frame error:", e);
     }
@@ -161,5 +163,5 @@ export function useScreenCapture(opts: UseScreenCaptureOptions) {
     };
   }, [stop]);
 
-  return { capturing, error, start, stop };
+  return { capturing, error, start, stop, lastCaptureTs };
 }

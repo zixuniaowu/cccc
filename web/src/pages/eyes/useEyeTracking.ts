@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { clamp, IS_MOBILE } from "./constants";
 
 type Setter<T> = Dispatch<SetStateAction<T>>;
@@ -92,9 +92,9 @@ export function useEyeTracking(): UseEyeTrackingReturn {
   const [meshEnabled, setMeshEnabled] = useState(!IS_MOBILE);
   const [meshStatus, setMeshStatus] = useState<DetectorStatus>("idle");
   const [mirrorEnabled, setMirrorEnabled] = useState(true);
-  const [handEnabled, setHandEnabled] = useState(false);
+  const [handEnabled, setHandEnabled] = useState(!IS_MOBILE);
   const [handStatus, setHandStatus] = useState<DetectorStatus>("idle");
-  const [poseEnabled, setPoseEnabled] = useState(false);
+  const [poseEnabled, setPoseEnabled] = useState(!IS_MOBILE);
   const [poseStatus, setPoseStatus] = useState<DetectorStatus>("idle");
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -105,7 +105,81 @@ export function useEyeTracking(): UseEyeTrackingReturn {
   const poseLandmarkerRef = useRef<any>(null);
   const lastFrameRef = useRef<Float32Array | null>(null);
   const missCountRef = useRef(0);
-  const currentDelegateRef = useRef<"GPU" | "CPU">("GPU");
+  const handMissCountRef = useRef(0);
+  const poseMissCountRef = useRef(0);
+  const handDelegateRef = useRef<"GPU" | "CPU">("GPU");
+  const poseDelegateRef = useRef<"GPU" | "CPU">("GPU");
+  const lastFaceInferAtRef = useRef(0);
+  const lastFaceAtRef = useRef(0);
+  const lastFacePointsRef = useRef<Array<{ x: number; y: number; z: number }> | null>(null);
+  const lastHandInferAtRef = useRef(0);
+  const lastPoseInferAtRef = useRef(0);
+  const lastHandsRef = useRef<Array<Array<{ x: number; y: number }>> | null>(null);
+  const lastPoseRef = useRef<Array<{ x: number; y: number; visibility?: number }> | null>(null);
+  const lastHandsAtRef = useRef(0);
+  const lastPoseAtRef = useRef(0);
+
+  const createFaceLandmarker = useCallback(async (delegate: "GPU" | "CPU") => {
+    const vision = await import("@mediapipe/tasks-vision");
+    const { FilesetResolver, FaceLandmarker } = vision as any;
+    const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
+    const fileset = await FilesetResolver.forVisionTasks(
+      `${assetBase}/wasm`
+    );
+    return FaceLandmarker.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath: `${assetBase}/face_landmarker.task`,
+        delegate,
+      },
+      runningMode: "VIDEO",
+      numFaces: 1,
+      minFaceDetectionConfidence: 0.15,
+      minFacePresenceConfidence: 0.4,
+      minTrackingConfidence: 0.4,
+      outputFaceBlendshapes: false,
+      outputFacialTransformationMatrixes: false,
+    });
+  }, []);
+
+  const createHandLandmarker = useCallback(async (delegate: "GPU" | "CPU") => {
+    const vision = await import("@mediapipe/tasks-vision");
+    const { FilesetResolver, HandLandmarker } = vision as any;
+    const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
+    const fileset = await FilesetResolver.forVisionTasks(
+      `${assetBase}/wasm`
+    );
+    return HandLandmarker.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath: `${assetBase}/hand_landmarker.task`,
+        delegate,
+      },
+      runningMode: "VIDEO",
+      numHands: 2,
+      minHandDetectionConfidence: 0.3,
+      minHandPresenceConfidence: 0.3,
+      minTrackingConfidence: 0.3,
+    });
+  }, []);
+
+  const createPoseLandmarker = useCallback(async (delegate: "GPU" | "CPU") => {
+    const vision = await import("@mediapipe/tasks-vision");
+    const { FilesetResolver, PoseLandmarker } = vision as any;
+    const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
+    const fileset = await FilesetResolver.forVisionTasks(
+      `${assetBase}/wasm`
+    );
+    return PoseLandmarker.createFromOptions(fileset, {
+      baseOptions: {
+        modelAssetPath: `${assetBase}/pose_landmarker_lite.task`,
+        delegate,
+      },
+      runningMode: "VIDEO",
+      numPoses: 1,
+      minPoseDetectionConfidence: 0.3,
+      minPosePresenceConfidence: 0.3,
+      minTrackingConfidence: 0.3,
+    });
+  }, []);
 
   // Reset cam vector when follow off
   useEffect(() => {
@@ -194,73 +268,62 @@ export function useEyeTracking(): UseEyeTrackingReturn {
     const load = async (delegate: "GPU" | "CPU" = "GPU") => {
       try {
         setMeshStatus("loading");
-        const vision = await import("@mediapipe/tasks-vision");
-        const { FilesetResolver, FaceLandmarker } = vision as any;
-        const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
-        const fileset = await FilesetResolver.forVisionTasks(
-          `${assetBase}/wasm`
-        );
-        const landmarker = await FaceLandmarker.createFromOptions(fileset, {
-          baseOptions: {
-            modelAssetPath: `${assetBase}/face_landmarker.task`,
-          },
-          runningMode: "VIDEO",
-          numFaces: 1,
-          minFaceDetectionConfidence: 0.15,
-          minFacePresenceConfidence: 0.4,
-          minTrackingConfidence: 0.4,
-          outputFaceBlendshapes: false,
-          outputFacialTransformationMatrixes: false,
-          delegate,
-        });
+        const landmarker = await createFaceLandmarker(delegate);
         if (!cancelled) {
           landmarkerRef.current = landmarker;
-          currentDelegateRef.current = delegate;
           setMeshStatus("ready");
           missCountRef.current = 0;
         }
       } catch (e) {
+        if (!cancelled && delegate === "GPU") {
+          try {
+            await load("CPU");
+            return;
+          } catch {
+            // Fall through to error state below.
+          }
+        }
         if (!cancelled) {
           setMeshStatus("error");
           console.error("Face mesh load failed", e);
-          setMeshEnabled(false);
         }
       }
     };
     void load();
     return () => { cancelled = true; };
-  }, [meshEnabled]);
+  }, [meshEnabled, createFaceLandmarker]);
 
   // ── Lazy-load MediaPipe hand landmarker ──
   useEffect(() => {
-    if (!handEnabled) return;
-    if (handLandmarkerRef.current) return;
+    if (!handEnabled) {
+      setHandStatus("idle");
+      return;
+    }
+    if (handLandmarkerRef.current) {
+      setHandStatus("ready");
+      return;
+    }
     let cancelled = false;
 
-    const load = async () => {
+    const load = async (delegate: "GPU" | "CPU" = "GPU") => {
       try {
         setHandStatus("loading");
-        const vision = await import("@mediapipe/tasks-vision");
-        const { FilesetResolver, HandLandmarker } = vision as any;
-        const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
-        const fileset = await FilesetResolver.forVisionTasks(
-          `${assetBase}/wasm`
-        );
-        const landmarker = await HandLandmarker.createFromOptions(fileset, {
-          baseOptions: {
-            modelAssetPath: `${assetBase}/hand_landmarker.task`,
-          },
-          runningMode: "VIDEO",
-          numHands: 2,
-          minHandDetectionConfidence: 0.4,
-          minHandPresenceConfidence: 0.4,
-          minTrackingConfidence: 0.4,
-        });
+        const landmarker = await createHandLandmarker(delegate);
         if (!cancelled) {
           handLandmarkerRef.current = landmarker;
+          handDelegateRef.current = delegate;
+          handMissCountRef.current = 0;
           setHandStatus("ready");
         }
       } catch (e) {
+        if (!cancelled && delegate === "GPU") {
+          try {
+            await load("CPU");
+            return;
+          } catch {
+            // Fall through to error state below.
+          }
+        }
         if (!cancelled) {
           setHandStatus("error");
           console.error("Hand landmarker load failed", e);
@@ -269,38 +332,39 @@ export function useEyeTracking(): UseEyeTrackingReturn {
     };
     void load();
     return () => { cancelled = true; };
-  }, [handEnabled]);
+  }, [handEnabled, createHandLandmarker]);
 
   // ── Lazy-load MediaPipe pose landmarker ──
   useEffect(() => {
-    if (!poseEnabled) return;
-    if (poseLandmarkerRef.current) return;
+    if (!poseEnabled) {
+      setPoseStatus("idle");
+      return;
+    }
+    if (poseLandmarkerRef.current) {
+      setPoseStatus("ready");
+      return;
+    }
     let cancelled = false;
 
-    const load = async () => {
+    const load = async (delegate: "GPU" | "CPU" = "GPU") => {
       try {
         setPoseStatus("loading");
-        const vision = await import("@mediapipe/tasks-vision");
-        const { FilesetResolver, PoseLandmarker } = vision as any;
-        const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
-        const fileset = await FilesetResolver.forVisionTasks(
-          `${assetBase}/wasm`
-        );
-        const landmarker = await PoseLandmarker.createFromOptions(fileset, {
-          baseOptions: {
-            modelAssetPath: `${assetBase}/pose_landmarker_lite.task`,
-          },
-          runningMode: "VIDEO",
-          numPoses: 1,
-          minPoseDetectionConfidence: 0.4,
-          minPosePresenceConfidence: 0.4,
-          minTrackingConfidence: 0.4,
-        });
+        const landmarker = await createPoseLandmarker(delegate);
         if (!cancelled) {
           poseLandmarkerRef.current = landmarker;
+          poseDelegateRef.current = delegate;
+          poseMissCountRef.current = 0;
           setPoseStatus("ready");
         }
       } catch (e) {
+        if (!cancelled && delegate === "GPU") {
+          try {
+            await load("CPU");
+            return;
+          } catch {
+            // Fall through to error state below.
+          }
+        }
         if (!cancelled) {
           setPoseStatus("error");
           console.error("Pose landmarker load failed", e);
@@ -309,7 +373,7 @@ export function useEyeTracking(): UseEyeTrackingReturn {
     };
     void load();
     return () => { cancelled = true; };
-  }, [poseEnabled]);
+  }, [poseEnabled, createPoseLandmarker]);
 
   // ── Drawing helpers ──
   const drawFace = (
@@ -413,7 +477,7 @@ export function useEyeTracking(): UseEyeTrackingReturn {
     cw: number,
     ch: number
   ) => {
-    const VIS_THRESH = 0.5;
+    const VIS_THRESH = 0.35;
 
     // Connections
     ctx.strokeStyle = "rgba(251,191,36,0.7)"; // amber
@@ -442,7 +506,9 @@ export function useEyeTracking(): UseEyeTrackingReturn {
 
   // ── Tracking loop ──
   useEffect(() => {
-    if (!camFollow || !cameraReady || !videoRef.current) return;
+    if (!cameraReady || !videoRef.current) return;
+    const shouldTrack = camFollow || meshEnabled || handEnabled || poseEnabled;
+    if (!shouldTrack) return;
     const video = videoRef.current;
     const overlay = overlayRef.current;
     const w = 96;
@@ -460,6 +526,10 @@ export function useEyeTracking(): UseEyeTrackingReturn {
       }
     }
     let stopped = false;
+    const FACE_INTERVAL_MS = 30; // ~33 FPS
+    const HAND_INTERVAL_MS = 36; // ~28 FPS
+    const POSE_INTERVAL_MS = 54; // ~18 FPS
+    const DRAW_HOLD_MS = 220;
 
     const loop = async () => {
       if (stopped || !diffCtx) return;
@@ -502,108 +572,118 @@ export function useEyeTracking(): UseEyeTrackingReturn {
 
       // ── MediaPipe face landmarker ──
       if (meshEnabled && meshStatus === "ready" && landmarkerRef.current) {
-        try {
-          const result = landmarkerRef.current.detectForVideo(video, nowMs);
-          if (result?.faceLandmarks?.length) {
-            const ptsRaw = result.faceLandmarks[0] as Array<{
-              x: number; y: number; z: number;
-            }>;
-            const pts = mirrorEnabled
-              ? ptsRaw.map((p) => ({ x: 1 - p.x, y: p.y, z: p.z }))
-              : ptsRaw;
+        if (nowMs - lastFaceInferAtRef.current >= FACE_INTERVAL_MS) {
+          try {
+            lastFaceInferAtRef.current = nowMs;
+            const result = landmarkerRef.current.detectForVideo(video, nowMs);
+            if (result?.faceLandmarks?.length) {
+              const ptsRaw = result.faceLandmarks[0] as Array<{
+                x: number; y: number; z: number;
+              }>;
+              const pts = mirrorEnabled
+                ? ptsRaw.map((p) => ({ x: 1 - p.x, y: p.y, z: p.z }))
+                : ptsRaw;
 
-            // Head rotation via nose offset
-            const noseR = ptsRaw[1];
-            const leftEar = ptsRaw[234];
-            const rightEar = ptsRaw[454];
-            const foreheadPt = ptsRaw[10];
-            const chinPt = ptsRaw[152];
-            const faceCx = (leftEar.x + rightEar.x) / 2;
-            const faceCy = (foreheadPt.y + chinPt.y) / 2;
-            const faceW = Math.abs(rightEar.x - leftEar.x) || 0.15;
-            const faceH = Math.abs(chinPt.y - foreheadPt.y) || 0.15;
-            const yaw = clamp((-(noseR.x - faceCx) / faceW) * 5.0, -1, 1);
-            const pitch = clamp(((noseR.y - faceCy) / faceH) * 4.0, -1, 1);
-            setCamVec((prev) => ({
-              x: clamp(prev.x * 0.15 + yaw * 0.85, -1, 1),
-              y: clamp(prev.y * 0.15 + pitch * 0.85, -1, 1),
-            }));
-
-            if (ctxOv) {
-              drawFace(ctxOv, pts, vw, vh);
-            }
-
-            faceDetected = true;
-            missCountRef.current = 0;
-          } else {
-            // GPU fallback to CPU if too many misses
-            missCountRef.current += 1;
-            if (missCountRef.current > 15 && currentDelegateRef.current === "GPU") {
-              landmarkerRef.current = null;
-              setMeshStatus("loading");
-              try {
-                const vision = await import("@mediapipe/tasks-vision");
-                const { FilesetResolver, FaceLandmarker } = vision as any;
-                const assetBase = `${import.meta.env.BASE_URL}mediapipe`;
-                const fileset = await FilesetResolver.forVisionTasks(`${assetBase}/wasm`);
-                const lm = await FaceLandmarker.createFromOptions(fileset, {
-                  baseOptions: {
-                    modelAssetPath: `${assetBase}/face_landmarker.task`,
-                  },
-                  runningMode: "VIDEO",
-                  numFaces: 1,
-                  minFaceDetectionConfidence: 0.1,
-                  minFacePresenceConfidence: 0.2,
-                  minTrackingConfidence: 0.2,
-                  delegate: "CPU",
-                });
-                landmarkerRef.current = lm;
-                currentDelegateRef.current = "CPU";
-                setMeshStatus("ready");
-                missCountRef.current = 0;
-              } catch (e) {
-                setMeshStatus("error");
-                console.error("Face mesh CPU fallback failed", e);
+              // Head rotation via nose offset
+              const noseR = ptsRaw[1];
+              const leftEar = ptsRaw[234];
+              const rightEar = ptsRaw[454];
+              const foreheadPt = ptsRaw[10];
+              const chinPt = ptsRaw[152];
+              const faceCx = (leftEar.x + rightEar.x) / 2;
+              const faceCy = (foreheadPt.y + chinPt.y) / 2;
+              const faceW = Math.abs(rightEar.x - leftEar.x) || 0.15;
+              const faceH = Math.abs(chinPt.y - foreheadPt.y) || 0.15;
+              const yaw = clamp((-(noseR.x - faceCx) / faceW) * 5.0, -1, 1);
+              const pitch = clamp(((noseR.y - faceCy) / faceH) * 4.0, -1, 1);
+              if (camFollow) {
+                setCamVec((prev) => ({
+                  x: clamp(prev.x * 0.15 + yaw * 0.85, -1, 1),
+                  y: clamp(prev.y * 0.15 + pitch * 0.85, -1, 1),
+                }));
               }
+
+              lastFacePointsRef.current = pts;
+              lastFaceAtRef.current = nowMs;
+              faceDetected = true;
+              missCountRef.current = 0;
+            } else {
+              missCountRef.current += 1;
             }
+          } catch {
+            // fall through
           }
-        } catch {
-          // fall through
+        }
+        if (
+          ctxOv &&
+          lastFacePointsRef.current &&
+          nowMs - lastFaceAtRef.current <= DRAW_HOLD_MS
+        ) {
+          drawFace(ctxOv, lastFacePointsRef.current, vw, vh);
+          faceDetected = true;
         }
       }
 
       // ── MediaPipe hand landmarker ──
       if (handEnabled && handStatus === "ready" && handLandmarkerRef.current) {
-        try {
-          const result = handLandmarkerRef.current.detectForVideo(video, nowMs + 0.1);
-          if (result?.landmarks?.length && ctxOv) {
-            const allHands = (result.landmarks as Array<Array<{ x: number; y: number; z: number }>>).map(
-              (hand) => mirrorEnabled
-                ? hand.map((p) => ({ x: 1 - p.x, y: p.y }))
-                : hand.map((p) => ({ x: p.x, y: p.y }))
-            );
-            drawHands(ctxOv, allHands, vw, vh);
+        if (nowMs - lastHandInferAtRef.current >= HAND_INTERVAL_MS) {
+          try {
+            lastHandInferAtRef.current = nowMs;
+            const result = handLandmarkerRef.current.detectForVideo(video, nowMs);
+            if (result?.landmarks?.length) {
+              const allHands = (result.landmarks as Array<Array<{ x: number; y: number; z: number }>>).map(
+                (hand) => mirrorEnabled
+                  ? hand.map((p) => ({ x: 1 - p.x, y: p.y }))
+                  : hand.map((p) => ({ x: p.x, y: p.y }))
+              );
+              lastHandsRef.current = allHands;
+              lastHandsAtRef.current = nowMs;
+              handMissCountRef.current = 0;
+            } else {
+              handMissCountRef.current += 1;
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
+        }
+        if (
+          ctxOv &&
+          lastHandsRef.current &&
+          nowMs - lastHandsAtRef.current <= DRAW_HOLD_MS
+        ) {
+          drawHands(ctxOv, lastHandsRef.current, vw, vh);
         }
       }
 
       // ── MediaPipe pose landmarker ──
       if (poseEnabled && poseStatus === "ready" && poseLandmarkerRef.current) {
-        try {
-          const result = poseLandmarkerRef.current.detectForVideo(video, nowMs + 0.2);
-          if (result?.landmarks?.length && ctxOv) {
-            const ptsRaw = result.landmarks[0] as Array<{
-              x: number; y: number; z: number; visibility?: number;
-            }>;
-            const pts = mirrorEnabled
-              ? ptsRaw.map((p) => ({ x: 1 - p.x, y: p.y, visibility: p.visibility }))
-              : ptsRaw.map((p) => ({ x: p.x, y: p.y, visibility: p.visibility }));
-            drawPose(ctxOv, pts, vw, vh);
+        if (nowMs - lastPoseInferAtRef.current >= POSE_INTERVAL_MS) {
+          try {
+            lastPoseInferAtRef.current = nowMs;
+            const result = poseLandmarkerRef.current.detectForVideo(video, nowMs);
+            if (result?.landmarks?.length) {
+              const ptsRaw = result.landmarks[0] as Array<{
+                x: number; y: number; z: number; visibility?: number;
+              }>;
+              const pts = mirrorEnabled
+                ? ptsRaw.map((p) => ({ x: 1 - p.x, y: p.y, visibility: p.visibility }))
+                : ptsRaw.map((p) => ({ x: p.x, y: p.y, visibility: p.visibility }));
+              lastPoseRef.current = pts;
+              lastPoseAtRef.current = nowMs;
+              poseMissCountRef.current = 0;
+            } else {
+              poseMissCountRef.current += 1;
+            }
+          } catch {
+            // ignore
           }
-        } catch {
-          // ignore
+        }
+        if (
+          ctxOv &&
+          lastPoseRef.current &&
+          nowMs - lastPoseAtRef.current <= DRAW_HOLD_MS
+        ) {
+          drawPose(ctxOv, lastPoseRef.current, vw, vh);
         }
       }
 
@@ -616,10 +696,12 @@ export function useEyeTracking(): UseEyeTrackingReturn {
               const box = faces[0].boundingBox as DOMRect;
               const nx = clamp(((box.x + box.width / 2) / w) * 2 - 1, -1, 1);
               const ny = clamp(((box.y + box.height / 2) / h) * 2 - 1, -1, 1);
-              setCamVec((prev) => ({
-                x: clamp(prev.x * 0.6 + nx * 0.4, -1, 1),
-                y: clamp(prev.y * 0.6 + ny * 0.4, -1, 1),
-              }));
+              if (camFollow) {
+                setCamVec((prev) => ({
+                  x: clamp(prev.x * 0.6 + nx * 0.4, -1, 1),
+                  y: clamp(prev.y * 0.6 + ny * 0.4, -1, 1),
+                }));
+              }
               faceDetected = true;
 
               if (ctxOv) {
@@ -670,10 +752,12 @@ export function useEyeTracking(): UseEyeTrackingReturn {
             if (sum > 1200) {
               const nx = clamp((cx / sum / (w - 1)) * 2 - 1, -1, 1);
               const ny = clamp((cy / sum / (h - 1)) * 2 - 1, -1, 1);
-              setCamVec((prevVec) => ({
-                x: clamp(prevVec.x * 0.7 + nx * 0.3, -1, 1),
-                y: clamp(prevVec.y * 0.7 + ny * 0.3, -1, 1),
-              }));
+              if (camFollow) {
+                setCamVec((prevVec) => ({
+                  x: clamp(prevVec.x * 0.7 + nx * 0.3, -1, 1),
+                  y: clamp(prevVec.y * 0.7 + ny * 0.3, -1, 1),
+                }));
+              }
             }
           }
           lastFrameRef.current = gray;
@@ -685,7 +769,19 @@ export function useEyeTracking(): UseEyeTrackingReturn {
 
     requestAnimationFrame(loop);
     return () => { stopped = true; };
-  }, [camFollow, cameraReady, meshEnabled, meshStatus, mirrorEnabled, handEnabled, handStatus, poseEnabled, poseStatus]);
+  }, [
+    camFollow,
+    cameraReady,
+    meshEnabled,
+    meshStatus,
+    mirrorEnabled,
+    handEnabled,
+    handStatus,
+    poseEnabled,
+    poseStatus,
+    createHandLandmarker,
+    createPoseLandmarker,
+  ]);
 
   return {
     camVec,

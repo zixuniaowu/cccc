@@ -43,13 +43,19 @@ export default function TelepresenceEyes() {
   const [healthWarning, setHealthWarning] = useState(false);
   const [lastAgentReply, setLastAgentReply] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const skipAutoScrollRef = useRef(false);
   const [connectTimeoutReached, setConnectTimeoutReached] = useState(false);
 
   // ── Persistent preferences ──
   const { prefs, update: updatePrefs } = usePreferences();
   const voiceEnabled = prefs.voiceEnabled;
+  const showCameraPreview = prefs.showCameraPreview;
   const setVoiceEnabled = useCallback(
     (v: boolean) => updatePrefs({ voiceEnabled: v }),
+    [updatePrefs]
+  );
+  const setShowCameraPreview = useCallback(
+    (v: boolean) => updatePrefs({ showCameraPreview: v }),
     [updatePrefs]
   );
 
@@ -204,6 +210,34 @@ export default function TelepresenceEyes() {
     [group, pushLog]
   );
 
+  // ── TTS queue — prevents rapid messages from canceling each other ──
+  const ttsQueueRef = useRef<string[]>([]);
+  const ttsPlayingRef = useRef(false);
+
+  const playNextInQueue = useCallback(() => {
+    if (ttsQueueRef.current.length === 0) {
+      ttsPlayingRef.current = false;
+      setMood("idle");
+      return;
+    }
+    ttsPlayingRef.current = true;
+    setMood("speaking");
+    const next = ttsQueueRef.current.shift()!;
+    tts.speak(next, () => {
+      playNextInQueue();
+    });
+  }, [tts]);
+
+  const enqueueTTS = useCallback(
+    (text: string) => {
+      ttsQueueRef.current.push(text);
+      if (!ttsPlayingRef.current) {
+        playNextInQueue();
+      }
+    },
+    [playNextInQueue]
+  );
+
   // ── SSE messages (replaces 3.5s polling) ──
   const onAgentMessage = useCallback(
     (text: string, _eventId: string) => {
@@ -222,8 +256,15 @@ export default function TelepresenceEyes() {
       // Detect news briefing — always TTS regardless of voiceEnabled
       const isNews = NEWS_PREFIXES.some((p) => text.startsWith(p));
 
+      // Keep current viewport/focus during periodic news briefings.
+      if (isNews) {
+        skipAutoScrollRef.current = true;
+      }
+
       pushLog({ who: "agent", text, ts: Date.now() });
-      setLastAgentReply(text);
+      if (!isNews) {
+        setLastAgentReply(text);
+      }
       window.dispatchEvent(
         new CustomEvent("cccc:agent-reply", { detail: text })
       );
@@ -233,15 +274,12 @@ export default function TelepresenceEyes() {
       setHealthWarning(false);
 
       if (voiceEnabled || isNews) {
-        setMood("speaking");
-        tts.speak(text, () => {
-          setMood("idle");
-        });
+        enqueueTTS(text);
       } else {
         setMood("idle");
       }
     },
-    [voiceEnabled, tts, pushLog]
+    [voiceEnabled, enqueueTTS, pushLog]
   );
 
   const { connected: sseConnected, mode: sseMode, reconnecting: sseReconnecting } = useSSEMessages({
@@ -367,6 +405,10 @@ export default function TelepresenceEyes() {
 
   // ── Auto-scroll chat log on new messages ──
   useEffect(() => {
+    if (skipAutoScrollRef.current) {
+      skipAutoScrollRef.current = false;
+      return;
+    }
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [log]);
 
@@ -634,6 +676,17 @@ export default function TelepresenceEyes() {
               {tracking.mirrorEnabled ? "镜像视图" : "正常视图"}
             </button>
             <button
+              onClick={() => setShowCameraPreview(!showCameraPreview)}
+              className={classNames(
+                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                showCameraPreview
+                  ? "bg-slate-500/20 border-slate-400/60"
+                  : "bg-emerald-500/20 border-emerald-400/60"
+              )}
+            >
+              {showCameraPreview ? "隐藏摄像画面" : "显示摄像画面"}
+            </button>
+            <button
               onClick={() => tracking.setHandEnabled((v) => !v)}
               className={classNames(
                 "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
@@ -747,7 +800,7 @@ export default function TelepresenceEyes() {
         <section className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur">
           <div className="flex items-center justify-between gap-3 mb-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-white/90 flex-wrap">
-              摄像头 / 识别网格
+              {showCameraPreview ? "摄像头 / 识别网格" : "识别网格（摄像画面已隐藏）"}
               <span
                 className={classNames(
                   "px-2 py-0.5 rounded-full text-[11px] border",
@@ -766,8 +819,8 @@ export default function TelepresenceEyes() {
               若未显示视频，请确认摄像头权限。
             </div>
           </div>
-          <div className="camera-pair">
-            <div className="camera-frame">
+          <div className={classNames("camera-pair", !showCameraPreview && "camera-pair--mesh-only")}>
+            <div className={classNames("camera-frame", !showCameraPreview && "camera-frame--hidden")}>
               <video
                 ref={tracking.videoRef as React.RefObject<HTMLVideoElement>}
                 className="camera-video"
@@ -776,7 +829,7 @@ export default function TelepresenceEyes() {
                 autoPlay
               />
             </div>
-            <div className="mesh-frame">
+            <div className={classNames("mesh-frame", !showCameraPreview && "mesh-frame--solo")}>
               <canvas ref={tracking.overlayRef as React.RefObject<HTMLCanvasElement>} className="mesh-canvas" />
             </div>
           </div>

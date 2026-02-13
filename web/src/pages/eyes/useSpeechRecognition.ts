@@ -23,6 +23,7 @@ export function useSpeechRecognition({
   const [autoListen, setAutoListen] = useState(false);
   const [supported, setSupported] = useState(false);
   const [ready, setReady] = useState(false);
+  const [interimText, setInterimText] = useState("");
 
   const recognitionRef = useRef<any>(null);
   const listeningRef = useRef(false);
@@ -79,6 +80,7 @@ export function useSpeechRecognition({
     const commitInterimBuffer = () => {
       const text = interimBufferRef.current.trim();
       interimBufferRef.current = "";
+      setInterimText("");
       if (!text) return;
       const now = Date.now();
       if (
@@ -152,6 +154,7 @@ export function useSpeechRecognition({
           // Final result — send immediately
           clearTimeout(silenceTimerRef.current);
           interimBufferRef.current = "";
+          setInterimText("");
           const textNorm = transcript.trim();
           if (!textNorm) continue;
           const now = Date.now();
@@ -166,6 +169,7 @@ export function useSpeechRecognition({
         } else {
           // Interim result — accumulate and set 1.5s silence timer
           interimBufferRef.current = transcript;
+          setInterimText(transcript);
           clearTimeout(silenceTimerRef.current);
           silenceTimerRef.current = setTimeout(() => {
             commitInterimBuffer();
@@ -239,5 +243,6 @@ export function useSpeechRecognition({
     setAutoListen,
     toggle,
     startRecognition,
+    interimText,
   };
 }

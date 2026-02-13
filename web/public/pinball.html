@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>弹珠小游戏</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    font-family: 'Segoe UI', sans-serif;
+    overflow: hidden;
+  }
+  #gameContainer {
+    position: relative;
+  }
+  canvas {
+    border: 2px solid #e94560;
+    border-radius: 8px;
+    display: block;
+  }
+  #ui {
+    position: absolute;
+    top: 10px;
+    left: 0;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    padding: 0 16px;
+    color: #eee;
+    font-size: 18px;
+    pointer-events: none;
+  }
+  #overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.6);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    color: #fff;
+    border-radius: 8px;
+  }
+  #overlay h1 { font-size: 36px; margin-bottom: 12px; }
+  #overlay p { font-size: 18px; margin-bottom: 24px; }
+  #overlay button {
+    padding: 12px 32px;
+    font-size: 18px;
+    border: none;
+    border-radius: 6px;
+    background: #e94560;
+    color: #fff;
+    cursor: pointer;
+  }
+  #overlay button:hover { background: #c73650; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="gameContainer">
+  <canvas id="game"></canvas>
+  <div id="ui">
+    <span>分数: <b id="scoreText">0</b></span>
+    <span>生命: <b id="livesText">3</b></span>
+  </div>
+  <div id="overlay">
+    <h1 id="overlayTitle">弹珠小游戏</h1>
+    <p id="overlayMsg">用鼠标或方向键控制挡板，消除所有砖块！</p>
+    <button id="startBtn">开始游戏</button>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = 480, H = 640;
+canvas.width = W;
+canvas.height = H;
+
+const scoreText = document.getElementById('scoreText');
+const livesText = document.getElementById('livesText');
+const overlay = document.getElementById('overlay');
+const overlayTitle = document.getElementById('overlayTitle');
+const overlayMsg = document.getElementById('overlayMsg');
+const startBtn = document.getElementById('startBtn');
+
+// 挡板
+const paddle = { w: 80, h: 12, x: 0, y: H - 30, speed: 7 };
+paddle.x = (W - paddle.w) / 2;
+
+// 球
+const ball = { r: 7, x: W / 2, y: H - 45, dx: 4, dy: -4 };
+
+// 砖块
+const brickRows = 5, brickCols = 8;
+const brickW = 52, brickH = 20, brickPad = 4, brickTop = 50, brickLeft = 12;
+const brickColors = ['#e94560', '#f5a623', '#f7d354', '#44bd32', '#0abde3'];
+let bricks = [];
+
+let score = 0, lives = 3, running = false, animId = null;
+let keys = {};
+
+function initBricks() {
+  bricks = [];
+  for (let r = 0; r < brickRows; r++) {
+    bricks[r] = [];
+    for (let c = 0; c < brickCols; c++) {
+      bricks[r][c] = { alive: true };
+    }
+  }
+}
+
+function resetBall() {
+  ball.x = W / 2;
+  ball.y = H - 45;
+  ball.dx = 4 * (Math.random() > 0.5 ? 1 : -1);
+  ball.dy = -4;
+}
+
+function drawBall() {
+  ctx.beginPath();
+  ctx.arc(ball.x, ball.y, ball.r, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff';
+  ctx.fill();
+  ctx.closePath();
+}
+
+function drawPaddle() {
+  ctx.beginPath();
+  ctx.roundRect(paddle.x, paddle.y, paddle.w, paddle.h, 6);
+  ctx.fillStyle = '#e94560';
+  ctx.fill();
+  ctx.closePath();
+}
+
+function drawBricks() {
+  for (let r = 0; r < brickRows; r++) {
+    for (let c = 0; c < brickCols; c++) {
+      if (!bricks[r][c].alive) continue;
+      const x = brickLeft + c * (brickW + brickPad);
+      const y = brickTop + r * (brickH + brickPad);
+      ctx.beginPath();
+      ctx.roundRect(x, y, brickW, brickH, 4);
+      ctx.fillStyle = brickColors[r % brickColors.length];
+      ctx.fill();
+      ctx.closePath();
+    }
+  }
+}
+
+function collisionDetection() {
+  for (let r = 0; r < brickRows; r++) {
+    for (let c = 0; c < brickCols; c++) {
+      const b = bricks[r][c];
+      if (!b.alive) continue;
+      const bx = brickLeft + c * (brickW + brickPad);
+      const by = brickTop + r * (brickH + brickPad);
+      if (ball.x > bx && ball.x < bx + brickW && ball.y - ball.r < by + brickH && ball.y + ball.r > by) {
+        ball.dy = -ball.dy;
+        b.alive = false;
+        score++;
+        scoreText.textContent = score;
+        if (score === brickRows * brickCols) {
+          showOverlay('你赢了！', '最终分数: ' + score, '再来一局');
+          running = false;
+        }
+      }
+    }
+  }
+}
+
+function movePaddle() {
+  if (keys['ArrowLeft'] || keys['a']) paddle.x -= paddle.speed;
+  if (keys['ArrowRight'] || keys['d']) paddle.x += paddle.speed;
+  if (paddle.x < 0) paddle.x = 0;
+  if (paddle.x + paddle.w > W) paddle.x = W - paddle.w;
+}
+
+function update() {
+  ball.x += ball.dx;
+  ball.y += ball.dy;
+
+  // 左右墙
+  if (ball.x - ball.r < 0 || ball.x + ball.r > W) ball.dx = -ball.dx;
+  // 顶墙
+  if (ball.y - ball.r < 0) ball.dy = -ball.dy;
+
+  // 挡板碰撞
+  if (
+    ball.dy > 0 &&
+    ball.y + ball.r >= paddle.y &&
+    ball.y + ball.r <= paddle.y + paddle.h + 4 &&
+    ball.x >= paddle.x &&
+    ball.x <= paddle.x + paddle.w
+  ) {
+    ball.dy = -ball.dy;
+    // 根据击中位置改变水平速度
+    let hit = (ball.x - (paddle.x + paddle.w / 2)) / (paddle.w / 2);
+    ball.dx = hit * 5;
+  }
+
+  // 掉落
+  if (ball.y + ball.r > H) {
+    lives--;
+    livesText.textContent = lives;
+    if (lives <= 0) {
+      showOverlay('游戏结束', '最终分数: ' + score, '重新开始');
+      running = false;
+    } else {
+      resetBall();
+    }
+  }
+
+  collisionDetection();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBricks();
+  drawBall();
+  drawPaddle();
+}
+
+function loop() {
+  if (!running) return;
+  movePaddle();
+  update();
+  draw();
+  animId = requestAnimationFrame(loop);
+}
+
+function showOverlay(title, msg, btn) {
+  overlayTitle.textContent = title;
+  overlayMsg.textContent = msg;
+  startBtn.textContent = btn;
+  overlay.classList.remove('hidden');
+}
+
+function startGame() {
+  overlay.classList.add('hidden');
+  score = 0; lives = 3;
+  scoreText.textContent = score;
+  livesText.textContent = lives;
+  initBricks();
+  resetBall();
+  paddle.x = (W - paddle.w) / 2;
+  running = true;
+  loop();
+}
+
+// 键盘
+document.addEventListener('keydown', e => keys[e.key] = true);
+document.addEventListener('keyup', e => keys[e.key] = false);
+
+// 鼠标
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  paddle.x = mx - paddle.w / 2;
+  if (paddle.x < 0) paddle.x = 0;
+  if (paddle.x + paddle.w > W) paddle.x = W - paddle.w;
+});
+
+// 触屏
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const tx = e.touches[0].clientX - rect.left;
+  paddle.x = tx - paddle.w / 2;
+  if (paddle.x < 0) paddle.x = 0;
+  if (paddle.x + paddle.w > W) paddle.x = W - paddle.w;
+}, { passive: false });
+
+startBtn.addEventListener('click', startGame);
+
+// 初始画面
+initBricks();
+draw();
+</script>
+</body>
+</html>

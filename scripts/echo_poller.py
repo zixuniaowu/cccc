@@ -1,9 +1,10 @@
-import requests, time, sys, os, subprocess, tempfile, threading
+import json, requests, time, sys, os, subprocess, tempfile, threading
 from datetime import datetime, timezone
 
 GROUP_ID = os.environ.get("CCCC_GROUP_ID", "g_878b8bbd4747")
 ACTOR_ID = os.environ.get("CCCC_ACTOR_ID", "perA")
 API = os.environ.get("CCCC_API", "http://127.0.0.1:8848/api/v1")
+AGENT_RUNTIME = os.environ.get("CCCC_AGENT_RUNTIME", "gemini").strip().lower()
 
 SYSTEM_PROMPT = (
     "You are perA, a friendly AI companion in the CCCC voice agent system "
@@ -20,7 +21,7 @@ SYSTEM_PROMPT = (
 
 MAX_AGE_SEC = 60
 HISTORY_LIMIT = 6
-CLAUDE_TIMEOUT = 300  # increased for complex coding tasks
+AGENT_TIMEOUT = int(os.environ.get("CCCC_AGENT_TIMEOUT", "300"))  # seconds
 PROGRESS_INTERVAL = 30  # seconds before sending "still processing" update
 
 
@@ -115,8 +116,41 @@ def download_attachment(url: str, dest_path: str) -> bool:
         return False
 
 
+def _parse_gemini_response(raw: str) -> str:
+    """Extract response text from Gemini JSON output."""
+    text = (raw or "").strip()
+    if not text:
+        return ""
+
+    # Primary path: full JSON payload
+    try:
+        doc = json.loads(text)
+        if isinstance(doc, dict):
+            resp = str(doc.get("response") or "").strip()
+            if resp:
+                return resp
+    except Exception:
+        pass
+
+    # Fallback: try first JSON object in mixed output
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        try:
+            doc = json.loads(text[start : end + 1])
+            if isinstance(doc, dict):
+                resp = str(doc.get("response") or "").strip()
+                if resp:
+                    return resp
+        except Exception:
+            pass
+
+    # Last fallback: return raw
+    return text
+
+
 def generate_reply(prompt: str, reply_to: str | None = None, image_paths: list[str] | None = None) -> str:
-    """Call Claude CLI with conversation history via PowerShell pipe.
+    """Call configured agent CLI with conversation history via PowerShell pipe.
     Sends progress updates for long-running tasks."""
     prompt = prompt.strip()
     if not prompt:
@@ -133,7 +167,7 @@ def generate_reply(prompt: str, reply_to: str | None = None, image_paths: list[s
     env["PATH"] = npm_bin + os.pathsep + env.get("PATH", "")
     env["PYTHONUTF8"] = "1"
 
-    print(f"[poller] calling claude for: {prompt[:60]}", flush=True)
+    print(f"[poller] calling runtime={AGENT_RUNTIME} for: {prompt[:60]}", flush=True)
 
     # Progress timer: send "still processing" if Claude takes > PROGRESS_INTERVAL seconds
     progress_sent = threading.Event()
@@ -151,35 +185,44 @@ def generate_reply(prompt: str, reply_to: str | None = None, image_paths: list[s
         f.write(full_prompt)
         tmp_path = f.name
     try:
-        # Pass prompt as CLI arg (not pipe) so stdin stays free for tool use
-        # If images are provided, add them as file args
-        image_args = ""
-        if image_paths:
-            for img_path in image_paths:
-                # Claude CLI supports image files via positional args
-                image_args += f" '{img_path}'"
-        ps_cmd = [
-            "powershell", "-NoLogo", "-NonInteractive", "-Command",
-            f"$p = Get-Content -Raw -Encoding UTF8 '{tmp_path}'; claude -p $p{image_args} --no-session-persistence --dangerously-skip-permissions",
-        ]
+        # Build runtime-specific command (keep stdin free for tool use).
+        # NOTE: Gemini image attachment CLI behavior may vary; currently we only pass text prompt.
+        if AGENT_RUNTIME == "gemini":
+            ps_cmd = [
+                "powershell", "-NoLogo", "-NonInteractive", "-Command",
+                f"$p = Get-Content -Raw -Encoding UTF8 '{tmp_path}'; gemini -p $p --yolo --output-format json",
+            ]
+        else:
+            image_args = ""
+            if image_paths:
+                for img_path in image_paths:
+                    image_args += f" '{img_path}'"
+            ps_cmd = [
+                "powershell", "-NoLogo", "-NonInteractive", "-Command",
+                f"$p = Get-Content -Raw -Encoding UTF8 '{tmp_path}'; claude -p $p{image_args} --no-session-persistence --dangerously-skip-permissions",
+            ]
         res = subprocess.run(
             ps_cmd,
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=CLAUDE_TIMEOUT,
+            timeout=AGENT_TIMEOUT,
             env=env,
         )
         if res.returncode == 0 and res.stdout and res.stdout.strip():
+            if AGENT_RUNTIME == "gemini":
+                parsed = _parse_gemini_response(res.stdout)
+                print(f"[poller] gemini replied: {parsed[:80]}", flush=True)
+                return parsed
             print(f"[poller] claude replied: {res.stdout.strip()[:80]}", flush=True)
             return res.stdout.strip()
         if res.stderr and res.stderr.strip():
-            print(f"[poller] claude stderr: {res.stderr.strip()[:200]}", file=sys.stderr, flush=True)
+            print(f"[poller] {AGENT_RUNTIME} stderr: {res.stderr.strip()[:200]}", file=sys.stderr, flush=True)
     except subprocess.TimeoutExpired:
-        print(f"[poller] claude timeout ({CLAUDE_TIMEOUT}s)", file=sys.stderr, flush=True)
+        print(f"[poller] {AGENT_RUNTIME} timeout ({AGENT_TIMEOUT}s)", file=sys.stderr, flush=True)
     except Exception as e:
-        print(f"[poller] claude error: {e}", file=sys.stderr, flush=True)
+        print(f"[poller] {AGENT_RUNTIME} error: {e}", file=sys.stderr, flush=True)
     finally:
         progress_timer.cancel()
         try:
@@ -217,7 +260,10 @@ def mark_read(event_id):
 
 
 def main():
-    print(f"[poller] started for actor={ACTOR_ID} group={GROUP_ID}", flush=True)
+    print(
+        f"[poller] started for actor={ACTOR_ID} group={GROUP_ID} runtime={AGENT_RUNTIME}",
+        flush=True,
+    )
     while True:
         msgs = fetch_inbox()
         actionable = []

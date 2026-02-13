@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import type { Mood } from "./types";
-import { MOOD_COLOR, clamp } from "./constants";
+import { MOOD_COLOR, buildShareUrl, RIGHT_EYE_PARALLAX } from "./constants";
 import { EyeCanvas } from "./EyeCanvas";
 import { classNames } from "../../utils/classNames";
 
@@ -19,6 +20,9 @@ interface MobileCompanionLayoutProps {
   autoListen: boolean;
   onSetAutoListen: (v: boolean | ((prev: boolean) => boolean)) => void;
   speechSupported: boolean;
+  onRequestTilt?: () => void;
+  interimText?: string;
+  lastAgentReply?: string;
 }
 
 /**
@@ -45,9 +49,21 @@ export function MobileCompanionLayout(props: MobileCompanionLayoutProps) {
     autoListen,
     onSetAutoListen,
     speechSupported,
+    onRequestTilt,
+    interimText,
+    lastAgentReply,
   } = props;
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [visibleReply, setVisibleReply] = useState("");
+
+  // 2.6: Show agent reply text for 3 seconds then fade out
+  useEffect(() => {
+    if (!lastAgentReply) return;
+    setVisibleReply(lastAgentReply);
+    const timer = setTimeout(() => setVisibleReply(""), 4000);
+    return () => clearTimeout(timer);
+  }, [lastAgentReply]);
   const [iosUnlocked, setIosUnlocked] = useState(false);
   const touchStartRef = useRef<{ y: number; ts: number } | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -99,8 +115,10 @@ export function MobileCompanionLayout(props: MobileCompanionLayoutProps) {
       const ac = new AudioContext();
       ac.resume().then(() => ac.close());
     } catch {}
+    // Request gyroscope permission (iOS 13+ requires user gesture)
+    onRequestTilt?.();
     setIosUnlocked(true);
-  }, [iosUnlocked]);
+  }, [iosUnlocked, onRequestTilt]);
 
   // ── Tap = toggle listening, Swipe up = settings ──
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -141,9 +159,7 @@ export function MobileCompanionLayout(props: MobileCompanionLayoutProps) {
   };
 
   // Share URL for connecting from another device
-  const shareUrl = groupId
-    ? `${window.location.origin}${window.location.pathname}?mode=eyes&group=${groupId}`
-    : "";
+  const shareUrl = groupId ? buildShareUrl(groupId) : "";
 
   return (
     <div
@@ -171,7 +187,7 @@ export function MobileCompanionLayout(props: MobileCompanionLayoutProps) {
           <EyeCanvas
             mood={eyeMood}
             blink={blink}
-            pupilOffset={{ x: pupilOffset.x * 0.9, y: pupilOffset.y }}
+            pupilOffset={{ x: pupilOffset.x * RIGHT_EYE_PARALLAX, y: pupilOffset.y }}
             ambient={ambient}
           />
         </div>
@@ -187,35 +203,59 @@ export function MobileCompanionLayout(props: MobileCompanionLayoutProps) {
         </div>
       )}
 
+      {/* 1.1: Interim speech text bubble */}
+      {interimText && (
+        <div className="px-6 pb-2 text-center animate-bubble-in">
+          <span className="inline-block px-4 py-2 rounded-2xl bg-white/10 text-white/70 text-sm backdrop-blur">
+            {interimText}
+          </span>
+        </div>
+      )}
+
+      {/* 2.6: Agent reply text (fades after 4s) */}
+      {visibleReply && (
+        <div className="px-6 pb-2 text-center animate-bubble-in">
+          <span className="inline-block px-4 py-2 rounded-2xl bg-white/10 text-white/80 text-sm backdrop-blur max-w-[90vw] line-clamp-3">
+            {visibleReply}
+          </span>
+        </div>
+      )}
+
       {/* Bottom status bar */}
-      <div className="flex items-center justify-center gap-3 pb-4 pt-2 safe-area-inset-bottom">
-        <span
-          className="px-3 py-1 rounded-full text-xs font-medium"
-          style={{
-            backgroundColor: `${accent}22`,
-            color: accent,
-            border: `1px solid ${accent}44`,
-          }}
-        >
-          {eyeMood === "listening"
-            ? "聆听中"
-            : eyeMood === "thinking"
-              ? "思考中"
-              : eyeMood === "speaking"
-                ? "播报中"
-                : eyeMood === "error"
-                  ? "错误"
-                  : "待命"}
-        </span>
-        <span
-          className={classNames(
-            "w-2 h-2 rounded-full",
-            sseConnected ? "bg-emerald-400" : "bg-red-400"
-          )}
-          title={sseConnected ? "SSE 已连" : "SSE 断开"}
-        />
+      <div className="flex flex-col items-center gap-1 pb-4 pt-2 safe-area-inset-bottom">
+        {/* 1.4: Swipe-up hint arrow */}
+        {!settingsOpen && (
+          <div className="text-white/20 text-xs animate-bounce mb-1">↑ 上滑设置</div>
+        )}
+        <div className="flex items-center gap-3">
+          <span
+            className="px-3 py-1 rounded-full text-xs font-medium transition-colors duration-500"
+            style={{
+              backgroundColor: `${accent}22`,
+              color: accent,
+              border: `1px solid ${accent}44`,
+            }}
+          >
+            {eyeMood === "listening"
+              ? "聆听中"
+              : eyeMood === "thinking"
+                ? "思考中"
+                : eyeMood === "speaking"
+                  ? "播报中"
+                  : eyeMood === "error"
+                    ? "错误"
+                    : "待命"}
+          </span>
+          <span
+            className={classNames(
+              "w-2 h-2 rounded-full",
+              sseConnected ? "bg-emerald-400" : "bg-red-400"
+            )}
+            title={sseConnected ? "SSE 已连" : "SSE 断开"}
+          />
+        </div>
         <span className="text-white/30 text-[10px]">
-          {groupTitle || "未连接"} · 点击说话 · 上滑设置
+          {groupTitle || "未连接"} · 点击说话
         </span>
       </div>
 
@@ -227,7 +267,7 @@ export function MobileCompanionLayout(props: MobileCompanionLayoutProps) {
         )}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="bg-white/10 backdrop-blur-xl border-t border-white/15 rounded-t-2xl px-6 py-5 safe-area-inset-bottom">
+        <div className="bg-white/10 backdrop-blur-xl border-t border-white/15 rounded-t-2xl px-6 py-5 safe-area-inset-bottom max-h-[70vh] overflow-y-auto">
           {/* Drag handle */}
           <div className="w-10 h-1 rounded-full bg-white/30 mx-auto mb-5" />
 
@@ -244,18 +284,23 @@ export function MobileCompanionLayout(props: MobileCompanionLayoutProps) {
               onToggle={() => onSetVoiceEnabled(!voiceEnabled)}
             />
 
-            {/* Group info */}
+            {/* Group info + QR */}
             {groupId && (
               <div className="pt-2 border-t border-white/10">
-                <div className="text-white/50 text-xs mb-1">工作组 ID</div>
-                <div className="text-white/80 text-sm font-mono break-all">
+                <div className="text-white/50 text-xs mb-2">工作组</div>
+                <div className="text-white/80 text-sm font-mono break-all mb-3">
                   {groupId}
                 </div>
-                <div className="text-white/50 text-xs mt-2 mb-1">
-                  共享链接（桌面扫码或复制）
-                </div>
-                <div className="text-cyan-300/80 text-xs font-mono break-all">
-                  {shareUrl}
+                <div className="flex items-center gap-4">
+                  <div className="bg-white rounded-lg p-2 flex-shrink-0">
+                    <QRCodeSVG value={shareUrl} size={80} level="M" />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <div className="text-white/50 text-xs">共享链接</div>
+                    <div className="text-cyan-300/80 text-[10px] font-mono break-all">
+                      {shareUrl}
+                    </div>
+                  </div>
                 </div>
               </div>
             )}

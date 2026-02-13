@@ -5,6 +5,8 @@ const STORAGE_KEY = "cccc-eyes-prefs";
 export interface EyesPreferences {
   voiceEnabled: boolean;
   autoListen: boolean;
+  /** Show raw camera preview panel in desktop camera section */
+  showCameraPreview: boolean;
   lastGroupId: string | null;
   screenWatch: boolean;
   /** Screen capture interval in seconds */
@@ -19,6 +21,7 @@ const DEFAULT_SCREEN_PROMPT =
 const DEFAULTS: EyesPreferences = {
   voiceEnabled: true,
   autoListen: false,
+  showCameraPreview: true,
   lastGroupId: null,
   screenWatch: false,
   screenInterval: 30,

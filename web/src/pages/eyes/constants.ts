@@ -11,6 +11,9 @@ export const MOOD_COLOR: Record<Mood, string> = {
 export const clamp = (v: number, min: number, max: number) =>
   Math.min(Math.max(v, min), max);
 
+/** Parallax factor for the right eye (slight offset for depth effect) */
+export const RIGHT_EYE_PARALLAX = 0.9;
+
 export const IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(
   navigator.userAgent || ""
 );
@@ -22,4 +25,38 @@ export const THINKING_PREFIXES = ["正在思考", "仍在处理"];
 export const SCREEN_CAPTURE_NOOP = "无特别发现";
 
 /** News briefing prefixes — auto-TTS even if user isn't actively chatting */
-export const NEWS_PREFIXES = ["[新闻简报]", "[早间简报]"];
+export const NEWS_PREFIXES = ["[新闻简报]", "[早间简报]", "[股市简报]", "[AI新技术说明]"];
+
+/** Whether the page is opened via localhost */
+export const IS_LOCALHOST =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1");
+
+const LAN_IP_KEY = "cccc_lan_ip";
+
+/** Get the saved LAN IP (defaults to empty) */
+export function getLanIp(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem(LAN_IP_KEY) || "";
+}
+
+/** Persist LAN IP to localStorage */
+export function setLanIp(ip: string): void {
+  localStorage.setItem(LAN_IP_KEY, ip.trim());
+}
+
+/**
+ * Build a share URL that works across devices on the same LAN.
+ * When the page is opened via localhost, replaces hostname with saved LAN IP.
+ */
+export function buildShareUrl(groupId: string): string {
+  const { protocol, port, pathname } = window.location;
+  if (!IS_LOCALHOST) {
+    return `${window.location.origin}${pathname}?group=${groupId}`;
+  }
+  const lanIp = getLanIp();
+  if (!lanIp) return ""; // No LAN IP configured yet
+  const host = lanIp + (port ? `:${port}` : "");
+  return `${protocol}//${host}${pathname}?group=${groupId}`;
+}

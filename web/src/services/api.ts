@@ -156,6 +156,10 @@ export async function fetchPing() {
   );
 }
 
+export async function fetchLanIp() {
+  return apiJson<{ lan_ip: string | null }>("/api/v1/server/lan-ip");
+}
+
 export async function fetchGroup(groupId: string) {
   return apiJson<{ group: GroupDoc }>(`/api/v1/groups/${encodeURIComponent(groupId)}`);
 }
@@ -712,7 +716,7 @@ export async function fetchNewsStatus(groupId: string) {
   return apiJson<NewsAgentStatus>(`/api/news/status?group_id=${encodeURIComponent(groupId)}`);
 }
 
-export async function startNewsAgent(groupId: string, interests = "AI,科技,编程", schedule = "8,11,14,17,20") {
+export async function startNewsAgent(groupId: string, interests = "AI,科技,编程,股市,美股,A股", schedule = "8,11,14,17,20") {
   return apiJson<{ group_id: string; pid: number }>("/api/news/start", {
     method: "POST",
     body: JSON.stringify({ group_id: groupId, interests, schedule }),
