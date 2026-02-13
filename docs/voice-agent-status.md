@@ -1,6 +1,6 @@
 # CCCC 语音 Agent 系统状态
 
-> 最后更新: 2026-02-11
+> 最后更新: 2026-02-14
 
 ## 项目概述
 
@@ -48,6 +48,75 @@
   - UTF-8 编码兼容 (Windows cp932 问题已解决)
   - 工具调用正常 (文件读写、命令执行)
 - [x] **perA 能写代码** — 已验证可以创建 `web/public/pinball.html` 弹珠游戏
+
+## 当前技术栈（2026-02-14 增量整理）
+
+> 这一节是对 2026-02-11 版本报告的补充，聚焦“现在正在使用”的实现与依赖。
+
+### 1) 前端（Eyes 页面）
+
+| 类别 | 当前实现 | 关键位置 |
+|------|----------|----------|
+| UI 框架 | React 18 + TypeScript + Vite 6 | `web/package.json` |
+| 状态管理 | React Hooks + `zustand`（全局状态场景） | `web/package.json` |
+| 样式 | CSS + Tailwind 工具链（构建） | `web/package.json`, `web/src/index.css` |
+| 实时消息 | SSE (`EventSource`) + 失败后轮询回退（3.5s） | `web/src/pages/eyes/useSSEMessages.ts` |
+| 语音识别 | `SpeechRecognition/webkitSpeechRecognition`（continuous + interim + watchdog） | `web/src/pages/eyes/useSpeechRecognition.ts` |
+| 语音播报 | `speechSynthesis`（分段播报 + watchdog + 可主动 cancel） | `web/src/pages/eyes/useTTS.ts` |
+| 视觉识别 | MediaPipe Tasks Vision：Face + Hand + Pose（GPU/CPU 回退） | `web/src/pages/eyes/useEyeTracking.ts` |
+| 屏幕观察 | `getDisplayMedia` 截屏 + JPEG 上传给 Agent 分析 | `web/src/pages/eyes/useScreenCapture.ts` |
+| 本地偏好 | `localStorage` 保存 voice/autoListen/cameraPreview/截屏参数 | `web/src/pages/eyes/usePreferences.ts` |
+
+### 2) 视觉识别模型与资源
+
+| 资源 | 用途 | 路径 |
+|------|------|------|
+| `face_landmarker.task` | 脸部 mesh 与视线估计输入 | `web/public/mediapipe/face_landmarker.task` |
+| `hand_landmarker.task` | 手部关键点识别（最多 2 手） | `web/public/mediapipe/hand_landmarker.task` |
+| `pose_landmarker_lite.task` | 身体姿态关键点识别 | `web/public/mediapipe/pose_landmarker_lite.task` |
+| `vision_wasm*.{js,wasm}` | MediaPipe wasm runtime | `web/public/mediapipe/wasm/` |
+
+### 3) 后端与通信层
+
+| 类别 | 当前实现 | 关键位置 |
+|------|----------|----------|
+| Web/API | FastAPI + Uvicorn + Pydantic | `pyproject.toml`, `src/cccc/ports/web/app.py` |
+| 协作内核 | CCCC Daemon（group / inbox / ledger / actor 路由） | `src/cccc/daemon/server.py` |
+| 消息推送 | `/api/v1/groups/{gid}/ledger/stream`（SSE） | `src/cccc/ports/web/app.py` |
+| 新闻控制 API | `/api/news/status` `/api/news/start` `/api/news/stop` | `src/cccc/ports/web/app.py` |
+
+### 4) 新闻播报链路（现状）
+
+| 项目 | 当前实现 | 关键位置 |
+|------|----------|----------|
+| Agent 入口 | `python -m cccc.ports.news` | `src/cccc/ports/news/__main__.py` |
+| LLM 运行时 | 默认 `gemini`，可切 `claude` | `src/cccc/ports/news/agent.py` |
+| 内容结构 | 三栏目 JSON：`news` / `market` / `ai_tech` | `src/cccc/ports/news/agent.py` |
+| 播报前缀 | `[新闻简报]` `[股市简报]` `[AI新技术说明]` | `src/cccc/ports/news/agent.py`, `web/src/pages/eyes/constants.ts` |
+| 默认兴趣词 | `AI,科技,编程,股市,美股,A股` | `src/cccc/ports/news/__main__.py`, `web/src/services/api.ts` |
+
+### 5) 最近稳定性修复（已落地）
+
+- [x] `停止新闻播报` 增强：不再只依赖 `news_agent.pid`，会扫描并终止孤儿 `cccc.ports.news` 进程（Windows/Linux 都有兜底逻辑）。
+  - 位置: `src/cccc/ports/web/app.py`
+- [x] Eyes 页点击“停止新闻播报”时，立即清空并取消 TTS 队列，避免“已经停了但还在念”。
+  - 位置: `web/src/pages/eyes/index.tsx`
+- [x] 新闻播报期间保持当前焦点/视图，不强制跳转到新文字区域。
+  - 位置: `web/src/pages/eyes/index.tsx`
+
+### 6) 当前 Eyes 源码结构（替代旧版单文件说明）
+
+| 文件 | 作用 |
+|------|------|
+| `web/src/pages/eyes/index.tsx` | Eyes 页面主编排（消息、TTS、新闻开关、布局） |
+| `web/src/pages/eyes/useEyeTracking.ts` | 摄像头 + Face/Hand/Pose 识别与覆盖层绘制 |
+| `web/src/pages/eyes/useSpeechRecognition.ts` | 语音识别生命周期与自动重启 |
+| `web/src/pages/eyes/useTTS.ts` | TTS 分段播报、进度、取消 |
+| `web/src/pages/eyes/useSSEMessages.ts` | SSE 监听与轮询降级 |
+| `web/src/pages/eyes/useScreenCapture.ts` | 屏幕截图上传给 Agent 分析 |
+| `web/src/pages/eyes/usePreferences.ts` | 本地偏好持久化 |
+| `web/src/pages/eyes/MobileCompanionLayout.tsx` | 移动端伴随布局 |
+| `web/src/services/api.ts` | Eyes 相关 API 封装（含 news start/stop/status） |
 
 ### 关键参数
 
@@ -121,14 +190,18 @@ requests.post('http://127.0.0.1:8848/api/v1/groups/g_878b8bbd4747/send',
 
 | 文件 | 说明 | 状态 |
 |------|------|------|
-| `scripts/echo_poller.py` | Agent 轮询桥接脚本 | 核心，未提交 |
-| `scripts/echo_agent.py` | 简单 echo 回复脚本 (旧) | 已弃用 |
-| `scripts/send_test.py` | 发送测试消息的辅助脚本 | 工具 |
-| `web/src/pages/TelepresenceEyes.tsx` | Eyes 语音交互页面 | 核心，未提交 |
-| `web/src/index.css` | 眼睛动画样式 | 修改，未提交 |
-| `web/src/main.tsx` | 入口，Eyes 路由判断 | 修改，未提交 |
-| `web/public/pinball.html` | perA 创建的弹珠游戏 | Agent 产出 |
-| `web/public/mediapipe/` | MediaPipe 面部追踪模型 | 依赖资源 |
+| `src/cccc/ports/web/app.py` | Web API、SSE、news start/stop/status | 核心 |
+| `src/cccc/ports/news/agent.py` | 新闻抓取与分栏目播报逻辑 | 核心 |
+| `src/cccc/ports/news/__main__.py` | 新闻 Agent 模块入口 | 入口 |
+| `web/src/pages/eyes/index.tsx` | Eyes 页面主编排 | 核心 |
+| `web/src/pages/eyes/useEyeTracking.ts` | Face/Hand/Pose 识别与网格渲染 | 核心 |
+| `web/src/pages/eyes/useSpeechRecognition.ts` | 浏览器语音识别控制 | 核心 |
+| `web/src/pages/eyes/useTTS.ts` | 分段 TTS 与播报取消 | 核心 |
+| `web/src/pages/eyes/useSSEMessages.ts` | SSE + 轮询降级 | 核心 |
+| `web/src/pages/eyes/useScreenCapture.ts` | 桌面截图上传分析 | 功能模块 |
+| `web/src/services/api.ts` | 前端 API 封装（含新闻接口） | 基础模块 |
+| `web/public/pinball.html` | Agent 产出示例页面 | 示例 |
+| `web/public/mediapipe/` | MediaPipe task 与 wasm 资源 | 依赖资源 |
 
 ## TODO
 
@@ -139,7 +212,6 @@ requests.post('http://127.0.0.1:8848/api/v1/groups/g_878b8bbd4747/send',
 - [ ] **Agent 响应速度** — 编程任务需要 60-120s，考虑：
   - 先发一条"正在处理..."的即时回复
   - 完成后再发实际结果
-- [ ] **提交代码** — 当前所有改动都未 git commit
 
 ### 中优先级
 
