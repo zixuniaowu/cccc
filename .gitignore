@@ -21,6 +21,7 @@ uv.lock
 *.egg-info/
 
 # Web UI build/cache artifacts
+/node_modules/
 */node_modules/
 /web/.vite/
 /web/dist/
@@ -67,4 +68,6 @@ web/public/mediapipe/
 
 # Misc artifacts
 build.log
+*.log
 nul
+C*Userszixundevccccactors.json

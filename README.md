@@ -1,109 +1,194 @@
-<div align="center">
+# AI 语音伴侣 - Telepresence Eyes
 
-# AI 语音伴侣 — Telepresence Eyes
+一对会动的眼睛，随时跟你对话。  
+支持桌面端与手机端协同，具备语音对话、摄像头跟随、桌面观察、新闻播报等能力。
 
-**一对会动的眼睛，随时跟你对话。**<br>
-手机上随身携带，桌面上观察你的工作，自动播报新闻。
+![AI Eyes](docs/screenshots/eyes-closeup.png)
 
-<br>
+## 项目定位
 
-<img src="docs/screenshots/eyes-closeup.png" alt="AI Eyes" width="600">
+本项目基于 `CCCC` 多智能体协作内核，提供一个浏览器端 AI 伴侣界面：
 
-<br><br>
+- 桌面端：完整控制台（语音、摄像头、新闻、桌面观察）
+- 手机端：全屏陪伴模式（轻交互、可随身携带）
+- 同工作组：桌面和手机共享会话上下文
 
-`feat/voice-agent` · 26 files · +3,818 / −1,331 lines
+## 核心功能
 
-</div>
+- 语音对话：浏览器语音识别 + TTS 语音播报
+- 眼睛动画：Canvas2D 实时渲染（虹膜、瞳孔、眨眼、情绪状态）
+- 面部跟随：摄像头追踪视线方向
+- 桌面观察：定时截图并交由 AI 分析
+- 新闻播报：按主题定时抓取并生成摘要语音
 
----
+## 界面预览
 
-## 这是什么？
+![Desktop View](docs/screenshots/desktop-viewport.png)
+![Desktop QR](docs/screenshots/desktop-qr.png)
+![GitHub Preview](docs/github-preview.png)
+![Report Preview](docs/report-preview.png)
 
-一个跑在浏览器里的 AI 伴侣界面。两只逼真的眼睛会跟随你的鼠标、面部、手机倾斜而转动，能听你说话、用语音回答、观察你的桌面内容、定时播报新闻。
+## 运行要求
 
-<table>
-<tr>
-<td width="65%">
-<img src="docs/screenshots/desktop-viewport.png" alt="桌面端" width="100%">
-<p align="center"><b>桌面端</b> — 完整控制面板</p>
-</td>
-<td width="35%">
-<img src="docs/screenshots/mobile-companion.png" alt="手机端" width="100%">
-<p align="center"><b>手机端</b> — 全屏伴侣模式</p>
-</td>
-</tr>
-</table>
+- Python `3.11`（最低 `3.9`）
+- Node.js `18+`（建议 `20+`）
+- npm `9+`
+- Windows / macOS / Linux
+- 浏览器需允许麦克风与摄像头权限
 
----
+## 快速开始（Windows）
 
-## 能做什么？
+1. 克隆项目
 
-| | 功能 | 说明 |
-|---|---|---|
-| 🎤 | **语音对话** | 对着麦克风说话，AI 实时听懂后语音回答。支持自动聆听模式 |
-| 👀 | **逼真眼睛** | Canvas2D 逐帧渲染：虹膜纤维、瞳孔缩放、微跳视、自然眨眼，5 种情绪表情 |
-| 📱 | **手机随身伴侣** | 全屏黑色背景，点击任意处说话。防息屏、和桌面共享同一工作组 |
-| 💻 | **桌面截屏观察** | 每隔 30 秒截取桌面发给 AI 分析，发现有趣内容会主动评论 |
-| 📰 | **新闻自动播报** | 配置感兴趣的话题，AI 定时搜索最新新闻，整理成中文摘要语音朗读 |
-| 🎬 | **面部跟随** | 摄像头捕捉面部位置，眼睛跟着你转，像在真的看着你 |
-
----
-
-## 表情系统
-
-眼睛不只是装饰。瞳孔大小、虹膜发光、眼皮形态都会根据 AI 当前状态变化：
-
-<table>
-<tr>
-<td width="50%">
-<img src="docs/screenshots/eyes-closeup.png" alt="Eyes" width="100%">
-</td>
-<td width="50%">
-
-**聆听时** — 瞳孔放大 1.25x，眼睛睁大，像在认真听你说话
-
-**思考时** — 瞳孔缩小 0.75x，目光偏左上，微微眯眼
-
-**播报时** — 虹膜发光脉动，瞳孔边缘柔光
-
-**出错时** — 瞳孔大张 1.35x，血丝加重，眼皮下垂
-
-</td>
-</tr>
-</table>
-
-7 层渲染：眼窝阴影 → 巩膜+血丝 → 虹膜（60 根纤维+发光环） → 瞳孔 → 3 个高光点 → 贝塞尔曲线眼皮 → 情绪光晕。每只眼睛 60fps 实时绘制。
-
----
-
-## 怎么运作的？
-
-```
-你说话 ──→ CCCC 后端 ──→ Claude AI ──→ 实时推回浏览器 ──→ 语音朗读
- (语音识别)    (消息路由)    (思考/回复)    (SSE 推送)       (TTS 分句播报)
+```powershell
+git clone https://github.com/zixuniaowu/cccc.git
+cd cccc
 ```
 
-- 浏览器语音识别转文字，发送到 CCCC 后端
-- Claude AI 处理，眼睛自动切换到「思考」表情
-- SSE 实时推送回复（不是轮询），延迟极低
-- TTS 分句朗读回答，不会因为文字太长而截断
+2. 安装后端依赖
 
----
+```powershell
+uv venv -p 3.11 .venv
+uv pip install -e .
+```
 
-## 桌面 + 手机，同一个 AI
+3. 安装前端依赖
 
-桌面端有完整控制面板：语音、摄像头、截屏、新闻。<br>
-手机端是极简全屏模式：点一下就说话，上滑打开设置。<br>
-两端可以连同一个工作组，共享对话。
+```powershell
+cd web
+npm install
+cd ..
+```
 
-<img src="docs/screenshots/desktop-full.png" alt="桌面完整界面" width="100%">
+4. 构建前端静态资源（写入 Python 包）
 
-<p align="center">桌面端 — 眼睛 + 控制按钮 + 摄像头预览 + 对话记录</p>
+```powershell
+cd web
+npm run build
+cd ..
+```
 
----
+5. 启动服务
 
-<div align="center">
+```powershell
+.venv\Scripts\python -m cccc.cli
+```
 
-基于 [CCCC](https://github.com/aspect-build/cccc) 多智能体协作内核 · [完整 HTML 报告](docs/voice-agent-upgrade-report.html)
+6. 打开页面
 
-</div>
+- Web UI: `http://127.0.0.1:8848/ui/`
+
+## 一键启动脚本
+
+项目根目录提供 `start.ps1`：
+
+```powershell
+./start.ps1 -LocalHome
+```
+
+脚本会自动准备虚拟环境并拉起 daemon + web。
+
+## 本地开发流程
+
+### 后端开发
+
+```powershell
+uv venv -p 3.11 .venv
+uv pip install -e .
+uv run pytest
+```
+
+### 前端开发（热更新）
+
+```powershell
+cd web
+npm install
+npm run dev -- --host --base /ui/
+```
+
+说明：前端 dev server 会将 `/api` 代理到后端 `8848` 端口。
+
+### 前端打包到后端
+
+```powershell
+cd web
+npm run build
+```
+
+产物会更新到 `src/cccc/ports/web/dist`，用于打包与发布。
+
+## 常用命令
+
+```powershell
+# 运行后端（等价入口）
+.venv\Scripts\python -m cccc.cli
+cccc
+
+# 后端测试
+uv run pytest
+
+# 前端 lint / build
+cd web
+npm run lint
+npm run build
+```
+
+## 环境变量
+
+可通过环境变量调整服务行为：
+
+- `CCCC_WEB_HOST`：Web 监听地址（默认 `127.0.0.1`）
+- `CCCC_WEB_PORT`：Web 监听端口（默认 `8848`）
+- `CCCC_WEB_LOG_LEVEL`：日志等级（如 `info`、`debug`）
+- `CCCC_HOME`：运行时数据目录（默认用户主目录下）
+
+如果你启用外部模型服务，请按所用 provider 配置对应 API Key。
+
+## 目录结构
+
+```text
+src/cccc/                      # Python 内核、CLI、Web 适配层
+src/cccc/ports/web/dist/       # 打包后的 Web 静态资源
+web/                           # React + Vite 前端源码
+web/public/                    # 静态资产（含页面与模型资源）
+tests/                         # pytest 测试
+scripts/                       # 本地脚本与自动化工具
+docs/                          # 文档与截图
+```
+
+## 提交与发布约定
+
+- 使用 Conventional Commits：`feat:` `fix:` `docs:` `chore:`
+- 提交前建议至少执行：
+
+```powershell
+uv run pytest
+cd web
+npm run lint
+npm run build
+```
+
+- `node_modules` 不入库，克隆后本地执行 `npm install` 即可
+- 日志、临时文件、缓存文件不入库
+
+## 常见问题
+
+### 1) 为什么仓库里没有 `node_modules`？
+
+`node_modules` 体积大且可再生，属于本地构建产物。  
+正确流程是克隆后在 `web/` 目录执行 `npm install`。
+
+### 2) 打开页面后麦克风/摄像头不可用
+
+- 确认浏览器权限已允许
+- 建议使用 `localhost` 或受信任的本地地址
+- 检查是否被其他应用占用设备
+
+### 3) 改了前端但页面没变化
+
+- 开发模式使用 `npm run dev`
+- 发布模式需重新执行 `npm run build`
+
+## License
+
+Apache-2.0
