@@ -804,6 +804,21 @@ def _pid_alive(pid: int) -> bool:
         return False
 
 
+def _background_python_executable(executable: str) -> str:
+    """Prefer pythonw.exe on Windows for detached/background workers."""
+    exe = str(executable or "").strip()
+    if os.name != "nt" or not exe:
+        return exe
+    try:
+        p = Path(exe)
+        pyw = p.with_name("pythonw.exe")
+        if pyw.exists():
+            return str(pyw)
+    except Exception:
+        pass
+    return exe
+
+
 def _best_effort_killpg(pid: int, sig: signal.Signals) -> None:
     if pid <= 0:
         return
@@ -885,6 +900,11 @@ def _find_group_module_pids(home: Path, *, module: str, group_id: str) -> set[in
         return found
 
     try:
+        run_kwargs: Dict[str, Any] = {}
+        if os.name == "nt":
+            flags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if flags:
+                run_kwargs["creationflags"] = flags
         ps = subprocess.run(
             [
                 "powershell",
@@ -901,6 +921,7 @@ def _find_group_module_pids(home: Path, *, module: str, group_id: str) -> set[in
             encoding="utf-8",
             errors="ignore",
             timeout=3.0,
+            **run_kwargs,
         )
         if ps.returncode != 0:
             return found
@@ -1253,14 +1274,25 @@ def _maybe_autostart_enabled_im_bridges() -> None:
             with log_path.open("a", encoding="utf-8") as log_file:
                 env = os.environ.copy()
                 env["CCCC_HOME"] = str(home)
+                python_exec = _background_python_executable(sys.executable)
+                popen_kwargs: Dict[str, Any] = {
+                    "env": env,
+                    "stdout": log_file,
+                    "stderr": log_file,
+                    "stdin": subprocess.DEVNULL,
+                    "start_new_session": True,
+                    "cwd": str(home),
+                }
+                if os.name == "nt":
+                    flags = 0
+                    flags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+                    flags |= int(getattr(subprocess, "DETACHED_PROCESS", 0))
+                    flags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    if flags:
+                        popen_kwargs["creationflags"] = flags
                 proc = subprocess.Popen(
-                    [sys.executable, "-m", "cccc.ports.im.bridge", gid, platform],
-                    env=env,
-                    stdout=log_file,
-                    stderr=log_file,
-                    stdin=subprocess.DEVNULL,
-                    start_new_session=True,
-                    cwd=str(home),
+                    [python_exec, "-m", "cccc.ports.im.bridge", gid, platform],
+                    **popen_kwargs,
                 )
                 time.sleep(0.25)
                 rc = proc.poll()
@@ -1316,7 +1348,7 @@ def _maybe_autostart_enabled_news_agents() -> None:
         news_cfg = group.doc.get("news_agent") if isinstance(group.doc.get("news_agent"), dict) else None
         if not isinstance(news_cfg, dict) or not coerce_bool(news_cfg.get("enabled"), default=False):
             continue
-        interests = str(news_cfg.get("interests") or "AI,科技,编程,股市,美股,A股").strip()
+        interests = str(news_cfg.get("interests") or "AI,科技,编程").strip()
         schedule = str(news_cfg.get("schedule") or "8,11,14,17,20").strip()
         pid_path = group.path / "state" / "news_agent.pid"
         if pid_path.exists():
@@ -1351,16 +1383,28 @@ def _maybe_autostart_enabled_news_agents() -> None:
                 env["CCCC_API"] = f"http://127.0.0.1:{env.get('CCCC_PORT', '8848')}/api/v1"
                 env["NEWS_AGENT_PID_PATH"] = str(pid_path)
                 env["NEWS_AGENT_RUNTIME"] = "gemini"
+                env["NEWS_AGENT_MODE"] = "news"
                 env["PYTHONUTF8"] = "1"
                 env["PYTHONIOENCODING"] = "utf-8"
+                python_exec = _background_python_executable(sys.executable)
+                popen_kwargs: Dict[str, Any] = {
+                    "env": env,
+                    "stdout": log_file,
+                    "stderr": log_file,
+                    "stdin": subprocess.DEVNULL,
+                    "start_new_session": True,
+                    "cwd": str(home),
+                }
+                if os.name == "nt":
+                    flags = 0
+                    flags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+                    flags |= int(getattr(subprocess, "DETACHED_PROCESS", 0))
+                    flags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    if flags:
+                        popen_kwargs["creationflags"] = flags
                 proc = subprocess.Popen(
-                    [sys.executable, "-m", "cccc.ports.news", gid, interests, schedule],
-                    env=env,
-                    stdout=log_file,
-                    stderr=log_file,
-                    stdin=subprocess.DEVNULL,
-                    start_new_session=True,
-                    cwd=str(home),
+                    [python_exec, "-m", "cccc.ports.news", gid, interests, schedule, "--mode=news"],
+                    **popen_kwargs,
                 )
                 time.sleep(0.25)
                 rc = proc.poll()

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import contextlib
+import hashlib
+import io
 import json
 import logging
 import mimetypes
@@ -8,11 +12,15 @@ import os
 import re
 import shlex
 import signal
+import socket
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, Literal, Optional, Union
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
@@ -125,8 +133,45 @@ class GroupTemplatePreviewRequest(BaseModel):
 
 class NewsAgentConfigRequest(BaseModel):
     group_id: str
-    interests: str = "AI,科技,编程,股市,美股,A股"
+    interests: str = "AI,科技,编程"
     schedule: str = "8,11,14,17,20"
+
+
+class MarketAgentConfigRequest(BaseModel):
+    group_id: str
+    interests: str = "股市,美股,A股,港股,宏观,财报"
+    schedule: str = "9,12,15,18,22"
+
+
+class AILongAgentConfigRequest(BaseModel):
+    group_id: str
+    interests: str = "CCCC,框架,多Agent,协作,消息总线,语音播报"
+    schedule: str = "10,16,21"
+
+
+class AILongPreloadRequest(BaseModel):
+    group_id: str
+    interests: str = "CCCC,框架,多Agent,协作,消息总线,语音播报"
+    force: bool = False
+    script_key: str = ""
+    topic: str = ""
+
+
+class HorrorAgentConfigRequest(BaseModel):
+    group_id: str
+    interests: str = "深夜,公寓,都市传说,悬疑,心理惊悚"
+    schedule: str = "21,23,1"
+
+
+class TTSSynthesizeRequest(BaseModel):
+    text: str = Field(default="")
+    style: str = Field(default="general")
+    lang: str = Field(default="zh-CN")
+    # Browser engine is client-side; server endpoint currently proxies GPT-SoVITS.
+    engine: Literal["gpt_sovits_v4"] = "gpt_sovits_v4"
+    rate: float = Field(default=1.0)
+    pitch: float = Field(default=1.0)
+    volume: float = Field(default=1.0)
 
 
 WEB_MAX_FILE_MB = 20
@@ -361,6 +406,20 @@ def _best_effort_terminate_pid(pid: int) -> None:
     pid = int(pid or 0)
     if pid <= 0:
         return
+    if os.name == "nt":
+        try:
+            import subprocess as sp
+
+            sp.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=sp.DEVNULL,
+                stderr=sp.DEVNULL,
+                check=False,
+                timeout=3.0,
+            )
+            return
+        except Exception:
+            pass
     try:
         os.killpg(os.getpgid(pid), signal.SIGTERM)
         return
@@ -370,6 +429,21 @@ def _best_effort_terminate_pid(pid: int) -> None:
         os.kill(pid, signal.SIGTERM)
     except Exception:
         pass
+
+
+def _background_python_executable(executable: str) -> str:
+    """Prefer pythonw.exe on Windows to avoid transient console popups."""
+    exe = str(executable or "").strip()
+    if os.name != "nt" or not exe:
+        return exe
+    try:
+        p = Path(exe)
+        pyw = p.with_name("pythonw.exe")
+        if pyw.exists():
+            return str(pyw)
+    except Exception:
+        pass
+    return exe
 
 
 def _proc_cccc_home(pid: int) -> Optional[Path]:
@@ -399,12 +473,19 @@ def _proc_cccc_home(pid: int) -> Optional[Path]:
         return None
 
 
-def _find_group_module_pids(*, home: Path, module: str, group_id: str) -> list[int]:
+def _find_group_module_pids(
+    *,
+    home: Path,
+    module: str,
+    group_id: str,
+    command_contains: Optional[list[str]] = None,
+) -> list[int]:
     """Find pids by python module + group id. Works on Linux (/proc) and Windows (CIM)."""
     mod = str(module or "").strip()
     gid = str(group_id or "").strip()
     if not mod or not gid:
         return []
+    tokens = [str(t or "").strip() for t in (command_contains or []) if str(t or "").strip()]
 
     found: set[int] = set()
     proc = Path("/proc")
@@ -421,6 +502,8 @@ def _find_group_module_pids(*, home: Path, module: str, group_id: str) -> list[i
             except Exception:
                 continue
             if mod not in cmdline or gid not in cmdline:
+                continue
+            if tokens and any(tok not in cmdline for tok in tokens):
                 continue
             ph = _proc_cccc_home(pid)
             if ph is None:
@@ -439,6 +522,12 @@ def _find_group_module_pids(*, home: Path, module: str, group_id: str) -> list[i
     try:
         import subprocess as sp
 
+        run_kwargs: Dict[str, Any] = {}
+        if os.name == "nt":
+            flags = int(getattr(sp, "CREATE_NO_WINDOW", 0))
+            if flags:
+                run_kwargs["creationflags"] = flags
+
         ps = sp.run(
             [
                 "powershell",
@@ -455,6 +544,7 @@ def _find_group_module_pids(*, home: Path, module: str, group_id: str) -> list[i
             encoding="utf-8",
             errors="ignore",
             timeout=3.0,
+            **run_kwargs,
         )
         if ps.returncode != 0:
             return sorted(found)
@@ -469,6 +559,8 @@ def _find_group_module_pids(*, home: Path, module: str, group_id: str) -> list[i
             cmdline = str(row.get("CommandLine") or "")
             if not cmdline or mod not in cmdline or gid not in cmdline:
                 continue
+            if tokens and any(tok not in cmdline for tok in tokens):
+                continue
             try:
                 pid = int(row.get("ProcessId") or 0)
             except Exception:
@@ -478,6 +570,335 @@ def _find_group_module_pids(*, home: Path, module: str, group_id: str) -> list[i
     except Exception:
         pass
     return sorted(found)
+
+
+def _parse_env_float(name: str, default: float) -> float:
+    raw = str(os.environ.get(name) or "").strip()
+    if not raw:
+        return float(default)
+    try:
+        return float(raw)
+    except Exception:
+        return float(default)
+
+
+def _tts_text_lang(lang: str) -> str:
+    normalized = str(lang or "").strip().lower()
+    if normalized.startswith("zh"):
+        return "zh"
+    if normalized.startswith("ja"):
+        return "ja"
+    if normalized.startswith("en"):
+        return "en"
+    if normalized.startswith("ko"):
+        return "ko"
+    return "auto"
+
+
+def _extract_audio_bytes_from_json(payload: Dict[str, Any]) -> Optional[bytes]:
+    b64_candidates: list[str] = []
+    for key in ("audio", "audio_base64", "data", "wav", "wav_base64"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            b64_candidates.append(value.strip())
+    for item in b64_candidates:
+        try:
+            v = item.split(",", 1)[1] if item.startswith("data:") and "," in item else item
+            return base64.b64decode(v, validate=False)
+        except Exception:
+            continue
+    return None
+
+
+def _probe_tcp_endpoint(endpoint: str, timeout_sec: float = 0.5) -> bool:
+    raw = str(endpoint or "").strip()
+    if not raw:
+        return False
+    try:
+        parsed = urllib.parse.urlparse(raw if "://" in raw else f"http://{raw}")
+        host = str(parsed.hostname or "").strip()
+        if not host:
+            return False
+        port = int(parsed.port or (443 if parsed.scheme == "https" else 80))
+        if port <= 0:
+            return False
+        with socket.create_connection((host, port), timeout=max(0.2, min(3.0, float(timeout_sec)))):
+            return True
+    except Exception:
+        return False
+
+
+def _gpt_sovits_payload(req: TTSSynthesizeRequest) -> Dict[str, Any]:
+    speed_default = _parse_env_float("CCCC_TTS_GPTSOVITS_SPEED", 1.0)
+    speed_horror = _parse_env_float("CCCC_TTS_GPTSOVITS_SPEED_HORROR", 1.04)
+    speed = speed_horror if str(req.style or "").strip().lower() == "horror" else speed_default
+    # Apply front-end expressive rate as a light multiplier, but keep it stable.
+    speed *= max(0.82, min(1.24, float(req.rate or 1.0)))
+
+    payload: Dict[str, Any] = {
+        "text": str(req.text or "").strip(),
+        "text_lang": _tts_text_lang(req.lang),
+        "media_type": "wav",
+        "streaming_mode": False,
+        "speed_factor": max(0.75, min(1.35, speed)),
+    }
+
+    ref_audio = str(os.environ.get("CCCC_TTS_GPTSOVITS_REF_AUDIO") or "").strip()
+    if not ref_audio:
+        candidates = [
+            Path.cwd().parent / "gpt-sovits" / "reference" / "ref.wav",
+            Path.home() / "dev" / "gpt-sovits" / "reference" / "ref.wav",
+            Path.home() / "gpt-sovits" / "reference" / "ref.wav",
+        ]
+        for p in candidates:
+            try:
+                if p.is_file():
+                    ref_audio = str(p)
+                    break
+            except Exception:
+                continue
+    prompt_text = str(os.environ.get("CCCC_TTS_GPTSOVITS_PROMPT_TEXT") or "").strip()
+    prompt_lang = str(os.environ.get("CCCC_TTS_GPTSOVITS_PROMPT_LANG") or "").strip() or "zh"
+    top_k = _parse_env_float("CCCC_TTS_GPTSOVITS_TOP_K", 20.0)
+    top_p = _parse_env_float("CCCC_TTS_GPTSOVITS_TOP_P", 0.85)
+    temperature = _parse_env_float("CCCC_TTS_GPTSOVITS_TEMPERATURE", 0.65)
+
+    if ref_audio:
+        payload["ref_audio_path"] = ref_audio
+        # GPT-SoVITS api_v2 requires prompt_lang even when prompt_text is empty.
+        payload["prompt_lang"] = prompt_lang
+    if prompt_text:
+        payload["prompt_text"] = prompt_text
+
+    payload["top_k"] = int(max(1, min(200, round(top_k))))
+    payload["top_p"] = max(0.1, min(1.0, top_p))
+    payload["temperature"] = max(0.1, min(1.2, temperature))
+
+    split_method = str(os.environ.get("CCCC_TTS_GPTSOVITS_SPLIT_METHOD") or "").strip()
+    if split_method:
+        payload["text_split_method"] = split_method
+    return payload
+
+
+def _synthesize_via_gpt_sovits(
+    req: TTSSynthesizeRequest,
+    *,
+    timeout_override: Optional[float] = None,
+) -> tuple[bytes, str]:
+    endpoint = str(os.environ.get("CCCC_TTS_GPTSOVITS_URL") or "http://127.0.0.1:9880/tts").strip()
+    timeout_sec = float(timeout_override) if timeout_override is not None else _parse_env_float("CCCC_TTS_GPTSOVITS_TIMEOUT_SEC", 40.0)
+    if not endpoint:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "tts_unconfigured",
+                "message": "GPT-SoVITS endpoint is not configured",
+                "details": {"env": "CCCC_TTS_GPTSOVITS_URL"},
+            },
+        )
+    body = json.dumps(_gpt_sovits_payload(req), ensure_ascii=False).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "Accept": "audio/*,application/octet-stream,application/json",
+            "Connection": "close",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=max(3.0, timeout_sec)) as resp:
+            content_type = str(resp.headers.get("Content-Type") or "application/octet-stream").lower()
+            data = resp.read()
+    except urllib.error.HTTPError as e:
+        err_text = ""
+        try:
+            err_text = e.read().decode("utf-8", "ignore")[:300]
+        except Exception:
+            err_text = ""
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "tts_upstream_http_error",
+                "message": f"GPT-SoVITS returned HTTP {int(getattr(e, 'code', 502) or 502)}",
+                "details": {"endpoint": endpoint, "body": err_text},
+            },
+        ) from e
+    except urllib.error.URLError as e:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "tts_upstream_unreachable",
+                "message": f"cannot connect GPT-SoVITS endpoint: {endpoint}",
+                "details": {"reason": str(e.reason)},
+            },
+        ) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "tts_proxy_error",
+                "message": f"TTS proxy failed: {e}",
+                "details": {"endpoint": endpoint},
+            },
+        ) from e
+
+    if not data:
+        raise HTTPException(
+            status_code=502,
+            detail={"code": "tts_empty_audio", "message": "GPT-SoVITS returned empty audio", "details": {"endpoint": endpoint}},
+        )
+
+    if "application/json" in content_type or data[:1] in (b"{", b"["):
+        try:
+            doc = json.loads(data.decode("utf-8", "ignore"))
+        except Exception:
+            doc = {}
+        if not isinstance(doc, dict):
+            doc = {}
+        audio_bytes = _extract_audio_bytes_from_json(doc)
+        if audio_bytes:
+            return audio_bytes, "audio/wav"
+        err_msg = str(doc.get("message") or doc.get("error") or "").strip()
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "code": "tts_invalid_json_payload",
+                "message": err_msg or "GPT-SoVITS JSON response does not contain audio",
+                "details": {"endpoint": endpoint},
+            },
+        )
+
+    if "audio/" not in content_type:
+        content_type = "audio/wav"
+    return data, content_type
+
+
+def _split_ai_long_chunks(text: str, max_chars: int = 90) -> list[str]:
+    raw = re.sub(r"\s+", " ", str(text or "").strip())
+    if not raw:
+        return []
+    if len(raw) <= max_chars:
+        return [raw]
+
+    # Prefer sentence boundaries first.
+    parts = [p.strip() for p in re.split(r"(?<=[。！？!?；;])\s*", raw) if p.strip()]
+    if not parts:
+        parts = [raw]
+
+    chunks: list[str] = []
+    buf = ""
+
+    def _push(value: str) -> None:
+        t = str(value or "").strip()
+        if t:
+            chunks.append(t)
+
+    for part in parts:
+        if len(part) > max_chars:
+            sub_parts = [p.strip() for p in re.split(r"(?<=[，、,:：])\s*", part) if p.strip()]
+        else:
+            sub_parts = [part]
+
+        for sub in sub_parts:
+            if not sub:
+                continue
+            if len(sub) > max_chars:
+                if buf:
+                    _push(buf)
+                    buf = ""
+                start = 0
+                while start < len(sub):
+                    _push(sub[start : start + max_chars])
+                    start += max_chars
+                continue
+            candidate = f"{buf} {sub}".strip() if buf else sub
+            if len(candidate) <= max_chars:
+                buf = candidate
+            else:
+                _push(buf)
+                buf = sub
+
+    _push(buf)
+    return [c for c in chunks if c]
+
+
+def _ai_long_preload_dir(group: Any) -> Path:
+    return Path(group.path) / "state" / "ai_long_preload"
+
+
+def _list_ai_long_scripts() -> list[Dict[str, Any]]:
+    try:
+        from ...ports.news.agent import PREPARED_LONGFORM_SCRIPTS
+    except Exception:
+        return []
+    out: list[Dict[str, Any]] = []
+    for key, item in PREPARED_LONGFORM_SCRIPTS.items():
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or key).strip()
+        aliases = [str(a).strip() for a in (item.get("aliases") or []) if str(a).strip()]
+        sections = item.get("sections") or []
+        section_count = len(sections) if isinstance(sections, list) else 0
+        out.append(
+            {
+                "key": str(key),
+                "title": title,
+                "aliases": aliases,
+                "sections": section_count,
+            }
+        )
+    return out
+
+
+def _read_ai_long_manifest(group: Any) -> Dict[str, Any]:
+    manifest_path = _ai_long_preload_dir(group) / "manifest.json"
+    if not manifest_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail={"code": "ai_long_preload_not_ready", "message": "AI 长文预加载音频不存在"},
+        )
+    try:
+        raw = manifest_path.read_text(encoding="utf-8")
+        doc = json.loads(raw)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "ai_long_preload_manifest_invalid", "message": f"manifest parse failed: {e}"},
+        ) from e
+    if not isinstance(doc, dict):
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "ai_long_preload_manifest_invalid", "message": "manifest is not an object"},
+        )
+    chunks = doc.get("chunks")
+    if not isinstance(chunks, list):
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "ai_long_preload_manifest_invalid", "message": "manifest chunks missing"},
+        )
+    return doc
+
+
+def _build_topic_longform_script(topic: str) -> tuple[str, list[str]]:
+    t = str(topic or "").strip()
+    if not t:
+        return "AI专题长文", []
+    title = f"{t}：系统长文说明"
+    sections = [
+        f"这一期我们围绕“{t}”做一篇完整说明，不做快讯，而是从背景、原理、应用和边界四个层面串起来，让你可以一次听懂这个主题到底在解决什么问题。",
+        f"先看背景。{t} 之所以被频繁讨论，是因为过去方案在成本、稳定性和可扩展性上都存在瓶颈。业务一旦规模化，旧流程会在响应速度和维护复杂度上迅速暴露短板。",
+        f"再看核心原理。你可以把 {t} 理解成一套分层系统：上层处理任务目标和编排，中层负责状态流转与策略控制，底层负责计算执行与结果回传。三层协同决定最终体验。",
+        f"在工程实现上，{t} 通常不是单点能力，而是组合能力。它往往依赖数据管线、调度策略和缓存机制共同工作，只有把这些环节打通，效果才会稳定而且可复用。",
+        f"应用层面，{t} 在内容生产、自动化协作、知识检索和人机交互这几类场景里价值最明显。它的优势不是替代人，而是把重复流程标准化，把关键决策留给人来确认。",
+        f"如果你在团队里落地 {t}，建议先从小范围闭环开始：先定义输入和输出，再明确验收标准，然后做一条可观察的最小链路。先跑通，再扩展，避免一上来就全量改造。",
+        f"与此同时也要关注边界。{t} 的结果质量高度依赖数据质量和流程约束，缺少监控与回滚机制时，系统会在高压场景下出现漂移，导致输出不稳定或者难以复盘。",
+        f"成本方面，{t} 的投入通常集中在前期设计和中期调优。只要架构分层清晰、指标可观测，后期边际成本会逐步下降，整体收益会从单点效率提升扩展到全流程提效。",
+        f"从趋势看，{t} 接下来会更强调“可解释、可治理、可协作”。也就是说不仅要做得快，还要讲得清楚、查得出来、改得动，这样才能进入长期可持续迭代阶段。",
+        f"最后做个总结：{t} 的真正价值，在于把零散能力收敛成可复用的系统能力。你可以先把它当成一个工程框架，而不是一次性功能，这样更容易持续打磨并形成自己的方法论。",
+    ]
+    return title, sections
 
 
 def create_app() -> FastAPI:
@@ -495,6 +916,43 @@ def create_app() -> FastAPI:
     cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
     inflight: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
     cache_lock = asyncio.Lock()
+    # Protect GPT-SoVITS CPU backend from concurrent overload.
+    tts_synth_lock = asyncio.Lock()
+    ai_long_preload_lock = asyncio.Lock()
+    ai_long_preload_state: Dict[str, Dict[str, Any]] = {}
+    ai_long_preload_tasks: Dict[str, asyncio.Task[None]] = {}
+
+    async def _set_ai_long_preload_state(group_id: str, **updates: Any) -> Dict[str, Any]:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return {}
+        async with ai_long_preload_lock:
+            state = dict(ai_long_preload_state.get(gid) or {})
+            state.update(updates)
+            state["group_id"] = gid
+            state["updated_at"] = int(time.time())
+            ai_long_preload_state[gid] = state
+            return dict(state)
+
+    async def _get_ai_long_preload_state(group_id: str) -> Dict[str, Any]:
+        gid = str(group_id or "").strip()
+        async with ai_long_preload_lock:
+            state = dict(ai_long_preload_state.get(gid) or {})
+            task = ai_long_preload_tasks.get(gid)
+            state.setdefault("group_id", gid)
+            state.setdefault("status", "idle")
+            state.setdefault("title", "")
+            state.setdefault("interests", "")
+            state.setdefault("script_key", "")
+            state.setdefault("topic", "")
+            state.setdefault("message", "")
+            state.setdefault("script_hash", "")
+            state.setdefault("total_chunks", 0)
+            state.setdefault("completed_chunks", 0)
+            state.setdefault("script_chars", 0)
+            state.setdefault("manifest_ready", False)
+            state["running"] = bool(task is not None and not task.done())
+            return state
 
     async def _cached_json(key: str, ttl_s: float, fetcher) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
         if not read_only or ttl_s <= 0:
@@ -2341,7 +2799,7 @@ def create_app() -> FastAPI:
                 except (AttributeError, ChildProcessError):
                     os.kill(pid, 0)  # Check if process exists
                     running = True
-            except (ValueError, ProcessLookupError, PermissionError):
+            except (ValueError, ProcessLookupError, PermissionError, OSError):
                 pid = None
 
         # Get subscriber count
@@ -2517,7 +2975,7 @@ def create_app() -> FastAPI:
                 except (AttributeError, ChildProcessError):
                     os.kill(pid, 0)
                     return {"ok": False, "error": {"code": "already_running", "message": f"bridge already running (pid={pid})"}}
-            except (ValueError, ProcessLookupError, PermissionError):
+            except (ValueError, ProcessLookupError, PermissionError, OSError):
                 pass
 
         # Check IM config
@@ -2592,12 +3050,23 @@ def create_app() -> FastAPI:
         try:
             import sys
             log_file = log_path.open("a", encoding="utf-8")
+            python_exec = _background_python_executable(sys.executable)
+            popen_kwargs: Dict[str, Any] = {
+                "env": env,
+                "stdout": log_file,
+                "stderr": log_file,
+                "start_new_session": True,
+            }
+            if os.name == "nt":
+                flags = 0
+                flags |= int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+                flags |= int(getattr(subprocess, "DETACHED_PROCESS", 0))
+                flags |= int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if flags:
+                    popen_kwargs["creationflags"] = flags
             proc = subprocess.Popen(
-                [sys.executable, "-m", "cccc.ports.im.bridge", req.group_id, platform],
-                env=env,
-                stdout=log_file,
-                stderr=log_file,
-                start_new_session=True,
+                [python_exec, "-m", "cccc.ports.im.bridge", req.group_id, platform],
+                **popen_kwargs,
             )
             # If the process exits immediately (common for missing token/deps), report failure.
             await asyncio.sleep(0.25)
@@ -2662,33 +3131,131 @@ def create_app() -> FastAPI:
 
         return {"ok": True, "result": {"group_id": req.group_id, "stopped": stopped}}
 
-    # ── News Agent endpoints ──
+    # ── Broadcast Agent endpoints (news / market / ai_long / horror) ──
 
-    @app.get("/api/news/status")
-    async def news_status(group_id: str = "") -> Dict[str, Any]:
-        """Check news agent status for a group."""
+    BROADCAST_SPECS: Dict[str, Dict[str, str]] = {
+        "news": {
+            "cfg_key": "news_agent",
+            "pid_name": "news_agent.pid",
+            "log_name": "news_agent.log",
+            "mode": "news",
+            "default_interests": "AI,科技,编程",
+            "default_schedule": "8,11,14,17,20",
+        },
+        "market": {
+            "cfg_key": "market_agent",
+            "pid_name": "market_agent.pid",
+            "log_name": "market_agent.log",
+            "mode": "market",
+            "default_interests": "股市,美股,A股,港股,宏观,财报",
+            "default_schedule": "9,12,15,18,22",
+        },
+        "ai_long": {
+            "cfg_key": "ai_long_agent",
+            "pid_name": "ai_long_agent.pid",
+            "log_name": "ai_long_agent.log",
+            "mode": "ai_long",
+            "default_interests": "CCCC,框架,多Agent,协作,消息总线,语音播报",
+            "default_schedule": "10,16,21",
+        },
+        "horror": {
+            "cfg_key": "horror_agent",
+            "pid_name": "horror_agent.pid",
+            "log_name": "horror_agent.log",
+            "mode": "horror",
+            "default_interests": "深夜,公寓,都市传说,悬疑,心理惊悚",
+            "default_schedule": "21,23,1",
+        },
+    }
+
+    def _broadcast_tokens(kind: str) -> list[str]:
+        spec = BROADCAST_SPECS.get(kind, BROADCAST_SPECS["news"])
+        return [f"--mode={spec.get('mode', 'news')}"]
+
+    def _stop_broadcast_kind(group: Any, kind: str, *, persist_cfg: bool) -> int:
+        spec = BROADCAST_SPECS.get(kind, BROADCAST_SPECS["news"])
+        cfg_key = str(spec.get("cfg_key") or "news_agent")
+        mode = str(spec.get("mode") or "news")
+        pid_name = str(spec.get("pid_name") or "news_agent.pid")
+        gid = str(getattr(group, "group_id", "") or getattr(group, "path", Path("")).name or "").strip()
+
+        if persist_cfg:
+            cfg = group.doc.get(cfg_key)
+            if isinstance(cfg, dict):
+                cfg["enabled"] = False
+                group.doc[cfg_key] = cfg
+                try:
+                    group.save()
+                except Exception:
+                    pass
+
+        killed: set[int] = set()
+        pid_path = group.path / "state" / pid_name
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                if pid > 0:
+                    _best_effort_terminate_pid(pid)
+                    killed.add(pid)
+            except Exception:
+                pass
+            try:
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        for pid in _find_group_module_pids(
+            home=home,
+            module="cccc.ports.news",
+            group_id=gid,
+            command_contains=[f"--mode={mode}"],
+        ):
+            if pid in killed:
+                continue
+            _best_effort_terminate_pid(pid)
+            killed.add(pid)
+        return len(killed)
+
+    async def _broadcast_status(kind: str, group_id: str) -> Dict[str, Any]:
         if not group_id:
             return {"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id"}}
         group = load_group(group_id)
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
-        news_cfg = group.doc.get("news_agent") or {}
-        enabled = bool(news_cfg.get("enabled"))
+        spec = BROADCAST_SPECS.get(kind, BROADCAST_SPECS["news"])
+        cfg_key = str(spec.get("cfg_key") or "news_agent")
+        pid_name = str(spec.get("pid_name") or "news_agent.pid")
+        mode = str(spec.get("mode") or "news")
+        default_interests = str(spec.get("default_interests") or "")
+        default_schedule = str(spec.get("default_schedule") or "")
+
+        cfg = group.doc.get(cfg_key) or {}
+        enabled = bool(cfg.get("enabled"))
         running = False
         pid = 0
 
-        pid_path = group.path / "state" / "news_agent.pid"
+        pid_path = group.path / "state" / pid_name
         if pid_path.exists():
             try:
                 pid = int(pid_path.read_text(encoding="utf-8").strip())
                 os.kill(pid, 0)
                 running = True
-            except (ValueError, ProcessLookupError, PermissionError):
+            except (ValueError, ProcessLookupError, PermissionError, OSError):
                 running = False
                 pid = 0
+
         if not running:
-            orphan_pids = [p for p in _find_group_module_pids(home=home, module="cccc.ports.news", group_id=group_id) if _pid_alive(p)]
+            orphan_pids = [
+                p
+                for p in _find_group_module_pids(
+                    home=home,
+                    module="cccc.ports.news",
+                    group_id=group_id,
+                    command_contains=[f"--mode={mode}"],
+                )
+                if _pid_alive(p)
+            ]
             if orphan_pids:
                 pid = int(orphan_pids[0])
                 running = True
@@ -2702,35 +3269,56 @@ def create_app() -> FastAPI:
             "ok": True,
             "result": {
                 "group_id": group_id,
+                "kind": kind,
                 "enabled": enabled,
                 "running": running,
                 "pid": pid,
-                "interests": news_cfg.get("interests", "AI,科技,编程,股市,美股,A股"),
-                "schedule": news_cfg.get("schedule", "8,11,14,17,20"),
+                "interests": cfg.get("interests", default_interests),
+                "schedule": cfg.get("schedule", default_schedule),
             },
         }
 
-    @app.post("/api/news/start")
-    async def news_start(req: NewsAgentConfigRequest) -> Dict[str, Any]:
-        """Start news agent for a group."""
+    async def _broadcast_start(kind: str, *, group_id: str, interests: str, schedule: str) -> Dict[str, Any]:
         import subprocess as sp
 
-        group = load_group(req.group_id)
+        group = load_group(group_id)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
-        pid_path = group.path / "state" / "news_agent.pid"
+        spec = BROADCAST_SPECS.get(kind, BROADCAST_SPECS["news"])
+        cfg_key = str(spec.get("cfg_key") or "news_agent")
+        pid_name = str(spec.get("pid_name") or "news_agent.pid")
+        log_name = str(spec.get("log_name") or "news_agent.log")
+        mode = str(spec.get("mode") or "news")
+
+        # Keep channels independent: only one broadcast stream can run at a time.
+        for other_kind in BROADCAST_SPECS:
+            if other_kind == kind:
+                continue
+            _stop_broadcast_kind(group, other_kind, persist_cfg=True)
+
+        pid_path = group.path / "state" / pid_name
         if pid_path.exists():
             try:
                 pid = int(pid_path.read_text(encoding="utf-8").strip())
                 os.kill(pid, 0)
-                return {"ok": False, "error": {"code": "already_running", "message": f"news agent already running (pid={pid})"}}
-            except (ValueError, ProcessLookupError, PermissionError):
+                return {"ok": False, "error": {"code": "already_running", "message": f"{kind} agent already running (pid={pid})"}}
+            except (ValueError, ProcessLookupError, PermissionError, OSError):
                 try:
                     pid_path.unlink(missing_ok=True)
                 except Exception:
                     pass
-        orphan_pids = [p for p in _find_group_module_pids(home=home, module="cccc.ports.news", group_id=req.group_id) if _pid_alive(p)]
+
+        orphan_pids = [
+            p
+            for p in _find_group_module_pids(
+                home=home,
+                module="cccc.ports.news",
+                group_id=group_id,
+                command_contains=[f"--mode={mode}"],
+            )
+            if _pid_alive(p)
+        ]
         if orphan_pids:
             pid = int(orphan_pids[0])
             try:
@@ -2738,89 +3326,755 @@ def create_app() -> FastAPI:
                 pid_path.write_text(str(pid), encoding="utf-8")
             except Exception:
                 pass
-            return {"ok": False, "error": {"code": "already_running", "message": f"news agent already running (pid={pid})"}}
+            return {"ok": False, "error": {"code": "already_running", "message": f"{kind} agent already running (pid={pid})"}}
 
-        # Persist config
-        news_cfg = group.doc.get("news_agent") or {}
-        if not isinstance(news_cfg, dict):
-            news_cfg = {}
-        news_cfg["enabled"] = True
-        news_cfg["interests"] = req.interests
-        news_cfg["schedule"] = req.schedule
-        group.doc["news_agent"] = news_cfg
+        cfg = group.doc.get(cfg_key) or {}
+        if not isinstance(cfg, dict):
+            cfg = {}
+        cfg["enabled"] = True
+        cfg["interests"] = interests
+        cfg["schedule"] = schedule
+        group.doc[cfg_key] = cfg
         group.save()
 
         state_dir = group.path / "state"
         state_dir.mkdir(parents=True, exist_ok=True)
-        log_path = state_dir / "news_agent.log"
+        log_path = state_dir / log_name
 
         try:
             import sys as _sys
+
             env = os.environ.copy()
-            env["CCCC_GROUP_ID"] = req.group_id
+            env["CCCC_GROUP_ID"] = group_id
             env["CCCC_API"] = f"http://127.0.0.1:{env.get('CCCC_PORT', '8848')}/api/v1"
             env["NEWS_AGENT_PID_PATH"] = str(pid_path)
             env["NEWS_AGENT_RUNTIME"] = "gemini"
+            env["NEWS_AGENT_GEMINI_MODEL"] = str(
+                os.environ.get("NEWS_AGENT_GEMINI_MODEL")
+                or os.environ.get("CCCC_GEMINI_MODEL")
+                or "gemini-2.5-flash-lite"
+            ).strip()
+            env["NEWS_AGENT_MODE"] = mode
             env["PYTHONUTF8"] = "1"
             env["PYTHONIOENCODING"] = "utf-8"
-            # Remove CLAUDECODE to avoid nested-session rejection in claude CLI
             env.pop("CLAUDECODE", None)
+            python_exec = _background_python_executable(_sys.executable)
 
             log_file = log_path.open("a", encoding="utf-8")
+            popen_kwargs: Dict[str, Any] = {
+                "env": env,
+                "stdout": log_file,
+                "stderr": log_file,
+                "stdin": sp.DEVNULL,
+                "start_new_session": True,
+            }
+            if os.name == "nt":
+                flags = 0
+                flags |= int(getattr(sp, "CREATE_NEW_PROCESS_GROUP", 0))
+                flags |= int(getattr(sp, "DETACHED_PROCESS", 0))
+                flags |= int(getattr(sp, "CREATE_NO_WINDOW", 0))
+                if flags:
+                    popen_kwargs["creationflags"] = flags
+
             proc = sp.Popen(
-                [_sys.executable, "-m", "cccc.ports.news", req.group_id, req.interests, req.schedule],
-                env=env,
-                stdout=log_file,
-                stderr=log_file,
-                stdin=sp.DEVNULL,
-                start_new_session=True,
+                [
+                    python_exec,
+                    "-m",
+                    "cccc.ports.news",
+                    group_id,
+                    interests,
+                    schedule,
+                    f"--mode={mode}",
+                ],
+                **popen_kwargs,
             )
             await asyncio.sleep(0.25)
             exit_code = proc.poll()
             if exit_code is not None:
-                return {"ok": False, "error": {"code": "agent_exited", "message": f"news agent exited early (code={exit_code}). Check log: {log_path}"}}
+                return {
+                    "ok": False,
+                    "error": {"code": "agent_exited", "message": f"{kind} agent exited early (code={exit_code}). Check log: {log_path}"},
+                }
 
             pid_path.write_text(str(proc.pid), encoding="utf-8")
-            return {"ok": True, "result": {"group_id": req.group_id, "pid": proc.pid}}
+            return {"ok": True, "result": {"group_id": group_id, "kind": kind, "pid": proc.pid}}
         except Exception as e:
             return {"ok": False, "error": {"code": "start_failed", "message": str(e)}}
 
+    async def _broadcast_stop(kind: str, *, group_id: str) -> Dict[str, Any]:
+        group = load_group(group_id)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
+        stopped = _stop_broadcast_kind(group, kind, persist_cfg=True)
+        return {"ok": True, "result": {"group_id": group_id, "kind": kind, "stopped": stopped}}
+
+    async def _run_ai_long_preload(
+        group_id: str,
+        interests: str,
+        force: bool,
+        *,
+        script_key: str = "",
+        topic: str = "",
+    ) -> None:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return
+        try:
+            group = load_group(gid)
+            if group is None:
+                raise RuntimeError(f"group not found: {gid}")
+
+            preload_dir = _ai_long_preload_dir(group)
+            preload_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = preload_dir / "manifest.json"
+            await _set_ai_long_preload_state(
+                gid,
+                status="preparing",
+                message="正在准备长文稿",
+                interests=interests,
+                script_key=script_key,
+                topic=topic,
+                manifest_ready=False,
+                error="",
+            )
+
+            from ...ports.news.agent import (
+                AI_LONG_PREFIX,
+                PREPARED_LONGFORM_SCRIPTS,
+                _fetch_longform_script_once,
+                _select_prepared_longform_script,
+                _strip_brief_prefix,
+            )
+            resolved_interests = str(interests or "").strip()
+            resolved_topic = str(topic or "").strip()
+            resolved_script_key = str(script_key or "").strip()
+
+            prepared: Optional[tuple[str, list[str]]] = None
+            if resolved_script_key:
+                candidate = PREPARED_LONGFORM_SCRIPTS.get(resolved_script_key)
+                if isinstance(candidate, dict):
+                    title = str(candidate.get("title") or resolved_script_key).strip()
+                    raw_sections = candidate.get("sections") or []
+                    sections = [str(s).strip() for s in raw_sections if str(s).strip()] if isinstance(raw_sections, list) else []
+                    if sections:
+                        prepared = (title, sections)
+
+            title = ""
+            sections: list[str] = []
+            if resolved_topic and not resolved_script_key:
+                # Topic mode: always produce a closed long-form around the chosen theme.
+                title, sections = _build_topic_longform_script(resolved_topic)
+                resolved_interests = resolved_topic
+            elif prepared:
+                title, sections = prepared
+            else:
+                prepared = await run_in_threadpool(_select_prepared_longform_script, resolved_interests)
+                if prepared:
+                    title, sections = prepared
+                else:
+                    # news agent helper prints progress logs; redirect to avoid cp932 console encoding issues on Windows.
+                    def _fetch_once_silent() -> tuple[str, list[str]]:
+                        sink = io.StringIO()
+                        with contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):
+                            return _fetch_longform_script_once(resolved_interests, None)
+
+                    title, sections = await run_in_threadpool(_fetch_once_silent)
+            clean_sections: list[str] = []
+            for section in sections:
+                t = _strip_brief_prefix(section)
+                if t:
+                    clean_sections.append(t)
+            if not clean_sections:
+                raise RuntimeError("没有可用于播报的长文稿内容")
+
+            script_text = f"{AI_LONG_PREFIX} {' '.join(clean_sections)}".strip()
+            script_hash = hashlib.sha1(script_text.encode("utf-8")).hexdigest()
+            chunks = _split_ai_long_chunks(script_text, 90)
+            if not chunks:
+                raise RuntimeError("长文分段失败")
+            total = len(chunks)
+
+            def _write_preload_manifest(
+                chunks_payload: list[Dict[str, Any]],
+                *,
+                complete: bool,
+                completed_top_chunks: int,
+            ) -> None:
+                manifest_doc = {
+                    "group_id": gid,
+                    "title": title,
+                    "interests": interests,
+                    "script_key": resolved_script_key,
+                    "topic": resolved_topic,
+                    "script_hash": script_hash,
+                    "script_chars": len(script_text),
+                    "script_text": script_text,
+                    "expected_total_chunks": total,
+                    "completed_top_chunks": max(0, int(completed_top_chunks)),
+                    "complete": bool(complete),
+                    "chunks": chunks_payload,
+                    "created_at": int(time.time()),
+                }
+                manifest_path.write_text(json.dumps(manifest_doc, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            existing_manifest: Dict[str, Any] = {}
+            if manifest_path.exists():
+                try:
+                    existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                except Exception:
+                    existing_manifest = {}
+            reusable_chunks: list[Dict[str, Any]] = []
+            resumed_top_chunks = 0
+            if not force and isinstance(existing_manifest, dict):
+                old_hash = str(existing_manifest.get("script_hash") or "").strip()
+                old_chunks = existing_manifest.get("chunks")
+                if old_hash == script_hash and isinstance(old_chunks, list) and old_chunks:
+                    available_old: list[Dict[str, Any]] = []
+                    for item in old_chunks:
+                        if not isinstance(item, dict):
+                            break
+                        rel = str(item.get("file") or "").strip()
+                        if not rel:
+                            break
+                        chunk_path = preload_dir / rel
+                        if not chunk_path.is_file():
+                            break
+                        saved_text = str(item.get("text") or "").strip()
+                        media_type = str(item.get("media_type") or "audio/wav")
+                        size = 0
+                        try:
+                            size = int(chunk_path.stat().st_size)
+                        except Exception:
+                            size = int(item.get("bytes") or 0)
+                        src_idx = -1
+                        try:
+                            src_idx = int(item.get("source_chunk_index"))  # type: ignore[arg-type]
+                        except Exception:
+                            src_idx = -1
+                        available_old.append(
+                            {
+                                "index": len(available_old),
+                                "text": saved_text,
+                                "file": rel,
+                                "media_type": media_type,
+                                "bytes": max(0, size),
+                                "source_chunk_index": src_idx,
+                            }
+                        )
+
+                    # Prefer explicit source chunk markers when available.
+                    if available_old and all(int(it.get("source_chunk_index", -1)) >= 0 for it in available_old):
+                        last_idx = -1
+                        ok = True
+                        for it in available_old:
+                            src_idx = int(it.get("source_chunk_index", -1))
+                            if src_idx < last_idx:
+                                ok = False
+                                break
+                            if src_idx > last_idx + 1:
+                                ok = False
+                                break
+                            last_idx = max(last_idx, src_idx)
+                            reusable_chunks.append(dict(it))
+                        if ok:
+                            resumed_top_chunks = max(0, last_idx + 1)
+                        else:
+                            reusable_chunks = []
+                            resumed_top_chunks = 0
+                    elif available_old:
+                        # Backward-compatible inference for manifests without source_chunk_index.
+                        def _norm_text(v: str) -> str:
+                            return re.sub(r"\s+", "", str(v or "").strip())
+
+                        i = 0
+                        j = 0
+                        while i < total and j < len(available_old):
+                            target = _norm_text(str(chunks[i] or ""))
+                            if not target:
+                                i += 1
+                                continue
+                            acc = ""
+                            start_j = j
+                            matched = False
+                            while j < len(available_old):
+                                seg_text = _norm_text(str(available_old[j].get("text") or ""))
+                                if not seg_text:
+                                    j += 1
+                                    continue
+                                acc += seg_text
+                                if acc == target:
+                                    for k in range(start_j, j + 1):
+                                        item_k = dict(available_old[k])
+                                        item_k["source_chunk_index"] = i
+                                        item_k["index"] = len(reusable_chunks)
+                                        item_k["text"] = str(item_k.get("text") or "").strip() or str(chunks[i] or "")
+                                        reusable_chunks.append(item_k)
+                                    resumed_top_chunks = i + 1
+                                    j += 1
+                                    matched = True
+                                    break
+                                if not target.startswith(acc):
+                                    matched = False
+                                    break
+                                j += 1
+                            if not matched:
+                                break
+                            i += 1
+
+                    if resumed_top_chunks >= total and total > 0:
+                        await _set_ai_long_preload_state(
+                            gid,
+                            status="ready",
+                            message="已复用后台预加载音频",
+                            title=str(existing_manifest.get("title") or title),
+                            script_hash=script_hash,
+                            total_chunks=total,
+                            completed_chunks=total,
+                            script_chars=len(script_text),
+                            manifest_ready=True,
+                            error="",
+                        )
+                        return
+
+            if reusable_chunks:
+                keep_names = {str(item.get("file") or "").strip() for item in reusable_chunks}
+                for old in preload_dir.glob("chunk_*.*"):
+                    if old.name in keep_names:
+                        continue
+                    try:
+                        old.unlink()
+                    except Exception:
+                        pass
+            else:
+                for old in preload_dir.glob("chunk_*.*"):
+                    try:
+                        old.unlink()
+                    except Exception:
+                        pass
+
+            resumed_chunks = max(0, resumed_top_chunks)
+            await _set_ai_long_preload_state(
+                gid,
+                status="synthesizing",
+                message="正在继续后台转音频" if resumed_chunks > 0 else "正在后台转音频",
+                title=title,
+                script_hash=script_hash,
+                total_chunks=total,
+                completed_chunks=resumed_chunks,
+                script_chars=len(script_text),
+                manifest_ready=False,
+                error="",
+            )
+
+            manifest_chunks: list[Dict[str, Any]] = list(reusable_chunks)
+            if manifest_chunks:
+                _write_preload_manifest(manifest_chunks, complete=False, completed_top_chunks=resumed_chunks)
+            preload_timeout_base = _parse_env_float("CCCC_TTS_GPTSOVITS_PRELOAD_TIMEOUT_SEC", 55.0)
+            preload_timeout_step = _parse_env_float("CCCC_TTS_GPTSOVITS_PRELOAD_TIMEOUT_STEP_SEC", 12.0)
+
+            def _split_segment_for_retry(segment: str) -> tuple[str, str]:
+                s = str(segment or "").strip()
+                if len(s) < 2:
+                    return s, ""
+                mid = len(s) // 2
+                punct = set("，。、；：,.!?！？ ")
+                best = -1
+                best_dist = 10**9
+                lo = max(1, mid - 24)
+                hi = min(len(s) - 1, mid + 24)
+                for i in range(lo, hi):
+                    if s[i] not in punct:
+                        continue
+                    d = abs(i - mid)
+                    if d < best_dist:
+                        best_dist = d
+                        best = i
+                split_at = best if best > 0 else mid
+                left = s[:split_at].strip()
+                right = s[split_at:].strip()
+                if not left or not right:
+                    split_at = mid
+                    left = s[:split_at].strip()
+                    right = s[split_at:].strip()
+                return left, right
+
+            async def _synthesize_segment(segment: str, depth: int = 0) -> list[tuple[str, bytes, str]]:
+                text = str(segment or "").strip()
+                if not text:
+                    return []
+                req = TTSSynthesizeRequest(
+                    text=text,
+                    style="ai_long",
+                    lang="zh-CN",
+                    engine="gpt_sovits_v4",
+                    rate=1.0,
+                    pitch=1.0,
+                    volume=1.0,
+                )
+                last_error: Optional[Exception] = None
+                for attempt in range(3):
+                    try:
+                        timeout_this_try = max(
+                            12.0,
+                            float(preload_timeout_base) + float(preload_timeout_step) * float(attempt) + float(depth) * 4.0,
+                        )
+
+                        def _synth_once() -> tuple[bytes, str]:
+                            return _synthesize_via_gpt_sovits(req, timeout_override=timeout_this_try)
+
+                        async with tts_synth_lock:
+                            audio_bytes, media_type = await run_in_threadpool(_synth_once)
+                        return [(text, audio_bytes, media_type)]
+                    except Exception as e:
+                        last_error = e
+                        if attempt >= 2:
+                            break
+                        await asyncio.sleep(0.6 + attempt * 0.8)
+                err_text = str(last_error or "").lower()
+                retryable_timeout = "timed out" in err_text or "timeout" in err_text
+                if retryable_timeout and depth < 4 and len(text) >= 36:
+                    left, right = _split_segment_for_retry(text)
+                    if left and right and left != text and right != text:
+                        left_items = await _synthesize_segment(left, depth + 1)
+                        right_items = await _synthesize_segment(right, depth + 1)
+                        return [*left_items, *right_items]
+                if retryable_timeout:
+                    # Skip pathological segments instead of failing the whole preload job.
+                    return []
+                if last_error is not None:
+                    raise last_error
+                return []
+
+            for idx in range(len(manifest_chunks), total):
+                chunk = chunks[idx]
+                segment_items = await _synthesize_segment(chunk, 0)
+                for seg_text, audio_bytes, media_type in segment_items:
+                    file_idx = len(manifest_chunks)
+                    ext = "wav"
+                    if "mpeg" in media_type or "mp3" in media_type:
+                        ext = "mp3"
+                    file_name = f"chunk_{file_idx:03d}.{ext}"
+                    chunk_path = preload_dir / file_name
+                    chunk_path.write_bytes(audio_bytes)
+                    manifest_chunks.append(
+                        {
+                            "index": file_idx,
+                            "text": seg_text,
+                            "file": file_name,
+                            "media_type": media_type,
+                            "bytes": len(audio_bytes),
+                            "source_chunk_index": idx,
+                        }
+                    )
+                _write_preload_manifest(manifest_chunks, complete=False, completed_top_chunks=idx + 1)
+                await _set_ai_long_preload_state(gid, completed_chunks=idx + 1)
+
+            if not manifest_chunks:
+                raise RuntimeError("未能生成任何可播放音频片段")
+            _write_preload_manifest(manifest_chunks, complete=True, completed_top_chunks=total)
+            await _set_ai_long_preload_state(
+                gid,
+                status="ready",
+                message=f"预加载完成，共 {len(manifest_chunks)} 段",
+                manifest_ready=True,
+                completed_chunks=total,
+                total_chunks=total,
+                error="",
+            )
+        except asyncio.CancelledError:
+            await _set_ai_long_preload_state(
+                gid,
+                status="idle",
+                message="预加载已取消",
+                manifest_ready=False,
+                error="cancelled",
+            )
+            raise
+        except Exception as e:
+            await _set_ai_long_preload_state(
+                gid,
+                status="error",
+                message="后台预加载失败",
+                manifest_ready=False,
+                error=str(e),
+            )
+        finally:
+            async with ai_long_preload_lock:
+                task = ai_long_preload_tasks.get(gid)
+                if task is asyncio.current_task():
+                    ai_long_preload_tasks.pop(gid, None)
+
+    @app.get("/api/news/status")
+    async def news_status(group_id: str = "") -> Dict[str, Any]:
+        return await _broadcast_status("news", group_id)
+
+    @app.post("/api/news/start")
+    async def news_start(req: NewsAgentConfigRequest) -> Dict[str, Any]:
+        return await _broadcast_start("news", group_id=req.group_id, interests=req.interests, schedule=req.schedule)
+
     @app.post("/api/news/stop")
     async def news_stop(req: IMActionRequest) -> Dict[str, Any]:
-        """Stop news agent for a group."""
-        group = load_group(req.group_id)
+        return await _broadcast_stop("news", group_id=req.group_id)
+
+    @app.get("/api/market/status")
+    async def market_status(group_id: str = "") -> Dict[str, Any]:
+        return await _broadcast_status("market", group_id)
+
+    @app.post("/api/market/start")
+    async def market_start(req: MarketAgentConfigRequest) -> Dict[str, Any]:
+        return await _broadcast_start("market", group_id=req.group_id, interests=req.interests, schedule=req.schedule)
+
+    @app.post("/api/market/stop")
+    async def market_stop(req: IMActionRequest) -> Dict[str, Any]:
+        return await _broadcast_stop("market", group_id=req.group_id)
+
+    @app.get("/api/ai_long/status")
+    async def ai_long_status(group_id: str = "") -> Dict[str, Any]:
+        return await _broadcast_status("ai_long", group_id)
+
+    @app.get("/api/ai_long/scripts")
+    async def ai_long_scripts() -> Dict[str, Any]:
+        return {"ok": True, "result": {"scripts": _list_ai_long_scripts()}}
+
+    @app.post("/api/ai_long/start")
+    async def ai_long_start(req: AILongAgentConfigRequest) -> Dict[str, Any]:
+        return await _broadcast_start("ai_long", group_id=req.group_id, interests=req.interests, schedule=req.schedule)
+
+    @app.post("/api/ai_long/stop")
+    async def ai_long_stop(req: IMActionRequest) -> Dict[str, Any]:
+        return await _broadcast_stop("ai_long", group_id=req.group_id)
+
+    @app.get("/api/ai_long/preload/status")
+    async def ai_long_preload_status(group_id: str = "") -> Dict[str, Any]:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return {"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id"}}
+        group = load_group(gid)
         if group is None:
-            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {gid}"})
+        state = await _get_ai_long_preload_state(gid)
+        # Recover persisted ready state after server restart.
+        if not state.get("running"):
+            manifest_path = _ai_long_preload_dir(group) / "manifest.json"
+            if manifest_path.exists():
+                try:
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    chunks = manifest.get("chunks")
+                    if isinstance(chunks, list) and chunks:
+                        chunk_count = len(chunks)
+                        expected_total = int(manifest.get("expected_total_chunks") or 0)
+                        completed_top = int(manifest.get("completed_top_chunks") or 0)
+                        total = max(expected_total if expected_total > 0 else 0, completed_top, chunk_count)
+                        complete = bool(manifest.get("complete")) or (expected_total > 0 and chunk_count >= expected_total)
+                        if complete:
+                            state.update(
+                                {
+                                    "status": "ready",
+                                    "title": str(manifest.get("title") or state.get("title") or ""),
+                                    "interests": str(manifest.get("interests") or state.get("interests") or ""),
+                                    "script_hash": str(manifest.get("script_hash") or state.get("script_hash") or ""),
+                                    "script_chars": int(manifest.get("script_chars") or 0),
+                                    "total_chunks": total,
+                                    "completed_chunks": total,
+                                    "manifest_ready": True,
+                                    "message": str(state.get("message") or "已存在后台预加载音频"),
+                                }
+                            )
+                        else:
+                            state.update(
+                                {
+                                    "status": "idle",
+                                    "title": str(manifest.get("title") or state.get("title") or ""),
+                                    "interests": str(manifest.get("interests") or state.get("interests") or ""),
+                                    "script_hash": str(manifest.get("script_hash") or state.get("script_hash") or ""),
+                                    "script_chars": int(manifest.get("script_chars") or 0),
+                                    "total_chunks": total,
+                                    "completed_chunks": min(total, completed_top if completed_top > 0 else chunk_count),
+                                    "manifest_ready": False,
+                                    "message": str(state.get("message") or "检测到未完成预加载，可继续"),
+                                }
+                            )
+                except Exception:
+                    pass
+        return {"ok": True, "result": state}
 
-        news_cfg = group.doc.get("news_agent")
-        if isinstance(news_cfg, dict):
-            news_cfg["enabled"] = False
-            group.doc["news_agent"] = news_cfg
-            try:
-                group.save()
-            except Exception:
-                pass
+    @app.post("/api/ai_long/preload/start")
+    async def ai_long_preload_start(req: AILongPreloadRequest) -> Dict[str, Any]:
+        gid = str(req.group_id or "").strip()
+        if not gid:
+            return {"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id"}}
+        group = load_group(gid)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {gid}"})
 
-        killed: set[int] = set()
-        pid_path = group.path / "state" / "news_agent.pid"
-        if pid_path.exists():
-            try:
-                pid = int(pid_path.read_text(encoding="utf-8").strip())
-                if pid > 0:
-                    _best_effort_terminate_pid(pid)
-                    killed.add(pid)
-            except Exception:
-                pass
-            try:
-                pid_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-        for pid in _find_group_module_pids(home=home, module="cccc.ports.news", group_id=req.group_id):
-            if pid in killed:
+        async with ai_long_preload_lock:
+            existing = ai_long_preload_tasks.get(gid)
+            if existing is not None and not existing.done():
+                state = dict(ai_long_preload_state.get(gid) or {})
+                return {
+                    "ok": False,
+                    "error": {"code": "already_running", "message": "AI 长文预加载正在进行中"},
+                    "result": state,
+                }
+            script_key = str(req.script_key or "").strip()
+            topic = str(req.topic or "").strip()
+            interests = str(req.interests or "").strip()
+            if topic:
+                interests = topic
+            task = asyncio.create_task(
+                _run_ai_long_preload(
+                    gid,
+                    interests,
+                    bool(req.force),
+                    script_key=script_key,
+                    topic=topic,
+                )
+            )
+            ai_long_preload_tasks[gid] = task
+            ai_long_preload_state[gid] = {
+                "group_id": gid,
+                "status": "queued",
+                "title": "",
+                "interests": interests,
+                "script_key": script_key,
+                "topic": topic,
+                "message": "已进入后台预加载队列",
+                "script_hash": "",
+                "total_chunks": 0,
+                "completed_chunks": 0,
+                "script_chars": 0,
+                "manifest_ready": False,
+                "running": True,
+                "updated_at": int(time.time()),
+                "error": "",
+            }
+        return {"ok": True, "result": {"group_id": gid, "started": True}}
+
+    @app.get("/api/ai_long/preload/manifest")
+    async def ai_long_preload_manifest(group_id: str = "") -> Dict[str, Any]:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return {"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id"}}
+        group = load_group(gid)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {gid}"})
+        doc = _read_ai_long_manifest(group)
+        chunks_out: list[Dict[str, Any]] = []
+        for item in doc.get("chunks") or []:
+            if not isinstance(item, dict):
                 continue
-            _best_effort_terminate_pid(pid)
-            killed.add(pid)
+            idx = int(item.get("index") or len(chunks_out))
+            chunks_out.append(
+                {
+                    "index": idx,
+                    "text": str(item.get("text") or ""),
+                    "media_type": str(item.get("media_type") or "audio/wav"),
+                    "bytes": int(item.get("bytes") or 0),
+                }
+            )
+        return {
+            "ok": True,
+            "result": {
+                "group_id": gid,
+                "title": str(doc.get("title") or ""),
+                "interests": str(doc.get("interests") or ""),
+                "script_key": str(doc.get("script_key") or ""),
+                "topic": str(doc.get("topic") or ""),
+                "script_hash": str(doc.get("script_hash") or ""),
+                "script_chars": int(doc.get("script_chars") or 0),
+                "chunks": chunks_out,
+            },
+        }
 
-        return {"ok": True, "result": {"group_id": req.group_id, "stopped": len(killed)}}
+    @app.get("/api/ai_long/preload/chunk")
+    async def ai_long_preload_chunk(group_id: str = "", index: int = 0) -> Response:
+        gid = str(group_id or "").strip()
+        if not gid:
+            raise HTTPException(status_code=400, detail={"code": "missing_group_id", "message": "missing group_id"})
+        group = load_group(gid)
+        if group is None:
+            raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {gid}"})
+        doc = _read_ai_long_manifest(group)
+        chunks = doc.get("chunks") or []
+        if not isinstance(chunks, list) or index < 0 or index >= len(chunks):
+            raise HTTPException(status_code=404, detail={"code": "chunk_not_found", "message": f"chunk index out of range: {index}"})
+        chunk = chunks[index]
+        if not isinstance(chunk, dict):
+            raise HTTPException(status_code=500, detail={"code": "chunk_invalid", "message": "chunk manifest invalid"})
+        rel = str(chunk.get("file") or "").strip()
+        if not rel:
+            raise HTTPException(status_code=500, detail={"code": "chunk_invalid", "message": "chunk file missing"})
+        chunk_path = _ai_long_preload_dir(group) / rel
+        if not chunk_path.exists() or not chunk_path.is_file():
+            raise HTTPException(status_code=404, detail={"code": "chunk_file_missing", "message": f"chunk file missing: {rel}"})
+        media_type = str(chunk.get("media_type") or "audio/wav")
+        return FileResponse(path=chunk_path, media_type=media_type, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/horror/status")
+    async def horror_status(group_id: str = "") -> Dict[str, Any]:
+        return await _broadcast_status("horror", group_id)
+
+    @app.post("/api/horror/start")
+    async def horror_start(req: HorrorAgentConfigRequest) -> Dict[str, Any]:
+        return await _broadcast_start("horror", group_id=req.group_id, interests=req.interests, schedule=req.schedule)
+
+    @app.post("/api/horror/stop")
+    async def horror_stop(req: IMActionRequest) -> Dict[str, Any]:
+        return await _broadcast_stop("horror", group_id=req.group_id)
+
+    @app.get("/api/tts/providers")
+    async def tts_providers() -> Dict[str, Any]:
+        gpt_url = str(os.environ.get("CCCC_TTS_GPTSOVITS_URL") or "http://127.0.0.1:9880/tts").strip()
+        gpt_available = False
+        if gpt_url:
+            gpt_available = await run_in_threadpool(_probe_tcp_endpoint, gpt_url, 0.5)
+        return {
+            "ok": True,
+            "result": {
+                "default_engine": "browser",
+                "providers": [
+                    {"engine": "browser", "label": "Browser TTS", "available": True},
+                    {
+                        "engine": "gpt_sovits_v4",
+                        "label": "GPT-SoVITS v4",
+                        "available": bool(gpt_available),
+                        "endpoint": gpt_url,
+                    },
+                ],
+            },
+        }
+
+    @app.post("/api/tts/synthesize")
+    async def tts_synthesize(req: TTSSynthesizeRequest) -> Response:
+        text = str(req.text or "").strip()
+        if not text:
+            raise HTTPException(status_code=400, detail={"code": "invalid_text", "message": "text is required"})
+        if req.engine != "gpt_sovits_v4":
+            raise HTTPException(status_code=400, detail={"code": "unsupported_engine", "message": f"unsupported engine: {req.engine}"})
+        preload_active = any(
+            task is not None and not bool(task.done())
+            for task in ai_long_preload_tasks.values()
+        )
+        default_wait_sec = 8.0 if preload_active else 0.35
+        wait_sec = _parse_env_float("CCCC_TTS_GPTSOVITS_QUEUE_WAIT_SEC", default_wait_sec)
+        acquired = False
+        try:
+            await asyncio.wait_for(tts_synth_lock.acquire(), timeout=max(0.0, wait_sec))
+            acquired = True
+        except TimeoutError as e:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "tts_busy",
+                    "message": "TTS backend is busy, please retry shortly",
+                    "details": {"queue_wait_sec": wait_sec, "preload_active": preload_active},
+                },
+            ) from e
+        try:
+            data, media_type = await run_in_threadpool(_synthesize_via_gpt_sovits, req)
+        finally:
+            if acquired:
+                tts_synth_lock.release()
+        return Response(content=data, media_type=media_type, headers={"Cache-Control": "no-store"})
 
     return app

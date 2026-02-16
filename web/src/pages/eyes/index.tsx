@@ -20,13 +20,48 @@ import { useTTS } from "./useTTS";
 import { useEyeTracking } from "./useEyeTracking";
 import { useSSEMessages } from "./useSSEMessages";
 import { MobileCompanionLayout } from "./MobileCompanionLayout";
-import { useScreenCapture } from "./useScreenCapture";
-import { usePreferences } from "./usePreferences";
+import { usePreferences, type TTSEngine } from "./usePreferences";
 import { useDeviceTilt } from "./useDeviceTilt";
 
 // ────────────────────────────────────────────
 //  Orchestrator
 // ────────────────────────────────────────────
+
+type BroadcastMode = "news" | "market" | "horror";
+type ActiveBroadcastMode = BroadcastMode | "ai_long";
+type NowPlayingMode = ActiveBroadcastMode | "ai_long_preload";
+const VOICE_COMMAND_COOLDOWN_MS = 1200;
+
+function isAlreadyRunningError(resp: { ok: boolean; error?: { code?: string; message?: string } | null }): boolean {
+  return !resp.ok && String(resp.error?.code || "") === "already_running";
+}
+
+function detectBroadcastModeFromText(text: string): ActiveBroadcastMode | null {
+  const t = String(text || "").trim();
+  if (t.startsWith("[新闻简报]") || t.startsWith("[早间简报]")) return "news";
+  if (t.startsWith("[股市简报]")) return "market";
+  if (t.startsWith("[AI新技术说明]") || t.startsWith("[AI长文说明]")) return "ai_long";
+  if (t.startsWith("[恐怖故事]")) return "horror";
+  return null;
+}
+
+function modeLabel(mode: NowPlayingMode | null): string {
+  if (mode === "news") return "新闻简报";
+  if (mode === "market") return "股市简报";
+  if (mode === "horror") return "恐怖故事";
+  if (mode === "ai_long") return "AI长文";
+  if (mode === "ai_long_preload") return "AI长文预加载";
+  return "待命";
+}
+
+function normalizeVoiceCommandText(text: string): string {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/[，。！？、；：,.!?:;"'`~(){}<>【】（）\s]+/g, "")
+    .replace(/\[/g, "")
+    .replace(/\]/g, "")
+    .trim();
+}
 
 export default function TelepresenceEyes() {
   const stageRef = useRef<HTMLDivElement>(null);
@@ -44,18 +79,36 @@ export default function TelepresenceEyes() {
   const [lastAgentReply, setLastAgentReply] = useState("");
   const chatEndRef = useRef<HTMLDivElement>(null);
   const skipAutoScrollRef = useRef(false);
+  const ttsProviderWarnedRef = useRef(false);
+  const setAutoListenRef = useRef<((next: boolean | ((v: boolean) => boolean)) => void) | null>(null);
   const [connectTimeoutReached, setConnectTimeoutReached] = useState(false);
 
   // ── Persistent preferences ──
   const { prefs, update: updatePrefs } = usePreferences();
   const voiceEnabled = prefs.voiceEnabled;
   const showCameraPreview = prefs.showCameraPreview;
+  const ttsEngine = prefs.ttsEngine;
+  const ttsRateMultiplier = Math.max(
+    0.82,
+    Math.min(1.28, Number(prefs.ttsRateMultiplier || 1))
+  );
   const setVoiceEnabled = useCallback(
     (v: boolean) => updatePrefs({ voiceEnabled: v }),
     [updatePrefs]
   );
   const setShowCameraPreview = useCallback(
     (v: boolean) => updatePrefs({ showCameraPreview: v }),
+    [updatePrefs]
+  );
+  const setTTSEngine = useCallback(
+    (v: TTSEngine) => updatePrefs({ ttsEngine: v }),
+    [updatePrefs]
+  );
+  const setTTSRateMultiplier = useCallback(
+    (v: number) =>
+      updatePrefs({
+        ttsRateMultiplier: Math.max(0.82, Math.min(1.28, Number(v) || 1)),
+      }),
     [updatePrefs]
   );
 
@@ -75,7 +128,7 @@ export default function TelepresenceEyes() {
   const gazeShift = useGazeShift();
 
   // ── TTS ──
-  const tts = useTTS();
+  const tts = useTTS("zh-CN", ttsEngine, ttsRateMultiplier);
 
   // ── Eye tracking (camera + face detection) ──
   const tracking = useEyeTracking();
@@ -213,6 +266,20 @@ export default function TelepresenceEyes() {
   // ── TTS queue — prevents rapid messages from canceling each other ──
   const ttsQueueRef = useRef<string[]>([]);
   const ttsPlayingRef = useRef(false);
+  const broadcastMuteUntilRef = useRef(0);
+  const broadcastAutoplayArmedRef = useRef(false);
+  const expectedBroadcastModeRef = useRef<ActiveBroadcastMode | null>(null);
+  const lastBroadcastModeRef = useRef<ActiveBroadcastMode | null>(null);
+  const broadcastArmAtRef = useRef(0);
+  const lastBroadcastAtRef = useRef(0);
+  const lastVoiceCommandRef = useRef<{ key: string; ts: number }>({
+    key: "",
+    ts: 0,
+  });
+  const aiLongPreloadAudioRef = useRef<HTMLAudioElement | null>(null);
+  const aiLongPreloadAbortRef = useRef<AbortController | null>(null);
+  const aiLongPreloadStopRef = useRef(false);
+  const MAX_PENDING_BROADCAST_TTS = 1;
 
   const playNextInQueue = useCallback(() => {
     if (ttsQueueRef.current.length === 0) {
@@ -229,8 +296,17 @@ export default function TelepresenceEyes() {
   }, [tts]);
 
   const enqueueTTS = useCallback(
-    (text: string) => {
-      ttsQueueRef.current.push(text);
+    (text: string, opts?: { broadcastLike?: boolean }) => {
+      if (opts?.broadcastLike) {
+        // Keep broadcast playback near-real-time: drop stale backlog and keep latest.
+        if (ttsQueueRef.current.length >= MAX_PENDING_BROADCAST_TTS) {
+          ttsQueueRef.current = [text];
+        } else {
+          ttsQueueRef.current.push(text);
+        }
+      } else {
+        ttsQueueRef.current.push(text);
+      }
       if (!ttsPlayingRef.current) {
         playNextInQueue();
       }
@@ -241,13 +317,40 @@ export default function TelepresenceEyes() {
   const stopSpeechNow = useCallback(() => {
     ttsQueueRef.current = [];
     ttsPlayingRef.current = false;
+    aiLongPreloadStopRef.current = true;
+    if (aiLongPreloadAbortRef.current) {
+      try {
+        aiLongPreloadAbortRef.current.abort();
+      } catch {}
+      aiLongPreloadAbortRef.current = null;
+    }
+    const preloadAudio = aiLongPreloadAudioRef.current;
+    if (preloadAudio) {
+      try {
+        preloadAudio.pause();
+        preloadAudio.src = "";
+        preloadAudio.load();
+      } catch {}
+      aiLongPreloadAudioRef.current = null;
+    }
+    setAiLongPreloadPlaying(false);
+    setAiLongPreloadProgress([0, 0]);
     tts.cancel();
     setMood("idle");
   }, [tts]);
 
+  const muteBroadcastTTS = useCallback((ms = 15000) => {
+    broadcastMuteUntilRef.current = Date.now() + Math.max(0, ms);
+  }, []);
+
+  const clearBroadcastMuteTTS = useCallback(() => {
+    broadcastMuteUntilRef.current = 0;
+  }, []);
+
   // ── SSE messages (replaces 3.5s polling) ──
   const onAgentMessage = useCallback(
     (text: string, _eventId: string) => {
+      const now = Date.now();
       // Detect "thinking" indicator messages
       const isThinking = THINKING_PREFIXES.some((p) => text.startsWith(p));
       if (isThinking) {
@@ -260,16 +363,42 @@ export default function TelepresenceEyes() {
         return; // Silent discard
       }
 
-      // Detect news briefing — always TTS regardless of voiceEnabled
-      const isNews = NEWS_PREFIXES.some((p) => text.startsWith(p));
+      // Broadcast-tagged chunks are always recognized as broadcast candidates.
+      const isBroadcastTagged = NEWS_PREFIXES.some((p) => text.startsWith(p));
+      const detectedMode = detectBroadcastModeFromText(text);
+      if (detectedMode) {
+        lastBroadcastModeRef.current = detectedMode;
+      }
+      // Prefix-less long chunks may be broadcast continuations.
+      const isNarrationChunk = text.length >= 80 && /[。！？!?]/.test(text);
+      const isBroadcastContinuation =
+        !isBroadcastTagged &&
+        isNarrationChunk &&
+        now - lastBroadcastAtRef.current < 45000;
+      const messageBroadcastMode =
+        detectedMode ||
+        (isBroadcastContinuation ? lastBroadcastModeRef.current : null);
+      const isBroadcastLike = isBroadcastTagged || isBroadcastContinuation;
+      if (isBroadcastLike) {
+        lastBroadcastAtRef.current = now;
+        setNowPlayingText(text);
+        setNowPlayingMode((prev) => messageBroadcastMode || prev || null);
+        setNowPlayingTs(now);
+      }
+
+      // Hard stop window: drop late broadcast chunks after user clicked stop.
+      if (now < broadcastMuteUntilRef.current && isBroadcastLike) {
+        setMood("idle");
+        return;
+      }
 
       // Keep current viewport/focus during periodic news briefings.
-      if (isNews) {
+      if (isBroadcastLike) {
         skipAutoScrollRef.current = true;
       }
 
       pushLog({ who: "agent", text, ts: Date.now() });
-      if (!isNews) {
+      if (!isBroadcastLike) {
         setLastAgentReply(text);
       }
       window.dispatchEvent(
@@ -280,7 +409,20 @@ export default function TelepresenceEyes() {
       emptyReplyCountRef.current = 0;
       setHealthWarning(false);
 
-      if (voiceEnabled || isNews) {
+      const expectedMode = expectedBroadcastModeRef.current;
+      const modeMatches = Boolean(
+        messageBroadcastMode &&
+          expectedMode &&
+          messageBroadcastMode === expectedMode
+      );
+      const shouldAutoplayBroadcast =
+        isBroadcastLike &&
+        broadcastAutoplayArmedRef.current &&
+        modeMatches &&
+        now >= broadcastArmAtRef.current;
+      if (shouldAutoplayBroadcast) {
+        enqueueTTS(text, { broadcastLike: true });
+      } else if (voiceEnabled && !isBroadcastLike) {
         enqueueTTS(text);
       } else {
         setMood("idle");
@@ -294,23 +436,64 @@ export default function TelepresenceEyes() {
     onAgentMessage,
   });
 
-  // ── Speech recognition ──
-  const speech = useSpeechRecognition({
-    onResult: handleSend,
-    paused: tts.speaking,
-  });
+  const speechHints = useMemo(
+    () => [
+      "CCCC",
+      "新闻简报",
+      "股市简报",
+      "恐怖故事",
+      "AI长文",
+      "停止播报",
+      "强制停播",
+      "开启播报",
+      "机器人角色",
+      "蛋角色",
+      "停止语音",
+      "开启自动聆听",
+      "关闭自动聆听",
+      "静音回复播报",
+      "开启回复播报",
+      "隐藏摄像画面",
+      "显示摄像画面",
+      "切换浏览器语音",
+      "切换GPT语音",
+      "语速快一点",
+      "语速慢一点",
+      "恢复默认语速",
+      "自动聆听",
+      "语音提问",
+    ],
+    []
+  );
 
-  // ── Screen capture (desktop only) ──
-  const [screenSettingsOpen, setScreenSettingsOpen] = useState(false);
-  const screenCapture = useScreenCapture({
-    groupId: group?.group_id ?? null,
-    intervalSec: prefs.screenInterval,
-    prompt: prefs.screenPrompt,
-  });
-
-  // ── News agent status ──
+  // ── Broadcast agents status ──
   const [newsRunning, setNewsRunning] = useState(false);
+  const [marketRunning, setMarketRunning] = useState(false);
+  const [aiLongRunning, setAiLongRunning] = useState(false);
+  const [horrorRunning, setHorrorRunning] = useState(false);
   const [newsBusy, setNewsBusy] = useState(false);
+  const [marketBusy, setMarketBusy] = useState(false);
+  const [aiLongBusy, setAiLongBusy] = useState(false);
+  const [horrorBusy, setHorrorBusy] = useState(false);
+  const [stopAllBusy, setStopAllBusy] = useState(false);
+  const [selectedBroadcastMode, setSelectedBroadcastMode] =
+    useState<BroadcastMode>("news");
+  const [aiLongPreloadBusy, setAiLongPreloadBusy] = useState(false);
+  const [aiLongPreloadPlaying, setAiLongPreloadPlaying] = useState(false);
+  const [aiLongPreloadProgress, setAiLongPreloadProgress] = useState<[number, number]>([0, 0]);
+  const [aiLongPreloadState, setAiLongPreloadState] = useState<api.AILongPreloadStatus | null>(null);
+  const [aiLongScripts, setAiLongScripts] = useState<api.AILongScript[]>([]);
+  const [aiLongSourceMode, setAiLongSourceMode] = useState<"preset" | "topic">("preset");
+  const [aiLongScriptKey, setAiLongScriptKey] = useState("cccc_intro_v1");
+  const [aiLongTopic, setAiLongTopic] = useState("cccc 框架介绍");
+  const [nowPlayingText, setNowPlayingText] = useState("");
+  const [nowPlayingMode, setNowPlayingMode] = useState<NowPlayingMode | null>(null);
+  const [nowPlayingTs, setNowPlayingTs] = useState<number | null>(null);
+  const [gptTtsAvailable, setGptTtsAvailable] = useState<boolean | null>(null);
+  const [gptTtsEndpoint, setGptTtsEndpoint] = useState("");
+  const [ttsProviderLoading, setTtsProviderLoading] = useState(false);
+  const [lastVoiceAction, setLastVoiceAction] = useState("");
+  const [lastVoiceActionTs, setLastVoiceActionTs] = useState<number | null>(null);
 
   // ── LAN IP for QR code (when on localhost) ──
   const [lanIp, setLanIpState] = useState(() => getLanIp());
@@ -330,34 +513,907 @@ export default function TelepresenceEyes() {
     }).catch(() => {});
   }, [handleLanIpChange]);
 
-  // Poll news agent status when group is connected
+  useEffect(() => {
+    let cancelled = false;
+    const loadScripts = async () => {
+      try {
+        const resp = await api.fetchAiLongScripts();
+        if (!resp.ok || cancelled) return;
+        const scripts = resp.result.scripts || [];
+        setAiLongScripts(scripts);
+        if (!scripts.length) return;
+        if (!scripts.some((s) => s.key === aiLongScriptKey)) {
+          setAiLongScriptKey(scripts[0].key);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    void loadScripts();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const refreshTTSProviders = useCallback(async () => {
+    setTtsProviderLoading(true);
+    try {
+      const resp = await api.fetchTTSProviders();
+      if (!resp.ok) {
+        setGptTtsAvailable(null);
+        return;
+      }
+      const providers = resp.result.providers || [];
+      const gpt = providers.find((p) => p.engine === "gpt_sovits_v4");
+      const available = Boolean(gpt?.available);
+      setGptTtsAvailable(available);
+      setGptTtsEndpoint(String(gpt?.endpoint || ""));
+      if (available) {
+        ttsProviderWarnedRef.current = false;
+      } else if (ttsEngine === "gpt_sovits_v4" && !ttsProviderWarnedRef.current) {
+        ttsProviderWarnedRef.current = true;
+        pushLog({
+          who: "agent",
+          text: "GPT-SoVITS 当前不可达，播报将自动回退浏览器语音",
+          ts: Date.now(),
+        });
+      }
+    } catch {
+      setGptTtsAvailable(null);
+    } finally {
+      setTtsProviderLoading(false);
+    }
+  }, [ttsEngine, pushLog]);
+
+  useEffect(() => {
+    void refreshTTSProviders();
+    const timer = setInterval(
+      () => void refreshTTSProviders(),
+      ttsEngine === "gpt_sovits_v4" ? 6000 : 12000
+    );
+    return () => clearInterval(timer);
+  }, [ttsEngine, refreshTTSProviders]);
+
+  const refreshBroadcastStatus = useCallback(async (groupId?: string | null) => {
+    const gid = String(groupId || group?.group_id || "").trim();
+    if (!gid) return;
+    try {
+      const [newsResp, marketResp, aiLongResp, horrorResp, preloadResp] =
+        await Promise.all([
+          api.fetchNewsStatus(gid),
+          api.fetchMarketStatus(gid),
+          api.fetchAiLongStatus(gid),
+          api.fetchHorrorStatus(gid),
+          api.fetchAiLongPreloadStatus(gid),
+        ]);
+      if (newsResp.ok) setNewsRunning(newsResp.result.running);
+      if (marketResp.ok) setMarketRunning(marketResp.result.running);
+      if (aiLongResp.ok) setAiLongRunning(aiLongResp.result.running);
+      if (horrorResp.ok) setHorrorRunning(horrorResp.result.running);
+      if (preloadResp.ok) setAiLongPreloadState(preloadResp.result);
+    } catch {
+      // Ignore transient status polling errors.
+    }
+  }, [group?.group_id]);
+
+  // Poll broadcast agents status when group is connected
   useEffect(() => {
     if (!group?.group_id) return;
-    const check = async () => {
-      const resp = await api.fetchNewsStatus(group.group_id);
-      if (resp.ok) setNewsRunning(resp.result.running);
-    };
-    void check();
-    const timer = setInterval(() => void check(), 15000);
+    void refreshBroadcastStatus(group.group_id);
+    const timer = setInterval(
+      () => void refreshBroadcastStatus(group.group_id),
+      12000
+    );
     return () => clearInterval(timer);
-  }, [group?.group_id]);
+  }, [group?.group_id, refreshBroadcastStatus]);
 
   const toggleNewsAgent = useCallback(async () => {
     if (!group?.group_id || newsBusy) return;
     setNewsBusy(true);
     try {
       if (newsRunning) {
+        broadcastAutoplayArmedRef.current = false;
+        expectedBroadcastModeRef.current = null;
+        muteBroadcastTTS();
         stopSpeechNow();
-        await api.stopNewsAgent(group.group_id);
-        setNewsRunning(false);
+        const resp = await api.stopNewsAgent(group.group_id);
+        if (resp.ok) {
+          setNewsRunning(false);
+        } else {
+          pushLog({
+            who: "agent",
+            text: `停止新闻失败: ${resp.error?.message || "unknown"}`,
+            ts: Date.now(),
+          });
+        }
       } else {
+        stopSpeechNow();
+        clearBroadcastMuteTTS();
+        if (marketRunning) {
+          await api.stopMarketAgent(group.group_id);
+          setMarketRunning(false);
+        }
+        if (aiLongRunning) {
+          await api.stopAiLongAgent(group.group_id);
+          setAiLongRunning(false);
+        }
+        if (horrorRunning) {
+          await api.stopHorrorAgent(group.group_id);
+          setHorrorRunning(false);
+        }
         const resp = await api.startNewsAgent(group.group_id);
-        if (resp.ok) setNewsRunning(true);
+        if (resp.ok || isAlreadyRunningError(resp)) {
+          broadcastAutoplayArmedRef.current = true;
+          expectedBroadcastModeRef.current = "news";
+          broadcastArmAtRef.current = Date.now();
+          setNewsRunning(true);
+          if (isAlreadyRunningError(resp)) {
+            pushLog({
+              who: "agent",
+              text: "新闻播报已在运行",
+              ts: Date.now(),
+            });
+          }
+        } else {
+          pushLog({
+            who: "agent",
+            text: `启动新闻失败: ${resp.error?.message || "unknown"}`,
+            ts: Date.now(),
+          });
+        }
+      }
+    } catch (e: any) {
+      pushLog({
+        who: "agent",
+        text: `新闻操作失败: ${e?.message || "network error"}`,
+        ts: Date.now(),
+      });
+    } finally {
+      setNewsBusy(false);
+      void refreshBroadcastStatus(group.group_id);
+    }
+  }, [group?.group_id, newsRunning, newsBusy, muteBroadcastTTS, stopSpeechNow, clearBroadcastMuteTTS, marketRunning, aiLongRunning, horrorRunning, pushLog, refreshBroadcastStatus]);
+
+  const toggleMarketAgent = useCallback(async () => {
+    if (!group?.group_id || marketBusy) return;
+    setMarketBusy(true);
+    try {
+      if (marketRunning) {
+        broadcastAutoplayArmedRef.current = false;
+        expectedBroadcastModeRef.current = null;
+        muteBroadcastTTS();
+        stopSpeechNow();
+        const resp = await api.stopMarketAgent(group.group_id);
+        if (resp.ok) {
+          setMarketRunning(false);
+        } else {
+          pushLog({
+            who: "agent",
+            text: `停止股市失败: ${resp.error?.message || "unknown"}`,
+            ts: Date.now(),
+          });
+        }
+      } else {
+        stopSpeechNow();
+        clearBroadcastMuteTTS();
+        if (newsRunning) {
+          await api.stopNewsAgent(group.group_id);
+          setNewsRunning(false);
+        }
+        if (aiLongRunning) {
+          await api.stopAiLongAgent(group.group_id);
+          setAiLongRunning(false);
+        }
+        if (horrorRunning) {
+          await api.stopHorrorAgent(group.group_id);
+          setHorrorRunning(false);
+        }
+        const resp = await api.startMarketAgent(group.group_id);
+        if (resp.ok || isAlreadyRunningError(resp)) {
+          broadcastAutoplayArmedRef.current = true;
+          expectedBroadcastModeRef.current = "market";
+          broadcastArmAtRef.current = Date.now();
+          setMarketRunning(true);
+          if (isAlreadyRunningError(resp)) {
+            pushLog({
+              who: "agent",
+              text: "股市播报已在运行",
+              ts: Date.now(),
+            });
+          }
+        } else {
+          pushLog({
+            who: "agent",
+            text: `启动股市失败: ${resp.error?.message || "unknown"}`,
+            ts: Date.now(),
+          });
+        }
+      }
+    } catch (e: any) {
+      pushLog({
+        who: "agent",
+        text: `股市操作失败: ${e?.message || "network error"}`,
+        ts: Date.now(),
+      });
+    } finally {
+      setMarketBusy(false);
+      void refreshBroadcastStatus(group.group_id);
+    }
+  }, [group?.group_id, marketBusy, marketRunning, muteBroadcastTTS, stopSpeechNow, clearBroadcastMuteTTS, newsRunning, aiLongRunning, horrorRunning, pushLog, refreshBroadcastStatus]);
+
+  const toggleAiLongAgent = useCallback(async () => {
+    if (!group?.group_id || aiLongBusy) return;
+    setAiLongBusy(true);
+    try {
+      if (aiLongRunning) {
+        broadcastAutoplayArmedRef.current = false;
+        expectedBroadcastModeRef.current = null;
+        muteBroadcastTTS();
+        stopSpeechNow();
+        const resp = await api.stopAiLongAgent(group.group_id);
+        if (resp.ok) {
+          setAiLongRunning(false);
+        } else {
+          pushLog({
+            who: "agent",
+            text: `停止AI长文失败: ${resp.error?.message || "unknown"}`,
+            ts: Date.now(),
+          });
+        }
+      } else {
+        stopSpeechNow();
+        clearBroadcastMuteTTS();
+        if (newsRunning) {
+          await api.stopNewsAgent(group.group_id);
+          setNewsRunning(false);
+        }
+        if (marketRunning) {
+          await api.stopMarketAgent(group.group_id);
+          setMarketRunning(false);
+        }
+        if (horrorRunning) {
+          await api.stopHorrorAgent(group.group_id);
+          setHorrorRunning(false);
+        }
+        const resp = await api.startAiLongAgent(group.group_id);
+        if (resp.ok || isAlreadyRunningError(resp)) {
+          broadcastAutoplayArmedRef.current = true;
+          expectedBroadcastModeRef.current = "ai_long";
+          broadcastArmAtRef.current = Date.now();
+          setAiLongRunning(true);
+          if (isAlreadyRunningError(resp)) {
+            pushLog({
+              who: "agent",
+              text: "AI长文播报已在运行",
+              ts: Date.now(),
+            });
+          }
+        } else {
+          pushLog({
+            who: "agent",
+            text: `启动AI长文失败: ${resp.error?.message || "unknown"}`,
+            ts: Date.now(),
+          });
+        }
+      }
+    } catch (e: any) {
+      pushLog({
+        who: "agent",
+        text: `AI长文操作失败: ${e?.message || "network error"}`,
+        ts: Date.now(),
+      });
+    } finally {
+      setAiLongBusy(false);
+      void refreshBroadcastStatus(group.group_id);
+    }
+  }, [group?.group_id, aiLongBusy, aiLongRunning, muteBroadcastTTS, stopSpeechNow, clearBroadcastMuteTTS, newsRunning, marketRunning, horrorRunning, pushLog, refreshBroadcastStatus]);
+
+  const toggleHorrorAgent = useCallback(async () => {
+    if (!group?.group_id || horrorBusy) return;
+    setHorrorBusy(true);
+    try {
+      if (horrorRunning) {
+        broadcastAutoplayArmedRef.current = false;
+        expectedBroadcastModeRef.current = null;
+        muteBroadcastTTS();
+        stopSpeechNow();
+        const resp = await api.stopHorrorAgent(group.group_id);
+        if (resp.ok) {
+          setHorrorRunning(false);
+        } else {
+          pushLog({
+            who: "agent",
+            text: `停止恐怖故事失败: ${resp.error?.message || "unknown"}`,
+            ts: Date.now(),
+          });
+        }
+      } else {
+        stopSpeechNow();
+        clearBroadcastMuteTTS();
+        if (newsRunning) {
+          await api.stopNewsAgent(group.group_id);
+          setNewsRunning(false);
+        }
+        if (marketRunning) {
+          await api.stopMarketAgent(group.group_id);
+          setMarketRunning(false);
+        }
+        if (aiLongRunning) {
+          await api.stopAiLongAgent(group.group_id);
+          setAiLongRunning(false);
+        }
+        const resp = await api.startHorrorAgent(group.group_id);
+        if (resp.ok || isAlreadyRunningError(resp)) {
+          broadcastAutoplayArmedRef.current = true;
+          expectedBroadcastModeRef.current = "horror";
+          broadcastArmAtRef.current = Date.now();
+          setHorrorRunning(true);
+          if (isAlreadyRunningError(resp)) {
+            pushLog({
+              who: "agent",
+              text: "恐怖故事播报已在运行",
+              ts: Date.now(),
+            });
+          }
+        } else {
+          pushLog({
+            who: "agent",
+            text: `启动恐怖故事失败: ${resp.error?.message || "unknown"}`,
+            ts: Date.now(),
+          });
+        }
+      }
+    } catch (e: any) {
+      pushLog({
+        who: "agent",
+        text: `恐怖故事操作失败: ${e?.message || "network error"}`,
+        ts: Date.now(),
+      });
+    } finally {
+      setHorrorBusy(false);
+      void refreshBroadcastStatus(group.group_id);
+    }
+  }, [group?.group_id, horrorBusy, horrorRunning, muteBroadcastTTS, stopSpeechNow, clearBroadcastMuteTTS, newsRunning, marketRunning, aiLongRunning, pushLog, refreshBroadcastStatus]);
+
+  const forceStopBroadcast = useCallback(async () => {
+    if (stopAllBusy) return;
+    setStopAllBusy(true);
+    try {
+      broadcastAutoplayArmedRef.current = false;
+      expectedBroadcastModeRef.current = null;
+      broadcastArmAtRef.current = 0;
+      muteBroadcastTTS(20000);
+      stopSpeechNow();
+      const gid = String(group?.group_id || "").trim();
+      if (gid) {
+        await Promise.allSettled([
+          api.stopNewsAgent(gid),
+          api.stopMarketAgent(gid),
+          api.stopAiLongAgent(gid),
+          api.stopHorrorAgent(gid),
+        ]);
+      }
+      setNewsRunning(false);
+      setMarketRunning(false);
+      setAiLongRunning(false);
+      setHorrorRunning(false);
+      if (gid) {
+        await refreshBroadcastStatus(gid);
+        window.setTimeout(() => {
+          void refreshBroadcastStatus(gid);
+        }, 1200);
       }
     } finally {
       setNewsBusy(false);
+      setMarketBusy(false);
+      setAiLongBusy(false);
+      setHorrorBusy(false);
+      setStopAllBusy(false);
     }
-  }, [group?.group_id, newsRunning, newsBusy, stopSpeechNow]);
+  }, [group?.group_id, stopAllBusy, muteBroadcastTTS, stopSpeechNow, refreshBroadcastStatus]);
+
+  const activeBroadcastMode: ActiveBroadcastMode | null = useMemo(() => {
+    if (newsRunning) return "news";
+    if (marketRunning) return "market";
+    if (aiLongRunning) return "ai_long";
+    if (horrorRunning) return "horror";
+    return null;
+  }, [newsRunning, marketRunning, aiLongRunning, horrorRunning]);
+
+  const broadcastBusy = newsBusy || marketBusy || aiLongBusy || horrorBusy || stopAllBusy;
+  const hasActivePlayback = Boolean(
+    activeBroadcastMode || aiLongPreloadPlaying || tts.speaking
+  );
+
+  const preloadAiLongAudio = useCallback(async () => {
+    if (!group?.group_id || aiLongPreloadBusy) return;
+    const trimmedTopic = aiLongTopic.trim();
+    if (aiLongSourceMode === "topic" && !trimmedTopic) {
+      pushLog({
+        who: "agent",
+        text: "请先填写 AI 长文主题",
+        ts: Date.now(),
+      });
+      return;
+    }
+    const selectedScript = aiLongScripts.find((s) => s.key === aiLongScriptKey);
+    const resolvedInterests =
+      aiLongSourceMode === "topic"
+        ? trimmedTopic
+        : selectedScript?.aliases?.join(",") || "CCCC,框架,多Agent,协作,消息总线,语音播报";
+    setAiLongPreloadBusy(true);
+    try {
+      const resp = await api.startAiLongPreload(
+        group.group_id,
+        resolvedInterests,
+        false,
+        {
+          scriptKey: aiLongSourceMode === "preset" ? aiLongScriptKey : "",
+          topic: aiLongSourceMode === "topic" ? trimmedTopic : "",
+        }
+      );
+      if (resp.ok || isAlreadyRunningError(resp)) {
+        pushLog({
+          who: "agent",
+          text: isAlreadyRunningError(resp)
+            ? "AI长文后台预加载正在进行"
+            : aiLongSourceMode === "preset"
+              ? `已开始预加载：${selectedScript?.title || aiLongScriptKey}`
+              : `已开始按主题预加载：${trimmedTopic}`,
+          ts: Date.now(),
+        });
+      } else {
+        pushLog({
+          who: "agent",
+          text: `启动AI长文预加载失败: ${resp.error?.message || "unknown"}`,
+          ts: Date.now(),
+        });
+      }
+      const statusResp = await api.fetchAiLongPreloadStatus(group.group_id);
+      if (statusResp.ok) setAiLongPreloadState(statusResp.result);
+    } catch (e: any) {
+      pushLog({
+        who: "agent",
+        text: `AI长文预加载失败: ${e?.message || "network error"}`,
+        ts: Date.now(),
+      });
+    } finally {
+      setAiLongPreloadBusy(false);
+    }
+  }, [
+    group?.group_id,
+    aiLongPreloadBusy,
+    aiLongTopic,
+    aiLongSourceMode,
+    aiLongScriptKey,
+    aiLongScripts,
+    pushLog,
+  ]);
+
+  const playPreloadedAiLong = useCallback(async () => {
+    if (!group?.group_id || aiLongPreloadPlaying) return;
+    if (activeBroadcastMode) {
+      pushLog({
+        who: "agent",
+        text: "请先停止当前播报，再播放预加载AI长文",
+        ts: Date.now(),
+      });
+      return;
+    }
+    stopSpeechNow();
+    aiLongPreloadStopRef.current = false;
+    setAiLongPreloadPlaying(true);
+    setMood("speaking");
+    try {
+      const manifestResp = await api.fetchAiLongPreloadManifest(group.group_id);
+      if (!manifestResp.ok) {
+        throw new Error(manifestResp.error?.message || "预加载音频未准备好");
+      }
+      const chunks = manifestResp.result.chunks || [];
+      if (!chunks.length) {
+        throw new Error("预加载音频为空");
+      }
+      setAiLongPreloadProgress([0, chunks.length]);
+      for (let i = 0; i < chunks.length; i++) {
+        if (aiLongPreloadStopRef.current) break;
+        setNowPlayingMode("ai_long_preload");
+        setNowPlayingText(String(chunks[i].text || "").trim() || `AI长文片段 ${i + 1}`);
+        setNowPlayingTs(Date.now());
+        const chunkIndex = chunks[i].index;
+        const controller = new AbortController();
+        aiLongPreloadAbortRef.current = controller;
+        const audioResp = await api.fetchAiLongPreloadChunk(
+          group.group_id,
+          chunkIndex,
+          controller.signal
+        );
+        if (aiLongPreloadAbortRef.current === controller) {
+          aiLongPreloadAbortRef.current = null;
+        }
+        if (!audioResp.ok) {
+          throw new Error(audioResp.error.message || "读取预加载音频失败");
+        }
+        if (aiLongPreloadStopRef.current) break;
+        setAiLongPreloadProgress([i + 1, chunks.length]);
+        const url = URL.createObjectURL(audioResp.blob);
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const audio = new Audio(url);
+            aiLongPreloadAudioRef.current = audio;
+            let settled = false;
+            const done = (err?: Error) => {
+              if (settled) return;
+              settled = true;
+              audio.onended = null;
+              audio.onerror = null;
+              if (aiLongPreloadAudioRef.current === audio) {
+                aiLongPreloadAudioRef.current = null;
+              }
+              if (err) reject(err);
+              else resolve();
+            };
+            audio.onended = () => done();
+            audio.onerror = () => done(new Error(`音频片段播放失败（第 ${i + 1} 段）`));
+            const p = audio.play();
+            if (p && typeof p.catch === "function") {
+              p.catch(() => done(new Error("浏览器阻止自动播放，请先与页面交互")));
+            }
+          });
+        } finally {
+          URL.revokeObjectURL(url);
+        }
+      }
+      if (!aiLongPreloadStopRef.current) {
+        pushLog({
+          who: "agent",
+          text: "AI长文预加载音频播放完成",
+          ts: Date.now(),
+        });
+      }
+    } catch (e: any) {
+      if (!aiLongPreloadStopRef.current) {
+        pushLog({
+          who: "agent",
+          text: `播放预加载AI长文失败: ${e?.message || "unknown"}`,
+          ts: Date.now(),
+        });
+      }
+    } finally {
+      aiLongPreloadStopRef.current = false;
+      setAiLongPreloadPlaying(false);
+      setAiLongPreloadProgress([0, 0]);
+      setMood("idle");
+    }
+  }, [group?.group_id, aiLongPreloadPlaying, activeBroadcastMode, stopSpeechNow, pushLog]);
+
+  const aiLongPreloadRunning = Boolean(aiLongPreloadState?.running);
+  const aiLongPreloadReady = Boolean(aiLongPreloadState?.manifest_ready);
+  const speakingProgress = aiLongPreloadPlaying ? aiLongPreloadProgress : tts.ttsProgress;
+  const nowPlayingDisplayMode: NowPlayingMode | null = useMemo(() => {
+    if (aiLongPreloadPlaying) return "ai_long_preload";
+    if (activeBroadcastMode) return activeBroadcastMode;
+    return nowPlayingMode;
+  }, [aiLongPreloadPlaying, activeBroadcastMode, nowPlayingMode]);
+
+  const aiLongPreloadSummary = useMemo(() => {
+    if (!aiLongPreloadState) return "AI长文预加载：未开始";
+    const total = Math.max(0, Number(aiLongPreloadState.total_chunks || 0));
+    const done = Math.max(0, Number(aiLongPreloadState.completed_chunks || 0));
+    if (aiLongPreloadState.running) {
+      return `AI长文预加载中 ${done}/${total || "?"}`;
+    }
+    if (aiLongPreloadState.status === "ready" && aiLongPreloadState.manifest_ready) {
+      return `AI长文已就绪 ${done}/${total}`;
+    }
+    if (aiLongPreloadState.status === "error") {
+      return `AI长文预加载失败: ${aiLongPreloadState.error || aiLongPreloadState.message || "unknown"}`;
+    }
+    return aiLongPreloadState.message || "AI长文预加载：待命";
+  }, [aiLongPreloadState]);
+  const canTriggerAiLongPreload = Boolean(group?.group_id)
+    && !aiLongPreloadBusy
+    && !aiLongPreloadRunning
+    && (aiLongSourceMode === "preset" ? Boolean(aiLongScriptKey) : Boolean(aiLongTopic.trim()));
+
+  const toggleSelectedBroadcast = useCallback(async () => {
+    if (broadcastBusy) return;
+    if (activeBroadcastMode === "news") {
+      await toggleNewsAgent();
+      return;
+    }
+    if (activeBroadcastMode === "market") {
+      await toggleMarketAgent();
+      return;
+    }
+    if (activeBroadcastMode === "ai_long") {
+      await toggleAiLongAgent();
+      return;
+    }
+    if (activeBroadcastMode === "horror") {
+      await toggleHorrorAgent();
+      return;
+    }
+    if (selectedBroadcastMode === "news") {
+      await toggleNewsAgent();
+      return;
+    }
+    if (selectedBroadcastMode === "market") {
+      await toggleMarketAgent();
+      return;
+    }
+    await toggleHorrorAgent();
+  }, [
+    activeBroadcastMode,
+    broadcastBusy,
+    selectedBroadcastMode,
+    toggleNewsAgent,
+    toggleMarketAgent,
+    toggleAiLongAgent,
+    toggleHorrorAgent,
+  ]);
+
+  const runLocalVoiceCommand = useCallback(
+    async (rawText: string): Promise<boolean> => {
+      const compact = normalizeVoiceCommandText(rawText);
+      if (!compact) return false;
+
+      const runCommand = async (
+        key: string,
+        fn: () => Promise<void> | void,
+        ack: string
+      ): Promise<boolean> => {
+        const now = Date.now();
+        if (
+          lastVoiceCommandRef.current.key === key &&
+          now - lastVoiceCommandRef.current.ts < VOICE_COMMAND_COOLDOWN_MS
+        ) {
+          return true;
+        }
+        lastVoiceCommandRef.current = { key, ts: now };
+        await fn();
+        setLastVoiceAction(ack);
+        setLastVoiceActionTs(Date.now());
+        pushLog({ who: "agent", text: `语音指令已执行：${ack}`, ts: Date.now() });
+        return true;
+      };
+
+      if (
+        /(强制停播|停止当前播报|停止播报|停止播放|停止语音|停止朗读|停播|先停一下|先停播)/.test(
+          compact
+        )
+      ) {
+        return runCommand("stop-broadcast", async () => {
+          await forceStopBroadcast();
+        }, "强制停播");
+      }
+
+      if (/(语速快一点|加快语速|快一点|说快点)/.test(compact)) {
+        const next = Math.max(
+          0.82,
+          Math.min(1.28, Number((ttsRateMultiplier + 0.08).toFixed(2)))
+        );
+        return runCommand("tts-rate-up", () => {
+          setTTSRateMultiplier(next);
+        }, `语速 ${next}x`);
+      }
+
+      if (/(语速慢一点|放慢语速|慢一点|说慢点)/.test(compact)) {
+        const next = Math.max(
+          0.82,
+          Math.min(1.28, Number((ttsRateMultiplier - 0.08).toFixed(2)))
+        );
+        return runCommand("tts-rate-down", () => {
+          setTTSRateMultiplier(next);
+        }, `语速 ${next}x`);
+      }
+
+      if (/(恢复默认语速|语速默认|默认语速)/.test(compact)) {
+        return runCommand("tts-rate-default", () => {
+          setTTSRateMultiplier(1);
+        }, "语速 1.00x");
+      }
+
+      const startIntent =
+        /(开启|开始|播放|播报|开播|切到|切换到|来点|来个|我要听|听一下)/.test(
+          compact
+        );
+      const commandLike = compact.length <= 28;
+      const hasNews =
+        /新闻简报|新闻播报|播报新闻|新闻模式/.test(compact);
+      const hasMarket =
+        /股市简报|股票简报|股市播报|股票播报|财经简报/.test(compact);
+      const hasHorror =
+        /恐怖故事|鬼故事|惊悚故事|悬疑故事|夜间故事/.test(compact);
+
+      if (hasNews && startIntent) {
+        return runCommand("start-news", async () => {
+          setSelectedBroadcastMode("news");
+          if (activeBroadcastMode && activeBroadcastMode !== "news") {
+            await forceStopBroadcast();
+          }
+          if (!newsRunning) {
+            await toggleNewsAgent();
+          }
+        }, "新闻简报");
+      }
+
+      if (hasMarket && startIntent) {
+        return runCommand("start-market", async () => {
+          setSelectedBroadcastMode("market");
+          if (activeBroadcastMode && activeBroadcastMode !== "market") {
+            await forceStopBroadcast();
+          }
+          if (!marketRunning) {
+            await toggleMarketAgent();
+          }
+        }, "股市简报");
+      }
+
+      if (hasHorror && startIntent) {
+        return runCommand("start-horror", async () => {
+          setSelectedBroadcastMode("horror");
+          if (activeBroadcastMode && activeBroadcastMode !== "horror") {
+            await forceStopBroadcast();
+          }
+          if (!horrorRunning) {
+            await toggleHorrorAgent();
+          }
+        }, "恐怖故事");
+      }
+
+      if (
+        /(开启选中播报|开始选中播报|开启播报|开始播报|继续播报|恢复播报)/.test(
+          compact
+        )
+      ) {
+        return runCommand("start-selected", async () => {
+          await toggleSelectedBroadcast();
+        }, "播报开关");
+      }
+
+      if (
+        commandLike &&
+        /(预加载|预热|后台准备).*(ai长文|长文|长稿)|长文预加载/.test(compact)
+      ) {
+        return runCommand("preload-ai-long", async () => {
+          await preloadAiLongAudio();
+        }, "AI长文预加载");
+      }
+
+      if (
+        commandLike &&
+        /(播放|开始|继续).*(预加载|长文|长稿)|播放预加载长文|开始长文播报/.test(
+          compact
+        )
+      ) {
+        return runCommand("play-ai-long", async () => {
+          await playPreloadedAiLong();
+        }, "播放预加载长文");
+      }
+
+      if (/(蛋角色|蛋形象|切换蛋|换蛋)/.test(compact)) {
+        return runCommand("avatar-egg", async () => {
+          tracking.setAvatarEnabled(true);
+          tracking.setAvatarStyle("egg");
+        }, "切换为蛋角色");
+      }
+
+      if (/(机器人|机甲角色|机械角色|切换机器人)/.test(compact)) {
+        return runCommand("avatar-robot", async () => {
+          tracking.setAvatarEnabled(true);
+          tracking.setAvatarStyle("robot");
+        }, "切换为机器人");
+      }
+
+      if (/(开启自动聆听|打开自动聆听|自动聆听开启)/.test(compact)) {
+        return runCommand("auto-listen-on", () => {
+          setAutoListenRef.current?.(true);
+        }, "开启自动聆听");
+      }
+
+      if (/(关闭自动聆听|停止自动聆听|自动聆听关闭)/.test(compact)) {
+        return runCommand("auto-listen-off", () => {
+          setAutoListenRef.current?.(false);
+        }, "关闭自动聆听");
+      }
+
+      if (/(静音回复播报|关闭回复播报|关闭语音回复)/.test(compact)) {
+        return runCommand("reply-voice-off", () => {
+          setVoiceEnabled(false);
+        }, "关闭回复播报");
+      }
+
+      if (/(开启回复播报|打开回复播报|开启语音回复)/.test(compact)) {
+        return runCommand("reply-voice-on", () => {
+          setVoiceEnabled(true);
+        }, "开启回复播报");
+      }
+
+      if (/(隐藏摄像画面|关闭摄像画面|只显示网格)/.test(compact)) {
+        return runCommand("camera-preview-hide", () => {
+          setShowCameraPreview(false);
+        }, "隐藏摄像画面");
+      }
+
+      if (/(显示摄像画面|打开摄像画面)/.test(compact)) {
+        return runCommand("camera-preview-show", () => {
+          setShowCameraPreview(true);
+        }, "显示摄像画面");
+      }
+
+      if (
+        /(切换浏览器语音|使用浏览器语音|切换到浏览器tts|切换浏览器tts)/.test(
+          compact
+        )
+      ) {
+        return runCommand("tts-browser", () => {
+          setTTSEngine("browser");
+        }, "切换到浏览器语音");
+      }
+
+      if (
+        /(切换gpt语音|切换gptsovits|切换到gpt语音|使用gpt语音)/.test(compact)
+      ) {
+        return runCommand("tts-gpt", () => {
+          if (gptTtsAvailable === false) {
+            pushLog({
+              who: "agent",
+              text: "GPT-SoVITS 当前离线，暂不切换",
+              ts: Date.now(),
+            });
+            return;
+          }
+          setTTSEngine("gpt_sovits_v4");
+        }, "切换到 GPT-SoVITS");
+      }
+
+      return false;
+    },
+    [
+      activeBroadcastMode,
+      gptTtsAvailable,
+      forceStopBroadcast,
+      horrorRunning,
+      marketRunning,
+      newsRunning,
+      playPreloadedAiLong,
+      preloadAiLongAudio,
+      pushLog,
+      setShowCameraPreview,
+      setTTSRateMultiplier,
+      setTTSEngine,
+      setVoiceEnabled,
+      ttsRateMultiplier,
+      toggleHorrorAgent,
+      toggleMarketAgent,
+      toggleNewsAgent,
+      toggleSelectedBroadcast,
+      tracking,
+    ]
+  );
+
+  const handleSpeechResult = useCallback(
+    (text: string) => {
+      void (async () => {
+        const handled = await runLocalVoiceCommand(text);
+        if (handled) return;
+        await handleSend(text);
+      })();
+    },
+    [runLocalVoiceCommand, handleSend]
+  );
+
+  // ── Speech recognition ──
+  const speech = useSpeechRecognition({
+    onResult: handleSpeechResult,
+    paused: tts.speaking,
+    lang: "zh-CN",
+    hints: speechHints,
+  });
+
+  useEffect(() => {
+    setAutoListenRef.current = speech.setAutoListen;
+  }, [speech.setAutoListen]);
 
   // ── Tilt permission ──
   const requestTiltPermission = async () => {
@@ -477,7 +1533,7 @@ export default function TelepresenceEyes() {
         className="absolute inset-0 pointer-events-none transition-[background-color] duration-700"
         style={{ backgroundColor: `${accent}0a` }}
       />
-      <div className="relative max-w-4xl mx-auto px-4 py-6 flex flex-col gap-6">
+      <div className="relative max-w-4xl mx-auto px-4 py-4 md:py-5 flex flex-col gap-4">
         {/* Header */}
         <header className="flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3">
@@ -571,7 +1627,7 @@ export default function TelepresenceEyes() {
               : eyeMood === "thinking"
                 ? "思考中…"
                 : eyeMood === "speaking"
-                  ? `播报中${tts.ttsProgress[1] > 1 ? ` (${tts.ttsProgress[0]}/${tts.ttsProgress[1]})` : "…"}`
+                  ? `播报中${speakingProgress[1] > 1 ? ` (${speakingProgress[0]}/${speakingProgress[1]})` : "…"}`
                   : eyeMood === "error"
                     ? "错误"
                     : "待命"}
@@ -594,12 +1650,168 @@ export default function TelepresenceEyes() {
             />
           </div>
 
+          {/* Camera + Mesh preview */}
+          <section className="w-full bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white/90 flex-wrap">
+                {showCameraPreview ? "摄像头 / 识别网格" : "识别网格（摄像画面已隐藏）"}
+                <span
+                  className={classNames(
+                    "px-2 py-0.5 rounded-full text-[11px] border",
+                    tracking.camFollow
+                      ? "bg-cyan-500/20 border-cyan-400/50 text-cyan-50"
+                      : "bg-white/5 border-white/20 text-white/70"
+                  )}
+                >
+                  {tracking.camFollow ? "跟随中" : "未跟随"}
+                </span>
+                <DetectorStatusPill label="Face" status={tracking.meshStatus} color="cyan" />
+                <DetectorStatusPill label="Hand" status={tracking.handStatus} color="emerald" />
+                <DetectorStatusPill label="Pose" status={tracking.poseStatus} color="amber" />
+                <span
+                  className={classNames(
+                    "px-2 py-0.5 rounded-full text-[11px] border",
+                    tracking.avatarEnabled
+                      ? "bg-cyan-500/20 border-cyan-400/50 text-cyan-50"
+                      : "bg-white/5 border-white/20 text-white/70"
+                  )}
+                >
+                  {tracking.avatarEnabled
+                    ? `角色开（${tracking.avatarStyle === "robot" ? "机器人" : "蛋"}）`
+                    : "角色关"}
+                </span>
+              </div>
+              <div className="text-xs text-white/60">
+                若未显示视频，请确认摄像头权限。
+              </div>
+            </div>
+            <div className={classNames("camera-pair", !showCameraPreview && "camera-pair--mesh-only")}>
+              <div className={classNames("camera-frame", !showCameraPreview && "camera-frame--hidden")}>
+                <video
+                  ref={tracking.videoRef as React.RefObject<HTMLVideoElement>}
+                  className="camera-video"
+                  muted
+                  playsInline
+                  autoPlay
+                />
+              </div>
+              <div className={classNames("mesh-frame", !showCameraPreview && "mesh-frame--solo")}>
+                <canvas ref={tracking.overlayRef as React.RefObject<HTMLCanvasElement>} className="mesh-canvas" />
+              </div>
+            </div>
+          </section>
+
+          <section className="w-full max-w-[1080px] rounded-2xl border border-emerald-300/25 bg-emerald-500/5 p-2.5 backdrop-blur">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-[10px] md:text-[11px] font-semibold text-emerald-100/90 whitespace-nowrap">
+                  {activeBroadcastMode || aiLongPreloadPlaying ? "当前播报内容" : "最近播报内容"}
+                </span>
+                <span className="px-1.5 py-0.5 rounded-full border border-emerald-300/35 bg-emerald-500/10 text-[10px] text-emerald-100/85">
+                  {modeLabel(nowPlayingDisplayMode)}
+                </span>
+              </div>
+              <span className="text-[10px] text-white/45 whitespace-nowrap">
+                {nowPlayingTs
+                  ? new Date(nowPlayingTs).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })
+                  : ""}
+              </span>
+            </div>
+            <div className="mt-1.5 rounded-lg border border-white/10 bg-black/25 px-2 py-1.5 min-h-[2.8rem] max-h-24 overflow-auto text-[11px] md:text-[12px] leading-relaxed text-white/90 whitespace-pre-wrap break-words">
+              {nowPlayingText || "播报开始后，这里会显示当前内容。"}
+            </div>
+          </section>
+
+          <div className="w-full max-w-[1080px] grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-2">
+            <label className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-2 py-1.5">
+              <span className="text-[10px] md:text-[11px] text-white/70 whitespace-nowrap">
+                语音引擎
+              </span>
+              <select
+                value={ttsEngine}
+                onChange={(e) => setTTSEngine(e.target.value as TTSEngine)}
+                className="min-w-0 flex-1 bg-transparent text-[10px] md:text-[11px] text-white/90 outline-none"
+                disabled={tts.speaking || aiLongPreloadPlaying}
+              >
+                <option value="browser" className="bg-slate-900">
+                  浏览器内置 TTS（当前）
+                </option>
+                <option
+                  value="gpt_sovits_v4"
+                  className="bg-slate-900"
+                  disabled={gptTtsAvailable === false}
+                >
+                  GPT-SoVITS v4（实验）
+                </option>
+              </select>
+            </label>
+            <div className="flex items-center justify-between rounded-xl border border-white/15 bg-white/5 px-2 py-1.5 text-[10px] md:text-[11px] text-white/70">
+              <span>
+                当前: {ttsEngine === "gpt_sovits_v4" ? "GPT-SoVITS v4" : "浏览器 TTS"}
+              </span>
+              {ttsEngine === "gpt_sovits_v4" && (
+                <span
+                  className={classNames(
+                    gptTtsAvailable
+                      ? "text-emerald-300/90"
+                      : gptTtsAvailable === false
+                        ? "text-rose-300/90"
+                        : "text-amber-300/90"
+                  )}
+                >
+                  {ttsProviderLoading
+                    ? "检测中..."
+                    : gptTtsAvailable
+                      ? "服务在线"
+                      : gptTtsAvailable === false
+                        ? "服务离线（自动回退浏览器）"
+                        : "需本地启动 127.0.0.1:9880"}
+                </span>
+              )}
+            </div>
+          </div>
+          {ttsEngine === "gpt_sovits_v4" && gptTtsEndpoint && (
+            <div className="w-full max-w-[1080px] -mt-1 text-[10px] md:text-[11px] text-white/45 truncate">
+              GPT-SoVITS: {gptTtsEndpoint}
+            </div>
+          )}
+          <div className="w-full max-w-[1080px] flex items-center justify-between gap-2 rounded-xl border border-white/15 bg-white/5 px-2 py-1.5 text-[10px] md:text-[11px] text-white/75">
+            <span>语速倍率: {ttsRateMultiplier.toFixed(2)}x</span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setTTSRateMultiplier(Number(Math.max(0.82, ttsRateMultiplier - 0.08).toFixed(2)))}
+                disabled={tts.speaking || aiLongPreloadPlaying}
+                className="px-2 py-1 rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 disabled:opacity-40"
+              >
+                慢一点
+              </button>
+              <button
+                onClick={() => setTTSRateMultiplier(1)}
+                disabled={tts.speaking || aiLongPreloadPlaying}
+                className="px-2 py-1 rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 disabled:opacity-40"
+              >
+                默认
+              </button>
+              <button
+                onClick={() => setTTSRateMultiplier(Number(Math.min(1.28, ttsRateMultiplier + 0.08).toFixed(2)))}
+                disabled={tts.speaking || aiLongPreloadPlaying}
+                className="px-2 py-1 rounded-lg border border-white/20 bg-white/5 text-white/80 hover:bg-white/10 disabled:opacity-40"
+              >
+                快一点
+              </button>
+            </div>
+          </div>
+
           {/* Controls */}
-          <div className="flex items-center gap-3 flex-wrap justify-center">
+          <div className="grid w-full max-w-[1080px] grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
             <button
               onClick={speech.toggle}
               className={classNames(
-                "px-4 py-2 rounded-xl border font-medium transition-all",
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border font-medium transition-all",
                 speech.listening
                   ? "bg-emerald-500/20 border-emerald-400/60 text-emerald-50 shadow-[0_0_0_3px_rgba(16,185,129,0.15)]"
                   : "bg-white/5 border-white/20 text-white/90 hover:bg-white/10"
@@ -617,7 +1829,7 @@ export default function TelepresenceEyes() {
             <button
               onClick={() => speech.setAutoListen((v) => !v)}
               className={classNames(
-                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
                 speech.autoListen
                   ? "bg-emerald-500/20 border-emerald-400/60"
                   : "bg-white/5 border-white/15"
@@ -628,20 +1840,19 @@ export default function TelepresenceEyes() {
             </button>
             <button
               onClick={() => setVoiceEnabled(!voiceEnabled)}
-              className="px-3 py-2 rounded-xl bg-white/5 border border-white/15 text-white/80 hover:bg-white/10 transition"
+              className={classNames(
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
+                voiceEnabled
+                  ? "bg-emerald-500/20 border-emerald-400/60"
+                  : "bg-white/5 border-white/15"
+              )}
             >
-              {voiceEnabled ? "静音回复" : "开启播报"}
-            </button>
-            <button
-              onClick={() => setMood("idle")}
-              className="px-3 py-2 rounded-xl bg-white/5 border border-white/15 text-white/80 hover:bg-white/10 transition"
-            >
-              重置表情
+              {voiceEnabled ? "静音回复播报" : "开启回复播报"}
             </button>
             <button
               onClick={() => tracking.setCamFollow((v) => !v)}
               className={classNames(
-                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
                 tracking.camFollow
                   ? "bg-cyan-500/20 border-cyan-400/60"
                   : "bg-white/5 border-white/15"
@@ -653,14 +1864,14 @@ export default function TelepresenceEyes() {
               onClick={() =>
                 tracking.setCameraStarted(!tracking.cameraStarted)
               }
-              className="px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition bg-amber-500/20 border-amber-400/60"
+              className="px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition bg-amber-500/20 border-amber-400/60"
             >
               {tracking.cameraStarted ? "关闭摄像头" : "开启摄像头"}
             </button>
             <button
               onClick={() => tracking.setMeshEnabled((v) => !v)}
               className={classNames(
-                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
                 tracking.meshEnabled
                   ? "bg-emerald-500/20 border-emerald-400/60"
                   : "bg-white/5 border-white/15"
@@ -675,7 +1886,7 @@ export default function TelepresenceEyes() {
             <button
               onClick={() => tracking.setMirrorEnabled((v) => !v)}
               className={classNames(
-                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
                 tracking.mirrorEnabled
                   ? "bg-indigo-500/20 border-indigo-400/60"
                   : "bg-white/5 border-white/15"
@@ -686,7 +1897,7 @@ export default function TelepresenceEyes() {
             <button
               onClick={() => setShowCameraPreview(!showCameraPreview)}
               className={classNames(
-                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
                 showCameraPreview
                   ? "bg-slate-500/20 border-slate-400/60"
                   : "bg-emerald-500/20 border-emerald-400/60"
@@ -697,7 +1908,7 @@ export default function TelepresenceEyes() {
             <button
               onClick={() => tracking.setHandEnabled((v) => !v)}
               className={classNames(
-                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
                 tracking.handEnabled
                   ? "bg-emerald-500/20 border-emerald-400/60"
                   : "bg-white/5 border-white/15"
@@ -712,7 +1923,7 @@ export default function TelepresenceEyes() {
             <button
               onClick={() => tracking.setPoseEnabled((v) => !v)}
               className={classNames(
-                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
                 tracking.poseEnabled
                   ? "bg-amber-500/20 border-amber-400/60"
                   : "bg-white/5 border-white/15"
@@ -725,122 +1936,178 @@ export default function TelepresenceEyes() {
                   : "开启身体"}
             </button>
             <button
-              onClick={() =>
-                screenCapture.capturing
-                  ? screenCapture.stop()
-                  : void screenCapture.start()
-              }
+              onClick={() => tracking.setAvatarEnabled((v) => !v)}
               className={classNames(
-                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition",
-                screenCapture.capturing
-                  ? "bg-rose-500/20 border-rose-400/60"
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
+                tracking.avatarEnabled
+                  ? "bg-cyan-500/20 border-cyan-400/60"
                   : "bg-white/5 border-white/15"
               )}
+              disabled={!tracking.meshEnabled && !tracking.poseEnabled}
             >
-              {screenCapture.capturing ? "停止观察桌面" : "观察桌面"}
+              {tracking.avatarEnabled ? "关闭角色叠层" : "开启角色叠层"}
             </button>
             <button
-              onClick={() => void toggleNewsAgent()}
-              disabled={newsBusy}
+              onClick={() =>
+                tracking.setAvatarStyle((prev) => (prev === "robot" ? "egg" : "robot"))
+              }
               className={classNames(
-                "px-3 py-2 rounded-xl border text-white/80 hover:bg-white/10 transition disabled:opacity-40",
-                newsRunning
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/80 hover:bg-white/10 transition",
+                "bg-white/5 border-white/15"
+              )}
+              disabled={!tracking.avatarEnabled}
+            >
+              {tracking.avatarStyle === "robot" ? "切换为蛋角色" : "切换为机器人"}
+            </button>
+          </div>
+          {lastVoiceAction && (
+            <div className="w-full max-w-[1080px] -mt-1 text-[10px] md:text-[11px] text-cyan-100/75 truncate">
+              最近语音命令: {lastVoiceAction}
+              {lastVoiceActionTs
+                ? ` · ${new Date(lastVoiceActionTs).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                  })}`
+                : ""}
+            </div>
+          )}
+          <div className="mt-2 w-full max-w-[900px] mx-auto grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto_auto] gap-2">
+            <label className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-2 py-1.5">
+              <span className="text-[10px] md:text-[11px] text-white/70 whitespace-nowrap">
+                播报类型
+              </span>
+              <select
+                value={selectedBroadcastMode}
+                onChange={(e) =>
+                  setSelectedBroadcastMode(e.target.value as BroadcastMode)
+                }
+                className="min-w-0 flex-1 bg-transparent text-[10px] md:text-[11px] text-white/90 outline-none"
+                disabled={broadcastBusy}
+              >
+                <option value="news" className="bg-slate-900">
+                  新闻简报
+                </option>
+                <option value="market" className="bg-slate-900">
+                  股市简报
+                </option>
+                <option value="horror" className="bg-slate-900">
+                  恐怖故事
+                </option>
+              </select>
+            </label>
+            <button
+              onClick={() =>
+                void ((activeBroadcastMode || aiLongPreloadPlaying)
+                  ? forceStopBroadcast()
+                  : toggleSelectedBroadcast())
+              }
+              disabled={(activeBroadcastMode || aiLongPreloadPlaying) ? stopAllBusy : broadcastBusy}
+              className={classNames(
+                "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/85 hover:bg-white/10 transition disabled:opacity-40",
+                (activeBroadcastMode || aiLongPreloadPlaying)
                   ? "bg-amber-500/20 border-amber-400/60"
                   : "bg-white/5 border-white/15"
               )}
             >
-              {newsBusy ? "处理中..." : newsRunning ? "停止新闻播报" : "开启新闻播报"}
+              {(activeBroadcastMode || aiLongPreloadPlaying)
+                ? stopAllBusy
+                  ? "停止中..."
+                  : "停止当前播报"
+                : broadcastBusy
+                  ? "处理中..."
+                  : "开启选中播报"}
+            </button>
+            <button
+              onClick={() => void forceStopBroadcast()}
+              disabled={stopAllBusy || !hasActivePlayback}
+              className="px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/85 hover:bg-white/10 transition disabled:opacity-40 bg-rose-500/20 border-rose-400/60"
+            >
+              {stopAllBusy ? "停止中..." : activeBroadcastMode || aiLongPreloadPlaying ? "强制停播" : "停止语音"}
             </button>
           </div>
-          {screenCapture.error && (
-            <div className="text-xs text-red-400 text-center mt-2">
-              {screenCapture.error}
+          <div className="w-full max-w-[900px] mx-auto rounded-xl border border-cyan-300/25 bg-cyan-500/5 p-2.5">
+            <div className="text-[10px] md:text-[11px] text-cyan-100/90 mb-2">
+              AI长文独立流程（与新闻/股市/恐怖分离）
             </div>
-          )}
-          {/* Screen capture last-capture time (2.2) */}
-          {screenCapture.capturing && screenCapture.lastCaptureTs && (
-            <ScreenCaptureTimer lastTs={screenCapture.lastCaptureTs} />
-          )}
+            <div className="grid grid-cols-1 md:grid-cols-[auto_minmax(0,1fr)_auto_auto] gap-2">
+              <label className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-2 py-1.5">
+                <span className="text-[10px] md:text-[11px] text-white/70 whitespace-nowrap">来源</span>
+                <select
+                  value={aiLongSourceMode}
+                  onChange={(e) => setAiLongSourceMode(e.target.value as "preset" | "topic")}
+                  className="min-w-0 flex-1 bg-transparent text-[10px] md:text-[11px] text-white/90 outline-none"
+                  disabled={aiLongPreloadRunning || aiLongPreloadPlaying}
+                >
+                  <option value="preset" className="bg-slate-900">预置长文</option>
+                  <option value="topic" className="bg-slate-900">按主题生成</option>
+                </select>
+              </label>
+              {aiLongSourceMode === "preset" ? (
+                <label className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-2 py-1.5">
+                  <span className="text-[10px] md:text-[11px] text-white/70 whitespace-nowrap">长文</span>
+                  <select
+                    value={aiLongScriptKey}
+                    onChange={(e) => setAiLongScriptKey(e.target.value)}
+                    className="min-w-0 flex-1 bg-transparent text-[10px] md:text-[11px] text-white/90 outline-none"
+                    disabled={aiLongPreloadRunning || aiLongPreloadPlaying}
+                  >
+                    {aiLongScripts.length === 0 ? (
+                      <option value="cccc_intro_v1" className="bg-slate-900">CCCC框架介绍</option>
+                    ) : (
+                      aiLongScripts.map((s) => (
+                        <option key={s.key} value={s.key} className="bg-slate-900">
+                          {s.title}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </label>
+              ) : (
+                <label className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-2 py-1.5">
+                  <span className="text-[10px] md:text-[11px] text-white/70 whitespace-nowrap">主题</span>
+                  <input
+                    value={aiLongTopic}
+                    onChange={(e) => setAiLongTopic(e.target.value)}
+                    placeholder="例如：GPT-SoVITS v4 原理与调优"
+                    className="min-w-0 flex-1 bg-transparent text-[10px] md:text-[11px] text-white/90 outline-none placeholder:text-white/40"
+                    disabled={aiLongPreloadRunning || aiLongPreloadPlaying}
+                  />
+                </label>
+              )}
+              <button
+                onClick={() => void preloadAiLongAudio()}
+                disabled={!canTriggerAiLongPreload}
+                className={classNames(
+                  "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/85 hover:bg-white/10 transition disabled:opacity-40",
+                  aiLongPreloadRunning ? "bg-amber-500/20 border-amber-400/60" : "bg-cyan-500/20 border-cyan-400/60"
+                )}
+              >
+                {aiLongPreloadBusy || aiLongPreloadRunning ? "预加载中..." : "触发预加载"}
+              </button>
+              <button
+                onClick={() => void playPreloadedAiLong()}
+                disabled={!group?.group_id || !aiLongPreloadReady || aiLongPreloadPlaying || Boolean(activeBroadcastMode)}
+                className={classNames(
+                  "px-2 py-1.5 text-[10px] md:text-[11px] leading-tight whitespace-nowrap rounded-xl border text-white/85 hover:bg-white/10 transition disabled:opacity-40",
+                  aiLongPreloadPlaying ? "bg-amber-500/20 border-amber-400/60" : "bg-emerald-500/20 border-emerald-400/60"
+                )}
+              >
+                {aiLongPreloadPlaying ? "播放中..." : "播放预加载长文"}
+              </button>
+            </div>
+            <div className="mt-2 flex items-center rounded-xl border border-white/15 bg-white/5 px-2 py-1.5 text-[10px] md:text-[11px] text-white/70 min-w-0">
+              <span className="truncate" title={aiLongPreloadSummary}>
+                {aiLongPreloadSummary}
+              </span>
+            </div>
+          </div>
           {/* TTS error feedback */}
           {tts.ttsError && (
             <div className="text-xs text-amber-400 text-center mt-1">
-              播报超时已停止
+              {tts.ttsErrorMessage || "播报失败，已停止"}
             </div>
           )}
-          {/* Screen capture settings */}
-          <div className="flex items-center justify-center mt-2">
-            <button
-              onClick={() => setScreenSettingsOpen((v) => !v)}
-              className="text-[10px] text-white/40 hover:text-white/70 transition"
-            >
-              {screenSettingsOpen ? "隐藏截屏设置" : "截屏设置"}
-            </button>
-          </div>
-          {screenSettingsOpen && (
-            <div className="mt-2 p-3 rounded-xl bg-black/30 border border-white/10 flex flex-col gap-2">
-              <label className="flex items-center justify-between gap-3">
-                <span className="text-xs text-white/70">截取间隔 (秒)</span>
-                <input
-                  type="number"
-                  min={10}
-                  max={300}
-                  value={prefs.screenInterval}
-                  onChange={(e) =>
-                    updatePrefs({ screenInterval: Math.max(10, Math.min(300, Number(e.target.value) || 30)) })
-                  }
-                  className="w-20 px-2 py-1 rounded-lg bg-black/50 border border-white/15 text-white/90 text-xs text-right"
-                />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-xs text-white/70">AI 分析提示词</span>
-                <textarea
-                  value={prefs.screenPrompt}
-                  onChange={(e) => updatePrefs({ screenPrompt: e.target.value })}
-                  rows={3}
-                  className="w-full px-2 py-1 rounded-lg bg-black/50 border border-white/15 text-white/80 text-xs resize-none"
-                />
-              </label>
-            </div>
-          )}
-        </section>
-
-        {/* Camera + Mesh preview */}
-        <section className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-white/90 flex-wrap">
-              {showCameraPreview ? "摄像头 / 识别网格" : "识别网格（摄像画面已隐藏）"}
-              <span
-                className={classNames(
-                  "px-2 py-0.5 rounded-full text-[11px] border",
-                  tracking.camFollow
-                    ? "bg-cyan-500/20 border-cyan-400/50 text-cyan-50"
-                    : "bg-white/5 border-white/20 text-white/70"
-                )}
-              >
-                {tracking.camFollow ? "跟随中" : "未跟随"}
-              </span>
-              <DetectorStatusPill label="Face" status={tracking.meshStatus} color="cyan" />
-              <DetectorStatusPill label="Hand" status={tracking.handStatus} color="emerald" />
-              <DetectorStatusPill label="Pose" status={tracking.poseStatus} color="amber" />
-            </div>
-            <div className="text-xs text-white/60">
-              若未显示视频，请确认摄像头权限。
-            </div>
-          </div>
-          <div className={classNames("camera-pair", !showCameraPreview && "camera-pair--mesh-only")}>
-            <div className={classNames("camera-frame", !showCameraPreview && "camera-frame--hidden")}>
-              <video
-                ref={tracking.videoRef as React.RefObject<HTMLVideoElement>}
-                className="camera-video"
-                muted
-                playsInline
-                autoPlay
-              />
-            </div>
-            <div className={classNames("mesh-frame", !showCameraPreview && "mesh-frame--solo")}>
-              <canvas ref={tracking.overlayRef as React.RefObject<HTMLCanvasElement>} className="mesh-canvas" />
-            </div>
-          </div>
         </section>
 
         {/* Text input */}
@@ -1038,27 +2305,6 @@ function DetectorStatusPill({
     >
       {label} {statusLabel[status]}
     </span>
-  );
-}
-
-// ────────────────────────────────────────────
-//  Screen capture timer (2.2)
-// ────────────────────────────────────────────
-function ScreenCaptureTimer({ lastTs }: { lastTs: number }) {
-  const [ago, setAgo] = React.useState("");
-  React.useEffect(() => {
-    const tick = () => {
-      const s = Math.round((Date.now() - lastTs) / 1000);
-      setAgo(s < 60 ? `${s}秒前` : `${Math.floor(s / 60)}分钟前`);
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [lastTs]);
-  return (
-    <div className="text-[10px] text-white/40 text-center mt-1">
-      上次截屏: {ago}
-    </div>
   );
 }
 

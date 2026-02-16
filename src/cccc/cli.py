@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import socket
@@ -36,6 +37,23 @@ from .kernel.registry import load_registry
 from .kernel.scope import detect_scope
 from .kernel.system_prompt import render_system_prompt
 from .paths import ensure_home
+from .util.conv import coerce_bool
+
+
+def _ensure_windows_selector_event_loop_policy() -> None:
+    """Avoid Proactor accept instability on Windows under long-lived connections."""
+    if os.name != "nt":
+        return
+    try:
+        policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+        if policy_cls is None:
+            return
+        current = asyncio.get_event_loop_policy()
+        if not isinstance(current, policy_cls):
+            asyncio.set_event_loop_policy(policy_cls())
+    except Exception:
+        # Best-effort only; keep startup resilient.
+        pass
 
 
 def _print_json(obj: Any) -> None:
@@ -449,11 +467,13 @@ def _default_entry() -> int:
     host = str(os.environ.get("CCCC_WEB_HOST") or "").strip() or "127.0.0.1"
     port = int(os.environ.get("CCCC_WEB_PORT") or 8848)
     log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip() or "info"
-    reload_mode = bool(os.environ.get("CCCC_WEB_RELOAD"))
+    # Parse env bool safely; values like "0"/"false" must disable reload.
+    reload_mode = coerce_bool(os.environ.get("CCCC_WEB_RELOAD"), default=False)
     
     # Run web. Let uvicorn own signal handling; set a bounded graceful timeout to
     # avoid hanging forever on long-lived connections (e.g. SSE/WebSocket).
     import uvicorn
+    _ensure_windows_selector_event_loop_policy()
 
     config = uvicorn.Config(
         "cccc.ports.web.app:create_app",
@@ -461,6 +481,7 @@ def _default_entry() -> int:
         host=host,
         port=port,
         log_level=log_level,
+        loop="cccc.util.uvicorn_loop:create_safe_event_loop",
         reload=reload_mode,
         timeout_graceful_shutdown=3,
     )

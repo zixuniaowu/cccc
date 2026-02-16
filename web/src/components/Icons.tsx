@@ -473,6 +473,26 @@ export function PowerIcon({ className, size = 18 }: IconProps) {
     </svg>
   );
 }
+
+export function GamepadIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <path d="M6 12h4M8 10v4M15 11h.01M18 13h.01" strokeWidth="2" />
+      <rect x="2" y="6" width="20" height="12" rx="3" />
+    </svg>
+  );
+}
+
 export function AlertIcon({ className, size = 18 }: IconProps) {
   return (
     <svg

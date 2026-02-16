@@ -25,7 +25,14 @@ export const THINKING_PREFIXES = ["正在思考", "仍在处理"];
 export const SCREEN_CAPTURE_NOOP = "无特别发现";
 
 /** News briefing prefixes — auto-TTS even if user isn't actively chatting */
-export const NEWS_PREFIXES = ["[新闻简报]", "[早间简报]", "[股市简报]", "[AI新技术说明]"];
+export const NEWS_PREFIXES = [
+  "[新闻简报]",
+  "[早间简报]",
+  "[股市简报]",
+  "[AI新技术说明]",
+  "[AI长文说明]",
+  "[恐怖故事]",
+];
 
 /** Whether the page is opened via localhost */
 export const IS_LOCALHOST =

@@ -2,11 +2,17 @@ import { useState, useCallback } from "react";
 
 const STORAGE_KEY = "cccc-eyes-prefs";
 
+export type TTSEngine = "browser" | "gpt_sovits_v4";
+
 export interface EyesPreferences {
   voiceEnabled: boolean;
   autoListen: boolean;
   /** Show raw camera preview panel in desktop camera section */
   showCameraPreview: boolean;
+  /** TTS engine selection: browser built-in or local GPT-SoVITS v4 proxy */
+  ttsEngine: TTSEngine;
+  /** Global speech speed multiplier for both browser TTS and GPT-SoVITS proxy */
+  ttsRateMultiplier: number;
   lastGroupId: string | null;
   screenWatch: boolean;
   /** Screen capture interval in seconds */
@@ -22,6 +28,8 @@ const DEFAULTS: EyesPreferences = {
   voiceEnabled: true,
   autoListen: false,
   showCameraPreview: true,
+  ttsEngine: "browser",
+  ttsRateMultiplier: 1.0,
   lastGroupId: null,
   screenWatch: false,
   screenInterval: 30,
@@ -35,7 +43,12 @@ function loadPrefs(): EyesPreferences {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      return { ...DEFAULTS, ...parsed };
+      const merged = { ...DEFAULTS, ...parsed } as EyesPreferences;
+      const r = Number(merged.ttsRateMultiplier);
+      merged.ttsRateMultiplier = Number.isFinite(r)
+        ? Math.max(0.82, Math.min(1.28, r))
+        : DEFAULTS.ttsRateMultiplier;
+      return merged;
     }
   } catch {}
   return { ...DEFAULTS };

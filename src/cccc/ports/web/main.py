@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import os
 import sys
 from typing import Optional
@@ -8,6 +9,21 @@ from typing import Optional
 import uvicorn
 
 from ...daemon.server import call_daemon
+
+
+def _ensure_windows_selector_event_loop_policy() -> None:
+    """Avoid Proactor accept instability on Windows under long-lived connections."""
+    if os.name != "nt":
+        return
+    try:
+        policy_cls = getattr(asyncio, "WindowsSelectorEventLoopPolicy", None)
+        if policy_cls is None:
+            return
+        current = asyncio.get_event_loop_policy()
+        if not isinstance(current, policy_cls):
+            asyncio.set_event_loop_policy(policy_cls())
+    except Exception:
+        pass
 
 
 def _check_daemon_running() -> bool:
@@ -41,6 +57,8 @@ def main(argv: Optional[list[str]] = None) -> int:
         print("  or use: cccc (to start both daemon and web together)", file=sys.stderr)
         return 1
 
+    _ensure_windows_selector_event_loop_policy()
+
     try:
         uvicorn.run(
             "cccc.ports.web.app:create_app",
@@ -48,6 +66,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             host=str(args.host),
             port=int(args.port),
             log_level=str(args.log_level),
+            loop="cccc.util.uvicorn_loop:create_safe_event_loop",
             reload=bool(args.reload),
         )
     except (KeyboardInterrupt, SystemExit):

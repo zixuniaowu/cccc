@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>极简复古弹珠台 - CCCC Edition</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0f0f1a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    font-family: 'Courier New', Courier, monospace;
+    overflow: hidden;
+    color: #00ffcc;
+  }
+  #game-container {
+    position: relative;
+    box-shadow: 0 0 50px rgba(0, 255, 204, 0.2);
+    border: 4px solid #333;
+    border-radius: 20px;
+    background: #161625;
+  }
+  #ui {
+    position: absolute;
+    top: -40px;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    font-size: 20px;
+    text-shadow: 0 0 10px #00ffcc;
+  }
+  #instructions {
+    position: absolute;
+    bottom: -60px;
+    width: 100%;
+    text-align: center;
+    font-size: 14px;
+    color: #888;
+  }
+  .controls-hint {
+    color: #e94560;
+    font-weight: bold;
+  }
+  #overlay {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.8);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    border-radius: 16px;
+    z-index: 10;
+  }
+  h1 { font-size: 48px; margin-bottom: 20px; color: #00ffcc; text-align: center; }
+  button {
+    background: transparent;
+    border: 2px solid #00ffcc;
+    color: #00ffcc;
+    padding: 15px 40px;
+    font-size: 24px;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.3s;
+  }
+  button:hover {
+    background: #00ffcc;
+    color: #161625;
+    box-shadow: 0 0 20px #00ffcc;
+  }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="game-container">
+  <div id="ui">
+    <span>SCORE: <span id="score">0000</span></span>
+    <span>BALLS: <span id="balls">3</span></span>
+  </div>
+  <div id="canvas-holder"></div>
+  <div id="overlay">
+    <h1>RETRO PINBALL</h1>
+    <button id="start-btn">START GAME</button>
+  </div>
+  <div id="instructions">
+    Use <span class="controls-hint">LEFT/RIGHT ARROWS</span> or <span class="controls-hint">A/D</span> for Flippers<br>
+    Press <span class="controls-hint">SPACE</span> to launch the ball!
+  </div>
+</div>
+
+<script>
+const { Engine, Render, Runner, World, Bodies, Body, Composite, Events, Vector } = Matter;
+
+const WIDTH = 400;
+const HEIGHT = 600;
+let score = 0;
+let ballsRemaining = 3;
+let gameState = 'START';
+
+const engine = Engine.create();
+const world = engine.world;
+engine.gravity.y = 1.2;
+
+const render = Render.create({
+  element: document.getElementById('canvas-holder'),
+  engine: engine,
+  options: {
+    width: WIDTH,
+    height: HEIGHT,
+    wireframes: false,
+    background: '#161625'
+  }
+});
+
+Render.run(render);
+const runner = Runner.create();
+Runner.run(runner, engine);
+
+// --- Game Objects ---
+let ball = null;
+let leftFlipper, rightFlipper;
+let bumpers = [];
+
+function createTable() {
+  const wallOptions = { isStatic: true, render: { fillStyle: '#333' } };
+  
+  // Outer walls
+  World.add(world, [
+    Bodies.rectangle(WIDTH/2, 0, WIDTH, 20, wallOptions), // Top
+    Bodies.rectangle(0, HEIGHT/2, 20, HEIGHT, wallOptions), // Left
+    Bodies.rectangle(WIDTH, HEIGHT/2, 20, HEIGHT, wallOptions), // Right
+    // Slanted bottom
+    Bodies.rectangle(50, HEIGHT - 50, 200, 20, { ...wallOptions, angle: Math.PI/6 }),
+    Bodies.rectangle(WIDTH - 50, HEIGHT - 50, 200, 20, { ...wallOptions, angle: -Math.PI/6 }),
+  ]);
+
+  // Flippers
+  leftFlipper = createFlipper(120, HEIGHT - 80, 80, 15, -0.5, 0.5);
+  rightFlipper = createFlipper(WIDTH - 120, HEIGHT - 80, 80, 15, 0.5, -0.5);
+
+  // Bumpers
+  createBumper(100, 150, 30);
+  createBumper(300, 150, 30);
+  createBumper(200, 250, 40);
+  
+  // Top curve helpers
+  for(let i=0; i<8; i++) {
+    const angle = (i/8) * Math.PI;
+    const x = WIDTH/2 + Math.cos(angle) * 150;
+    const y = 150 - Math.sin(angle) * 50;
+    World.add(world, Bodies.circle(x, y, 5, { isStatic: true, render: { fillStyle: '#444' } }));
+  }
+}
+
+function createFlipper(x, y, width, height, startAngle, endAngle) {
+  const flipper = Bodies.rectangle(x, y, width, height, {
+    chamfer: { radius: height/2 },
+    render: { fillStyle: '#e94560' }
+  });
+  
+  const pivot = { x: x + (startAngle > 0 ? width/2 : -width/2), y: y };
+  
+  // We'll use a manual constraint-like behavior in the update loop
+  return { body: flipper, pivot, angle: 0, targetAngle: 0, baseAngle: startAngle };
+}
+
+function createBumper(x, y, r) {
+  const b = Bodies.circle(x, y, r, {
+    isStatic: true,
+    label: 'bumper',
+    render: { 
+        fillStyle: '#00ffcc',
+        strokeStyle: '#fff',
+        lineWidth: 3
+    }
+  });
+  World.add(world, b);
+  bumpers.push(b);
+}
+
+function spawnBall() {
+  if (ball) World.remove(world, ball);
+  ball = Bodies.circle(WIDTH - 40, HEIGHT - 100, 10, {
+    restitution: 0.5,
+    density: 0.01,
+    friction: 0.01,
+    label: 'ball',
+    render: { fillStyle: '#eee' }
+  });
+  World.add(world, ball);
+}
+
+// --- Logic ---
+const keys = {};
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+Events.on(engine, 'beforeUpdate', () => {
+  if (gameState !== 'PLAYING') return;
+
+  // Update Flippers
+  updateFlipper(leftFlipper, keys['ArrowLeft'] || keys['KeyA']);
+  updateFlipper(rightFlipper, keys['ArrowRight'] || keys['KeyD']);
+
+  // Launch ball
+  if (keys['Space'] && ball && ball.position.y > HEIGHT - 120 && ball.position.x > WIDTH - 60) {
+    Body.applyForce(ball, ball.position, { x: 0, y: -0.15 });
+  }
+
+  // Check out of bounds
+  if (ball && ball.position.y > HEIGHT + 50) {
+    ballsRemaining--;
+    document.getElementById('balls').textContent = ballsRemaining;
+    if (ballsRemaining <= 0) {
+      gameOver();
+    } else {
+      spawnBall();
+    }
+  }
+});
+
+function updateFlipper(f, active) {
+  const target = active ? (f.baseAngle > 0 ? -0.8 : 0.8) : f.baseAngle;
+  const diff = target - f.angle;
+  f.angle += diff * 0.3;
+  
+  // Simple pivot physics
+  const newX = f.pivot.x - Math.cos(f.angle) * (f.body.bounds.max.x - f.body.bounds.min.x)/2 * (f.baseAngle > 0 ? -1 : 1);
+  const newY = f.pivot.y - Math.sin(f.angle) * (f.body.bounds.max.x - f.body.bounds.min.x)/2 * (f.baseAngle > 0 ? -1 : 1);
+  
+  Body.setPosition(f.body, { x: f.pivot.x, y: f.pivot.y }); // This is a simplification
+  // Actually let's just rotate it
+  Body.setAngle(f.body, f.angle);
+  // Manual offset to simulate pivot at end
+  const offset = (f.body.bounds.max.x - f.body.bounds.min.x)/2 * 0.8;
+  const dir = f.baseAngle > 0 ? -1 : 1;
+  Body.setPosition(f.body, {
+    x: f.pivot.x + Math.cos(f.angle) * offset * dir,
+    y: f.pivot.y + Math.sin(f.angle) * offset * dir
+  });
+}
+
+Events.on(engine, 'collisionStart', (event) => {
+  event.pairs.forEach(pair => {
+    if (pair.bodyA.label === 'bumper' || pair.bodyB.label === 'bumper') {
+      score += 100;
+      document.getElementById('score').textContent = score.toString().padStart(4, '0');
+      
+      // Flash effect
+      const bumper = pair.bodyA.label === 'bumper' ? pair.bodyA : pair.bodyB;
+      bumper.render.fillStyle = '#fff';
+      setTimeout(() => bumper.render.fillStyle = '#00ffcc', 100);
+      
+      // Extra push
+      if (ball) {
+        const force = Vector.mult(Vector.normalise(Vector.sub(ball.position, bumper.position)), 0.05);
+        Body.applyForce(ball, ball.position, force);
+      }
+    }
+  });
+});
+
+function startGame() {
+  document.getElementById('overlay').classList.add('hidden');
+  score = 0;
+  ballsRemaining = 3;
+  document.getElementById('score').textContent = '0000';
+  document.getElementById('balls').textContent = '3';
+  
+  World.clear(world);
+  createTable();
+  spawnBall();
+  World.add(world, [leftFlipper.body, rightFlipper.body]);
+  
+  gameState = 'PLAYING';
+}
+
+function gameOver() {
+  gameState = 'GAMEOVER';
+  document.getElementById('overlay').classList.remove('hidden');
+  document.querySelector('h1').textContent = 'GAME OVER
+SCORE: ' + score;
+  document.getElementById('start-btn').textContent = 'TRY AGAIN';
+}
+
+document.getElementById('start-btn').addEventListener('click', startGame);
+
+// Initialize table
+createTable();
+World.add(world, [leftFlipper.body, rightFlipper.body]);
+
+</script>
+</body>
+</html>

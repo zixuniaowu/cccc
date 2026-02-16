@@ -705,6 +705,7 @@ export async function stopIMBridge(groupId: string) {
 
 export interface NewsAgentStatus {
   group_id: string;
+  kind?: string;
   enabled: boolean;
   running: boolean;
   pid: number;
@@ -716,7 +717,7 @@ export async function fetchNewsStatus(groupId: string) {
   return apiJson<NewsAgentStatus>(`/api/news/status?group_id=${encodeURIComponent(groupId)}`);
 }
 
-export async function startNewsAgent(groupId: string, interests = "AI,科技,编程,股市,美股,A股", schedule = "8,11,14,17,20") {
+export async function startNewsAgent(groupId: string, interests = "AI,科技,编程", schedule = "8,11,14,17,20") {
   return apiJson<{ group_id: string; pid: number }>("/api/news/start", {
     method: "POST",
     body: JSON.stringify({ group_id: groupId, interests, schedule }),
@@ -728,6 +729,257 @@ export async function stopNewsAgent(groupId: string) {
     method: "POST",
     body: JSON.stringify({ group_id: groupId }),
   });
+}
+
+export async function fetchMarketStatus(groupId: string) {
+  return apiJson<NewsAgentStatus>(`/api/market/status?group_id=${encodeURIComponent(groupId)}`);
+}
+
+export async function startMarketAgent(groupId: string, interests = "股市,美股,A股,港股,宏观,财报", schedule = "9,12,15,18,22") {
+  return apiJson<{ group_id: string; pid: number }>("/api/market/start", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId, interests, schedule }),
+  });
+}
+
+export async function stopMarketAgent(groupId: string) {
+  return apiJson<{ group_id: string; stopped: number }>("/api/market/stop", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId }),
+  });
+}
+
+export async function fetchAiLongStatus(groupId: string) {
+  return apiJson<NewsAgentStatus>(`/api/ai_long/status?group_id=${encodeURIComponent(groupId)}`);
+}
+
+export interface AILongScript {
+  key: string;
+  title: string;
+  aliases: string[];
+  sections: number;
+}
+
+export async function fetchAiLongScripts() {
+  return apiJson<{ scripts: AILongScript[] }>("/api/ai_long/scripts");
+}
+
+export async function startAiLongAgent(groupId: string, interests = "CCCC,框架,多Agent,协作,消息总线,语音播报", schedule = "10,16,21") {
+  return apiJson<{ group_id: string; pid: number }>("/api/ai_long/start", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId, interests, schedule }),
+  });
+}
+
+export async function stopAiLongAgent(groupId: string) {
+  return apiJson<{ group_id: string; stopped: number }>("/api/ai_long/stop", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId }),
+  });
+}
+
+export interface AILongPreloadStatus {
+  group_id: string;
+  status: "idle" | "queued" | "preparing" | "synthesizing" | "ready" | "error";
+  running: boolean;
+  title: string;
+  interests: string;
+  script_key: string;
+  topic: string;
+  message: string;
+  script_hash: string;
+  script_chars: number;
+  total_chunks: number;
+  completed_chunks: number;
+  manifest_ready: boolean;
+  error?: string;
+  updated_at?: number;
+}
+
+export interface AILongPreloadChunkMeta {
+  index: number;
+  text: string;
+  media_type: string;
+  bytes: number;
+}
+
+export interface AILongPreloadManifest {
+  group_id: string;
+  title: string;
+  interests: string;
+  script_key: string;
+  topic: string;
+  script_hash: string;
+  script_chars: number;
+  chunks: AILongPreloadChunkMeta[];
+}
+
+export async function fetchAiLongPreloadStatus(groupId: string) {
+  return apiJson<AILongPreloadStatus>(`/api/ai_long/preload/status?group_id=${encodeURIComponent(groupId)}`);
+}
+
+export async function startAiLongPreload(
+  groupId: string,
+  interests = "CCCC,框架,多Agent,协作,消息总线,语音播报",
+  force = false,
+  opts?: { scriptKey?: string; topic?: string }
+) {
+  return apiJson<{ group_id: string; started: boolean }>("/api/ai_long/preload/start", {
+    method: "POST",
+    body: JSON.stringify({
+      group_id: groupId,
+      interests,
+      force,
+      script_key: opts?.scriptKey || "",
+      topic: opts?.topic || "",
+    }),
+  });
+}
+
+export async function fetchAiLongPreloadManifest(groupId: string) {
+  return apiJson<AILongPreloadManifest>(`/api/ai_long/preload/manifest?group_id=${encodeURIComponent(groupId)}`);
+}
+
+export type AudioBlobResponse =
+  | { ok: true; blob: Blob; contentType: string }
+  | { ok: false; error: { code: string; message: string } };
+
+export async function fetchAiLongPreloadChunk(
+  groupId: string,
+  index: number,
+  signal?: AbortSignal
+): Promise<AudioBlobResponse> {
+  let resp: Response;
+  try {
+    resp = await fetch(
+      `/api/ai_long/preload/chunk?group_id=${encodeURIComponent(groupId)}&index=${encodeURIComponent(String(index))}`,
+      {
+        headers: getAuthHeaders(),
+        signal,
+      }
+    );
+  } catch (e) {
+    return {
+      ok: false,
+      error: {
+        code: "NETWORK_ERROR",
+        message: e instanceof Error ? e.message : "Network request failed",
+      },
+    };
+  }
+  if (!resp.ok) {
+    let code = "chunk_fetch_failed";
+    let message = `chunk fetch failed (${resp.status})`;
+    try {
+      const data = await resp.json();
+      if (data && typeof data === "object") {
+        const err = (data as { error?: { code?: string; message?: string } }).error;
+        if (err?.code) code = String(err.code);
+        if (err?.message) message = String(err.message);
+      }
+    } catch {
+      // ignore
+    }
+    return { ok: false, error: { code, message } };
+  }
+  const contentType = resp.headers.get("content-type") || "audio/wav";
+  const blob = await resp.blob();
+  return { ok: true, blob, contentType };
+}
+
+export async function fetchHorrorStatus(groupId: string) {
+  return apiJson<NewsAgentStatus>(`/api/horror/status?group_id=${encodeURIComponent(groupId)}`);
+}
+
+export async function startHorrorAgent(groupId: string, interests = "深夜,公寓,都市传说,悬疑,心理惊悚", schedule = "21,23,1") {
+  return apiJson<{ group_id: string; pid: number }>("/api/horror/start", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId, interests, schedule }),
+  });
+}
+
+export async function stopHorrorAgent(groupId: string) {
+  return apiJson<{ group_id: string; stopped: number }>("/api/horror/stop", {
+    method: "POST",
+    body: JSON.stringify({ group_id: groupId }),
+  });
+}
+
+// ============ TTS Providers ============
+
+export type TTSEngine = "browser" | "gpt_sovits_v4";
+
+export type TTSStyle = "general" | "news" | "market" | "ai_long" | "horror";
+
+export interface TTSProviderStatus {
+  engine: TTSEngine;
+  label: string;
+  available: boolean;
+  endpoint?: string;
+}
+
+export async function fetchTTSProviders() {
+  return apiJson<{ default_engine: TTSEngine; providers: TTSProviderStatus[] }>("/api/tts/providers");
+}
+
+export interface TTSSynthesizeRequest {
+  text: string;
+  style: TTSStyle;
+  lang: string;
+  engine: Exclude<TTSEngine, "browser">;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+}
+
+export type TTSAudioResponse =
+  | { ok: true; blob: Blob; contentType: string }
+  | { ok: false; error: { code: string; message: string } };
+
+export async function synthesizeTTSAudio(
+  req: TTSSynthesizeRequest,
+  signal?: AbortSignal
+): Promise<TTSAudioResponse> {
+  let resp: Response;
+  try {
+    resp = await fetch("/api/tts/synthesize", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...getAuthHeaders(),
+      },
+      body: JSON.stringify(req),
+      signal,
+    });
+  } catch (e) {
+    return {
+      ok: false,
+      error: {
+        code: "NETWORK_ERROR",
+        message: e instanceof Error ? e.message : "Network request failed",
+      },
+    };
+  }
+
+  if (!resp.ok) {
+    let code = "tts_failed";
+    let message = `TTS failed (${resp.status})`;
+    try {
+      const data = await resp.json();
+      if (data && typeof data === "object") {
+        const err = (data as { error?: { code?: string; message?: string } }).error;
+        if (err?.code) code = String(err.code);
+        if (err?.message) message = String(err.message);
+      }
+    } catch {
+      // ignore body parse errors
+    }
+    return { ok: false, error: { code, message } };
+  }
+
+  const contentType = resp.headers.get("content-type") || "audio/wav";
+  const blob = await resp.blob();
+  return { ok: true, blob, contentType };
 }
 
 // ============ Observability ============

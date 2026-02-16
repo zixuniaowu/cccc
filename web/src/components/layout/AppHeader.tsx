@@ -12,7 +12,8 @@ import {
   SettingsIcon, 
   EditIcon,
   MoreIcon,
-  MenuIcon 
+  MenuIcon,
+  GamepadIcon 
 } from "../Icons";
 
 export interface AppHeaderProps {
@@ -128,6 +129,18 @@ export function AppHeader({
           <>
             {/* Desktop Actions */}
             <div className="hidden sm:flex items-center gap-1.5 mr-2">
+              <button
+                onClick={() => window.open("/pinball.html", "_blank")}
+                className={classNames(
+                  "p-2 rounded-xl transition-all glass-btn",
+                  isDark ? "text-slate-400 hover:text-white" : "text-gray-400 hover:text-gray-900"
+                )}
+                title="Play Pinball Game"
+              >
+                <span className="sr-only">Game</span>
+                <GamepadIcon size={18} />
+              </button>
+
               <button
                 onClick={onOpenSearch}
                 disabled={!selectedGroupId}
