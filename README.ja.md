@@ -1,245 +1,193 @@
-# CCCC — マルチエージェント協調カーネル
+# AI 音声コンパニオン - Telepresence Eyes
 
-[English](README.md) | [中文](README.zh-CN.md) | **日本語**
+[中文](README.md) | **日本語**
 
-> **ステータス**: 0.4.0rc18 (Release Candidate)
+会話できる「動く目」の AI コンパニオン。  
+デスクトップとスマホを連携し、音声対話・視線追従・画面観察・ニュース読み上げを行います。
 
-[![Documentation](https://img.shields.io/badge/docs-online-blue)](https://dweb-channel.github.io/cccc/)
-[![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+![AI Eyes](docs/screenshots/eyes-closeup.png)
 
-CCCC は **local-first なマルチエージェント協調カーネル**です。モダンな IM のように AI エージェントを協調させます。
+## プロジェクト概要
 
-**主な機能**：
-- 🤖 **マルチランタイム対応** — Claude Code、Codex CLI、Droid、OpenCode、Copilot など
-- 📝 **追記型 ledger** — 永続的な履歴、唯一の事実源
-- 🌐 **Web ファーストコンソール** — モバイルフレンドリー
-- 💬 **IM グレードのメッセージング** — @mentions、reply/quote、既読確認
-- 🔧 **MCP ツール面** — 38+ ツールで信頼性の高いエージェント操作
-- 🔌 **IM ブリッジ** — Telegram、Slack、Discord、Feishu、DingTalk
+本プロジェクトは `CCCC` マルチエージェント基盤の上で動く、ブラウザ向け AI コンパニオン UI です。
 
-![CCCC Chat UI](screenshots/chat.png)
+- デスクトップ: 音声、カメラ、ニュース、画面観察をまとめたフルコンソール
+- スマホ: 全画面のシンプルなコンパニオンモード
+- 同一ワーキンググループ: デスクトップとスマホで会話コンテキストを共有
 
----
+## 主な機能
 
-## クイックスタート
+- 音声対話: ブラウザ音声認識 + TTS 読み上げ
+- 目のアニメーション: Canvas2D で虹彩・瞳孔・瞬き・感情状態をリアルタイム描画
+- 顔追従: カメラ入力に合わせて視線を追従
+- 画面観察: 定期スクリーンショットを AI が解析
+- ニュース読み上げ: 関心トピックを定期収集して要約を音声で再生
 
-```bash
-# インストール
-pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
+## UI プレビュー
 
-# 起動
-cccc
-```
+![Desktop View](docs/screenshots/desktop-viewport.png)
+![Desktop QR](docs/screenshots/desktop-qr.png)
+![GitHub Preview](docs/github-preview.png)
+![Report Preview](docs/report-preview.png)
 
-`http://127.0.0.1:8848/` を開いて Web UI にアクセス。
+## 動作要件
 
----
+- Python `3.11`（最低 `3.9`）
+- Node.js `18+`（推奨 `20+`）
+- npm `9+`
+- Windows / macOS / Linux
+- ブラウザのマイク・カメラ権限
 
-## ドキュメント
+## クイックスタート（Windows）
 
-📚 **[ドキュメントを読む](https://dweb-channel.github.io/cccc/)** — 完全なガイド、リファレンス、API ドキュメント。
+1. リポジトリを取得
 
----
-
-## インストール
-
-### AI アシスタントでインストール
-
-以下のプロンプトを AI アシスタント（Claude、ChatGPT など）にコピーしてください：
-
-> CCCC（Claude Code Collaboration Context）マルチエージェント協調システムのインストールと起動を手伝ってください。
->
-> 手順：
->
-> 1. cccc-pair をインストール：
->    ```
->    pip install --index-url https://pypi.org/simple \
->      --extra-index-url https://test.pypi.org/simple \
->      cccc-pair==0.4.0rc18
->    ```
->
-> 2. インストール後、CCCC を起動：
->    ```
->    cccc
->    ```
->
-> 3. アクセス URL を教えてください（通常は http://localhost:8848/ui/）
->
-> エラーが発生した場合は、診断と解決を手伝ってください。
-
-### 旧バージョンからのアップグレード
-
-古いバージョンの cccc-pair（例：0.3.x）がインストールされている場合は、先にアンインストールが必要です：
-
-```bash
-# pipx ユーザー
-pipx uninstall cccc-pair
-
-# pip ユーザー
-pip uninstall cccc-pair
-
-# 残留ファイルがある場合は手動で削除
-rm -f ~/.local/bin/cccc ~/.local/bin/ccccd
-```
-
-> **注意**：0.4.x のコマンド構造は 0.3.x と完全に異なります。旧版の `init`、`run`、`bridge` コマンドは `attach`、`daemon`、`mcp` などに置き換えられました。
-
-### TestPyPI からインストール（推奨）
-
-```bash
-pip install --index-url https://pypi.org/simple \
-  --extra-index-url https://test.pypi.org/simple \
-  cccc-pair==0.4.0rc18
-```
-
-### ソースからインストール
-
-```bash
-git clone https://github.com/dweb-channel/cccc
+```powershell
+git clone https://github.com/zixuniaowu/cccc.git
 cd cccc
-pip install -e .
 ```
 
-### uv を使用（Windows 推奨）
+2. バックエンド依存をインストール
 
-```bash
+```powershell
 uv venv -p 3.11 .venv
 uv pip install -e .
-uv run cccc --help
 ```
 
-**要件**: Python 3.9+、macOS / Linux / Windows
+3. フロントエンド依存をインストール
 
----
-
-## コア概念
-
-| 概念 | 説明 |
-|------|------|
-| **Working Group** | 永続履歴を持つ協調単位（グループチャットのようなもの） |
-| **Actor** | エージェントセッション（PTY または headless） |
-| **Scope** | グループに紐づくディレクトリ |
-| **Ledger** | 追記型イベントストリーム |
-| **CCCC_HOME** | ランタイムホーム、デフォルト `~/.cccc/` |
-
----
-
-## ランタイムと MCP
-
-CCCC は複数のエージェントランタイムをサポート：
-
-```bash
-cccc runtime list --all     # 利用可能なランタイムを表示
-cccc setup --runtime <name> # MCP を設定
+```powershell
+cd web
+npm install
+cd ..
 ```
 
-**MCP 自動設定**: `claude`、`codex`、`droid`、`amp`、`auggie`、`neovate`、`gemini`
-**手動設定**: `cursor`、`kilocode`、`opencode`、`copilot`、`custom`
+4. フロントエンドをビルド（Python パッケージへ配置）
 
----
-
-## マルチエージェント設定
-
-プロジェクトでマルチエージェント協調を設定：
-
-```bash
-# プロジェクトディレクトリに紐付け
-cd /path/to/repo
-cccc attach .
-
-# ランタイムの MCP を設定
-cccc setup --runtime claude
-
-# actors を追加（最初の enabled が foreman に）
-cccc actor add foreman --runtime claude
-cccc actor add peer-1  --runtime codex
-
-# グループを起動
-cccc group start
+```powershell
+cd web
+npm run build
+cd ..
 ```
 
----
+5. サービスを起動
 
-## Web UI
-
-内蔵 Web UI の機能：
-
-- マルチグループナビゲーション
-- Actor 管理（add/start/stop/restart）
-- Chat（@mentions + reply）
-- actor ごとの埋め込みターミナル
-- Context と自動化設定
-- IM Bridge 設定
-
----
-
-## IM ブリッジ
-
-Working Group を IM プラットフォームにブリッジ：
-
-```bash
-cccc im set telegram --token-env TELEGRAM_BOT_TOKEN
-cccc im start
+```powershell
+.venv\Scripts\python -m cccc.cli
 ```
 
-対応: **Telegram** | **Slack** | **Discord** | **Feishu/Lark** | **DingTalk**
+6. ブラウザで開く
 
----
+- Web UI: `http://127.0.0.1:8848/ui/`
 
-## CLI チートシート
+## ワンコマンド起動
 
-```bash
-cccc doctor              # 環境チェック
-cccc groups              # グループ一覧
-cccc use <group_id>      # グループ切り替え
-cccc send "msg" --to @all
-cccc inbox --mark-read
-cccc tail -n 50 -f
-cccc daemon status|start|stop
+ルートの `start.ps1` を利用できます。
+
+```powershell
+./start.ps1 -LocalHome
 ```
 
----
+仮想環境の準備から daemon + web 起動まで実行します。
 
-## PROJECT.md
+## ローカル開発フロー
 
-リポジトリルートに `PROJECT.md` を配置し、プロジェクト憲法として扱います。エージェントは `cccc_project_info` MCP ツールで読み取ります。
+### バックエンド開発
 
----
+```powershell
+uv venv -p 3.11 .venv
+uv pip install -e .
+uv run pytest
+```
 
-## セキュリティ
+### フロントエンド開発（ホットリロード）
 
-Web UI は高権限です。リモートアクセス時：
-- `CCCC_WEB_TOKEN` 環境変数を設定
-- アクセスゲートウェイを使用（Cloudflare Access、Tailscale、WireGuard）
+```powershell
+cd web
+npm install
+npm run dev -- --host --base /ui/
+```
 
----
+`/api` はバックエンドの `8848` ポートへプロキシされます。
 
-## なぜリライト？
+### フロントエンド成果物を反映
 
-<details>
-<summary>歴史: v0.3.x → v0.4.x</summary>
+```powershell
+cd web
+npm run build
+```
 
-v0.3.x（tmux-first）は概念を証明しましたが、限界に直面：
+ビルド成果物は `src/cccc/ports/web/dist` に出力され、配布用アセットとして使われます。
 
-1. **統一 ledger がない** — メッセージが複数ファイルに分散、レイテンシ増加
-2. **actor 数の制約** — tmux レイアウトは 1–2 actors に制限
-3. **エージェント制御能力の弱さ** — 自律性が制限
-4. **リモートアクセスが一級体験でない** — Web コントロールプレーンが必要
+## よく使うコマンド
 
-v0.4.x の導入：
-- 統一された追記型 ledger
-- N-actor モデル
-- 38+ MCP ツールのコントロールプレーン
-- Web ファーストコンソール
-- IM グレードのメッセージング
+```powershell
+# バックエンド起動（同等のエントリ）
+.venv\Scripts\python -m cccc.cli
+cccc
 
-旧版: [cccc-tmux](https://github.com/ChesterRa/cccc-tmux)
+# バックエンドテスト
+uv run pytest
 
-</details>
+# フロントエンド lint / build
+cd web
+npm run lint
+npm run build
+```
 
----
+## 環境変数
+
+- `CCCC_WEB_HOST`: Web バインドアドレス（既定 `127.0.0.1`）
+- `CCCC_WEB_PORT`: Web ポート（既定 `8848`）
+- `CCCC_WEB_LOG_LEVEL`: ログレベル（例 `info`、`debug`）
+- `CCCC_HOME`: ランタイムデータの保存先
+
+外部モデルを使う場合は、利用プロバイダに応じた API Key を設定してください。
+
+## ディレクトリ構成
+
+```text
+src/cccc/                      # Python カーネル、CLI、Web アダプタ
+src/cccc/ports/web/dist/       # ビルド済み Web アセット
+web/                           # React + Vite フロントエンド
+web/public/                    # 静的アセット（ページ/モデル等）
+tests/                         # pytest
+scripts/                       # ローカル補助スクリプト
+docs/                          # ドキュメントとスクリーンショット
+```
+
+## コミットとリリース方針
+
+- Conventional Commits を使用: `feat:` `fix:` `docs:` `chore:`
+- コミット前の推奨実行:
+
+```powershell
+uv run pytest
+cd web
+npm run lint
+npm run build
+```
+
+- `node_modules` はリポジトリ管理しない（クローン後に `npm install`）
+- ログ、キャッシュ、一時ファイルはコミットしない
+
+## FAQ
+
+### 1) なぜ `node_modules` がリポジトリにないのですか？
+
+`node_modules` は再生成可能なローカル成果物で、容量も大きいためです。  
+クローン後に `web/` で `npm install` を実行してください。
+
+### 2) マイクやカメラが使えません
+
+- ブラウザ権限を許可しているか確認
+- `localhost` など信頼できるローカル環境で実行
+- 他アプリによるデバイス占有を確認
+
+### 3) フロントエンドを変更したのに反映されません
+
+- 開発中は `npm run dev` を使用
+- 配布用表示は `npm run build` を再実行
 
 ## License
 
