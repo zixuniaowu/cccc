@@ -18,6 +18,8 @@ import type {
   IMStatus,
   IMPlatform,
   RemoteAccessState,
+  GroupSpaceStatus,
+  GroupSpaceJob,
 } from "../types";
 
 // ============ Token management ============
@@ -995,6 +997,136 @@ export async function startRemoteAccess() {
 export async function stopRemoteAccess() {
   return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access/stop?by=user", {
     method: "POST",
+  });
+}
+
+export async function fetchGroupSpaceStatus(groupId: string, provider: string = "notebooklm") {
+  return apiJson<GroupSpaceStatus>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/space/status?provider=${encodeURIComponent(provider)}`
+  );
+}
+
+export async function bindGroupSpace(groupId: string, remoteSpaceId: string, provider: string = "notebooklm") {
+  return apiJson<GroupSpaceStatus>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/space/bind`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        by: "user",
+        provider,
+        action: "bind",
+        remote_space_id: remoteSpaceId,
+      }),
+    }
+  );
+}
+
+export async function unbindGroupSpace(groupId: string, provider: string = "notebooklm") {
+  return apiJson<GroupSpaceStatus>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/space/bind`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        by: "user",
+        provider,
+        action: "unbind",
+        remote_space_id: "",
+      }),
+    }
+  );
+}
+
+export async function ingestGroupSpace(args: {
+  groupId: string;
+  provider?: string;
+  kind: "context_sync" | "resource_ingest";
+  payload: Record<string, unknown>;
+  idempotencyKey?: string;
+}) {
+  return apiJson<{
+    group_id: string;
+    job_id: string;
+    accepted: boolean;
+    deduped: boolean;
+    job: GroupSpaceJob;
+    queue_summary: { pending: number; running: number; failed: number };
+    provider_mode: string;
+  }>(`/api/v1/groups/${encodeURIComponent(args.groupId)}/space/ingest`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      provider: args.provider || "notebooklm",
+      kind: args.kind,
+      payload: args.payload || {},
+      idempotency_key: String(args.idempotencyKey || ""),
+    }),
+  });
+}
+
+export async function queryGroupSpace(args: {
+  groupId: string;
+  provider?: string;
+  query: string;
+  options?: Record<string, unknown>;
+}) {
+  return apiJson<{
+    group_id: string;
+    provider: string;
+    provider_mode: string;
+    degraded: boolean;
+    answer: string;
+    references: unknown[];
+    error?: { code?: string; message?: string } | null;
+  }>(`/api/v1/groups/${encodeURIComponent(args.groupId)}/space/query`, {
+    method: "POST",
+    body: JSON.stringify({
+      provider: args.provider || "notebooklm",
+      query: args.query,
+      options: args.options || {},
+    }),
+  });
+}
+
+export async function listGroupSpaceJobs(args: {
+  groupId: string;
+  provider?: string;
+  state?: string;
+  limit?: number;
+}) {
+  const params = new URLSearchParams({
+    provider: String(args.provider || "notebooklm"),
+    limit: String(Math.max(1, Math.min(500, Number(args.limit || 50)))),
+  });
+  if (String(args.state || "").trim()) {
+    params.set("state", String(args.state || "").trim());
+  }
+  return apiJson<{
+    group_id: string;
+    provider: string;
+    jobs: GroupSpaceJob[];
+    queue_summary: { pending: number; running: number; failed: number };
+  }>(`/api/v1/groups/${encodeURIComponent(args.groupId)}/space/jobs?${params.toString()}`);
+}
+
+export async function actionGroupSpaceJob(args: {
+  groupId: string;
+  provider?: string;
+  action: "retry" | "cancel";
+  jobId: string;
+}) {
+  return apiJson<{
+    group_id: string;
+    provider: string;
+    job: GroupSpaceJob;
+    queue_summary: { pending: number; running: number; failed: number };
+  }>(`/api/v1/groups/${encodeURIComponent(args.groupId)}/space/jobs`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      provider: args.provider || "notebooklm",
+      action: args.action,
+      job_id: args.jobId,
+    }),
   });
 }
 

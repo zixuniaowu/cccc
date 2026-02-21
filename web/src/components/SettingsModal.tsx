@@ -11,6 +11,7 @@ import {
   IMBridgeTab,
   TranscriptTab,
   GuidanceTab,
+  GroupSpaceTab,
   BlueprintTab,
   ActorProfilesTab,
   RemoteAccessTab,
@@ -701,6 +702,7 @@ export function SettingsModal({
     { id: "guidance", label: t("tabs.guidance") },
     { id: "automation", label: t("tabs.automation") },
     { id: "delivery", label: t("tabs.delivery") },
+    { id: "space", label: t("tabs.space") },
     { id: "messaging", label: t("tabs.messaging") },
     { id: "im", label: t("tabs.im") },
     { id: "transcript", label: t("tabs.transcript") },
@@ -866,6 +868,14 @@ export function SettingsModal({
               )}
 
               {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} />}
+
+              {activeTab === "space" && (
+                <GroupSpaceTab
+                  isDark={isDark}
+                  groupId={groupId}
+                  isActive={scope === "group" && activeTab === "space"}
+                />
+              )}
 
               {activeTab === "blueprint" && <BlueprintTab isDark={isDark} groupId={groupId} groupTitle={groupDoc?.title || ""} />}
 

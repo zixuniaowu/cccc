@@ -281,6 +281,34 @@ class RemoteAccessConfigureRequest(BaseModel):
     enforce_web_token: Optional[bool] = None
 
 
+class GroupSpaceBindRequest(BaseModel):
+    by: str = Field(default="user")
+    provider: Optional[str] = Field(default="notebooklm")
+    action: Literal["bind", "unbind"] = "bind"
+    remote_space_id: str = Field(default="")
+
+
+class GroupSpaceIngestRequest(BaseModel):
+    by: str = Field(default="user")
+    provider: Optional[str] = Field(default="notebooklm")
+    kind: Literal["context_sync", "resource_ingest"] = "context_sync"
+    payload: Dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str = Field(default="")
+
+
+class GroupSpaceQueryRequest(BaseModel):
+    provider: Optional[str] = Field(default="notebooklm")
+    query: str = Field(default="")
+    options: Dict[str, Any] = Field(default_factory=dict)
+
+
+class GroupSpaceJobActionRequest(BaseModel):
+    by: str = Field(default="user")
+    provider: Optional[str] = Field(default="notebooklm")
+    action: Literal["retry", "cancel"]
+    job_id: str = Field(default="")
+
+
 class GroupDeleteRequest(BaseModel):
     confirm: str = Field(default="")
     by: str = Field(default="user")
@@ -749,6 +777,120 @@ def create_app() -> FastAPI:
     async def remote_access_stop(by: str = "user") -> Dict[str, Any]:
         """Stop remote access service."""
         return await _daemon({"op": "remote_access_stop", "args": {"by": str(by or "user")}})
+
+    @app.get("/api/v1/groups/{group_id}/space/status")
+    async def group_space_status(group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
+        return await _daemon(
+            {
+                "op": "group_space_status",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/space/bind")
+    async def group_space_bind(group_id: str, req: GroupSpaceBindRequest) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Group Space write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "group_space_bind",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "action": str(req.action or "bind").strip() or "bind",
+                    "remote_space_id": str(req.remote_space_id or "").strip(),
+                    "by": str(req.by or "user").strip() or "user",
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/space/ingest")
+    async def group_space_ingest(group_id: str, req: GroupSpaceIngestRequest) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Group Space write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "group_space_ingest",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "kind": str(req.kind or "context_sync").strip() or "context_sync",
+                    "payload": dict(req.payload or {}),
+                    "idempotency_key": str(req.idempotency_key or "").strip(),
+                    "by": str(req.by or "user").strip() or "user",
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/space/query")
+    async def group_space_query(group_id: str, req: GroupSpaceQueryRequest) -> Dict[str, Any]:
+        return await _daemon(
+            {
+                "op": "group_space_query",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "query": str(req.query or "").strip(),
+                    "options": dict(req.options or {}),
+                },
+            }
+        )
+
+    @app.get("/api/v1/groups/{group_id}/space/jobs")
+    async def group_space_jobs_list(
+        group_id: str,
+        provider: str = "notebooklm",
+        state: str = "",
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        args: Dict[str, Any] = {
+            "group_id": group_id,
+            "provider": str(provider or "notebooklm").strip() or "notebooklm",
+            "action": "list",
+            "limit": int(limit or 50),
+        }
+        state_value = str(state or "").strip()
+        if state_value:
+            args["state"] = state_value
+        return await _daemon({"op": "group_space_jobs", "args": args})
+
+    @app.post("/api/v1/groups/{group_id}/space/jobs")
+    async def group_space_jobs_action(group_id: str, req: GroupSpaceJobActionRequest) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Group Space write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "group_space_jobs",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "action": str(req.action or "retry").strip() or "retry",
+                    "job_id": str(req.job_id or "").strip(),
+                    "by": str(req.by or "user").strip() or "user",
+                },
+            }
+        )
 
     @app.get("/api/v1/registry/reconcile")
     async def registry_reconcile_preview() -> Dict[str, Any]:

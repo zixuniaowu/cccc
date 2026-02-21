@@ -252,6 +252,59 @@ export type RemoteAccessState = {
   next_steps?: string[] | null;
 };
 
+export type GroupSpaceProviderState = {
+  provider: "notebooklm" | string;
+  enabled: boolean;
+  mode: "disabled" | "active" | "degraded" | string;
+  last_health_at?: string | null;
+  last_error?: string | null;
+};
+
+export type GroupSpaceBinding = {
+  group_id: string;
+  provider: "notebooklm" | string;
+  remote_space_id?: string;
+  bound_by?: string;
+  bound_at?: string;
+  status: "bound" | "unbound" | "error" | string;
+};
+
+export type GroupSpaceQueueSummary = {
+  pending: number;
+  running: number;
+  failed: number;
+};
+
+export type GroupSpaceJobError = {
+  code?: string;
+  message?: string;
+};
+
+export type GroupSpaceJob = {
+  job_id: string;
+  group_id: string;
+  provider: "notebooklm" | string;
+  remote_space_id: string;
+  kind: "context_sync" | "resource_ingest" | string;
+  payload: Record<string, unknown>;
+  payload_digest?: string;
+  idempotency_key?: string;
+  state: "pending" | "running" | "succeeded" | "failed" | "canceled" | string;
+  attempt: number;
+  max_attempts: number;
+  next_run_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+  last_error?: GroupSpaceJobError;
+};
+
+export type GroupSpaceStatus = {
+  group_id: string;
+  provider: GroupSpaceProviderState;
+  binding: GroupSpaceBinding;
+  queue_summary: GroupSpaceQueueSummary;
+};
+
 export type AutomationRuleTriggerInterval = {
   kind: "interval";
   every_seconds: number;
