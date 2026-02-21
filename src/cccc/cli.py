@@ -1772,6 +1772,126 @@ def cmd_space_status(args: argparse.Namespace) -> int:
     return 0 if resp.get("ok") else 2
 
 
+def _load_space_auth_json_arg(args: argparse.Namespace) -> tuple[bool, str]:
+    raw = str(getattr(args, "auth_json", "") or "").strip()
+    file_path = str(getattr(args, "auth_json_file", "") or "").strip()
+    if raw and file_path:
+        _print_json(
+            {
+                "ok": False,
+                "error": {
+                    "code": "invalid_args",
+                    "message": "use only one of --auth-json or --auth-json-file",
+                },
+            }
+        )
+        return False, ""
+    if file_path:
+        try:
+            raw = Path(file_path).read_text(encoding="utf-8")
+        except Exception as e:
+            _print_json(
+                {
+                    "ok": False,
+                    "error": {
+                        "code": "invalid_auth_json_file",
+                        "message": f"failed to read --auth-json-file: {e}",
+                    },
+                }
+            )
+            return False, ""
+    if not str(raw or "").strip():
+        _print_json({"ok": False, "error": {"code": "missing_auth_json", "message": "missing auth_json"}})
+        return False, ""
+    try:
+        obj = _parse_json_object_arg(raw, field="auth_json")
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "invalid_auth_json", "message": str(e)}})
+        return False, ""
+    return True, json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
+def cmd_space_credential_status(args: argparse.Namespace) -> int:
+    """Show Group Space provider credential status (masked metadata only)."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_credential_status",
+            "args": {"provider": provider, "by": by},
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_credential_set(args: argparse.Namespace) -> int:
+    """Set Group Space provider credential (write-only)."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    ok, auth_json = _load_space_auth_json_arg(args)
+    if not ok:
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_credential_update",
+            "args": {
+                "provider": provider,
+                "by": by,
+                "auth_json": auth_json,
+                "clear": False,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_credential_clear(args: argparse.Namespace) -> int:
+    """Clear stored Group Space provider credential."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_credential_update",
+            "args": {
+                "provider": provider,
+                "by": by,
+                "auth_json": "",
+                "clear": True,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_health(args: argparse.Namespace) -> int:
+    """Run Group Space provider health check."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_health_check",
+            "args": {"provider": provider, "by": by},
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
 def cmd_space_bind(args: argparse.Namespace) -> int:
     """Bind group to a Group Space provider remote space."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
@@ -1780,9 +1900,6 @@ def cmd_space_bind(args: argparse.Namespace) -> int:
     remote_space_id = str(getattr(args, "remote_space_id", "") or "").strip()
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
-        return 2
-    if not remote_space_id:
-        _print_json({"ok": False, "error": {"code": "missing_remote_space_id", "message": "missing remote_space_id"}})
         return 2
     if not _ensure_daemon_running():
         _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
@@ -1795,6 +1912,34 @@ def cmd_space_bind(args: argparse.Namespace) -> int:
                 "provider": provider,
                 "action": "bind",
                 "remote_space_id": remote_space_id,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_sync(args: argparse.Namespace) -> int:
+    """Run Group Space file synchronization (repo/space -> provider)."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    force = bool(getattr(args, "force", False))
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_sync",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "run",
+                "force": force,
                 "by": by,
             },
         }
@@ -3241,8 +3386,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_space_status.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
     p_space_status.set_defaults(func=cmd_space_status)
 
+    p_space_credential = space_sub.add_parser("credential", help="Manage Group Space provider credentials")
+    space_credential_sub = p_space_credential.add_subparsers(dest="credential_action", required=True)
+
+    p_space_credential_status = space_credential_sub.add_parser("status", help="Show provider credential status (masked)")
+    p_space_credential_status.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_credential_status.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_credential_status.set_defaults(func=cmd_space_credential_status)
+
+    p_space_credential_set = space_credential_sub.add_parser("set", help="Set provider credential (write-only)")
+    p_space_credential_set.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_credential_set.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_credential_set.add_argument("--auth-json", default="", help="Provider auth JSON payload")
+    p_space_credential_set.add_argument("--auth-json-file", default="", help="Path to provider auth JSON file")
+    p_space_credential_set.set_defaults(func=cmd_space_credential_set)
+
+    p_space_credential_clear = space_credential_sub.add_parser("clear", help="Clear stored provider credential")
+    p_space_credential_clear.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_credential_clear.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_credential_clear.set_defaults(func=cmd_space_credential_clear)
+
+    p_space_health = space_sub.add_parser("health", help="Run Group Space provider health check")
+    p_space_health.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_health.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_health.set_defaults(func=cmd_space_health)
+
     p_space_bind = space_sub.add_parser("bind", help="Bind group to a provider remote space")
-    p_space_bind.add_argument("remote_space_id", help="Provider remote space/notebook ID")
+    p_space_bind.add_argument("remote_space_id", nargs="?", default="", help="Provider remote space/notebook ID (optional; auto-create when omitted)")
     p_space_bind.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_space_bind.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
     p_space_bind.add_argument("--by", default="user", help="Requester (default: user)")
@@ -3253,6 +3423,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_space_unbind.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
     p_space_unbind.add_argument("--by", default="user", help="Requester (default: user)")
     p_space_unbind.set_defaults(func=cmd_space_unbind)
+
+    p_space_sync = space_sub.add_parser("sync", help="Synchronize repo space/ resources to provider")
+    p_space_sync.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_sync.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_sync.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_sync.add_argument("--force", action="store_true", help="Force full reconcile even if no local changes detected")
+    p_space_sync.set_defaults(func=cmd_space_sync)
 
     p_space_ingest = space_sub.add_parser("ingest", help="Submit an ingest job to Group Space")
     p_space_ingest.add_argument("--group", default="", help="Target group_id (default: active group)")

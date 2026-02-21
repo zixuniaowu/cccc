@@ -113,6 +113,44 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 self.assertTrue(jobs_body.get("ok"))
                 jobs_list = ((jobs_body.get("result") or {}).get("jobs") or [])
                 self.assertIsInstance(jobs_list, list)
+
+                sync = client.post(
+                    f"/api/v1/groups/{gid}/space/sync",
+                    json={
+                        "by": "user",
+                        "provider": "notebooklm",
+                        "action": "status",
+                        "force": False,
+                    },
+                )
+                self.assertEqual(sync.status_code, 200)
+                sync_body = sync.json()
+                self.assertTrue(sync_body.get("ok"))
+
+                credential_status = client.get("/api/v1/space/providers/notebooklm/credential?by=user")
+                self.assertEqual(credential_status.status_code, 200)
+                self.assertTrue(credential_status.json().get("ok"))
+
+                credential_update = client.post(
+                    "/api/v1/space/providers/notebooklm/credential",
+                    json={
+                        "by": "user",
+                        "auth_json": '{"cookies":[{"name":"SID","value":"x","domain":".google.com"}]}',
+                        "clear": False,
+                    },
+                )
+                self.assertEqual(credential_update.status_code, 200)
+                self.assertTrue(credential_update.json().get("ok"))
+
+                with patch(
+                    "cccc.daemon.ops.group_space_ops.notebooklm_health_check",
+                    return_value={"provider": "notebooklm", "enabled": True, "compatible": True, "reason": "ok"},
+                ):
+                    health = client.post("/api/v1/space/providers/notebooklm/health?by=user")
+                self.assertEqual(health.status_code, 200)
+                health_body = health.json()
+                self.assertTrue(health_body.get("ok"))
+                self.assertEqual(bool((health_body.get("result") or {}).get("healthy")), True)
         finally:
             cleanup_stub()
             cleanup()
@@ -140,6 +178,24 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 body = write_resp.json()
                 self.assertFalse(body.get("ok"))
                 self.assertEqual(str((body.get("error") or {}).get("code") or ""), "read_only")
+
+                sync_write_resp = client.post(
+                    f"/api/v1/groups/{gid}/space/sync",
+                    json={"by": "user", "provider": "notebooklm", "action": "run", "force": True},
+                )
+                self.assertEqual(sync_write_resp.status_code, 403)
+                self.assertEqual(str((sync_write_resp.json().get("error") or {}).get("code") or ""), "read_only")
+
+                cred_write_resp = client.post(
+                    "/api/v1/space/providers/notebooklm/credential",
+                    json={"by": "user", "auth_json": "{}", "clear": False},
+                )
+                self.assertEqual(cred_write_resp.status_code, 403)
+                self.assertEqual(str((cred_write_resp.json().get("error") or {}).get("code") or ""), "read_only")
+
+                health_write_resp = client.post("/api/v1/space/providers/notebooklm/health?by=user")
+                self.assertEqual(health_write_resp.status_code, 403)
+                self.assertEqual(str((health_write_resp.json().get("error") or {}).get("code") or ""), "read_only")
         finally:
             cleanup_mode()
             cleanup()

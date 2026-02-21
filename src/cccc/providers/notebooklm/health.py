@@ -17,7 +17,46 @@ def notebooklm_real_enabled() -> bool:
     return _truthy_env("CCCC_NOTEBOOKLM_REAL")
 
 
-def validate_notebooklm_auth_json() -> Dict[str, Any]:
+def parse_notebooklm_auth_json(raw: str, *, label: str = "CCCC_NOTEBOOKLM_AUTH_JSON") -> Dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        raise NotebookLMProviderError(
+            code="space_provider_not_configured",
+            message=f"missing {label}",
+            transient=False,
+            degrade_provider=True,
+        )
+    try:
+        payload = json.loads(text)
+    except Exception as e:
+        raise NotebookLMProviderError(
+            code="space_provider_auth_invalid",
+            message=f"invalid {label}: {e}",
+            transient=False,
+            degrade_provider=True,
+        ) from e
+    if not isinstance(payload, dict):
+        raise NotebookLMProviderError(
+            code="space_provider_auth_invalid",
+            message=f"{label} must be a JSON object",
+            transient=False,
+            degrade_provider=True,
+        )
+    cookies = payload.get("cookies")
+    if not isinstance(cookies, list) or not cookies:
+        raise NotebookLMProviderError(
+            code="space_provider_auth_invalid",
+            message=f"{label} missing cookies array",
+            transient=False,
+            degrade_provider=True,
+        )
+    return payload
+
+
+def validate_notebooklm_auth_json(auth_json_raw: str | None = None) -> Dict[str, Any]:
+    raw = str(auth_json_raw or "").strip()
+    if raw:
+        return parse_notebooklm_auth_json(raw, label="NOTEBOOKLM_AUTH_JSON")
     raw = str(os.environ.get("CCCC_NOTEBOOKLM_AUTH_JSON") or "").strip()
     if not raw:
         raise NotebookLMProviderError(
@@ -26,34 +65,10 @@ def validate_notebooklm_auth_json() -> Dict[str, Any]:
             transient=False,
             degrade_provider=True,
         )
-    try:
-        payload = json.loads(raw)
-    except Exception as e:
-        raise NotebookLMProviderError(
-            code="space_provider_auth_invalid",
-            message=f"invalid CCCC_NOTEBOOKLM_AUTH_JSON: {e}",
-            transient=False,
-            degrade_provider=True,
-        ) from e
-    if not isinstance(payload, dict):
-        raise NotebookLMProviderError(
-            code="space_provider_auth_invalid",
-            message="CCCC_NOTEBOOKLM_AUTH_JSON must be a JSON object",
-            transient=False,
-            degrade_provider=True,
-        )
-    cookies = payload.get("cookies")
-    if not isinstance(cookies, list) or not cookies:
-        raise NotebookLMProviderError(
-            code="space_provider_auth_invalid",
-            message="CCCC_NOTEBOOKLM_AUTH_JSON missing cookies array",
-            transient=False,
-            degrade_provider=True,
-        )
-    return payload
+    return parse_notebooklm_auth_json(raw, label="CCCC_NOTEBOOKLM_AUTH_JSON")
 
 
-def notebooklm_health_check() -> Dict[str, Any]:
+def notebooklm_health_check(auth_json_raw: str | None = None) -> Dict[str, Any]:
     if not notebooklm_real_enabled():
         raise NotebookLMProviderError(
             code="space_provider_not_configured",
@@ -61,7 +76,7 @@ def notebooklm_health_check() -> Dict[str, Any]:
             transient=False,
             degrade_provider=True,
         )
-    _ = validate_notebooklm_auth_json()
+    _ = validate_notebooklm_auth_json(auth_json_raw)
     compat = probe_notebooklm_vendor()
     if not compat.compatible:
         raise NotebookLMProviderError(
@@ -76,4 +91,3 @@ def notebooklm_health_check() -> Dict[str, Any]:
         "compatible": True,
         "reason": "ok",
     }
-

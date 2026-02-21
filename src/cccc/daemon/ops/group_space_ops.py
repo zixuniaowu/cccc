@@ -7,18 +7,26 @@ from typing import Any, Dict, Optional
 from ...contracts.v1 import DaemonError, DaemonResponse, SpaceBinding
 from ...kernel.group import load_group
 from ...kernel.permissions import require_group_permission
+from ..group_space_provider import SpaceProviderError, provider_create_space
+from ...providers.notebooklm.errors import NotebookLMProviderError
+from ...providers.notebooklm.health import notebooklm_health_check, notebooklm_real_enabled, parse_notebooklm_auth_json
+from ..group_space_sync import read_group_space_sync_state, sync_group_space_files
+from ..group_space_projection import sync_group_space_projection
 from ..group_space_runtime import execute_space_job, retry_space_job, run_space_query
 from ..group_space_store import (
     cancel_space_job,
+    describe_space_provider_credential_state,
     enqueue_space_job,
     get_space_binding,
     get_space_job,
     get_space_provider_state,
     list_space_bindings,
     list_space_jobs,
+    load_space_provider_secrets,
     set_space_binding_unbound,
     set_space_provider_state,
     space_queue_summary,
+    update_space_provider_secrets,
     upsert_space_binding,
 )
 
@@ -26,6 +34,8 @@ _SPACE_PROVIDER_IDS = {"notebooklm"}
 _SPACE_JOB_KINDS = {"context_sync", "resource_ingest"}
 _SPACE_JOB_STATES = {"pending", "running", "succeeded", "failed", "canceled"}
 _SPACE_JOB_ACTIONS = {"list", "retry", "cancel"}
+_SPACE_SYNC_ACTIONS = {"status", "run"}
+_SPACE_PROVIDER_SECRET_KEYS = {"notebooklm": "NOTEBOOKLM_AUTH_JSON"}
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -49,6 +59,13 @@ def _kind_or_error(raw: Any) -> str:
 def _action_or_error(raw: Any) -> str:
     action = str(raw or "list").strip() or "list"
     if action not in _SPACE_JOB_ACTIONS:
+        raise ValueError(f"invalid action: {action}")
+    return action
+
+
+def _sync_action_or_error(raw: Any) -> str:
+    action = str(raw or "status").strip() or "status"
+    if action not in _SPACE_SYNC_ACTIONS:
         raise ValueError(f"invalid action: {action}")
     return action
 
@@ -77,6 +94,104 @@ def _assert_write_permission(group: Any, *, by: str) -> None:
     require_group_permission(group, by=str(by or "user").strip(), action="group.update")
 
 
+def _is_user_writer(by: str) -> bool:
+    who = str(by or "").strip()
+    return not who or who == "user"
+
+
+def _provider_secret_key(provider: str) -> str:
+    key = _SPACE_PROVIDER_SECRET_KEYS.get(str(provider or "").strip())
+    if not key:
+        raise ValueError(f"unsupported provider: {provider}")
+    return key
+
+
+def _resolve_auth_json(provider: str) -> str:
+    pid = _provider_or_error(provider)
+    key = _provider_secret_key(pid)
+    if pid == "notebooklm":
+        import os
+
+        raw_env = str(os.environ.get("CCCC_NOTEBOOKLM_AUTH_JSON") or "").strip()
+        if raw_env:
+            return raw_env
+    try:
+        secrets_map = load_space_provider_secrets(pid)
+    except Exception:
+        return ""
+    return str(secrets_map.get(key) or "").strip()
+
+
+def _truthy_env(name: str) -> bool:
+    import os
+
+    value = str(os.environ.get(name) or "").strip().lower()
+    return value in {"1", "true", "yes", "y", "on"}
+
+
+def _provider_runtime_readiness(provider: str) -> Dict[str, Any]:
+    pid = _provider_or_error(provider)
+    if pid != "notebooklm":
+        return {"write_ready": False, "reason": "unsupported_provider"}
+    real_enabled = bool(notebooklm_real_enabled())
+    stub_enabled = bool(_truthy_env("CCCC_NOTEBOOKLM_STUB"))
+    auth_configured = bool(_resolve_auth_json(pid))
+    write_ready = (real_enabled and auth_configured) or ((not real_enabled) and stub_enabled)
+    reason = "ok"
+    if not write_ready:
+        if real_enabled and not auth_configured:
+            reason = "missing_auth"
+        elif (not real_enabled) and (not stub_enabled):
+            reason = "real_disabled_and_stub_disabled"
+        else:
+            reason = "not_ready"
+    return {
+        "real_adapter_enabled": real_enabled,
+        "stub_adapter_enabled": stub_enabled,
+        "auth_configured": auth_configured,
+        "write_ready": write_ready,
+        "readiness_reason": reason,
+    }
+
+
+def _build_provider_credential_status(provider: str) -> Dict[str, Any]:
+    pid = _provider_or_error(provider)
+    key = _provider_secret_key(pid)
+    base = describe_space_provider_credential_state(pid, key=key)
+    auth_json = _resolve_auth_json(pid)
+    env_configured = False
+    store_configured = bool(base.get("store_configured"))
+    source = "none"
+    if pid == "notebooklm":
+        import os
+
+        env_configured = bool(str(os.environ.get("CCCC_NOTEBOOKLM_AUTH_JSON") or "").strip())
+    if env_configured:
+        source = "env"
+    elif store_configured:
+        source = "store"
+    out = dict(base)
+    out["configured"] = bool(auth_json)
+    out["source"] = source
+    out["env_configured"] = env_configured
+    out["store_configured"] = store_configured
+    if bool(auth_json):
+        if source == "env":
+            out["masked_value"] = "EN******ON"
+        elif not str(out.get("masked_value") or "").strip():
+            out["masked_value"] = "ST******ED"
+    else:
+        out["masked_value"] = None
+    return out
+
+
+def _sync_projection_best_effort(group_id: str, provider: str) -> None:
+    try:
+        _ = sync_group_space_projection(group_id, provider=provider)
+    except Exception:
+        pass
+
+
 def handle_group_space_status(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     provider_raw = args.get("provider")
@@ -84,8 +199,10 @@ def handle_group_space_status(args: Dict[str, Any]) -> DaemonResponse:
         group = _require_group(group_id)
         provider = _provider_or_error(provider_raw)
         provider_state = get_space_provider_state(provider)
+        provider_state.update(_provider_runtime_readiness(provider))
         binding = get_space_binding(group.group_id, provider=provider) or _default_binding(group.group_id, provider)
         summary = space_queue_summary(group_id=group.group_id, provider=provider)
+        sync_state = read_group_space_sync_state(group.group_id)
         return DaemonResponse(
             ok=True,
             result={
@@ -93,6 +210,7 @@ def handle_group_space_status(args: Dict[str, Any]) -> DaemonResponse:
                 "provider": provider_state,
                 "binding": binding,
                 "queue_summary": summary,
+                "sync": sync_state,
             },
         )
     except LookupError as e:
@@ -120,9 +238,19 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
         group = _require_group(group_id)
         _assert_write_permission(group, by=by)
         provider = _provider_or_error(provider_raw)
+        sync_result: Optional[Dict[str, Any]] = None
         if action == "bind":
             if not remote_space_id:
-                return _error("space_binding_conflict", "missing remote_space_id for bind")
+                try:
+                    created = provider_create_space(
+                        provider,
+                        title=f"CCCC {str(getattr(group, 'title', '') or group.group_id)} Space",
+                    )
+                    remote_space_id = str(created.get("remote_space_id") or "").strip()
+                    if not remote_space_id:
+                        return _error("space_provider_upstream_error", "provider create_space returned empty remote_space_id")
+                except SpaceProviderError as e:
+                    return _error(str(e.code or "space_provider_upstream_error"), str(e))
             binding = upsert_space_binding(
                 group.group_id,
                 provider=provider,
@@ -137,6 +265,10 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                 last_error="",
                 touch_health=True,
             )
+            try:
+                sync_result = sync_group_space_files(group.group_id, provider=provider, force=True)
+            except Exception as e:
+                sync_result = {"ok": False, "code": "space_sync_failed", "message": str(e)}
         else:
             binding = set_space_binding_unbound(group.group_id, provider=provider, by=by)
             has_any_bound = any(
@@ -154,6 +286,8 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                     touch_health=True,
                 )
         summary = space_queue_summary(group_id=group.group_id, provider=provider)
+        _sync_projection_best_effort(group.group_id, provider)
+        sync_state = read_group_space_sync_state(group.group_id)
         return DaemonResponse(
             ok=True,
             result={
@@ -161,6 +295,8 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                 "provider": provider_state,
                 "binding": binding,
                 "queue_summary": summary,
+                "sync": sync_state,
+                "sync_result": sync_result if isinstance(sync_result, dict) else {},
             },
         )
     except LookupError as e:
@@ -213,6 +349,7 @@ def handle_group_space_ingest(args: Dict[str, Any]) -> DaemonResponse:
         final_job = dict(job)
         if not deduped:
             final_job = execute_space_job(str(job.get("job_id") or ""))
+        _sync_projection_best_effort(group.group_id, provider)
         return DaemonResponse(
             ok=True,
             result={
@@ -348,6 +485,7 @@ def handle_group_space_jobs(args: Dict[str, Any]) -> DaemonResponse:
             updated = cancel_space_job(job_id)
         else:
             return _error("space_job_invalid", f"invalid action: {action}")
+        _sync_projection_best_effort(group.group_id, provider)
 
         return DaemonResponse(
             ok=True,
@@ -379,6 +517,162 @@ def handle_group_space_jobs(args: Dict[str, Any]) -> DaemonResponse:
         return _error("group_space_jobs_failed", str(e))
 
 
+def handle_group_space_sync(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip() or "user"
+    provider_raw = args.get("provider")
+    action_raw = args.get("action")
+    force = bool(args.get("force") is True)
+    try:
+        group = _require_group(group_id)
+        provider = _provider_or_error(provider_raw)
+        action = _sync_action_or_error(action_raw)
+        if action == "status":
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "group_id": group.group_id,
+                    "provider": provider,
+                    "sync": read_group_space_sync_state(group.group_id),
+                },
+            )
+        _assert_write_permission(group, by=by)
+        result = sync_group_space_files(group.group_id, provider=provider, force=force)
+        _sync_projection_best_effort(group.group_id, provider)
+        if not bool(result.get("ok")):
+            return _error(
+                str(result.get("code") or "space_sync_failed"),
+                str(result.get("message") or "group space sync failed"),
+                details=result,
+            )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "provider": provider,
+                "sync": read_group_space_sync_state(group.group_id),
+                "sync_result": result,
+            },
+        )
+    except LookupError as e:
+        return _error("group_not_found", str(e))
+    except ValueError as e:
+        message = str(e)
+        if "permission denied" in message.lower():
+            return _error("space_permission_denied", message)
+        if message == "missing_group_id":
+            return _error("missing_group_id", "missing group_id")
+        return _error("space_job_invalid", message)
+    except Exception as e:
+        if "permission denied" in str(e).lower():
+            return _error("space_permission_denied", str(e))
+        return _error("group_space_sync_failed", str(e))
+
+
+def handle_group_space_provider_credential_status(args: Dict[str, Any]) -> DaemonResponse:
+    provider_raw = args.get("provider")
+    by = str(args.get("by") or "user").strip() or "user"
+    if not _is_user_writer(by):
+        return _error("space_permission_denied", "only user can read provider credentials")
+    try:
+        provider = _provider_or_error(provider_raw)
+        status = _build_provider_credential_status(provider)
+        return DaemonResponse(ok=True, result={"provider": provider, "credential": status})
+    except ValueError as e:
+        return _error("space_job_invalid", str(e))
+    except Exception as e:
+        return _error("group_space_provider_credential_status_failed", str(e))
+
+
+def handle_group_space_provider_credential_update(args: Dict[str, Any]) -> DaemonResponse:
+    provider_raw = args.get("provider")
+    by = str(args.get("by") or "user").strip() or "user"
+    clear = bool(args.get("clear") is True)
+    auth_json = str(args.get("auth_json") or "").strip()
+    if not _is_user_writer(by):
+        return _error("space_permission_denied", "only user can update provider credentials")
+    try:
+        provider = _provider_or_error(provider_raw)
+        secret_key = _provider_secret_key(provider)
+        if clear:
+            _ = update_space_provider_secrets(
+                provider,
+                set_vars={},
+                unset_keys=[secret_key],
+                clear=True,
+            )
+        else:
+            if not auth_json:
+                return _error("space_provider_not_configured", "missing auth_json")
+            _ = parse_notebooklm_auth_json(auth_json, label=secret_key)
+            _ = update_space_provider_secrets(
+                provider,
+                set_vars={secret_key: auth_json},
+                unset_keys=[],
+                clear=False,
+            )
+        status = _build_provider_credential_status(provider)
+        return DaemonResponse(ok=True, result={"provider": provider, "credential": status})
+    except NotebookLMProviderError as e:
+        return _error(str(e.code or "space_provider_auth_invalid"), str(e))
+    except ValueError as e:
+        return _error("space_job_invalid", str(e))
+    except Exception as e:
+        return _error("group_space_provider_credential_update_failed", str(e))
+
+
+def handle_group_space_provider_health_check(args: Dict[str, Any]) -> DaemonResponse:
+    provider_raw = args.get("provider")
+    by = str(args.get("by") or "user").strip() or "user"
+    if not _is_user_writer(by):
+        return _error("space_permission_denied", "only user can run provider health checks")
+    try:
+        provider = _provider_or_error(provider_raw)
+        current_state = get_space_provider_state(provider)
+        auth_json = _resolve_auth_json(provider)
+        try:
+            health = notebooklm_health_check(auth_json_raw=auth_json)
+            mode = "active" if bool(current_state.get("enabled")) else "disabled"
+            provider_state = set_space_provider_state(
+                provider,
+                mode=mode,
+                last_error="",
+                touch_health=True,
+            )
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "provider": provider,
+                    "healthy": True,
+                    "health": dict(health or {}),
+                    "provider_state": provider_state,
+                    "credential": _build_provider_credential_status(provider),
+                },
+            )
+        except NotebookLMProviderError as e:
+            mode = "degraded" if bool(current_state.get("enabled")) else "disabled"
+            provider_state = set_space_provider_state(
+                provider,
+                mode=mode,
+                last_error=str(e),
+                touch_health=True,
+            )
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "provider": provider,
+                    "healthy": False,
+                    "error": {"code": str(e.code or "space_provider_upstream_error"), "message": str(e)},
+                    "provider_state": provider_state,
+                    "credential": _build_provider_credential_status(provider),
+                },
+            )
+    except ValueError as e:
+        return _error("space_job_invalid", str(e))
+    except Exception as e:
+        return _error("group_space_provider_health_check_failed", str(e))
+
+
 def try_handle_group_space_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
     if op == "group_space_status":
         return handle_group_space_status(args)
@@ -390,4 +684,12 @@ def try_handle_group_space_op(op: str, args: Dict[str, Any]) -> Optional[DaemonR
         return handle_group_space_query(args)
     if op == "group_space_jobs":
         return handle_group_space_jobs(args)
+    if op == "group_space_sync":
+        return handle_group_space_sync(args)
+    if op == "group_space_provider_credential_status":
+        return handle_group_space_provider_credential_status(args)
+    if op == "group_space_provider_credential_update":
+        return handle_group_space_provider_credential_update(args)
+    if op == "group_space_provider_health_check":
+        return handle_group_space_provider_health_check(args)
     return None

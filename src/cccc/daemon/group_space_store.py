@@ -3,17 +3,26 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from ..contracts.v1 import SpaceBinding, SpaceJob, SpaceProviderState, SpaceQueueSummary
+from ..contracts.v1 import (
+    SpaceBinding,
+    SpaceJob,
+    SpaceProviderCredentialState,
+    SpaceProviderState,
+    SpaceQueueSummary,
+)
 from ..paths import ensure_home
 from ..util.fs import atomic_write_json, read_json
 from ..util.time import parse_utc_iso, utc_now_iso
 
 _PROVIDER_IDS = {"notebooklm"}
 _JOB_ID_PREFIX = "spj_"
+_PROVIDER_SECRET_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _space_root(home: Path) -> Path:
@@ -34,6 +43,26 @@ def _jobs_path(home: Path) -> Path:
 
 def _history_path(home: Path) -> Path:
     return _space_root(home) / "jobs.history.jsonl"
+
+
+def _provider_secret_root(home: Path) -> Path:
+    return home / "state" / "secrets" / "space_providers"
+
+
+def _provider_secret_filename(provider: str) -> str:
+    pid = _provider_or_raise(provider)
+    digest = hashlib.sha256(pid.encode("utf-8")).hexdigest()[:16]
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", pid).strip("._-")
+    if not slug:
+        slug = "provider"
+    slug = slug[:32]
+    return f"{slug}.{digest}.json"
+
+
+def _provider_secret_path(provider: str) -> Path:
+    home = ensure_home()
+    root = _provider_secret_root(home)
+    return root / _provider_secret_filename(provider)
 
 
 def _ensure_dir(path: Path, mode: int = 0o700) -> None:
@@ -58,6 +87,30 @@ def _provider_or_raise(raw: Any) -> str:
     if provider not in _PROVIDER_IDS:
         raise ValueError(f"unsupported provider: {provider}")
     return provider
+
+
+def _validate_provider_secret_key(key: Any) -> str:
+    k = str(key or "").strip()
+    if not k:
+        raise ValueError("missing secret key")
+    if not _PROVIDER_SECRET_KEY_RE.match(k):
+        raise ValueError(f"invalid secret key: {k}")
+    return k
+
+
+def _mask_secret_value(value: Any) -> str:
+    raw = str(value or "")
+    if len(raw) <= 6:
+        return "******"
+    return f"{raw[:2]}******{raw[-2:]}"
+
+
+def _path_mtime_iso(path: Path) -> Optional[str]:
+    try:
+        stat = path.stat()
+        return datetime.fromtimestamp(float(stat.st_mtime), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    except Exception:
+        return None
 
 
 def _save_doc(path: Path, doc: Dict[str, Any]) -> None:
@@ -282,6 +335,82 @@ def set_space_provider_state(
     doc["providers"] = providers
     _save_doc(path, doc)
     return dict(item)
+
+
+def load_space_provider_secrets(provider: str = "notebooklm") -> Dict[str, str]:
+    pid = _provider_or_raise(provider)
+    path = _provider_secret_path(pid)
+    raw = read_json(path)
+    out: Dict[str, str] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key, value in raw.items():
+        if value is None:
+            continue
+        try:
+            kk = _validate_provider_secret_key(key)
+        except Exception:
+            continue
+        out[kk] = str(value)
+    return out
+
+
+def update_space_provider_secrets(
+    provider: str = "notebooklm",
+    *,
+    set_vars: Dict[str, str],
+    unset_keys: List[str],
+    clear: bool,
+) -> Dict[str, str]:
+    pid = _provider_or_raise(provider)
+    current = {} if clear else load_space_provider_secrets(pid)
+    for key in unset_keys:
+        kk = _validate_provider_secret_key(key)
+        current.pop(kk, None)
+    for key, value in set_vars.items():
+        kk = _validate_provider_secret_key(key)
+        current[kk] = str(value)
+
+    path = _provider_secret_path(pid)
+    root = path.parent
+    if not current:
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return {}
+
+    _ensure_dir(root, 0o700)
+    atomic_write_json(path, current, indent=2)
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+    return dict(current)
+
+
+def describe_space_provider_credential_state(
+    provider: str = "notebooklm",
+    *,
+    key: str,
+) -> Dict[str, Any]:
+    pid = _provider_or_raise(provider)
+    secret_key = _validate_provider_secret_key(key)
+    secrets_map = load_space_provider_secrets(pid)
+    value = str(secrets_map.get(secret_key) or "")
+    configured = bool(value)
+    path = _provider_secret_path(pid)
+    model = SpaceProviderCredentialState(
+        provider=pid,
+        key=secret_key,
+        configured=configured,
+        source=("store" if configured else "none"),
+        env_configured=False,
+        store_configured=configured,
+        updated_at=_path_mtime_iso(path),
+        masked_value=(_mask_secret_value(value) if configured else None),
+    )
+    return model.model_dump(exclude_none=True)
 
 
 def get_space_binding(group_id: str, provider: str = "notebooklm") -> Optional[Dict[str, Any]]:

@@ -258,6 +258,22 @@ export type GroupSpaceProviderState = {
   mode: "disabled" | "active" | "degraded" | string;
   last_health_at?: string | null;
   last_error?: string | null;
+  real_adapter_enabled?: boolean;
+  stub_adapter_enabled?: boolean;
+  auth_configured?: boolean;
+  write_ready?: boolean;
+  readiness_reason?: string;
+};
+
+export type GroupSpaceProviderCredentialStatus = {
+  provider: "notebooklm" | string;
+  key: string;
+  configured: boolean;
+  source: "none" | "store" | "env" | string;
+  env_configured: boolean;
+  store_configured: boolean;
+  updated_at?: string | null;
+  masked_value?: string | null;
 };
 
 export type GroupSpaceBinding = {
@@ -303,6 +319,45 @@ export type GroupSpaceStatus = {
   provider: GroupSpaceProviderState;
   binding: GroupSpaceBinding;
   queue_summary: GroupSpaceQueueSummary;
+  sync?: GroupSpaceSyncState;
+  sync_result?: GroupSpaceSyncResult;
+};
+
+export type GroupSpaceSyncState = {
+  available?: boolean;
+  reason?: string;
+  space_root?: string;
+  group_id?: string;
+  provider?: string;
+  remote_space_id?: string;
+  last_run_at?: string;
+  converged?: boolean;
+  unsynced_count?: number;
+  uploaded?: number;
+  updated?: number;
+  deleted?: number;
+  reused?: number;
+  last_error?: string;
+  last_fingerprint?: Record<string, unknown>;
+  errors?: Array<Record<string, unknown>>;
+};
+
+export type GroupSpaceSyncResult = {
+  ok?: boolean;
+  group_id?: string;
+  provider?: string;
+  remote_space_id?: string;
+  space_root?: string;
+  skipped?: boolean;
+  reason?: string;
+  converged?: boolean;
+  unsynced_count?: number;
+  local_files?: number;
+  uploaded?: number;
+  updated?: number;
+  deleted?: number;
+  reused?: number;
+  errors?: Array<Record<string, unknown>>;
 };
 
 export type AutomationRuleTriggerInterval = {

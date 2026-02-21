@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { GroupSpaceJob, GroupSpaceStatus } from "../../../types";
+import type { GroupSpaceJob, GroupSpaceProviderCredentialStatus, GroupSpaceStatus } from "../../../types";
 import * as api from "../../../services/api";
 import { cardClass, inputClass } from "./types";
 
@@ -28,6 +28,8 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
   const { t } = useTranslation("settings");
   const [provider] = useState("notebooklm");
   const [status, setStatus] = useState<GroupSpaceStatus | null>(null);
+  const [credential, setCredential] = useState<GroupSpaceProviderCredentialStatus | null>(null);
+  const [authJsonText, setAuthJsonText] = useState("");
   const [jobs, setJobs] = useState<GroupSpaceJob[]>([]);
   const [jobsFilter, setJobsFilter] = useState("");
   const [bindRemoteId, setBindRemoteId] = useState("");
@@ -55,9 +57,10 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     setBusy(true);
     setErr("");
     try {
-      const [statusResp, jobsResp] = await Promise.all([
+      const [statusResp, jobsResp, credentialResp] = await Promise.all([
         api.fetchGroupSpaceStatus(gid, provider),
         api.listGroupSpaceJobs({ groupId: gid, provider, state: jobsFilter, limit: 30 }),
+        api.fetchGroupSpaceProviderCredential(provider),
       ]);
       if (!statusResp.ok) {
         setErr(statusResp.error?.message || t("groupSpace.loadFailed"));
@@ -72,6 +75,11 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
         setErr(jobsResp.error?.message || t("groupSpace.loadJobsFailed"));
         setJobs([]);
         return;
+      }
+      if (credentialResp.ok) {
+        setCredential(credentialResp.result?.credential || null);
+      } else {
+        setCredential(null);
       }
       setJobs(Array.isArray(jobsResp.result?.jobs) ? jobsResp.result.jobs : []);
     } catch {
@@ -96,15 +104,10 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
   const handleBind = async () => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
-    const remoteSpaceId = String(bindRemoteId || "").trim();
-    if (!remoteSpaceId) {
-      setErr(t("groupSpace.bindRemoteRequired"));
-      return;
-    }
     setBusy(true);
     setErr("");
     try {
-      const resp = await api.bindGroupSpace(gid, remoteSpaceId, provider);
+      const resp = await api.bindGroupSpace(gid, String(bindRemoteId || "").trim(), provider);
       if (!resp.ok) {
         setErr(resp.error?.message || t("groupSpace.bindFailed"));
         return;
@@ -114,6 +117,31 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
       setHintWithTimeout(t("groupSpace.bindSuccess"));
     } catch {
       setErr(t("groupSpace.bindFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSyncNow = async () => {
+    const gid = String(groupId || "").trim();
+    if (!gid) return;
+    setBusy(true);
+    setErr("");
+    try {
+      const resp = await api.syncGroupSpace({
+        groupId: gid,
+        provider,
+        action: "run",
+        force: true,
+      });
+      if (!resp.ok) {
+        setErr(resp.error?.message || t("groupSpace.syncFailed"));
+        return;
+      }
+      setHintWithTimeout(t("groupSpace.syncDone"));
+      await loadAll();
+    } catch {
+      setErr(t("groupSpace.syncFailed"));
     } finally {
       setBusy(false);
     }
@@ -166,6 +194,85 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
       await loadAll();
     } catch {
       setErr(t("groupSpace.ingestFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSaveCredential = async () => {
+    const parsed = parseJsonObject(authJsonText);
+    if (!parsed.ok) {
+      setErr(t("groupSpace.invalidJsonObject", { field: t("groupSpace.authJson") }));
+      return;
+    }
+    setBusy(true);
+    setErr("");
+    try {
+      const resp = await api.updateGroupSpaceProviderCredential({
+        provider,
+        authJson: authJsonText,
+        clear: false,
+      });
+      if (!resp.ok) {
+        setErr(resp.error?.message || t("groupSpace.credentialSaveFailed"));
+        return;
+      }
+      setCredential(resp.result?.credential || null);
+      setAuthJsonText("");
+      setHintWithTimeout(t("groupSpace.credentialSaved"));
+      await loadAll();
+    } catch {
+      setErr(t("groupSpace.credentialSaveFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleClearCredential = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      const resp = await api.updateGroupSpaceProviderCredential({
+        provider,
+        authJson: "",
+        clear: true,
+      });
+      if (!resp.ok) {
+        setErr(resp.error?.message || t("groupSpace.credentialClearFailed"));
+        return;
+      }
+      setCredential(resp.result?.credential || null);
+      setAuthJsonText("");
+      setHintWithTimeout(t("groupSpace.credentialCleared"));
+      await loadAll();
+    } catch {
+      setErr(t("groupSpace.credentialClearFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleHealthCheck = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      const resp = await api.checkGroupSpaceProviderHealth(provider);
+      if (!resp.ok) {
+        setErr(resp.error?.message || t("groupSpace.healthCheckFailed"));
+        return;
+      }
+      if (resp.result?.credential) {
+        setCredential(resp.result.credential);
+      }
+      if (resp.result?.healthy) {
+        setHintWithTimeout(t("groupSpace.healthCheckOk"));
+      } else {
+        const reason = String(resp.result?.error?.message || "");
+        setErr(reason || t("groupSpace.healthCheckFailed"));
+      }
+      await loadAll();
+    } catch {
+      setErr(t("groupSpace.healthCheckFailed"));
     } finally {
       setBusy(false);
     }
@@ -275,17 +382,103 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
             {t("groupSpace.providerMode")}: {String(status?.provider?.mode || "disabled")}
           </div>
           <div className={isDark ? "text-slate-400" : "text-gray-600"}>
+            {t("groupSpace.providerWriteReady")}: {status?.provider?.write_ready ? t("common:yes") : t("common:no")}
+            {status?.provider?.readiness_reason ? ` (${String(status.provider.readiness_reason)})` : ""}
+          </div>
+          <div className={isDark ? "text-slate-400" : "text-gray-600"}>
+            {t("groupSpace.realAdapter")}: {status?.provider?.real_adapter_enabled ? t("common:yes") : t("common:no")}
+            {" · "}
+            {t("groupSpace.stubAdapter")}: {status?.provider?.stub_adapter_enabled ? t("common:yes") : t("common:no")}
+            {" · "}
+            {t("groupSpace.authConfigured")}: {status?.provider?.auth_configured ? t("common:yes") : t("common:no")}
+          </div>
+          <div className={isDark ? "text-slate-400" : "text-gray-600"}>
             {t("groupSpace.bindingStatus")}: {String(status?.binding?.status || "unbound")}
             {status?.binding?.remote_space_id ? ` · ${status.binding.remote_space_id}` : ""}
           </div>
           <div className={isDark ? "text-slate-400" : "text-gray-600"}>
+            {t("groupSpace.syncConverged")}: {status?.sync?.converged ? t("common:yes") : t("common:no")}
+            {" · "}
+            {t("groupSpace.syncUnsynced")}: {Number(status?.sync?.unsynced_count || 0)}
+          </div>
+          {status?.sync?.space_root ? (
+            <div className={isDark ? "text-slate-500" : "text-gray-500"}>
+              {t("groupSpace.spaceRoot")}: <span className="font-mono break-all">{String(status.sync.space_root)}</span>
+            </div>
+          ) : null}
+          {status?.sync?.last_run_at ? (
+            <div className={isDark ? "text-slate-500" : "text-gray-500"}>
+              {t("groupSpace.syncLastRunAt")}: {String(status.sync.last_run_at)}
+            </div>
+          ) : null}
+          <div className={isDark ? "text-slate-400" : "text-gray-600"}>
             {t("groupSpace.queueSummary")}: P {Number(status?.queue_summary?.pending || 0)} / R {Number(status?.queue_summary?.running || 0)} / F {Number(status?.queue_summary?.failed || 0)}
           </div>
-          {status?.provider?.last_error ? (
+            {status?.provider?.last_error ? (
             <div className={isDark ? "text-amber-300" : "text-amber-700"}>
               {t("groupSpace.lastError")}: {String(status.provider.last_error)}
             </div>
           ) : null}
+          {status?.sync?.last_error ? (
+            <div className={isDark ? "text-amber-300" : "text-amber-700"}>
+              {t("groupSpace.syncLastError")}: {String(status.sync.last_error)}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className={cardClass(isDark)}>
+        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("groupSpace.credentialTitle")}</div>
+        <div className={`mt-2 text-xs space-y-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+          <div>{t("groupSpace.credentialConfigured")}: {credential?.configured ? t("common:yes") : t("common:no")}</div>
+          <div>{t("groupSpace.credentialSource")}: {String(credential?.source || "none")}</div>
+          {credential?.masked_value ? (
+            <div>{t("groupSpace.credentialMaskedValue")}: <span className="font-mono">{credential.masked_value}</span></div>
+          ) : null}
+          {credential?.updated_at ? (
+            <div>{t("groupSpace.credentialUpdatedAt")}: {String(credential.updated_at)}</div>
+          ) : null}
+        </div>
+        <div className="mt-2 space-y-2">
+          <div>
+            <label className={`block text-[11px] mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("groupSpace.authJson")}</label>
+            <textarea
+              value={authJsonText}
+              onChange={(e) => setAuthJsonText(e.target.value)}
+              rows={3}
+              placeholder={t("groupSpace.authJsonPlaceholder")}
+              className={`${inputClass(isDark)} resize-y`}
+            />
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => void handleSaveCredential()}
+              disabled={busy}
+              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
+                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
+              } disabled:opacity-50`}
+            >
+              {t("groupSpace.saveCredential")}
+            </button>
+            <button
+              onClick={() => void handleClearCredential()}
+              disabled={busy}
+              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
+                isDark ? "bg-rose-900/40 hover:bg-rose-800/40 text-rose-300 border border-rose-700/60" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
+              } disabled:opacity-50`}
+            >
+              {t("groupSpace.clearCredential")}
+            </button>
+            <button
+              onClick={() => void handleHealthCheck()}
+              disabled={busy}
+              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
+                isDark ? "bg-emerald-900/40 hover:bg-emerald-800/40 text-emerald-300 border border-emerald-700/60" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200"
+              } disabled:opacity-50`}
+            >
+              {t("groupSpace.healthCheck")}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -319,6 +512,15 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
               } disabled:opacity-50`}
             >
               {t("groupSpace.unbind")}
+            </button>
+            <button
+              onClick={() => void handleSyncNow()}
+              disabled={busy}
+              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
+                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
+              } disabled:opacity-50`}
+            >
+              {t("groupSpace.syncNow")}
             </button>
           </div>
         </div>

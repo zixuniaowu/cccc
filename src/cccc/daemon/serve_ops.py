@@ -74,6 +74,26 @@ def start_space_jobs_thread(
     return t
 
 
+def start_space_sync_thread(
+    *,
+    stop_event: threading.Event,
+    tick_space_sync: Callable[[], Any],
+    interval_seconds: float = 30.0,
+) -> threading.Thread:
+    def _space_sync_loop() -> None:
+        interval = max(5.0, float(interval_seconds or 30.0))
+        while not stop_event.is_set():
+            try:
+                tick_space_sync()
+            except Exception:
+                pass
+            stop_event.wait(interval)
+
+    t = threading.Thread(target=_space_sync_loop, name="cccc-space-sync", daemon=True)
+    t.start()
+    return t
+
+
 def bind_server_socket(
     *,
     transport: str,

@@ -5,6 +5,7 @@ import json
 import os
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Mapping
 
 from .errors import NotebookLMProviderError
@@ -22,11 +23,18 @@ class NotebookLMAdapter:
 
     provider_id = "notebooklm"
 
-    def health_check(self) -> Dict[str, Any]:
-        return notebooklm_health_check()
+    def health_check(self, auth_json_raw: str | None = None) -> Dict[str, Any]:
+        return notebooklm_health_check(auth_json_raw=auth_json_raw)
 
-    def ingest(self, *, remote_space_id: str, kind: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-        self.health_check()
+    def ingest(
+        self,
+        *,
+        remote_space_id: str,
+        kind: str,
+        payload: Dict[str, Any],
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
         notebook_id = str(remote_space_id or "").strip()
         if not notebook_id:
             raise NotebookLMProviderError(
@@ -36,7 +44,7 @@ class NotebookLMAdapter:
                 degrade_provider=True,
             )
 
-        auth_payload = validate_notebooklm_auth_json()
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         normalized_kind = str(kind or "context_sync").strip() or "context_sync"
         try:
             return _run_coroutine_sync(
@@ -51,8 +59,15 @@ class NotebookLMAdapter:
         except Exception as e:
             raise _map_vendor_exception(e) from e
 
-    def query(self, *, remote_space_id: str, query: str, options: Dict[str, Any]) -> Dict[str, Any]:
-        self.health_check()
+    def query(
+        self,
+        *,
+        remote_space_id: str,
+        query: str,
+        options: Dict[str, Any],
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
         notebook_id = str(remote_space_id or "").strip()
         if not notebook_id:
             raise NotebookLMProviderError(
@@ -69,7 +84,7 @@ class NotebookLMAdapter:
                 transient=False,
                 degrade_provider=False,
             )
-        auth_payload = validate_notebooklm_auth_json()
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         safe_options = dict(options or {})
         try:
             return _run_coroutine_sync(
@@ -77,6 +92,174 @@ class NotebookLMAdapter:
                     notebook_id=notebook_id,
                     query=question,
                     options=safe_options,
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def create_notebook(
+        self,
+        *,
+        title: str,
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_title = str(title or "").strip() or "CCCC Space"
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _create_notebook_async(
+                    title=notebook_title,
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def list_sources(
+        self,
+        *,
+        remote_space_id: str,
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _list_sources_async(
+                    notebook_id=notebook_id,
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def add_file_source(
+        self,
+        *,
+        remote_space_id: str,
+        file_path: str,
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        target = str(file_path or "").strip()
+        if not target:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="file_path is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _add_file_source_async(
+                    notebook_id=notebook_id,
+                    file_path=target,
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def delete_source(
+        self,
+        *,
+        remote_space_id: str,
+        source_id: str,
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        sid = str(source_id or "").strip()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        if not sid:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="source_id is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _delete_source_async(
+                    notebook_id=notebook_id,
+                    source_id=sid,
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def rename_source(
+        self,
+        *,
+        remote_space_id: str,
+        source_id: str,
+        new_title: str,
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        sid = str(source_id or "").strip()
+        title = str(new_title or "").strip()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        if not sid:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="source_id is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        if not title:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="new_title is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _rename_source_async(
+                    notebook_id=notebook_id,
+                    source_id=sid,
+                    new_title=title,
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
                 )
@@ -238,6 +421,113 @@ async def _query_async(
         "remote_space_id": notebook_id,
         "provider": "notebooklm",
     }
+
+
+async def _create_notebook_async(
+    *,
+    title: str,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    async with client:
+        notebook = await client.notebooks.create(title)
+    notebook_id = str(getattr(notebook, "id", "") or "").strip()
+    if not notebook_id:
+        raise NotebookLMProviderError(
+            code="space_provider_upstream_error",
+            message="notebook create returned empty notebook id",
+            transient=False,
+            degrade_provider=False,
+        )
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": notebook_id,
+        "title": str(getattr(notebook, "title", "") or title),
+        "created": True,
+    }
+
+
+def _source_to_dict(source: Any) -> Dict[str, Any]:
+    return {
+        "source_id": str(getattr(source, "id", "") or ""),
+        "title": str(getattr(source, "title", "") or ""),
+        "url": str(getattr(source, "url", "") or ""),
+        "status": int(getattr(source, "status", 0) or 0),
+        "kind": str(getattr(source, "kind", "") or ""),
+    }
+
+
+async def _list_sources_async(
+    *,
+    notebook_id: str,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    async with client:
+        sources = await client.sources.list(notebook_id)
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": notebook_id,
+        "sources": [_source_to_dict(source) for source in list(sources or [])],
+    }
+
+
+async def _add_file_source_async(
+    *,
+    notebook_id: str,
+    file_path: str,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    target = Path(file_path).expanduser().resolve()
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    async with client:
+        source = await client.sources.add_file(notebook_id, str(target), wait=False)
+    out = _source_to_dict(source)
+    out["provider"] = "notebooklm"
+    out["remote_space_id"] = notebook_id
+    out["file_path"] = str(target)
+    out["accepted"] = True
+    return out
+
+
+async def _delete_source_async(
+    *,
+    notebook_id: str,
+    source_id: str,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    async with client:
+        ok = await client.sources.delete(notebook_id, source_id)
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": notebook_id,
+        "source_id": source_id,
+        "deleted": bool(ok),
+    }
+
+
+async def _rename_source_async(
+    *,
+    notebook_id: str,
+    source_id: str,
+    new_title: str,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    async with client:
+        source = await client.sources.rename(notebook_id, source_id, new_title)
+    out = _source_to_dict(source)
+    out["provider"] = "notebooklm"
+    out["remote_space_id"] = notebook_id
+    out["renamed"] = True
+    out["title"] = str(out.get("title") or new_title)
+    return out
 
 
 def _map_vendor_exception(exc: Exception) -> NotebookLMProviderError:

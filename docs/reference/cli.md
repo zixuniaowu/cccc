@@ -189,8 +189,15 @@ Manage Group Space provider-backed shared memory.
 
 ```bash
 cccc space status
-cccc space bind <remote_space_id>
+cccc space credential status
+cccc space credential set --auth-json '{"cookies":[{"name":"SID","value":"...","domain":".google.com"}]}'
+cccc space credential set --auth-json-file ./notebooklm.storage_state.json
+cccc space credential clear
+cccc space health
+
+cccc space bind [remote_space_id]    # omit to auto-create NotebookLM notebook
 cccc space unbind
+cccc space sync --force
 
 cccc space ingest --kind context_sync --payload '{"vision":"v0.5 plan"}'
 cccc space ingest --kind resource_ingest --payload '{"path":"docs/spec.md"}' --idempotency-key ingest-docs-1
@@ -208,6 +215,10 @@ Notes:
 - `--group` is optional; defaults to the active group.
 - Current provider is `notebooklm`.
 - `--payload` and `--options` must be JSON objects.
+- Provider credentials are write-only; CLI/Web only return masked metadata.
+- `cccc space health` validates credential format and adapter compatibility.
+- When a group is bound, curated `context_sync` exports are also auto-enqueued from `context_sync` updates.
+- `cccc space sync` reconciles local `repo/space/` files to provider resources.
 
 ## Setup Commands
 

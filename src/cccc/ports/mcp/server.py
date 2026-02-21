@@ -26,6 +26,7 @@ cccc.* namespace (collaboration control plane):
 - cccc_space_ingest: Enqueue and execute Group Space ingest job
 - cccc_space_query: Query provider-backed Group Space knowledge
 - cccc_space_jobs: List/retry/cancel Group Space jobs
+- cccc_space_sync: Read or run repo/space synchronization reconcile
 - cccc_automation_state: Read automation reminders/status visible to caller
 - cccc_automation_manage: Manage automation reminders (MCP actor writes are notify-only)
 - cccc_project_info: Get PROJECT.md content (project goals/constraints)
@@ -979,6 +980,29 @@ def space_jobs(
     )
 
 
+def space_sync(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "run",
+    force: bool = False,
+) -> Dict[str, Any]:
+    """Run Group Space file sync reconcile or read current sync state."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_sync",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "action": str(action or "run"),
+                "force": bool(force),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
 def project_info(*, group_id: str) -> Dict[str, Any]:
     """Get PROJECT.md content for the group's active scope"""
     from pathlib import Path
@@ -1611,6 +1635,17 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             job_id=str(arguments.get("job_id") or ""),
             state=str(arguments.get("state") or ""),
             limit=min(max(int(arguments.get("limit") or 50), 1), 500),
+        )
+
+    if name == "cccc_space_sync":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        return space_sync(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=str(arguments.get("action") or "run"),
+            force=bool(arguments.get("force") is True),
         )
 
     if name == "cccc_group_set_state":

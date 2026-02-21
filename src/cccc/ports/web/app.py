@@ -309,6 +309,19 @@ class GroupSpaceJobActionRequest(BaseModel):
     job_id: str = Field(default="")
 
 
+class GroupSpaceSyncRequest(BaseModel):
+    by: str = Field(default="user")
+    provider: Optional[str] = Field(default="notebooklm")
+    action: Literal["status", "run"] = "run"
+    force: bool = False
+
+
+class GroupSpaceProviderCredentialUpdateRequest(BaseModel):
+    by: str = Field(default="user")
+    auth_json: str = Field(default="")
+    clear: bool = False
+
+
 class GroupDeleteRequest(BaseModel):
     confirm: str = Field(default="")
     by: str = Field(default="user")
@@ -888,6 +901,86 @@ def create_app() -> FastAPI:
                     "action": str(req.action or "retry").strip() or "retry",
                     "job_id": str(req.job_id or "").strip(),
                     "by": str(req.by or "user").strip() or "user",
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/space/sync")
+    async def group_space_sync(group_id: str, req: GroupSpaceSyncRequest) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Group Space write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "group_space_sync",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "action": str(req.action or "run").strip() or "run",
+                    "force": bool(req.force),
+                    "by": str(req.by or "user").strip() or "user",
+                },
+            }
+        )
+
+    @app.get("/api/v1/space/providers/{provider}/credential")
+    async def group_space_provider_credential_status(provider: str, by: str = "user") -> Dict[str, Any]:
+        return await _daemon(
+            {
+                "op": "group_space_provider_credential_status",
+                "args": {
+                    "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                    "by": str(by or "user").strip() or "user",
+                },
+            }
+        )
+
+    @app.post("/api/v1/space/providers/{provider}/credential")
+    async def group_space_provider_credential_update(
+        provider: str,
+        req: GroupSpaceProviderCredentialUpdateRequest,
+    ) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Provider credential write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "group_space_provider_credential_update",
+                "args": {
+                    "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                    "by": str(req.by or "user").strip() or "user",
+                    "auth_json": str(req.auth_json or ""),
+                    "clear": bool(req.clear),
+                },
+            }
+        )
+
+    @app.post("/api/v1/space/providers/{provider}/health")
+    async def group_space_provider_health_check(provider: str, by: str = "user") -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Provider health-check endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "group_space_provider_health_check",
+                "args": {
+                    "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                    "by": str(by or "user").strip() or "user",
                 },
             }
         )

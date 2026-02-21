@@ -28,6 +28,14 @@ class TestGroupSpaceContract(unittest.TestCase):
         with self.assertRaises(ValidationError):
             SpaceJob(job_id="spj_1", group_id="g_1", state="unknown")
 
+    def test_provider_credential_state_defaults(self) -> None:
+        from cccc.contracts.v1.group_space import SpaceProviderCredentialState
+
+        doc = SpaceProviderCredentialState()
+        self.assertEqual(doc.provider, "notebooklm")
+        self.assertEqual(doc.source, "none")
+        self.assertFalse(doc.configured)
+
 
 if __name__ == "__main__":
     unittest.main()

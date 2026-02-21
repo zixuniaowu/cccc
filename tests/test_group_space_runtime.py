@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
+import time
 import unittest
 from unittest.mock import patch
 
@@ -139,6 +141,155 @@ class TestGroupSpaceRuntime(unittest.TestCase):
                     self.assertGreaterEqual(int(post.get("attempt") or 0), 2)
 
             self.assertEqual(calls["n"], 2)
+        finally:
+            cleanup()
+
+    def test_write_execution_is_serialized_per_remote_space(self) -> None:
+        from cccc.daemon.group_space_runtime import execute_space_job
+        from cccc.daemon.group_space_store import enqueue_space_job, set_space_provider_state
+
+        _, cleanup = self._with_home()
+        try:
+            set_space_provider_state("notebooklm", enabled=True, mode="active", last_error="", touch_health=True)
+            job1, _ = enqueue_space_job(
+                group_id="g_lock_1",
+                provider="notebooklm",
+                remote_space_id="nb_lock",
+                kind="context_sync",
+                payload={"n": 1},
+                idempotency_key="lock-1",
+            )
+            job2, _ = enqueue_space_job(
+                group_id="g_lock_2",
+                provider="notebooklm",
+                remote_space_id="nb_lock",
+                kind="resource_ingest",
+                payload={"n": 2},
+                idempotency_key="lock-2",
+            )
+
+            mu = threading.Lock()
+            active = {"n": 0, "max": 0}
+
+            def _slow_ingest(provider: str, *, remote_space_id: str, kind: str, payload: dict):
+                _ = provider, remote_space_id, kind, payload
+                with mu:
+                    active["n"] += 1
+                    active["max"] = max(active["max"], active["n"])
+                time.sleep(0.08)
+                with mu:
+                    active["n"] -= 1
+                return {"ok": True}
+
+            with patch("cccc.daemon.group_space_runtime.provider_ingest", side_effect=_slow_ingest):
+                t1 = threading.Thread(target=execute_space_job, args=(str(job1.get("job_id") or ""),))
+                t2 = threading.Thread(target=execute_space_job, args=(str(job2.get("job_id") or ""),))
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
+
+            self.assertEqual(active["max"], 1)
+        finally:
+            cleanup()
+
+    def test_write_execution_allows_parallelism_across_different_remotes(self) -> None:
+        from cccc.daemon.group_space_runtime import execute_space_job
+        from cccc.daemon.group_space_store import enqueue_space_job, set_space_provider_state
+
+        _, cleanup = self._with_home()
+        try:
+            set_space_provider_state("notebooklm", enabled=True, mode="active", last_error="", touch_health=True)
+            job1, _ = enqueue_space_job(
+                group_id="g_lock_3",
+                provider="notebooklm",
+                remote_space_id="nb_lock_a",
+                kind="context_sync",
+                payload={"n": 1},
+                idempotency_key="lock-a",
+            )
+            job2, _ = enqueue_space_job(
+                group_id="g_lock_4",
+                provider="notebooklm",
+                remote_space_id="nb_lock_b",
+                kind="resource_ingest",
+                payload={"n": 2},
+                idempotency_key="lock-b",
+            )
+
+            mu = threading.Lock()
+            active = {"n": 0, "max": 0}
+
+            def _slow_ingest(provider: str, *, remote_space_id: str, kind: str, payload: dict):
+                _ = provider, remote_space_id, kind, payload
+                with mu:
+                    active["n"] += 1
+                    active["max"] = max(active["max"], active["n"])
+                time.sleep(0.08)
+                with mu:
+                    active["n"] -= 1
+                return {"ok": True}
+
+            with patch("cccc.daemon.group_space_runtime.provider_ingest", side_effect=_slow_ingest):
+                t1 = threading.Thread(target=execute_space_job, args=(str(job1.get("job_id") or ""),))
+                t2 = threading.Thread(target=execute_space_job, args=(str(job2.get("job_id") or ""),))
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
+
+            self.assertGreaterEqual(active["max"], 2)
+        finally:
+            cleanup()
+
+    def test_global_provider_write_cap_can_serialize_different_remotes(self) -> None:
+        from cccc.daemon.group_space_runtime import execute_space_job
+        from cccc.daemon.group_space_store import enqueue_space_job, set_space_provider_state
+
+        _, cleanup = self._with_home()
+        try:
+            set_space_provider_state("notebooklm", enabled=True, mode="active", last_error="", touch_health=True)
+            job1, _ = enqueue_space_job(
+                group_id="g_cap_1",
+                provider="notebooklm",
+                remote_space_id="nb_cap_a",
+                kind="context_sync",
+                payload={"n": 1},
+                idempotency_key="cap-a",
+            )
+            job2, _ = enqueue_space_job(
+                group_id="g_cap_2",
+                provider="notebooklm",
+                remote_space_id="nb_cap_b",
+                kind="resource_ingest",
+                payload={"n": 2},
+                idempotency_key="cap-b",
+            )
+
+            mu = threading.Lock()
+            active = {"n": 0, "max": 0}
+
+            def _slow_ingest(provider: str, *, remote_space_id: str, kind: str, payload: dict):
+                _ = provider, remote_space_id, kind, payload
+                with mu:
+                    active["n"] += 1
+                    active["max"] = max(active["max"], active["n"])
+                time.sleep(0.08)
+                with mu:
+                    active["n"] -= 1
+                return {"ok": True}
+
+            sem = threading.BoundedSemaphore(1)
+            with patch("cccc.daemon.group_space_runtime._provider_write_semaphore", return_value=sem):
+                with patch("cccc.daemon.group_space_runtime.provider_ingest", side_effect=_slow_ingest):
+                    t1 = threading.Thread(target=execute_space_job, args=(str(job1.get("job_id") or ""),))
+                    t2 = threading.Thread(target=execute_space_job, args=(str(job2.get("job_id") or ""),))
+                    t1.start()
+                    t2.start()
+                    t1.join()
+                    t2.join()
+
+            self.assertEqual(active["max"], 1)
         finally:
             cleanup()
 

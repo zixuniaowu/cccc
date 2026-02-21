@@ -94,12 +94,14 @@ from .request_dispatch_ops import RequestDispatchDeps, dispatch_request
 from .serve_ops import (
     start_automation_thread,
     start_space_jobs_thread,
+    start_space_sync_thread,
     bind_server_socket,
     write_daemon_addr,
     start_bootstrap_thread,
     cleanup_after_stop,
 )
 from .group_space_runtime import process_due_space_jobs
+from .group_space_sync import process_due_space_syncs
 from .ops.template_ops import (
     group_create_from_template,
     group_template_export,
@@ -825,6 +827,17 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         stop_event=stop_event,
         tick_space_jobs=_tick_space_jobs,
         interval_seconds=1.0,
+    )
+
+    def _tick_space_sync() -> None:
+        result = process_due_space_syncs(provider="notebooklm", limit=20)
+        if int(result.get("processed") or 0) > 0:
+            logger.debug("group_space_sync_processed=%s", int(result.get("processed") or 0))
+
+    start_space_sync_thread(
+        stop_event=stop_event,
+        tick_space_sync=_tick_space_sync,
+        interval_seconds=30.0,
     )
 
     transport = _desired_daemon_transport()

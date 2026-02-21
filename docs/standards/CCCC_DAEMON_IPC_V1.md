@@ -1095,7 +1095,22 @@ Notes:
 
 Result:
 ```ts
-{ success: true; dry_run: boolean; changes: Array<Record<string, unknown>>; version: string }
+{
+  success: true
+  dry_run: boolean
+  changes: Array<Record<string, unknown>>
+  version: string
+  space_sync?: {
+    queued: boolean
+    reason?: "not_bound" | "binding_inactive" | "missing_remote_space_id" | "provider_disabled" | "enqueue_failed"
+    deduped?: boolean
+    job_id?: string
+    provider?: "notebooklm"
+    kind?: "context_sync"
+    idempotency_key?: string
+    error?: string
+  }
+}
 ```
 
 #### `task_list`
@@ -1587,7 +1602,7 @@ Provider failures MUST NOT block core collaboration flows (chat/context/actors).
 
 #### `group_space_status`
 
-Read provider mode, group binding, and queue summary.
+Read provider mode, group binding, queue summary, and repo `space/` sync state.
 
 Args:
 ```ts
@@ -1602,6 +1617,11 @@ Result:
     provider: "notebooklm"
     enabled: boolean
     mode: "disabled" | "active" | "degraded"
+    real_adapter_enabled?: boolean
+    stub_adapter_enabled?: boolean
+    auth_configured?: boolean
+    write_ready?: boolean
+    readiness_reason?: string
     last_health_at?: string | null
     last_error?: string | null
   }
@@ -1614,12 +1634,24 @@ Result:
     status: "bound" | "unbound" | "error"
   }
   queue_summary: { pending: number; running: number; failed: number }
+  sync?: {
+    available?: boolean
+    reason?: string
+    space_root?: string
+    remote_space_id?: string
+    last_run_at?: string
+    converged?: boolean
+    unsynced_count?: number
+    last_error?: string
+  }
 }
 ```
 
 #### `group_space_bind`
 
 Bind/unbind a group to provider remote space.
+When `action=bind` and `remote_space_id` is empty, daemon may auto-create
+a provider notebook and bind it.
 
 Args:
 ```ts
@@ -1639,6 +1671,8 @@ Result:
   provider: Record<string, unknown>
   binding: Record<string, unknown>
   queue_summary: { pending: number; running: number; failed: number }
+  sync?: Record<string, unknown>
+  sync_result?: Record<string, unknown>
 }
 ```
 
@@ -1716,6 +1750,40 @@ Args:
 }
 ```
 
+#### `group_space_sync`
+
+Run/read `repo/space/` reconciliation status for the bound provider notebook.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "status" | "run"
+  force?: boolean
+  by?: string
+}
+```
+
+Result (`action=status`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  sync: Record<string, unknown>
+}
+```
+
+Result (`action=run`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  sync: Record<string, unknown>
+  sync_result: Record<string, unknown>
+}
+```
+
 Result (`action=list`):
 ```ts
 {
@@ -1733,6 +1801,104 @@ Result (`action=retry|cancel`):
   provider: "notebooklm"
   job: Record<string, unknown>
   queue_summary: { pending: number; running: number; failed: number }
+}
+```
+
+#### `group_space_provider_credential_status`
+
+Read provider credential status (masked metadata only, no secret values).
+
+Args:
+```ts
+{
+  provider?: "notebooklm"
+  by?: string // user-only
+}
+```
+
+Result:
+```ts
+{
+  provider: "notebooklm"
+  credential: {
+    provider: "notebooklm"
+    key: string
+    configured: boolean
+    source: "none" | "store" | "env"
+    env_configured: boolean
+    store_configured: boolean
+    updated_at?: string | null
+    masked_value?: string | null
+  }
+}
+```
+
+#### `group_space_provider_credential_update`
+
+Update or clear provider credentials in the daemon secret store.
+
+Args:
+```ts
+{
+  provider?: "notebooklm"
+  by?: string // user-only
+  auth_json?: string
+  clear?: boolean
+}
+```
+
+Notes:
+- `clear=true` removes stored credentials for this provider.
+- `auth_json` is write-only and never returned in response payloads.
+- Environment credential (`CCCC_NOTEBOOKLM_AUTH_JSON`) has higher precedence than stored credentials.
+
+Result:
+```ts
+{
+  provider: "notebooklm"
+  credential: {
+    provider: "notebooklm"
+    key: string
+    configured: boolean
+    source: "none" | "store" | "env"
+    env_configured: boolean
+    store_configured: boolean
+    updated_at?: string | null
+    masked_value?: string | null
+  }
+}
+```
+
+#### `group_space_provider_health_check`
+
+Run provider health check and update provider state (`active`/`degraded`/`disabled`) accordingly.
+
+Args:
+```ts
+{
+  provider?: "notebooklm"
+  by?: string // user-only
+}
+```
+
+Result:
+```ts
+{
+  provider: "notebooklm"
+  healthy: boolean
+  health?: Record<string, unknown>
+  error?: { code: string; message: string }
+  provider_state: Record<string, unknown>
+  credential: {
+    provider: "notebooklm"
+    key: string
+    configured: boolean
+    source: "none" | "store" | "env"
+    env_configured: boolean
+    store_configured: boolean
+    updated_at?: string | null
+    masked_value?: string | null
+  }
 }
 ```
 

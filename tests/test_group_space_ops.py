@@ -76,9 +76,28 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(str(provider.get("provider") or ""), "notebooklm")
             self.assertEqual(str(provider.get("mode") or ""), "disabled")
             self.assertEqual(bool(provider.get("enabled")), False)
+            self.assertEqual(bool(provider.get("write_ready")), False)
+            self.assertEqual(str(provider.get("readiness_reason") or ""), "real_disabled_and_stub_disabled")
             self.assertEqual(str(binding.get("status") or ""), "unbound")
             self.assertEqual(int(summary.get("pending") or 0), 0)
         finally:
+            cleanup()
+
+    def test_status_reports_stub_readiness(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-status-ready")
+            status, _ = self._call("group_space_status", {"group_id": gid})
+            self.assertTrue(status.ok, getattr(status, "error", None))
+            result = status.result if isinstance(status.result, dict) else {}
+            provider = result.get("provider") if isinstance(result.get("provider"), dict) else {}
+            self.assertEqual(bool(provider.get("stub_adapter_enabled")), True)
+            self.assertEqual(bool(provider.get("real_adapter_enabled")), False)
+            self.assertEqual(bool(provider.get("write_ready")), True)
+            self.assertEqual(str(provider.get("readiness_reason") or ""), "ok")
+        finally:
+            cleanup_stub()
             cleanup()
 
     def test_bind_ingest_query_jobs_with_stub(self) -> None:
@@ -313,6 +332,264 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(str(canceled_job.get("state") or ""), "canceled")
         finally:
             cleanup_stub()
+            cleanup()
+
+    def test_provider_credential_status_update_and_clear(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            initial, _ = self._call(
+                "group_space_provider_credential_status",
+                {"provider": "notebooklm", "by": "user"},
+            )
+            self.assertTrue(initial.ok, getattr(initial, "error", None))
+            initial_cred = ((initial.result or {}).get("credential") or {}) if isinstance(initial.result, dict) else {}
+            self.assertEqual(bool(initial_cred.get("configured")), False)
+            self.assertEqual(str(initial_cred.get("source") or ""), "none")
+
+            bad_update, _ = self._call(
+                "group_space_provider_credential_update",
+                {
+                    "provider": "notebooklm",
+                    "by": "user",
+                    "auth_json": "{bad-json",
+                    "clear": False,
+                },
+            )
+            self.assertFalse(bad_update.ok)
+            self.assertEqual(str(getattr(bad_update.error, "code", "")), "space_provider_auth_invalid")
+
+            good_update, _ = self._call(
+                "group_space_provider_credential_update",
+                {
+                    "provider": "notebooklm",
+                    "by": "user",
+                    "auth_json": '{"cookies":[{"name":"SID","value":"x","domain":".google.com"}]}',
+                    "clear": False,
+                },
+            )
+            self.assertTrue(good_update.ok, getattr(good_update, "error", None))
+            cred = ((good_update.result or {}).get("credential") or {}) if isinstance(good_update.result, dict) else {}
+            self.assertEqual(bool(cred.get("configured")), True)
+            self.assertEqual(str(cred.get("source") or ""), "store")
+            self.assertTrue(str(cred.get("masked_value") or "").strip())
+
+            clear_resp, _ = self._call(
+                "group_space_provider_credential_update",
+                {
+                    "provider": "notebooklm",
+                    "by": "user",
+                    "clear": True,
+                },
+            )
+            self.assertTrue(clear_resp.ok, getattr(clear_resp, "error", None))
+            cleared = ((clear_resp.result or {}).get("credential") or {}) if isinstance(clear_resp.result, dict) else {}
+            self.assertEqual(bool(cleared.get("configured")), False)
+        finally:
+            cleanup()
+
+    def test_provider_credential_status_env_overrides_store(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_env = self._with_env(
+            "CCCC_NOTEBOOKLM_AUTH_JSON",
+            '{"cookies":[{"name":"SID","value":"env","domain":".google.com"}]}',
+        )
+        try:
+            stored_update, _ = self._call(
+                "group_space_provider_credential_update",
+                {
+                    "provider": "notebooklm",
+                    "by": "user",
+                    "auth_json": '{"cookies":[{"name":"SID","value":"store","domain":".google.com"}]}',
+                    "clear": False,
+                },
+            )
+            self.assertTrue(stored_update.ok, getattr(stored_update, "error", None))
+
+            status, _ = self._call(
+                "group_space_provider_credential_status",
+                {"provider": "notebooklm", "by": "user"},
+            )
+            self.assertTrue(status.ok, getattr(status, "error", None))
+            cred = ((status.result or {}).get("credential") or {}) if isinstance(status.result, dict) else {}
+            self.assertEqual(bool(cred.get("configured")), True)
+            self.assertEqual(str(cred.get("source") or ""), "env")
+            self.assertEqual(bool(cred.get("env_configured")), True)
+            self.assertEqual(bool(cred.get("store_configured")), True)
+        finally:
+            cleanup_env()
+            cleanup()
+
+    def test_provider_health_check_returns_structured_result(self) -> None:
+        from cccc.providers.notebooklm.errors import NotebookLMProviderError
+
+        _, cleanup = self._with_home()
+        try:
+            with patch(
+                "cccc.daemon.ops.group_space_ops.notebooklm_health_check",
+                return_value={"provider": "notebooklm", "enabled": True, "compatible": True, "reason": "ok"},
+            ):
+                ok_resp, _ = self._call(
+                    "group_space_provider_health_check",
+                    {"provider": "notebooklm", "by": "user"},
+                )
+            self.assertTrue(ok_resp.ok, getattr(ok_resp, "error", None))
+            ok_result = ok_resp.result if isinstance(ok_resp.result, dict) else {}
+            self.assertEqual(bool(ok_result.get("healthy")), True)
+
+            with patch(
+                "cccc.daemon.ops.group_space_ops.notebooklm_health_check",
+                side_effect=NotebookLMProviderError(
+                    code="space_provider_auth_invalid",
+                    message="auth invalid",
+                    transient=False,
+                    degrade_provider=True,
+                ),
+            ):
+                fail_resp, _ = self._call(
+                    "group_space_provider_health_check",
+                    {"provider": "notebooklm", "by": "user"},
+                )
+            self.assertTrue(fail_resp.ok, getattr(fail_resp, "error", None))
+            fail_result = fail_resp.result if isinstance(fail_resp.result, dict) else {}
+            self.assertEqual(bool(fail_result.get("healthy")), False)
+            err = fail_result.get("error") if isinstance(fail_result.get("error"), dict) else {}
+            self.assertEqual(str(err.get("code") or ""), "space_provider_auth_invalid")
+        finally:
+            cleanup()
+
+    def test_provider_health_check_compat_mismatch_marks_degraded_when_enabled(self) -> None:
+        from cccc.daemon.group_space_store import set_space_provider_state
+        from cccc.providers.notebooklm.errors import NotebookLMProviderError
+
+        _, cleanup = self._with_home()
+        try:
+            set_space_provider_state("notebooklm", enabled=True, mode="active", last_error="", touch_health=True)
+            with patch(
+                "cccc.daemon.ops.group_space_ops.notebooklm_health_check",
+                side_effect=NotebookLMProviderError(
+                    code="space_provider_compat_mismatch",
+                    message="vendor package unavailable",
+                    transient=False,
+                    degrade_provider=True,
+                ),
+            ):
+                resp, _ = self._call(
+                    "group_space_provider_health_check",
+                    {"provider": "notebooklm", "by": "user"},
+                )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(bool(result.get("healthy")), False)
+            provider_state = result.get("provider_state") if isinstance(result.get("provider_state"), dict) else {}
+            self.assertEqual(str(provider_state.get("mode") or ""), "degraded")
+            err = result.get("error") if isinstance(result.get("error"), dict) else {}
+            self.assertEqual(str(err.get("code") or ""), "space_provider_compat_mismatch")
+        finally:
+            cleanup()
+
+    def test_provider_credential_ops_require_user_identity(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            for op, args in (
+                ("group_space_provider_credential_status", {"provider": "notebooklm", "by": "foreman"}),
+                (
+                    "group_space_provider_credential_update",
+                    {
+                        "provider": "notebooklm",
+                        "by": "foreman",
+                        "auth_json": '{"cookies":[{"name":"SID","value":"x","domain":".google.com"}]}',
+                        "clear": False,
+                    },
+                ),
+                ("group_space_provider_health_check", {"provider": "notebooklm", "by": "foreman"}),
+            ):
+                resp, _ = self._call(op, args)
+                self.assertFalse(resp.ok)
+                self.assertEqual(str(getattr(resp.error, "code", "")), "space_permission_denied")
+        finally:
+            cleanup()
+
+    def test_real_adapter_flag_off_rolls_back_without_blocking_group_space_flow(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_real = self._with_env("CCCC_NOTEBOOKLM_REAL", None)
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", None)
+        try:
+            gid = self._create_group("space-rollback")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_rb_1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            query, _ = self._call(
+                "group_space_query",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "query": "status?",
+                },
+            )
+            self.assertTrue(query.ok, getattr(query, "error", None))
+            result = query.result if isinstance(query.result, dict) else {}
+            self.assertEqual(bool(result.get("degraded")), True)
+            err = result.get("error") if isinstance(result.get("error"), dict) else {}
+            self.assertEqual(str(err.get("code") or ""), "space_provider_disabled")
+
+            ingest, _ = self._call(
+                "group_space_ingest",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "kind": "context_sync",
+                    "payload": {"k": "v"},
+                    "idempotency_key": "rollback-1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(ingest.ok, getattr(ingest, "error", None))
+            job = (ingest.result or {}).get("job") if isinstance(ingest.result, dict) else {}
+            self.assertEqual(str(job.get("state") or ""), "failed")
+            last_error = job.get("last_error") if isinstance(job.get("last_error"), dict) else {}
+            self.assertEqual(str(last_error.get("code") or ""), "space_provider_disabled")
+        finally:
+            cleanup_stub()
+            cleanup_real()
+            cleanup()
+
+    def test_bind_without_remote_id_can_auto_create_notebook(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("space-auto-bind")
+            with patch(
+                "cccc.daemon.ops.group_space_ops.provider_create_space",
+                return_value={"provider": "notebooklm", "remote_space_id": "nb_auto_1", "created": True},
+            ), patch(
+                "cccc.daemon.ops.group_space_ops.sync_group_space_files",
+                return_value={"ok": True, "converged": True, "unsynced_count": 0},
+            ):
+                bind, _ = self._call(
+                    "group_space_bind",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "action": "bind",
+                        "remote_space_id": "",
+                        "by": "user",
+                    },
+                )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+            result = bind.result if isinstance(bind.result, dict) else {}
+            binding = result.get("binding") if isinstance(result.get("binding"), dict) else {}
+            self.assertEqual(str(binding.get("remote_space_id") or ""), "nb_auto_1")
+            sync_result = result.get("sync_result") if isinstance(result.get("sync_result"), dict) else {}
+            self.assertEqual(bool(sync_result.get("ok")), True)
+        finally:
             cleanup()
 
 

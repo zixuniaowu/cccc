@@ -20,6 +20,7 @@ import type {
   RemoteAccessState,
   GroupSpaceStatus,
   GroupSpaceJob,
+  GroupSpaceProviderCredentialStatus,
 } from "../types";
 
 // ============ Token management ============
@@ -1006,7 +1007,7 @@ export async function fetchGroupSpaceStatus(groupId: string, provider: string = 
   );
 }
 
-export async function bindGroupSpace(groupId: string, remoteSpaceId: string, provider: string = "notebooklm") {
+export async function bindGroupSpace(groupId: string, remoteSpaceId: string = "", provider: string = "notebooklm") {
   return apiJson<GroupSpaceStatus>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/space/bind`,
     {
@@ -1015,7 +1016,7 @@ export async function bindGroupSpace(groupId: string, remoteSpaceId: string, pro
         by: "user",
         provider,
         action: "bind",
-        remote_space_id: remoteSpaceId,
+        remote_space_id: String(remoteSpaceId || ""),
       }),
     }
   );
@@ -1127,6 +1128,66 @@ export async function actionGroupSpaceJob(args: {
       action: args.action,
       job_id: args.jobId,
     }),
+  });
+}
+
+export async function syncGroupSpace(args: {
+  groupId: string;
+  provider?: string;
+  action?: "status" | "run";
+  force?: boolean;
+}) {
+  return apiJson<{
+    group_id: string;
+    provider: string;
+    sync?: Record<string, unknown>;
+    sync_result?: Record<string, unknown>;
+  }>(`/api/v1/groups/${encodeURIComponent(args.groupId)}/space/sync`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      provider: args.provider || "notebooklm",
+      action: args.action || "run",
+      force: Boolean(args.force),
+    }),
+  });
+}
+
+export async function fetchGroupSpaceProviderCredential(provider: string = "notebooklm") {
+  return apiJson<{ provider: string; credential: GroupSpaceProviderCredentialStatus }>(
+    `/api/v1/space/providers/${encodeURIComponent(provider)}/credential?by=user`
+  );
+}
+
+export async function updateGroupSpaceProviderCredential(args: {
+  provider?: string;
+  authJson?: string;
+  clear?: boolean;
+}) {
+  const provider = String(args.provider || "notebooklm");
+  return apiJson<{ provider: string; credential: GroupSpaceProviderCredentialStatus }>(
+    `/api/v1/space/providers/${encodeURIComponent(provider)}/credential`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        by: "user",
+        auth_json: String(args.authJson || ""),
+        clear: Boolean(args.clear),
+      }),
+    }
+  );
+}
+
+export async function checkGroupSpaceProviderHealth(provider: string = "notebooklm") {
+  return apiJson<{
+    provider: string;
+    healthy: boolean;
+    health?: Record<string, unknown>;
+    error?: { code?: string; message?: string };
+    provider_state?: Record<string, unknown>;
+    credential?: GroupSpaceProviderCredentialStatus;
+  }>(`/api/v1/space/providers/${encodeURIComponent(provider)}/health?by=user`, {
+    method: "POST",
   });
 }
 

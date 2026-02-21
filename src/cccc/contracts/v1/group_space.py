@@ -12,6 +12,7 @@ SpaceBindingStatus = Literal["bound", "unbound", "error"]
 SpaceJobState = Literal["pending", "running", "succeeded", "failed", "canceled"]
 SpaceJobKind = Literal["context_sync", "resource_ingest"]
 SpaceJobAction = Literal["list", "retry", "cancel"]
+SpaceCredentialSource = Literal["none", "store", "env"]
 
 
 class SpaceProviderState(BaseModel):
@@ -20,6 +21,19 @@ class SpaceProviderState(BaseModel):
     mode: SpaceProviderMode = "disabled"
     last_health_at: Optional[str] = None
     last_error: Optional[str] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SpaceProviderCredentialState(BaseModel):
+    provider: SpaceProviderId = "notebooklm"
+    key: str = ""
+    configured: bool = False
+    source: SpaceCredentialSource = "none"
+    env_configured: bool = False
+    store_configured: bool = False
+    updated_at: Optional[str] = None
+    masked_value: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -68,4 +82,3 @@ class SpaceQueueSummary(BaseModel):
     failed: int = 0
 
     model_config = ConfigDict(extra="forbid")
-
