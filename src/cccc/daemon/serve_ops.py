@@ -54,6 +54,26 @@ def start_automation_thread(
     return t
 
 
+def start_space_jobs_thread(
+    *,
+    stop_event: threading.Event,
+    tick_space_jobs: Callable[[], Any],
+    interval_seconds: float = 1.0,
+) -> threading.Thread:
+    def _space_jobs_loop() -> None:
+        interval = max(0.2, float(interval_seconds or 1.0))
+        while not stop_event.is_set():
+            try:
+                tick_space_jobs()
+            except Exception:
+                pass
+            stop_event.wait(interval)
+
+    t = threading.Thread(target=_space_jobs_loop, name="cccc-space-jobs", daemon=True)
+    t.start()
+    return t
+
+
 def bind_server_socket(
     *,
     transport: str,

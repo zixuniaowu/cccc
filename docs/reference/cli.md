@@ -181,6 +181,34 @@ cccc im logs                       # View IM bridge logs
 cccc im logs -f                    # Follow IM bridge logs
 ```
 
+## Group Space Commands
+
+### `cccc space`
+
+Manage Group Space provider-backed shared memory.
+
+```bash
+cccc space status
+cccc space bind <remote_space_id>
+cccc space unbind
+
+cccc space ingest --kind context_sync --payload '{"vision":"v0.5 plan"}'
+cccc space ingest --kind resource_ingest --payload '{"path":"docs/spec.md"}' --idempotency-key ingest-docs-1
+
+cccc space query "What is the latest shared plan?"
+cccc space query "Summarize risks" --options '{"top_k":5}'
+
+cccc space jobs list
+cccc space jobs list --state failed --limit 20
+cccc space jobs retry <job_id>
+cccc space jobs cancel <job_id>
+```
+
+Notes:
+- `--group` is optional; defaults to the active group.
+- Current provider is `notebooklm`.
+- `--payload` and `--options` must be JSON objects.
+
 ## Setup Commands
 
 ### `cccc setup`

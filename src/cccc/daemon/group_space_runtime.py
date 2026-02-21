@@ -7,6 +7,7 @@ from .group_space_provider import SpaceProviderError, provider_ingest, provider_
 from .group_space_store import (
     get_space_job,
     get_space_provider_state,
+    list_due_space_jobs,
     mark_space_job_failed,
     mark_space_job_retry_scheduled,
     mark_space_job_running,
@@ -47,50 +48,49 @@ def execute_space_job(job_id: str) -> Dict[str, Any]:
     if state not in ("pending", "running"):
         return job
 
-    while True:
-        current = mark_space_job_running(job_id)
-        provider = str(current.get("provider") or "notebooklm").strip() or "notebooklm"
-        remote_space_id = str(current.get("remote_space_id") or "").strip()
-        kind = str(current.get("kind") or "context_sync").strip() or "context_sync"
-        payload = current.get("payload") if isinstance(current.get("payload"), dict) else {}
-        attempt = int(current.get("attempt") or 0)
-        max_attempts = max(1, int(current.get("max_attempts") or 3))
+    current = mark_space_job_running(job_id)
+    provider = str(current.get("provider") or "notebooklm").strip() or "notebooklm"
+    remote_space_id = str(current.get("remote_space_id") or "").strip()
+    kind = str(current.get("kind") or "context_sync").strip() or "context_sync"
+    payload = current.get("payload") if isinstance(current.get("payload"), dict) else {}
+    attempt = int(current.get("attempt") or 0)
+    max_attempts = max(1, int(current.get("max_attempts") or 3))
 
-        try:
-            _ = provider_ingest(
-                provider,
-                remote_space_id=remote_space_id,
-                kind=kind,
-                payload=dict(payload),
-            )
+    try:
+        _ = provider_ingest(
+            provider,
+            remote_space_id=remote_space_id,
+            kind=kind,
+            payload=dict(payload),
+        )
+        set_space_provider_state(
+            provider,
+            enabled=True,
+            mode="active",
+            last_error="",
+            touch_health=True,
+        )
+        return mark_space_job_succeeded(job_id)
+    except Exception as exc:
+        err = _classify_error(exc)
+        if err["degrade_provider"]:
             set_space_provider_state(
                 provider,
                 enabled=True,
-                mode="active",
-                last_error="",
+                mode="degraded",
+                last_error=err["message"],
                 touch_health=True,
             )
-            return mark_space_job_succeeded(job_id)
-        except Exception as exc:
-            err = _classify_error(exc)
-            if err["degrade_provider"]:
-                set_space_provider_state(
-                    provider,
-                    enabled=True,
-                    mode="degraded",
-                    last_error=err["message"],
-                    touch_health=True,
-                )
-            if bool(err["transient"]) and attempt < max_attempts:
-                backoff = _RETRY_BACKOFF_SECONDS[min(attempt - 1, len(_RETRY_BACKOFF_SECONDS) - 1)]
-                mark_space_job_retry_scheduled(
-                    job_id,
-                    code=str(err["code"]),
-                    message=str(err["message"]),
-                    next_run_at=_utc_after_seconds(int(backoff)),
-                )
-                continue
-            return mark_space_job_failed(job_id, code=str(err["code"]), message=str(err["message"]))
+        if bool(err["transient"]) and attempt < max_attempts:
+            idx = min(max(0, attempt - 1), len(_RETRY_BACKOFF_SECONDS) - 1)
+            backoff = _RETRY_BACKOFF_SECONDS[idx]
+            return mark_space_job_retry_scheduled(
+                job_id,
+                code=str(err["code"]),
+                message=str(err["message"]),
+                next_run_at=_utc_after_seconds(int(backoff)),
+            )
+        return mark_space_job_failed(job_id, code=str(err["code"]), message=str(err["message"]))
 
 
 def retry_space_job(job_id: str) -> Dict[str, Any]:
@@ -144,3 +144,34 @@ def run_space_query(
             "provider_mode": str(state.get("mode") or "degraded"),
         }
 
+
+def process_due_space_jobs(*, limit: int = 20) -> Dict[str, Any]:
+    max_items = max(1, min(int(limit or 20), 200))
+    due_jobs = list_due_space_jobs(limit=max_items)
+    processed = 0
+    succeeded = 0
+    failed = 0
+    rescheduled = 0
+    for item in due_jobs:
+        job_id = str(item.get("job_id") or "").strip()
+        if not job_id:
+            continue
+        try:
+            out = execute_space_job(job_id)
+            processed += 1
+            state = str(out.get("state") or "")
+            if state == "succeeded":
+                succeeded += 1
+            elif state == "failed":
+                failed += 1
+            elif state == "pending":
+                rescheduled += 1
+        except Exception:
+            failed += 1
+    return {
+        "seen": len(due_jobs),
+        "processed": processed,
+        "succeeded": succeeded,
+        "failed": failed,
+        "rescheduled": rescheduled,
+    }

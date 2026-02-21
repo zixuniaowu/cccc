@@ -93,11 +93,13 @@ from .ops.runner_ops import stop_actor as runner_stop_actor
 from .request_dispatch_ops import RequestDispatchDeps, dispatch_request
 from .serve_ops import (
     start_automation_thread,
+    start_space_jobs_thread,
     bind_server_socket,
     write_daemon_addr,
     start_bootstrap_thread,
     cleanup_after_stop,
 )
+from .group_space_runtime import process_due_space_jobs
 from .ops.template_ops import (
     group_create_from_template,
     group_template_export,
@@ -812,6 +814,17 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         ),
         tick_delivery=tick_delivery,
         compact_ledgers=_maybe_compact_ledgers,
+    )
+
+    def _tick_space_jobs() -> None:
+        result = process_due_space_jobs(limit=20)
+        if int(result.get("processed") or 0) > 0:
+            logger.debug("group_space_due_jobs_processed=%s", int(result.get("processed") or 0))
+
+    start_space_jobs_thread(
+        stop_event=stop_event,
+        tick_space_jobs=_tick_space_jobs,
+        interval_seconds=1.0,
     )
 
     transport = _desired_daemon_transport()

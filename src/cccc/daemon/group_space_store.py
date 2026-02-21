@@ -10,7 +10,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from ..contracts.v1 import SpaceBinding, SpaceJob, SpaceProviderState, SpaceQueueSummary
 from ..paths import ensure_home
 from ..util.fs import atomic_write_json, read_json
-from ..util.time import utc_now_iso
+from ..util.time import parse_utc_iso, utc_now_iso
 
 _PROVIDER_IDS = {"notebooklm"}
 _JOB_ID_PREFIX = "spj_"
@@ -630,6 +630,37 @@ def list_space_jobs(
     return out[:max_items]
 
 
+def list_due_space_jobs(*, limit: int = 50) -> List[Dict[str, Any]]:
+    max_items = max(1, min(int(limit or 50), 500))
+    now_dt = parse_utc_iso(utc_now_iso())
+    if now_dt is None:
+        return []
+    _, doc = _load_jobs_doc()
+    jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
+    out: List[Dict[str, Any]] = []
+    for item in jobs.values():
+        if not isinstance(item, dict):
+            continue
+        try:
+            model = SpaceJob.model_validate(item)
+        except Exception:
+            continue
+        if model.state != "pending":
+            continue
+        due_at = parse_utc_iso(str(model.next_run_at or "").strip())
+        if due_at is not None and due_at > now_dt:
+            continue
+        out.append(model.model_dump(exclude_none=True))
+    out.sort(
+        key=lambda it: (
+            str(it.get("next_run_at") or ""),
+            str(it.get("created_at") or ""),
+            str(it.get("job_id") or ""),
+        )
+    )
+    return out[:max_items]
+
+
 def space_queue_summary(*, group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
@@ -655,4 +686,3 @@ def space_queue_summary(*, group_id: str, provider: str = "notebooklm") -> Dict[
             failed += 1
     summary = SpaceQueueSummary(pending=pending, running=running, failed=failed)
     return summary.model_dump(exclude_none=True)
-

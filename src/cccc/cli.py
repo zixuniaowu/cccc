@@ -43,6 +43,19 @@ def _print_json(obj: Any) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
+def _parse_json_object_arg(raw: Any, *, field: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if not text:
+        return {}
+    try:
+        obj = json.loads(text)
+    except Exception as e:
+        raise ValueError(f"{field} must be valid JSON object: {e}") from e
+    if not isinstance(obj, dict):
+        raise ValueError(f"{field} must be a JSON object")
+    return dict(obj)
+
+
 def _default_runner_kind() -> str:
     """Pick a sensible default runner for this platform."""
     try:
@@ -1744,6 +1757,238 @@ def cmd_runtime_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_space_status(args: argparse.Namespace) -> int:
+    """Show Group Space status (provider, binding, queue summary)."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon({"op": "group_space_status", "args": {"group_id": group_id, "provider": provider}})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_bind(args: argparse.Namespace) -> int:
+    """Bind group to a Group Space provider remote space."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    remote_space_id = str(getattr(args, "remote_space_id", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not remote_space_id:
+        _print_json({"ok": False, "error": {"code": "missing_remote_space_id", "message": "missing remote_space_id"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_bind",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "bind",
+                "remote_space_id": remote_space_id,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_unbind(args: argparse.Namespace) -> int:
+    """Unbind group from a Group Space provider remote space."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_bind",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "unbind",
+                "remote_space_id": "",
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_ingest(args: argparse.Namespace) -> int:
+    """Submit and execute a Group Space ingest job."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    kind = str(getattr(args, "kind", "") or "context_sync").strip() or "context_sync"
+    idempotency_key = str(getattr(args, "idempotency_key", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    try:
+        payload = _parse_json_object_arg(getattr(args, "payload", "{}"), field="payload")
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "invalid_payload", "message": str(e)}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_ingest",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "kind": kind,
+                "payload": payload,
+                "idempotency_key": idempotency_key,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_query(args: argparse.Namespace) -> int:
+    """Query Group Space provider-backed memory."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    query = str(getattr(args, "query", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not query:
+        _print_json({"ok": False, "error": {"code": "missing_query", "message": "missing query"}})
+        return 2
+    try:
+        options = _parse_json_object_arg(getattr(args, "options", "{}"), field="options")
+    except Exception as e:
+        _print_json({"ok": False, "error": {"code": "invalid_options", "message": str(e)}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_query",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "query": query,
+                "options": options,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_jobs_list(args: argparse.Namespace) -> int:
+    """List Group Space jobs."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    state = str(getattr(args, "state", "") or "").strip()
+    try:
+        limit = int(getattr(args, "limit", 50) or 50)
+    except Exception:
+        limit = 50
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    req_args: dict[str, Any] = {
+        "group_id": group_id,
+        "provider": provider,
+        "action": "list",
+        "limit": max(1, min(limit, 500)),
+    }
+    if state:
+        req_args["state"] = state
+    resp = call_daemon({"op": "group_space_jobs", "args": req_args})
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_jobs_retry(args: argparse.Namespace) -> int:
+    """Retry a failed/canceled Group Space job."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    job_id = str(getattr(args, "job_id", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not job_id:
+        _print_json({"ok": False, "error": {"code": "missing_job_id", "message": "missing job_id"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_jobs",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "retry",
+                "job_id": job_id,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_jobs_cancel(args: argparse.Namespace) -> int:
+    """Cancel a pending/running Group Space job."""
+    group_id = _resolve_group_id(getattr(args, "group", ""))
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    job_id = str(getattr(args, "job_id", "") or "").strip()
+    if not group_id:
+        _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
+        return 2
+    if not job_id:
+        _print_json({"ok": False, "error": {"code": "missing_job_id", "message": "missing job_id"}})
+        return 2
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_jobs",
+            "args": {
+                "group_id": group_id,
+                "provider": provider,
+                "action": "cancel",
+                "job_id": job_id,
+                "by": by,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
 def cmd_web(args: argparse.Namespace) -> int:
     from .ports.web.main import main as web_main
 
@@ -2987,6 +3232,67 @@ def build_parser() -> argparse.ArgumentParser:
     p_runtime_list = runtime_sub.add_parser("list", help="List available agent runtimes")
     p_runtime_list.add_argument("--all", action="store_true", help="Show all known runtimes (not just primary ones)")
     p_runtime_list.set_defaults(func=cmd_runtime_list)
+
+    p_space = sub.add_parser("space", help="Manage Group Space provider-backed shared memory")
+    space_sub = p_space.add_subparsers(dest="action", required=True)
+
+    p_space_status = space_sub.add_parser("status", help="Show Group Space status")
+    p_space_status.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_status.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_status.set_defaults(func=cmd_space_status)
+
+    p_space_bind = space_sub.add_parser("bind", help="Bind group to a provider remote space")
+    p_space_bind.add_argument("remote_space_id", help="Provider remote space/notebook ID")
+    p_space_bind.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_bind.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_bind.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_bind.set_defaults(func=cmd_space_bind)
+
+    p_space_unbind = space_sub.add_parser("unbind", help="Unbind group from provider remote space")
+    p_space_unbind.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_unbind.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_unbind.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_unbind.set_defaults(func=cmd_space_unbind)
+
+    p_space_ingest = space_sub.add_parser("ingest", help="Submit an ingest job to Group Space")
+    p_space_ingest.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_ingest.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_ingest.add_argument("--kind", choices=["context_sync", "resource_ingest"], default="context_sync", help="Job kind")
+    p_space_ingest.add_argument("--payload", default="{}", help="JSON object payload (default: {})")
+    p_space_ingest.add_argument("--idempotency-key", default="", help="Optional idempotency key for dedupe")
+    p_space_ingest.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_ingest.set_defaults(func=cmd_space_ingest)
+
+    p_space_query = space_sub.add_parser("query", help="Query Group Space provider-backed memory")
+    p_space_query.add_argument("query", help="Query text")
+    p_space_query.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_query.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_query.add_argument("--options", default="{}", help="JSON object options (default: {})")
+    p_space_query.set_defaults(func=cmd_space_query)
+
+    p_space_jobs = space_sub.add_parser("jobs", help="List/retry/cancel Group Space jobs")
+    space_jobs_sub = p_space_jobs.add_subparsers(dest="jobs_action", required=True)
+
+    p_space_jobs_list = space_jobs_sub.add_parser("list", help="List jobs")
+    p_space_jobs_list.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_jobs_list.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_jobs_list.add_argument("--state", choices=["pending", "running", "succeeded", "failed", "canceled"], default="", help="Optional state filter")
+    p_space_jobs_list.add_argument("--limit", type=int, default=50, help="Max jobs to return (default: 50)")
+    p_space_jobs_list.set_defaults(func=cmd_space_jobs_list)
+
+    p_space_jobs_retry = space_jobs_sub.add_parser("retry", help="Retry a failed/canceled job")
+    p_space_jobs_retry.add_argument("job_id", help="Job ID")
+    p_space_jobs_retry.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_jobs_retry.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_jobs_retry.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_jobs_retry.set_defaults(func=cmd_space_jobs_retry)
+
+    p_space_jobs_cancel = space_jobs_sub.add_parser("cancel", help="Cancel a pending/running job")
+    p_space_jobs_cancel.add_argument("job_id", help="Job ID")
+    p_space_jobs_cancel.add_argument("--group", default="", help="Target group_id (default: active group)")
+    p_space_jobs_cancel.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_jobs_cancel.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_jobs_cancel.set_defaults(func=cmd_space_jobs_cancel)
 
     p_ver = sub.add_parser("version", help="Show version")
     p_ver.set_defaults(func=cmd_version)
