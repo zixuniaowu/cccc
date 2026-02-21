@@ -3,6 +3,10 @@ from __future__ import annotations
 import os
 from typing import Any, Dict
 
+from ..providers.notebooklm.adapter import get_notebooklm_adapter
+from ..providers.notebooklm.errors import NotebookLMProviderError
+from ..providers.notebooklm.health import notebooklm_real_enabled
+
 
 class SpaceProviderError(RuntimeError):
     def __init__(
@@ -29,6 +33,21 @@ def _notebooklm_stub_enabled() -> bool:
 
 
 def _notebooklm_ingest(*, remote_space_id: str, kind: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    if notebooklm_real_enabled():
+        adapter = get_notebooklm_adapter()
+        try:
+            return adapter.ingest(
+                remote_space_id=remote_space_id,
+                kind=kind,
+                payload=payload,
+            )
+        except NotebookLMProviderError as e:
+            raise SpaceProviderError(
+                e.code,
+                str(e),
+                transient=bool(e.transient),
+                degrade_provider=bool(e.degrade_provider),
+            ) from e
     if not _notebooklm_stub_enabled():
         raise SpaceProviderError(
             "space_provider_disabled",
@@ -47,6 +66,21 @@ def _notebooklm_ingest(*, remote_space_id: str, kind: str, payload: Dict[str, An
 
 
 def _notebooklm_query(*, remote_space_id: str, query: str, options: Dict[str, Any]) -> Dict[str, Any]:
+    if notebooklm_real_enabled():
+        adapter = get_notebooklm_adapter()
+        try:
+            return adapter.query(
+                remote_space_id=remote_space_id,
+                query=query,
+                options=options,
+            )
+        except NotebookLMProviderError as e:
+            raise SpaceProviderError(
+                e.code,
+                str(e),
+                transient=bool(e.transient),
+                degrade_provider=bool(e.degrade_provider),
+            ) from e
     if not _notebooklm_stub_enabled():
         raise SpaceProviderError(
             "space_provider_disabled",
@@ -89,4 +123,3 @@ def provider_query(
     if pid == "notebooklm":
         return _notebooklm_query(remote_space_id=remote_space_id, query=query, options=options)
     raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
-
