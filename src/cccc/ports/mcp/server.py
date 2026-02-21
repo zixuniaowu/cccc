@@ -21,6 +21,11 @@ cccc.* namespace (collaboration control plane):
 - cccc_actor_start: Start actor
 - cccc_actor_stop: Stop actor
 - cccc_runtime_list: List available agent runtimes
+- cccc_space_status: Read Group Space provider/binding/queue status
+- cccc_space_bind: Bind or unbind Group Space provider mapping
+- cccc_space_ingest: Enqueue and execute Group Space ingest job
+- cccc_space_query: Query provider-backed Group Space knowledge
+- cccc_space_jobs: List/retry/cancel Group Space jobs
 - cccc_automation_state: Read automation reminders/status visible to caller
 - cccc_automation_manage: Manage automation reminders (MCP actor writes are notify-only)
 - cccc_project_info: Get PROJECT.md content (project goals/constraints)
@@ -868,6 +873,112 @@ def im_bind(*, group_id: str, key: str) -> Dict[str, Any]:
     })
 
 
+def space_status(*, group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
+    """Get Group Space status (provider + binding + queue summary)."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_status",
+            "args": {"group_id": group_id, "provider": str(provider or "notebooklm")},
+        }
+    )
+
+
+def space_bind(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "bind",
+    remote_space_id: str = "",
+) -> Dict[str, Any]:
+    """Bind or unbind Group Space provider for a group."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_bind",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "action": str(action or "bind"),
+                "remote_space_id": str(remote_space_id or ""),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
+def space_ingest(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    kind: str = "context_sync",
+    payload: Optional[Dict[str, Any]] = None,
+    idempotency_key: str = "",
+) -> Dict[str, Any]:
+    """Submit a Group Space ingest job."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_ingest",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "kind": str(kind or "context_sync"),
+                "payload": dict(payload or {}),
+                "idempotency_key": str(idempotency_key or ""),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
+def space_query(
+    *,
+    group_id: str,
+    provider: str = "notebooklm",
+    query: str,
+    options: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Query Group Space knowledge provider."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_query",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "query": str(query or ""),
+                "options": dict(options or {}),
+            },
+        }
+    )
+
+
+def space_jobs(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "list",
+    job_id: str = "",
+    state: str = "",
+    limit: int = 50,
+) -> Dict[str, Any]:
+    """List/retry/cancel Group Space jobs."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_jobs",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "action": str(action or "list"),
+                "job_id": str(job_id or ""),
+                "state": str(state or ""),
+                "limit": int(limit or 50),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
 def project_info(*, group_id: str) -> Dict[str, Any]:
     """Get PROJECT.md content for the group's active scope"""
     from pathlib import Path
@@ -1447,6 +1558,60 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
 
     if name == "cccc_runtime_list":
         return runtime_list()
+
+    if name == "cccc_space_status":
+        gid = _resolve_group_id(arguments)
+        return space_status(
+            group_id=gid,
+            provider=str(arguments.get("provider") or "notebooklm"),
+        )
+
+    if name == "cccc_space_bind":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        return space_bind(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=str(arguments.get("action") or "bind"),
+            remote_space_id=str(arguments.get("remote_space_id") or ""),
+        )
+
+    if name == "cccc_space_ingest":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        payload_raw = arguments.get("payload")
+        return space_ingest(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            kind=str(arguments.get("kind") or "context_sync"),
+            payload=dict(payload_raw) if isinstance(payload_raw, dict) else {},
+            idempotency_key=str(arguments.get("idempotency_key") or ""),
+        )
+
+    if name == "cccc_space_query":
+        gid = _resolve_group_id(arguments)
+        options_raw = arguments.get("options")
+        return space_query(
+            group_id=gid,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            query=str(arguments.get("query") or ""),
+            options=dict(options_raw) if isinstance(options_raw, dict) else {},
+        )
+
+    if name == "cccc_space_jobs":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        return space_jobs(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=str(arguments.get("action") or "list"),
+            job_id=str(arguments.get("job_id") or ""),
+            state=str(arguments.get("state") or ""),
+            limit=min(max(int(arguments.get("limit") or 50), 1), 500),
+        )
 
     if name == "cccc_group_set_state":
         gid = _resolve_group_id(arguments)

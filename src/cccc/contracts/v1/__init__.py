@@ -4,6 +4,19 @@ from .actor import Actor, ActorRole, ActorSubmit, AgentRuntime, HeadlessState, R
 from .actor_profile import ActorProfile
 from .automation import AutomationAction, AutomationRule, AutomationRuleSet, AutomationTrigger
 from .event import Event
+from .group_space import (
+    SpaceBinding,
+    SpaceBindingStatus,
+    SpaceJob,
+    SpaceJobAction,
+    SpaceJobError,
+    SpaceJobKind,
+    SpaceJobState,
+    SpaceProviderId,
+    SpaceProviderMode,
+    SpaceProviderState,
+    SpaceQueueSummary,
+)
 from .group_template import GroupTemplate, GroupTemplateActor, GroupTemplatePrompts, GroupTemplateSettings
 from .ipc import DaemonError, DaemonRequest, DaemonResponse
 from .message import Attachment, ChatMessageData, ChatReactionData, Reference
@@ -30,6 +43,17 @@ __all__ = [
     "GroupTemplateActor",
     "GroupTemplatePrompts",
     "GroupTemplateSettings",
+    "SpaceBinding",
+    "SpaceBindingStatus",
+    "SpaceJob",
+    "SpaceJobAction",
+    "SpaceJobError",
+    "SpaceJobKind",
+    "SpaceJobState",
+    "SpaceProviderId",
+    "SpaceProviderMode",
+    "SpaceProviderState",
+    "SpaceQueueSummary",
     "HeadlessState",
     "NotifyAckData",
     "NotifyKind",

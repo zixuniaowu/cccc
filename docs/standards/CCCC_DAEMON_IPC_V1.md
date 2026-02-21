@@ -1580,6 +1580,162 @@ Result:
 { remote_access: Record<string, unknown> }
 ```
 
+### 8.17 Group Space (Provider-Backed Shared Memory, M1-lite)
+
+These operations provide a thin control-plane for optional external memory providers.
+Provider failures MUST NOT block core collaboration flows (chat/context/actors).
+
+#### `group_space_status`
+
+Read provider mode, group binding, and queue summary.
+
+Args:
+```ts
+{ group_id: string; provider?: "notebooklm" }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  provider: {
+    provider: "notebooklm"
+    enabled: boolean
+    mode: "disabled" | "active" | "degraded"
+    last_health_at?: string | null
+    last_error?: string | null
+  }
+  binding: {
+    group_id: string
+    provider: "notebooklm"
+    remote_space_id: string
+    bound_by: string
+    bound_at: string
+    status: "bound" | "unbound" | "error"
+  }
+  queue_summary: { pending: number; running: number; failed: number }
+}
+```
+
+#### `group_space_bind`
+
+Bind/unbind a group to provider remote space.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "bind" | "unbind"
+  remote_space_id?: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  provider: Record<string, unknown>
+  binding: Record<string, unknown>
+  queue_summary: { pending: number; running: number; failed: number }
+}
+```
+
+#### `group_space_ingest`
+
+Create (or dedupe) an ingest job and execute it with bounded retry policy.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  kind?: "context_sync" | "resource_ingest"
+  payload?: Record<string, unknown>
+  idempotency_key?: string
+  by?: string
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  job_id: string
+  accepted: true
+  deduped: boolean
+  job: Record<string, unknown>
+  queue_summary: { pending: number; running: number; failed: number }
+  provider_mode: "disabled" | "active" | "degraded"
+}
+```
+
+#### `group_space_query`
+
+Query provider-backed memory for a group. If provider is degraded, result MAY return
+`ok=true` with `degraded=true` and an empty answer.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  query: string
+  options?: Record<string, unknown>
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  degraded: boolean
+  answer: string
+  references: unknown[]
+  error?: { code: string; message: string } | null
+}
+```
+
+#### `group_space_jobs`
+
+List/retry/cancel Group Space jobs.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "list" | "retry" | "cancel"
+  job_id?: string
+  state?: "pending" | "running" | "succeeded" | "failed" | "canceled"
+  limit?: number
+  by?: string
+}
+```
+
+Result (`action=list`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  jobs: Record<string, unknown>[]
+  queue_summary: { pending: number; running: number; failed: number }
+}
+```
+
+Result (`action=retry|cancel`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  job: Record<string, unknown>
+  queue_summary: { pending: number; running: number; failed: number }
+}
+```
+
 ## 9. Appendix: Example Lines
 
 ### 9.1 Ping

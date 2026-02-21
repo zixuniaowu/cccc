@@ -491,6 +491,174 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "cccc_space_status",
+        "description": "Read Group Space status for the current group (provider mode, binding, queue summary).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_bind",
+        "description": "Bind/unbind Group Space provider mapping for this group. Write operation (user/foreman).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["bind", "unbind"],
+                    "description": "Bind or unbind provider mapping",
+                    "default": "bind",
+                },
+                "remote_space_id": {
+                    "type": "string",
+                    "description": "Remote notebook/space ID required for action=bind",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_ingest",
+        "description": "Enqueue and execute a Group Space ingest job with idempotency protection.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["context_sync", "resource_ingest"],
+                    "description": "Ingest job kind",
+                    "default": "context_sync",
+                },
+                "payload": {
+                    "type": "object",
+                    "description": "Provider-specific payload",
+                    "default": {},
+                },
+                "idempotency_key": {
+                    "type": "string",
+                    "description": "Optional idempotency key for dedupe",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_query",
+        "description": "Query Group Space knowledge provider. On provider degradation, returns degraded=true instead of crashing.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Query text",
+                },
+                "options": {
+                    "type": "object",
+                    "description": "Optional provider query options",
+                    "default": {},
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "cccc_space_jobs",
+        "description": "List/retry/cancel Group Space jobs. Use action=list for read-only polling.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "retry", "cancel"],
+                    "description": "Job control action",
+                    "default": "list",
+                },
+                "job_id": {
+                    "type": "string",
+                    "description": "Required for action=retry|cancel",
+                },
+                "state": {
+                    "type": "string",
+                    "enum": ["pending", "running", "succeeded", "failed", "canceled"],
+                    "description": "Optional filter for action=list",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max jobs for action=list (default 50)",
+                    "default": 50,
+                    "minimum": 1,
+                    "maximum": 500,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "cccc_group_set_state",
         "description": "Set group state to control automation behavior. States: active (normal operation), idle (task complete; internal automation is muted while scheduled rules still run), paused (user pause; all automation blocked), stopped (stop all actor runtimes). Foreman should set to 'idle' when task is complete.",
         "inputSchema": {
