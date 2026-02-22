@@ -546,7 +546,13 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_space_ingest",
-        "description": "Enqueue and execute a Group Space ingest job with idempotency protection.",
+        "description": (
+            "Enqueue and execute a Group Space ingest job with idempotency protection.\n"
+            "For kind=resource_ingest, payload supports source_type + fields:\n"
+            "- web_page/youtube: {source_type, url, title?}\n"
+            "- pasted_text: {source_type, content, title?}\n"
+            "- google_docs/google_slides/google_spreadsheet: {source_type, file_id, title?, mime_type?}"
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -572,7 +578,10 @@ MCP_TOOLS = [
                 },
                 "payload": {
                     "type": "object",
-                    "description": "Provider-specific payload",
+                    "description": (
+                        "Provider-specific payload. For resource_ingest, include source_type and required fields "
+                        "(url/content/file_id depending on type)."
+                    ),
                     "default": {},
                 },
                 "idempotency_key": {
@@ -610,6 +619,143 @@ MCP_TOOLS = [
                 },
             },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "cccc_space_sources",
+        "description": "List/refresh/rename/delete NotebookLM sources in the currently bound notebook.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "refresh", "rename", "delete"],
+                    "description": "Source lifecycle action",
+                    "default": "list",
+                },
+                "source_id": {
+                    "type": "string",
+                    "description": "Required for action=refresh|rename|delete",
+                },
+                "new_title": {
+                    "type": "string",
+                    "description": "Required for action=rename",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_artifact",
+        "description": (
+            "List/generate/download NotebookLM artifacts for the current group.\n"
+            "Use action=generate with wait=true and save_to_space=true to auto-save output into repo/space/artifacts."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["list", "generate", "download"],
+                    "description": "Artifact action",
+                    "default": "list",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": [
+                        "audio",
+                        "video",
+                        "report",
+                        "study_guide",
+                        "quiz",
+                        "flashcards",
+                        "infographic",
+                        "slide_deck",
+                        "data_table",
+                        "mind_map",
+                    ],
+                    "description": "Artifact kind. Required for action=generate|download, optional filter for action=list.",
+                },
+                "options": {
+                    "type": "object",
+                    "description": "Provider-specific artifact generation options (action=generate)",
+                    "default": {},
+                },
+                "wait": {
+                    "type": "boolean",
+                    "description": "For action=generate: wait for completion before returning",
+                    "default": True,
+                },
+                "save_to_space": {
+                    "type": "boolean",
+                    "description": "Auto-download completed artifact to repo/space/artifacts",
+                    "default": True,
+                },
+                "output_path": {
+                    "type": "string",
+                    "description": "Optional local output path override for download/save",
+                },
+                "output_format": {
+                    "type": "string",
+                    "enum": ["json", "markdown", "html"],
+                    "description": "Output format for quiz/flashcards downloads",
+                    "default": "markdown",
+                },
+                "artifact_id": {
+                    "type": "string",
+                    "description": "Specific artifact ID to download (optional)",
+                },
+                "timeout_seconds": {
+                    "type": "number",
+                    "description": "For action=generate with wait=true: max wait seconds",
+                    "default": 600,
+                    "minimum": 10,
+                    "maximum": 3600,
+                },
+                "initial_interval": {
+                    "type": "number",
+                    "description": "For wait polling: initial interval seconds",
+                    "default": 2,
+                    "minimum": 0.5,
+                    "maximum": 60,
+                },
+                "max_interval": {
+                    "type": "number",
+                    "description": "For wait polling: max interval seconds",
+                    "default": 10,
+                    "minimum": 1,
+                    "maximum": 120,
+                },
+            },
+            "required": [],
         },
     },
     {

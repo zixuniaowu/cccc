@@ -25,6 +25,7 @@ from .group_space_runtime import acquire_space_provider_write
 from .group_space_store import get_space_binding, get_space_provider_state, list_space_bindings
 
 _SYNC_INTERNAL_FILES = {".space-index.json", ".space-sync-state.json", ".space-status.json"}
+_SYNC_EXCLUDED_TOP_DIRS = {"artifacts"}
 _MARKER_PREFIX = "CCCC::space::"
 _PATH_HASH_LEN = 24
 
@@ -105,7 +106,20 @@ def _iter_space_files(space_root: Path) -> Iterable[Tuple[Path, str]]:
     out: List[Tuple[Path, str]] = []
     for current, dirs, files in os.walk(roots[0]):
         current_path = Path(current)
-        dirs[:] = sorted([d for d in dirs if not str(d).startswith(".")])
+        try:
+            rel_current = current_path.relative_to(roots[0])
+        except Exception:
+            rel_current = Path(".")
+        if rel_current == Path("."):
+            dirs[:] = sorted(
+                [
+                    d
+                    for d in dirs
+                    if (not str(d).startswith(".")) and (str(d) not in _SYNC_EXCLUDED_TOP_DIRS)
+                ]
+            )
+        else:
+            dirs[:] = sorted([d for d in dirs if not str(d).startswith(".")])
         for name in sorted(files):
             if name in _SYNC_INTERNAL_FILES:
                 continue
@@ -117,6 +131,9 @@ def _iter_space_files(space_root: Path) -> Iterable[Tuple[Path, str]]:
             try:
                 rel = abs_path.relative_to(roots[0]).as_posix()
             except Exception:
+                continue
+            top = rel.split("/", 1)[0]
+            if top in _SYNC_EXCLUDED_TOP_DIRS:
                 continue
             out.append((abs_path, rel))
     return out

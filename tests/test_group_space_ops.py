@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
 import tempfile
+import types
 import unittest
 from unittest.mock import patch
 
@@ -63,6 +66,10 @@ class TestGroupSpaceOps(unittest.TestCase):
         )
         self.assertTrue(add.ok, getattr(add, "error", None))
 
+    def _attach_scope(self, group_id: str, path: str) -> None:
+        attach, _ = self._call("attach", {"group_id": group_id, "path": path, "by": "user"})
+        self.assertTrue(attach.ok, getattr(attach, "error", None))
+
     def test_status_defaults_to_unbound(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -98,6 +105,32 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(str(provider.get("readiness_reason") or ""), "ok")
         finally:
             cleanup_stub()
+            cleanup()
+
+    def test_group_space_spaces_lists_remote_notebooks(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("space-list-notebooks")
+            with patch(
+                "cccc.daemon.ops.group_space_ops.provider_list_spaces",
+                return_value={
+                    "provider": "notebooklm",
+                    "spaces": [
+                        {"remote_space_id": "nb_1", "title": "Team Space"},
+                        {"remote_space_id": "nb_2", "title": "Archive Space"},
+                    ],
+                },
+            ):
+                spaces_resp, _ = self._call(
+                    "group_space_spaces",
+                    {"group_id": gid, "provider": "notebooklm"},
+                )
+            self.assertTrue(spaces_resp.ok, getattr(spaces_resp, "error", None))
+            result = spaces_resp.result if isinstance(spaces_resp.result, dict) else {}
+            spaces = result.get("spaces") if isinstance(result.get("spaces"), list) else []
+            self.assertEqual(len(spaces), 2)
+            self.assertEqual(str(spaces[0].get("remote_space_id") or ""), "nb_1")
+        finally:
             cleanup()
 
     def test_bind_ingest_query_jobs_with_stub(self) -> None:
@@ -173,6 +206,180 @@ class TestGroupSpaceOps(unittest.TestCase):
             jobs_list = (jobs.result or {}).get("jobs") if isinstance(jobs.result, dict) else []
             self.assertIsInstance(jobs_list, list)
             self.assertGreaterEqual(len(jobs_list), 1)
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_space_sources_list_refresh_delete_with_stub(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-sources")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_src_1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            listed, _ = self._call(
+                "group_space_sources",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "list",
+                },
+            )
+            self.assertTrue(listed.ok, getattr(listed, "error", None))
+            list_result = listed.result if isinstance(listed.result, dict) else {}
+            self.assertEqual(str(list_result.get("action") or ""), "list")
+            self.assertIsInstance(list_result.get("sources"), list)
+
+            refreshed, _ = self._call(
+                "group_space_sources",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "refresh",
+                    "source_id": "src_abc",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(refreshed.ok, getattr(refreshed, "error", None))
+            refreshed_result = refreshed.result if isinstance(refreshed.result, dict) else {}
+            self.assertEqual(str(refreshed_result.get("action") or ""), "refresh")
+
+            deleted, _ = self._call(
+                "group_space_sources",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "delete",
+                    "source_id": "src_abc",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(deleted.ok, getattr(deleted, "error", None))
+            deleted_result = deleted.result if isinstance(deleted.result, dict) else {}
+            self.assertEqual(str(deleted_result.get("action") or ""), "delete")
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_space_artifact_generate_auto_saves_to_space(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        scope_td = tempfile.TemporaryDirectory()
+        try:
+            gid = self._create_group("space-artifacts")
+            self._attach_scope(gid, scope_td.name)
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_art_1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            generated, _ = self._call(
+                "group_space_artifact",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "generate",
+                    "kind": "report",
+                    "wait": True,
+                    "save_to_space": True,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(generated.ok, getattr(generated, "error", None))
+            result = generated.result if isinstance(generated.result, dict) else {}
+            self.assertEqual(str(result.get("action") or ""), "generate")
+            self.assertEqual(str(result.get("kind") or ""), "report")
+            self.assertEqual(bool(result.get("saved_to_space")), True)
+            output_path = str(result.get("output_path") or "")
+            self.assertTrue(output_path)
+            self.assertIn("/space/artifacts/notebooklm/report/", output_path)
+            self.assertTrue(os.path.isfile(output_path))
+        finally:
+            scope_td.cleanup()
+            cleanup_stub()
+            cleanup()
+
+    def test_space_artifact_rejects_invalid_kind(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-artifacts-invalid")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_art_2",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            invalid, _ = self._call(
+                "group_space_artifact",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "generate",
+                    "kind": "comic",
+                    "by": "user",
+                },
+            )
+            self.assertFalse(invalid.ok)
+            self.assertEqual(str(getattr(invalid.error, "code", "")), "space_job_invalid")
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_space_artifact_download_requires_output_path_when_not_saving_to_space(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-artifacts-download")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_art_3",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            bad_download, _ = self._call(
+                "group_space_artifact",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "download",
+                    "kind": "report",
+                    "save_to_space": False,
+                    "output_path": "",
+                    "by": "user",
+                },
+            )
+            self.assertFalse(bad_download.ok)
+            self.assertEqual(str(getattr(bad_download.error, "code", "")), "space_job_invalid")
         finally:
             cleanup_stub()
             cleanup()
@@ -641,11 +848,11 @@ class TestGroupSpaceOps(unittest.TestCase):
     def test_bind_without_remote_id_can_auto_create_notebook(self) -> None:
         _, cleanup = self._with_home()
         try:
-            gid = self._create_group("space-auto-bind")
+            gid = self._create_group("Space Auto Bind")
             with patch(
                 "cccc.daemon.ops.group_space_ops.provider_create_space",
                 return_value={"provider": "notebooklm", "remote_space_id": "nb_auto_1", "created": True},
-            ), patch(
+            ) as create_mock, patch(
                 "cccc.daemon.ops.group_space_ops.sync_group_space_files",
                 return_value={"ok": True, "converged": True, "unsynced_count": 0},
             ):
@@ -660,11 +867,66 @@ class TestGroupSpaceOps(unittest.TestCase):
                     },
                 )
             self.assertTrue(bind.ok, getattr(bind, "error", None))
+            create_mock.assert_called_once_with("notebooklm", title="CCCC · Space Auto Bind")
             result = bind.result if isinstance(bind.result, dict) else {}
             binding = result.get("binding") if isinstance(result.get("binding"), dict) else {}
             self.assertEqual(str(binding.get("remote_space_id") or ""), "nb_auto_1")
             sync_result = result.get("sync_result") if isinstance(result.get("sync_result"), dict) else {}
             self.assertEqual(bool(sync_result.get("ok")), True)
+        finally:
+            cleanup()
+
+    def test_notebooklm_auth_verification_works_inside_running_event_loop(self) -> None:
+        from cccc.daemon import notebooklm_auth_flow as auth_flow
+
+        fake_vendor_module = types.ModuleType("notebooklm_auth_fake")
+
+        def _extract_cookies_from_storage(storage_state):
+            raw = storage_state.get("cookies")
+            return list(raw) if isinstance(raw, list) else []
+
+        async def _fetch_tokens(cookies):
+            if not cookies:
+                raise RuntimeError("missing cookies")
+            return ("csrf_token", "session_id")
+
+        fake_vendor_module.extract_cookies_from_storage = _extract_cookies_from_storage
+        fake_vendor_module.fetch_tokens = _fetch_tokens
+
+        class _Compat:
+            compatible = True
+            reason = ""
+
+        storage_state = {
+            "cookies": [{"name": "__Secure-1PSID", "value": "x", "domain": ".google.com", "path": "/"}],
+            "origins": [],
+        }
+
+        with patch.object(auth_flow, "parse_notebooklm_auth_json", return_value={"ok": True}), patch.object(
+            auth_flow,
+            "probe_notebooklm_vendor",
+            return_value=_Compat(),
+        ), patch.dict(
+            sys.modules,
+            {"cccc.providers.notebooklm._vendor.notebooklm.auth": fake_vendor_module},
+        ):
+
+            async def _run_verify() -> None:
+                auth_flow._verify_storage_state(storage_state)
+
+            asyncio.run(_run_verify())
+
+    def test_notebooklm_auth_browser_profile_is_persistent_under_home(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon import notebooklm_auth_flow as auth_flow
+
+            profile_a = auth_flow._managed_browser_profile_dir()
+            profile_b = auth_flow._managed_browser_profile_dir()
+            self.assertEqual(profile_a, profile_b)
+            self.assertTrue(profile_a.exists())
+            self.assertTrue(profile_a.is_dir())
+            self.assertIn(str(os.environ.get("CCCC_HOME") or ""), str(profile_a))
         finally:
             cleanup()
 

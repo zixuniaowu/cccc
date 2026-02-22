@@ -25,6 +25,9 @@ def _group_space_policy_lines(group_id: str) -> List[str]:
             f"- Bound memory provider: {provider} ({mode})",
             "- Use cccc_space_query for long-horizon/shared knowledge lookup.",
             "- Use cccc_space_ingest only for stable findings/resources worth reusing.",
+            "- For resource_ingest payloads: use source_type + {url|content|file_id} depending on source kind.",
+            "- Use cccc_space_artifact for NotebookLM outputs (save_to_space=true persists to repo/space/artifacts).",
+            "- If you see files matching '*.conflict.remote.*' under space/, report and ask user for resolution; do not auto-merge/delete.",
             "- If provider is degraded/disabled, continue with Context + ledger and report fallback explicitly.",
         ]
     except Exception:

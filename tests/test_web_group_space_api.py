@@ -70,6 +70,13 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 status_body = status.json()
                 self.assertTrue(status_body.get("ok"))
 
+                spaces = client.get(f"/api/v1/groups/{gid}/space/spaces?provider=notebooklm")
+                self.assertEqual(spaces.status_code, 200)
+                spaces_body = spaces.json()
+                self.assertTrue(spaces_body.get("ok"))
+                spaces_list = ((spaces_body.get("result") or {}).get("spaces") or [])
+                self.assertIsInstance(spaces_list, list)
+
                 bind = client.post(
                     f"/api/v1/groups/{gid}/space/bind",
                     json={
@@ -92,6 +99,41 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 self.assertEqual(query.status_code, 200)
                 query_body = query.json()
                 self.assertTrue(query_body.get("ok"))
+
+                sources = client.get(f"/api/v1/groups/{gid}/space/sources?provider=notebooklm")
+                self.assertEqual(sources.status_code, 200)
+                self.assertTrue(sources.json().get("ok"))
+
+                source_refresh = client.post(
+                    f"/api/v1/groups/{gid}/space/sources",
+                    json={
+                        "by": "user",
+                        "provider": "notebooklm",
+                        "action": "refresh",
+                        "source_id": "src_web_1",
+                    },
+                )
+                self.assertEqual(source_refresh.status_code, 200)
+                self.assertTrue(source_refresh.json().get("ok"))
+
+                artifacts = client.get(f"/api/v1/groups/{gid}/space/artifacts?provider=notebooklm")
+                self.assertEqual(artifacts.status_code, 200)
+                self.assertTrue(artifacts.json().get("ok"))
+
+                artifact_generate = client.post(
+                    f"/api/v1/groups/{gid}/space/artifacts",
+                    json={
+                        "by": "user",
+                        "provider": "notebooklm",
+                        "action": "generate",
+                        "kind": "report",
+                        "options": {"language": "en"},
+                        "wait": False,
+                        "save_to_space": False,
+                    },
+                )
+                self.assertEqual(artifact_generate.status_code, 200)
+                self.assertTrue(artifact_generate.json().get("ok"))
 
                 ingest = client.post(
                     f"/api/v1/groups/{gid}/space/ingest",
@@ -218,6 +260,47 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 )
                 self.assertEqual(sync_write_resp.status_code, 403)
                 self.assertEqual(str((sync_write_resp.json().get("error") or {}).get("code") or ""), "read_only")
+
+                sources_read_resp = client.get(f"/api/v1/groups/{gid}/space/sources?provider=notebooklm")
+                self.assertEqual(sources_read_resp.status_code, 200)
+                self.assertFalse(sources_read_resp.json().get("ok"))
+                self.assertEqual(
+                    str((sources_read_resp.json().get("error") or {}).get("code") or ""),
+                    "space_binding_missing",
+                )
+
+                sources_write_resp = client.post(
+                    f"/api/v1/groups/{gid}/space/sources",
+                    json={
+                        "by": "user",
+                        "provider": "notebooklm",
+                        "action": "delete",
+                        "source_id": "src_ro_1",
+                    },
+                )
+                self.assertEqual(sources_write_resp.status_code, 403)
+                self.assertEqual(str((sources_write_resp.json().get("error") or {}).get("code") or ""), "read_only")
+
+                artifacts_read_resp = client.get(f"/api/v1/groups/{gid}/space/artifacts?provider=notebooklm")
+                self.assertEqual(artifacts_read_resp.status_code, 200)
+                self.assertFalse(artifacts_read_resp.json().get("ok"))
+                self.assertEqual(
+                    str((artifacts_read_resp.json().get("error") or {}).get("code") or ""),
+                    "space_binding_missing",
+                )
+
+                artifacts_write_resp = client.post(
+                    f"/api/v1/groups/{gid}/space/artifacts",
+                    json={
+                        "by": "user",
+                        "provider": "notebooklm",
+                        "action": "generate",
+                        "kind": "report",
+                        "options": {},
+                    },
+                )
+                self.assertEqual(artifacts_write_resp.status_code, 403)
+                self.assertEqual(str((artifacts_write_resp.json().get("error") or {}).get("code") or ""), "read_only")
 
                 cred_write_resp = client.post(
                     "/api/v1/space/providers/notebooklm/credential",

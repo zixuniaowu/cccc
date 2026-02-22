@@ -1675,6 +1675,31 @@ Result:
 }
 ```
 
+#### `group_space_spaces`
+
+List available remote notebooks/spaces for provider selection UI.
+
+Args:
+```ts
+{ group_id: string; provider?: "notebooklm" }
+```
+
+Result:
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_state: Record<string, unknown>
+  binding: Record<string, unknown>
+  spaces: Array<{
+    remote_space_id: string
+    title?: string
+    created_at?: string
+    is_owner?: boolean
+  }>
+}
+```
+
 #### `group_space_bind`
 
 Bind/unbind a group to provider remote space.
@@ -1758,6 +1783,125 @@ Result:
   answer: string
   references: unknown[]
   error?: { code: string; message: string } | null
+}
+```
+
+#### `group_space_sources`
+
+List/refresh/rename/delete provider sources in the currently bound notebook.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "list" | "refresh" | "rename" | "delete"
+  source_id?: string // required for refresh/rename/delete
+  new_title?: string // required for rename
+  by?: string
+}
+```
+
+Result (`action=list`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "list"
+  sources: Record<string, unknown>[]
+  list_result: Record<string, unknown>
+}
+```
+
+Result (`action=refresh` | `rename` | `delete`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "refresh" | "rename" | "delete"
+  source_id: string
+  refresh_result?: Record<string, unknown>
+  rename_result?: Record<string, unknown>
+  delete_result?: Record<string, unknown>
+}
+```
+
+#### `group_space_artifact`
+
+List/generate/download provider artifacts (NotebookLM studio outputs).
+For `action=generate`, daemon can optionally wait for completion and auto-save
+the artifact into local `repo/space/artifacts/...`.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+  action?: "list" | "generate" | "download"
+  kind?: "audio" | "video" | "report" | "study_guide" | "quiz" | "flashcards" | "infographic" | "slide_deck" | "data_table" | "mind_map"
+  options?: Record<string, unknown> // for action=generate
+  wait?: boolean // action=generate only
+  save_to_space?: boolean // generate/download auto-save behavior
+  output_path?: string // optional local path override
+  output_format?: "json" | "markdown" | "html" // quiz/flashcards
+  artifact_id?: string // optional explicit download target
+  timeout_seconds?: number // generate+wait only
+  initial_interval?: number // generate+wait only
+  max_interval?: number // generate+wait only
+  by?: string
+}
+```
+
+Result (`action=list`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "list"
+  kind?: string
+  artifacts: Record<string, unknown>[]
+  list_result: Record<string, unknown>
+}
+```
+
+Result (`action=generate`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "generate"
+  kind: string
+  task_id?: string
+  status?: string
+  wait: boolean
+  saved_to_space: boolean
+  output_path?: string
+  generate_result: Record<string, unknown>
+  wait_result?: Record<string, unknown>
+  download_result?: Record<string, unknown>
+}
+```
+
+Result (`action=download`):
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  provider_mode: "disabled" | "active" | "degraded"
+  binding: Record<string, unknown>
+  action: "download"
+  kind: string
+  saved_to_space: boolean
+  output_path: string
+  download_result: Record<string, unknown>
 }
 ```
 

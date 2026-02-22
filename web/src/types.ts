@@ -317,6 +317,30 @@ export type GroupSpaceBinding = {
   status: "bound" | "unbound" | "error" | string;
 };
 
+export type GroupSpaceRemoteSpace = {
+  remote_space_id: string;
+  title?: string;
+  created_at?: string;
+  is_owner?: boolean;
+};
+
+export type GroupSpaceSource = {
+  source_id: string;
+  title?: string;
+  url?: string;
+  status?: number | string;
+  kind?: string;
+};
+
+export type GroupSpaceArtifact = {
+  artifact_id: string;
+  title?: string;
+  kind?: string;
+  status?: string;
+  created_at?: string;
+  url?: string;
+};
+
 export type GroupSpaceQueueSummary = {
   pending: number;
   running: number;

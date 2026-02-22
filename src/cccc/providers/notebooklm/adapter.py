@@ -7,6 +7,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping
+from urllib.parse import urlparse
 
 from .errors import NotebookLMProviderError
 from .health import notebooklm_health_check, validate_notebooklm_auth_json
@@ -112,6 +113,23 @@ class NotebookLMAdapter:
             return _run_coroutine_sync(
                 _create_notebook_async(
                     title=notebook_title,
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def list_notebooks(
+        self,
+        *,
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _list_notebooks_async(
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
                 )
@@ -267,6 +285,207 @@ class NotebookLMAdapter:
         except Exception as e:
             raise _map_vendor_exception(e) from e
 
+    def refresh_source(
+        self,
+        *,
+        remote_space_id: str,
+        source_id: str,
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        sid = str(source_id or "").strip()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        if not sid:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="source_id is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _refresh_source_async(
+                    notebook_id=notebook_id,
+                    source_id=sid,
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def list_artifacts(
+        self,
+        *,
+        remote_space_id: str,
+        kind: str = "",
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _list_artifacts_async(
+                    notebook_id=notebook_id,
+                    kind=str(kind or "").strip().lower(),
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def generate_artifact(
+        self,
+        *,
+        remote_space_id: str,
+        kind: str,
+        options: Dict[str, Any],
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        artifact_kind = str(kind or "").strip().lower()
+        if not artifact_kind:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="kind is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _generate_artifact_async(
+                    notebook_id=notebook_id,
+                    kind=artifact_kind,
+                    options=dict(options or {}),
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def wait_artifact(
+        self,
+        *,
+        remote_space_id: str,
+        task_id: str,
+        timeout_seconds: float = 600.0,
+        initial_interval: float = 2.0,
+        max_interval: float = 10.0,
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        tid = str(task_id or "").strip()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        if not tid:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="task_id is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _wait_artifact_async(
+                    notebook_id=notebook_id,
+                    task_id=tid,
+                    timeout_seconds=float(timeout_seconds or 600.0),
+                    initial_interval=float(initial_interval or 2.0),
+                    max_interval=float(max_interval or 10.0),
+                    auth_payload=auth_payload,
+                    timeout_seconds_for_client=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def download_artifact(
+        self,
+        *,
+        remote_space_id: str,
+        kind: str,
+        output_path: str,
+        artifact_id: str = "",
+        output_format: str = "",
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        artifact_kind = str(kind or "").strip().lower()
+        target = str(output_path or "").strip()
+        aid = str(artifact_id or "").strip()
+        fmt = str(output_format or "").strip().lower()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        if not artifact_kind:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="kind is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        if not target:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="output_path is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_coroutine_sync(
+                _download_artifact_async(
+                    notebook_id=notebook_id,
+                    kind=artifact_kind,
+                    output_path=target,
+                    artifact_id=aid,
+                    output_format=fmt,
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                )
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
 
 def _read_timeout_seconds() -> float:
     raw = str(os.environ.get("CCCC_NOTEBOOKLM_TIMEOUT") or "").strip()
@@ -310,6 +529,67 @@ def _normalize_ingest_title(*, kind: str, payload: Mapping[str, Any]) -> str:
         return title[:120]
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
     return f"CCCC {kind} {stamp}"
+
+
+_RESOURCE_DRIVE_MIME: Dict[str, str] = {
+    "google_docs": "application/vnd.google-apps.document",
+    "google_slides": "application/vnd.google-apps.presentation",
+    "google_spreadsheet": "application/vnd.google-apps.spreadsheet",
+}
+
+
+def _looks_like_youtube_url(url: str) -> bool:
+    text = str(url or "").strip()
+    if not text:
+        return False
+    try:
+        host = str(urlparse(text).hostname or "").strip().lower()
+    except Exception:
+        return False
+    if not host:
+        return False
+    return host == "youtu.be" or host == "youtube.com" or host.endswith(".youtube.com")
+
+
+def _normalize_resource_source_type(payload: Mapping[str, Any]) -> str:
+    raw = str(payload.get("source_type") or payload.get("type") or "").strip().lower()
+    alias = {
+        "url": "web_page",
+        "web_page": "web_page",
+        "youtube": "youtube",
+        "text": "pasted_text",
+        "pasted_text": "pasted_text",
+        "google_doc": "google_docs",
+        "google_docs": "google_docs",
+        "drive_doc": "google_docs",
+        "google_slide": "google_slides",
+        "google_slides": "google_slides",
+        "drive_slide": "google_slides",
+        "google_sheet": "google_spreadsheet",
+        "google_sheets": "google_spreadsheet",
+        "google_spreadsheet": "google_spreadsheet",
+        "drive_sheet": "google_spreadsheet",
+    }
+    normalized = alias.get(raw, "")
+    if normalized:
+        return normalized
+
+    url = str(payload.get("url") or "").strip()
+    if url:
+        return "youtube" if _looks_like_youtube_url(url) else "web_page"
+
+    file_id = str(payload.get("file_id") or "").strip()
+    if file_id:
+        mime_hint = str(payload.get("mime_type") or "").strip().lower()
+        if "presentation" in mime_hint:
+            return "google_slides"
+        if "spreadsheet" in mime_hint or "sheets" in mime_hint:
+            return "google_spreadsheet"
+        return "google_docs"
+
+    if str(payload.get("content") or "").strip() or str(payload.get("text") or "").strip():
+        return "pasted_text"
+    return "pasted_text"
 
 
 def _payload_to_text(payload: Mapping[str, Any]) -> str:
@@ -357,10 +637,61 @@ async def _ingest_async(
     client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
     title = _normalize_ingest_title(kind=kind, payload=payload)
     url = str(payload.get("url") or "").strip()
+    source_type = ""
     async with client:
-        if kind == "resource_ingest" and url:
-            source = await client.sources.add_url(notebook_id, url, wait=False)
-            source_mode = "url"
+        if kind == "resource_ingest":
+            source_type = _normalize_resource_source_type(payload)
+            if source_type in {"web_page", "youtube"}:
+                if not url:
+                    raise NotebookLMProviderError(
+                        code="space_job_invalid",
+                        message=f"url is required for {source_type}",
+                        transient=False,
+                        degrade_provider=False,
+                    )
+                source = await client.sources.add_url(notebook_id, url, wait=False)
+                source_mode = source_type
+            elif source_type == "pasted_text":
+                text = _payload_to_text(payload).strip()
+                if not text:
+                    raise NotebookLMProviderError(
+                        code="space_job_invalid",
+                        message="content is required for pasted_text",
+                        transient=False,
+                        degrade_provider=False,
+                    )
+                source = await client.sources.add_text(
+                    notebook_id,
+                    title=title,
+                    content=text,
+                    wait=False,
+                )
+                source_mode = source_type
+            elif source_type in _RESOURCE_DRIVE_MIME:
+                file_id = str(payload.get("file_id") or "").strip()
+                if not file_id:
+                    raise NotebookLMProviderError(
+                        code="space_job_invalid",
+                        message=f"file_id is required for {source_type}",
+                        transient=False,
+                        degrade_provider=False,
+                    )
+                mime_type = str(payload.get("mime_type") or "").strip() or _RESOURCE_DRIVE_MIME[source_type]
+                source = await client.sources.add_drive(
+                    notebook_id,
+                    file_id=file_id,
+                    title=title,
+                    mime_type=mime_type,
+                    wait=False,
+                )
+                source_mode = source_type
+            else:
+                raise NotebookLMProviderError(
+                    code="space_job_invalid",
+                    message=f"unsupported resource_ingest source_type: {source_type}",
+                    transient=False,
+                    degrade_provider=False,
+                )
         else:
             text = _payload_to_text(payload)
             source = await client.sources.add_text(
@@ -376,6 +707,7 @@ async def _ingest_async(
         "accepted": True,
         "kind": kind,
         "source_mode": source_mode,
+        "source_type": source_type or source_mode,
         "source_id": str(getattr(source, "id", "") or ""),
         "title": str(getattr(source, "title", "") or title),
     }
@@ -448,6 +780,41 @@ async def _create_notebook_async(
     }
 
 
+async def _list_notebooks_async(
+    *,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    async with client:
+        notebooks = await client.notebooks.list()
+    spaces: list[Dict[str, Any]] = []
+    for nb in list(notebooks or []):
+        remote_space_id = str(getattr(nb, "id", "") or "").strip()
+        if not remote_space_id:
+            continue
+        title = str(getattr(nb, "title", "") or "").strip() or remote_space_id
+        created_at = getattr(nb, "created_at", None)
+        created_at_s = ""
+        if created_at is not None:
+            try:
+                created_at_s = created_at.isoformat()
+            except Exception:
+                created_at_s = str(created_at)
+        spaces.append(
+            {
+                "remote_space_id": remote_space_id,
+                "title": title,
+                "created_at": created_at_s,
+                "is_owner": bool(getattr(nb, "is_owner", True)),
+            }
+        )
+    return {
+        "provider": "notebooklm",
+        "spaces": spaces,
+    }
+
+
 def _source_to_dict(source: Any) -> Dict[str, Any]:
     return {
         "source_id": str(getattr(source, "id", "") or ""),
@@ -455,6 +822,312 @@ def _source_to_dict(source: Any) -> Dict[str, Any]:
         "url": str(getattr(source, "url", "") or ""),
         "status": int(getattr(source, "status", 0) or 0),
         "kind": str(getattr(source, "kind", "") or ""),
+    }
+
+
+def _artifact_to_dict(artifact: Any) -> Dict[str, Any]:
+    created_at = getattr(artifact, "created_at", None)
+    created_at_s = ""
+    if created_at is not None:
+        try:
+            created_at_s = created_at.isoformat()
+        except Exception:
+            created_at_s = str(created_at)
+    return {
+        "artifact_id": str(getattr(artifact, "id", "") or ""),
+        "title": str(getattr(artifact, "title", "") or ""),
+        "kind": str(getattr(artifact, "kind", "") or ""),
+        "status": str(getattr(artifact, "status_str", "") or ""),
+        "created_at": created_at_s,
+        "url": str(getattr(artifact, "url", "") or ""),
+    }
+
+
+def _as_string_list(raw: Any) -> list[str] | None:
+    if not isinstance(raw, list):
+        return None
+    out: list[str] = []
+    for item in raw:
+        value = str(item or "").strip()
+        if value:
+            out.append(value)
+    return out or None
+
+
+def _enum_or_none(enum_cls: Any, raw: Any, *, field: str) -> Any:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    text_l = text.lower()
+    for member in list(enum_cls):
+        name = str(getattr(member, "name", "")).strip().lower()
+        value = str(getattr(member, "value", "")).strip().lower()
+        if text_l == name or text_l == value:
+            return member
+    raise NotebookLMProviderError(
+        code="space_job_invalid",
+        message=f"invalid {field}: {text}",
+        transient=False,
+        degrade_provider=False,
+    )
+
+
+async def _list_artifacts_async(
+    *,
+    notebook_id: str,
+    kind: str,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    from ._vendor.notebooklm.types import ArtifactType
+
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    artifact_type = _enum_or_none(ArtifactType, kind, field="kind") if kind else None
+    async with client:
+        artifacts = await client.artifacts.list(notebook_id, artifact_type=artifact_type)
+    rows = [_artifact_to_dict(item) for item in list(artifacts or [])]
+    rows = sorted(rows, key=lambda row: str(row.get("created_at") or ""), reverse=True)
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": notebook_id,
+        "kind": kind,
+        "artifacts": rows,
+    }
+
+
+async def _generate_artifact_async(
+    *,
+    notebook_id: str,
+    kind: str,
+    options: Dict[str, Any],
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    from ._vendor.notebooklm.rpc import (
+        AudioFormat,
+        AudioLength,
+        InfographicDetail,
+        InfographicOrientation,
+        QuizDifficulty,
+        QuizQuantity,
+        ReportFormat,
+        SlideDeckFormat,
+        SlideDeckLength,
+        VideoFormat,
+        VideoStyle,
+    )
+
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    source_ids = _as_string_list(options.get("source_ids"))
+    language = str(options.get("language") or "").strip() or "en"
+    instructions = str(options.get("instructions") or "").strip() or None
+
+    async with client:
+        if kind == "audio":
+            status = await client.artifacts.generate_audio(
+                notebook_id,
+                source_ids=source_ids,
+                language=language,
+                instructions=instructions,
+                audio_format=_enum_or_none(AudioFormat, options.get("audio_format"), field="audio_format"),
+                audio_length=_enum_or_none(AudioLength, options.get("audio_length"), field="audio_length"),
+            )
+        elif kind == "video":
+            status = await client.artifacts.generate_video(
+                notebook_id,
+                source_ids=source_ids,
+                language=language,
+                instructions=instructions,
+                video_format=_enum_or_none(VideoFormat, options.get("video_format"), field="video_format"),
+                video_style=_enum_or_none(VideoStyle, options.get("video_style"), field="video_style"),
+            )
+        elif kind == "report":
+            status = await client.artifacts.generate_report(
+                notebook_id,
+                report_format=_enum_or_none(ReportFormat, options.get("report_format"), field="report_format")
+                or ReportFormat.BRIEFING_DOC,
+                source_ids=source_ids,
+                language=language,
+                custom_prompt=str(options.get("custom_prompt") or "").strip() or None,
+            )
+        elif kind == "study_guide":
+            status = await client.artifacts.generate_study_guide(
+                notebook_id,
+                source_ids=source_ids,
+                language=language,
+            )
+        elif kind == "quiz":
+            status = await client.artifacts.generate_quiz(
+                notebook_id,
+                source_ids=source_ids,
+                instructions=instructions,
+                quantity=_enum_or_none(QuizQuantity, options.get("quantity"), field="quantity"),
+                difficulty=_enum_or_none(QuizDifficulty, options.get("difficulty"), field="difficulty"),
+            )
+        elif kind == "flashcards":
+            status = await client.artifacts.generate_flashcards(
+                notebook_id,
+                source_ids=source_ids,
+                instructions=instructions,
+                quantity=_enum_or_none(QuizQuantity, options.get("quantity"), field="quantity"),
+                difficulty=_enum_or_none(QuizDifficulty, options.get("difficulty"), field="difficulty"),
+            )
+        elif kind == "infographic":
+            status = await client.artifacts.generate_infographic(
+                notebook_id,
+                source_ids=source_ids,
+                language=language,
+                instructions=instructions,
+                orientation=_enum_or_none(
+                    InfographicOrientation,
+                    options.get("orientation"),
+                    field="orientation",
+                ),
+                detail_level=_enum_or_none(
+                    InfographicDetail,
+                    options.get("detail_level"),
+                    field="detail_level",
+                ),
+            )
+        elif kind == "slide_deck":
+            status = await client.artifacts.generate_slide_deck(
+                notebook_id,
+                source_ids=source_ids,
+                language=language,
+                instructions=instructions,
+                slide_format=_enum_or_none(SlideDeckFormat, options.get("slide_format"), field="slide_format"),
+                slide_length=_enum_or_none(SlideDeckLength, options.get("slide_length"), field="slide_length"),
+            )
+        elif kind == "data_table":
+            status = await client.artifacts.generate_data_table(
+                notebook_id,
+                source_ids=source_ids,
+                language=language,
+                instructions=instructions,
+            )
+        elif kind == "mind_map":
+            out = await client.artifacts.generate_mind_map(
+                notebook_id,
+                source_ids=source_ids,
+            )
+            note_id = str((out or {}).get("note_id") or "").strip()
+            return {
+                "provider": "notebooklm",
+                "remote_space_id": notebook_id,
+                "kind": kind,
+                "task_id": note_id,
+                "status": "completed" if note_id else "failed",
+                "metadata": {"note_id": note_id},
+            }
+        else:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message=f"unsupported artifact kind: {kind}",
+                transient=False,
+                degrade_provider=False,
+            )
+
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": notebook_id,
+        "kind": kind,
+        "task_id": str(getattr(status, "task_id", "") or ""),
+        "status": str(getattr(status, "status", "") or ""),
+        "url": str(getattr(status, "url", "") or ""),
+        "error": str(getattr(status, "error", "") or ""),
+        "error_code": str(getattr(status, "error_code", "") or ""),
+        "metadata": dict(getattr(status, "metadata", {}) or {}),
+    }
+
+
+async def _wait_artifact_async(
+    *,
+    notebook_id: str,
+    task_id: str,
+    timeout_seconds: float,
+    initial_interval: float,
+    max_interval: float,
+    auth_payload: Dict[str, Any],
+    timeout_seconds_for_client: float,
+) -> Dict[str, Any]:
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds_for_client)
+    async with client:
+        status = await client.artifacts.wait_for_completion(
+            notebook_id,
+            task_id,
+            timeout=float(timeout_seconds),
+            initial_interval=float(initial_interval),
+            max_interval=float(max_interval),
+        )
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": notebook_id,
+        "task_id": str(getattr(status, "task_id", "") or task_id),
+        "status": str(getattr(status, "status", "") or ""),
+        "url": str(getattr(status, "url", "") or ""),
+        "error": str(getattr(status, "error", "") or ""),
+        "error_code": str(getattr(status, "error_code", "") or ""),
+        "metadata": dict(getattr(status, "metadata", {}) or {}),
+    }
+
+
+async def _download_artifact_async(
+    *,
+    notebook_id: str,
+    kind: str,
+    output_path: str,
+    artifact_id: str,
+    output_format: str,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    aid = artifact_id or None
+    target = str(Path(output_path).expanduser().resolve())
+    fmt = output_format or "markdown"
+    async with client:
+        if kind == "audio":
+            saved_path = await client.artifacts.download_audio(notebook_id, target, artifact_id=aid)
+        elif kind == "video":
+            saved_path = await client.artifacts.download_video(notebook_id, target, artifact_id=aid)
+        elif kind == "infographic":
+            saved_path = await client.artifacts.download_infographic(notebook_id, target, artifact_id=aid)
+        elif kind == "slide_deck":
+            saved_path = await client.artifacts.download_slide_deck(notebook_id, target, artifact_id=aid)
+        elif kind == "report" or kind == "study_guide":
+            saved_path = await client.artifacts.download_report(notebook_id, target, artifact_id=aid)
+        elif kind == "mind_map":
+            saved_path = await client.artifacts.download_mind_map(notebook_id, target, artifact_id=aid)
+        elif kind == "data_table":
+            saved_path = await client.artifacts.download_data_table(notebook_id, target, artifact_id=aid)
+        elif kind == "quiz":
+            saved_path = await client.artifacts.download_quiz(
+                notebook_id,
+                target,
+                artifact_id=aid,
+                output_format=fmt,
+            )
+        elif kind == "flashcards":
+            saved_path = await client.artifacts.download_flashcards(
+                notebook_id,
+                target,
+                artifact_id=aid,
+                output_format=fmt,
+            )
+        else:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message=f"unsupported artifact kind: {kind}",
+                transient=False,
+                degrade_provider=False,
+            )
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": notebook_id,
+        "kind": kind,
+        "artifact_id": artifact_id,
+        "output_path": str(saved_path or target),
+        "downloaded": True,
     }
 
 
@@ -528,6 +1201,24 @@ async def _rename_source_async(
     out["renamed"] = True
     out["title"] = str(out.get("title") or new_title)
     return out
+
+
+async def _refresh_source_async(
+    *,
+    notebook_id: str,
+    source_id: str,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    async with client:
+        ok = await client.sources.refresh(notebook_id, source_id)
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": notebook_id,
+        "source_id": source_id,
+        "refreshed": bool(ok),
+    }
 
 
 def _map_vendor_exception(exc: Exception) -> NotebookLMProviderError:

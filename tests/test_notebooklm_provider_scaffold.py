@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -10,19 +11,21 @@ class TestNotebookLMProviderScaffold(unittest.TestCase):
         from cccc.daemon.group_space_provider import SpaceProviderError, provider_query
 
         with patch.dict(os.environ, {}, clear=False):
-            os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
-            os.environ["CCCC_NOTEBOOKLM_STUB"] = "1"
-            os.environ.pop("CCCC_NOTEBOOKLM_AUTH_JSON", None)
-            with patch("cccc.daemon.group_space_provider.notebooklm_real_enabled", return_value=True):
-                with self.assertRaises(SpaceProviderError) as ctx:
-                    provider_query(
-                        "notebooklm",
-                        remote_space_id="nb_1",
-                        query="hello",
-                        options={},
-                    )
-            self.assertEqual(ctx.exception.code, "space_provider_not_configured")
-            self.assertTrue(ctx.exception.degrade_provider)
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["CCCC_HOME"] = td
+                os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
+                os.environ["CCCC_NOTEBOOKLM_STUB"] = "1"
+                os.environ.pop("CCCC_NOTEBOOKLM_AUTH_JSON", None)
+                with patch("cccc.daemon.group_space_provider.notebooklm_real_enabled", return_value=True):
+                    with self.assertRaises(SpaceProviderError) as ctx:
+                        provider_query(
+                            "notebooklm",
+                            remote_space_id="nb_1",
+                            query="hello",
+                            options={},
+                        )
+                self.assertEqual(ctx.exception.code, "space_provider_not_configured")
+                self.assertTrue(ctx.exception.degrade_provider)
 
     def test_invalid_auth_json_is_mapped_to_space_provider_error(self) -> None:
         from cccc.daemon.group_space_provider import SpaceProviderError, provider_ingest

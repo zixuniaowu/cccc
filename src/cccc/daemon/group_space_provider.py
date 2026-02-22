@@ -190,6 +190,42 @@ def _notebooklm_create_space(*, title: str) -> Dict[str, Any]:
     }
 
 
+def _notebooklm_list_spaces() -> Dict[str, Any]:
+    if notebooklm_real_enabled():
+        adapter = get_notebooklm_adapter()
+        auth_json_raw = _resolve_notebooklm_auth_json()
+        try:
+            list_fn = adapter.list_notebooks
+            supports_auth_override = False
+            try:
+                params = inspect.signature(list_fn).parameters
+                supports_auth_override = "auth_json_raw" in params
+            except Exception:
+                supports_auth_override = False
+            if supports_auth_override:
+                return list_fn(auth_json_raw=auth_json_raw)
+            return list_fn()
+        except NotebookLMProviderError as e:
+            raise SpaceProviderError(
+                e.code,
+                str(e),
+                transient=bool(e.transient),
+                degrade_provider=bool(e.degrade_provider),
+            ) from e
+    if not _notebooklm_stub_enabled():
+        raise SpaceProviderError(
+            "space_provider_disabled",
+            "notebooklm provider adapter is not configured in this build",
+            transient=False,
+            degrade_provider=True,
+        )
+    return {
+        "provider": "notebooklm",
+        "spaces": [],
+        "stub": True,
+    }
+
+
 def _notebooklm_list_sources(*, remote_space_id: str) -> Dict[str, Any]:
     if notebooklm_real_enabled():
         adapter = get_notebooklm_adapter()
@@ -369,6 +405,278 @@ def _notebooklm_rename_source(*, remote_space_id: str, source_id: str, new_title
     }
 
 
+def _notebooklm_refresh_source(*, remote_space_id: str, source_id: str) -> Dict[str, Any]:
+    if notebooklm_real_enabled():
+        adapter = get_notebooklm_adapter()
+        auth_json_raw = _resolve_notebooklm_auth_json()
+        try:
+            refresh_fn = adapter.refresh_source
+            supports_auth_override = False
+            try:
+                params = inspect.signature(refresh_fn).parameters
+                supports_auth_override = "auth_json_raw" in params
+            except Exception:
+                supports_auth_override = False
+            if supports_auth_override:
+                return refresh_fn(
+                    remote_space_id=remote_space_id,
+                    source_id=source_id,
+                    auth_json_raw=auth_json_raw,
+                )
+            return refresh_fn(
+                remote_space_id=remote_space_id,
+                source_id=source_id,
+            )
+        except NotebookLMProviderError as e:
+            raise SpaceProviderError(
+                e.code,
+                str(e),
+                transient=bool(e.transient),
+                degrade_provider=bool(e.degrade_provider),
+            ) from e
+    if not _notebooklm_stub_enabled():
+        raise SpaceProviderError(
+            "space_provider_disabled",
+            "notebooklm provider adapter is not configured in this build",
+            transient=False,
+            degrade_provider=True,
+        )
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": str(remote_space_id or ""),
+        "source_id": str(source_id or ""),
+        "refreshed": True,
+        "stub": True,
+    }
+
+
+def _notebooklm_list_artifacts(*, remote_space_id: str, kind: str = "") -> Dict[str, Any]:
+    if notebooklm_real_enabled():
+        adapter = get_notebooklm_adapter()
+        auth_json_raw = _resolve_notebooklm_auth_json()
+        try:
+            list_fn = adapter.list_artifacts
+            supports_auth_override = False
+            try:
+                params = inspect.signature(list_fn).parameters
+                supports_auth_override = "auth_json_raw" in params
+            except Exception:
+                supports_auth_override = False
+            if supports_auth_override:
+                return list_fn(
+                    remote_space_id=remote_space_id,
+                    kind=kind,
+                    auth_json_raw=auth_json_raw,
+                )
+            return list_fn(remote_space_id=remote_space_id, kind=kind)
+        except NotebookLMProviderError as e:
+            raise SpaceProviderError(
+                e.code,
+                str(e),
+                transient=bool(e.transient),
+                degrade_provider=bool(e.degrade_provider),
+            ) from e
+    if not _notebooklm_stub_enabled():
+        raise SpaceProviderError(
+            "space_provider_disabled",
+            "notebooklm provider adapter is not configured in this build",
+            transient=False,
+            degrade_provider=True,
+        )
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": str(remote_space_id or ""),
+        "kind": str(kind or ""),
+        "artifacts": [],
+        "stub": True,
+    }
+
+
+def _notebooklm_generate_artifact(*, remote_space_id: str, kind: str, options: Dict[str, Any]) -> Dict[str, Any]:
+    if notebooklm_real_enabled():
+        adapter = get_notebooklm_adapter()
+        auth_json_raw = _resolve_notebooklm_auth_json()
+        try:
+            generate_fn = adapter.generate_artifact
+            supports_auth_override = False
+            try:
+                params = inspect.signature(generate_fn).parameters
+                supports_auth_override = "auth_json_raw" in params
+            except Exception:
+                supports_auth_override = False
+            if supports_auth_override:
+                return generate_fn(
+                    remote_space_id=remote_space_id,
+                    kind=kind,
+                    options=options,
+                    auth_json_raw=auth_json_raw,
+                )
+            return generate_fn(
+                remote_space_id=remote_space_id,
+                kind=kind,
+                options=options,
+            )
+        except NotebookLMProviderError as e:
+            raise SpaceProviderError(
+                e.code,
+                str(e),
+                transient=bool(e.transient),
+                degrade_provider=bool(e.degrade_provider),
+            ) from e
+    if not _notebooklm_stub_enabled():
+        raise SpaceProviderError(
+            "space_provider_disabled",
+            "notebooklm provider adapter is not configured in this build",
+            transient=False,
+            degrade_provider=True,
+        )
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": str(remote_space_id or ""),
+        "kind": str(kind or ""),
+        "task_id": f"art_stub_{secrets.token_hex(8)}",
+        "status": "completed",
+        "stub": True,
+    }
+
+
+def _notebooklm_wait_artifact(
+    *,
+    remote_space_id: str,
+    task_id: str,
+    timeout_seconds: float,
+    initial_interval: float,
+    max_interval: float,
+) -> Dict[str, Any]:
+    if notebooklm_real_enabled():
+        adapter = get_notebooklm_adapter()
+        auth_json_raw = _resolve_notebooklm_auth_json()
+        try:
+            wait_fn = adapter.wait_artifact
+            supports_auth_override = False
+            try:
+                params = inspect.signature(wait_fn).parameters
+                supports_auth_override = "auth_json_raw" in params
+            except Exception:
+                supports_auth_override = False
+            if supports_auth_override:
+                return wait_fn(
+                    remote_space_id=remote_space_id,
+                    task_id=task_id,
+                    timeout_seconds=timeout_seconds,
+                    initial_interval=initial_interval,
+                    max_interval=max_interval,
+                    auth_json_raw=auth_json_raw,
+                )
+            return wait_fn(
+                remote_space_id=remote_space_id,
+                task_id=task_id,
+                timeout_seconds=timeout_seconds,
+                initial_interval=initial_interval,
+                max_interval=max_interval,
+            )
+        except NotebookLMProviderError as e:
+            raise SpaceProviderError(
+                e.code,
+                str(e),
+                transient=bool(e.transient),
+                degrade_provider=bool(e.degrade_provider),
+            ) from e
+    if not _notebooklm_stub_enabled():
+        raise SpaceProviderError(
+            "space_provider_disabled",
+            "notebooklm provider adapter is not configured in this build",
+            transient=False,
+            degrade_provider=True,
+        )
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": str(remote_space_id or ""),
+        "task_id": str(task_id or ""),
+        "status": "completed",
+        "stub": True,
+    }
+
+
+def _notebooklm_download_artifact(
+    *,
+    remote_space_id: str,
+    kind: str,
+    output_path: str,
+    artifact_id: str = "",
+    output_format: str = "",
+) -> Dict[str, Any]:
+    if notebooklm_real_enabled():
+        adapter = get_notebooklm_adapter()
+        auth_json_raw = _resolve_notebooklm_auth_json()
+        try:
+            download_fn = adapter.download_artifact
+            supports_auth_override = False
+            try:
+                params = inspect.signature(download_fn).parameters
+                supports_auth_override = "auth_json_raw" in params
+            except Exception:
+                supports_auth_override = False
+            if supports_auth_override:
+                return download_fn(
+                    remote_space_id=remote_space_id,
+                    kind=kind,
+                    output_path=output_path,
+                    artifact_id=artifact_id,
+                    output_format=output_format,
+                    auth_json_raw=auth_json_raw,
+                )
+            return download_fn(
+                remote_space_id=remote_space_id,
+                kind=kind,
+                output_path=output_path,
+                artifact_id=artifact_id,
+                output_format=output_format,
+            )
+        except NotebookLMProviderError as e:
+            raise SpaceProviderError(
+                e.code,
+                str(e),
+                transient=bool(e.transient),
+                degrade_provider=bool(e.degrade_provider),
+            ) from e
+    if not _notebooklm_stub_enabled():
+        raise SpaceProviderError(
+            "space_provider_disabled",
+            "notebooklm provider adapter is not configured in this build",
+            transient=False,
+            degrade_provider=True,
+        )
+    target = str(output_path or "").strip()
+    if not target:
+        raise SpaceProviderError(
+            "space_job_invalid",
+            "output_path is required",
+            transient=False,
+            degrade_provider=False,
+        )
+    try:
+        os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+        with open(target, "w", encoding="utf-8") as f:
+            f.write(f"[stub artifact] kind={kind} artifact_id={artifact_id}\n")
+    except Exception as e:
+        raise SpaceProviderError(
+            "space_provider_upstream_error",
+            f"failed to write stub artifact file: {e}",
+            transient=False,
+            degrade_provider=False,
+        ) from e
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": str(remote_space_id or ""),
+        "kind": str(kind or ""),
+        "artifact_id": str(artifact_id or ""),
+        "output_path": target,
+        "downloaded": True,
+        "stub": True,
+    }
+
+
 def provider_ingest(
     provider: str,
     *,
@@ -403,6 +711,13 @@ def provider_create_space(
     pid = str(provider or "").strip() or "notebooklm"
     if pid == "notebooklm":
         return _notebooklm_create_space(title=title)
+    raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
+
+
+def provider_list_spaces(provider: str) -> Dict[str, Any]:
+    pid = str(provider or "").strip() or "notebooklm"
+    if pid == "notebooklm":
+        return _notebooklm_list_spaces()
     raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
 
 
@@ -451,4 +766,83 @@ def provider_rename_source(
     pid = str(provider or "").strip() or "notebooklm"
     if pid == "notebooklm":
         return _notebooklm_rename_source(remote_space_id=remote_space_id, source_id=source_id, new_title=new_title)
+    raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
+
+
+def provider_refresh_source(
+    provider: str,
+    *,
+    remote_space_id: str,
+    source_id: str,
+) -> Dict[str, Any]:
+    pid = str(provider or "").strip() or "notebooklm"
+    if pid == "notebooklm":
+        return _notebooklm_refresh_source(remote_space_id=remote_space_id, source_id=source_id)
+    raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
+
+
+def provider_list_artifacts(
+    provider: str,
+    *,
+    remote_space_id: str,
+    kind: str = "",
+) -> Dict[str, Any]:
+    pid = str(provider or "").strip() or "notebooklm"
+    if pid == "notebooklm":
+        return _notebooklm_list_artifacts(remote_space_id=remote_space_id, kind=kind)
+    raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
+
+
+def provider_generate_artifact(
+    provider: str,
+    *,
+    remote_space_id: str,
+    kind: str,
+    options: Dict[str, Any],
+) -> Dict[str, Any]:
+    pid = str(provider or "").strip() or "notebooklm"
+    if pid == "notebooklm":
+        return _notebooklm_generate_artifact(remote_space_id=remote_space_id, kind=kind, options=options)
+    raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
+
+
+def provider_wait_artifact(
+    provider: str,
+    *,
+    remote_space_id: str,
+    task_id: str,
+    timeout_seconds: float,
+    initial_interval: float,
+    max_interval: float,
+) -> Dict[str, Any]:
+    pid = str(provider or "").strip() or "notebooklm"
+    if pid == "notebooklm":
+        return _notebooklm_wait_artifact(
+            remote_space_id=remote_space_id,
+            task_id=task_id,
+            timeout_seconds=timeout_seconds,
+            initial_interval=initial_interval,
+            max_interval=max_interval,
+        )
+    raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
+
+
+def provider_download_artifact(
+    provider: str,
+    *,
+    remote_space_id: str,
+    kind: str,
+    output_path: str,
+    artifact_id: str = "",
+    output_format: str = "",
+) -> Dict[str, Any]:
+    pid = str(provider or "").strip() or "notebooklm"
+    if pid == "notebooklm":
+        return _notebooklm_download_artifact(
+            remote_space_id=remote_space_id,
+            kind=kind,
+            output_path=output_path,
+            artifact_id=artifact_id,
+            output_format=output_format,
+        )
     raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")

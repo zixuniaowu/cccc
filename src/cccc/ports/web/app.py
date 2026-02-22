@@ -308,6 +308,30 @@ class GroupSpaceQueryRequest(BaseModel):
     options: Dict[str, Any] = Field(default_factory=dict)
 
 
+class GroupSpaceSourceActionRequest(BaseModel):
+    by: str = Field(default="user")
+    provider: Optional[str] = Field(default="notebooklm")
+    action: Literal["delete", "rename", "refresh"]
+    source_id: str = Field(default="")
+    new_title: str = Field(default="")
+
+
+class GroupSpaceArtifactActionRequest(BaseModel):
+    by: str = Field(default="user")
+    provider: Optional[str] = Field(default="notebooklm")
+    action: Literal["generate", "download"] = "generate"
+    kind: str = Field(default="")
+    options: Dict[str, Any] = Field(default_factory=dict)
+    wait: bool = True
+    save_to_space: bool = True
+    output_path: str = Field(default="")
+    output_format: str = Field(default="")
+    artifact_id: str = Field(default="")
+    timeout_seconds: float = 600.0
+    initial_interval: float = 2.0
+    max_interval: float = 10.0
+
+
 class GroupSpaceJobActionRequest(BaseModel):
     by: str = Field(default="user")
     provider: Optional[str] = Field(default="notebooklm")
@@ -795,6 +819,18 @@ def create_app() -> FastAPI:
             }
         )
 
+    @app.get("/api/v1/groups/{group_id}/space/spaces")
+    async def group_space_spaces(group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
+        return await _daemon(
+            {
+                "op": "group_space_spaces",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                },
+            }
+        )
+
     @app.post("/api/v1/groups/{group_id}/space/bind")
     async def group_space_bind(group_id: str, req: GroupSpaceBindRequest) -> Dict[str, Any]:
         if read_only:
@@ -852,6 +888,93 @@ def create_app() -> FastAPI:
                     "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
                     "query": str(req.query or "").strip(),
                     "options": dict(req.options or {}),
+                },
+            }
+        )
+
+    @app.get("/api/v1/groups/{group_id}/space/sources")
+    async def group_space_sources_list(group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
+        return await _daemon(
+            {
+                "op": "group_space_sources",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                    "action": "list",
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/space/sources")
+    async def group_space_sources_action(group_id: str, req: GroupSpaceSourceActionRequest) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Group Space write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "group_space_sources",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "action": str(req.action or "refresh").strip() or "refresh",
+                    "source_id": str(req.source_id or "").strip(),
+                    "new_title": str(req.new_title or "").strip(),
+                    "by": str(req.by or "user").strip() or "user",
+                },
+            }
+        )
+
+    @app.get("/api/v1/groups/{group_id}/space/artifacts")
+    async def group_space_artifacts_list(
+        group_id: str,
+        provider: str = "notebooklm",
+        kind: str = "",
+    ) -> Dict[str, Any]:
+        return await _daemon(
+            {
+                "op": "group_space_artifact",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                    "action": "list",
+                    "kind": str(kind or "").strip().lower(),
+                },
+            }
+        )
+
+    @app.post("/api/v1/groups/{group_id}/space/artifacts")
+    async def group_space_artifacts_action(group_id: str, req: GroupSpaceArtifactActionRequest) -> Dict[str, Any]:
+        if read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Group Space write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "group_space_artifact",
+                "args": {
+                    "group_id": group_id,
+                    "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "action": str(req.action or "generate").strip() or "generate",
+                    "kind": str(req.kind or "").strip().lower(),
+                    "options": dict(req.options or {}),
+                    "wait": bool(req.wait),
+                    "save_to_space": bool(req.save_to_space),
+                    "output_path": str(req.output_path or "").strip(),
+                    "output_format": str(req.output_format or "").strip().lower(),
+                    "artifact_id": str(req.artifact_id or "").strip(),
+                    "timeout_seconds": float(req.timeout_seconds),
+                    "initial_interval": float(req.initial_interval),
+                    "max_interval": float(req.max_interval),
+                    "by": str(req.by or "user").strip() or "user",
                 },
             }
         )

@@ -96,6 +96,9 @@ class TestSystemPromptGroupSpace(unittest.TestCase):
             self.assertIn("Group Space:", prompt)
             self.assertIn("cccc_space_query", prompt)
             self.assertIn("cccc_space_ingest", prompt)
+            self.assertIn("cccc_space_artifact", prompt)
+            self.assertIn("source_type", prompt)
+            self.assertIn("*.conflict.remote.*", prompt)
         finally:
             cleanup()
 

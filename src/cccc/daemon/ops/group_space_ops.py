@@ -2,13 +2,29 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import logging
+from pathlib import Path
+import re
 from typing import Any, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse, SpaceBinding
 from ...kernel.group import load_group
 from ...kernel.permissions import require_group_permission
-from ..group_space_provider import SpaceProviderError, provider_create_space
+from ..group_space_paths import resolve_space_root_from_group
+from ..group_space_provider import (
+    SpaceProviderError,
+    provider_delete_source,
+    provider_create_space,
+    provider_download_artifact,
+    provider_generate_artifact,
+    provider_list_artifacts,
+    provider_list_sources,
+    provider_list_spaces,
+    provider_refresh_source,
+    provider_rename_source,
+    provider_wait_artifact,
+)
 from ...providers.notebooklm.errors import NotebookLMProviderError
 from ...providers.notebooklm.health import notebooklm_health_check, parse_notebooklm_auth_json
 from ..notebooklm_auth_flow import (
@@ -18,7 +34,7 @@ from ..notebooklm_auth_flow import (
 )
 from ..group_space_sync import read_group_space_sync_state, sync_group_space_files
 from ..group_space_projection import sync_group_space_projection
-from ..group_space_runtime import execute_space_job, retry_space_job, run_space_query
+from ..group_space_runtime import acquire_space_provider_write, execute_space_job, retry_space_job, run_space_query
 from ..group_space_store import (
     cancel_space_job,
     describe_space_provider_credential_state,
@@ -41,6 +57,20 @@ _SPACE_JOB_KINDS = {"context_sync", "resource_ingest"}
 _SPACE_JOB_STATES = {"pending", "running", "succeeded", "failed", "canceled"}
 _SPACE_JOB_ACTIONS = {"list", "retry", "cancel"}
 _SPACE_SYNC_ACTIONS = {"status", "run"}
+_SPACE_SOURCE_ACTIONS = {"list", "delete", "rename", "refresh"}
+_SPACE_ARTIFACT_ACTIONS = {"list", "generate", "download"}
+_SPACE_ARTIFACT_KINDS = {
+    "audio",
+    "video",
+    "report",
+    "study_guide",
+    "quiz",
+    "flashcards",
+    "infographic",
+    "slide_deck",
+    "data_table",
+    "mind_map",
+}
 _SPACE_PROVIDER_AUTH_ACTIONS = {"status", "start", "cancel"}
 _SPACE_PROVIDER_SECRET_KEYS = {"notebooklm": "NOTEBOOKLM_AUTH_JSON"}
 _LOG = logging.getLogger("cccc.daemon.group_space_ops")
@@ -78,11 +108,124 @@ def _sync_action_or_error(raw: Any) -> str:
     return action
 
 
+def _source_action_or_error(raw: Any) -> str:
+    action = str(raw or "list").strip() or "list"
+    if action not in _SPACE_SOURCE_ACTIONS:
+        raise ValueError(f"invalid action: {action}")
+    return action
+
+
 def _provider_auth_action_or_error(raw: Any) -> str:
     action = str(raw or "status").strip() or "status"
     if action not in _SPACE_PROVIDER_AUTH_ACTIONS:
         raise ValueError(f"invalid action: {action}")
     return action
+
+
+def _artifact_action_or_error(raw: Any) -> str:
+    action = str(raw or "list").strip() or "list"
+    if action not in _SPACE_ARTIFACT_ACTIONS:
+        raise ValueError(f"invalid action: {action}")
+    return action
+
+
+def _artifact_kind_or_error(raw: Any, *, allow_empty: bool = False) -> str:
+    kind = str(raw or "").strip().lower()
+    if not kind:
+        if allow_empty:
+            return ""
+        raise ValueError("missing kind")
+    if kind not in _SPACE_ARTIFACT_KINDS:
+        raise ValueError(f"invalid kind: {kind}")
+    return kind
+
+
+def _bool_or_default(raw: Any, *, default: bool) -> bool:
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _float_or_default(raw: Any, *, default: float, lo: float, hi: float) -> float:
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+    except Exception:
+        return default
+    return max(lo, min(value, hi))
+
+
+def _artifact_status_completed(raw: Any) -> bool:
+    status = str(raw or "").strip().lower()
+    return status in {"completed", "succeeded", "ready", "done"}
+
+
+def _safe_path_fragment(raw: Any, *, fallback: str) -> str:
+    text = str(raw or "").strip()
+    text = re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-._")
+    if not text:
+        text = fallback
+    return text[:64]
+
+
+def _artifact_extension(kind: str, *, output_format: str) -> str:
+    k = str(kind or "").strip().lower()
+    fmt = str(output_format or "").strip().lower()
+    if k == "audio":
+        return ".mp3"
+    if k == "video":
+        return ".mp4"
+    if k in {"report", "study_guide"}:
+        return ".md"
+    if k == "quiz" or k == "flashcards":
+        if fmt == "json":
+            return ".json"
+        if fmt == "html":
+            return ".html"
+        return ".md"
+    if k == "infographic":
+        return ".png"
+    if k == "slide_deck":
+        return ".pdf"
+    if k == "data_table":
+        return ".csv"
+    if k == "mind_map":
+        return ".json"
+    return ".bin"
+
+
+def _default_artifact_output_path(
+    *,
+    group: Any,
+    provider: str,
+    kind: str,
+    output_format: str,
+    artifact_id: str,
+    task_id: str,
+) -> str:
+    space_root = resolve_space_root_from_group(group, create=True)
+    if space_root is None:
+        raise ValueError("space_root_unavailable (attach scope first or provide output_path)")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
+    ident = _safe_path_fragment(artifact_id or task_id, fallback="latest")
+    ext = _artifact_extension(kind, output_format=output_format)
+    target = (
+        Path(space_root)
+        / "artifacts"
+        / _safe_path_fragment(provider, fallback="provider")
+        / _safe_path_fragment(kind, fallback="artifact")
+        / f"{stamp}-{ident}{ext}"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return str(target)
 
 
 def _require_group(group_id: str):
@@ -93,6 +236,18 @@ def _require_group(group_id: str):
     if group is None:
         raise LookupError(f"group not found: {gid}")
     return group
+
+
+def _auto_notebook_title_for_group(group: Any) -> str:
+    group_title = ""
+    try:
+        group_title = str(group.doc.get("title") or "").strip()
+    except Exception:
+        group_title = ""
+    if not group_title:
+        group_title = str(getattr(group, "group_id", "") or "").strip() or "Group"
+    # NotebookLM title length is not strictly documented; keep a conservative cap.
+    return f"CCCC · {group_title[:96]}"
 
 
 def _default_binding(group_id: str, provider: str) -> Dict[str, Any]:
@@ -249,6 +404,40 @@ def handle_group_space_status(args: Dict[str, Any]) -> DaemonResponse:
         return _error("group_space_status_failed", str(e))
 
 
+def handle_group_space_spaces(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    provider_raw = args.get("provider")
+    try:
+        group = _require_group(group_id)
+        provider = _provider_or_error(provider_raw)
+        spaces_result = provider_list_spaces(provider)
+        spaces = spaces_result.get("spaces") if isinstance(spaces_result.get("spaces"), list) else []
+        binding = get_space_binding(group.group_id, provider=provider) or _default_binding(group.group_id, provider)
+        provider_state = get_space_provider_state(provider)
+        provider_state.update(_provider_runtime_readiness(provider))
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "provider": provider,
+                "provider_state": provider_state,
+                "binding": binding,
+                "spaces": spaces,
+            },
+        )
+    except SpaceProviderError as e:
+        return _error(str(e.code or "space_provider_upstream_error"), str(e))
+    except LookupError as e:
+        return _error("group_not_found", str(e))
+    except ValueError as e:
+        message = str(e)
+        if message == "missing_group_id":
+            return _error("missing_group_id", "missing group_id")
+        return _error("space_job_invalid", message)
+    except Exception as e:
+        return _error("group_space_spaces_failed", str(e))
+
+
 def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "user").strip() or "user"
@@ -267,7 +456,7 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                 try:
                     created = provider_create_space(
                         provider,
-                        title=f"CCCC {str(getattr(group, 'title', '') or group.group_id)} Space",
+                        title=_auto_notebook_title_for_group(group),
                     )
                     remote_space_id = str(created.get("remote_space_id") or "").strip()
                     if not remote_space_id:
@@ -475,6 +664,299 @@ def handle_group_space_query(args: Dict[str, Any]) -> DaemonResponse:
         return _error("space_job_invalid", message)
     except Exception as e:
         return _error("group_space_query_failed", str(e))
+
+
+def handle_group_space_sources(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip() or "user"
+    provider_raw = args.get("provider")
+    action_raw = args.get("action")
+    source_id = str(args.get("source_id") or "").strip()
+    new_title = str(args.get("new_title") or "").strip()
+    try:
+        group = _require_group(group_id)
+        provider = _provider_or_error(provider_raw)
+        action = _source_action_or_error(action_raw)
+        binding = get_space_binding(group.group_id, provider=provider)
+        if not isinstance(binding, dict):
+            return _error("space_binding_missing", "group is not bound to provider")
+        remote_space_id = str(binding.get("remote_space_id") or "").strip()
+        status = str(binding.get("status") or "").strip()
+        if not remote_space_id or status != "bound":
+            return _error("space_binding_missing", "group space binding is not active")
+        provider_state = get_space_provider_state(provider)
+        provider_mode = str(provider_state.get("mode") or "disabled")
+        if (not bool(provider_state.get("enabled"))) or provider_mode == "disabled":
+            return _error("space_provider_disabled", "provider is disabled")
+
+        if action == "list":
+            listed = provider_list_sources(provider, remote_space_id=remote_space_id)
+            sources = listed.get("sources") if isinstance(listed.get("sources"), list) else []
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "group_id": group.group_id,
+                    "provider": provider,
+                    "provider_mode": provider_mode,
+                    "binding": binding,
+                    "action": action,
+                    "sources": sources,
+                    "list_result": listed,
+                },
+            )
+
+        _assert_write_permission(group, by=by)
+        if not source_id:
+            return _error("space_job_invalid", "source_id is required")
+
+        if action == "delete":
+            out = provider_delete_source(
+                provider,
+                remote_space_id=remote_space_id,
+                source_id=source_id,
+            )
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "group_id": group.group_id,
+                    "provider": provider,
+                    "provider_mode": str(get_space_provider_state(provider).get("mode") or provider_mode),
+                    "binding": binding,
+                    "action": action,
+                    "source_id": source_id,
+                    "delete_result": out,
+                },
+            )
+
+        if action == "rename":
+            if not new_title:
+                return _error("space_job_invalid", "new_title is required for rename")
+            out = provider_rename_source(
+                provider,
+                remote_space_id=remote_space_id,
+                source_id=source_id,
+                new_title=new_title,
+            )
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "group_id": group.group_id,
+                    "provider": provider,
+                    "provider_mode": str(get_space_provider_state(provider).get("mode") or provider_mode),
+                    "binding": binding,
+                    "action": action,
+                    "source_id": source_id,
+                    "rename_result": out,
+                },
+            )
+
+        out = provider_refresh_source(
+            provider,
+            remote_space_id=remote_space_id,
+            source_id=source_id,
+        )
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "provider": provider,
+                "provider_mode": str(get_space_provider_state(provider).get("mode") or provider_mode),
+                "binding": binding,
+                "action": action,
+                "source_id": source_id,
+                "refresh_result": out,
+            },
+        )
+    except SpaceProviderError as e:
+        return _error(str(e.code or "space_provider_upstream_error"), str(e))
+    except LookupError as e:
+        return _error("group_not_found", str(e))
+    except ValueError as e:
+        message = str(e)
+        if "permission denied" in message.lower():
+            return _error("space_permission_denied", message)
+        if message == "missing_group_id":
+            return _error("missing_group_id", "missing group_id")
+        return _error("space_job_invalid", message)
+    except Exception as e:
+        if "permission denied" in str(e).lower():
+            return _error("space_permission_denied", str(e))
+        return _error("group_space_sources_failed", str(e))
+
+
+def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "user").strip() or "user"
+    provider_raw = args.get("provider")
+    action_raw = args.get("action")
+    kind_raw = args.get("kind")
+    options_raw = args.get("options")
+    output_path = str(args.get("output_path") or "").strip()
+    output_format = str(args.get("output_format") or "").strip().lower()
+    artifact_id = str(args.get("artifact_id") or "").strip()
+    save_to_space = _bool_or_default(args.get("save_to_space"), default=True)
+    wait_for_completion = _bool_or_default(args.get("wait"), default=True)
+    timeout_seconds = _float_or_default(args.get("timeout_seconds"), default=600.0, lo=10.0, hi=3600.0)
+    initial_interval = _float_or_default(args.get("initial_interval"), default=2.0, lo=0.5, hi=60.0)
+    max_interval = _float_or_default(args.get("max_interval"), default=10.0, lo=1.0, hi=120.0)
+    if max_interval < initial_interval:
+        max_interval = initial_interval
+    try:
+        group = _require_group(group_id)
+        provider = _provider_or_error(provider_raw)
+        action = _artifact_action_or_error(action_raw)
+        binding = get_space_binding(group.group_id, provider=provider)
+        if not isinstance(binding, dict):
+            return _error("space_binding_missing", "group is not bound to provider")
+        remote_space_id = str(binding.get("remote_space_id") or "").strip()
+        status = str(binding.get("status") or "").strip()
+        if not remote_space_id or status != "bound":
+            return _error("space_binding_missing", "group space binding is not active")
+        provider_state = get_space_provider_state(provider)
+        provider_mode = str(provider_state.get("mode") or "disabled")
+        if (not bool(provider_state.get("enabled"))) or provider_mode == "disabled":
+            return _error("space_provider_disabled", "provider is disabled")
+
+        if action == "list":
+            kind = _artifact_kind_or_error(kind_raw, allow_empty=True)
+            listed = provider_list_artifacts(provider, remote_space_id=remote_space_id, kind=kind)
+            artifacts = listed.get("artifacts") if isinstance(listed.get("artifacts"), list) else []
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "group_id": group.group_id,
+                    "provider": provider,
+                    "provider_mode": provider_mode,
+                    "binding": binding,
+                    "action": action,
+                    "kind": kind,
+                    "artifacts": artifacts,
+                    "list_result": listed,
+                },
+            )
+
+        _assert_write_permission(group, by=by)
+        kind = _artifact_kind_or_error(kind_raw, allow_empty=False)
+
+        if action == "download":
+            if not output_path and not save_to_space:
+                return _error("space_job_invalid", "output_path is required when save_to_space=false")
+            target_path = output_path
+            if not target_path:
+                target_path = _default_artifact_output_path(
+                    group=group,
+                    provider=provider,
+                    kind=kind,
+                    output_format=output_format,
+                    artifact_id=artifact_id,
+                    task_id="",
+                )
+            with acquire_space_provider_write(provider, remote_space_id):
+                download_result = provider_download_artifact(
+                    provider,
+                    remote_space_id=remote_space_id,
+                    kind=kind,
+                    output_path=target_path,
+                    artifact_id=artifact_id,
+                    output_format=output_format,
+                )
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "group_id": group.group_id,
+                    "provider": provider,
+                    "provider_mode": str(get_space_provider_state(provider).get("mode") or provider_mode),
+                    "binding": binding,
+                    "action": action,
+                    "kind": kind,
+                    "saved_to_space": bool(save_to_space),
+                    "output_path": str(download_result.get("output_path") or target_path),
+                    "download_result": download_result,
+                },
+            )
+
+        options = options_raw if isinstance(options_raw, dict) else {}
+        with acquire_space_provider_write(provider, remote_space_id):
+            generate_result = provider_generate_artifact(
+                provider,
+                remote_space_id=remote_space_id,
+                kind=kind,
+                options=dict(options),
+            )
+        task_id = str(generate_result.get("task_id") or "").strip()
+        artifact_status = str(generate_result.get("status") or "").strip()
+        wait_result: Dict[str, Any] = {}
+        if wait_for_completion and task_id and (not _artifact_status_completed(artifact_status)):
+            wait_result = provider_wait_artifact(
+                provider,
+                remote_space_id=remote_space_id,
+                task_id=task_id,
+                timeout_seconds=timeout_seconds,
+                initial_interval=initial_interval,
+                max_interval=max_interval,
+            )
+            task_id = str(wait_result.get("task_id") or task_id).strip()
+            artifact_status = str(wait_result.get("status") or artifact_status).strip()
+
+        download_result: Dict[str, Any] = {}
+        final_output_path = ""
+        if save_to_space and _artifact_status_completed(artifact_status):
+            target_path = output_path
+            if not target_path:
+                target_path = _default_artifact_output_path(
+                    group=group,
+                    provider=provider,
+                    kind=kind,
+                    output_format=output_format,
+                    artifact_id=artifact_id,
+                    task_id=task_id,
+                )
+            selected_artifact_id = artifact_id or task_id
+            with acquire_space_provider_write(provider, remote_space_id):
+                download_result = provider_download_artifact(
+                    provider,
+                    remote_space_id=remote_space_id,
+                    kind=kind,
+                    output_path=target_path,
+                    artifact_id=selected_artifact_id,
+                    output_format=output_format,
+                )
+            final_output_path = str(download_result.get("output_path") or target_path)
+
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "provider": provider,
+                "provider_mode": str(get_space_provider_state(provider).get("mode") or provider_mode),
+                "binding": binding,
+                "action": action,
+                "kind": kind,
+                "task_id": task_id,
+                "status": artifact_status,
+                "wait": bool(wait_for_completion),
+                "saved_to_space": bool(save_to_space and bool(final_output_path)),
+                "output_path": final_output_path,
+                "generate_result": generate_result,
+                "wait_result": wait_result,
+                "download_result": download_result,
+            },
+        )
+    except SpaceProviderError as e:
+        return _error(str(e.code or "space_provider_upstream_error"), str(e))
+    except LookupError as e:
+        return _error("group_not_found", str(e))
+    except ValueError as e:
+        message = str(e)
+        if "permission denied" in message.lower():
+            return _error("space_permission_denied", message)
+        if message == "missing_group_id":
+            return _error("missing_group_id", "missing group_id")
+        return _error("space_job_invalid", message)
+    except Exception as e:
+        if "permission denied" in str(e).lower():
+            return _error("space_permission_denied", str(e))
+        return _error("group_space_artifact_failed", str(e))
 
 
 def handle_group_space_jobs(args: Dict[str, Any]) -> DaemonResponse:
@@ -755,12 +1237,18 @@ def handle_group_space_provider_auth(args: Dict[str, Any]) -> DaemonResponse:
 def try_handle_group_space_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
     if op == "group_space_status":
         return handle_group_space_status(args)
+    if op == "group_space_spaces":
+        return handle_group_space_spaces(args)
     if op == "group_space_bind":
         return handle_group_space_bind(args)
     if op == "group_space_ingest":
         return handle_group_space_ingest(args)
     if op == "group_space_query":
         return handle_group_space_query(args)
+    if op == "group_space_sources":
+        return handle_group_space_sources(args)
+    if op == "group_space_artifact":
+        return handle_group_space_artifact(args)
     if op == "group_space_jobs":
         return handle_group_space_jobs(args)
     if op == "group_space_sync":

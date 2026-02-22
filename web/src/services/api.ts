@@ -19,6 +19,9 @@ import type {
   IMPlatform,
   RemoteAccessState,
   GroupSpaceStatus,
+  GroupSpaceRemoteSpace,
+  GroupSpaceSource,
+  GroupSpaceArtifact,
   GroupSpaceJob,
   GroupSpaceProviderCredentialStatus,
   GroupSpaceProviderAuthStatus,
@@ -1033,6 +1036,18 @@ export async function bindGroupSpace(groupId: string, remoteSpaceId: string = ""
   );
 }
 
+export async function fetchGroupSpaceSpaces(groupId: string, provider: string = "notebooklm") {
+  return apiJson<{
+    group_id: string;
+    provider: string;
+    provider_state?: Record<string, unknown>;
+    binding?: Record<string, unknown>;
+    spaces: GroupSpaceRemoteSpace[];
+  }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/space/spaces?provider=${encodeURIComponent(provider)}`
+  );
+}
+
 export async function unbindGroupSpace(groupId: string, provider: string = "notebooklm") {
   return apiJson<GroupSpaceStatus>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/space/bind`,
@@ -1095,6 +1110,122 @@ export async function queryGroupSpace(args: {
       provider: args.provider || "notebooklm",
       query: args.query,
       options: args.options || {},
+    }),
+  });
+}
+
+export async function fetchGroupSpaceSources(groupId: string, provider: string = "notebooklm") {
+  return apiJson<{
+    group_id: string;
+    provider: string;
+    provider_mode: string;
+    binding?: Record<string, unknown>;
+    action: "list";
+    sources: GroupSpaceSource[];
+    list_result?: Record<string, unknown>;
+  }>(
+    `/api/v1/groups/${encodeURIComponent(groupId)}/space/sources?provider=${encodeURIComponent(provider)}`
+  );
+}
+
+export async function actionGroupSpaceSource(args: {
+  groupId: string;
+  provider?: string;
+  action: "delete" | "rename" | "refresh";
+  sourceId: string;
+  newTitle?: string;
+}) {
+  return apiJson<{
+    group_id: string;
+    provider: string;
+    provider_mode: string;
+    binding?: Record<string, unknown>;
+    action: string;
+    source_id: string;
+    delete_result?: Record<string, unknown>;
+    rename_result?: Record<string, unknown>;
+    refresh_result?: Record<string, unknown>;
+  }>(`/api/v1/groups/${encodeURIComponent(args.groupId)}/space/sources`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      provider: args.provider || "notebooklm",
+      action: args.action,
+      source_id: args.sourceId,
+      new_title: String(args.newTitle || ""),
+    }),
+  });
+}
+
+export async function fetchGroupSpaceArtifacts(
+  groupId: string,
+  provider: string = "notebooklm",
+  kind: string = ""
+) {
+  const params = new URLSearchParams({
+    provider: String(provider || "notebooklm"),
+  });
+  if (String(kind || "").trim()) {
+    params.set("kind", String(kind || "").trim().toLowerCase());
+  }
+  return apiJson<{
+    group_id: string;
+    provider: string;
+    provider_mode: string;
+    binding?: Record<string, unknown>;
+    action: "list";
+    kind?: string;
+    artifacts: GroupSpaceArtifact[];
+    list_result?: Record<string, unknown>;
+  }>(`/api/v1/groups/${encodeURIComponent(groupId)}/space/artifacts?${params.toString()}`);
+}
+
+export async function actionGroupSpaceArtifact(args: {
+  groupId: string;
+  provider?: string;
+  action: "generate" | "download";
+  kind: string;
+  options?: Record<string, unknown>;
+  wait?: boolean;
+  saveToSpace?: boolean;
+  outputPath?: string;
+  outputFormat?: string;
+  artifactId?: string;
+  timeoutSeconds?: number;
+  initialInterval?: number;
+  maxInterval?: number;
+}) {
+  return apiJson<{
+    group_id: string;
+    provider: string;
+    provider_mode: string;
+    binding?: Record<string, unknown>;
+    action: string;
+    kind: string;
+    task_id?: string;
+    status?: string;
+    wait?: boolean;
+    saved_to_space?: boolean;
+    output_path?: string;
+    generate_result?: Record<string, unknown>;
+    wait_result?: Record<string, unknown>;
+    download_result?: Record<string, unknown>;
+  }>(`/api/v1/groups/${encodeURIComponent(args.groupId)}/space/artifacts`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      provider: args.provider || "notebooklm",
+      action: args.action,
+      kind: String(args.kind || "").trim().toLowerCase(),
+      options: args.options || {},
+      wait: args.wait ?? true,
+      save_to_space: args.saveToSpace ?? true,
+      output_path: String(args.outputPath || ""),
+      output_format: String(args.outputFormat || ""),
+      artifact_id: String(args.artifactId || ""),
+      timeout_seconds: Number(args.timeoutSeconds || 600),
+      initial_interval: Number(args.initialInterval || 2),
+      max_interval: Number(args.maxInterval || 10),
     }),
   });
 }

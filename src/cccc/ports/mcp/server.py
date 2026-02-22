@@ -25,6 +25,8 @@ cccc.* namespace (collaboration control plane):
 - cccc_space_bind: Bind or unbind Group Space provider mapping
 - cccc_space_ingest: Enqueue and execute Group Space ingest job
 - cccc_space_query: Query provider-backed Group Space knowledge
+- cccc_space_sources: List/refresh/rename/delete provider sources for the bound notebook
+- cccc_space_artifact: List/generate/download provider artifacts (can auto-save to repo space/artifacts)
 - cccc_space_jobs: List/retry/cancel Group Space jobs
 - cccc_space_sync: Read or run repo/space synchronization reconcile
 - cccc_space_provider_auth: Control provider auth flow (status/start/cancel)
@@ -956,6 +958,72 @@ def space_query(
     )
 
 
+def space_sources(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "list",
+    source_id: str = "",
+    new_title: str = "",
+) -> Dict[str, Any]:
+    """List/refresh/rename/delete Group Space provider sources."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_sources",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "action": str(action or "list"),
+                "source_id": str(source_id or ""),
+                "new_title": str(new_title or ""),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
+def space_artifact(
+    *,
+    group_id: str,
+    by: str,
+    provider: str = "notebooklm",
+    action: str = "list",
+    kind: str = "",
+    options: Optional[Dict[str, Any]] = None,
+    wait: bool = True,
+    save_to_space: bool = True,
+    output_path: str = "",
+    output_format: str = "",
+    artifact_id: str = "",
+    timeout_seconds: float = 600.0,
+    initial_interval: float = 2.0,
+    max_interval: float = 10.0,
+) -> Dict[str, Any]:
+    """List/generate/download Group Space provider artifacts."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_artifact",
+            "args": {
+                "group_id": group_id,
+                "provider": str(provider or "notebooklm"),
+                "action": str(action or "list"),
+                "kind": str(kind or ""),
+                "options": dict(options or {}),
+                "wait": bool(wait),
+                "save_to_space": bool(save_to_space),
+                "output_path": str(output_path or ""),
+                "output_format": str(output_format or ""),
+                "artifact_id": str(artifact_id or ""),
+                "timeout_seconds": float(timeout_seconds),
+                "initial_interval": float(initial_interval),
+                "max_interval": float(max_interval),
+                "by": str(by or "user"),
+            },
+        }
+    )
+
+
 def space_jobs(
     *,
     group_id: str,
@@ -1674,6 +1742,57 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             provider=str(arguments.get("provider") or "notebooklm"),
             query=str(arguments.get("query") or ""),
             options=dict(options_raw) if isinstance(options_raw, dict) else {},
+        )
+
+    if name == "cccc_space_sources":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        return space_sources(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=str(arguments.get("action") or "list"),
+            source_id=str(arguments.get("source_id") or ""),
+            new_title=str(arguments.get("new_title") or ""),
+        )
+
+    if name == "cccc_space_artifact":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        options_raw = arguments.get("options")
+        timeout_raw = arguments.get("timeout_seconds")
+        initial_raw = arguments.get("initial_interval")
+        max_raw = arguments.get("max_interval")
+        timeout_seconds = 600.0
+        initial_interval = 2.0
+        max_interval = 10.0
+        try:
+            if timeout_raw is not None:
+                timeout_seconds = float(timeout_raw)
+            if initial_raw is not None:
+                initial_interval = float(initial_raw)
+            if max_raw is not None:
+                max_interval = float(max_raw)
+        except Exception:
+            raise MCPError(
+                code="invalid_request",
+                message="timeout_seconds/initial_interval/max_interval must be numbers",
+            )
+        return space_artifact(
+            group_id=gid,
+            by=by,
+            provider=str(arguments.get("provider") or "notebooklm"),
+            action=str(arguments.get("action") or "list"),
+            kind=str(arguments.get("kind") or ""),
+            options=dict(options_raw) if isinstance(options_raw, dict) else {},
+            wait=coerce_bool(arguments.get("wait"), default=True),
+            save_to_space=coerce_bool(arguments.get("save_to_space"), default=True),
+            output_path=str(arguments.get("output_path") or ""),
+            output_format=str(arguments.get("output_format") or ""),
+            artifact_id=str(arguments.get("artifact_id") or ""),
+            timeout_seconds=timeout_seconds,
+            initial_interval=initial_interval,
+            max_interval=max_interval,
         )
 
     if name == "cccc_space_jobs":
