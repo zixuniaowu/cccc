@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse, SpaceBinding
@@ -10,6 +11,11 @@ from ...kernel.permissions import require_group_permission
 from ..group_space_provider import SpaceProviderError, provider_create_space
 from ...providers.notebooklm.errors import NotebookLMProviderError
 from ...providers.notebooklm.health import notebooklm_health_check, notebooklm_real_enabled, parse_notebooklm_auth_json
+from ..notebooklm_auth_flow import (
+    cancel_notebooklm_auth_flow,
+    get_notebooklm_auth_flow_status,
+    start_notebooklm_auth_flow,
+)
 from ..group_space_sync import read_group_space_sync_state, sync_group_space_files
 from ..group_space_projection import sync_group_space_projection
 from ..group_space_runtime import execute_space_job, retry_space_job, run_space_query
@@ -35,6 +41,7 @@ _SPACE_JOB_KINDS = {"context_sync", "resource_ingest"}
 _SPACE_JOB_STATES = {"pending", "running", "succeeded", "failed", "canceled"}
 _SPACE_JOB_ACTIONS = {"list", "retry", "cancel"}
 _SPACE_SYNC_ACTIONS = {"status", "run"}
+_SPACE_PROVIDER_AUTH_ACTIONS = {"status", "start", "cancel"}
 _SPACE_PROVIDER_SECRET_KEYS = {"notebooklm": "NOTEBOOKLM_AUTH_JSON"}
 
 
@@ -66,6 +73,13 @@ def _action_or_error(raw: Any) -> str:
 def _sync_action_or_error(raw: Any) -> str:
     action = str(raw or "status").strip() or "status"
     if action not in _SPACE_SYNC_ACTIONS:
+        raise ValueError(f"invalid action: {action}")
+    return action
+
+
+def _provider_auth_action_or_error(raw: Any) -> str:
+    action = str(raw or "status").strip() or "status"
+    if action not in _SPACE_PROVIDER_AUTH_ACTIONS:
         raise ValueError(f"invalid action: {action}")
     return action
 
@@ -133,7 +147,12 @@ def _provider_runtime_readiness(provider: str) -> Dict[str, Any]:
     pid = _provider_or_error(provider)
     if pid != "notebooklm":
         return {"write_ready": False, "reason": "unsupported_provider"}
-    real_enabled = bool(notebooklm_real_enabled())
+    provider_state = get_space_provider_state(pid)
+    env_raw = str(os.environ.get("CCCC_NOTEBOOKLM_REAL") or "").strip()
+    if env_raw:
+        real_enabled = bool(notebooklm_real_enabled())
+    else:
+        real_enabled = bool(provider_state.get("real_enabled"))
     stub_enabled = bool(_truthy_env("CCCC_NOTEBOOKLM_STUB"))
     auth_configured = bool(_resolve_auth_json(pid))
     write_ready = (real_enabled and auth_configured) or ((not real_enabled) and stub_enabled)
@@ -673,6 +692,51 @@ def handle_group_space_provider_health_check(args: Dict[str, Any]) -> DaemonResp
         return _error("group_space_provider_health_check_failed", str(e))
 
 
+def handle_group_space_provider_auth(args: Dict[str, Any]) -> DaemonResponse:
+    provider_raw = args.get("provider")
+    by = str(args.get("by") or "user").strip() or "user"
+    action_raw = args.get("action")
+    timeout_seconds = int(args.get("timeout_seconds") or 900)
+    if not _is_user_writer(by):
+        return _error("space_permission_denied", "only user can run provider auth flow")
+    try:
+        provider = _provider_or_error(provider_raw)
+        if provider != "notebooklm":
+            return _error("space_job_invalid", f"unsupported provider auth flow: {provider}")
+        action = _provider_auth_action_or_error(action_raw)
+        if action == "start":
+            _ = set_space_provider_state(
+                provider,
+                enabled=True,
+                real_enabled=True,
+                mode="active",
+                last_error="",
+                touch_health=True,
+            )
+            os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
+            auth = start_notebooklm_auth_flow(timeout_seconds=timeout_seconds)
+        elif action == "cancel":
+            auth = cancel_notebooklm_auth_flow()
+        else:
+            auth = get_notebooklm_auth_flow_status()
+        provider_state = get_space_provider_state(provider)
+        provider_state.update(_provider_runtime_readiness(provider))
+        credential = _build_provider_credential_status(provider)
+        return DaemonResponse(
+            ok=True,
+            result={
+                "provider": provider,
+                "provider_state": provider_state,
+                "credential": credential,
+                "auth": auth,
+            },
+        )
+    except ValueError as e:
+        return _error("space_job_invalid", str(e))
+    except Exception as e:
+        return _error("group_space_provider_auth_failed", str(e))
+
+
 def try_handle_group_space_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
     if op == "group_space_status":
         return handle_group_space_status(args)
@@ -692,4 +756,6 @@ def try_handle_group_space_op(op: str, args: Dict[str, Any]) -> Optional[DaemonR
         return handle_group_space_provider_credential_update(args)
     if op == "group_space_provider_health_check":
         return handle_group_space_provider_health_check(args)
+    if op == "group_space_provider_auth":
+        return handle_group_space_provider_auth(args)
     return None

@@ -322,6 +322,12 @@ class GroupSpaceProviderCredentialUpdateRequest(BaseModel):
     clear: bool = False
 
 
+class GroupSpaceProviderAuthRequest(BaseModel):
+    by: str = Field(default="user")
+    action: Literal["status", "start", "cancel"] = "status"
+    timeout_seconds: int = 900
+
+
 class GroupDeleteRequest(BaseModel):
     confirm: str = Field(default="")
     by: str = Field(default="user")
@@ -981,6 +987,42 @@ def create_app() -> FastAPI:
                 "args": {
                     "provider": str(provider or "notebooklm").strip() or "notebooklm",
                     "by": str(by or "user").strip() or "user",
+                },
+            }
+        )
+
+    @app.post("/api/v1/space/providers/{provider}/auth")
+    async def group_space_provider_auth(provider: str, req: GroupSpaceProviderAuthRequest) -> Dict[str, Any]:
+        action = str(req.action or "status").strip() or "status"
+        if read_only and action != "status":
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Provider auth-flow write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        return await _daemon(
+            {
+                "op": "group_space_provider_auth",
+                "args": {
+                    "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                    "by": str(req.by or "user").strip() or "user",
+                    "action": action,
+                    "timeout_seconds": int(req.timeout_seconds or 900),
+                },
+            }
+        )
+
+    @app.get("/api/v1/space/providers/{provider}/auth")
+    async def group_space_provider_auth_status(provider: str, by: str = "user") -> Dict[str, Any]:
+        return await _daemon(
+            {
+                "op": "group_space_provider_auth",
+                "args": {
+                    "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                    "by": str(by or "user").strip() or "user",
+                    "action": "status",
                 },
             }
         )

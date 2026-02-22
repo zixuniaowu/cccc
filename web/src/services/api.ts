@@ -21,6 +21,7 @@ import type {
   GroupSpaceStatus,
   GroupSpaceJob,
   GroupSpaceProviderCredentialStatus,
+  GroupSpaceProviderAuthStatus,
 } from "../types";
 
 // ============ Token management ============
@@ -1188,6 +1189,37 @@ export async function checkGroupSpaceProviderHealth(provider: string = "notebook
     credential?: GroupSpaceProviderCredentialStatus;
   }>(`/api/v1/space/providers/${encodeURIComponent(provider)}/health?by=user`, {
     method: "POST",
+  });
+}
+
+export async function controlGroupSpaceProviderAuth(args: {
+  provider?: string;
+  action: "status" | "start" | "cancel";
+  timeoutSeconds?: number;
+}) {
+  const provider = args.provider || "notebooklm";
+  if (args.action === "status") {
+    return apiJson<{
+      provider: string;
+      provider_state: Record<string, unknown>;
+      credential: GroupSpaceProviderCredentialStatus;
+      auth: GroupSpaceProviderAuthStatus;
+    }>(`/api/v1/space/providers/${encodeURIComponent(provider)}/auth?by=user`, {
+      method: "GET",
+    });
+  }
+  return apiJson<{
+    provider: string;
+    provider_state: Record<string, unknown>;
+    credential: GroupSpaceProviderCredentialStatus;
+    auth: GroupSpaceProviderAuthStatus;
+  }>(`/api/v1/space/providers/${encodeURIComponent(provider)}/auth`, {
+    method: "POST",
+    body: JSON.stringify({
+      by: "user",
+      action: args.action,
+      timeout_seconds: Number(args.timeoutSeconds || 900),
+    }),
   });
 }
 

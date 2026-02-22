@@ -18,6 +18,7 @@ SpaceCredentialSource = Literal["none", "store", "env"]
 class SpaceProviderState(BaseModel):
     provider: SpaceProviderId = "notebooklm"
     enabled: bool = False
+    real_enabled: bool = False
     mode: SpaceProviderMode = "disabled"
     last_health_at: Optional[str] = None
     last_error: Optional[str] = None

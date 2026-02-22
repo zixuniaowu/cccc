@@ -102,6 +102,7 @@ from .serve_ops import (
 )
 from .group_space_runtime import process_due_space_jobs
 from .group_space_sync import process_due_space_syncs
+from .group_space_store import get_space_provider_state
 from .ops.template_ops import (
     group_create_from_template,
     group_template_export,
@@ -141,6 +142,18 @@ def _apply_observability_settings(home: Path, obs: Dict[str, Any]) -> None:
         if level == "INFO":
             level = "DEBUG"
     setup_root_json_logging(component="daemon", level=level, force=True)
+
+
+def _apply_space_provider_runtime_flags_from_state() -> None:
+    """Restore provider runtime toggles from daemon-owned persisted state."""
+    try:
+        if str(os.environ.get("CCCC_NOTEBOOKLM_REAL") or "").strip():
+            return
+        state = get_space_provider_state("notebooklm")
+        if bool(state.get("real_enabled")):
+            os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
+    except Exception:
+        pass
 
 
 def _pty_backlog_bytes() -> int:
@@ -737,6 +750,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         _apply_observability_settings(p.home, get_observability_settings())
     except Exception:
         pass
+    _apply_space_provider_runtime_flags_from_state()
 
     _cleanup_stale_daemon_endpoints(p)
     if _is_daemon_alive(p):

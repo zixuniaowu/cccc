@@ -487,6 +487,84 @@ class TestGroupSpaceOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_provider_auth_flow_start_status_cancel(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_real = self._with_env("CCCC_NOTEBOOKLM_REAL", None)
+        try:
+            with patch(
+                "cccc.daemon.ops.group_space_ops.start_notebooklm_auth_flow",
+                return_value={
+                    "provider": "notebooklm",
+                    "state": "running",
+                    "phase": "waiting_user_login",
+                    "session_id": "nbl_auth_1",
+                },
+            ) as start_mock, patch(
+                "cccc.daemon.ops.group_space_ops.get_notebooklm_auth_flow_status",
+                return_value={
+                    "provider": "notebooklm",
+                    "state": "running",
+                    "phase": "waiting_user_login",
+                },
+            ) as status_mock, patch(
+                "cccc.daemon.ops.group_space_ops.cancel_notebooklm_auth_flow",
+                return_value={
+                    "provider": "notebooklm",
+                    "state": "running",
+                    "phase": "canceling",
+                },
+            ) as cancel_mock:
+                started, _ = self._call(
+                    "group_space_provider_auth",
+                    {
+                        "provider": "notebooklm",
+                        "by": "user",
+                        "action": "start",
+                        "timeout_seconds": 120,
+                    },
+                )
+                self.assertTrue(started.ok, getattr(started, "error", None))
+                start_mock.assert_called_once_with(timeout_seconds=120)
+                started_result = started.result if isinstance(started.result, dict) else {}
+                started_auth = started_result.get("auth") if isinstance(started_result.get("auth"), dict) else {}
+                self.assertEqual(str(started_auth.get("state") or ""), "running")
+                provider_state = (
+                    started_result.get("provider_state")
+                    if isinstance(started_result.get("provider_state"), dict)
+                    else {}
+                )
+                self.assertEqual(bool(provider_state.get("real_enabled")), True)
+                self.assertEqual(os.environ.get("CCCC_NOTEBOOKLM_REAL"), "1")
+
+                status, _ = self._call(
+                    "group_space_provider_auth",
+                    {
+                        "provider": "notebooklm",
+                        "by": "user",
+                        "action": "status",
+                    },
+                )
+                self.assertTrue(status.ok, getattr(status, "error", None))
+                status_mock.assert_called_once()
+                status_auth = (status.result or {}).get("auth") if isinstance(status.result, dict) else {}
+                self.assertEqual(str((status_auth or {}).get("state") or ""), "running")
+
+                canceled, _ = self._call(
+                    "group_space_provider_auth",
+                    {
+                        "provider": "notebooklm",
+                        "by": "user",
+                        "action": "cancel",
+                    },
+                )
+                self.assertTrue(canceled.ok, getattr(canceled, "error", None))
+                cancel_mock.assert_called_once()
+                canceled_auth = (canceled.result or {}).get("auth") if isinstance(canceled.result, dict) else {}
+                self.assertEqual(str((canceled_auth or {}).get("phase") or ""), "canceling")
+        finally:
+            cleanup_real()
+            cleanup()
+
     def test_provider_credential_ops_require_user_identity(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -502,6 +580,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     },
                 ),
                 ("group_space_provider_health_check", {"provider": "notebooklm", "by": "foreman"}),
+                ("group_space_provider_auth", {"provider": "notebooklm", "by": "foreman", "action": "status"}),
             ):
                 resp, _ = self._call(op, args)
                 self.assertFalse(resp.ok)

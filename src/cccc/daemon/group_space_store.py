@@ -308,6 +308,7 @@ def set_space_provider_state(
     provider: str = "notebooklm",
     *,
     enabled: Optional[bool] = None,
+    real_enabled: Optional[bool] = None,
     mode: Optional[str] = None,
     last_error: Optional[str] = None,
     touch_health: bool = False,
@@ -323,6 +324,8 @@ def set_space_provider_state(
     )
     if enabled is not None:
         current["enabled"] = bool(enabled)
+    if real_enabled is not None:
+        current["real_enabled"] = bool(real_enabled)
     if mode is not None:
         current["mode"] = str(mode)
     if last_error is not None:

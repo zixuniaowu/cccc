@@ -1902,6 +1902,54 @@ Result:
 }
 ```
 
+#### `group_space_provider_auth`
+
+Control provider auth flow (`status`/`start`/`cancel`) for backend-managed
+NotebookLM sign-in.
+
+Args:
+```ts
+{
+  provider?: "notebooklm"
+  action?: "status" | "start" | "cancel"
+  timeout_seconds?: number
+  by?: string // user-only
+}
+```
+
+Result:
+```ts
+{
+  provider: "notebooklm"
+  provider_state: Record<string, unknown>
+  credential: {
+    provider: "notebooklm"
+    key: string
+    configured: boolean
+    source: "none" | "store" | "env"
+    env_configured: boolean
+    store_configured: boolean
+    updated_at?: string | null
+    masked_value?: string | null
+  }
+  auth: {
+    provider: "notebooklm"
+    state: "idle" | "running" | "succeeded" | "failed" | "canceled"
+    phase?: string
+    session_id?: string
+    started_at?: string
+    updated_at?: string
+    finished_at?: string
+    message?: string
+    error?: { code: string; message: string } | Record<string, unknown>
+  }
+}
+```
+
+Notes:
+- `start` may open a browser on the daemon host for Google sign-in.
+- Provider write readiness remains gated by `auth_configured` and runtime mode.
+
 ## 9. Appendix: Example Lines
 
 ### 9.1 Ping

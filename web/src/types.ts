@@ -255,6 +255,7 @@ export type RemoteAccessState = {
 export type GroupSpaceProviderState = {
   provider: "notebooklm" | string;
   enabled: boolean;
+  real_enabled?: boolean;
   mode: "disabled" | "active" | "degraded" | string;
   last_health_at?: string | null;
   last_error?: string | null;
@@ -274,6 +275,26 @@ export type GroupSpaceProviderCredentialStatus = {
   store_configured: boolean;
   updated_at?: string | null;
   masked_value?: string | null;
+};
+
+export type GroupSpaceProviderAuthState =
+  | "idle"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "canceled"
+  | string;
+
+export type GroupSpaceProviderAuthStatus = {
+  provider: "notebooklm" | string;
+  state: GroupSpaceProviderAuthState;
+  phase?: string;
+  session_id?: string;
+  started_at?: string;
+  updated_at?: string;
+  finished_at?: string;
+  message?: string;
+  error?: { code?: string; message?: string } | null;
 };
 
 export type GroupSpaceBinding = {

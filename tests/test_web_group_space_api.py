@@ -151,6 +151,39 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 health_body = health.json()
                 self.assertTrue(health_body.get("ok"))
                 self.assertEqual(bool((health_body.get("result") or {}).get("healthy")), True)
+
+                with patch(
+                    "cccc.daemon.ops.group_space_ops.start_notebooklm_auth_flow",
+                    return_value={
+                        "provider": "notebooklm",
+                        "state": "running",
+                        "phase": "waiting_user_login",
+                        "session_id": "nbl_auth_web",
+                    },
+                ), patch(
+                    "cccc.daemon.ops.group_space_ops.get_notebooklm_auth_flow_status",
+                    return_value={"provider": "notebooklm", "state": "running", "phase": "waiting_user_login"},
+                ), patch(
+                    "cccc.daemon.ops.group_space_ops.cancel_notebooklm_auth_flow",
+                    return_value={"provider": "notebooklm", "state": "running", "phase": "canceling"},
+                ):
+                    auth_start = client.post(
+                        "/api/v1/space/providers/notebooklm/auth",
+                        json={"by": "user", "action": "start", "timeout_seconds": 120},
+                    )
+                    self.assertEqual(auth_start.status_code, 200)
+                    self.assertTrue(auth_start.json().get("ok"))
+
+                    auth_status = client.get("/api/v1/space/providers/notebooklm/auth?by=user")
+                    self.assertEqual(auth_status.status_code, 200)
+                    self.assertTrue(auth_status.json().get("ok"))
+
+                    auth_cancel = client.post(
+                        "/api/v1/space/providers/notebooklm/auth",
+                        json={"by": "user", "action": "cancel"},
+                    )
+                    self.assertEqual(auth_cancel.status_code, 200)
+                    self.assertTrue(auth_cancel.json().get("ok"))
         finally:
             cleanup_stub()
             cleanup()
@@ -196,6 +229,24 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 health_write_resp = client.post("/api/v1/space/providers/notebooklm/health?by=user")
                 self.assertEqual(health_write_resp.status_code, 403)
                 self.assertEqual(str((health_write_resp.json().get("error") or {}).get("code") or ""), "read_only")
+
+                auth_status_resp = client.get("/api/v1/space/providers/notebooklm/auth?by=user")
+                self.assertEqual(auth_status_resp.status_code, 200)
+                self.assertTrue(auth_status_resp.json().get("ok"))
+
+                auth_start_resp = client.post(
+                    "/api/v1/space/providers/notebooklm/auth",
+                    json={"by": "user", "action": "start"},
+                )
+                self.assertEqual(auth_start_resp.status_code, 403)
+                self.assertEqual(str((auth_start_resp.json().get("error") or {}).get("code") or ""), "read_only")
+
+                auth_cancel_resp = client.post(
+                    "/api/v1/space/providers/notebooklm/auth",
+                    json={"by": "user", "action": "cancel"},
+                )
+                self.assertEqual(auth_cancel_resp.status_code, 403)
+                self.assertEqual(str((auth_cancel_resp.json().get("error") or {}).get("code") or ""), "read_only")
         finally:
             cleanup_mode()
             cleanup()
