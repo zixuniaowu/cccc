@@ -1542,7 +1542,30 @@ Result:
     status: "stopped" | "running" | "not_installed" | "not_authenticated" | "misconfigured" | "error"
     endpoint?: string | null
     updated_at?: string | null
-    diagnostics?: Record<string, unknown>
+    diagnostics?: {
+      web_token_present?: boolean
+      web_token_source?: "settings" | "env" | "none" | string
+      web_host?: string
+      web_host_source?: "settings" | "env" | "default" | string
+      web_port?: number
+      web_port_source?: "settings" | "env" | "default" | string
+      web_public_url?: string | null
+      web_public_url_source?: "settings" | "env" | "none" | string
+      web_bind_loopback?: boolean
+      web_bind_reachable?: boolean
+      mode_supported?: boolean
+      tailscale_installed?: boolean | null
+      tailscale_backend_state?: string | null
+      [k: string]: unknown
+    }
+    config?: {
+      web_host?: string
+      web_port?: number
+      web_public_url?: string | null
+      web_token_configured?: boolean
+      web_token_source?: "settings" | "env" | "none" | string
+      [k: string]: unknown
+    }
     next_steps?: string[]
   }
 }
@@ -1559,6 +1582,11 @@ Args:
   provider?: "off" | "manual" | "tailscale"
   mode?: string
   enforce_web_token?: boolean
+  web_host?: string
+  web_port?: number
+  web_public_url?: string
+  web_token?: string
+  clear_web_token?: boolean
 }
 ```
 

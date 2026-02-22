@@ -27,6 +27,9 @@ cccc.* namespace (collaboration control plane):
 - cccc_space_query: Query provider-backed Group Space knowledge
 - cccc_space_jobs: List/retry/cancel Group Space jobs
 - cccc_space_sync: Read or run repo/space synchronization reconcile
+- cccc_space_provider_auth: Control provider auth flow (status/start/cancel)
+- cccc_space_provider_credential_status: Read provider credential status (masked)
+- cccc_space_provider_credential_update: Update/clear provider credential
 - cccc_automation_state: Read automation reminders/status visible to caller
 - cccc_automation_manage: Manage automation reminders (MCP actor writes are notify-only)
 - cccc_project_info: Get PROJECT.md content (project goals/constraints)
@@ -1003,6 +1006,55 @@ def space_sync(
     )
 
 
+def space_provider_auth(
+    *,
+    provider: str = "notebooklm",
+    by: str,
+    action: str = "status",
+    timeout_seconds: int = 900,
+) -> Dict[str, Any]:
+    """Control Group Space provider auth flow (status/start/cancel)."""
+    req: Dict[str, Any] = {
+        "provider": str(provider or "notebooklm"),
+        "by": str(by or "user"),
+        "action": str(action or "status"),
+    }
+    if str(action or "status") == "start":
+        req["timeout_seconds"] = max(60, min(int(timeout_seconds or 900), 1800))
+    return _call_daemon_or_raise({"op": "group_space_provider_auth", "args": req})
+
+
+def space_provider_credential_status(*, provider: str = "notebooklm", by: str) -> Dict[str, Any]:
+    """Read Group Space provider credential status (masked metadata)."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_provider_credential_status",
+            "args": {"provider": str(provider or "notebooklm"), "by": str(by or "user")},
+        }
+    )
+
+
+def space_provider_credential_update(
+    *,
+    provider: str = "notebooklm",
+    by: str,
+    auth_json: str = "",
+    clear: bool = False,
+) -> Dict[str, Any]:
+    """Update/clear Group Space provider credential."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_provider_credential_update",
+            "args": {
+                "provider": str(provider or "notebooklm"),
+                "by": str(by or "user"),
+                "auth_json": str(auth_json or ""),
+                "clear": bool(clear),
+            },
+        }
+    )
+
+
 def project_info(*, group_id: str) -> Dict[str, Any]:
     """Get PROJECT.md content for the group's active scope"""
     from pathlib import Path
@@ -1646,6 +1698,38 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             provider=str(arguments.get("provider") or "notebooklm"),
             action=str(arguments.get("action") or "run"),
             force=bool(arguments.get("force") is True),
+        )
+
+    if name == "cccc_space_provider_auth":
+        by = _resolve_caller_from_by(arguments)
+        timeout_raw = arguments.get("timeout_seconds")
+        timeout_seconds = 900
+        if timeout_raw is not None:
+            try:
+                timeout_seconds = int(timeout_raw)
+            except Exception:
+                raise MCPError(code="invalid_request", message="timeout_seconds must be an integer")
+        return space_provider_auth(
+            provider=str(arguments.get("provider") or "notebooklm"),
+            by=by,
+            action=str(arguments.get("action") or "status"),
+            timeout_seconds=timeout_seconds,
+        )
+
+    if name == "cccc_space_provider_credential_status":
+        by = _resolve_caller_from_by(arguments)
+        return space_provider_credential_status(
+            provider=str(arguments.get("provider") or "notebooklm"),
+            by=by,
+        )
+
+    if name == "cccc_space_provider_credential_update":
+        by = _resolve_caller_from_by(arguments)
+        return space_provider_credential_update(
+            provider=str(arguments.get("provider") or "notebooklm"),
+            by=by,
+            auth_json=str(arguments.get("auth_json") or ""),
+            clear=coerce_bool(arguments.get("clear"), default=False),
         )
 
     if name == "cccc_group_set_state":

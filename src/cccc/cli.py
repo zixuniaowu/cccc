@@ -36,6 +36,7 @@ from .kernel.registry import load_registry
 from .kernel.scope import detect_scope
 from .kernel.system_prompt import render_system_prompt
 from .paths import ensure_home
+from .ports.im.config_schema import canonicalize_im_config
 from .util.conv import coerce_bool
 
 
@@ -96,7 +97,7 @@ def _ensure_daemon_running() -> bool:
                         return False
                 return True
             except Exception:
-                return True
+                return False
 
         needs_restart = False
         if daemon_version and daemon_version != __version__:
@@ -106,9 +107,11 @@ def _ensure_daemon_running() -> bool:
 
         if needs_restart:
             try:
-                call_daemon({"op": "shutdown"}, timeout_s=2.0)
-            except Exception:
-                pass
+                shutdown_resp = call_daemon({"op": "shutdown"}, timeout_s=2.0)
+                if not bool(shutdown_resp.get("ok")):
+                    print("warn: daemon restart requested but shutdown RPC failed; trying fallback termination", file=sys.stderr)
+            except Exception as e:
+                print(f"warn: daemon restart requested but shutdown RPC errored: {e}", file=sys.stderr)
 
             deadline = time.time() + 2.0
             while time.time() < deadline:
@@ -121,15 +124,24 @@ def _ensure_daemon_running() -> bool:
                 try:
                     import signal
 
+                    killed = False
                     try:
                         os.killpg(os.getpgid(daemon_pid), signal.SIGTERM)
-                    except Exception:
+                        killed = True
+                    except Exception as e_pg:
                         try:
                             os.kill(daemon_pid, signal.SIGTERM)
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                            killed = True
+                        except Exception as e_kill:
+                            print(
+                                f"warn: failed to terminate stale daemon pid={daemon_pid}: killpg={e_pg}; kill={e_kill}",
+                                file=sys.stderr,
+                            )
+                    if not killed:
+                        return True
+                except Exception as e:
+                    print(f"warn: failed to terminate stale daemon pid={daemon_pid}: {e}", file=sys.stderr)
+                    return True
 
                 deadline = time.time() + 2.0
                 while time.time() < deadline:
@@ -150,8 +162,8 @@ def _ensure_daemon_running() -> bool:
                 sock_path.unlink(missing_ok=True)
                 addr_path.unlink(missing_ok=True)
                 pid_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"warn: failed to cleanup stale daemon state files: {e}", file=sys.stderr)
         else:
             return True
 
@@ -1892,6 +1904,67 @@ def cmd_space_health(args: argparse.Namespace) -> int:
     return 0 if resp.get("ok") else 2
 
 
+def cmd_space_auth_status(args: argparse.Namespace) -> int:
+    """Show Group Space provider auth flow status."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_auth",
+            "args": {"provider": provider, "by": by, "action": "status"},
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_auth_start(args: argparse.Namespace) -> int:
+    """Start Group Space provider auth flow."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    try:
+        timeout_seconds = int(getattr(args, "timeout_seconds", 900) or 900)
+    except Exception:
+        timeout_seconds = 900
+    timeout_seconds = max(60, min(timeout_seconds, 1800))
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_auth",
+            "args": {
+                "provider": provider,
+                "by": by,
+                "action": "start",
+                "timeout_seconds": timeout_seconds,
+            },
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
+def cmd_space_auth_cancel(args: argparse.Namespace) -> int:
+    """Cancel Group Space provider auth flow."""
+    provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    by = str(getattr(args, "by", "") or "user").strip() or "user"
+    if not _ensure_daemon_running():
+        _print_json({"ok": False, "error": {"code": "daemon_unavailable", "message": "daemon unavailable"}})
+        return 2
+    resp = call_daemon(
+        {
+            "op": "group_space_provider_auth",
+            "args": {"provider": provider, "by": by, "action": "cancel"},
+        }
+    )
+    _print_json(resp)
+    return 0 if resp.get("ok") else 2
+
+
 def cmd_space_bind(args: argparse.Namespace) -> int:
     """Bind group to a Group Space provider remote space."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
@@ -2560,57 +2633,43 @@ def cmd_im_set(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
         return 2
 
-    # Update group.yaml with IM config
+    # Update group.yaml with canonical IM config.
+    prev_im = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
     im_config: dict[str, Any] = {"platform": platform}
-    # Default file transfer settings (can be customized in group.yaml).
-    default_max_mb = 20 if platform in ("telegram", "slack") else 10
-    im_config["files"] = {"enabled": True, "max_mb": default_max_mb}
-    
-    if platform == "slack":
-        # Slack uses dual tokens
-        if bot_token_env:
-            im_config["bot_token_env"] = bot_token_env
-        if app_token_env:
+    if isinstance(prev_im, dict) and "enabled" in prev_im:
+        im_config["enabled"] = coerce_bool(prev_im.get("enabled"), default=False)
+    if isinstance(prev_im, dict) and isinstance(prev_im.get("files"), dict):
+        im_config["files"] = prev_im.get("files")
+    else:
+        default_max_mb = 20 if platform in ("telegram", "slack") else 10
+        im_config["files"] = {"enabled": True, "max_mb": default_max_mb}
+    if isinstance(prev_im, dict) and "skip_pending_on_start" in prev_im:
+        im_config["skip_pending_on_start"] = coerce_bool(prev_im.get("skip_pending_on_start"), default=True)
+
+    if platform in ("telegram", "discord", "slack"):
+        token_hint = bot_token_env or token_env or token
+        if token_hint:
+            im_config["bot_token_env"] = token_hint
+        if platform == "slack" and app_token_env:
             im_config["app_token_env"] = app_token_env
     elif platform == "feishu":
-        # Feishu: app_id/app_secret (stored as env var names; the bridge reads FEISHU_APP_ID/FEISHU_APP_SECRET).
         if feishu_domain:
-            v = feishu_domain.strip().lower()
-            if v in (
-                "lark",
-                "global",
-                "intl",
-                "international",
-                "open.larkoffice.com",
-                "https://open.larkoffice.com",
-                # Historical alias used in some SDKs/docs.
-                "open.larksuite.com",
-                "https://open.larksuite.com",
-            ):
-                im_config["feishu_domain"] = "https://open.larkoffice.com"
-            else:
-                im_config["feishu_domain"] = "https://open.feishu.cn"
+            im_config["feishu_domain"] = feishu_domain
         if app_key_env:
-            im_config["feishu_app_id_env"] = app_key_env
+            im_config["feishu_app_id"] = app_key_env
         if app_secret_env:
-            im_config["feishu_app_secret_env"] = app_secret_env
+            im_config["feishu_app_secret"] = app_secret_env
     elif platform == "dingtalk":
-        # DingTalk: app_key/app_secret (+ optional robot_code).
         if app_key_env:
-            im_config["dingtalk_app_key_env"] = app_key_env
+            im_config["dingtalk_app_key"] = app_key_env
         if app_secret_env:
-            im_config["dingtalk_app_secret_env"] = app_secret_env
+            im_config["dingtalk_app_secret"] = app_secret_env
         if dingtalk_robot_code_env:
-            im_config["dingtalk_robot_code_env"] = dingtalk_robot_code_env
-        if dingtalk_robot_code:
+            im_config["dingtalk_robot_code"] = dingtalk_robot_code_env
+        elif dingtalk_robot_code:
             im_config["dingtalk_robot_code"] = dingtalk_robot_code
-    else:
-        # Telegram/Discord use single token
-        if bot_token_env:
-            im_config["token_env"] = bot_token_env
 
-    if token and platform not in ("feishu", "dingtalk"):
-        im_config["token"] = token
+    im_config = canonicalize_im_config(im_config)
 
     # Update group doc and save
     group.doc["im"] = im_config
@@ -2652,7 +2711,8 @@ def cmd_im_config(args: argparse.Namespace) -> int:
         _print_json({"ok": False, "error": {"code": "group_not_found", "message": f"group not found: {group_id}"}})
         return 2
 
-    im_config = group.doc.get("im")
+    raw_im = group.doc.get("im")
+    im_config = canonicalize_im_config(raw_im) if isinstance(raw_im, dict) else raw_im
     _print_json({"ok": True, "result": {"group_id": group_id, "im": im_config}})
     return 0
 
@@ -2725,32 +2785,36 @@ def cmd_im_start(args: argparse.Namespace) -> int:
         return 2
 
     # Check IM config
-    im_config = group.doc.get("im", {})
+    im_config = canonicalize_im_config(group.doc.get("im", {}))
     if not im_config:
         _print_json({"ok": False, "error": {"code": "no_im_config", "message": "no IM configuration. Run: cccc im set <platform>"}})
         return 2
 
     # Persist desired run-state for restart/autostart.
-    if isinstance(im_config, dict):
-        im_config["enabled"] = True
-        group.doc["im"] = im_config
-        try:
-            group.save()
-        except Exception:
-            pass
+    im_config["enabled"] = True
+    group.doc["im"] = im_config
+    try:
+        group.save()
+    except Exception:
+        pass
 
     platform = im_config.get("platform", "telegram")
 
     # Prepare environment
     env = os.environ.copy()
-    token_env = im_config.get("token_env")
-    token = im_config.get("token")
-    if token and token_env:
-        env[token_env] = token
-    elif token:
+    bot_token_env = str(im_config.get("bot_token_env") or "").strip()
+    bot_token = str(im_config.get("bot_token") or "").strip()
+    if bot_token and bot_token_env:
+        env[bot_token_env] = bot_token
+    elif bot_token:
         # Set default env var based on platform
         default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
-        env[default_env.get(platform, "BOT_TOKEN")] = token
+        env[default_env.get(platform, "BOT_TOKEN")] = bot_token
+    if str(platform) == "slack":
+        app_token_env = str(im_config.get("app_token_env") or "").strip()
+        app_token = str(im_config.get("app_token") or "").strip()
+        if app_token and app_token_env:
+            env[app_token_env] = app_token
 
     # Feishu/DingTalk: set credentials from config
     # Supports both direct values and env var names (for Web UI compatibility)
@@ -2855,8 +2919,9 @@ def cmd_im_stop(args: argparse.Namespace) -> int:
     try:
         group = load_group(group_id)
         if group is not None:
-            im_cfg = group.doc.get("im")
-            if isinstance(im_cfg, dict):
+            raw_im_cfg = group.doc.get("im")
+            if isinstance(raw_im_cfg, dict):
+                im_cfg = canonicalize_im_config(raw_im_cfg)
                 im_cfg["enabled"] = False
                 group.doc["im"] = im_cfg
                 group.save()
@@ -2917,7 +2982,8 @@ def cmd_im_status(args: argparse.Namespace) -> int:
     group = load_group(group_id)
     group_exists = group is not None
 
-    im_config = group.doc.get("im", {}) if group_exists else {}
+    raw_im = group.doc.get("im", {}) if group_exists else {}
+    im_config = canonicalize_im_config(raw_im) if isinstance(raw_im, dict) else {}
     platform = im_config.get("platform") if im_config else None
 
     # Check if running
@@ -2953,7 +3019,7 @@ def cmd_im_status(args: argparse.Namespace) -> int:
 
 
 def cmd_im_bind(args: argparse.Namespace) -> int:
-    """Bind a pending authorization key to authorize a Telegram chat."""
+    """Bind a pending authorization key to authorize an IM chat."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
@@ -3410,6 +3476,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_space_health.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
     p_space_health.add_argument("--by", default="user", help="Requester (default: user)")
     p_space_health.set_defaults(func=cmd_space_health)
+
+    p_space_auth = space_sub.add_parser("auth", help="Manage Group Space provider auth flow")
+    space_auth_sub = p_space_auth.add_subparsers(dest="auth_action", required=True)
+
+    p_space_auth_status = space_auth_sub.add_parser("status", help="Show provider auth flow status")
+    p_space_auth_status.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_auth_status.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_auth_status.set_defaults(func=cmd_space_auth_status)
+
+    p_space_auth_start = space_auth_sub.add_parser("start", help="Start provider auth flow")
+    p_space_auth_start.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_auth_start.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_auth_start.add_argument(
+        "--timeout-seconds",
+        type=int,
+        default=900,
+        help="Auth flow timeout seconds (60-1800, default: 900)",
+    )
+    p_space_auth_start.set_defaults(func=cmd_space_auth_start)
+
+    p_space_auth_cancel = space_auth_sub.add_parser("cancel", help="Cancel provider auth flow")
+    p_space_auth_cancel.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_auth_cancel.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_auth_cancel.set_defaults(func=cmd_space_auth_cancel)
 
     p_space_bind = space_sub.add_parser("bind", help="Bind group to a provider remote space")
     p_space_bind.add_argument("remote_space_id", nargs="?", default="", help="Provider remote space/notebook ID (optional; auto-create when omitted)")

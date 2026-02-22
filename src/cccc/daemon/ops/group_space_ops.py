@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+import logging
 from typing import Any, Dict, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse, SpaceBinding
@@ -10,7 +10,7 @@ from ...kernel.group import load_group
 from ...kernel.permissions import require_group_permission
 from ..group_space_provider import SpaceProviderError, provider_create_space
 from ...providers.notebooklm.errors import NotebookLMProviderError
-from ...providers.notebooklm.health import notebooklm_health_check, notebooklm_real_enabled, parse_notebooklm_auth_json
+from ...providers.notebooklm.health import notebooklm_health_check, parse_notebooklm_auth_json
 from ..notebooklm_auth_flow import (
     cancel_notebooklm_auth_flow,
     get_notebooklm_auth_flow_status,
@@ -43,6 +43,7 @@ _SPACE_JOB_ACTIONS = {"list", "retry", "cancel"}
 _SPACE_SYNC_ACTIONS = {"status", "run"}
 _SPACE_PROVIDER_AUTH_ACTIONS = {"status", "start", "cancel"}
 _SPACE_PROVIDER_SECRET_KEYS = {"notebooklm": "NOTEBOOKLM_AUTH_JSON"}
+_LOG = logging.getLogger("cccc.daemon.group_space_ops")
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -129,10 +130,7 @@ def _resolve_auth_json(provider: str) -> str:
         raw_env = str(os.environ.get("CCCC_NOTEBOOKLM_AUTH_JSON") or "").strip()
         if raw_env:
             return raw_env
-    try:
-        secrets_map = load_space_provider_secrets(pid)
-    except Exception:
-        return ""
+    secrets_map = load_space_provider_secrets(pid)
     return str(secrets_map.get(key) or "").strip()
 
 
@@ -148,15 +146,20 @@ def _provider_runtime_readiness(provider: str) -> Dict[str, Any]:
     if pid != "notebooklm":
         return {"write_ready": False, "reason": "unsupported_provider"}
     provider_state = get_space_provider_state(pid)
-    env_raw = str(os.environ.get("CCCC_NOTEBOOKLM_REAL") or "").strip()
-    if env_raw:
-        real_enabled = bool(notebooklm_real_enabled())
-    else:
-        real_enabled = bool(provider_state.get("real_enabled"))
+    real_enabled = bool(provider_state.get("real_enabled"))
     stub_enabled = bool(_truthy_env("CCCC_NOTEBOOKLM_STUB"))
-    auth_configured = bool(_resolve_auth_json(pid))
+    auth_configured = False
+    credential_read_error = ""
+    try:
+        auth_configured = bool(_resolve_auth_json(pid))
+    except Exception as e:
+        credential_read_error = str(e)
+        _LOG.warning("group-space credential read failed provider=%s: %s", pid, credential_read_error)
     write_ready = (real_enabled and auth_configured) or ((not real_enabled) and stub_enabled)
     reason = "ok"
+    if credential_read_error:
+        reason = "credential_read_failed"
+        write_ready = False
     if not write_ready:
         if real_enabled and not auth_configured:
             reason = "missing_auth"
@@ -170,6 +173,7 @@ def _provider_runtime_readiness(provider: str) -> Dict[str, Any]:
         "auth_configured": auth_configured,
         "write_ready": write_ready,
         "readiness_reason": reason,
+        "credential_read_error": credential_read_error or None,
     }
 
 
@@ -207,8 +211,8 @@ def _build_provider_credential_status(provider: str) -> Dict[str, Any]:
 def _sync_projection_best_effort(group_id: str, provider: str) -> None:
     try:
         _ = sync_group_space_projection(group_id, provider=provider)
-    except Exception:
-        pass
+    except Exception as e:
+        _LOG.warning("group-space projection sync failed group=%s provider=%s: %s", group_id, provider, e)
 
 
 def handle_group_space_status(args: Dict[str, Any]) -> DaemonResponse:
@@ -280,14 +284,31 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
             provider_state = set_space_provider_state(
                 provider,
                 enabled=True,
-                mode="active",
-                last_error="",
+                mode="degraded",
+                last_error="synchronizing group space after bind",
                 touch_health=True,
             )
             try:
                 sync_result = sync_group_space_files(group.group_id, provider=provider, force=True)
             except Exception as e:
                 sync_result = {"ok": False, "code": "space_sync_failed", "message": str(e)}
+            if isinstance(sync_result, dict) and bool(sync_result.get("ok")):
+                provider_state = set_space_provider_state(
+                    provider,
+                    enabled=True,
+                    mode="active",
+                    last_error="",
+                    touch_health=True,
+                )
+            else:
+                last_error = str((sync_result or {}).get("message") or "group space sync failed")
+                provider_state = set_space_provider_state(
+                    provider,
+                    enabled=True,
+                    mode="degraded",
+                    last_error=last_error,
+                    touch_health=True,
+                )
         else:
             binding = set_space_binding_unbound(group.group_id, provider=provider, by=by)
             has_any_bound = any(
@@ -650,7 +671,10 @@ def handle_group_space_provider_health_check(args: Dict[str, Any]) -> DaemonResp
         current_state = get_space_provider_state(provider)
         auth_json = _resolve_auth_json(provider)
         try:
-            health = notebooklm_health_check(auth_json_raw=auth_json)
+            health = notebooklm_health_check(
+                auth_json_raw=auth_json,
+                real_enabled=bool(current_state.get("real_enabled")),
+            )
             mode = "active" if bool(current_state.get("enabled")) else "disabled"
             provider_state = set_space_provider_state(
                 provider,
@@ -705,15 +729,6 @@ def handle_group_space_provider_auth(args: Dict[str, Any]) -> DaemonResponse:
             return _error("space_job_invalid", f"unsupported provider auth flow: {provider}")
         action = _provider_auth_action_or_error(action_raw)
         if action == "start":
-            _ = set_space_provider_state(
-                provider,
-                enabled=True,
-                real_enabled=True,
-                mode="active",
-                last_error="",
-                touch_health=True,
-            )
-            os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
             auth = start_notebooklm_auth_flow(timeout_seconds=timeout_seconds)
         elif action == "cancel":
             auth = cancel_notebooklm_auth_flow()

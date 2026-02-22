@@ -7,8 +7,7 @@ from typing import Any, Dict
 
 from ..providers.notebooklm.adapter import get_notebooklm_adapter
 from ..providers.notebooklm.errors import NotebookLMProviderError
-from ..providers.notebooklm.health import notebooklm_real_enabled
-from .group_space_store import load_space_provider_secrets
+from .group_space_store import get_space_provider_state, load_space_provider_secrets
 
 _NOTEBOOKLM_AUTH_KEY = "NOTEBOOKLM_AUTH_JSON"
 
@@ -37,14 +36,19 @@ def _notebooklm_stub_enabled() -> bool:
     return _truthy_env("CCCC_NOTEBOOKLM_STUB")
 
 
+def notebooklm_real_enabled() -> bool:
+    try:
+        state = get_space_provider_state("notebooklm")
+        return bool(state.get("real_enabled"))
+    except Exception:
+        return _truthy_env("CCCC_NOTEBOOKLM_REAL")
+
+
 def _resolve_notebooklm_auth_json() -> str:
     raw_env = str(os.environ.get("CCCC_NOTEBOOKLM_AUTH_JSON") or "").strip()
     if raw_env:
         return raw_env
-    try:
-        secrets_map = load_space_provider_secrets("notebooklm")
-    except Exception:
-        return ""
+    secrets_map = load_space_provider_secrets("notebooklm")
     return str(secrets_map.get(_NOTEBOOKLM_AUTH_KEY) or "").strip()
 
 

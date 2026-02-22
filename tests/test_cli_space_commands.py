@@ -33,6 +33,15 @@ class TestCliSpaceCommands(unittest.TestCase):
         args = parser.parse_args(["space", "health"])
         self.assertEqual(args.action, "health")
 
+        args = parser.parse_args(["space", "auth", "status"])
+        self.assertEqual(args.action, "auth")
+        self.assertEqual(args.auth_action, "status")
+
+        args = parser.parse_args(["space", "auth", "start", "--timeout-seconds", "120"])
+        self.assertEqual(args.action, "auth")
+        self.assertEqual(args.auth_action, "start")
+        self.assertEqual(args.timeout_seconds, 120)
+
         args = parser.parse_args(["space", "sync"])
         self.assertEqual(args.action, "sync")
 
@@ -171,6 +180,51 @@ class TestCliSpaceCommands(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         req = calls[0]
         self.assertEqual(req.get("op"), "group_space_provider_health_check")
+        self.assertEqual(req.get("args", {}).get("provider"), "notebooklm")
+
+    def test_space_auth_start_routes_to_provider_auth(self) -> None:
+        from cccc import cli
+
+        calls = []
+
+        def _fake_call_daemon(req):
+            calls.append(req)
+            return {"ok": True, "result": {"auth": {"state": "running"}}}
+
+        args = Namespace(provider="notebooklm", by="user", timeout_seconds=120)
+        with patch.object(cli, "_ensure_daemon_running", return_value=True), \
+             patch.object(cli, "call_daemon", side_effect=_fake_call_daemon), \
+             patch.object(cli, "_print_json"):
+            code = cli.cmd_space_auth_start(args)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        req = calls[0]
+        self.assertEqual(req.get("op"), "group_space_provider_auth")
+        self.assertEqual(req.get("args", {}).get("action"), "start")
+        self.assertEqual(req.get("args", {}).get("provider"), "notebooklm")
+        self.assertEqual(req.get("args", {}).get("timeout_seconds"), 120)
+
+    def test_space_auth_status_routes_to_provider_auth(self) -> None:
+        from cccc import cli
+
+        calls = []
+
+        def _fake_call_daemon(req):
+            calls.append(req)
+            return {"ok": True, "result": {"auth": {"state": "idle"}}}
+
+        args = Namespace(provider="notebooklm", by="user")
+        with patch.object(cli, "_ensure_daemon_running", return_value=True), \
+             patch.object(cli, "call_daemon", side_effect=_fake_call_daemon), \
+             patch.object(cli, "_print_json"):
+            code = cli.cmd_space_auth_status(args)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        req = calls[0]
+        self.assertEqual(req.get("op"), "group_space_provider_auth")
+        self.assertEqual(req.get("args", {}).get("action"), "status")
         self.assertEqual(req.get("args", {}).get("provider"), "notebooklm")
 
 

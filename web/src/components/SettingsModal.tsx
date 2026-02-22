@@ -228,8 +228,8 @@ export function SettingsModal({
       if (configResp.ok && configResp.result.im) {
         const im = configResp.result.im;
         if (im.platform) setImPlatform(im.platform);
-        setImBotTokenEnv(im.bot_token_env || im.token_env || im.token || "");
-        setImAppTokenEnv(im.app_token_env || "");
+        setImBotTokenEnv(im.bot_token_env || im.bot_token || im.token_env || im.token || "");
+        setImAppTokenEnv(im.app_token_env || im.app_token || "");
         // Feishu fields
         {
           const raw = String(im.feishu_domain || "https://open.feishu.cn").trim();
@@ -271,8 +271,8 @@ export function SettingsModal({
           setTerminalScrollbackLines(Math.max(1000, Math.round(scrollbackLines)));
         }
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error("Failed to load observability settings:", e);
     }
   };
 
@@ -287,8 +287,8 @@ export function SettingsModal({
           setTailActorId(actors[0].id);
         }
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      console.error("Failed to load developer actor list:", e);
     }
   };
 

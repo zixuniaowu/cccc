@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import secrets
 import subprocess
 import sys
@@ -16,7 +15,7 @@ from typing import Any, Dict, Optional
 from ..providers.notebooklm.health import parse_notebooklm_auth_json
 from ..providers.notebooklm.compat import probe_notebooklm_vendor
 from ..providers.notebooklm.errors import NotebookLMProviderError
-from .group_space_store import set_space_provider_state, update_space_provider_secrets
+from .group_space_store import get_space_provider_state, set_space_provider_state, update_space_provider_secrets
 
 _FLOW_LOCK = threading.Lock()
 _FLOW_STATE: Dict[str, Any] = {
@@ -228,6 +227,21 @@ def _persist_storage_state(storage_state: Dict[str, Any]) -> None:
 
 
 def _connect_worker(*, session_id: str, timeout_seconds: int, cancel_event: threading.Event) -> None:
+    prior_state = get_space_provider_state("notebooklm")
+    prior_enabled = bool(prior_state.get("enabled"))
+    prior_real_enabled = bool(prior_state.get("real_enabled"))
+
+    def _mark_provider_error(message: str) -> None:
+        mode = "degraded" if prior_enabled else "disabled"
+        _ = set_space_provider_state(
+            "notebooklm",
+            enabled=prior_enabled,
+            real_enabled=prior_real_enabled,
+            mode=mode,
+            last_error=str(message or "NotebookLM connect failed"),
+            touch_health=True,
+        )
+
     try:
         _update_state(
             state="running",
@@ -239,30 +253,12 @@ def _connect_worker(*, session_id: str, timeout_seconds: int, cancel_event: thre
             sync_playwright = _ensure_sync_playwright()
         except Exception as e:
             message = f"Failed to prepare browser runtime for Google sign-in: {e}"
-            _ = set_space_provider_state(
-                "notebooklm",
-                enabled=True,
-                real_enabled=True,
-                mode="degraded",
-                last_error=message,
-                touch_health=True,
-            )
+            _mark_provider_error(message)
             _set_failed(
                 code="space_provider_auth_flow_dependency_missing",
                 message=message,
             )
             return
-
-        # Persist real-adapter intent and apply to this daemon process.
-        os.environ["CCCC_NOTEBOOKLM_REAL"] = "1"
-        _ = set_space_provider_state(
-            "notebooklm",
-            enabled=True,
-            real_enabled=True,
-            mode="active",
-            last_error="",
-            touch_health=True,
-        )
 
         deadline = time.time() + max(60, min(timeout_seconds, 1800))
         with sync_playwright() as pw:
@@ -283,14 +279,7 @@ def _connect_worker(*, session_id: str, timeout_seconds: int, cancel_event: thre
                         return
                     if time.time() >= deadline:
                         message = "Google sign-in timed out. Please retry Connect."
-                        _ = set_space_provider_state(
-                            "notebooklm",
-                            enabled=True,
-                            real_enabled=True,
-                            mode="degraded",
-                            last_error=message,
-                            touch_health=True,
-                        )
+                        _mark_provider_error(message)
                         _set_failed(
                             code="space_provider_auth_flow_timeout",
                             message=message,
@@ -373,14 +362,7 @@ def _connect_worker(*, session_id: str, timeout_seconds: int, cancel_event: thre
                 except Exception:
                     pass
     except Exception as e:
-        _ = set_space_provider_state(
-            "notebooklm",
-            enabled=True,
-            real_enabled=True,
-            mode="degraded",
-            last_error=str(e),
-            touch_health=True,
-        )
+        _mark_provider_error(str(e))
         _set_failed(code="space_provider_auth_flow_failed", message=str(e))
 
 

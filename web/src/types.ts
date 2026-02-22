@@ -240,14 +240,25 @@ export type RemoteAccessState = {
   updated_at?: string | null;
   diagnostics?: {
     web_token_present?: boolean;
+    web_token_source?: "settings" | "env" | "none" | string;
     web_host?: string;
+    web_host_source?: "settings" | "env" | "default" | string;
     web_port?: number;
+    web_port_source?: "settings" | "env" | "default" | string;
     web_public_url?: string | null;
+    web_public_url_source?: "settings" | "env" | "none" | string;
     web_bind_loopback?: boolean;
     web_bind_reachable?: boolean;
     mode_supported?: boolean;
     tailscale_installed?: boolean | null;
     tailscale_backend_state?: string | null;
+  } | null;
+  config?: {
+    web_host?: string;
+    web_port?: number;
+    web_public_url?: string | null;
+    web_token_configured?: boolean;
+    web_token_source?: "settings" | "env" | "none" | string;
   } | null;
   next_steps?: string[] | null;
 };
@@ -458,7 +469,10 @@ export type IMConfig = {
   // Legacy single token field (backward compat)
   token_env?: string;
   token?: string;
-  // Dual token fields for Slack (bot_token for outbound, app_token for inbound)
+  // Canonical token fields
+  bot_token?: string;
+  app_token?: string;
+  // Token env fields (Slack/Telegram/Discord)
   bot_token_env?: string;
   app_token_env?: string;
   // Feishu fields

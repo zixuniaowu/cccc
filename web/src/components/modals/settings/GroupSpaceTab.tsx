@@ -46,7 +46,8 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
   const [ingestKind, setIngestKind] = useState<"context_sync" | "resource_ingest">("context_sync");
   const [ingestPayloadText, setIngestPayloadText] = useState("{}");
   const [ingestIdempotencyKey, setIngestIdempotencyKey] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const [hint, setHint] = useState("");
   const [err, setErr] = useState("");
 
@@ -81,44 +82,46 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
   const loadAll = async () => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
-    setBusy(true);
+    setLoading(true);
     setErr("");
     try {
-      const [statusResp, jobsResp, credentialResp, authResp] = await Promise.all([
-        api.fetchGroupSpaceStatus(gid, provider),
-        api.listGroupSpaceJobs({ groupId: gid, provider, state: jobsFilter, limit: 30 }),
-        api.fetchGroupSpaceProviderCredential(provider),
-        api.controlGroupSpaceProviderAuth({ provider, action: "status" }),
-      ]);
+      const statusResp = await api.fetchGroupSpaceStatus(gid, provider);
       if (!statusResp.ok) {
         setErr(statusResp.error?.message || t("groupSpace.loadFailed"));
-        return;
+      } else {
+        setStatus(statusResp.result || null);
+        const binding = statusResp.result?.binding;
+        if (binding?.status === "bound" && String(binding.remote_space_id || "").trim()) {
+          setBindRemoteId(String(binding.remote_space_id || ""));
+        }
       }
-      setStatus(statusResp.result || null);
-      const binding = statusResp.result?.binding;
-      if (binding?.status === "bound" && String(binding.remote_space_id || "").trim()) {
-        setBindRemoteId(String(binding.remote_space_id || ""));
-      }
+
+      const jobsResp = await api.listGroupSpaceJobs({ groupId: gid, provider, state: jobsFilter, limit: 30 });
       if (!jobsResp.ok) {
-        setErr(jobsResp.error?.message || t("groupSpace.loadJobsFailed"));
+        const msg = jobsResp.error?.message || t("groupSpace.loadJobsFailed");
+        setErr((prev) => prev || msg);
         setJobs([]);
-        return;
+      } else {
+        setJobs(Array.isArray(jobsResp.result?.jobs) ? jobsResp.result.jobs : []);
       }
+
+      const credentialResp = await api.fetchGroupSpaceProviderCredential(provider);
       if (credentialResp.ok) {
         setCredential(credentialResp.result?.credential || null);
       } else {
         setCredential(null);
       }
+
+      const authResp = await api.controlGroupSpaceProviderAuth({ provider, action: "status" });
       if (authResp.ok) {
         setAuthFlow(authResp.result?.auth || null);
       } else {
         setAuthFlow(null);
       }
-      setJobs(Array.isArray(jobsResp.result?.jobs) ? jobsResp.result.jobs : []);
-    } catch {
-      setErr(t("groupSpace.loadFailed"));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : t("groupSpace.loadFailed"));
     } finally {
-      setBusy(false);
+      setLoading(false);
     }
   };
 
@@ -136,7 +139,10 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     const pollOnce = async () => {
       try {
         const resp = await api.controlGroupSpaceProviderAuth({ provider, action: "status" });
-        if (!resp.ok) return;
+        if (!resp.ok) {
+          setErr(resp.error?.message || t("groupSpace.loadFailed"));
+          return;
+        }
         const next = resp.result?.auth || null;
         setAuthFlow(next);
         const nextState = String(next?.state || "");
@@ -146,8 +152,8 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
             setHintWithTimeout(t("groupSpace.googleConnectSuccess"));
           }
         }
-      } catch {
-        // keep previous status on transient polling failure
+      } catch (e) {
+        setErr(e instanceof Error ? e.message : t("groupSpace.loadFailed"));
       }
     };
     void pollOnce();
@@ -168,7 +174,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
   };
 
   const handleConnectGoogle = async () => {
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.controlGroupSpaceProviderAuth({
@@ -186,12 +192,12 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.connectStartFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
   const handleCancelConnect = async () => {
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.controlGroupSpaceProviderAuth({
@@ -208,14 +214,14 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.connectCancelFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
   const handleBind = async () => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.bindGroupSpace(gid, String(bindRemoteId || "").trim(), provider);
@@ -229,14 +235,14 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.bindFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
   const handleSyncNow = async () => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.syncGroupSpace({
@@ -254,14 +260,14 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.syncFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
   const handleUnbind = async () => {
     const gid = String(groupId || "").trim();
     if (!gid) return;
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.unbindGroupSpace(gid, provider);
@@ -275,7 +281,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.unbindFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
@@ -287,7 +293,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
       setErr(t("groupSpace.invalidJsonObject", { field: t("groupSpace.ingestPayload") }));
       return;
     }
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.ingestGroupSpace({
@@ -306,7 +312,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.ingestFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
@@ -320,7 +326,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
       setErr(t("groupSpace.storageStateInvalid"));
       return;
     }
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.updateGroupSpaceProviderCredential({
@@ -339,12 +345,12 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.credentialSaveFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
   const handleClearCredential = async () => {
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.updateGroupSpaceProviderCredential({
@@ -363,12 +369,12 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.credentialClearFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
   const handleHealthCheck = async () => {
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.checkGroupSpaceProviderHealth(provider);
@@ -389,7 +395,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.healthCheckFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
@@ -406,7 +412,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
       setErr(t("groupSpace.invalidJsonObject", { field: t("groupSpace.queryOptions") }));
       return;
     }
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     setQueryAnswer("");
     setQueryMeta("");
@@ -439,14 +445,14 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.queryFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
   const handleJobAction = async (action: "retry" | "cancel", jobId: string) => {
     const gid = String(groupId || "").trim();
     if (!gid || !jobId) return;
-    setBusy(true);
+    setActionBusy(true);
     setErr("");
     try {
       const resp = await api.actionGroupSpaceJob({
@@ -464,7 +470,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     } catch {
       setErr(t("groupSpace.jobActionFailed"));
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
 
@@ -492,7 +498,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={() => void handleConnectGoogle()}
-            disabled={busy || connectionRunning}
+            disabled={actionBusy || connectionRunning}
             className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
               isDark ? "bg-emerald-900/40 hover:bg-emerald-800/40 text-emerald-300 border border-emerald-700/60" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200"
             } disabled:opacity-50`}
@@ -501,7 +507,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           </button>
           <button
             onClick={() => void handleCancelConnect()}
-            disabled={busy || !connectionRunning}
+            disabled={actionBusy || !connectionRunning}
             className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
               isDark ? "bg-rose-900/40 hover:bg-rose-800/40 text-rose-300 border border-rose-700/60" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
             } disabled:opacity-50`}
@@ -510,7 +516,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           </button>
           <button
             onClick={() => void loadAll()}
-            disabled={busy}
+            disabled={actionBusy || loading}
             className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
               isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
             } disabled:opacity-50`}
@@ -545,12 +551,12 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("groupSpace.statusTitle")}</div>
           <button
             onClick={() => void loadAll()}
-            disabled={busy}
+            disabled={actionBusy || loading}
             className={`px-3 py-2 rounded-lg text-xs min-h-[40px] transition-colors ${
               isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
             } disabled:opacity-50`}
           >
-            {busy ? t("common:loading") : t("groupSpace.refresh")}
+            {loading ? t("common:loading") : t("groupSpace.refresh")}
           </button>
         </div>
         <div className="mt-2 text-xs">
@@ -633,7 +639,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
             <div className="flex flex-wrap gap-2">
               <button
                 onClick={() => void handleSaveCredential()}
-                disabled={busy}
+                disabled={actionBusy}
                 className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                   isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
                 } disabled:opacity-50`}
@@ -642,7 +648,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
               </button>
               <button
                 onClick={() => void handleClearCredential()}
-                disabled={busy}
+                disabled={actionBusy}
                 className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                   isDark ? "bg-rose-900/40 hover:bg-rose-800/40 text-rose-300 border border-rose-700/60" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
                 } disabled:opacity-50`}
@@ -651,7 +657,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
               </button>
               <button
                 onClick={() => void handleHealthCheck()}
-                disabled={busy}
+                disabled={actionBusy}
                 className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                   isDark ? "bg-emerald-900/40 hover:bg-emerald-800/40 text-emerald-300 border border-emerald-700/60" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200"
                 } disabled:opacity-50`}
@@ -678,7 +684,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           <div className="flex items-end gap-2">
             <button
               onClick={() => void handleBind()}
-              disabled={busy || !writeReady}
+              disabled={actionBusy || !writeReady}
               className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                 isDark ? "bg-emerald-900/40 hover:bg-emerald-800/40 text-emerald-300 border border-emerald-700/60" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200"
               } disabled:opacity-50`}
@@ -687,7 +693,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
             </button>
             <button
               onClick={() => void handleUnbind()}
-              disabled={busy}
+              disabled={actionBusy}
               className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                 isDark ? "bg-rose-900/40 hover:bg-rose-800/40 text-rose-300 border border-rose-700/60" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
               } disabled:opacity-50`}
@@ -696,7 +702,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
             </button>
             <button
               onClick={() => void handleSyncNow()}
-              disabled={busy}
+              disabled={actionBusy}
               className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                 isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
               } disabled:opacity-50`}
@@ -725,7 +731,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           </div>
           <button
             onClick={() => void handleQuery()}
-            disabled={busy}
+            disabled={actionBusy}
             className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
               isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
             } disabled:opacity-50`}
@@ -771,7 +777,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           <div className="sm:col-span-3">
             <button
               onClick={() => void handleIngest()}
-              disabled={busy}
+              disabled={actionBusy}
               className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                 isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
               } disabled:opacity-50`}
@@ -816,7 +822,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
                   <div className="mt-2 flex gap-2">
                     <button
                       onClick={() => void handleJobAction("retry", job.job_id)}
-                      disabled={!canRetry || busy}
+                      disabled={!canRetry || actionBusy}
                       className={`px-2 py-1 rounded border ${
                         isDark ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-gray-300 text-gray-800 hover:bg-gray-50"
                       } disabled:opacity-40`}
@@ -825,7 +831,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
                     </button>
                     <button
                       onClick={() => void handleJobAction("cancel", job.job_id)}
-                      disabled={!canCancel || busy}
+                      disabled={!canCancel || actionBusy}
                       className={`px-2 py-1 rounded border ${
                         isDark ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-gray-300 text-gray-800 hover:bg-gray-50"
                       } disabled:opacity-40`}

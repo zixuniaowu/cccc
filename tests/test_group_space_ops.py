@@ -489,7 +489,6 @@ class TestGroupSpaceOps(unittest.TestCase):
 
     def test_provider_auth_flow_start_status_cancel(self) -> None:
         _, cleanup = self._with_home()
-        cleanup_real = self._with_env("CCCC_NOTEBOOKLM_REAL", None)
         try:
             with patch(
                 "cccc.daemon.ops.group_space_ops.start_notebooklm_auth_flow",
@@ -533,8 +532,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     if isinstance(started_result.get("provider_state"), dict)
                     else {}
                 )
-                self.assertEqual(bool(provider_state.get("real_enabled")), True)
-                self.assertEqual(os.environ.get("CCCC_NOTEBOOKLM_REAL"), "1")
+                self.assertEqual(bool(provider_state.get("real_enabled")), False)
 
                 status, _ = self._call(
                     "group_space_provider_auth",
@@ -562,7 +560,6 @@ class TestGroupSpaceOps(unittest.TestCase):
                 canceled_auth = (canceled.result or {}).get("auth") if isinstance(canceled.result, dict) else {}
                 self.assertEqual(str((canceled_auth or {}).get("phase") or ""), "canceling")
         finally:
-            cleanup_real()
             cleanup()
 
     def test_provider_credential_ops_require_user_identity(self) -> None:

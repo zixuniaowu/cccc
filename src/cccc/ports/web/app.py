@@ -5,7 +5,6 @@ import json
 import logging
 import mimetypes
 import os
-import re
 import shlex
 import time
 from pathlib import Path
@@ -24,9 +23,11 @@ from ... import __version__
 from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind
 from ...contracts.v1.automation import AutomationRule, AutomationRuleSet
 from ...daemon.server import call_daemon, get_daemon_endpoint
+from ...ports.im.config_schema import canonicalize_im_config
 from ...kernel.blobs import store_blob_bytes, resolve_blob_attachment_path
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
+from ...kernel.settings import get_remote_access_settings
 from ...kernel.scope import detect_scope
 from ...kernel.prompt_files import (
     DEFAULT_PREAMBLE_BODY,
@@ -279,6 +280,11 @@ class RemoteAccessConfigureRequest(BaseModel):
     provider: Optional[Literal["off", "manual", "tailscale"]] = None
     mode: Optional[str] = None
     enforce_web_token: Optional[bool] = None
+    web_host: Optional[str] = None
+    web_port: Optional[int] = None
+    web_public_url: Optional[str] = None
+    web_token: Optional[str] = None
+    clear_web_token: bool = False
 
 
 class GroupSpaceBindRequest(BaseModel):
@@ -366,48 +372,6 @@ class IMPendingRejectRequest(BaseModel):
     key: str
 
 
-def _is_env_var_name(value: str) -> bool:
-    # Shell-friendly env var name (portable).
-    return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]*", (value or "").strip()))
-
-
-def _normalize_feishu_domain(value: str) -> str:
-    """
-    Normalize the Feishu/Lark OpenAPI domain.
-
-    Feishu (CN): https://open.feishu.cn
-    Lark (Global): https://open.larkoffice.com
-    """
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    v = raw.strip().lower().rstrip("/")
-    if v.endswith("/open-apis"):
-        v = v[: -len("/open-apis")].rstrip("/")
-    if v in ("feishu", "cn", "china", "open.feishu.cn", "https://open.feishu.cn"):
-        return "https://open.feishu.cn"
-    if v in (
-        "lark",
-        "global",
-        "intl",
-        "international",
-        "open.larkoffice.com",
-        "https://open.larkoffice.com",
-        # Historical alias used in some SDKs/docs.
-        "open.larksuite.com",
-        "https://open.larksuite.com",
-    ):
-        return "https://open.larkoffice.com"
-    if not (v.startswith("http://") or v.startswith("https://")):
-        v = "https://" + v
-    # Allow only known domains in the Web UI to avoid surprising network targets.
-    if v in ("https://open.feishu.cn", "https://open.larkoffice.com", "https://open.larksuite.com"):
-        if v == "https://open.larksuite.com":
-            return "https://open.larkoffice.com"
-        return v
-    return ""
-
-
 def _normalize_command(cmd: Union[str, list[str], None]) -> Optional[list[str]]:
     if cmd is None:
         return None
@@ -438,7 +402,7 @@ def _web_mode() -> Literal["normal", "exhibit"]:
 
 
 def _require_token_if_configured(request: Request) -> Optional[JSONResponse]:
-    token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
+    token = _configured_web_token()
     if not token:
         return None
 
@@ -463,6 +427,18 @@ def _require_token_if_configured(request: Request) -> Optional[JSONResponse]:
         status_code=401,
         content={"ok": False, "error": {"code": "unauthorized", "message": "missing/invalid token", "details": {}}},
     )
+
+
+def _configured_web_token() -> str:
+    """Resolve Web auth token from settings first, then env fallback."""
+    try:
+        cfg = get_remote_access_settings()
+        token = str(cfg.get("web_token") or "").strip() if isinstance(cfg, dict) else ""
+        if token:
+            return token
+    except Exception:
+        pass
+    return str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
 
 
 async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
@@ -585,7 +561,7 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def _auth(request: Request, call_next):  # type: ignore[no-untyped-def]
-        token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
+        token = _configured_web_token()
 
         blocked = _require_token_if_configured(request)
         if blocked is not None:
@@ -785,6 +761,16 @@ def create_app() -> FastAPI:
             args["mode"] = str(req.mode or "").strip()
         if req.enforce_web_token is not None:
             args["enforce_web_token"] = bool(req.enforce_web_token)
+        if req.web_host is not None:
+            args["web_host"] = str(req.web_host or "").strip()
+        if req.web_port is not None:
+            args["web_port"] = int(req.web_port)
+        if req.web_public_url is not None:
+            args["web_public_url"] = str(req.web_public_url or "").strip()
+        if req.clear_web_token:
+            args["clear_web_token"] = True
+        elif req.web_token is not None:
+            args["web_token"] = str(req.web_token or "").strip()
         return await _daemon({"op": "remote_access_configure", "args": args})
 
     @app.post("/api/v1/remote_access/start")
@@ -2649,7 +2635,7 @@ def create_app() -> FastAPI:
 
     @app.websocket("/api/v1/groups/{group_id}/actors/{actor_id}/term")
     async def actor_terminal(websocket: WebSocket, group_id: str, actor_id: str) -> None:
-        token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
+        token = _configured_web_token()
         if token:
             provided = str(websocket.query_params.get("token") or "").strip()
             cookie = ""
@@ -2823,7 +2809,7 @@ def create_app() -> FastAPI:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
-        im_config = group.doc.get("im", {})
+        im_config = canonicalize_im_config(group.doc.get("im", {}))
         platform = im_config.get("platform") if im_config else None
 
         # Check if running
@@ -2877,7 +2863,7 @@ def create_app() -> FastAPI:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {group_id}"})
 
-        im_cfg = group.doc.get("im")
+        im_cfg = canonicalize_im_config(group.doc.get("im"))
         return {"ok": True, "result": {"group_id": group_id, "im": im_cfg}}
 
     @app.post("/api/im/set")
@@ -2890,14 +2876,12 @@ def create_app() -> FastAPI:
         prev_im = group.doc.get("im") if isinstance(group.doc.get("im"), dict) else {}
         prev_enabled = coerce_bool(prev_im.get("enabled"), default=False) if isinstance(prev_im, dict) else False
 
-        # Build IM config.
-        # Note: Web UI historically used bot_token_env/app_token_env as a single input.
-        # We accept either an env var name (e.g. TELEGRAM_BOT_TOKEN) or a raw token value.
-        im_cfg: Dict[str, Any] = {"platform": req.platform}
+        # Build IM config draft then canonicalize to keep storage shape stable.
+        im_cfg: Dict[str, Any] = {"platform": str(req.platform or "").strip().lower()}
         if prev_enabled:
             im_cfg["enabled"] = True
 
-        platform = str(req.platform or "").strip().lower()
+        platform = str(im_cfg.get("platform") or "").strip().lower()
         prev_files = prev_im.get("files") if isinstance(prev_im, dict) else None
         if isinstance(prev_files, dict):
             # Preserve non-credential settings, if any (so "Set" doesn't silently drop them).
@@ -2907,75 +2891,37 @@ def create_app() -> FastAPI:
             default_max_mb = 20 if platform in ("telegram", "slack") else 10
             im_cfg["files"] = {"enabled": True, "max_mb": default_max_mb}
 
-        token_hint = str(req.bot_token_env or req.token_env or "").strip()
+        if isinstance(prev_im, dict) and "skip_pending_on_start" in prev_im:
+            im_cfg["skip_pending_on_start"] = coerce_bool(prev_im.get("skip_pending_on_start"), default=True)
 
-        if platform == "slack":
+        token_hint = str(req.bot_token_env or req.token_env or req.token or "").strip()
+
+        if platform in ("telegram", "discord", "slack"):
             if token_hint:
-                if _is_env_var_name(token_hint):
-                    im_cfg["bot_token_env"] = token_hint
-                else:
-                    im_cfg["bot_token"] = token_hint
-
+                im_cfg["bot_token_env"] = token_hint
             app_hint = str(req.app_token_env or "").strip()
-            if app_hint:
-                if _is_env_var_name(app_hint):
-                    im_cfg["app_token_env"] = app_hint
-                else:
-                    im_cfg["app_token"] = app_hint
-
-            # Backward compat: if only token_env provided, treat as bot_token_env.
-            if req.token_env and not req.bot_token_env and _is_env_var_name(req.token_env):
-                im_cfg.setdefault("bot_token_env", str(req.token_env).strip())
-
-            if req.token:
-                im_cfg.setdefault("bot_token", str(req.token).strip())
+            if platform == "slack" and app_hint:
+                im_cfg["app_token_env"] = app_hint
         elif platform == "feishu":
-            # Feishu: app_id + app_secret
-            dom = _normalize_feishu_domain(req.feishu_domain)
-            if dom:
-                im_cfg["feishu_domain"] = dom
+            im_cfg["feishu_domain"] = str(req.feishu_domain or "").strip()
             app_id = str(req.feishu_app_id or "").strip()
             app_secret = str(req.feishu_app_secret or "").strip()
             if app_id:
-                if _is_env_var_name(app_id):
-                    im_cfg["feishu_app_id_env"] = app_id
-                else:
-                    im_cfg["feishu_app_id"] = app_id
+                im_cfg["feishu_app_id"] = app_id
             if app_secret:
-                if _is_env_var_name(app_secret):
-                    im_cfg["feishu_app_secret_env"] = app_secret
-                else:
-                    im_cfg["feishu_app_secret"] = app_secret
+                im_cfg["feishu_app_secret"] = app_secret
         elif platform == "dingtalk":
-            # DingTalk: app_key + app_secret + optional robot_code
             app_key = str(req.dingtalk_app_key or "").strip()
             app_secret = str(req.dingtalk_app_secret or "").strip()
             robot_code = str(req.dingtalk_robot_code or "").strip()
             if app_key:
-                if _is_env_var_name(app_key):
-                    im_cfg["dingtalk_app_key_env"] = app_key
-                else:
-                    im_cfg["dingtalk_app_key"] = app_key
+                im_cfg["dingtalk_app_key"] = app_key
             if app_secret:
-                if _is_env_var_name(app_secret):
-                    im_cfg["dingtalk_app_secret_env"] = app_secret
-                else:
-                    im_cfg["dingtalk_app_secret"] = app_secret
+                im_cfg["dingtalk_app_secret"] = app_secret
             if robot_code:
-                if _is_env_var_name(robot_code):
-                    im_cfg["dingtalk_robot_code_env"] = robot_code
-                else:
-                    im_cfg["dingtalk_robot_code"] = robot_code
-        else:
-            # Telegram/Discord: single token.
-            if token_hint:
-                if _is_env_var_name(token_hint):
-                    im_cfg["token_env"] = token_hint
-                else:
-                    im_cfg["token"] = token_hint
+                im_cfg["dingtalk_robot_code"] = robot_code
 
-            if req.token:
-                im_cfg["token"] = str(req.token).strip()
+        im_cfg = canonicalize_im_config(im_cfg)
 
         # Update group doc and save
         group.doc["im"] = im_cfg
@@ -3025,15 +2971,14 @@ def create_app() -> FastAPI:
                 pass
 
         # Check IM config
-        im_cfg = group.doc.get("im", {})
+        im_cfg = canonicalize_im_config(group.doc.get("im", {}))
         if not im_cfg:
             return {"ok": False, "error": {"code": "no_im_config", "message": "no IM configuration"}}
 
         # Persist desired run-state for restart/autostart.
-        if isinstance(im_cfg, dict):
-            im_cfg["enabled"] = True
-            group.doc["im"] = im_cfg
-            group.save()
+        im_cfg["enabled"] = True
+        group.doc["im"] = im_cfg
+        group.save()
 
         platform = im_cfg.get("platform", "telegram")
 
@@ -3080,13 +3025,18 @@ def create_app() -> FastAPI:
                 env[robot_code_env] = robot_code
         else:
             # Telegram/Slack/Discord: token-based
-            token_env = im_cfg.get("token_env")
-            token = im_cfg.get("token")
-            if token and token_env:
-                env[token_env] = token
-            elif token:
+            bot_token_env = str(im_cfg.get("bot_token_env") or "").strip()
+            bot_token = str(im_cfg.get("bot_token") or "").strip()
+            if bot_token and bot_token_env:
+                env[bot_token_env] = bot_token
+            elif bot_token:
                 default_env = {"telegram": "TELEGRAM_BOT_TOKEN", "slack": "SLACK_BOT_TOKEN", "discord": "DISCORD_BOT_TOKEN"}
-                env[default_env.get(platform, "BOT_TOKEN")] = token
+                env[default_env.get(platform, "BOT_TOKEN")] = bot_token
+            if platform == "slack":
+                app_token_env = str(im_cfg.get("app_token_env") or "").strip()
+                app_token = str(im_cfg.get("app_token") or "").strip()
+                if app_token and app_token_env:
+                    env[app_token_env] = app_token
 
         # Start bridge as subprocess
         state_dir = group.path / "state"
@@ -3134,8 +3084,9 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
 
         # Persist desired run-state for restart/autostart.
-        im_cfg = group.doc.get("im")
-        if isinstance(im_cfg, dict):
+        raw_im_cfg = group.doc.get("im")
+        if isinstance(raw_im_cfg, dict):
+            im_cfg = canonicalize_im_config(raw_im_cfg)
             im_cfg["enabled"] = False
             group.doc["im"] = im_cfg
             try:

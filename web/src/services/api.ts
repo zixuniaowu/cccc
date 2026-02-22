@@ -978,6 +978,11 @@ export async function updateRemoteAccessConfig(args: {
   provider?: "off" | "manual" | "tailscale";
   mode?: string;
   enforceWebToken?: boolean;
+  webHost?: string;
+  webPort?: number;
+  webPublicUrl?: string;
+  webToken?: string;
+  clearWebToken?: boolean;
 }) {
   return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access", {
     method: "PUT",
@@ -986,6 +991,11 @@ export async function updateRemoteAccessConfig(args: {
       provider: args.provider,
       mode: args.mode,
       enforce_web_token: args.enforceWebToken,
+      web_host: args.webHost,
+      web_port: args.webPort,
+      web_public_url: args.webPublicUrl,
+      web_token: args.webToken,
+      clear_web_token: args.clearWebToken,
     }),
   });
 }

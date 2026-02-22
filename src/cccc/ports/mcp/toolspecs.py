@@ -694,6 +694,88 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "cccc_space_provider_auth",
+        "description": "Control Group Space provider auth flow (status/start/cancel).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Caller identity (optional if CCCC_ACTOR_ID is set)",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["status", "start", "cancel"],
+                    "description": "Auth flow action",
+                    "default": "status",
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": "For action=start: timeout seconds (60-1800, default 900)",
+                    "default": 900,
+                    "minimum": 60,
+                    "maximum": 1800,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_provider_credential_status",
+        "description": "Read Group Space provider credential status (masked metadata only).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Caller identity (optional if CCCC_ACTOR_ID is set)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_provider_credential_update",
+        "description": "Update or clear Group Space provider credential.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Caller identity (optional if CCCC_ACTOR_ID is set)",
+                },
+                "auth_json": {
+                    "type": "string",
+                    "description": "Provider credential JSON payload (required when clear=false)",
+                },
+                "clear": {
+                    "type": "boolean",
+                    "description": "Clear stored credential instead of updating",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "cccc_group_set_state",
         "description": "Set group state to control automation behavior. States: active (normal operation), idle (task complete; internal automation is muted while scheduled rules still run), paused (user pause; all automation blocked), stopped (stop all actor runtimes). Foreman should set to 'idle' when task is complete.",
         "inputSchema": {

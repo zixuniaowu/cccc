@@ -68,11 +68,16 @@ def validate_notebooklm_auth_json(auth_json_raw: str | None = None) -> Dict[str,
     return parse_notebooklm_auth_json(raw, label="CCCC_NOTEBOOKLM_AUTH_JSON")
 
 
-def notebooklm_health_check(auth_json_raw: str | None = None) -> Dict[str, Any]:
-    if not notebooklm_real_enabled():
+def notebooklm_health_check(
+    auth_json_raw: str | None = None,
+    *,
+    real_enabled: bool | None = None,
+) -> Dict[str, Any]:
+    enabled = notebooklm_real_enabled() if real_enabled is None else bool(real_enabled)
+    if not enabled:
         raise NotebookLMProviderError(
             code="space_provider_not_configured",
-            message="NotebookLM real adapter is disabled (set CCCC_NOTEBOOKLM_REAL=1 to enable)",
+            message="NotebookLM real adapter is disabled",
             transient=False,
             degrade_provider=True,
         )
