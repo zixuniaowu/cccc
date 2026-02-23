@@ -4,8 +4,12 @@ import asyncio
 import os
 import sys
 import tempfile
+import threading
+import time
 import types
 import unittest
+from pathlib import Path
+from typing import Any, Dict
 from unittest.mock import patch
 
 
@@ -107,6 +111,69 @@ class TestGroupSpaceOps(unittest.TestCase):
             cleanup_stub()
             cleanup()
 
+    def test_group_space_capabilities_reports_local_policy_and_ingest_schema(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("space-capabilities")
+            resp, _ = self._call(
+                "group_space_capabilities",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            self.assertEqual(str(result.get("group_id") or ""), gid)
+            self.assertEqual(str(result.get("provider") or ""), "notebooklm")
+
+            local_policy = result.get("local_file_policy") if isinstance(result.get("local_file_policy"), dict) else {}
+            allowed = local_policy.get("allowed_extensions") if isinstance(local_policy.get("allowed_extensions"), list) else []
+            self.assertIn(".md", allowed)
+            self.assertIn(".pdf", allowed)
+            self.assertNotIn(".py", allowed)
+            self.assertEqual(int(local_policy.get("max_file_size_bytes") or 0), 200 * 1024 * 1024)
+            self.assertEqual(
+                str(local_policy.get("unsupported_error_code") or ""),
+                "space_source_unsupported_format",
+            )
+            self.assertEqual(
+                str(local_policy.get("oversize_error_code") or ""),
+                "space_source_file_too_large",
+            )
+
+            ingest = result.get("ingest") if isinstance(result.get("ingest"), dict) else {}
+            resource_ingest = ingest.get("resource_ingest") if isinstance(ingest.get("resource_ingest"), dict) else {}
+            source_types = resource_ingest.get("source_types") if isinstance(resource_ingest.get("source_types"), list) else []
+            self.assertIn("file", source_types)
+            self.assertIn("web_page", source_types)
+            self.assertIn("youtube", source_types)
+            self.assertIn("google_docs", source_types)
+            required_fields = (
+                resource_ingest.get("required_fields")
+                if isinstance(resource_ingest.get("required_fields"), dict)
+                else {}
+            )
+            self.assertEqual(required_fields.get("google_docs"), ["source_type", "file_id"])
+            self.assertEqual(required_fields.get("file"), ["source_type", "file_path"])
+
+            artifacts = result.get("artifacts") if isinstance(result.get("artifacts"), dict) else {}
+            kinds = artifacts.get("kinds") if isinstance(artifacts.get("kinds"), list) else []
+            aliases = artifacts.get("aliases") if isinstance(artifacts.get("aliases"), dict) else {}
+            self.assertIn("slide_deck", kinds)
+            self.assertEqual(str(aliases.get("slide") or ""), "slide_deck")
+
+            query_caps = result.get("query") if isinstance(result.get("query"), dict) else {}
+            query_options = query_caps.get("options") if isinstance(query_caps.get("options"), dict) else {}
+            query_unsupported = (
+                query_caps.get("unsupported_options") if isinstance(query_caps.get("unsupported_options"), dict) else {}
+            )
+            self.assertIn("source_ids", query_options)
+            self.assertIn("language", query_unsupported)
+            self.assertIn("lang", query_unsupported)
+        finally:
+            cleanup()
+
     def test_group_space_spaces_lists_remote_notebooks(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -206,6 +273,39 @@ class TestGroupSpaceOps(unittest.TestCase):
             jobs_list = (jobs.result or {}).get("jobs") if isinstance(jobs.result, dict) else []
             self.assertIsInstance(jobs_list, list)
             self.assertGreaterEqual(len(jobs_list), 1)
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_group_space_query_rejects_unsupported_language_option(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-query-options")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_query_1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            bad_query, _ = self._call(
+                "group_space_query",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "query": "Summarize this notebook",
+                    "options": {"language": "zh-CN"},
+                },
+            )
+            self.assertFalse(bad_query.ok)
+            self.assertEqual(str(getattr(bad_query.error, "code", "")), "space_job_invalid")
+            self.assertIn("language/lang", str(getattr(bad_query.error, "message", "")))
         finally:
             cleanup_stub()
             cleanup()
@@ -316,6 +416,86 @@ class TestGroupSpaceOps(unittest.TestCase):
             cleanup_stub()
             cleanup()
 
+    def test_space_artifact_generate_save_path_prefers_canonical_artifact_id(self) -> None:
+        _, cleanup = self._with_home()
+        scope_td = tempfile.TemporaryDirectory()
+        try:
+            gid = self._create_group("space-artifacts-canonical-id")
+            self._attach_scope(gid, scope_td.name)
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_art_canonical",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            captured: dict[str, Any] = {}
+
+            def _gen(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+                _ = args, kwargs
+                return {
+                    "provider": "notebooklm",
+                    "remote_space_id": "nb_art_canonical",
+                    "kind": "report",
+                    "task_id": "tsk_123",
+                    "status": "completed",
+                }
+
+            def _list(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+                _ = args, kwargs
+                return {
+                    "provider": "notebooklm",
+                    "remote_space_id": "nb_art_canonical",
+                    "kind": "report",
+                    "artifacts": [
+                        {
+                            "artifact_id": "art_456",
+                            "kind": "report",
+                            "status": "completed",
+                            "created_at": "2026-02-23T00:00:00Z",
+                        }
+                    ],
+                }
+
+            def _download(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+                output_path = str(kwargs.get("output_path") or "")
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).write_text("report-body", encoding="utf-8")
+                captured["artifact_id"] = str(kwargs.get("artifact_id") or "")
+                captured["output_path"] = output_path
+                return {"output_path": output_path, "downloaded": True}
+
+            with patch("cccc.daemon.ops.group_space_ops.provider_generate_artifact", side_effect=_gen), \
+                 patch("cccc.daemon.ops.group_space_ops.provider_list_artifacts", side_effect=_list), \
+                 patch("cccc.daemon.ops.group_space_ops.provider_download_artifact", side_effect=_download):
+                generated, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "action": "generate",
+                        "kind": "report",
+                        "wait": True,
+                        "save_to_space": True,
+                        "by": "user",
+                    },
+                )
+
+            self.assertTrue(generated.ok, getattr(generated, "error", None))
+            result = generated.result if isinstance(generated.result, dict) else {}
+            output_path = str(result.get("output_path") or "")
+            self.assertIn("/space/artifacts/notebooklm/report/", output_path)
+            self.assertTrue(output_path.endswith("art_456.md"))
+            self.assertEqual(str(captured.get("artifact_id") or ""), "art_456")
+        finally:
+            scope_td.cleanup()
+            cleanup()
+
     def test_space_artifact_rejects_invalid_kind(self) -> None:
         _, cleanup = self._with_home()
         cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
@@ -380,6 +560,364 @@ class TestGroupSpaceOps(unittest.TestCase):
             )
             self.assertFalse(bad_download.ok)
             self.assertEqual(str(getattr(bad_download.error, "code", "")), "space_job_invalid")
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_space_artifact_accepts_prefixed_kind_alias(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        temp_ctx = tempfile.TemporaryDirectory()
+        try:
+            gid = self._create_group("space-artifacts-prefixed-kind")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_art_4",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            output_path = os.path.join(temp_ctx.name, "artifact.png")
+            downloaded, _ = self._call(
+                "group_space_artifact",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "download",
+                    "kind": "ArtifactType.INFOGRAPHIC",
+                    "save_to_space": False,
+                    "output_path": output_path,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(downloaded.ok, getattr(downloaded, "error", None))
+            result = downloaded.result if isinstance(downloaded.result, dict) else {}
+            self.assertEqual(str(result.get("kind") or ""), "infographic")
+            self.assertTrue(os.path.isfile(output_path))
+
+            generated, _ = self._call(
+                "group_space_artifact",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "generate",
+                    "kind": "slide",
+                    "wait": False,
+                    "save_to_space": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(generated.ok, getattr(generated, "error", None))
+            gen_result = generated.result if isinstance(generated.result, dict) else {}
+            self.assertEqual(str(gen_result.get("kind") or ""), "slide_deck")
+        finally:
+            temp_ctx.cleanup()
+            cleanup_stub()
+            cleanup()
+
+    def test_space_query_backpressure_when_lane_busy(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-query-backpressure")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_query_backpressure",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            started = threading.Event()
+            release = threading.Event()
+            first_result: dict = {}
+
+            def _slow_query(*, provider: str, remote_space_id: str, query: str, options: dict) -> dict:
+                _ = provider
+                _ = remote_space_id
+                _ = query
+                _ = options
+                started.set()
+                release.wait(2.0)
+                return {"answer": "ok", "references": [], "degraded": False, "error": None}
+
+            with patch("cccc.daemon.ops.group_space_ops.run_space_query", side_effect=_slow_query):
+                def _run_first() -> None:
+                    resp, _ = self._call(
+                        "group_space_query",
+                        {
+                            "group_id": gid,
+                            "provider": "notebooklm",
+                            "query": "first query",
+                        },
+                    )
+                    first_result["resp"] = resp
+
+                t = threading.Thread(target=_run_first, daemon=True)
+                t.start()
+                self.assertTrue(started.wait(1.5))
+
+                blocked, _ = self._call(
+                    "group_space_query",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "query": "second query",
+                    },
+                )
+                self.assertFalse(blocked.ok)
+                self.assertEqual(str(getattr(blocked.error, "code", "")), "space_backpressure")
+                details = getattr(blocked.error, "details", {}) if blocked.error else {}
+                self.assertEqual(str((details or {}).get("lane") or ""), "query")
+
+                release.set()
+                t.join(timeout=2.0)
+                self.assertFalse(t.is_alive())
+
+            first_resp = first_result.get("resp")
+            self.assertIsNotNone(first_resp)
+            assert first_resp is not None
+            self.assertTrue(first_resp.ok, getattr(first_resp, "error", None))
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_space_artifact_generate_queue_backpressure(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-generate-queue")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_gen_queue",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            seq = {"n": 0}
+
+            def _fake_generate(provider: str, *, remote_space_id: str, kind: str, options: dict) -> dict:
+                _ = provider
+                _ = remote_space_id
+                _ = kind
+                _ = options
+                seq["n"] += 1
+                return {"task_id": f"task_{seq['n']}", "status": "pending"}
+
+            def _fake_wait(
+                provider: str,
+                *,
+                remote_space_id: str,
+                task_id: str,
+                timeout_seconds: float,
+                initial_interval: float,
+                max_interval: float,
+            ) -> dict:
+                _ = provider
+                _ = remote_space_id
+                _ = timeout_seconds
+                _ = initial_interval
+                _ = max_interval
+                time.sleep(1.0)
+                return {"task_id": task_id, "status": "completed"}
+
+            with patch("cccc.daemon.ops.group_space_ops.provider_generate_artifact", side_effect=_fake_generate), patch(
+                "cccc.daemon.ops.group_space_ops.provider_wait_artifact",
+                side_effect=_fake_wait,
+            ):
+                first, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "action": "generate",
+                        "kind": "slide_deck",
+                        "wait": False,
+                        "save_to_space": False,
+                        "by": "user",
+                    },
+                )
+                self.assertTrue(first.ok, getattr(first, "error", None))
+                first_result = first.result if isinstance(first.result, dict) else {}
+                self.assertEqual(str(first_result.get("status") or ""), "pending")
+                self.assertFalse(bool(first_result.get("queued")))
+
+                second, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "action": "generate",
+                        "kind": "slide_deck",
+                        "wait": False,
+                        "save_to_space": False,
+                        "by": "user",
+                    },
+                )
+                self.assertTrue(second.ok, getattr(second, "error", None))
+                second_result = second.result if isinstance(second.result, dict) else {}
+                self.assertEqual(str(second_result.get("status") or ""), "queued")
+                self.assertTrue(bool(second_result.get("queued")))
+
+                third, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "action": "generate",
+                        "kind": "slide_deck",
+                        "wait": False,
+                        "save_to_space": False,
+                        "by": "user",
+                    },
+                )
+                self.assertFalse(third.ok)
+                self.assertEqual(str(getattr(third.error, "code", "")), "space_backpressure")
+                details = getattr(third.error, "details", {}) if third.error else {}
+                self.assertEqual(str((details or {}).get("lane") or ""), "generate")
+
+                # Let async workers finish before patch exits.
+                time.sleep(2.5)
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_space_artifact_async_generate_emits_system_notify(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-generate-notify")
+            self._add_actor(gid, "peer1", by="user")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_gen_notify",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            with patch(
+                "cccc.daemon.ops.group_space_ops.provider_generate_artifact",
+                return_value={"task_id": "task_notify_1", "status": "pending"},
+            ), patch(
+                "cccc.daemon.ops.group_space_ops.provider_wait_artifact",
+                return_value={"task_id": "task_notify_1", "status": "completed"},
+            ):
+                generated, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "action": "generate",
+                        "kind": "report",
+                        "wait": False,
+                        "save_to_space": False,
+                        "by": "user",
+                    },
+                )
+                self.assertTrue(generated.ok, getattr(generated, "error", None))
+
+            found = False
+            for _ in range(30):
+                inbox, _ = self._call(
+                    "inbox_list",
+                    {
+                        "group_id": gid,
+                        "actor_id": "peer1",
+                        "by": "peer1",
+                        "kind_filter": "notify",
+                        "limit": 30,
+                    },
+                )
+                self.assertTrue(inbox.ok, getattr(inbox, "error", None))
+                messages = (inbox.result or {}).get("messages") if isinstance(inbox.result, dict) else []
+                if isinstance(messages, list):
+                    for ev in messages:
+                        if not isinstance(ev, dict):
+                            continue
+                        if str(ev.get("kind") or "") != "system.notify":
+                            continue
+                        data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+                        context = data.get("context") if isinstance(data.get("context"), dict) else {}
+                        if str(context.get("task_id") or "") == "task_notify_1":
+                            found = True
+                            break
+                if found:
+                    break
+                time.sleep(0.1)
+            self.assertTrue(found, "expected async generate completion notify in inbox")
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_space_artifact_async_generate_returns_quickly_when_provider_generate_is_slow(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-generate-fast-return")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "action": "bind",
+                    "remote_space_id": "nb_gen_fast",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            def _slow_generate(provider: str, *, remote_space_id: str, kind: str, options: dict) -> dict:
+                _ = provider, remote_space_id, kind, options
+                time.sleep(2.0)
+                return {"task_id": "task_slow_1", "status": "pending"}
+
+            with patch(
+                "cccc.daemon.ops.group_space_ops.provider_generate_artifact",
+                side_effect=_slow_generate,
+            ), patch(
+                "cccc.daemon.ops.group_space_ops.provider_wait_artifact",
+                return_value={"task_id": "task_slow_1", "status": "completed"},
+            ):
+                started = time.monotonic()
+                generated, _ = self._call(
+                    "group_space_artifact",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "action": "generate",
+                        "kind": "audio",
+                        "wait": False,
+                        "save_to_space": False,
+                        "by": "user",
+                    },
+                )
+                elapsed = time.monotonic() - started
+                self.assertTrue(generated.ok, getattr(generated, "error", None))
+                result = generated.result if isinstance(generated.result, dict) else {}
+                self.assertEqual(str(result.get("status") or ""), "pending")
+                self.assertFalse(bool(result.get("queued")))
+                self.assertLess(elapsed, 1.0, f"expected async return, elapsed={elapsed:.3f}s")
+                # Let background worker consume patched provider fns before exiting patch scope.
+                time.sleep(2.3)
         finally:
             cleanup_stub()
             cleanup()
@@ -929,6 +1467,39 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertIn(str(os.environ.get("CCCC_HOME") or ""), str(profile_a))
         finally:
             cleanup()
+
+    def test_notebooklm_auth_flow_reuses_saved_credential_without_browser(self) -> None:
+        from cccc.daemon import notebooklm_auth_flow as auth_flow
+
+        saved_storage = {
+            "cookies": [{"name": "SID", "value": "saved", "domain": ".google.com", "path": "/"}],
+            "origins": [],
+        }
+        with patch.object(auth_flow, "_load_saved_storage_state", return_value=saved_storage), patch.object(
+            auth_flow,
+            "_verify_storage_state",
+            return_value=None,
+        ), patch.object(
+            auth_flow,
+            "_ensure_sync_playwright",
+            side_effect=AssertionError("browser should not start when saved credential is valid"),
+        ), patch.object(
+            auth_flow,
+            "get_space_provider_state",
+            return_value={"enabled": False, "real_enabled": False},
+        ), patch.object(
+            auth_flow,
+            "set_space_provider_state",
+            return_value={"enabled": True, "real_enabled": True, "mode": "active"},
+        ):
+            auth_flow._connect_worker(
+                session_id="nbl_auth_test_reuse",
+                timeout_seconds=120,
+                cancel_event=threading.Event(),
+            )
+            state = auth_flow.get_notebooklm_auth_flow_status()
+            self.assertEqual(str(state.get("state") or ""), "succeeded")
+            self.assertIn("connected", str(state.get("message") or "").lower())
 
 
 if __name__ == "__main__":

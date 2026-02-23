@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import logging
+import os
 from pathlib import Path
 import re
-from typing import Any, Dict, Optional
+import threading
+from typing import Any, Deque, Dict, Optional, Tuple
 
 from ...contracts.v1 import DaemonError, DaemonResponse, SpaceBinding
 from ...kernel.group import load_group
+from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
 from ..group_space_paths import resolve_space_root_from_group
 from ..group_space_provider import (
@@ -32,7 +37,7 @@ from ..notebooklm_auth_flow import (
     get_notebooklm_auth_flow_status,
     start_notebooklm_auth_flow,
 )
-from ..group_space_sync import read_group_space_sync_state, sync_group_space_files
+from ..group_space_sync import group_space_local_file_policy, read_group_space_sync_state, sync_group_space_files
 from ..group_space_projection import sync_group_space_projection
 from ..group_space_runtime import acquire_space_provider_write, execute_space_job, retry_space_job, run_space_query
 from ..group_space_store import (
@@ -71,9 +76,64 @@ _SPACE_ARTIFACT_KINDS = {
     "data_table",
     "mind_map",
 }
+_SPACE_ARTIFACT_KIND_ALIASES = {
+    "studyguide": "study_guide",
+    "study": "study_guide",
+    "datatable": "data_table",
+    "table": "data_table",
+    "slidedeck": "slide_deck",
+    "slides": "slide_deck",
+    "slide": "slide_deck",
+    "deck": "slide_deck",
+    "mindmap": "mind_map",
+    "overview": "report",
+    "summary": "report",
+    "briefing": "report",
+}
 _SPACE_PROVIDER_AUTH_ACTIONS = {"status", "start", "cancel"}
 _SPACE_PROVIDER_SECRET_KEYS = {"notebooklm": "NOTEBOOKLM_AUTH_JSON"}
+_SPACE_RESOURCE_INGEST_TYPES = {
+    "file",
+    "web_page",
+    "youtube",
+    "pasted_text",
+    "google_docs",
+    "google_slides",
+    "google_spreadsheet",
+}
+_SPACE_QUERY_OPTION_KEYS = {"source_ids"}
 _LOG = logging.getLogger("cccc.daemon.group_space_ops")
+_QUERY_ACTIVE_BY_LANE: Dict[str, int] = {}
+_QUERY_ACTIVE_LOCK = threading.Lock()
+_GENERATE_LANES: Dict[str, "_GenerateLaneState"] = {}
+_GENERATE_LANES_LOCK = threading.Lock()
+_DEFAULT_QUERY_RETRY_AFTER_SECONDS = 2
+_DEFAULT_GENERATE_RETRY_AFTER_SECONDS = 5
+_DEFAULT_ASYNC_GENERATE_WAIT_TIMEOUT_SECONDS = 7200.0
+
+
+@dataclass
+class _GenerateRequest:
+    lane_key: str
+    group_id: str
+    provider: str
+    remote_space_id: str
+    kind: str
+    options: Dict[str, Any]
+    save_to_space: bool
+    output_path: str
+    output_format: str
+    artifact_id: str
+    by: str
+    timeout_seconds: float
+    initial_interval: float
+    max_interval: float
+
+
+@dataclass
+class _GenerateLaneState:
+    active: int = 0
+    pending: Deque[_GenerateRequest] = field(default_factory=deque)
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -129,13 +189,31 @@ def _artifact_action_or_error(raw: Any) -> str:
     return action
 
 
+def _normalize_artifact_kind(raw: Any) -> str:
+    text = str(raw or "").strip().lower()
+    if not text:
+        return ""
+    if "." in text:
+        text = text.split(".")[-1].strip()
+    text = text.replace("-", "_")
+    return _SPACE_ARTIFACT_KIND_ALIASES.get(text, text)
+
+
 def _artifact_kind_or_error(raw: Any, *, allow_empty: bool = False) -> str:
-    kind = str(raw or "").strip().lower()
+    kind = _normalize_artifact_kind(raw)
     if not kind:
         if allow_empty:
             return ""
         raise ValueError("missing kind")
     if kind not in _SPACE_ARTIFACT_KINDS:
+        example = _SPACE_ARTIFACT_KIND_ALIASES.get(kind)
+        if not example:
+            for alias, target in _SPACE_ARTIFACT_KIND_ALIASES.items():
+                if kind.startswith(alias) or alias.startswith(kind):
+                    example = target
+                    break
+        if example:
+            raise ValueError(f"invalid kind: {kind} (try: {example})")
         raise ValueError(f"invalid kind: {kind}")
     return kind
 
@@ -200,6 +278,83 @@ def _artifact_extension(kind: str, *, output_format: str) -> str:
     if k == "mind_map":
         return ".json"
     return ".bin"
+
+
+def _artifact_row_id(row: Dict[str, Any]) -> str:
+    return str(row.get("artifact_id") or row.get("id") or "").strip()
+
+
+def _resolve_generated_artifact_id(
+    *,
+    provider: str,
+    remote_space_id: str,
+    kind: str,
+    task_id: str,
+    explicit_artifact_id: str,
+) -> str:
+    explicit = str(explicit_artifact_id or "").strip()
+    if explicit:
+        return explicit
+    tid = str(task_id or "").strip()
+    if not tid:
+        return ""
+    try:
+        listed = provider_list_artifacts(provider, remote_space_id=remote_space_id, kind=kind)
+    except Exception:
+        return tid
+    rows = listed.get("artifacts") if isinstance(listed.get("artifacts"), list) else []
+    artifacts = [dict(item) for item in rows if isinstance(item, dict)]
+    if not artifacts:
+        return tid
+    ids = {_artifact_row_id(item) for item in artifacts}
+    if tid in ids:
+        return tid
+    completed_ids = [
+        _artifact_row_id(item)
+        for item in artifacts
+        if _artifact_row_id(item) and _artifact_status_completed(item.get("status"))
+    ]
+    if len(completed_ids) == 1:
+        return str(completed_ids[0] or tid)
+    return tid
+
+
+def _cleanup_legacy_task_named_artifact_file(
+    *,
+    group: Any,
+    provider: str,
+    kind: str,
+    output_format: str,
+    task_id: str,
+    canonical_artifact_id: str,
+    canonical_output_path: str,
+) -> None:
+    tid = str(task_id or "").strip()
+    canonical_id = str(canonical_artifact_id or "").strip()
+    if (not tid) or (not canonical_id) or canonical_id == tid:
+        return
+    try:
+        legacy_path = _default_artifact_output_path(
+            group=group,
+            provider=provider,
+            kind=kind,
+            output_format=output_format,
+            artifact_id="",
+            task_id=tid,
+        )
+    except Exception:
+        return
+    legacy = Path(str(legacy_path or "")).expanduser()
+    current = Path(str(canonical_output_path or "")).expanduser()
+    if not legacy.is_absolute():
+        return
+    if legacy == current:
+        return
+    if legacy.exists() and legacy.is_file():
+        try:
+            legacy.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _default_artifact_output_path(
@@ -290,10 +445,318 @@ def _resolve_auth_json(provider: str) -> str:
 
 
 def _truthy_env(name: str) -> bool:
-    import os
-
     value = str(os.environ.get(name) or "").strip().lower()
     return value in {"1", "true", "yes", "y", "on"}
+
+
+def _int_env(name: str, *, default: int, lo: int, hi: int) -> int:
+    raw = str(os.environ.get(name) or "").strip()
+    try:
+        value = int(raw) if raw else int(default)
+    except Exception:
+        value = int(default)
+    return max(int(lo), min(int(hi), int(value)))
+
+
+def _float_env(name: str, *, default: float, lo: float, hi: float) -> float:
+    raw = str(os.environ.get(name) or "").strip()
+    try:
+        value = float(raw) if raw else float(default)
+    except Exception:
+        value = float(default)
+    return max(float(lo), min(float(hi), float(value)))
+
+
+def _query_inflight_limit() -> int:
+    return _int_env("CCCC_SPACE_QUERY_MAX_INFLIGHT", default=1, lo=1, hi=8)
+
+
+def _generate_active_limit() -> int:
+    return _int_env("CCCC_SPACE_GENERATE_MAX_ACTIVE", default=1, lo=1, hi=4)
+
+
+def _generate_pending_limit() -> int:
+    return _int_env("CCCC_SPACE_GENERATE_MAX_PENDING", default=1, lo=0, hi=8)
+
+
+def _async_generate_wait_timeout_seconds(request_timeout: float) -> float:
+    floor = _float_env(
+        "CCCC_SPACE_GENERATE_ASYNC_TIMEOUT_SECONDS",
+        default=_DEFAULT_ASYNC_GENERATE_WAIT_TIMEOUT_SECONDS,
+        lo=60.0,
+        hi=86400.0,
+    )
+    return max(float(request_timeout or 0.0), float(floor))
+
+
+def _space_lane_key(*, group_id: str, provider: str, remote_space_id: str) -> str:
+    gid = str(group_id or "").strip()
+    pid = str(provider or "notebooklm").strip() or "notebooklm"
+    rid = str(remote_space_id or "").strip()
+    return f"{gid}:{pid}:{rid}"
+
+
+def _query_lane_snapshot(*, active: int, limit: int) -> Dict[str, Any]:
+    return {
+        "lane": "query",
+        "active": max(0, int(active)),
+        "active_limit": max(1, int(limit)),
+        "pending": 0,
+        "pending_limit": 0,
+        "retry_after_seconds": _DEFAULT_QUERY_RETRY_AFTER_SECONDS,
+    }
+
+
+def _acquire_query_slot(*, lane_key: str) -> Tuple[bool, Dict[str, Any]]:
+    with _QUERY_ACTIVE_LOCK:
+        limit = _query_inflight_limit()
+        active = int(_QUERY_ACTIVE_BY_LANE.get(lane_key) or 0)
+        if active >= limit:
+            return False, _query_lane_snapshot(active=active, limit=limit)
+        _QUERY_ACTIVE_BY_LANE[lane_key] = active + 1
+        return True, _query_lane_snapshot(active=(active + 1), limit=limit)
+
+
+def _release_query_slot(*, lane_key: str) -> None:
+    with _QUERY_ACTIVE_LOCK:
+        active = int(_QUERY_ACTIVE_BY_LANE.get(lane_key) or 0)
+        if active <= 1:
+            _QUERY_ACTIVE_BY_LANE.pop(lane_key, None)
+            return
+        _QUERY_ACTIVE_BY_LANE[lane_key] = active - 1
+
+
+def _generate_lane_snapshot(
+    *,
+    lane: _GenerateLaneState,
+    active_limit: int,
+    pending_limit: int,
+    retry_after_seconds: int = _DEFAULT_GENERATE_RETRY_AFTER_SECONDS,
+) -> Dict[str, Any]:
+    return {
+        "lane": "generate",
+        "active": max(0, int(lane.active)),
+        "active_limit": max(1, int(active_limit)),
+        "pending": max(0, len(lane.pending)),
+        "pending_limit": max(0, int(pending_limit)),
+        "retry_after_seconds": max(1, int(retry_after_seconds)),
+    }
+
+
+def _admit_generate_request(req: _GenerateRequest, *, allow_queue: bool) -> Tuple[str, Dict[str, Any]]:
+    with _GENERATE_LANES_LOCK:
+        lane = _GENERATE_LANES.get(req.lane_key)
+        if lane is None:
+            lane = _GenerateLaneState()
+            _GENERATE_LANES[req.lane_key] = lane
+        active_limit = _generate_active_limit()
+        pending_limit = _generate_pending_limit()
+        if int(lane.active) < int(active_limit):
+            lane.active = int(lane.active) + 1
+            return "start", _generate_lane_snapshot(
+                lane=lane, active_limit=active_limit, pending_limit=pending_limit
+            )
+        if allow_queue and len(lane.pending) < int(pending_limit):
+            lane.pending.append(req)
+            return "queued", _generate_lane_snapshot(
+                lane=lane, active_limit=active_limit, pending_limit=pending_limit
+            )
+        snapshot = _generate_lane_snapshot(lane=lane, active_limit=active_limit, pending_limit=pending_limit)
+        if int(lane.active) <= 0 and not lane.pending:
+            _GENERATE_LANES.pop(req.lane_key, None)
+        return "reject", snapshot
+
+
+def _release_generate_slot(lane_key: str) -> Optional[_GenerateRequest]:
+    next_req: Optional[_GenerateRequest] = None
+    with _GENERATE_LANES_LOCK:
+        lane = _GENERATE_LANES.get(lane_key)
+        if lane is None:
+            return None
+        lane.active = max(0, int(lane.active) - 1)
+        active_limit = _generate_active_limit()
+        if lane.pending and int(lane.active) < int(active_limit):
+            next_req = lane.pending.popleft()
+            lane.active = int(lane.active) + 1
+        if int(lane.active) <= 0 and not lane.pending:
+            _GENERATE_LANES.pop(lane_key, None)
+    return next_req
+
+
+def _notify_target_from_by(by: str) -> str:
+    actor_id = str(by or "").strip()
+    if not actor_id or actor_id == "user":
+        return ""
+    return actor_id
+
+
+def _emit_artifact_async_notify(
+    *,
+    group_id: str,
+    by: str,
+    provider: str,
+    kind: str,
+    task_id: str,
+    status: str,
+    output_path: str,
+    ok: bool,
+    error_code: str = "",
+    error_message: str = "",
+) -> None:
+    try:
+        group = load_group(group_id)
+        if group is None:
+            return
+        title = "Group Space artifact ready" if ok else "Group Space artifact failed"
+        if ok:
+            message = f"{kind} generation completed."
+        else:
+            message = f"{kind} generation failed: {error_message or error_code or 'unknown error'}"
+        context = {
+            "group_id": str(group_id or ""),
+            "provider": str(provider or "notebooklm"),
+            "kind": str(kind or ""),
+            "task_id": str(task_id or ""),
+            "status": str(status or ""),
+            "output_path": str(output_path or ""),
+            "error": {"code": str(error_code or ""), "message": str(error_message or "")},
+        }
+        _ = append_event(
+            group.ledger_path,
+            kind="system.notify",
+            group_id=group.group_id,
+            scope_key="",
+            by="system",
+            data={
+                "kind": ("info" if ok else "error"),
+                "priority": ("normal" if ok else "high"),
+                "title": title,
+                "message": message,
+                "target_actor_id": _notify_target_from_by(by),
+                "requires_ack": False,
+                "context": context,
+            },
+        )
+    except Exception as e:
+        _LOG.warning("group-space async artifact notify failed group=%s: %s", group_id, e)
+
+
+def _start_generate_worker(req: _GenerateRequest, *, initial_generate_result: Optional[Dict[str, Any]] = None) -> None:
+    t = threading.Thread(
+        target=_run_generate_worker,
+        kwargs={"req": req, "initial_generate_result": initial_generate_result},
+        name="cccc-space-generate",
+        daemon=True,
+    )
+    t.start()
+
+
+def _run_generate_worker(*, req: _GenerateRequest, initial_generate_result: Optional[Dict[str, Any]] = None) -> None:
+    task_id = ""
+    artifact_status = ""
+    final_output_path = ""
+    error_code = ""
+    error_message = ""
+    ok = False
+    try:
+        generate_result = dict(initial_generate_result or {})
+        if not generate_result:
+            with acquire_space_provider_write(req.provider, req.remote_space_id):
+                generate_result = provider_generate_artifact(
+                    req.provider,
+                    remote_space_id=req.remote_space_id,
+                    kind=req.kind,
+                    options=dict(req.options or {}),
+                )
+        task_id = str(generate_result.get("task_id") or "").strip()
+        artifact_status = str(generate_result.get("status") or "").strip()
+        if not task_id:
+            raise SpaceProviderError(
+                "space_provider_upstream_error",
+                "provider generate returned empty task_id",
+                transient=False,
+                degrade_provider=False,
+            )
+
+        if not _artifact_status_completed(artifact_status):
+            wait_result = provider_wait_artifact(
+                req.provider,
+                remote_space_id=req.remote_space_id,
+                task_id=task_id,
+                timeout_seconds=_async_generate_wait_timeout_seconds(req.timeout_seconds),
+                initial_interval=float(req.initial_interval),
+                max_interval=float(req.max_interval),
+            )
+            task_id = str(wait_result.get("task_id") or task_id).strip()
+            artifact_status = str(wait_result.get("status") or artifact_status).strip()
+
+        if req.save_to_space and _artifact_status_completed(artifact_status):
+            group = _require_group(req.group_id)
+            target_path = req.output_path
+            selected_artifact_id = _resolve_generated_artifact_id(
+                provider=req.provider,
+                remote_space_id=req.remote_space_id,
+                kind=req.kind,
+                task_id=task_id,
+                explicit_artifact_id=req.artifact_id,
+            )
+            if not target_path:
+                target_path = _default_artifact_output_path(
+                    group=group,
+                    provider=req.provider,
+                    kind=req.kind,
+                    output_format=req.output_format,
+                    artifact_id=(selected_artifact_id or req.artifact_id),
+                    task_id=task_id,
+                )
+            if not selected_artifact_id:
+                selected_artifact_id = req.artifact_id or task_id
+            with acquire_space_provider_write(req.provider, req.remote_space_id):
+                download_result = provider_download_artifact(
+                    req.provider,
+                    remote_space_id=req.remote_space_id,
+                    kind=req.kind,
+                    output_path=target_path,
+                    artifact_id=selected_artifact_id,
+                    output_format=req.output_format,
+                )
+            final_output_path = str(download_result.get("output_path") or target_path)
+            if not req.output_path:
+                _cleanup_legacy_task_named_artifact_file(
+                    group=group,
+                    provider=req.provider,
+                    kind=req.kind,
+                    output_format=req.output_format,
+                    task_id=task_id,
+                    canonical_artifact_id=selected_artifact_id,
+                    canonical_output_path=final_output_path,
+                )
+        ok = _artifact_status_completed(artifact_status)
+        if not ok:
+            error_code = "space_artifact_not_ready"
+            error_message = f"artifact status is {artifact_status or 'unknown'}"
+    except Exception as e:
+        if isinstance(e, SpaceProviderError):
+            error_code = str(e.code or "space_provider_upstream_error")
+        else:
+            error_code = "group_space_artifact_failed"
+        error_message = str(e)
+    finally:
+        _emit_artifact_async_notify(
+            group_id=req.group_id,
+            by=req.by,
+            provider=req.provider,
+            kind=req.kind,
+            task_id=task_id,
+            status=artifact_status,
+            output_path=final_output_path,
+            ok=bool(ok),
+            error_code=error_code,
+            error_message=error_message,
+        )
+        next_req = _release_generate_slot(req.lane_key)
+        if next_req is not None:
+            _start_generate_worker(next_req)
 
 
 def _provider_runtime_readiness(provider: str) -> Dict[str, Any]:
@@ -368,6 +831,184 @@ def _sync_projection_best_effort(group_id: str, provider: str) -> None:
         _ = sync_group_space_projection(group_id, provider=provider)
     except Exception as e:
         _LOG.warning("group-space projection sync failed group=%s provider=%s: %s", group_id, provider, e)
+
+
+def _resource_ingest_capabilities() -> Dict[str, Any]:
+    return {
+        "source_types": sorted(_SPACE_RESOURCE_INGEST_TYPES),
+        "required_fields": {
+            "file": ["source_type", "file_path"],
+            "web_page": ["source_type", "url"],
+            "youtube": ["source_type", "url"],
+            "pasted_text": ["source_type", "content"],
+            "google_docs": ["source_type", "file_id"],
+            "google_slides": ["source_type", "file_id"],
+            "google_spreadsheet": ["source_type", "file_id"],
+        },
+        "optional_fields": {
+            "file": ["title", "mime_type", "path", "url"],
+            "web_page": ["title"],
+            "youtube": ["title"],
+            "pasted_text": ["title"],
+            "google_docs": ["title", "mime_type"],
+            "google_slides": ["title", "mime_type"],
+            "google_spreadsheet": ["title", "mime_type"],
+        },
+        "aliases": {
+            "local_file": "file",
+            "path": "file",
+            "url": "web_page",
+            "text": "pasted_text",
+            "google_doc": "google_docs",
+            "google_slide": "google_slides",
+            "google_sheet": "google_spreadsheet",
+        },
+        "examples": {
+            "file": {"source_type": "file", "file_path": "/abs/path/to/spec.md", "title": "Spec"},
+            "web_page": {"source_type": "web_page", "url": "https://example.com/spec"},
+            "youtube": {"source_type": "youtube", "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"},
+            "pasted_text": {"source_type": "pasted_text", "content": "Design notes..."},
+            "google_docs": {"source_type": "google_docs", "file_id": "1abcDEF...", "title": "Roadmap Doc"},
+        },
+    }
+
+
+def _artifact_capabilities() -> Dict[str, Any]:
+    return {
+        "actions": sorted(_SPACE_ARTIFACT_ACTIONS),
+        "kinds": sorted(_SPACE_ARTIFACT_KINDS),
+        "options": {
+            "language": "Preferred output language (e.g., zh-CN, ja, en)",
+            "instructions": "Provider-side generation instructions",
+            "source_ids": "Optional remote source_id list to constrain generation scope",
+        },
+        "aliases": {
+            "slide": "slide_deck",
+            "slides": "slide_deck",
+            "deck": "slide_deck",
+            "overview": "report",
+            "summary": "report",
+            "study": "study_guide",
+        },
+        "examples": {
+            "generate_audio": {
+                "action": "generate",
+                "kind": "audio",
+                "wait": False,
+                "save_to_space": True,
+                "options": {"language": "zh-CN"},
+            },
+            "generate_slide": {
+                "action": "generate",
+                "kind": "slide_deck",
+                "wait": False,
+                "save_to_space": True,
+                "options": {"language": "zh-CN"},
+            },
+            "download_report": {"action": "download", "kind": "report", "artifact_id": "<task_or_artifact_id>"},
+            "list_latest": {"action": "list"},
+        },
+    }
+
+
+def _query_capabilities() -> Dict[str, Any]:
+    return {
+        "options": {
+            "source_ids": "Optional remote source_id list to constrain retrieval scope",
+        },
+        "unsupported_options": {
+            "language": "Not supported by NotebookLM query API. Put language requirements in query text.",
+            "lang": "Alias of language; also unsupported for query.",
+        },
+        "examples": {
+            "basic": {"query": "Summarize key decisions from the notebook."},
+            "scoped": {"query": "Summarize only this source.", "options": {"source_ids": ["src_123"]}},
+        },
+    }
+
+
+def _normalize_query_options(raw: Any) -> Dict[str, Any]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError("options must be an object")
+
+    normalized: Dict[str, Any] = {}
+    unsupported: list[str] = []
+    for key, value in raw.items():
+        name = str(key or "").strip()
+        if not name:
+            continue
+        if name == "source_ids":
+            if value is None:
+                normalized["source_ids"] = []
+                continue
+            if not isinstance(value, list):
+                raise ValueError("options.source_ids must be an array of non-empty strings")
+            source_ids: list[str] = []
+            for idx, item in enumerate(value):
+                sid = str(item or "").strip()
+                if not sid:
+                    raise ValueError(f"options.source_ids[{idx}] must be a non-empty string")
+                source_ids.append(sid)
+            normalized["source_ids"] = source_ids
+            continue
+        unsupported.append(name)
+
+    if unsupported:
+        unique = sorted(set(unsupported))
+        if any(name in {"language", "lang"} for name in unique):
+            raise ValueError(
+                "query options do not support language/lang; NotebookLM query API has no language parameter. "
+                "Put language requirements in query text."
+            )
+        supported = ", ".join(sorted(_SPACE_QUERY_OPTION_KEYS))
+        raise ValueError(f"unsupported query options: {', '.join(unique)} (supported: {supported})")
+
+    return normalized
+
+
+def handle_group_space_capabilities(args: Dict[str, Any]) -> DaemonResponse:
+    group_id = str(args.get("group_id") or "").strip()
+    provider_raw = args.get("provider")
+    try:
+        group = _require_group(group_id)
+        provider = _provider_or_error(provider_raw)
+        space_root = resolve_space_root_from_group(group, create=False)
+        return DaemonResponse(
+            ok=True,
+            result={
+                "group_id": group.group_id,
+                "provider": provider,
+                "local_scope_attached": bool(space_root),
+                "space_root": str(space_root) if space_root is not None else "",
+                "local_file_policy": group_space_local_file_policy(),
+                "ingest": {
+                    "kinds": sorted(_SPACE_JOB_KINDS),
+                    "resource_ingest": _resource_ingest_capabilities(),
+                },
+                "query": _query_capabilities(),
+                "artifacts": _artifact_capabilities(),
+                "notes": [
+                    "Put local files under repo/space (including repo/space/sources) for file sync uploads.",
+                    "URL/Youtube/Google Docs/file-path resources should use group_space_ingest with kind=resource_ingest.",
+                    "group_space_query currently supports only options.source_ids; language/lang must be in query text.",
+                    "Artifact generation requires action=generate (or MCP auto-infers generate when source/options are present).",
+                    "NotebookLM integration is best-effort and may change due to upstream unofficial APIs.",
+                ],
+            },
+        )
+    except LookupError as e:
+        return _error("group_not_found", str(e))
+    except ValueError as e:
+        message = str(e)
+        if message == "missing_group_id":
+            return _error("missing_group_id", "missing group_id")
+        if "permission denied" in message.lower():
+            return _error("space_permission_denied", message)
+        return _error("space_job_invalid", message)
+    except Exception as e:
+        return _error("group_space_capabilities_failed", str(e))
 
 
 def handle_group_space_status(args: Dict[str, Any]) -> DaemonResponse:
@@ -478,7 +1119,7 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                 touch_health=True,
             )
             try:
-                sync_result = sync_group_space_files(group.group_id, provider=provider, force=True)
+                sync_result = sync_group_space_files(group.group_id, provider=provider, force=True, by=by)
             except Exception as e:
                 sync_result = {"ok": False, "code": "space_sync_failed", "message": str(e)}
             if isinstance(sync_result, dict) and bool(sync_result.get("ok")):
@@ -608,10 +1249,13 @@ def handle_group_space_query(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     provider_raw = args.get("provider")
     query_text = str(args.get("query") or "").strip()
-    options = args.get("options") if isinstance(args.get("options"), dict) else {}
+    options_raw = args.get("options")
     if not query_text:
         return _error("space_job_invalid", "missing query")
+    query_lane_key = ""
+    query_slot_acquired = False
     try:
+        options = _normalize_query_options(options_raw)
         group = _require_group(group_id)
         provider = _provider_or_error(provider_raw)
         binding = get_space_binding(group.group_id, provider=provider)
@@ -636,6 +1280,19 @@ def handle_group_space_query(args: Dict[str, Any]) -> DaemonResponse:
                     "error": {"code": "space_provider_disabled", "message": "provider is disabled"},
                 },
             )
+        query_lane_key = _space_lane_key(
+            group_id=group.group_id,
+            provider=provider,
+            remote_space_id=remote_space_id,
+        )
+        query_ok, query_lane = _acquire_query_slot(lane_key=query_lane_key)
+        if not query_ok:
+            return _error(
+                "space_backpressure",
+                "query lane is busy; retry later",
+                details=query_lane,
+            )
+        query_slot_acquired = True
         result = run_space_query(
             provider=provider,
             remote_space_id=remote_space_id,
@@ -664,6 +1321,9 @@ def handle_group_space_query(args: Dict[str, Any]) -> DaemonResponse:
         return _error("space_job_invalid", message)
     except Exception as e:
         return _error("group_space_query_failed", str(e))
+    finally:
+        if query_slot_acquired and query_lane_key:
+            _release_query_slot(lane_key=query_lane_key)
 
 
 def handle_group_space_sources(args: Dict[str, Any]) -> DaemonResponse:
@@ -801,6 +1461,8 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
     max_interval = _float_or_default(args.get("max_interval"), default=10.0, lo=1.0, hi=120.0)
     if max_interval < initial_interval:
         max_interval = initial_interval
+    lane_key = ""
+    generate_slot_owned = False
     try:
         group = _require_group(group_id)
         provider = _provider_or_error(provider_raw)
@@ -876,6 +1538,84 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
             )
 
         options = options_raw if isinstance(options_raw, dict) else {}
+        lane_key = _space_lane_key(
+            group_id=group.group_id,
+            provider=provider,
+            remote_space_id=remote_space_id,
+        )
+        gen_req = _GenerateRequest(
+            lane_key=lane_key,
+            group_id=group.group_id,
+            provider=provider,
+            remote_space_id=remote_space_id,
+            kind=kind,
+            options=dict(options),
+            save_to_space=bool(save_to_space),
+            output_path=output_path,
+            output_format=output_format,
+            artifact_id=artifact_id,
+            by=by,
+            timeout_seconds=timeout_seconds,
+            initial_interval=initial_interval,
+            max_interval=max_interval,
+        )
+        decision, lane = _admit_generate_request(gen_req, allow_queue=(not wait_for_completion))
+        if decision == "reject":
+            return _error(
+                "space_backpressure",
+                "generate lane is full; retry later",
+                details=lane,
+            )
+        if decision == "queued":
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "group_id": group.group_id,
+                    "provider": provider,
+                    "provider_mode": str(get_space_provider_state(provider).get("mode") or provider_mode),
+                    "binding": binding,
+                    "action": action,
+                    "kind": kind,
+                    "task_id": "",
+                    "status": "queued",
+                    "wait": False,
+                    "queued": True,
+                    "accepted": True,
+                    "saved_to_space": False,
+                    "output_path": "",
+                    "generate_result": {},
+                    "wait_result": {},
+                    "download_result": {},
+                    "queue": lane,
+                },
+            )
+        generate_slot_owned = True
+        if not wait_for_completion:
+            _start_generate_worker(gen_req)
+            generate_slot_owned = False
+            return DaemonResponse(
+                ok=True,
+                result={
+                    "group_id": group.group_id,
+                    "provider": provider,
+                    "provider_mode": str(get_space_provider_state(provider).get("mode") or provider_mode),
+                    "binding": binding,
+                    "action": action,
+                    "kind": kind,
+                    "task_id": "",
+                    "status": "pending",
+                    "wait": False,
+                    "queued": False,
+                    "accepted": True,
+                    "saved_to_space": False,
+                    "output_path": "",
+                    "generate_result": {},
+                    "wait_result": {},
+                    "download_result": {},
+                    "queue": lane,
+                },
+            )
+
         with acquire_space_provider_write(provider, remote_space_id):
             generate_result = provider_generate_artifact(
                 provider,
@@ -902,16 +1642,24 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
         final_output_path = ""
         if save_to_space and _artifact_status_completed(artifact_status):
             target_path = output_path
+            selected_artifact_id = _resolve_generated_artifact_id(
+                provider=provider,
+                remote_space_id=remote_space_id,
+                kind=kind,
+                task_id=task_id,
+                explicit_artifact_id=artifact_id,
+            )
             if not target_path:
                 target_path = _default_artifact_output_path(
                     group=group,
                     provider=provider,
                     kind=kind,
                     output_format=output_format,
-                    artifact_id=artifact_id,
+                    artifact_id=(selected_artifact_id or artifact_id),
                     task_id=task_id,
                 )
-            selected_artifact_id = artifact_id or task_id
+            if not selected_artifact_id:
+                selected_artifact_id = artifact_id or task_id
             with acquire_space_provider_write(provider, remote_space_id):
                 download_result = provider_download_artifact(
                     provider,
@@ -922,6 +1670,20 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
                     output_format=output_format,
                 )
             final_output_path = str(download_result.get("output_path") or target_path)
+            if not output_path:
+                _cleanup_legacy_task_named_artifact_file(
+                    group=group,
+                    provider=provider,
+                    kind=kind,
+                    output_format=output_format,
+                    task_id=task_id,
+                    canonical_artifact_id=selected_artifact_id,
+                    canonical_output_path=final_output_path,
+                )
+        next_req = _release_generate_slot(lane_key)
+        generate_slot_owned = False
+        if next_req is not None:
+            _start_generate_worker(next_req)
 
         return DaemonResponse(
             ok=True,
@@ -935,11 +1697,14 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
                 "task_id": task_id,
                 "status": artifact_status,
                 "wait": bool(wait_for_completion),
+                "queued": False,
+                "accepted": True,
                 "saved_to_space": bool(save_to_space and bool(final_output_path)),
                 "output_path": final_output_path,
                 "generate_result": generate_result,
                 "wait_result": wait_result,
                 "download_result": download_result,
+                "queue": lane,
             },
         )
     except SpaceProviderError as e:
@@ -957,6 +1722,11 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
         if "permission denied" in str(e).lower():
             return _error("space_permission_denied", str(e))
         return _error("group_space_artifact_failed", str(e))
+    finally:
+        if generate_slot_owned and lane_key:
+            next_req = _release_generate_slot(lane_key)
+            if next_req is not None:
+                _start_generate_worker(next_req)
 
 
 def handle_group_space_jobs(args: Dict[str, Any]) -> DaemonResponse:
@@ -1059,7 +1829,7 @@ def handle_group_space_sync(args: Dict[str, Any]) -> DaemonResponse:
                 },
             )
         _assert_write_permission(group, by=by)
-        result = sync_group_space_files(group.group_id, provider=provider, force=force)
+        result = sync_group_space_files(group.group_id, provider=provider, force=force, by=by)
         _sync_projection_best_effort(group.group_id, provider)
         if not bool(result.get("ok")):
             return _error(
@@ -1235,6 +2005,8 @@ def handle_group_space_provider_auth(args: Dict[str, Any]) -> DaemonResponse:
 
 
 def try_handle_group_space_op(op: str, args: Dict[str, Any]) -> Optional[DaemonResponse]:
+    if op == "group_space_capabilities":
+        return handle_group_space_capabilities(args)
     if op == "group_space_status":
         return handle_group_space_status(args)
     if op == "group_space_spaces":

@@ -135,7 +135,9 @@ Configure provider-backed shared memory per group:
 - Provider credential (masked metadata only)
 - Health check
 - Binding (`remote_space_id`, optional auto-create)
-- `Sync Now` reconcile button for local `repo/space/` resources
+- `Sync Now` two-way reconcile button:
+  - local `repo/space/` resources -> provider,
+  - provider source/artifact projection -> local `repo/space/`
 - Ingest/query/jobs controls
 
 For end-to-end setup details, see: `Group Space + NotebookLM`.

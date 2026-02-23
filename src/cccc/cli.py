@@ -39,6 +39,8 @@ from .paths import ensure_home
 from .ports.im.config_schema import canonicalize_im_config
 from .util.conv import coerce_bool
 
+_SPACE_QUERY_OPTION_KEYS = {"source_ids"}
+
 
 def _print_json(obj: Any) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
@@ -55,6 +57,37 @@ def _parse_json_object_arg(raw: Any, *, field: str) -> dict[str, Any]:
     if not isinstance(obj, dict):
         raise ValueError(f"{field} must be a JSON object")
     return dict(obj)
+
+
+def _normalize_space_query_options_cli(options: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(options or {})
+    unsupported = sorted(k for k in normalized.keys() if str(k or "").strip() not in _SPACE_QUERY_OPTION_KEYS)
+    if unsupported:
+        if any(str(k or "").strip() in {"language", "lang"} for k in unsupported):
+            raise ValueError(
+                "query options do not support language/lang; NotebookLM query API has no language parameter. "
+                "Put language requirements in query text."
+            )
+        supported = ", ".join(sorted(_SPACE_QUERY_OPTION_KEYS))
+        raise ValueError(
+            f"unsupported query options: {', '.join(str(k or '').strip() for k in unsupported)} (supported: {supported})"
+        )
+
+    if "source_ids" in normalized:
+        raw_source_ids = normalized.get("source_ids")
+        if raw_source_ids is None:
+            normalized["source_ids"] = []
+        elif not isinstance(raw_source_ids, list):
+            raise ValueError("options.source_ids must be an array of non-empty strings")
+        else:
+            source_ids: list[str] = []
+            for idx, item in enumerate(raw_source_ids):
+                sid = str(item or "").strip()
+                if not sid:
+                    raise ValueError(f"options.source_ids[{idx}] must be a non-empty string")
+                source_ids.append(sid)
+            normalized["source_ids"] = source_ids
+    return normalized
 
 
 def _default_runner_kind() -> str:
@@ -2096,6 +2129,7 @@ def cmd_space_query(args: argparse.Namespace) -> int:
         return 2
     try:
         options = _parse_json_object_arg(getattr(args, "options", "{}"), field="options")
+        options = _normalize_space_query_options_cli(options)
     except Exception as e:
         _print_json({"ok": False, "error": {"code": "invalid_options", "message": str(e)}})
         return 2
@@ -3534,7 +3568,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_space_query.add_argument("query", help="Query text")
     p_space_query.add_argument("--group", default="", help="Target group_id (default: active group)")
     p_space_query.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
-    p_space_query.add_argument("--options", default="{}", help="JSON object options (default: {})")
+    p_space_query.add_argument("--options", default="{}", help="JSON object options (supported: source_ids)")
     p_space_query.set_defaults(func=cmd_space_query)
 
     p_space_jobs = space_sub.add_parser("jobs", help="List/retry/cancel Group Space jobs")

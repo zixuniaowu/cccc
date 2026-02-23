@@ -203,7 +203,7 @@ cccc space ingest --kind context_sync --payload '{"vision":"v0.5 plan"}'
 cccc space ingest --kind resource_ingest --payload '{"path":"docs/spec.md"}' --idempotency-key ingest-docs-1
 
 cccc space query "What is the latest shared plan?"
-cccc space query "Summarize risks" --options '{"top_k":5}'
+cccc space query "Summarize risks from these sources" --options '{"source_ids":["src_1","src_2"]}'
 
 cccc space jobs list
 cccc space jobs list --state failed --limit 20
@@ -215,10 +215,14 @@ Notes:
 - `--group` is optional; defaults to the active group.
 - Current provider is `notebooklm`.
 - `--payload` and `--options` must be JSON objects.
+- `cccc space query --options` only supports `source_ids` (array of source IDs).
+- `language` / `lang` are not valid query options (put language requirement in query text).
 - Provider credentials are write-only; CLI/Web only return masked metadata.
 - `cccc space health` validates credential format and adapter compatibility.
 - When a group is bound, curated `context_sync` exports are also auto-enqueued from `context_sync` updates.
-- `cccc space sync` reconciles local `repo/space/` files to provider resources.
+- `cccc space sync` performs two-way reconcile for Group Space:
+  - local `repo/space/` files -> provider sources,
+  - provider source/artifact projection -> local `repo/space/` (`.sync/remote-sources` and `artifacts/`).
 
 ## Setup Commands
 

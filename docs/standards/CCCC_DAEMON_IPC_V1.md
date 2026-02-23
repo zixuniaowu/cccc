@@ -1769,9 +1769,15 @@ Args:
   group_id: string
   provider?: "notebooklm"
   query: string
-  options?: Record<string, unknown>
+  options?: {
+    source_ids?: string[] // optional remote source_id filter
+  }
 }
 ```
+
+Validation notes:
+- `options` only supports `source_ids`.
+- `options.language` / `options.lang` are invalid for `group_space_query` because NotebookLM query API does not provide a language parameter.
 
 Result:
 ```ts

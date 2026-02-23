@@ -78,6 +78,23 @@ function parseJsonObject(raw: string): { ok: true; value: Record<string, unknown
   }
 }
 
+function normalizeArtifactKind(raw: unknown): ArtifactKind | "" {
+  let text = String(raw || "").trim().toLowerCase();
+  if (!text) return "";
+  if (text.includes(".")) {
+    text = text.split(".").pop() || "";
+  }
+  text = text.replace(/-/g, "_");
+  const alias: Record<string, ArtifactKind> = {
+    studyguide: "study_guide",
+    datatable: "data_table",
+    slidedeck: "slide_deck",
+    mindmap: "mind_map",
+  };
+  const normalized = alias[text] || text;
+  return (ARTIFACT_KINDS as string[]).includes(normalized) ? (normalized as ArtifactKind) : "";
+}
+
 export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTabProps) {
   const { t } = useTranslation("settings");
   const [provider] = useState("notebooklm");
@@ -661,7 +678,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
 
   const handleArtifactDownload = async (kind: string, artifactId: string) => {
     const gid = String(groupId || "").trim();
-    const artifactKindValue = String(kind || "").trim().toLowerCase();
+    const artifactKindValue = normalizeArtifactKind(kind);
     const artifactIdValue = String(artifactId || "").trim();
     if (!gid || !artifactKindValue) return;
     if (!writeReady) {
@@ -902,6 +919,15 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
       <div>
         <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("groupSpace.title")}</h3>
         <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("groupSpace.description")}</p>
+        <div
+          className={`mt-2 rounded-lg border px-3 py-2 text-xs ${
+            isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
+          }`}
+        >
+          <div className="font-medium">{t("groupSpace.experimentalTitle")}</div>
+          <div className="mt-1">{t("groupSpace.experimentalHint")}</div>
+          <div className="mt-1">{t("groupSpace.experimentalDisclaimer")}</div>
+        </div>
       </div>
 
       <div className={cardClass(isDark)}>
@@ -964,7 +990,18 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
 
       <div className={cardClass(isDark)}>
         <div className="flex items-center justify-between gap-2">
-          <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("groupSpace.statusTitle")}</div>
+          <div className="flex items-center gap-2">
+            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("groupSpace.statusTitle")}</div>
+            <span
+              title={t("groupSpace.statusInfoTooltip")}
+              aria-label={t("groupSpace.statusInfoLabel")}
+              className={`inline-flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-semibold cursor-help ${
+                isDark ? "border border-slate-600 text-slate-300" : "border border-gray-300 text-gray-600"
+              }`}
+            >
+              !
+            </span>
+          </div>
           <div className="flex items-center gap-2">
             <button
               onClick={() => setShowStatusDetails((prev) => !prev)}
@@ -1114,9 +1151,12 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
         </div>
       </div>
 
+      {showTroubleshooting && showAdvancedOps ? (
+      <>
       <div className={cardClass(isDark)}>
         <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("groupSpace.addSourceTitle")}</div>
         <div className={`mt-1 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("groupSpace.addSourceHint")}</div>
+        <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("groupSpace.addSourceStorageHint")}</div>
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
             <label className={`block text-[11px] mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("groupSpace.sourceType")}</label>
@@ -1329,7 +1369,8 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           ) : (
             artifacts.map((artifact) => {
               const aid = String(artifact.artifact_id || "").trim();
-              const kind = String(artifact.kind || "").trim().toLowerCase();
+              const kind = normalizeArtifactKind(artifact.kind);
+              const kindLabel = kind || String(artifact.kind || "").trim() || "-";
               const statusText = renderArtifactStatus(artifact.status);
               const title = String(artifact.title || "").trim() || aid || "-";
               const createdAt = String(artifact.created_at || "").trim();
@@ -1342,7 +1383,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-medium break-all">{title}</div>
                     <div className={isDark ? "text-slate-400" : "text-gray-600"}>
-                      {kind || "-"} · {statusText}
+                      {kindLabel} · {statusText}
                     </div>
                   </div>
                   {aid ? <div className={`mt-1 font-mono break-all ${isDark ? "text-slate-500" : "text-gray-500"}`}>{aid}</div> : null}
@@ -1372,6 +1413,8 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           </div>
         ) : null}
       </div>
+      </>
+      ) : null}
 
       <div className={cardClass(isDark)}>
         <div className="flex items-center justify-between gap-2">

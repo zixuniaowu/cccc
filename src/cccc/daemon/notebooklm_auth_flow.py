@@ -21,7 +21,12 @@ from ..providers.notebooklm.health import parse_notebooklm_auth_json
 from ..providers.notebooklm.compat import probe_notebooklm_vendor
 from ..providers.notebooklm.errors import NotebookLMProviderError
 from ..paths import ensure_home
-from .group_space_store import get_space_provider_state, set_space_provider_state, update_space_provider_secrets
+from .group_space_store import (
+    get_space_provider_state,
+    load_space_provider_secrets,
+    set_space_provider_state,
+    update_space_provider_secrets,
+)
 
 _FLOW_LOCK = threading.Lock()
 _FLOW_STATE: Dict[str, Any] = {
@@ -447,12 +452,84 @@ def _collect_storage_state(context: Any) -> Dict[str, Any]:
     return state
 
 
-def _run_coroutine_sync(coro: Any) -> Any:
+def _seed_context_with_storage_state(context: Any, storage_state: Dict[str, Any]) -> int:
+    cookies = storage_state.get("cookies") if isinstance(storage_state, dict) else None
+    if not isinstance(cookies, list) or not cookies:
+        return 0
+    payload: list[Dict[str, Any]] = []
+    for item in cookies:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        value = str(item.get("value") or "")
+        domain = str(item.get("domain") or "").strip()
+        path = str(item.get("path") or "/").strip() or "/"
+        if not name or not domain:
+            continue
+        row: Dict[str, Any] = {
+            "name": name,
+            "value": value,
+            "domain": domain,
+            "path": path,
+        }
+        expires = item.get("expires")
+        if isinstance(expires, (int, float)):
+            row["expires"] = float(expires)
+        if "httpOnly" in item:
+            row["httpOnly"] = bool(item.get("httpOnly"))
+        if "secure" in item:
+            row["secure"] = bool(item.get("secure"))
+        same_site = str(item.get("sameSite") or "").strip()
+        if same_site:
+            row["sameSite"] = same_site
+        payload.append(row)
+    if not payload:
+        return 0
     try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
+        context.add_cookies(payload)
+        return len(payload)
+    except Exception:
+        return 0
 
+
+def _load_saved_storage_state() -> Dict[str, Any] | None:
+    raw_env = str(os.environ.get("CCCC_NOTEBOOKLM_AUTH_JSON") or "").strip()
+    if raw_env:
+        try:
+            return parse_notebooklm_auth_json(raw_env, label="CCCC_NOTEBOOKLM_AUTH_JSON")
+        except Exception:
+            return None
+    try:
+        secrets_map = load_space_provider_secrets("notebooklm")
+    except Exception:
+        return None
+    raw = str(secrets_map.get(_SPACE_PROVIDER_SECRET_KEY) or "").strip()
+    if not raw:
+        return None
+    try:
+        return parse_notebooklm_auth_json(raw, label=_SPACE_PROVIDER_SECRET_KEY)
+    except Exception:
+        return None
+
+
+def _is_hard_auth_failure(message: str) -> bool:
+    text = str(message or "").strip().lower()
+    if not text:
+        return False
+    markers = (
+        "missing required cookies",
+        "missing cookies",
+        "authentication expired",
+        "re-authenticate",
+        "run 'notebooklm login'",
+        "redirected to:",
+        "space_provider_auth_invalid",
+        "missing sid",
+    )
+    return any(token in text for token in markers)
+
+
+def _run_coroutine_sync(coro: Any) -> Any:
     result_holder: Dict[str, Any] = {}
     error_holder: Dict[str, BaseException] = {}
 
@@ -514,7 +591,46 @@ def _connect_worker(*, session_id: str, timeout_seconds: int, cancel_event: thre
             touch_health=True,
         )
 
+    def _mark_provider_connected(*, mode: str = "active", last_error: str = "") -> None:
+        _ = set_space_provider_state(
+            "notebooklm",
+            enabled=True,
+            real_enabled=True,
+            mode=str(mode or "active"),
+            last_error=str(last_error or ""),
+            touch_health=True,
+        )
+
+    def _try_reuse_saved_credential() -> bool:
+        saved = _load_saved_storage_state()
+        if not isinstance(saved, dict):
+            return False
+        cookies = saved.get("cookies")
+        if not isinstance(cookies, list) or not cookies:
+            return False
+        _update_state(
+            state="running",
+            phase="verifying_saved_credential",
+            message="Checking existing Google credential...",
+            error={},
+        )
+        try:
+            _verify_storage_state(saved)
+            _mark_provider_connected(mode="active", last_error="")
+            _set_succeeded("Google account already connected.")
+            return True
+        except Exception as e:
+            message = str(e)
+            if _is_hard_auth_failure(message):
+                return False
+            _persist_storage_state(saved)
+            _mark_provider_connected(mode="active", last_error="")
+            _set_succeeded("Google credential reused (verification deferred).")
+            return True
+
     try:
+        if _try_reuse_saved_credential():
+            return
         _update_state(
             state="running",
             phase="preparing_browser",
@@ -537,13 +653,21 @@ def _connect_worker(*, session_id: str, timeout_seconds: int, cancel_event: thre
             browser_session = _start_browser_session(pw)
             try:
                 context = browser_session.context
+                saved_state = _load_saved_storage_state()
+                restored_count = 0
+                if isinstance(saved_state, dict):
+                    restored_count = _seed_context_with_storage_state(context, saved_state)
                 pages = list(getattr(context, "pages", []) or [])
                 page = pages[0] if pages else context.new_page()
                 next_probe_at = 0.0
                 _update_state(
                     state="running",
                     phase="waiting_user_login",
-                    message=f"Browser opened ({browser_session.strategy}). Sign in with Google in the opened window.",
+                    message=(
+                        f"Browser opened ({browser_session.strategy}). "
+                        f"{'Restored previous session cookies. ' if restored_count > 0 else ''}"
+                        "Sign in with Google in the opened window."
+                    ),
                     error={},
                 )
                 if not _is_notebooklm_url(str(getattr(page, "url", "") or "")):
@@ -581,6 +705,24 @@ def _connect_worker(*, session_id: str, timeout_seconds: int, cancel_event: thre
                             error={},
                         )
                     if has_any_cookies:
+                        persisted = False
+                        try:
+                            _ = parse_notebooklm_auth_json(
+                                json.dumps(storage_state, ensure_ascii=False),
+                                label=_SPACE_PROVIDER_SECRET_KEY,
+                            )
+                            _persist_storage_state(storage_state)
+                            persisted = True
+                        except NotebookLMProviderError:
+                            _update_state(
+                                state="running",
+                                phase="waiting_user_login",
+                                message="Waiting for complete Google session cookies...",
+                                error={},
+                            )
+                            next_probe_at = now_ts + 4.0
+                            time.sleep(0.5)
+                            continue
                         _update_state(
                             state="running",
                             phase="verifying_session",
@@ -603,6 +745,10 @@ def _connect_worker(*, session_id: str, timeout_seconds: int, cancel_event: thre
                             msg = str(e)
                             if "vendor package unavailable" in msg or "compatibility mismatch" in msg:
                                 raise
+                            if persisted and (not _is_hard_auth_failure(msg)):
+                                _mark_provider_connected(mode="active", last_error="")
+                                _set_succeeded("Google account connected.")
+                                return
                             brief = (msg or "verification pending").replace("\n", " ").strip()
                             if len(brief) > 160:
                                 brief = brief[:160] + "..."
@@ -615,15 +761,7 @@ def _connect_worker(*, session_id: str, timeout_seconds: int, cancel_event: thre
                             next_probe_at = now_ts + 4.0
                             time.sleep(0.5)
                             continue
-                        _persist_storage_state(storage_state)
-                        _ = set_space_provider_state(
-                            "notebooklm",
-                            enabled=True,
-                            real_enabled=True,
-                            mode="active",
-                            last_error="",
-                            touch_health=True,
-                        )
+                        _mark_provider_connected(mode="active", last_error="")
                         _set_succeeded("Google account connected.")
                         return
                     next_probe_at = now_ts + 2.0

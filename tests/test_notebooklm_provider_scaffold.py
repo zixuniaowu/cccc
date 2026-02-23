@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
@@ -7,6 +8,79 @@ from unittest.mock import patch
 
 
 class TestNotebookLMProviderScaffold(unittest.TestCase):
+    def test_adapter_run_with_vendor_auth_injects_env_temporarily(self) -> None:
+        from cccc.providers.notebooklm import adapter as notebooklm_adapter
+
+        seen: dict[str, str] = {}
+
+        async def _probe():
+            seen["value"] = str(os.environ.get("NOTEBOOKLM_AUTH_JSON") or "")
+            return {"ok": True}
+
+        auth_payload = {"cookies": [{"name": "SID", "value": "token-x", "domain": ".google.com"}]}
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("NOTEBOOKLM_AUTH_JSON", None)
+            out = notebooklm_adapter._run_with_vendor_auth(auth_payload, _probe())
+            self.assertEqual(out, {"ok": True})
+            self.assertTrue(seen.get("value"))
+            parsed = json.loads(seen["value"])
+            cookies = parsed.get("cookies") if isinstance(parsed, dict) else []
+            self.assertEqual(str((cookies[0] if cookies else {}).get("value") or ""), "token-x")
+            self.assertNotIn("NOTEBOOKLM_AUTH_JSON", os.environ)
+
+    def test_adapter_run_with_vendor_auth_restores_previous_env(self) -> None:
+        from cccc.providers.notebooklm import adapter as notebooklm_adapter
+
+        async def _probe():
+            return str(os.environ.get("NOTEBOOKLM_AUTH_JSON") or "")
+
+        previous = '{"cookies":[{"name":"SID","value":"old","domain":".google.com"}]}'
+        auth_payload = {"cookies": [{"name": "SID", "value": "new", "domain": ".google.com"}]}
+        with patch.dict(os.environ, {"NOTEBOOKLM_AUTH_JSON": previous}, clear=False):
+            seen = notebooklm_adapter._run_with_vendor_auth(auth_payload, _probe())
+            self.assertIn('"value": "new"', seen)
+            self.assertEqual(str(os.environ.get("NOTEBOOKLM_AUTH_JSON") or ""), previous)
+
+    def test_adapter_download_artifact_injects_vendor_auth_env(self) -> None:
+        from cccc.providers.notebooklm.adapter import NotebookLMAdapter
+
+        captured: dict[str, str] = {}
+
+        async def _fake_download(
+            *,
+            notebook_id: str,
+            kind: str,
+            output_path: str,
+            artifact_id: str,
+            output_format: str,
+            auth_payload: dict,
+            timeout_seconds: float,
+        ):
+            _ = notebook_id, kind, output_path, artifact_id, output_format, auth_payload, timeout_seconds
+            captured["env"] = str(os.environ.get("NOTEBOOKLM_AUTH_JSON") or "")
+            return {"output_path": output_path, "downloaded": True}
+
+        adapter = NotebookLMAdapter()
+        raw_auth = '{"cookies":[{"name":"SID","value":"abc123","domain":".google.com"}]}'
+        with patch.object(adapter, "health_check", return_value={"provider": "notebooklm"}), patch(
+            "cccc.providers.notebooklm.adapter._download_artifact_async",
+            side_effect=_fake_download,
+        ):
+            out = adapter.download_artifact(
+                remote_space_id="nb_test",
+                kind="infographic",
+                output_path="/tmp/out.png",
+                artifact_id="art_1",
+                output_format="",
+                auth_json_raw=raw_auth,
+            )
+
+        self.assertEqual(bool(out.get("downloaded")), True)
+        self.assertTrue(captured.get("env"))
+        payload = json.loads(captured["env"])
+        cookies = payload.get("cookies") if isinstance(payload, dict) else []
+        self.assertEqual(str((cookies[0] if cookies else {}).get("value") or ""), "abc123")
+
     def test_real_mode_takes_precedence_over_stub_mode(self) -> None:
         from cccc.daemon.group_space_provider import SpaceProviderError, provider_query
 

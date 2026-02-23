@@ -23,13 +23,18 @@ export CCCC_WEB_TOKEN="change-me"
 2. Open **Settings**.
 3. Open **Group Space** tab.
 
-## 3. Configure Provider Credential
+## 3. Connect Google
 
-In **Provider Credential**:
+In **Google Connection**:
 
-1. Paste NotebookLM auth JSON (`storage_state`-style payload with `cookies`).
-2. Click **Save Credential**.
-3. Click **Health Check**.
+1. Click **Connect Google**.
+2. Complete sign-in in the opened browser window.
+3. CCCC stores credential automatically.
+
+Notes:
+
+- If a valid credential is already stored, connect will reuse it and skip browser login.
+- Credential is stored masked/write-only in CCCC secrets (not plaintext in UI).
 
 Expected result:
 
@@ -106,7 +111,7 @@ export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=1   # safer / slower
 export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=4   # faster / higher upstream pressure
 ```
 
-## 10. Repo Space Sync
+## 10. Repo Space Sync + File Formats
 
 When a group has a local scope attached, CCCC uses repo-local `space/` as the resource source of truth:
 
@@ -115,8 +120,37 @@ When a group has a local scope attached, CCCC uses repo-local `space/` as the re
 Sync metadata files:
 
 - `<scope_root>/space/.space-index.json` (path/hash -> remote source mapping)
-- `<scope_root>/space/.space-sync-state.json` (last sync run and convergence state)
-- `<scope_root>/space/.space-status.json` (status snapshot for UI/debug)
+- `<scope_root>/space/.space-sync-state.json` (authoritative sync state: `state`, `unsynced_count`, `failed_items`, `run_id`)
+- `<scope_root>/space/.space-status.json` (compact projection snapshot for UI/debug)
+- `<scope_root>/space/.sync/remote-sources/*.json` (remote source snapshots)
+- `<scope_root>/space/artifacts/notebooklm/...` (downloaded provider artifacts)
+
+Materialization rules:
+
+- Local files under `space/` (except hidden files and `artifacts/`) are uploaded as NotebookLM sources.
+- URL/YouTube/Google Docs-family sources are created through `resource_ingest` (Web Add Source / MCP / CLI).
+- All NotebookLM remote sources are mirrored as metadata snapshots:
+  - `space/.sync/remote-sources/<source_id>.json`
+  - fields: `source_id`, `title`, `kind`, `status`, `url`, `synced_at`
+- Remote sources are materialized into canonical descriptor files:
+  - `space/sources/<stem>.source.json`
+  - descriptor fields include: `source_id`, `type/kind`, `title`, `url`, `status`, `read_only`
+- Descriptor filename is generated as a readable stem (`kind` + best-effort label + short source id), not a raw UUID-only name.
+- Extracted/indexed text is mirrored separately as readonly preview:
+  - `space/.sync/source-text/<stem>.txt|.md|.csv`
+- NotebookLM completed artifacts are downloaded to:
+  - `space/artifacts/notebooklm/<kind>/<artifact_id>.<ext>`
+  - extension mapping:
+    - `audio -> .mp3`
+    - `video -> .mp4`
+    - `report|study_guide -> .md`
+    - `quiz|flashcards -> .md` (default)
+    - `infographic -> .png`
+    - `slide_deck -> .pdf`
+    - `data_table -> .csv`
+    - `mind_map -> .json`
+- Artifact manifest is written to:
+  - `space/.sync/remote-artifacts.json`
 
 You can force a full reconcile from CLI:
 

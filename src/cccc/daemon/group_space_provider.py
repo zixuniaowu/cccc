@@ -266,6 +266,55 @@ def _notebooklm_list_sources(*, remote_space_id: str) -> Dict[str, Any]:
     }
 
 
+def _notebooklm_get_source_fulltext(*, remote_space_id: str, source_id: str) -> Dict[str, Any]:
+    if notebooklm_real_enabled():
+        adapter = get_notebooklm_adapter()
+        auth_json_raw = _resolve_notebooklm_auth_json()
+        try:
+            get_fn = adapter.get_source_fulltext
+            supports_auth_override = False
+            try:
+                params = inspect.signature(get_fn).parameters
+                supports_auth_override = "auth_json_raw" in params
+            except Exception:
+                supports_auth_override = False
+            if supports_auth_override:
+                return get_fn(
+                    remote_space_id=remote_space_id,
+                    source_id=source_id,
+                    auth_json_raw=auth_json_raw,
+                )
+            return get_fn(
+                remote_space_id=remote_space_id,
+                source_id=source_id,
+            )
+        except NotebookLMProviderError as e:
+            raise SpaceProviderError(
+                e.code,
+                str(e),
+                transient=bool(e.transient),
+                degrade_provider=bool(e.degrade_provider),
+            ) from e
+    if not _notebooklm_stub_enabled():
+        raise SpaceProviderError(
+            "space_provider_disabled",
+            "notebooklm provider adapter is not configured in this build",
+            transient=False,
+            degrade_provider=True,
+        )
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": str(remote_space_id or ""),
+        "source_id": str(source_id or ""),
+        "title": "",
+        "kind": "",
+        "url": "",
+        "content": "",
+        "char_count": 0,
+        "stub": True,
+    }
+
+
 def _notebooklm_add_file_source(*, remote_space_id: str, file_path: str) -> Dict[str, Any]:
     if notebooklm_real_enabled():
         adapter = get_notebooklm_adapter()
@@ -729,6 +778,18 @@ def provider_list_sources(
     pid = str(provider or "").strip() or "notebooklm"
     if pid == "notebooklm":
         return _notebooklm_list_sources(remote_space_id=remote_space_id)
+    raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
+
+
+def provider_get_source_fulltext(
+    provider: str,
+    *,
+    remote_space_id: str,
+    source_id: str,
+) -> Dict[str, Any]:
+    pid = str(provider or "").strip() or "notebooklm"
+    if pid == "notebooklm":
+        return _notebooklm_get_source_fulltext(remote_space_id=remote_space_id, source_id=source_id)
     raise SpaceProviderError("space_job_invalid", f"unsupported provider: {pid}")
 
 

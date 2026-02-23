@@ -15,7 +15,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.concurrency import run_in_threadpool
 
@@ -303,6 +303,7 @@ class GroupSpaceIngestRequest(BaseModel):
 
 
 class GroupSpaceQueryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     provider: Optional[str] = Field(default="notebooklm")
     query: str = Field(default="")
     options: Dict[str, Any] = Field(default_factory=dict)

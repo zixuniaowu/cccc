@@ -22,6 +22,7 @@ cccc.* namespace (collaboration control plane):
 - cccc_actor_stop: Stop actor
 - cccc_runtime_list: List available agent runtimes
 - cccc_space_status: Read Group Space provider/binding/queue status
+- cccc_space_capabilities: Read Group Space local file policy + ingest schema matrix
 - cccc_space_bind: Bind or unbind Group Space provider mapping
 - cccc_space_ingest: Enqueue and execute Group Space ingest job
 - cccc_space_query: Query provider-backed Group Space knowledge
@@ -69,6 +70,7 @@ from __future__ import annotations
 
 import mimetypes
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -97,6 +99,10 @@ _CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
 _HELP_ROLE_HEADER_RE = re.compile(r"^##\s*@role:\s*(\w+)\s*$", re.IGNORECASE)
 _HELP_ACTOR_HEADER_RE = re.compile(r"^##\s*@actor:\s*(.+?)\s*$", re.IGNORECASE)
 _HELP_H2_RE = re.compile(r"^##(?!#)\s+.*$")
+_CJK_HAN_RE = re.compile(r"[\u4e00-\u9fff]")
+_CJK_KANA_RE = re.compile(r"[\u3040-\u30ff]")
+_CJK_HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
+_SPACE_QUERY_OPTION_KEYS = {"source_ids"}
 
 
 def _select_help_markdown(markdown: str, *, role: Optional[str], actor_id: Optional[str]) -> str:
@@ -180,6 +186,112 @@ def _select_help_markdown(markdown: str, *, role: Optional[str], actor_id: Optio
     if keep_trailing_newline:
         out_text += "\n"
     return out_text
+
+
+def _infer_language_from_text(text: str) -> str:
+    raw = str(text or "")
+    if not raw.strip():
+        return ""
+    if _CJK_KANA_RE.search(raw):
+        return "ja"
+    if _CJK_HANGUL_RE.search(raw):
+        return "ko"
+    if _CJK_HAN_RE.search(raw):
+        return "zh-CN"
+    return ""
+
+
+def _infer_artifact_language_from_source(source_hint: str) -> str:
+    source = str(source_hint or "").strip()
+    if not source:
+        return ""
+    try:
+        p = Path(source).expanduser().resolve()
+    except Exception:
+        p = None
+    if p is not None and p.exists() and p.is_file():
+        try:
+            blob = p.read_bytes()[:8192]
+            text = blob.decode("utf-8", errors="ignore")
+            hint = _infer_language_from_text(text)
+            if hint:
+                return hint
+        except Exception:
+            return ""
+    return _infer_language_from_text(source)
+
+
+def _normalize_space_query_options_mcp(arguments: Dict[str, Any]) -> Dict[str, Any]:
+    allowed_top_level = {"group_id", "provider", "query", "options", "by"}
+    top_keys = {str(k or "").strip() for k in arguments.keys()}
+    top_keys.discard("")
+    unknown_top = sorted(k for k in top_keys if k not in allowed_top_level)
+    if unknown_top:
+        if any(k in {"language", "lang"} for k in unknown_top):
+            raise MCPError(
+                code="invalid_request",
+                message=(
+                    "cccc_space_query does not support top-level language/lang. "
+                    "NotebookLM query API has no language parameter; put language requirements in query text."
+                ),
+            )
+        raise MCPError(
+            code="invalid_request",
+            message=(
+                "cccc_space_query unsupported top-level args: "
+                f"{', '.join(unknown_top)}. Supported args: group_id, provider, query, options."
+            ),
+        )
+
+    options_raw = arguments.get("options")
+    if options_raw is None:
+        options: Dict[str, Any] = {}
+    elif isinstance(options_raw, dict):
+        options = dict(options_raw)
+    else:
+        raise MCPError(code="invalid_request", message="cccc_space_query options must be an object")
+
+    unsupported_options = sorted(k for k in options.keys() if str(k or "").strip() not in _SPACE_QUERY_OPTION_KEYS)
+    if unsupported_options:
+        if any(str(k or "").strip() in {"language", "lang"} for k in unsupported_options):
+            raise MCPError(
+                code="invalid_request",
+                message=(
+                    "cccc_space_query options do not support language/lang. "
+                    "NotebookLM query API has no language parameter; put language requirements in query text."
+                ),
+            )
+        raise MCPError(
+            code="invalid_request",
+            message=(
+                "cccc_space_query unsupported options: "
+                f"{', '.join(str(k or '').strip() for k in unsupported_options)}. "
+                "Supported options: source_ids."
+            ),
+        )
+
+    if "source_ids" in options:
+        raw_source_ids = options.get("source_ids")
+        if raw_source_ids is None:
+            options["source_ids"] = []
+        elif not isinstance(raw_source_ids, list):
+            raise MCPError(
+                code="invalid_request",
+                message="cccc_space_query options.source_ids must be an array of non-empty strings",
+            )
+        else:
+            source_ids: List[str] = []
+            for idx, item in enumerate(raw_source_ids):
+                sid = str(item or "").strip()
+                if not sid:
+                    raise MCPError(
+                        code="invalid_request",
+                        message=f"cccc_space_query options.source_ids[{idx}] must be a non-empty string",
+                    )
+                source_ids.append(sid)
+            options["source_ids"] = source_ids
+
+    return options
 
 
 # =============================================================================
@@ -889,6 +1001,16 @@ def space_status(*, group_id: str, provider: str = "notebooklm") -> Dict[str, An
     )
 
 
+def space_capabilities(*, group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
+    """Get Group Space capabilities (local file policy + ingest schema/examples)."""
+    return _call_daemon_or_raise(
+        {
+            "op": "group_space_capabilities",
+            "args": {"group_id": group_id, "provider": str(provider or "notebooklm")},
+        }
+    )
+
+
 def space_bind(
     *,
     group_id: str,
@@ -991,7 +1113,7 @@ def space_artifact(
     action: str = "list",
     kind: str = "",
     options: Optional[Dict[str, Any]] = None,
-    wait: bool = True,
+    wait: bool = False,
     save_to_space: bool = True,
     output_path: str = "",
     output_format: str = "",
@@ -1001,27 +1123,40 @@ def space_artifact(
     max_interval: float = 10.0,
 ) -> Dict[str, Any]:
     """List/generate/download Group Space provider artifacts."""
-    return _call_daemon_or_raise(
-        {
-            "op": "group_space_artifact",
-            "args": {
-                "group_id": group_id,
-                "provider": str(provider or "notebooklm"),
-                "action": str(action or "list"),
-                "kind": str(kind or ""),
-                "options": dict(options or {}),
-                "wait": bool(wait),
-                "save_to_space": bool(save_to_space),
-                "output_path": str(output_path or ""),
-                "output_format": str(output_format or ""),
-                "artifact_id": str(artifact_id or ""),
-                "timeout_seconds": float(timeout_seconds),
-                "initial_interval": float(initial_interval),
-                "max_interval": float(max_interval),
-                "by": str(by or "user"),
-            },
-        }
-    )
+    action_v = str(action or "list")
+    kind_v = str(kind or "")
+    wait_v = bool(wait)
+    if action_v == "generate" and wait_v and str(kind_v).strip().lower() in {"audio", "video"}:
+        # Audio/video generation often runs far beyond typical MCP request timeouts.
+        # Force async mode to avoid client-side timeouts while preserving eventual notify/download flow.
+        wait_v = False
+    timeout_v = float(timeout_seconds)
+    req = {
+        "op": "group_space_artifact",
+        "args": {
+            "group_id": group_id,
+            "provider": str(provider or "notebooklm"),
+            "action": action_v,
+            "kind": kind_v,
+            "options": dict(options or {}),
+            "wait": wait_v,
+            "save_to_space": bool(save_to_space),
+            "output_path": str(output_path or ""),
+            "output_format": str(output_format or ""),
+            "artifact_id": str(artifact_id or ""),
+            "timeout_seconds": timeout_v,
+            "initial_interval": float(initial_interval),
+            "max_interval": float(max_interval),
+            "by": str(by or "user"),
+        },
+    }
+    daemon_timeout = 60.0
+    if action_v == "generate":
+        if wait_v:
+            daemon_timeout = max(180.0, timeout_v + 60.0)
+        else:
+            daemon_timeout = 120.0
+    return _call_daemon_or_raise(req, timeout_s=daemon_timeout)
 
 
 def space_jobs(
@@ -1710,6 +1845,13 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             provider=str(arguments.get("provider") or "notebooklm"),
         )
 
+    if name == "cccc_space_capabilities":
+        gid = _resolve_group_id(arguments)
+        return space_capabilities(
+            group_id=gid,
+            provider=str(arguments.get("provider") or "notebooklm"),
+        )
+
     if name == "cccc_space_bind":
         gid = _resolve_group_id(arguments)
         by = _resolve_caller_from_by(arguments)
@@ -1725,23 +1867,65 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _resolve_group_id(arguments)
         by = _resolve_caller_from_by(arguments)
         payload_raw = arguments.get("payload")
+        payload = dict(payload_raw) if isinstance(payload_raw, dict) else {}
+        if not payload:
+            for key in (
+                "source_type",
+                "type",
+                "url",
+                "content",
+                "text",
+                "file_id",
+                "mime_type",
+                "title",
+                "file_path",
+                "path",
+            ):
+                if key not in arguments:
+                    continue
+                value = arguments.get(key)
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if text:
+                    payload[key] = text
+            source_type = str(payload.get("source_type") or payload.get("type") or "").strip().lower()
+            if source_type in {"file", "local_file", "path"} and (not str(payload.get("file_path") or "").strip()):
+                file_path = str(payload.get("path") or payload.get("url") or "").strip()
+                if file_path:
+                    payload["file_path"] = file_path
+        kind = str(arguments.get("kind") or "").strip()
+        if not kind:
+            resource_hints = {
+                "source_type",
+                "type",
+                "url",
+                "content",
+                "text",
+                "file_id",
+                "mime_type",
+                "title",
+                "file_path",
+                "path",
+            }
+            kind = "resource_ingest" if any(k in payload for k in resource_hints) else "context_sync"
         return space_ingest(
             group_id=gid,
             by=by,
             provider=str(arguments.get("provider") or "notebooklm"),
-            kind=str(arguments.get("kind") or "context_sync"),
-            payload=dict(payload_raw) if isinstance(payload_raw, dict) else {},
+            kind=kind,
+            payload=payload,
             idempotency_key=str(arguments.get("idempotency_key") or ""),
         )
 
     if name == "cccc_space_query":
         gid = _resolve_group_id(arguments)
-        options_raw = arguments.get("options")
+        options = _normalize_space_query_options_mcp(arguments)
         return space_query(
             group_id=gid,
             provider=str(arguments.get("provider") or "notebooklm"),
             query=str(arguments.get("query") or ""),
-            options=dict(options_raw) if isinstance(options_raw, dict) else {},
+            options=options,
         )
 
     if name == "cccc_space_sources":
@@ -1760,6 +1944,31 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
         gid = _resolve_group_id(arguments)
         by = _resolve_caller_from_by(arguments)
         options_raw = arguments.get("options")
+        options = dict(options_raw) if isinstance(options_raw, dict) else {}
+        source_hint = str(arguments.get("source") or "").strip()
+        if source_hint and ("source" not in options):
+            options["source"] = source_hint
+        language_hint = str(arguments.get("language") or arguments.get("lang") or "").strip()
+        if not language_hint:
+            language_hint = str(options.get("language") or options.get("lang") or "").strip()
+        if not language_hint:
+            language_hint = str(os.environ.get("CCCC_SPACE_ARTIFACT_LANGUAGE") or "").strip()
+        if not language_hint and source_hint:
+            language_hint = _infer_artifact_language_from_source(source_hint)
+        if language_hint and ("language" not in options):
+            options["language"] = language_hint
+        action_raw = str(arguments.get("action") or "").strip()
+        if action_raw:
+            action = action_raw
+        else:
+            has_generate_intent = bool(source_hint) or ("wait" in arguments) or ("save_to_space" in arguments) or bool(options)
+            has_download_intent = bool(str(arguments.get("artifact_id") or "").strip() or str(arguments.get("output_path") or "").strip())
+            if has_generate_intent:
+                action = "generate"
+            elif has_download_intent:
+                action = "download"
+            else:
+                action = "list"
         timeout_raw = arguments.get("timeout_seconds")
         initial_raw = arguments.get("initial_interval")
         max_raw = arguments.get("max_interval")
@@ -1782,10 +1991,10 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             group_id=gid,
             by=by,
             provider=str(arguments.get("provider") or "notebooklm"),
-            action=str(arguments.get("action") or "list"),
+            action=action,
             kind=str(arguments.get("kind") or ""),
-            options=dict(options_raw) if isinstance(options_raw, dict) else {},
-            wait=coerce_bool(arguments.get("wait"), default=True),
+            options=options,
+            wait=coerce_bool(arguments.get("wait"), default=False),
             save_to_space=coerce_bool(arguments.get("save_to_space"), default=True),
             output_path=str(arguments.get("output_path") or ""),
             output_format=str(arguments.get("output_format") or ""),

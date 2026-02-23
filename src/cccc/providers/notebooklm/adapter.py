@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 import json
 import os
 import threading
@@ -48,14 +49,15 @@ class NotebookLMAdapter:
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         normalized_kind = str(kind or "context_sync").strip() or "context_sync"
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _ingest_async(
                     notebook_id=notebook_id,
                     kind=normalized_kind,
                     payload=dict(payload or {}),
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -88,14 +90,15 @@ class NotebookLMAdapter:
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         safe_options = dict(options or {})
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _query_async(
                     notebook_id=notebook_id,
                     query=question,
                     options=safe_options,
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -110,12 +113,13 @@ class NotebookLMAdapter:
         notebook_title = str(title or "").strip() or "CCCC Space"
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _create_notebook_async(
                     title=notebook_title,
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -128,11 +132,12 @@ class NotebookLMAdapter:
         self.health_check(auth_json_raw=auth_json_raw)
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _list_notebooks_async(
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -154,12 +159,51 @@ class NotebookLMAdapter:
             )
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _list_sources_async(
                     notebook_id=notebook_id,
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
+            )
+        except Exception as e:
+            raise _map_vendor_exception(e) from e
+
+    def get_source_fulltext(
+        self,
+        *,
+        remote_space_id: str,
+        source_id: str,
+        auth_json_raw: str | None = None,
+    ) -> Dict[str, Any]:
+        self.health_check(auth_json_raw=auth_json_raw)
+        notebook_id = str(remote_space_id or "").strip()
+        sid = str(source_id or "").strip()
+        if not notebook_id:
+            raise NotebookLMProviderError(
+                code="space_provider_not_configured",
+                message="missing remote_space_id (NotebookLM notebook id)",
+                transient=False,
+                degrade_provider=True,
+            )
+        if not sid:
+            raise NotebookLMProviderError(
+                code="space_job_invalid",
+                message="source_id is required",
+                transient=False,
+                degrade_provider=False,
+            )
+        auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
+        try:
+            return _run_with_vendor_auth(
+                auth_payload,
+                _get_source_fulltext_async(
+                    notebook_id=notebook_id,
+                    source_id=sid,
+                    auth_payload=auth_payload,
+                    timeout_seconds=_read_timeout_seconds(),
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -190,13 +234,14 @@ class NotebookLMAdapter:
             )
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _add_file_source_async(
                     notebook_id=notebook_id,
                     file_path=target,
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -227,13 +272,14 @@ class NotebookLMAdapter:
             )
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _delete_source_async(
                     notebook_id=notebook_id,
                     source_id=sid,
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -273,14 +319,15 @@ class NotebookLMAdapter:
             )
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _rename_source_async(
                     notebook_id=notebook_id,
                     source_id=sid,
                     new_title=title,
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -311,13 +358,14 @@ class NotebookLMAdapter:
             )
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _refresh_source_async(
                     notebook_id=notebook_id,
                     source_id=sid,
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -340,13 +388,14 @@ class NotebookLMAdapter:
             )
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _list_artifacts_async(
                     notebook_id=notebook_id,
                     kind=str(kind or "").strip().lower(),
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -378,14 +427,15 @@ class NotebookLMAdapter:
             )
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _generate_artifact_async(
                     notebook_id=notebook_id,
                     kind=artifact_kind,
                     options=dict(options or {}),
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -419,7 +469,8 @@ class NotebookLMAdapter:
             )
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _wait_artifact_async(
                     notebook_id=notebook_id,
                     task_id=tid,
@@ -428,7 +479,7 @@ class NotebookLMAdapter:
                     max_interval=float(max_interval or 10.0),
                     auth_payload=auth_payload,
                     timeout_seconds_for_client=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -472,7 +523,8 @@ class NotebookLMAdapter:
             )
         auth_payload = validate_notebooklm_auth_json(auth_json_raw=auth_json_raw)
         try:
-            return _run_coroutine_sync(
+            return _run_with_vendor_auth(
+                auth_payload,
                 _download_artifact_async(
                     notebook_id=notebook_id,
                     kind=artifact_kind,
@@ -481,7 +533,7 @@ class NotebookLMAdapter:
                     output_format=fmt,
                     auth_payload=auth_payload,
                     timeout_seconds=_read_timeout_seconds(),
-                )
+                ),
             )
         except Exception as e:
             raise _map_vendor_exception(e) from e
@@ -498,6 +550,34 @@ def _read_timeout_seconds() -> float:
     if timeout <= 0:
         return 30.0
     return min(timeout, 300.0)
+
+
+_VENDOR_AUTH_ENV_LOCK = threading.Lock()
+_VENDOR_AUTH_ENV_ACTIVE = 0
+_VENDOR_AUTH_ENV_PREV_PRESENT = False
+_VENDOR_AUTH_ENV_PREV_VALUE = ""
+
+
+@contextmanager
+def _vendor_auth_env(auth_payload: Dict[str, Any]):
+    global _VENDOR_AUTH_ENV_ACTIVE, _VENDOR_AUTH_ENV_PREV_PRESENT, _VENDOR_AUTH_ENV_PREV_VALUE
+    auth_json = json.dumps(auth_payload, ensure_ascii=False)
+    with _VENDOR_AUTH_ENV_LOCK:
+        if _VENDOR_AUTH_ENV_ACTIVE == 0:
+            _VENDOR_AUTH_ENV_PREV_PRESENT = "NOTEBOOKLM_AUTH_JSON" in os.environ
+            _VENDOR_AUTH_ENV_PREV_VALUE = str(os.environ.get("NOTEBOOKLM_AUTH_JSON") or "")
+        _VENDOR_AUTH_ENV_ACTIVE += 1
+        os.environ["NOTEBOOKLM_AUTH_JSON"] = auth_json
+    try:
+        yield
+    finally:
+        with _VENDOR_AUTH_ENV_LOCK:
+            _VENDOR_AUTH_ENV_ACTIVE = max(0, _VENDOR_AUTH_ENV_ACTIVE - 1)
+            if _VENDOR_AUTH_ENV_ACTIVE == 0:
+                if _VENDOR_AUTH_ENV_PREV_PRESENT:
+                    os.environ["NOTEBOOKLM_AUTH_JSON"] = _VENDOR_AUTH_ENV_PREV_VALUE
+                else:
+                    os.environ.pop("NOTEBOOKLM_AUTH_JSON", None)
 
 
 def _run_coroutine_sync(coro):
@@ -521,6 +601,11 @@ def _run_coroutine_sync(coro):
     if "error" in error_holder:
         raise error_holder["error"]
     return result_holder.get("value")
+
+
+def _run_with_vendor_auth(auth_payload: Dict[str, Any], coro: Any) -> Any:
+    with _vendor_auth_env(auth_payload):
+        return _run_coroutine_sync(coro)
 
 
 def _normalize_ingest_title(*, kind: str, payload: Mapping[str, Any]) -> str:
@@ -554,6 +639,9 @@ def _looks_like_youtube_url(url: str) -> bool:
 def _normalize_resource_source_type(payload: Mapping[str, Any]) -> str:
     raw = str(payload.get("source_type") or payload.get("type") or "").strip().lower()
     alias = {
+        "file": "file",
+        "local_file": "file",
+        "path": "file",
         "url": "web_page",
         "web_page": "web_page",
         "youtube": "youtube",
@@ -573,6 +661,10 @@ def _normalize_resource_source_type(payload: Mapping[str, Any]) -> str:
     normalized = alias.get(raw, "")
     if normalized:
         return normalized
+
+    file_path = str(payload.get("file_path") or payload.get("path") or "").strip()
+    if file_path:
+        return "file"
 
     url = str(payload.get("url") or "").strip()
     if url:
@@ -641,7 +733,18 @@ async def _ingest_async(
     async with client:
         if kind == "resource_ingest":
             source_type = _normalize_resource_source_type(payload)
-            if source_type in {"web_page", "youtube"}:
+            if source_type == "file":
+                file_path = str(payload.get("file_path") or payload.get("path") or payload.get("url") or "").strip()
+                if not file_path:
+                    raise NotebookLMProviderError(
+                        code="space_job_invalid",
+                        message="file_path is required for file",
+                        transient=False,
+                        degrade_provider=False,
+                    )
+                source = await client.sources.add_file(notebook_id, file_path, wait=False)
+                source_mode = source_type
+            elif source_type in {"web_page", "youtube"}:
                 if not url:
                     raise NotebookLMProviderError(
                         code="space_job_invalid",
@@ -821,7 +924,7 @@ def _source_to_dict(source: Any) -> Dict[str, Any]:
         "title": str(getattr(source, "title", "") or ""),
         "url": str(getattr(source, "url", "") or ""),
         "status": int(getattr(source, "status", 0) or 0),
-        "kind": str(getattr(source, "kind", "") or ""),
+        "kind": _normalize_enum_token(getattr(source, "kind", "")),
     }
 
 
@@ -836,7 +939,7 @@ def _artifact_to_dict(artifact: Any) -> Dict[str, Any]:
     return {
         "artifact_id": str(getattr(artifact, "id", "") or ""),
         "title": str(getattr(artifact, "title", "") or ""),
-        "kind": str(getattr(artifact, "kind", "") or ""),
+        "kind": _normalize_enum_token(getattr(artifact, "kind", "")),
         "status": str(getattr(artifact, "status_str", "") or ""),
         "created_at": created_at_s,
         "url": str(getattr(artifact, "url", "") or ""),
@@ -854,19 +957,46 @@ def _as_string_list(raw: Any) -> list[str] | None:
     return out or None
 
 
+def _normalize_enum_token(raw: Any) -> str:
+    if raw is None:
+        return ""
+    value = getattr(raw, "value", raw)
+    text = str(value or "").strip()
+    if not text:
+        text = str(raw or "").strip()
+    text = text.lower()
+    if "." in text:
+        text = text.split(".")[-1].strip()
+    text = text.replace("-", "_")
+    alias = {
+        "studyguide": "study_guide",
+        "study": "study_guide",
+        "datatable": "data_table",
+        "table": "data_table",
+        "slidedeck": "slide_deck",
+        "slides": "slide_deck",
+        "slide": "slide_deck",
+        "deck": "slide_deck",
+        "mindmap": "mind_map",
+        "overview": "report",
+        "summary": "report",
+        "briefing": "report",
+    }
+    return alias.get(text, text)
+
+
 def _enum_or_none(enum_cls: Any, raw: Any, *, field: str) -> Any:
-    text = str(raw or "").strip()
+    text = _normalize_enum_token(raw)
     if not text:
         return None
-    text_l = text.lower()
     for member in list(enum_cls):
-        name = str(getattr(member, "name", "")).strip().lower()
-        value = str(getattr(member, "value", "")).strip().lower()
-        if text_l == name or text_l == value:
+        name = _normalize_enum_token(getattr(member, "name", ""))
+        value = _normalize_enum_token(getattr(member, "value", ""))
+        if text == name or text == value:
             return member
     raise NotebookLMProviderError(
         code="space_job_invalid",
-        message=f"invalid {field}: {text}",
+        message=f"invalid {field}: {raw}",
         transient=False,
         degrade_provider=False,
     )
@@ -919,7 +1049,9 @@ async def _generate_artifact_async(
 
     client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
     source_ids = _as_string_list(options.get("source_ids"))
-    language = str(options.get("language") or "").strip() or "en"
+    language = str(options.get("language") or options.get("lang") or "").strip()
+    if not language:
+        language = str(os.environ.get("CCCC_SPACE_ARTIFACT_LANGUAGE") or "").strip() or "en"
     instructions = str(options.get("instructions") or "").strip() or None
 
     async with client:
@@ -1144,6 +1276,28 @@ async def _list_sources_async(
         "provider": "notebooklm",
         "remote_space_id": notebook_id,
         "sources": [_source_to_dict(source) for source in list(sources or [])],
+    }
+
+
+async def _get_source_fulltext_async(
+    *,
+    notebook_id: str,
+    source_id: str,
+    auth_payload: Dict[str, Any],
+    timeout_seconds: float,
+) -> Dict[str, Any]:
+    client = await _build_client(auth_payload=auth_payload, timeout_seconds=timeout_seconds)
+    async with client:
+        full = await client.sources.get_fulltext(notebook_id, source_id)
+    return {
+        "provider": "notebooklm",
+        "remote_space_id": notebook_id,
+        "source_id": str(getattr(full, "source_id", "") or source_id),
+        "title": str(getattr(full, "title", "") or ""),
+        "kind": _normalize_enum_token(getattr(full, "kind", "")),
+        "url": str(getattr(full, "url", "") or ""),
+        "content": str(getattr(full, "content", "") or ""),
+        "char_count": int(getattr(full, "char_count", 0) or 0),
     }
 
 

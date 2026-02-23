@@ -46,6 +46,31 @@ def sync_group_space_projection(group_id: str, *, provider: str = "notebooklm") 
 
     sync_state_raw = read_json(space_state_path(space_root))
     sync_state: Dict[str, Any] = sync_state_raw if isinstance(sync_state_raw, dict) else {}
+    failed_items_raw = sync_state.get("failed_items")
+    failed_items: list[Dict[str, Any]] = []
+    if isinstance(failed_items_raw, list):
+        for item in failed_items_raw:
+            if not isinstance(item, dict):
+                continue
+            failed_items.append(
+                {
+                    "rel_path": str(item.get("rel_path") or "").strip(),
+                    "code": str(item.get("code") or "").strip(),
+                    "message": str(item.get("message") or "").strip(),
+                }
+            )
+            if len(failed_items) >= 20:
+                break
+    sync_view = {
+        "state": str(sync_state.get("state") or ("error" if int(sync_state.get("unsynced_count") or 0) > 0 else "ok")),
+        "run_id": str(sync_state.get("run_id") or ""),
+        "last_run_at": str(sync_state.get("last_run_at") or ""),
+        "converged": bool(sync_state.get("converged")),
+        "unsynced_count": int(sync_state.get("unsynced_count") or 0),
+        "failed_count": int(sync_state.get("failed_count") or len(failed_items)),
+        "failed_items": failed_items,
+        "last_error": str(sync_state.get("last_error") or ""),
+    }
 
     doc = {
         "v": 1,
@@ -57,7 +82,8 @@ def sync_group_space_projection(group_id: str, *, provider: str = "notebooklm") 
         "binding": binding,
         "queue_summary": queue,
         "latest_context_sync": latest_context_sync,
-        "sync_state": sync_state,
+        "sync": sync_view,
+        "sync_state": sync_view,
     }
     out_path = space_status_path(space_root)
     atomic_write_json(out_path, doc, indent=2)

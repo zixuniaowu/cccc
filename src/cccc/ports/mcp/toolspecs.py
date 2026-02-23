@@ -492,7 +492,33 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_space_status",
-        "description": "Read Group Space status for the current group (provider mode, binding, queue summary).",
+        "description": (
+            "Read Group Space status for the current group "
+            "(provider mode, binding, queue summary, sync state, failed_items)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "provider": {
+                    "type": "string",
+                    "enum": ["notebooklm"],
+                    "description": "Group Space provider (default notebooklm)",
+                    "default": "notebooklm",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_space_capabilities",
+        "description": (
+            "Return Group Space capability matrix: local file whitelist policy for repo/space sync and "
+            "resource_ingest source-type schema/examples."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -549,9 +575,11 @@ MCP_TOOLS = [
         "description": (
             "Enqueue and execute a Group Space ingest job with idempotency protection.\n"
             "For kind=resource_ingest, payload supports source_type + fields:\n"
+            "- file: {source_type, file_path} (or path/url as file_path alias)\n"
             "- web_page/youtube: {source_type, url, title?}\n"
             "- pasted_text: {source_type, content, title?}\n"
-            "- google_docs/google_slides/google_spreadsheet: {source_type, file_id, title?, mime_type?}"
+            "- google_docs/google_slides/google_spreadsheet: {source_type, file_id, title?, mime_type?}\n"
+            "Convenience: if payload is omitted, top-level source_type/url/content/file_id/file_path/... fields are auto-packed into payload."
         ),
         "inputSchema": {
             "type": "object",
@@ -584,6 +612,43 @@ MCP_TOOLS = [
                     ),
                     "default": {},
                 },
+                "source_type": {
+                    "type": "string",
+                    "enum": ["file", "web_page", "youtube", "pasted_text", "google_docs", "google_slides", "google_spreadsheet"],
+                    "description": "Top-level convenience field when payload is omitted",
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Top-level convenience field for source_type=file",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Alias of file_path for source_type=file",
+                },
+                "url": {
+                    "type": "string",
+                    "description": "Top-level convenience field for web_page/youtube (or file path alias when source_type=file)",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Top-level convenience field for pasted_text",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Alias of content for pasted_text",
+                },
+                "file_id": {
+                    "type": "string",
+                    "description": "Top-level convenience field for google_docs/slides/spreadsheet",
+                },
+                "mime_type": {
+                    "type": "string",
+                    "description": "Optional MIME hint for google drive source types",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Optional display title for resource_ingest source",
+                },
                 "idempotency_key": {
                     "type": "string",
                     "description": "Optional idempotency key for dedupe",
@@ -614,7 +679,17 @@ MCP_TOOLS = [
                 },
                 "options": {
                     "type": "object",
-                    "description": "Optional provider query options",
+                    "description": (
+                        "Optional query options. Supported keys: source_ids (array of remote source_id). "
+                        "Unsupported keys like language/lang are rejected; put language requirements in query text."
+                    ),
+                    "properties": {
+                        "source_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional remote source_id filter list",
+                        }
+                    },
                     "default": {},
                 },
             },
@@ -663,7 +738,8 @@ MCP_TOOLS = [
         "name": "cccc_space_artifact",
         "description": (
             "List/generate/download NotebookLM artifacts for the current group.\n"
-            "Use action=generate with wait=true and save_to_space=true to auto-save output into repo/space/artifacts."
+            "If action is omitted and source/options/wait/save_to_space are provided, CCCC auto-infers action=generate.\n"
+            "For long generations, prefer action=generate with wait=false (default), then poll action=list and download when ready."
         ),
         "inputSchema": {
             "type": "object",
@@ -709,10 +785,22 @@ MCP_TOOLS = [
                     "description": "Provider-specific artifact generation options (action=generate)",
                     "default": {},
                 },
+                "source": {
+                    "type": "string",
+                    "description": "Optional source hint (used for action auto-inference and provider hints)",
+                },
+                "language": {
+                    "type": "string",
+                    "description": "Preferred output language (e.g., zh-CN, ja, en). Can also be passed via options.language.",
+                },
+                "lang": {
+                    "type": "string",
+                    "description": "Alias of language",
+                },
                 "wait": {
                     "type": "boolean",
                     "description": "For action=generate: wait for completion before returning",
-                    "default": True,
+                    "default": False,
                 },
                 "save_to_space": {
                     "type": "boolean",
