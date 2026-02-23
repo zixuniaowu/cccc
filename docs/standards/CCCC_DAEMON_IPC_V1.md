@@ -1700,6 +1700,59 @@ Result:
 }
 ```
 
+#### `group_space_capabilities`
+
+Return Group Space capability matrix for current group/provider.
+
+Args:
+```ts
+{
+  group_id: string
+  provider?: "notebooklm"
+}
+```
+
+Result:
+```ts
+{
+  group_id: string
+  provider: "notebooklm"
+  local_scope_attached: boolean
+  space_root: string
+  local_file_policy: {
+    allowed_extensions: string[]
+    max_file_size_bytes: number
+    unsupported_error_code: string
+    oversize_error_code: string
+  }
+  ingest: {
+    kinds: Array<"context_sync" | "resource_ingest">
+    resource_ingest: {
+      source_types: string[]
+      required_fields: Record<string, string[]>
+      optional_fields: Record<string, string[]>
+      aliases: Record<string, string>
+      examples: Record<string, Record<string, unknown>>
+    }
+  }
+  query: {
+    options: {
+      source_ids: string
+    }
+    unsupported_options: Record<string, string>
+    examples: Record<string, Record<string, unknown>>
+  }
+  artifacts: {
+    actions: string[]
+    kinds: string[]
+    options: Record<string, string>
+    aliases: Record<string, string>
+    examples: Record<string, Record<string, unknown>>
+  }
+  notes: string[]
+}
+```
+
 #### `group_space_bind`
 
 Bind/unbind a group to provider remote space.
