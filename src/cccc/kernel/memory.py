@@ -760,56 +760,64 @@ class MemoryStore:
         draft_cutoff = (now - timedelta(days=draft_days)).isoformat().replace("+00:00", "Z")
         zero_hit_cutoff = (now - timedelta(days=zero_hit_days)).isoformat().replace("+00:00", "Z")
         solid_cutoff = (now - timedelta(days=solid_review_days)).isoformat().replace("+00:00", "Z")
-
         anchor_expr = "COALESCE(NULLIF(last_recalled_at, ''), created_at)"
-        sql = f"""
-            SELECT
-                id,
-                content,
-                kind,
-                status,
-                hit_count,
-                created_at,
-                last_recalled_at,
-                {anchor_expr} AS anchor_ts,
-                CASE
-                    WHEN status = 'draft' AND hit_count = 0 AND {anchor_expr} <= :zero_hit_cutoff THEN 5
-                    WHEN status = 'draft' AND {anchor_expr} <= :draft_cutoff THEN 2
-                    WHEN status = 'solid' AND hit_count <= :solid_max_hit AND {anchor_expr} <= :solid_cutoff THEN 1
-                    ELSE 0
-                END AS score,
-                CASE
-                    WHEN status = 'draft' AND ({anchor_expr} <= :draft_cutoff OR (hit_count = 0 AND {anchor_expr} <= :zero_hit_cutoff))
-                        THEN 'delete_candidate'
-                    WHEN status = 'solid' AND hit_count <= :solid_max_hit AND {anchor_expr} <= :solid_cutoff
-                        THEN 'review_candidate'
-                    ELSE ''
-                END AS recommended_action
-            FROM memories
-            WHERE
-                group_id = :group_id
-                AND (
-                    (status = 'draft' AND ({anchor_expr} <= :draft_cutoff OR (hit_count = 0 AND {anchor_expr} <= :zero_hit_cutoff)))
-                    OR
-                    (status = 'solid' AND hit_count <= :solid_max_hit AND {anchor_expr} <= :solid_cutoff)
-                )
-            ORDER BY score DESC, anchor_ts ASC, created_at ASC
-            LIMIT :limit
-        """
-        rows = self._conn.execute(
-            sql,
-            {
-                "group_id": self.group_id,
-                "draft_cutoff": draft_cutoff,
-                "zero_hit_cutoff": zero_hit_cutoff,
-                "solid_cutoff": solid_cutoff,
-                "solid_max_hit": solid_max_hit,
-                "limit": limit,
-            },
-        ).fetchall()
+
+        def _run_bucket(where_sql: str, params: Dict[str, Any]) -> List[sqlite3.Row]:
+            query = f"""
+                SELECT
+                    id,
+                    content,
+                    kind,
+                    status,
+                    hit_count,
+                    created_at,
+                    last_recalled_at,
+                    {anchor_expr} AS anchor_ts
+                FROM memories
+                WHERE group_id = :group_id
+                  AND {where_sql}
+                ORDER BY anchor_ts ASC, created_at ASC
+                LIMIT :limit
+            """
+            args = {"group_id": self.group_id, "limit": limit}
+            args.update(params)
+            return self._conn.execute(query, args).fetchall()
+
+        # SQL coarse filter + SQL ordering + SQL limit per bucket.
+        # Bucket order defines global priority: high (draft zero-hit) -> medium (draft old) -> low (solid review).
+        draft_zero_hit_rows = _run_bucket(
+            (
+                "status = 'draft' AND hit_count = 0 AND "
+                "((last_recalled_at != '' AND last_recalled_at <= :zero_hit_cutoff) "
+                "OR (last_recalled_at = '' AND created_at <= :zero_hit_cutoff))"
+            ),
+            {"zero_hit_cutoff": zero_hit_cutoff},
+        )
+        draft_old_rows = _run_bucket(
+            (
+                "status = 'draft' AND "
+                "((last_recalled_at != '' AND last_recalled_at <= :draft_cutoff) "
+                "OR (last_recalled_at = '' AND created_at <= :draft_cutoff))"
+            ),
+            {"draft_cutoff": draft_cutoff},
+        )
+        solid_review_rows = _run_bucket(
+            (
+                "status = 'solid' AND hit_count <= :solid_max_hit AND "
+                "((last_recalled_at != '' AND last_recalled_at <= :solid_cutoff) "
+                "OR (last_recalled_at = '' AND created_at <= :solid_cutoff))"
+            ),
+            {"solid_cutoff": solid_cutoff, "solid_max_hit": solid_max_hit},
+        )
 
         candidates: List[Dict[str, Any]] = []
-        for row in rows:
+        seen_ids: set[str] = set()
+
+        def _append_row(row: sqlite3.Row, *, score: int, action: str) -> None:
+            rid = str(row["id"] or "")
+            if not rid or rid in seen_ids:
+                return
+            seen_ids.add(rid)
             created_raw = str(row["created_at"] or "")
             recalled_raw = str(row["last_recalled_at"] or "")
             anchor_raw = str(row["anchor_ts"] or "")
@@ -818,8 +826,6 @@ class MemoryStore:
 
             status = str(row["status"] or "")
             hit_count = int(row["hit_count"] or 0)
-            action = str(row["recommended_action"] or "")
-            score = int(row["score"] or 0)
             reasons: List[str] = []
             if action == "delete_candidate":
                 if age_days >= draft_days:
@@ -852,6 +858,15 @@ class MemoryStore:
                     "score": score,
                 }
             )
+
+        for row in draft_zero_hit_rows:
+            _append_row(row, score=5, action="delete_candidate")
+        for row in draft_old_rows:
+            _append_row(row, score=2, action="delete_candidate")
+        for row in solid_review_rows:
+            _append_row(row, score=1, action="review_candidate")
+
+        candidates = candidates[:limit]
 
         delete_candidates = [c for c in candidates if c.get("recommended_action") == "delete_candidate"]
         review_candidates = [c for c in candidates if c.get("recommended_action") == "review_candidate"]

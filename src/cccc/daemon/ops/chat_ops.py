@@ -227,7 +227,11 @@ def handle_send(
                 wanted = " ".join(to) if to else "@all"
                 return _error(
                     "no_enabled_recipients",
-                    f"no enabled agents match recipients: {wanted}",
+                    (
+                        "No enabled recipients after excluding sender. "
+                        "Please specify 'to' explicitly, e.g. to=['user'], to=['@all'], or to=['peer-reviewer']. "
+                        f"Current resolved recipients: {wanted}"
+                    ),
                     details={"to": list(to)},
                 )
 
@@ -400,7 +404,11 @@ def handle_reply(
                 wanted = " ".join(to) if to else "@all"
                 return _error(
                     "no_enabled_recipients",
-                    f"no enabled agents match recipients: {wanted}",
+                    (
+                        "No enabled recipients after excluding sender. "
+                        "Please specify 'to' explicitly, e.g. to=['user'], to=['@all'], or to=['peer-reviewer']. "
+                        f"Current resolved recipients: {wanted}"
+                    ),
                     details={"to": list(to)},
                 )
 

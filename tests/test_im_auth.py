@@ -428,6 +428,103 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         self.assertEqual(by, "Captain")
         self.assertEqual(to, ["@all", "Reviewer"])
 
+    def test_typing_indicator_removed_once_after_multi_file_delivery(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        class _FileOkAdapter(self._FakeAdapter):
+            def __init__(self) -> None:
+                super().__init__()
+                self.file_calls: list[tuple[str, str, str, str, int]] = []
+
+            def send_file(self, chat_id: str, file_path: Path, filename: str, caption: str = "", thread_id: int = 0) -> bool:
+                self.file_calls.append((str(chat_id), str(file_path), str(filename), str(caption), int(thread_id or 0)))
+                return True
+
+        km = KeyManager(self.state_dir)
+        sm = SubscriberManager(self.state_dir)
+        key = km.generate_key("chat_auth", 0, "telegram")
+        km.authorize("chat_auth", 0, "telegram", key)
+        sm.subscribe("chat_auth", chat_title="auth", thread_id=0, platform="telegram")
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = _FileOkAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+
+        # Simulate an active typing indicator awaiting outbound completion.
+        bridge._typing_indicators["chat_auth"] = ("chat_auth:1", "chat_auth:1:👀")
+
+        removed: list[str] = []
+        bridge._remove_typing_indicator = lambda chat_id: removed.append(str(chat_id))  # type: ignore[method-assign]
+
+        bridge.watcher.poll = lambda: [  # type: ignore[method-assign]
+            {
+                "kind": "chat.message",
+                "by": "foreman",
+                "data": {
+                    "text": "files",
+                    "to": ["user"],
+                    "attachments": [
+                        {"path": "state/blobs/a_file1.txt", "title": "f1.txt"},
+                        {"path": "state/blobs/b_file2.txt", "title": "f2.txt"},
+                    ],
+                },
+            }
+        ]
+
+        sample_file = self.state_dir / "sample.txt"
+        sample_file.write_text("ok", encoding="utf-8")
+        with patch("cccc.ports.im.bridge.resolve_blob_attachment_path", return_value=sample_file):
+            bridge._process_outbound()
+
+        self.assertEqual(len(adapter.file_calls), 2)
+        self.assertEqual(removed, ["chat_auth"])
+
+    def test_typing_indicator_kept_when_send_message_fails(self) -> None:
+        from cccc.ports.im.bridge import IMBridge
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        class _MessageFailAdapter(self._FakeAdapter):
+            def send_message(self, chat_id: str, text: str, thread_id: int = 0) -> bool:
+                self.sent_messages.append((str(chat_id), str(text), int(thread_id or 0)))
+                return False
+
+        km = KeyManager(self.state_dir)
+        sm = SubscriberManager(self.state_dir)
+        key = km.generate_key("chat_auth", 0, "telegram")
+        km.authorize("chat_auth", 0, "telegram", key)
+        sm.subscribe("chat_auth", chat_title="auth", thread_id=0, platform="telegram")
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = _MessageFailAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+
+        bridge._typing_indicators["chat_auth"] = ("chat_auth:1", "chat_auth:1:👀")
+        removed: list[str] = []
+        bridge._remove_typing_indicator = lambda chat_id: removed.append(str(chat_id))  # type: ignore[method-assign]
+
+        bridge.watcher.poll = lambda: [  # type: ignore[method-assign]
+            {
+                "kind": "chat.message",
+                "by": "foreman",
+                "data": {"text": "hello", "to": ["user"], "attachments": []},
+            }
+        ]
+        bridge._process_outbound()
+
+        self.assertEqual(len(adapter.sent_messages), 1)
+        self.assertEqual(removed, [])
+
     def test_subscribe_reloads_auth_state_and_avoids_stale_authorized_decision(self) -> None:
         from cccc.ports.im.bridge import IMBridge
 
