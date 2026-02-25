@@ -306,6 +306,20 @@ class TestDelete(MemoryStoreTestBase):
         ).fetchone()["c"]
         self.assertEqual(count, 0)
 
+    def test_delete_many_mixed_ids(self):
+        m1 = self.store.store("to delete 1")["id"]
+        m2 = self.store.store("to delete 2")["id"]
+        result = self.store.delete_many([m1, "missing", m2, m1])
+        self.assertEqual(result["deleted"], 2)
+        self.assertEqual(result["ids"], [m1, m2])
+        self.assertIsNone(self.store.get(m1))
+        self.assertIsNone(self.store.get(m2))
+
+    def test_delete_many_empty(self):
+        result = self.store.delete_many([])
+        self.assertEqual(result["deleted"], 0)
+        self.assertEqual(result["ids"], [])
+
 
 class TestListMemories(MemoryStoreTestBase):
     def test_list_empty(self):

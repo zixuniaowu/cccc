@@ -426,6 +426,87 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         self.assertFalse(bool(args.get("wait")))
         self.assertGreaterEqual(float(captured.get("timeout_s") or 0.0), 120.0)
 
+    def test_memory_delete_single_id_routes_to_daemon(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        captured = {}
+
+        def _fake_call(req):
+            captured["req"] = req
+            return {"ok": True, "deleted": True}
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
+        ):
+            mcp_server.handle_tool_call("cccc_memory_delete", {"id": "m1"})
+
+        req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
+        self.assertEqual(req.get("op"), "memory_delete")
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(args.get("group_id"), "g_test")
+        self.assertEqual(args.get("id"), "m1")
+
+    def test_memory_delete_batch_ids_routes_to_daemon(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        captured = {}
+
+        def _fake_call(req):
+            captured["req"] = req
+            return {"ok": True, "deleted_count": 2}
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
+        ):
+            mcp_server.handle_tool_call("cccc_memory_delete", {"ids": ["m1", "m2"]})
+
+        req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
+        self.assertEqual(req.get("op"), "memory_delete")
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(args.get("group_id"), "g_test")
+        self.assertEqual(args.get("ids"), ["m1", "m2"])
+
+    def test_memory_delete_missing_id_and_ids_raises(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"):
+            with self.assertRaises(mcp_server.MCPError) as cm:
+                mcp_server.handle_tool_call("cccc_memory_delete", {})
+        self.assertEqual(cm.exception.code, "missing_id")
+
+    def test_memory_decay_routes_to_daemon(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        captured = {}
+
+        def _fake_call(req):
+            captured["req"] = req
+            return {"ok": True, "count": 0}
+
+        with patch.object(mcp_server, "_resolve_group_id", return_value="g_test"), patch.object(
+            mcp_server, "_call_daemon_or_raise", side_effect=_fake_call
+        ):
+            mcp_server.handle_tool_call(
+                "cccc_memory_decay",
+                {
+                    "draft_days": 21,
+                    "zero_hit_days": 10,
+                    "solid_review_days": 90,
+                    "solid_max_hit": 2,
+                    "limit": 50,
+                },
+            )
+
+        req = captured.get("req") if isinstance(captured.get("req"), dict) else {}
+        self.assertEqual(req.get("op"), "memory_decay")
+        args = req.get("args") if isinstance(req.get("args"), dict) else {}
+        self.assertEqual(args.get("group_id"), "g_test")
+        self.assertEqual(args.get("draft_days"), 21)
+        self.assertEqual(args.get("zero_hit_days"), 10)
+        self.assertEqual(args.get("solid_review_days"), 90)
+        self.assertEqual(args.get("solid_max_hit"), 2)
+        self.assertEqual(args.get("limit"), 50)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1965,10 +1965,10 @@ MCP_TOOLS = [
             "required": [],
         },
     },
-    # memory_delete — delete a single memory by ID
+    # memory_delete — delete one or many memories by ID
     {
         "name": "cccc_memory_delete",
-        "description": "Delete a single memory by ID (scoped to group). Used for manual cleanup or compression.",
+        "description": "Delete memory by ID(s) (scoped to group). Supports single id or batch ids for manual cleanup/compression.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -1978,10 +1978,66 @@ MCP_TOOLS = [
                 },
                 "id": {
                     "type": "string",
-                    "description": "Memory ID to delete",
+                    "description": "Single memory ID to delete",
+                },
+                "ids": {
+                    "type": "array",
+                    "description": "Batch memory IDs to delete",
+                    "items": {"type": "string"},
                 },
             },
-            "required": ["id"],
+            "required": [],
+            "anyOf": [{"required": ["id"]}, {"required": ["ids"]}],
+        },
+    },
+    # memory_decay — find stale candidates (safe, non-destructive)
+    {
+        "name": "cccc_memory_decay",
+        "description": "Find stale memory candidates for cleanup/decay using last_recalled_at + hit_count + created_at. Returns candidates only, does not delete.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "draft_days": {
+                    "type": "integer",
+                    "description": "Draft memories older than this threshold become stale candidates",
+                    "default": 30,
+                    "minimum": 1,
+                    "maximum": 3650,
+                },
+                "zero_hit_days": {
+                    "type": "integer",
+                    "description": "Draft memories with hit_count=0 older than this threshold become high-priority candidates",
+                    "default": 14,
+                    "minimum": 1,
+                    "maximum": 3650,
+                },
+                "solid_review_days": {
+                    "type": "integer",
+                    "description": "Solid memories older than this threshold are returned as review candidates (not auto-delete)",
+                    "default": 120,
+                    "minimum": 1,
+                    "maximum": 3650,
+                },
+                "solid_max_hit": {
+                    "type": "integer",
+                    "description": "Maximum hit_count for solid review candidates",
+                    "default": 1,
+                    "minimum": 0,
+                    "maximum": 1000000,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of candidates to return",
+                    "default": 100,
+                    "minimum": 1,
+                    "maximum": 1000,
+                },
+            },
+            "required": [],
         },
     },
     # debug.* namespace - developer mode diagnostics (user + foreman only; dev mode required)

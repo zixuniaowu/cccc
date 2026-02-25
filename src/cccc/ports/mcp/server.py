@@ -2363,8 +2363,30 @@ def _handle_memory_namespace(name: str, arguments: Dict[str, Any]) -> Optional[D
 
     if name == "cccc_memory_delete":
         gid = _resolve_group_id(arguments)
+        args: Dict[str, Any] = {"group_id": gid}
         memory_id = str(arguments.get("id") or "").strip()
-        return _call_daemon_or_raise({"op": "memory_delete", "args": {"group_id": gid, "id": memory_id}})
+        if memory_id:
+            args["id"] = memory_id
+
+        raw_ids = arguments.get("ids")
+        if raw_ids is not None:
+            if not isinstance(raw_ids, list):
+                raise MCPError("validation_error", "ids must be an array of strings")
+            args["ids"] = [str(x) for x in raw_ids]
+
+        if "id" not in args and "ids" not in args:
+            raise MCPError("missing_id", "missing memory id or ids")
+
+        return _call_daemon_or_raise({"op": "memory_delete", "args": args})
+
+    if name == "cccc_memory_decay":
+        gid = _resolve_group_id(arguments)
+        args: Dict[str, Any] = {"group_id": gid}
+        for field in ("draft_days", "zero_hit_days", "solid_review_days", "solid_max_hit", "limit"):
+            val = arguments.get(field)
+            if val is not None:
+                args[field] = val
+        return _call_daemon_or_raise({"op": "memory_decay", "args": args})
 
     return None
 

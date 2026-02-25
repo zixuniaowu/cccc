@@ -465,7 +465,12 @@ def handle_memory_ingest(args: Dict[str, Any]) -> DaemonResponse:
 
 
 def handle_memory_delete(args: Dict[str, Any]) -> DaemonResponse:
-    """Delete a single memory by ID."""
+    """Delete memory by ID(s).
+
+    Supports:
+    - id: single memory ID
+    - ids: list of memory IDs (batch delete)
+    """
     group_id = str(args.get("group_id") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -475,11 +480,79 @@ def handle_memory_delete(args: Dict[str, Any]) -> DaemonResponse:
         return _error("group_not_found", f"group not found: {group_id}")
 
     memory_id = str(args.get("id") or "").strip()
-    if not memory_id:
-        return _error("missing_id", "missing memory id")
+    raw_ids = args.get("ids")
 
-    deleted = store.delete(memory_id)
-    return DaemonResponse(ok=True, result={"deleted": deleted})
+    ids: List[str] = []
+    if raw_ids is not None:
+        if not isinstance(raw_ids, list):
+            return _error("validation_error", "ids must be a list")
+        ids = [str(x or "").strip() for x in raw_ids if str(x or "").strip()]
+
+    # Single delete mode (backward-compatible)
+    if memory_id:
+        deleted = store.delete(memory_id)
+        return DaemonResponse(
+            ok=True,
+            result={
+                "deleted": deleted,
+                "deleted_count": 1 if deleted else 0,
+                "ids": [memory_id] if deleted else [],
+            },
+        )
+
+    # Batch delete mode
+    if ids:
+        result = store.delete_many(ids)
+        count = int(result.get("deleted") or 0)
+        deleted_ids = result.get("ids") if isinstance(result.get("ids"), list) else []
+        return DaemonResponse(
+            ok=True,
+            result={
+                "deleted": count > 0,
+                "deleted_count": count,
+                "ids": deleted_ids,
+            },
+        )
+
+    return _error("missing_id", "missing memory id or ids")
+
+
+# =============================================================================
+# memory_decay op
+# =============================================================================
+
+
+def handle_memory_decay(args: Dict[str, Any]) -> DaemonResponse:
+    """Find stale memory candidates for cleanup (safe: no deletion)."""
+    group_id = str(args.get("group_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+
+    store = _get_memory_store(group_id)
+    if store is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+
+    def _as_int(name: str, default: int) -> int:
+        val = args.get(name)
+        if val is None:
+            return default
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be an integer")
+
+    try:
+        result = store.find_stale(
+            draft_days=_as_int("draft_days", 30),
+            zero_hit_days=_as_int("zero_hit_days", 14),
+            solid_review_days=_as_int("solid_review_days", 120),
+            solid_max_hit=_as_int("solid_max_hit", 1),
+            limit=_as_int("limit", 100),
+        )
+    except ValueError as e:
+        return _error("validation_error", str(e))
+
+    return DaemonResponse(ok=True, result=result)
 
 
 # =============================================================================
@@ -596,4 +669,6 @@ def try_handle_memory_op(op: str, args: Dict[str, Any]) -> Optional[DaemonRespon
         return handle_memory_export(args)
     if op == "memory_delete":
         return handle_memory_delete(args)
+    if op == "memory_decay":
+        return handle_memory_decay(args)
     return None

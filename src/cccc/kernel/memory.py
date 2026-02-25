@@ -13,9 +13,10 @@ import hashlib
 import re
 import sqlite3
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from ..util.time import utc_now_iso
+from ..util.time import parse_utc_iso, utc_now_iso
 
 
 # =============================================================================
@@ -582,6 +583,44 @@ class MemoryStore:
         self._conn.commit()
         return cur.rowcount > 0
 
+    def delete_many(self, memory_ids: List[str]) -> Dict[str, Any]:
+        """Batch delete by IDs (scoped to this group).
+
+        Returns {"deleted": <count>, "ids": [deleted_ids]}.
+        """
+        assert self._conn is not None
+
+        # Normalize + de-duplicate while preserving caller order.
+        seen: set[str] = set()
+        ids: List[str] = []
+        for raw_id in memory_ids:
+            mid = str(raw_id or "").strip()
+            if not mid or mid in seen:
+                continue
+            seen.add(mid)
+            ids.append(mid)
+
+        if not ids:
+            return {"deleted": 0, "ids": []}
+
+        placeholders = ", ".join("?" for _ in ids)
+        rows = self._conn.execute(
+            f"SELECT id FROM memories WHERE group_id = ? AND id IN ({placeholders})",
+            [self.group_id] + ids,
+        ).fetchall()
+        found = {str(r["id"]) for r in rows}
+        deleted_ids = [mid for mid in ids if mid in found]
+
+        if deleted_ids:
+            delete_placeholders = ", ".join("?" for _ in deleted_ids)
+            self._conn.execute(
+                f"DELETE FROM memories WHERE group_id = ? AND id IN ({delete_placeholders})",
+                [self.group_id] + deleted_ids,
+            )
+            self._conn.commit()
+
+        return {"deleted": len(deleted_ids), "ids": deleted_ids}
+
     # -- CRUD: list --
 
     def list_memories(
@@ -683,6 +722,152 @@ class MemoryStore:
             "by_source_type": by_source,
             "tag_count": tag_count,
             "relation_count": relation_count,
+        }
+
+    # -- Decay / stale candidate discovery --
+
+    def find_stale(
+        self,
+        *,
+        draft_days: int = 30,
+        zero_hit_days: int = 14,
+        solid_review_days: int = 120,
+        solid_max_hit: int = 1,
+        limit: int = 100,
+    ) -> Dict[str, Any]:
+        """Identify stale memory candidates for cleanup/decay (safe, read-only).
+
+        Rules:
+        - Draft memories older than ``draft_days`` (by last_recalled_at fallback created_at)
+          are delete candidates.
+        - Draft with hit_count=0 and older than ``zero_hit_days`` are high-priority delete candidates.
+        - Solid memories are never auto-delete candidates; only review candidates when old and low-hit.
+        """
+        assert self._conn is not None
+
+        if draft_days < 1:
+            raise ValueError("draft_days must be >= 1")
+        if zero_hit_days < 1:
+            raise ValueError("zero_hit_days must be >= 1")
+        if solid_review_days < 1:
+            raise ValueError("solid_review_days must be >= 1")
+        if solid_max_hit < 0:
+            raise ValueError("solid_max_hit must be >= 0")
+        if limit < 1:
+            raise ValueError("limit must be >= 1")
+
+        now = datetime.now(timezone.utc)
+        draft_cutoff = (now - timedelta(days=draft_days)).isoformat().replace("+00:00", "Z")
+        zero_hit_cutoff = (now - timedelta(days=zero_hit_days)).isoformat().replace("+00:00", "Z")
+        solid_cutoff = (now - timedelta(days=solid_review_days)).isoformat().replace("+00:00", "Z")
+
+        anchor_expr = "COALESCE(NULLIF(last_recalled_at, ''), created_at)"
+        sql = f"""
+            SELECT
+                id,
+                content,
+                kind,
+                status,
+                hit_count,
+                created_at,
+                last_recalled_at,
+                {anchor_expr} AS anchor_ts,
+                CASE
+                    WHEN status = 'draft' AND hit_count = 0 AND {anchor_expr} <= :zero_hit_cutoff THEN 5
+                    WHEN status = 'draft' AND {anchor_expr} <= :draft_cutoff THEN 2
+                    WHEN status = 'solid' AND hit_count <= :solid_max_hit AND {anchor_expr} <= :solid_cutoff THEN 1
+                    ELSE 0
+                END AS score,
+                CASE
+                    WHEN status = 'draft' AND ({anchor_expr} <= :draft_cutoff OR (hit_count = 0 AND {anchor_expr} <= :zero_hit_cutoff))
+                        THEN 'delete_candidate'
+                    WHEN status = 'solid' AND hit_count <= :solid_max_hit AND {anchor_expr} <= :solid_cutoff
+                        THEN 'review_candidate'
+                    ELSE ''
+                END AS recommended_action
+            FROM memories
+            WHERE
+                group_id = :group_id
+                AND (
+                    (status = 'draft' AND ({anchor_expr} <= :draft_cutoff OR (hit_count = 0 AND {anchor_expr} <= :zero_hit_cutoff)))
+                    OR
+                    (status = 'solid' AND hit_count <= :solid_max_hit AND {anchor_expr} <= :solid_cutoff)
+                )
+            ORDER BY score DESC, anchor_ts ASC, created_at ASC
+            LIMIT :limit
+        """
+        rows = self._conn.execute(
+            sql,
+            {
+                "group_id": self.group_id,
+                "draft_cutoff": draft_cutoff,
+                "zero_hit_cutoff": zero_hit_cutoff,
+                "solid_cutoff": solid_cutoff,
+                "solid_max_hit": solid_max_hit,
+                "limit": limit,
+            },
+        ).fetchall()
+
+        candidates: List[Dict[str, Any]] = []
+        for row in rows:
+            created_raw = str(row["created_at"] or "")
+            recalled_raw = str(row["last_recalled_at"] or "")
+            anchor_raw = str(row["anchor_ts"] or "")
+            anchor_dt = parse_utc_iso(anchor_raw) or parse_utc_iso(created_raw) or now
+            age_days = max(0, int((now - anchor_dt).total_seconds() // 86400))
+
+            status = str(row["status"] or "")
+            hit_count = int(row["hit_count"] or 0)
+            action = str(row["recommended_action"] or "")
+            score = int(row["score"] or 0)
+            reasons: List[str] = []
+            if action == "delete_candidate":
+                if age_days >= draft_days:
+                    reasons.append(f"draft_older_than_{draft_days}d")
+                if hit_count == 0 and age_days >= zero_hit_days:
+                    reasons.append(f"zero_hit_older_than_{zero_hit_days}d")
+            elif action == "review_candidate":
+                if age_days >= solid_review_days and hit_count <= solid_max_hit:
+                    reasons.append(f"solid_review_older_than_{solid_review_days}d")
+
+            priority = "low"
+            if score >= 4:
+                priority = "high"
+            elif score >= 2:
+                priority = "medium"
+
+            candidates.append(
+                {
+                    "id": str(row["id"] or ""),
+                    "content_preview": str(row["content"] or "")[:120],
+                    "kind": str(row["kind"] or ""),
+                    "status": status,
+                    "hit_count": hit_count,
+                    "created_at": created_raw,
+                    "last_recalled_at": recalled_raw,
+                    "age_days": age_days,
+                    "reasons": reasons,
+                    "recommended_action": action,
+                    "priority": priority,
+                    "score": score,
+                }
+            )
+
+        delete_candidates = [c for c in candidates if c.get("recommended_action") == "delete_candidate"]
+        review_candidates = [c for c in candidates if c.get("recommended_action") == "review_candidate"]
+
+        return {
+            "candidates": candidates,
+            "count": len(candidates),
+            "delete_candidate_count": len(delete_candidates),
+            "review_candidate_count": len(review_candidates),
+            "config": {
+                "draft_days": draft_days,
+                "zero_hit_days": zero_hit_days,
+                "solid_review_days": solid_review_days,
+                "solid_max_hit": solid_max_hit,
+                "limit": limit,
+            },
         }
 
     # -- Recall (structured search) --

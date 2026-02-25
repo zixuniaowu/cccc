@@ -69,11 +69,13 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertIn("Notes are sticky notes", prompt)
             self.assertIn("Memory is a notebook", prompt)
 
-            # 4 MCP tools mentioned
+            # 6 MCP tools mentioned
             self.assertIn("cccc_memory_store", prompt)
             self.assertIn("cccc_memory_search", prompt)
             self.assertIn("cccc_memory_ingest", prompt)
             self.assertIn("cccc_memory_stats", prompt)
+            self.assertIn("cccc_memory_delete", prompt)
+            self.assertIn("cccc_memory_decay", prompt)
 
             # Strategy guidance
             self.assertIn("conservative", prompt)
@@ -116,6 +118,8 @@ class TestSystemPromptMemory(unittest.TestCase):
         self.assertIn("cccc_memory_search", text)
         self.assertIn("cccc_memory_ingest", text)
         self.assertIn("cccc_memory_stats", text)
+        self.assertIn("cccc_memory_delete", text)
+        self.assertIn("cccc_memory_decay", text)
 
         # Strategy
         self.assertIn("conservative", text)

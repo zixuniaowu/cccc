@@ -3,6 +3,7 @@
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 
 from cccc.contracts.v1 import DaemonResponse
@@ -11,6 +12,8 @@ from cccc.daemon.ops.memory_ops import (
     handle_memory_search,
     handle_memory_stats,
     handle_memory_ingest,
+    handle_memory_delete,
+    handle_memory_decay,
     try_handle_memory_op,
     _get_memory_store,
     close_all_stores,
@@ -416,6 +419,77 @@ class TestHandleMemoryIngest(MemoryOpsTestBase):
         self.assertEqual(resp.result["mode"], "signal")
 
 
+class TestHandleMemoryDelete(MemoryOpsTestBase):
+    """Test handle_memory_delete (single + batch)."""
+
+    def test_missing_group_id(self):
+        resp = handle_memory_delete({})
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "missing_group_id")
+
+    def test_missing_id_or_ids(self):
+        resp = handle_memory_delete({"group_id": self.group_id})
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "missing_id")
+
+    def test_delete_single(self):
+        created = handle_memory_store({"group_id": self.group_id, "content": "to delete"})
+        mem_id = created.result["id"]
+        resp = handle_memory_delete({"group_id": self.group_id, "id": mem_id})
+        self.assertTrue(resp.ok)
+        self.assertTrue(resp.result["deleted"])
+        self.assertEqual(resp.result["deleted_count"], 1)
+        self.assertEqual(resp.result["ids"], [mem_id])
+
+    def test_delete_batch(self):
+        m1 = handle_memory_store({"group_id": self.group_id, "content": "d1"}).result["id"]
+        m2 = handle_memory_store({"group_id": self.group_id, "content": "d2"}).result["id"]
+        resp = handle_memory_delete({"group_id": self.group_id, "ids": [m1, "missing", m2]})
+        self.assertTrue(resp.ok)
+        self.assertTrue(resp.result["deleted"])
+        self.assertEqual(resp.result["deleted_count"], 2)
+        self.assertEqual(resp.result["ids"], [m1, m2])
+
+    def test_delete_batch_invalid_ids_type(self):
+        resp = handle_memory_delete({"group_id": self.group_id, "ids": "not-a-list"})
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "validation_error")
+
+
+class TestHandleMemoryDecay(MemoryOpsTestBase):
+    """Test handle_memory_decay."""
+
+    def _age(self, memory_id: str, *, days: int) -> None:
+        store = _get_memory_store(self.group_id)
+        assert store is not None and store._conn is not None
+        ts = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat().replace("+00:00", "Z")
+        store._conn.execute(
+            "UPDATE memories SET created_at = ?, updated_at = ?, last_recalled_at = '' "
+            "WHERE id = ? AND group_id = ?",
+            (ts, ts, memory_id, self.group_id),
+        )
+        store._conn.commit()
+
+    def test_missing_group_id(self):
+        resp = handle_memory_decay({})
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "missing_group_id")
+
+    def test_decay_returns_candidates(self):
+        created = handle_memory_store({"group_id": self.group_id, "content": "stale draft"})
+        mem_id = created.result["id"]
+        self._age(mem_id, days=60)
+        resp = handle_memory_decay({"group_id": self.group_id, "draft_days": 30, "zero_hit_days": 14})
+        self.assertTrue(resp.ok)
+        ids = [c["id"] for c in resp.result["candidates"]]
+        self.assertIn(mem_id, ids)
+
+    def test_decay_invalid_param_returns_validation_error(self):
+        resp = handle_memory_decay({"group_id": self.group_id, "limit": "bad"})
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "validation_error")
+
+
 class TestTryHandleMemoryOp(MemoryOpsTestBase):
     """Test the dispatcher."""
 
@@ -445,6 +519,21 @@ class TestTryHandleMemoryOp(MemoryOpsTestBase):
         resp = try_handle_memory_op("memory_ingest", {
             "group_id": self.group_id,
         })
+        self.assertIsNotNone(resp)
+        self.assertTrue(resp.ok)
+
+    def test_dispatches_memory_delete(self):
+        created = handle_memory_store({"group_id": self.group_id, "content": "dispatch delete"})
+        mem_id = created.result["id"]
+        resp = try_handle_memory_op("memory_delete", {
+            "group_id": self.group_id,
+            "id": mem_id,
+        })
+        self.assertIsNotNone(resp)
+        self.assertTrue(resp.ok)
+
+    def test_dispatches_memory_decay(self):
+        resp = try_handle_memory_op("memory_decay", {"group_id": self.group_id})
         self.assertIsNotNone(resp)
         self.assertTrue(resp.ok)
 

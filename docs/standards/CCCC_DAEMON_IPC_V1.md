@@ -1220,11 +1220,58 @@ Args:
 ```ts
 {
   group_id: string
-  id: string  // memory ID to delete
+  id?: string     // single memory ID
+  ids?: string[]  // batch memory IDs
 }
 ```
 
-Result: `{ deleted: boolean }`
+Result: `{ deleted: boolean, deleted_count: number, ids: string[] }`
+
+#### `memory_decay`
+
+Find stale memory candidates for cleanup/decay (safe: read-only, no auto-delete).
+
+Args:
+```ts
+{
+  group_id: string
+  draft_days?: number        // default 30
+  zero_hit_days?: number     // default 14
+  solid_review_days?: number // default 120
+  solid_max_hit?: number     // default 1
+  limit?: number             // default 100
+}
+```
+
+Result:
+```ts
+{
+  candidates: Array<{
+    id: string
+    content_preview: string
+    kind: string
+    status: "draft" | "solid"
+    hit_count: number
+    created_at: string
+    last_recalled_at: string
+    age_days: number
+    reasons: string[]
+    recommended_action: "delete_candidate" | "review_candidate"
+    priority: "low" | "medium" | "high"
+    score: number
+  }>
+  count: number
+  delete_candidate_count: number
+  review_candidate_count: number
+  config: {
+    draft_days: number
+    zero_hit_days: number
+    solid_review_days: number
+    solid_max_hit: number
+    limit: number
+  }
+}
+```
 
 #### `task_list`
 

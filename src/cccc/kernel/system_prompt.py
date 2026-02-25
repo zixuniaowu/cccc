@@ -22,6 +22,8 @@ def _memory_policy_lines(group_id: str) -> List[str]:
         "- Use cccc_memory_search to recall past context (FTS5 + structured filters).",
         "- Use cccc_memory_ingest (signal mode) to review recent chat for memory-worthy content.",
         "- Use cccc_memory_stats to check memory health.",
+        "- Use cccc_memory_delete for manual cleanup/compression of stale or redundant memories.",
+        "- Use cccc_memory_decay to identify stale cleanup candidates first (non-destructive), then delete intentionally.",
         "- Strategy: prefer conservative (draft + high confidence); use aggressive only for confirmed decisions/facts.",
         "- When a milestone completes: review Notes for key decisions and archive them to Memory via cccc_memory_store.",
         "- Default recall has no side effects. Use track_hit=true to increment hit_count and auto-solidify drafts at 3 recalls.",
