@@ -45,5 +45,26 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertNotIn("lang", opt_props)
 
 
+    def test_memory_kind_enum_matches_kernel(self) -> None:
+        """W4 regression: MCP kind enums must match kernel MEMORY_KINDS."""
+        from cccc.kernel.memory import MEMORY_KINDS
+
+        kernel_kinds = set(MEMORY_KINDS)
+        for spec in MCP_TOOLS:
+            name = str(spec.get("name") or "")
+            if name not in ("cccc_memory_store", "cccc_memory_search"):
+                continue
+            schema = spec.get("inputSchema") or {}
+            props = schema.get("properties") or {}
+            kind_prop = props.get("kind") or {}
+            mcp_enum = kind_prop.get("enum")
+            self.assertIsNotNone(mcp_enum, msg=f"{name} kind missing enum")
+            self.assertEqual(
+                set(mcp_enum),
+                kernel_kinds,
+                msg=f"{name} kind enum mismatch with MEMORY_KINDS",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

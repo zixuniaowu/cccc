@@ -2304,6 +2304,54 @@ def _handle_terminal_namespace(name: str, arguments: Dict[str, Any]) -> Optional
     return None
 
 
+def _handle_memory_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if name == "cccc_memory_store":
+        gid = _resolve_group_id(arguments)
+        args: Dict[str, Any] = {"group_id": gid}
+        for field in ("id", "content", "kind", "status", "confidence", "source_type",
+                       "source_ref", "scope_key", "actor_id", "task_id", "milestone_id",
+                       "event_ts", "strategy"):
+            val = arguments.get(field)
+            if val is not None:
+                args[field] = val
+        if "tags" in arguments:
+            args["tags"] = arguments["tags"]
+        if arguments.get("solidify"):
+            args["solidify"] = True
+        return _call_daemon_or_raise({"op": "memory_store", "args": args})
+
+    if name == "cccc_memory_search":
+        gid = _resolve_group_id(arguments)
+        args = {"group_id": gid}
+        for field in ("query", "status", "kind", "actor_id", "task_id", "milestone_id",
+                       "confidence", "since", "until"):
+            val = arguments.get(field)
+            if val is not None:
+                args[field] = val
+        if "tags" in arguments:
+            args["tags"] = arguments["tags"]
+        if "limit" in arguments:
+            args["limit"] = arguments["limit"]
+        return _call_daemon_or_raise({"op": "memory_search", "args": args})
+
+    if name == "cccc_memory_ingest":
+        gid = _resolve_group_id(arguments)
+        args = {"group_id": gid}
+        for field in ("mode", "limit", "actor_id"):
+            val = arguments.get(field)
+            if val is not None:
+                args[field] = val
+        if arguments.get("reset_watermark"):
+            args["reset_watermark"] = True
+        return _call_daemon_or_raise({"op": "memory_ingest", "args": args})
+
+    if name == "cccc_memory_stats":
+        gid = _resolve_group_id(arguments)
+        return _call_daemon_or_raise({"op": "memory_stats", "args": {"group_id": gid}})
+
+    return None
+
+
 def _handle_debug_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if name == "cccc_debug_snapshot":
         gid = _resolve_group_id(arguments)
@@ -2327,6 +2375,7 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
     for handler in (
         _handle_cccc_namespace,
         _handle_context_namespace,
+        _handle_memory_namespace,
         _handle_headless_namespace,
         _handle_notify_namespace,
         _handle_terminal_namespace,

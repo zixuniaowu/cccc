@@ -1720,6 +1720,221 @@ MCP_TOOLS = [
             "required": ["key"],
         },
     },
+    # memory.* namespace - agent-driven memory system
+    {
+        "name": "cccc_memory_store",
+        "description": (
+            "Store or update a memory.\n\n"
+            "Create mode (no id): stores new memory with content and optional metadata.\n"
+            "Update mode (with id): updates existing memory fields.\n"
+            "Set solidify=true to immediately solidify the memory after store/update.\n"
+            "Use strategy param to apply predefined status/confidence presets: "
+            "aggressive (solid/medium), conservative (draft/high), milestone-only (solid/high)."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "id": {
+                    "type": "string",
+                    "description": "Memory ID for update mode (omit for create)",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Memory content (required for create, optional for update)",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["observation", "decision", "preference", "fact", "instruction", "context", "relation"],
+                    "description": "Memory kind",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["draft", "solid"],
+                    "description": "Memory status (default draft; overridden by strategy)",
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": "Confidence level (default medium; overridden by strategy)",
+                },
+                "source_type": {
+                    "type": "string",
+                    "description": "Source type (e.g. chat_ingest, manual, reflection)",
+                },
+                "source_ref": {
+                    "type": "string",
+                    "description": "Source reference (e.g. event_id)",
+                },
+                "scope_key": {
+                    "type": "string",
+                    "description": "Scope key for namespacing",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Actor who created this memory",
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Associated task ID",
+                },
+                "milestone_id": {
+                    "type": "string",
+                    "description": "Associated milestone ID",
+                },
+                "event_ts": {
+                    "type": "string",
+                    "description": "Event timestamp (ISO 8601)",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags for categorization",
+                },
+                "strategy": {
+                    "type": "string",
+                    "enum": ["aggressive", "conservative", "milestone-only"],
+                    "description": "Predefined status/confidence preset (overrides explicit status/confidence)",
+                },
+                "solidify": {
+                    "type": "boolean",
+                    "description": "Immediately solidify after store/update (default false)",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_memory_search",
+        "description": (
+            "Search memories via full-text search and/or structured filters.\n\n"
+            "FTS5 query with CJK supplement. Supports filters: status, kind, actor_id, task_id, "
+            "milestone_id, confidence, tags, since/until. Results are ordered solid-first, then by recency.\n"
+            "Each recall increments hit_count; draft memories auto-solidify at hit_count >= 3."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Full-text search query (optional; omit for filter-only mode)",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["draft", "solid"],
+                    "description": "Filter by status",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["observation", "decision", "preference", "fact", "instruction", "context", "relation"],
+                    "description": "Filter by kind",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Filter by actor ID",
+                },
+                "task_id": {
+                    "type": "string",
+                    "description": "Filter by task ID",
+                },
+                "milestone_id": {
+                    "type": "string",
+                    "description": "Filter by milestone ID",
+                },
+                "confidence": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high"],
+                    "description": "Filter by confidence level",
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Filter by tags (AND logic)",
+                },
+                "since": {
+                    "type": "string",
+                    "description": "Filter memories created after this ISO 8601 timestamp",
+                },
+                "until": {
+                    "type": "string",
+                    "description": "Filter memories created before this ISO 8601 timestamp",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default 20, max 100)",
+                    "default": 20,
+                    "minimum": 1,
+                    "maximum": 100,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_memory_ingest",
+        "description": (
+            "Ingest recent chat messages into memory.\n\n"
+            "Modes:\n"
+            "- signal (default): returns structured summary grouped by actor with suggested_kind, "
+            "key_phrases, time_range. Use this to decide what to store.\n"
+            "- raw: bulk imports chat messages as source_type=chat_ingest memories.\n\n"
+            "Uses watermark to skip already-processed events. Set reset_watermark=true to re-process."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["signal", "raw"],
+                    "description": "Ingest mode: signal (structured summary) or raw (bulk import)",
+                    "default": "signal",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Number of recent ledger lines to read (default 50, max 200)",
+                    "default": 50,
+                    "minimum": 1,
+                    "maximum": 200,
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Filter by actor ID (raw mode only)",
+                },
+                "reset_watermark": {
+                    "type": "boolean",
+                    "description": "Reset watermark to re-process previously ingested events",
+                    "default": False,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_memory_stats",
+        "description": "Get memory statistics for the group (total count, by status, by kind, tag count, relation count).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+            },
+            "required": [],
+        },
+    },
     # debug.* namespace - developer mode diagnostics (user + foreman only; dev mode required)
     {
         "name": "cccc_debug_snapshot",

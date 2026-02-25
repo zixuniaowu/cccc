@@ -1,0 +1,390 @@
+"""Tests for daemon memory_ops (T097)."""
+
+import os
+import tempfile
+import unittest
+from unittest.mock import patch, MagicMock
+
+from cccc.contracts.v1 import DaemonResponse
+from cccc.daemon.ops.memory_ops import (
+    handle_memory_store,
+    handle_memory_search,
+    handle_memory_stats,
+    handle_memory_ingest,
+    try_handle_memory_op,
+    _get_memory_store,
+    close_all_stores,
+    _store_cache,
+    _MAX_CACHED_STORES,
+)
+
+
+class MemoryOpsTestBase(unittest.TestCase):
+    """Base with a real temp group for memory ops."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.group_id = "g_ops_test"
+        # Patch load_group to return a mock group pointing to temp dir
+        self._patcher = patch("cccc.daemon.ops.memory_ops.load_group")
+        self.mock_load_group = self._patcher.start()
+        import pathlib
+        mock_group = MagicMock()
+        mock_group.path = pathlib.Path(self._td.name)
+        mock_group.ledger_path = pathlib.Path(self._td.name) / "ledger.jsonl"
+        self.mock_load_group.return_value = mock_group
+
+    def tearDown(self):
+        close_all_stores()
+        self._patcher.stop()
+        self._td.cleanup()
+
+
+class TestConnectionPoolCache(MemoryOpsTestBase):
+    """Test _get_memory_store connection pool."""
+
+    def test_get_store_creates_new(self):
+        store = _get_memory_store(self.group_id)
+        self.assertIsNotNone(store)
+        self.assertIn(self.group_id, _store_cache)
+
+    def test_get_store_returns_cached(self):
+        store1 = _get_memory_store(self.group_id)
+        store2 = _get_memory_store(self.group_id)
+        self.assertIs(store1, store2)
+
+    def test_get_store_none_for_unknown_group(self):
+        self.mock_load_group.return_value = None
+        store = _get_memory_store("nonexistent")
+        self.assertIsNone(store)
+
+    def test_lru_eviction(self):
+        """Evicts oldest when cache is full."""
+        for i in range(_MAX_CACHED_STORES):
+            gid = f"g_evict_{i}"
+            _get_memory_store(gid)
+        self.assertEqual(len(_store_cache), _MAX_CACHED_STORES)
+
+        # One more should evict the first
+        _get_memory_store("g_evict_overflow")
+        self.assertEqual(len(_store_cache), _MAX_CACHED_STORES)
+        self.assertNotIn("g_evict_0", _store_cache)
+        self.assertIn("g_evict_overflow", _store_cache)
+
+    def test_close_all_stores(self):
+        _get_memory_store(self.group_id)
+        self.assertGreater(len(_store_cache), 0)
+        close_all_stores()
+        self.assertEqual(len(_store_cache), 0)
+
+
+class TestHandleMemoryStore(MemoryOpsTestBase):
+    """Test handle_memory_store create/update/solidify."""
+
+    def test_missing_group_id(self):
+        resp = handle_memory_store({})
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "missing_group_id")
+
+    def test_group_not_found(self):
+        self.mock_load_group.return_value = None
+        resp = handle_memory_store({"group_id": "unknown"})
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "group_not_found")
+
+    def test_create_basic(self):
+        resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "test memory",
+        })
+        self.assertTrue(resp.ok)
+        self.assertIn("id", resp.result)
+        self.assertFalse(resp.result.get("deduplicated"))
+
+    def test_create_missing_content(self):
+        resp = handle_memory_store({"group_id": self.group_id})
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "missing_content")
+
+    def test_create_with_all_fields(self):
+        resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "detailed memory",
+            "kind": "decision",
+            "status": "solid",
+            "confidence": "high",
+            "source_type": "chat_ingest",
+            "source_ref": "evt_123",
+            "scope_key": "s_test",
+            "actor_id": "peer-impl",
+            "task_id": "T097",
+            "milestone_id": "M7",
+            "event_ts": "2026-02-25T00:00:00Z",
+            "tags": ["test", "memory"],
+            "strategy": "aggressive",
+        })
+        self.assertTrue(resp.ok)
+
+    def test_create_with_solidify(self):
+        resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "solidify on create",
+            "solidify": True,
+        })
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.result.get("status"), "solid")
+
+    def test_update_existing(self):
+        # Create first
+        create_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "original",
+        })
+        self.assertTrue(create_resp.ok)
+        mem_id = create_resp.result["id"]
+
+        # Update
+        update_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "id": mem_id,
+            "content": "modified",
+            "kind": "fact",
+        })
+        self.assertTrue(update_resp.ok)
+        self.assertTrue(update_resp.result.get("updated"))
+        self.assertEqual(update_resp.result["memory"]["content"], "modified")
+        self.assertEqual(update_resp.result["memory"]["kind"], "fact")
+
+    def test_update_nonexistent(self):
+        resp = handle_memory_store({
+            "group_id": self.group_id,
+            "id": "nonexistent_id",
+            "content": "fail",
+        })
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "memory_not_found")
+
+    def test_update_with_solidify(self):
+        create_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "to solidify",
+        })
+        mem_id = create_resp.result["id"]
+
+        update_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "id": mem_id,
+            "solidify": True,
+        })
+        self.assertTrue(update_resp.ok)
+        self.assertEqual(update_resp.result["memory"]["status"], "solid")
+
+    def test_update_tags(self):
+        create_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "tagged",
+            "tags": ["a", "b"],
+        })
+        mem_id = create_resp.result["id"]
+
+        update_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "id": mem_id,
+            "tags": ["c", "d"],
+        })
+        self.assertTrue(update_resp.ok)
+        self.assertEqual(sorted(update_resp.result["memory"]["tags"]), ["c", "d"])
+
+    def test_dedup(self):
+        resp1 = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "same content",
+        })
+        resp2 = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "same content",
+        })
+        self.assertTrue(resp1.ok)
+        self.assertTrue(resp2.ok)
+        self.assertTrue(resp2.result.get("deduplicated"))
+        self.assertEqual(resp1.result["id"], resp2.result["id"])
+
+
+class TestHandleMemorySearch(MemoryOpsTestBase):
+    """Test handle_memory_search."""
+
+    def test_missing_group_id(self):
+        resp = handle_memory_search({})
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "missing_group_id")
+
+    def test_search_empty(self):
+        resp = handle_memory_search({"group_id": self.group_id})
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.result["count"], 0)
+        self.assertEqual(resp.result["memories"], [])
+
+    def test_search_with_data(self):
+        handle_memory_store({
+            "group_id": self.group_id,
+            "content": "SQLite full-text search",
+            "kind": "fact",
+        })
+        resp = handle_memory_search({
+            "group_id": self.group_id,
+            "query": "SQLite",
+        })
+        self.assertTrue(resp.ok)
+        self.assertGreater(resp.result["count"], 0)
+
+    def test_search_with_filters(self):
+        handle_memory_store({
+            "group_id": self.group_id,
+            "content": "solid fact",
+            "status": "solid",
+            "kind": "fact",
+        })
+        handle_memory_store({
+            "group_id": self.group_id,
+            "content": "draft observation",
+            "kind": "observation",
+        })
+
+        resp = handle_memory_search({
+            "group_id": self.group_id,
+            "status": "solid",
+        })
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.result["count"], 1)
+
+    def test_search_with_limit(self):
+        for i in range(5):
+            handle_memory_store({
+                "group_id": self.group_id,
+                "content": f"memory {i}",
+            })
+        resp = handle_memory_search({
+            "group_id": self.group_id,
+            "limit": 2,
+        })
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.result["count"], 2)
+
+    def test_search_with_tags(self):
+        handle_memory_store({
+            "group_id": self.group_id,
+            "content": "tagged memory",
+            "tags": ["architecture", "search"],
+        })
+        resp = handle_memory_search({
+            "group_id": self.group_id,
+            "tags": ["architecture"],
+        })
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.result["count"], 1)
+
+    def test_search_limit_clamped(self):
+        """Limit is clamped to 1-100."""
+        resp = handle_memory_search({
+            "group_id": self.group_id,
+            "limit": 999,
+        })
+        self.assertTrue(resp.ok)
+
+    def test_search_memory_dict_shape(self):
+        """Search results have normalized memory shape."""
+        handle_memory_store({
+            "group_id": self.group_id,
+            "content": "shape check",
+        })
+        resp = handle_memory_search({"group_id": self.group_id})
+        self.assertTrue(resp.ok)
+        mem = resp.result["memories"][0]
+        for key in ("id", "content", "kind", "status", "confidence",
+                     "source_type", "source_ref", "group_id", "scope_key",
+                     "actor_id", "task_id", "milestone_id", "event_ts",
+                     "created_at", "updated_at", "content_hash", "hit_count", "tags"):
+            self.assertIn(key, mem, f"Missing key: {key}")
+
+
+class TestHandleMemoryStats(MemoryOpsTestBase):
+    """Test handle_memory_stats."""
+
+    def test_missing_group_id(self):
+        resp = handle_memory_stats({})
+        self.assertFalse(resp.ok)
+
+    def test_stats_empty(self):
+        resp = handle_memory_stats({"group_id": self.group_id})
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.result["total"], 0)
+
+    def test_stats_with_data(self):
+        handle_memory_store({
+            "group_id": self.group_id,
+            "content": "a",
+            "kind": "fact",
+            "status": "solid",
+        })
+        handle_memory_store({
+            "group_id": self.group_id,
+            "content": "b",
+            "kind": "observation",
+        })
+        resp = handle_memory_stats({"group_id": self.group_id})
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.result["total"], 2)
+
+
+class TestHandleMemoryIngest(MemoryOpsTestBase):
+    """Test handle_memory_ingest basic dispatch."""
+
+    def test_ingest_works(self):
+        resp = handle_memory_ingest({"group_id": self.group_id})
+        self.assertTrue(resp.ok)
+        self.assertEqual(resp.result["mode"], "signal")
+
+
+class TestTryHandleMemoryOp(MemoryOpsTestBase):
+    """Test the dispatcher."""
+
+    def test_dispatches_memory_store(self):
+        resp = try_handle_memory_op("memory_store", {
+            "group_id": self.group_id,
+            "content": "dispatch test",
+        })
+        self.assertIsNotNone(resp)
+        self.assertTrue(resp.ok)
+
+    def test_dispatches_memory_search(self):
+        resp = try_handle_memory_op("memory_search", {
+            "group_id": self.group_id,
+        })
+        self.assertIsNotNone(resp)
+        self.assertTrue(resp.ok)
+
+    def test_dispatches_memory_stats(self):
+        resp = try_handle_memory_op("memory_stats", {
+            "group_id": self.group_id,
+        })
+        self.assertIsNotNone(resp)
+        self.assertTrue(resp.ok)
+
+    def test_dispatches_memory_ingest(self):
+        resp = try_handle_memory_op("memory_ingest", {
+            "group_id": self.group_id,
+        })
+        self.assertIsNotNone(resp)
+        self.assertTrue(resp.ok)
+
+    def test_returns_none_for_unknown_op(self):
+        resp = try_handle_memory_op("unknown_op", {})
+        self.assertIsNone(resp)
+
+    def test_returns_none_for_non_memory_op(self):
+        resp = try_handle_memory_op("context_get", {"group_id": "test"})
+        self.assertIsNone(resp)
+
+
+if __name__ == "__main__":
+    unittest.main()

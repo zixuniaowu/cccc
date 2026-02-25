@@ -1113,6 +1113,80 @@ Result:
 }
 ```
 
+#### `memory_store`
+
+Args:
+```ts
+{
+  group_id: string
+  id?: string           // memory ID for update mode (omit for create)
+  content?: string      // required for create, optional for update
+  kind?: string
+  status?: string
+  confidence?: string
+  source_type?: string
+  source_ref?: string
+  scope_key?: string
+  actor_id?: string
+  task_id?: string
+  milestone_id?: string
+  event_ts?: string
+  tags?: string[]
+  strategy?: string     // "aggressive" | "conservative" | "milestone-only"
+  solidify?: boolean    // immediately solidify after store/update
+}
+```
+
+Result (create): `{ id, content_hash, created_at, status, deduplicated }`
+Result (update): `{ memory: Record<string, unknown>, updated: true }`
+
+#### `memory_search`
+
+Args:
+```ts
+{
+  group_id: string
+  query?: string        // FTS5 full-text query
+  status?: string
+  kind?: string
+  actor_id?: string
+  task_id?: string
+  milestone_id?: string
+  confidence?: string
+  tags?: string[]
+  since?: string        // ISO 8601
+  until?: string        // ISO 8601
+  limit?: number        // 1-100, default 20
+}
+```
+
+Result: `{ memories: Array<Record<string, unknown>>, count: number }`
+
+#### `memory_stats`
+
+Args:
+```ts
+{ group_id: string }
+```
+
+Result: `{ total, by_status, by_kind, tag_count, relation_count }`
+
+#### `memory_ingest`
+
+Args:
+```ts
+{
+  group_id: string
+  mode?: "signal" | "raw"    // default "signal"
+  limit?: number             // ledger lines to read (1-200, default 50)
+  actor_id?: string          // filter by actor (raw mode only)
+  reset_watermark?: boolean  // re-process previously ingested events
+}
+```
+
+Result (signal mode): `{ signals: Array<{actor_id, messages_count, suggested_kind, key_phrases, time_range, topic}>, events_processed, watermark, mode }`
+Result (raw mode): `{ imported, skipped, watermark, mode }`
+
 #### `task_list`
 
 Args:

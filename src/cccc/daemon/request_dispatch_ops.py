@@ -32,6 +32,7 @@ from .ops.group_bootstrap_ops import try_handle_group_bootstrap_op
 from .ops.registry_ops import try_handle_registry_op
 from .ops.im_ops import try_handle_im_op
 from .ops.runner_ops import try_handle_headless_op
+from .ops.memory_ops import try_handle_memory_op
 
 
 @dataclass(frozen=True)
@@ -348,6 +349,10 @@ def dispatch_request(
     context_resp = try_handle_context_op(op, args)
     if context_resp is not None:
         return context_resp, False
+
+    memory_resp = try_handle_memory_op(op, args)
+    if memory_resp is not None:
+        return memory_resp, False
 
     im_resp = try_handle_im_op(op, args)
     if im_resp is not None:

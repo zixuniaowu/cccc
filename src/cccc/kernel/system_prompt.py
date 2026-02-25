@@ -10,6 +10,24 @@ from .group_space import get_group_space_prompt_state
 from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
 
 
+def _memory_policy_lines(group_id: str) -> List[str]:
+    """Memory system guidance for agents."""
+    gid = str(group_id or "").strip()
+    if not gid:
+        return []
+    return [
+        "Memory:",
+        "- Memory vs Notes: Notes are sticky notes (temporary, in Context), Memory is a notebook (persistent, in memory.db).",
+        "- Use cccc_memory_store to persist important observations, decisions, facts, and preferences.",
+        "- Use cccc_memory_search to recall past context (FTS5 + structured filters).",
+        "- Use cccc_memory_ingest (signal mode) to review recent chat for memory-worthy content.",
+        "- Use cccc_memory_stats to check memory health.",
+        "- Strategy: prefer conservative (draft + high confidence); use aggressive only for confirmed decisions/facts.",
+        "- When a milestone completes: review Notes for key decisions and archive them to Memory via cccc_memory_store.",
+        "- Memories auto-solidify after 3 recalls (hit_count >= 3). Draft memories with low recall may be pruned later.",
+    ]
+
+
 def _group_space_policy_lines(group_id: str) -> List[str]:
     gid = str(group_id or "").strip()
     if not gid:
@@ -153,6 +171,10 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "- Visible chat MUST be sent via MCP: cccc_message_send / cccc_message_reply.",
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
     ]
+    memory_lines = _memory_policy_lines(group_id)
+    if memory_lines:
+        core_lines.extend(["", *memory_lines])
+
     group_space_lines = _group_space_policy_lines(group_id)
     if group_space_lines:
         core_lines.extend(["", *group_space_lines])
