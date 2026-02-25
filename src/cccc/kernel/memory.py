@@ -311,7 +311,7 @@ class MemoryStore:
     ) -> Dict[str, Any]:
         """Store a new memory. Returns the created memory dict.
 
-        Deduplicates by content_hash within the same group.
+        Deduplicates by (content_hash + source_ref) within the same group.
         When strategy is set, overrides status/confidence based on MEMORY_STRATEGIES.
         """
         assert self._conn is not None

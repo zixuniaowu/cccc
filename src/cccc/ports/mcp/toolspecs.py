@@ -1814,7 +1814,8 @@ MCP_TOOLS = [
             "Search memories via full-text search and/or structured filters.\n\n"
             "FTS5 query with CJK supplement. Supports filters: status, kind, actor_id, task_id, "
             "milestone_id, confidence, tags, since/until. Results are ordered solid-first, then by recency.\n"
-            "Each recall increments hit_count; draft memories auto-solidify at hit_count >= 3."
+            "Default search has no side effects. Set track_hit=true to increment hit_count "
+            "and enable auto-solidify for drafts at hit_count >= 3."
         ),
         "inputSchema": {
             "type": "object",
@@ -1866,6 +1867,11 @@ MCP_TOOLS = [
                 "until": {
                     "type": "string",
                     "description": "Filter memories created before this ISO 8601 timestamp",
+                },
+                "track_hit": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "When true, increments hit_count for returned memories and enables auto-solidify at threshold",
                 },
                 "limit": {
                     "type": "integer",

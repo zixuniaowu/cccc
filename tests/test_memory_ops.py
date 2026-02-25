@@ -209,6 +209,29 @@ class TestHandleMemoryStore(MemoryOpsTestBase):
         self.assertTrue(resp2.result.get("deduplicated"))
         self.assertEqual(resp1.result["id"], resp2.result["id"])
 
+    def test_create_invalid_enum_returns_validation_error(self):
+        resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "bad enum",
+            "kind": "INVALID_KIND",
+        })
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "validation_error")
+
+    def test_update_invalid_enum_returns_validation_error(self):
+        create_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "original",
+        })
+        mem_id = create_resp.result["id"]
+        resp = handle_memory_store({
+            "group_id": self.group_id,
+            "id": mem_id,
+            "status": "INVALID_STATUS",
+        })
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "validation_error")
+
 
 class TestHandleMemorySearch(MemoryOpsTestBase):
     """Test handle_memory_search."""
@@ -303,8 +326,56 @@ class TestHandleMemorySearch(MemoryOpsTestBase):
         for key in ("id", "content", "kind", "status", "confidence",
                      "source_type", "source_ref", "group_id", "scope_key",
                      "actor_id", "task_id", "milestone_id", "event_ts",
-                     "created_at", "updated_at", "content_hash", "hit_count", "tags"):
+                     "created_at", "updated_at", "last_recalled_at",
+                     "content_hash", "hit_count", "tags"):
             self.assertIn(key, mem, f"Missing key: {key}")
+
+    def test_search_invalid_enum_returns_validation_error(self):
+        resp = handle_memory_search({
+            "group_id": self.group_id,
+            "status": "INVALID_STATUS",
+        })
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "validation_error")
+
+    def test_search_invalid_limit_returns_validation_error(self):
+        resp = handle_memory_search({
+            "group_id": self.group_id,
+            "limit": "abc",
+        })
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "validation_error")
+
+    def test_search_track_hit_default_no_side_effect(self):
+        create_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "track hit default",
+        })
+        mem_id = create_resp.result["id"]
+        before = _get_memory_store(self.group_id).get(mem_id)
+        resp = handle_memory_search({
+            "group_id": self.group_id,
+            "query": "track hit default",
+        })
+        self.assertTrue(resp.ok)
+        after = _get_memory_store(self.group_id).get(mem_id)
+        self.assertEqual(before["hit_count"], after["hit_count"])
+        self.assertEqual(before["last_recalled_at"], after["last_recalled_at"])
+
+    def test_search_track_hit_true_updates_hit_count(self):
+        create_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "track hit true",
+        })
+        mem_id = create_resp.result["id"]
+        resp = handle_memory_search({
+            "group_id": self.group_id,
+            "query": "track hit true",
+            "track_hit": True,
+        })
+        self.assertTrue(resp.ok)
+        mem = _get_memory_store(self.group_id).get(mem_id)
+        self.assertEqual(mem["hit_count"], 1)
 
 
 class TestHandleMemoryStats(MemoryOpsTestBase):

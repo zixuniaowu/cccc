@@ -1156,6 +1156,7 @@ Args:
   tags?: string[]
   since?: string        // ISO 8601
   until?: string        // ISO 8601
+  track_hit?: boolean   // default false; when true increments hit_count and may auto-solidify
   limit?: number        // 1-100, default 20
 }
 ```

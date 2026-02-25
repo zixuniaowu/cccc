@@ -6,6 +6,7 @@ All context operations go through the daemon to preserve the single-writer invar
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -38,6 +39,8 @@ _CURATED_SPACE_SYNC_PREFIXES = (
     "note.",
     "reference.",
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -435,9 +438,17 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                                 }),
                             )
                     except Exception:
-                        pass
+                        logger.exception(
+                            "memory_milestone_hook_meta_record_failed group_id=%s milestone_id=%s",
+                            group_id,
+                            milestone_id,
+                        )
                 except Exception:
-                    pass
+                    logger.exception(
+                        "memory_milestone_hook_failed group_id=%s milestone_id=%s",
+                        group_id,
+                        milestone_id,
+                    )
 
             elif op_name == "milestone.restore":
                 milestone_id = str(item.get("milestone_id") or "")

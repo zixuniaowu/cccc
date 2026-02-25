@@ -2332,6 +2332,8 @@ def _handle_memory_namespace(name: str, arguments: Dict[str, Any]) -> Optional[D
             args["tags"] = arguments["tags"]
         if "limit" in arguments:
             args["limit"] = arguments["limit"]
+        if "track_hit" in arguments:
+            args["track_hit"] = coerce_bool(arguments.get("track_hit"), default=False)
         return _call_daemon_or_raise({"op": "memory_search", "args": args})
 
     if name == "cccc_memory_ingest":

@@ -18,6 +18,7 @@ from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
 from ...kernel.memory import MEMORY_KINDS, MemoryStore
 from ...kernel.memory_export import export_markdown, export_manifest
+from ...util.conv import coerce_bool
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -100,7 +101,10 @@ def handle_memory_store(args: Dict[str, Any]) -> DaemonResponse:
             if isinstance(raw_tags, list):
                 update_kwargs["tags"] = [str(t) for t in raw_tags]
 
-        mem = store.update(memory_id, **update_kwargs)
+        try:
+            mem = store.update(memory_id, **update_kwargs)
+        except ValueError as e:
+            return _error("validation_error", str(e))
         if mem is None:
             return _error("memory_not_found", f"memory not found: {memory_id}")
 
@@ -124,7 +128,10 @@ def handle_memory_store(args: Dict[str, Any]) -> DaemonResponse:
         if isinstance(raw_tags, list):
             store_kwargs["tags"] = [str(t) for t in raw_tags]
 
-    result = store.store(content, **store_kwargs)
+    try:
+        result = store.store(content, **store_kwargs)
+    except ValueError as e:
+        return _error("validation_error", str(e))
 
     if solidify and not result.get("deduplicated"):
         store.solidify(result["id"])
@@ -151,6 +158,7 @@ def _memory_to_dict(mem: Dict[str, Any]) -> Dict[str, Any]:
         "event_ts": mem.get("event_ts", ""),
         "created_at": mem.get("created_at", ""),
         "updated_at": mem.get("updated_at", ""),
+        "last_recalled_at": mem.get("last_recalled_at", ""),
         "content_hash": mem.get("content_hash", ""),
         "hit_count": mem.get("hit_count", 0),
         "tags": mem.get("tags", []),
@@ -187,11 +195,20 @@ def handle_memory_search(args: Dict[str, Any]) -> DaemonResponse:
         if isinstance(raw_tags, list):
             recall_kwargs["tags"] = [str(t) for t in raw_tags]
 
+    if "track_hit" in args:
+        recall_kwargs["track_hit"] = coerce_bool(args.get("track_hit"), default=False)
+
     limit = args.get("limit")
     if limit is not None:
-        recall_kwargs["limit"] = min(max(int(limit), 1), 100)
+        try:
+            recall_kwargs["limit"] = min(max(int(limit), 1), 100)
+        except (TypeError, ValueError):
+            return _error("validation_error", "limit must be an integer")
 
-    results = store.recall(**recall_kwargs)
+    try:
+        results = store.recall(**recall_kwargs)
+    except ValueError as e:
+        return _error("validation_error", str(e))
     return DaemonResponse(ok=True, result={
         "memories": [_memory_to_dict(m) for m in results],
         "count": len(results),
