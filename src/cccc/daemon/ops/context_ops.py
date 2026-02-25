@@ -408,6 +408,37 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 context_dirty = True
                 _mark_change(idx, op_name, f"Completed {milestone_id}")
 
+                # Memory hook: solidify_batch → export for this milestone
+                # Best-effort, never blocks the main flow
+                try:
+                    from .memory_ops import handle_memory_solidify_batch, handle_memory_export
+                    solidify_result = handle_memory_solidify_batch({
+                        "group_id": group_id,
+                        "milestone_id": milestone_id,
+                    })
+                    # Chain: export after solidify
+                    export_result = handle_memory_export({
+                        "group_id": group_id,
+                    })
+                    # Record hook results in memory_meta
+                    try:
+                        from .memory_ops import _get_memory_store
+                        _store = _get_memory_store(group_id)
+                        if _store is not None:
+                            import json as _json
+                            _store.set_meta(
+                                f"milestone_hook:{milestone_id}",
+                                _json.dumps({
+                                    "solidified": solidify_result.result.get("solidified", 0) if solidify_result.ok else 0,
+                                    "exported": export_result.ok,
+                                    "at": _utc_now_iso(),
+                                }),
+                            )
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
             elif op_name == "milestone.restore":
                 milestone_id = str(item.get("milestone_id") or "")
                 milestone = storage.get_milestone(context, milestone_id)

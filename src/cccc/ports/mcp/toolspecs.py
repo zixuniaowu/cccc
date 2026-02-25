@@ -1935,6 +1935,49 @@ MCP_TOOLS = [
             "required": [],
         },
     },
+    # memory_export — read-only Markdown + manifest export
+    {
+        "name": "cccc_memory_export",
+        "description": "Export solid memories as read-only Markdown (memory.md) + manifest.json with SHA-256 hash.\nWrites files to the group's state directory. Returns manifest and file paths.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "include_draft": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Include draft memories in export (default: solid only)",
+                },
+                "output_dir": {
+                    "type": "string",
+                    "description": "Optional output directory override (default: group state dir)",
+                },
+            },
+            "required": [],
+        },
+    },
+    # memory_delete — delete a single memory by ID
+    {
+        "name": "cccc_memory_delete",
+        "description": "Delete a single memory by ID (scoped to group). Used for manual cleanup or compression.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "id": {
+                    "type": "string",
+                    "description": "Memory ID to delete",
+                },
+            },
+            "required": ["id"],
+        },
+    },
     # debug.* namespace - developer mode diagnostics (user + foreman only; dev mode required)
     {
         "name": "cccc_debug_snapshot",

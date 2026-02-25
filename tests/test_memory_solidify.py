@@ -58,14 +58,14 @@ class TestSolidify(SolidifyTestBase):
 
 
 class TestAutoSolidify(SolidifyTestBase):
-    """Test auto-solidify via hit_count threshold in recall()."""
+    """Test auto-solidify via hit_count threshold in recall(track_hit=True)."""
 
     def test_auto_solidify_at_threshold(self):
-        """Draft memory auto-solidifies when hit_count reaches threshold."""
+        """Draft memory auto-solidifies when hit_count reaches threshold via track_hit."""
         r = self.store.store("auto solidify target")
-        # Recall it enough times to reach threshold
+        # Recall with track_hit=True enough times to reach threshold
         for _ in range(AUTO_SOLIDIFY_HIT_THRESHOLD):
-            self.store.recall("solidify")
+            self.store.recall("solidify", track_hit=True)
 
         mem = self.store.get(r["id"])
         self.assertEqual(mem["status"], "solid")
@@ -75,7 +75,7 @@ class TestAutoSolidify(SolidifyTestBase):
         """Draft memory stays draft below threshold."""
         r = self.store.store("below threshold")
         for _ in range(AUTO_SOLIDIFY_HIT_THRESHOLD - 1):
-            self.store.recall("threshold")
+            self.store.recall("threshold", track_hit=True)
 
         mem = self.store.get(r["id"])
         self.assertEqual(mem["status"], "draft")
@@ -84,21 +84,31 @@ class TestAutoSolidify(SolidifyTestBase):
         """Already solid memory is not affected by auto-solidify logic."""
         r = self.store.store("already solid", status="solid")
         for _ in range(AUTO_SOLIDIFY_HIT_THRESHOLD + 1):
-            self.store.recall("solid")
+            self.store.recall("solid", track_hit=True)
 
         mem = self.store.get(r["id"])
         self.assertEqual(mem["status"], "solid")
 
     def test_auto_solidify_in_results(self):
-        """recall() results reflect auto-solidified status."""
+        """recall(track_hit=True) results reflect auto-solidified status."""
         self.store.store("results check")
         for _ in range(AUTO_SOLIDIFY_HIT_THRESHOLD - 1):
-            self.store.recall("results")
+            self.store.recall("results", track_hit=True)
 
         # One more recall should trigger auto-solidify
-        results = self.store.recall("results")
+        results = self.store.recall("results", track_hit=True)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["status"], "solid")
+
+    def test_no_auto_solidify_without_track_hit(self):
+        """recall() without track_hit does NOT trigger auto-solidify."""
+        r = self.store.store("no auto solidify")
+        for _ in range(AUTO_SOLIDIFY_HIT_THRESHOLD + 2):
+            self.store.recall("auto solidify")
+
+        mem = self.store.get(r["id"])
+        self.assertEqual(mem["status"], "draft")
+        self.assertEqual(mem["hit_count"], 0)
 
 
 class TestStrategy(SolidifyTestBase):
@@ -141,12 +151,10 @@ class TestStrategy(SolidifyTestBase):
         self.assertEqual(mem["status"], "draft")
         self.assertEqual(mem["confidence"], "low")
 
-    def test_unknown_strategy_ignored(self):
-        """Unknown strategy name is ignored (uses defaults)."""
-        r = self.store.store("unknown strategy", strategy="nonexistent")
-        mem = self.store.get(r["id"])
-        self.assertEqual(mem["status"], "draft")
-        self.assertEqual(mem["confidence"], "medium")
+    def test_unknown_strategy_rejected(self):
+        """Unknown strategy name raises ValueError (enum strong validation)."""
+        with self.assertRaises(ValueError):
+            self.store.store("unknown strategy", strategy="nonexistent")
 
     def test_strategy_overrides_explicit_status(self):
         """Strategy overrides explicit status parameter."""

@@ -25,6 +25,9 @@ def _memory_policy_lines(group_id: str) -> List[str]:
         "- Strategy: prefer conservative (draft + high confidence); use aggressive only for confirmed decisions/facts.",
         "- When a milestone completes: review Notes for key decisions and archive them to Memory via cccc_memory_store.",
         "- Memories auto-solidify after 3 recalls (hit_count >= 3). Draft memories with low recall may be pruned later.",
+        "- Milestone hook: completing a milestone auto-solidifies related memories and exports memory.md.",
+        "- Use cccc_memory_export to manually trigger a read-only Markdown export (memory.md + manifest.json with SHA-256).",
+        "- Watermark is persistent: ingest resumes from where it left off, even after daemon restart.",
     ]
 
 

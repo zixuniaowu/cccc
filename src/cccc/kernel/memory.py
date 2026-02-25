@@ -27,7 +27,7 @@ MEMORY_STATUSES = ("draft", "solid")
 MEMORY_SOURCE_TYPES = ("manual", "chat_ingest", "milestone_report", "agent_extract")
 MEMORY_CONFIDENCE_LEVELS = ("low", "medium", "high")
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 AUTO_SOLIDIFY_HIT_THRESHOLD = 3
 
@@ -51,6 +51,12 @@ MEMORY_STRATEGIES: Dict[str, Dict[str, Any]] = {
 # =============================================================================
 # Helpers
 # =============================================================================
+
+
+def _validate_enum(value: str, allowed: tuple, field_name: str) -> None:
+    """Validate that value is in the allowed enum tuple. Raises ValueError if not."""
+    if value not in allowed:
+        raise ValueError(f"Invalid {field_name}: {value!r}. Must be one of {allowed}")
 
 
 def content_hash(content: str) -> str:
@@ -115,7 +121,8 @@ CREATE TABLE IF NOT EXISTS memories (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     content_hash TEXT NOT NULL DEFAULT '',
-    hit_count INTEGER NOT NULL DEFAULT 0
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    last_recalled_at TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS memory_relations (
@@ -139,6 +146,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
     content,
     content=memories,
     content_rowid=rowid
+);
+
+CREATE TABLE IF NOT EXISTS memory_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
 );
 
 -- FTS5 sync triggers
@@ -168,6 +181,7 @@ CREATE INDEX IF NOT EXISTS idx_memories_event_ts ON memories(event_ts);
 CREATE INDEX IF NOT EXISTS idx_memories_created_at ON memories(created_at);
 CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash);
 CREATE INDEX IF NOT EXISTS idx_memories_confidence ON memories(confidence);
+CREATE INDEX IF NOT EXISTS idx_memories_last_recalled_at ON memories(last_recalled_at);
 CREATE INDEX IF NOT EXISTS idx_memory_tags_memory_id ON memory_tags(memory_id);
 CREATE INDEX IF NOT EXISTS idx_memory_relations_from ON memory_relations(from_id);
 CREATE INDEX IF NOT EXISTS idx_memory_relations_to ON memory_relations(to_id);
@@ -199,12 +213,38 @@ class MemoryStore:
         assert self._conn is not None
         v = self._conn.execute("PRAGMA user_version").fetchone()[0]
         if v == 0:
+            # Fresh DB — create all tables at latest schema version
             self._conn.executescript(_SCHEMA_SQL)
             self._conn.executescript(_INDEX_SQL)
             # PRAGMA user_version does not support parameter binding (?);
             # SCHEMA_VERSION is a code constant, not user input.
             self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             self._conn.commit()
+        elif v < SCHEMA_VERSION:
+            self._migrate(v)
+
+    def _migrate(self, from_version: int) -> None:
+        """Run incremental migrations from from_version to SCHEMA_VERSION."""
+        assert self._conn is not None
+        if from_version < 2:
+            # v1 → v2: add memory_meta table + last_recalled_at column
+            self._conn.execute(
+                "CREATE TABLE IF NOT EXISTS memory_meta ("
+                "key TEXT PRIMARY KEY, "
+                "value TEXT NOT NULL DEFAULT '', "
+                "updated_at TEXT NOT NULL DEFAULT ''"
+                ")"
+            )
+            self._conn.execute(
+                "ALTER TABLE memories ADD COLUMN last_recalled_at TEXT NOT NULL DEFAULT ''"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_last_recalled_at "
+                "ON memories(last_recalled_at)"
+            )
+        # Bump version
+        self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        self._conn.commit()
 
     # -- Context manager --
 
@@ -218,6 +258,36 @@ class MemoryStore:
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+    # -- Meta KV --
+
+    def set_meta(self, key: str, value: str) -> None:
+        """Set a metadata key-value pair (upsert)."""
+        assert self._conn is not None
+        now = utc_now_iso()
+        self._conn.execute(
+            "INSERT INTO memory_meta (key, value, updated_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            (key, value, now),
+        )
+        self._conn.commit()
+
+    def get_meta(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Get a metadata value by key. Returns default if not found."""
+        assert self._conn is not None
+        row = self._conn.execute(
+            "SELECT value FROM memory_meta WHERE key = ?", (key,)
+        ).fetchone()
+        if row is None:
+            return default
+        return row[0]
+
+    def delete_meta(self, key: str) -> bool:
+        """Delete a metadata key. Returns True if deleted."""
+        assert self._conn is not None
+        cur = self._conn.execute("DELETE FROM memory_meta WHERE key = ?", (key,))
+        self._conn.commit()
+        return cur.rowcount > 0
 
     # -- CRUD: store --
 
@@ -246,6 +316,15 @@ class MemoryStore:
         """
         assert self._conn is not None
 
+        # Enum validation
+        _validate_enum(kind, MEMORY_KINDS, "kind")
+        _validate_enum(status, MEMORY_STATUSES, "status")
+        _validate_enum(confidence, MEMORY_CONFIDENCE_LEVELS, "confidence")
+        if strategy and strategy not in MEMORY_STRATEGIES:
+            raise ValueError(
+                f"Invalid strategy: {strategy!r}. Must be one of {tuple(MEMORY_STRATEGIES.keys())}"
+            )
+
         # Apply strategy overrides
         if strategy and strategy in MEMORY_STRATEGIES:
             strat = MEMORY_STRATEGIES[strategy]
@@ -255,11 +334,18 @@ class MemoryStore:
 
         c_hash = content_hash(content)
 
-        # Dedup check
-        row = self._conn.execute(
-            "SELECT id FROM memories WHERE group_id = ? AND content_hash = ?",
-            (self.group_id, c_hash),
-        ).fetchone()
+        # Dedup check: same source_ref + same content = idempotent retry.
+        # Different source_ref (or empty) + same content = separate records.
+        if source_ref:
+            row = self._conn.execute(
+                "SELECT id FROM memories WHERE group_id = ? AND content_hash = ? AND source_ref = ?",
+                (self.group_id, c_hash, source_ref),
+            ).fetchone()
+        else:
+            row = self._conn.execute(
+                "SELECT id FROM memories WHERE group_id = ? AND content_hash = ? AND source_ref = ''",
+                (self.group_id, c_hash),
+            ).fetchone()
         if row is not None:
             return {"id": row["id"], "deduplicated": True}
 
@@ -317,6 +403,57 @@ class MemoryStore:
         self._conn.commit()
         return self.get(memory_id)
 
+    def solidify_batch(
+        self,
+        *,
+        milestone_id: str = "",
+        kind: str = "",
+    ) -> Dict[str, Any]:
+        """Batch solidify: draft → solid for matching memories.
+
+        Returns {"solidified": count, "ids": [solidified_ids]}.
+        """
+        assert self._conn is not None
+        clauses = ["group_id = ?", "status = 'draft'"]
+        params: List[Any] = [self.group_id]
+
+        if milestone_id:
+            clauses.append("milestone_id = ?")
+            params.append(milestone_id)
+        if kind:
+            _validate_enum(kind, MEMORY_KINDS, "kind")
+            clauses.append("kind = ?")
+            params.append(kind)
+
+        where = " AND ".join(clauses)
+
+        # Get IDs first for return value
+        rows = self._conn.execute(
+            f"SELECT id FROM memories WHERE {where}", params
+        ).fetchall()
+        ids = [r["id"] for r in rows]
+
+        if ids:
+            now = utc_now_iso()
+            placeholders = ", ".join("?" for _ in ids)
+            self._conn.execute(
+                f"UPDATE memories SET status = 'solid', updated_at = ? "
+                f"WHERE id IN ({placeholders})",
+                [now] + ids,
+            )
+            self._conn.commit()
+
+            # Record in meta
+            import json
+            self.set_meta("last_solidify_batch", json.dumps({
+                "count": len(ids),
+                "milestone_id": milestone_id,
+                "kind": kind,
+                "at": now,
+            }))
+
+        return {"solidified": len(ids), "ids": ids}
+
     # -- CRUD: get --
 
     def get(self, memory_id: str) -> Optional[Dict[str, Any]]:
@@ -360,6 +497,15 @@ class MemoryStore:
     ) -> Optional[Dict[str, Any]]:
         """Update a memory. Returns updated memory dict or None if not found."""
         assert self._conn is not None
+
+        # Enum validation
+        if kind is not None:
+            _validate_enum(kind, MEMORY_KINDS, "kind")
+        if status is not None:
+            _validate_enum(status, MEMORY_STATUSES, "status")
+        if confidence is not None:
+            _validate_enum(confidence, MEMORY_CONFIDENCE_LEVELS, "confidence")
+
         existing = self.get(memory_id)
         if existing is None:
             return None
@@ -555,6 +701,7 @@ class MemoryStore:
         since: str = "",
         until: str = "",
         limit: int = 20,
+        track_hit: bool = False,
     ) -> List[Dict[str, Any]]:
         """Structured memory recall with FTS5 search and filters.
 
@@ -564,9 +711,20 @@ class MemoryStore:
         When query contains CJK characters (len >= 2), supplements FTS5
         with LIKE matching and merges results with dedup.
 
-        Increments hit_count on all returned memories (for auto-solidify).
+        When track_hit=True, increments hit_count and updates last_recalled_at
+        on all returned memories, and auto-solidifies drafts reaching the threshold.
+        Default is False (no side effects on query).
         """
         assert self._conn is not None
+
+        # Enum validation for filters
+        if kind:
+            _validate_enum(kind, MEMORY_KINDS, "kind")
+        if status:
+            _validate_enum(status, MEMORY_STATUSES, "status")
+        if confidence:
+            _validate_enum(confidence, MEMORY_CONFIDENCE_LEVELS, "confidence")
+
         filter_kwargs = dict(
             status=status, kind=kind, actor_id=actor_id,
             task_id=task_id, milestone_id=milestone_id,
@@ -593,14 +751,16 @@ class MemoryStore:
         has_query = bool(query.strip())
         results = _sort_solid_first(results, use_score=has_query)[:limit]
 
-        # Increment hit_count for returned memories + auto-solidify.
-        # Uses parameterized IN (...) with one ? per id — safe against injection.
-        if results:
+        # Increment hit_count + update last_recalled_at only when explicitly requested.
+        # Default is no side effects (track_hit=False).
+        if track_hit and results:
+            now = utc_now_iso()
             ids = [m["id"] for m in results]
             placeholders = ", ".join("?" for _ in ids)
             self._conn.execute(
-                f"UPDATE memories SET hit_count = hit_count + 1 WHERE id IN ({placeholders})",
-                ids,
+                f"UPDATE memories SET hit_count = hit_count + 1, last_recalled_at = ? "
+                f"WHERE id IN ({placeholders})",
+                [now] + ids,
             )
             # Auto-solidify: draft memories that reach the hit threshold.
             # Params: [updated_at, *ids, threshold] — all bound via ?.
@@ -608,13 +768,14 @@ class MemoryStore:
                 f"UPDATE memories SET status = 'solid', updated_at = ? "
                 f"WHERE id IN ({placeholders}) "
                 f"AND status = 'draft' AND hit_count >= ?",
-                [utc_now_iso()] + ids + [AUTO_SOLIDIFY_HIT_THRESHOLD],
+                [now] + ids + [AUTO_SOLIDIFY_HIT_THRESHOLD],
             )
             self._conn.commit()
-            # Update hit_count and status in returned results
+            # Update hit_count, last_recalled_at and status in returned results
             for m in results:
                 new_hit = m.get("hit_count", 0) + 1
                 m["hit_count"] = new_hit
+                m["last_recalled_at"] = now
                 if m.get("status") == "draft" and new_hit >= AUTO_SOLIDIFY_HIT_THRESHOLD:
                     m["status"] = "solid"
 

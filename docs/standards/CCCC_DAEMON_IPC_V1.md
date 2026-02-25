@@ -1187,6 +1187,44 @@ Args:
 Result (signal mode): `{ signals: Array<{actor_id, messages_count, suggested_kind, key_phrases, time_range, topic}>, events_processed, watermark, mode }`
 Result (raw mode): `{ imported, skipped, watermark, mode }`
 
+#### `memory_solidify_batch`
+
+Args:
+```ts
+{
+  group_id: string
+  milestone_id?: string  // filter by milestone
+  kind?: string          // filter by kind
+}
+```
+
+Result: `{ solidified: number, ids: string[] }`
+
+#### `memory_export`
+
+Args:
+```ts
+{
+  group_id: string
+  include_draft?: boolean  // include draft memories (default: false)
+  output_dir?: string      // output directory override
+}
+```
+
+Result: `{ manifest: { group_id, sha256, memory_count, exported_at, format }, md_path: string, manifest_path: string }`
+
+#### `memory_delete`
+
+Args:
+```ts
+{
+  group_id: string
+  id: string  // memory ID to delete
+}
+```
+
+Result: `{ deleted: boolean }`
+
 #### `task_list`
 
 Args:

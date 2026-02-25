@@ -183,6 +183,42 @@ class TestStore(MemoryStoreTestBase):
         self.assertEqual(sorted(mem["tags"]), ["bar", "baz", "foo"])
 
 
+class TestDedupSemantics(MemoryStoreTestBase):
+    """Bug 1 fix: dedup respects source_ref — different source_ref = separate records."""
+
+    def test_different_source_ref_same_content_not_deduped(self):
+        """Different source_ref + same content should create two records."""
+        r1 = self.store.store("same content", source_ref="ref_a")
+        r2 = self.store.store("same content", source_ref="ref_b")
+        self.assertFalse(r1["deduplicated"])
+        self.assertFalse(r2["deduplicated"])
+        self.assertNotEqual(r1["id"], r2["id"])
+
+    def test_same_source_ref_same_content_deduped(self):
+        """Same source_ref + same content = idempotent retry (dedup)."""
+        r1 = self.store.store("same content", source_ref="ref_a")
+        r2 = self.store.store("same content", source_ref="ref_a")
+        self.assertFalse(r1["deduplicated"])
+        self.assertTrue(r2["deduplicated"])
+        self.assertEqual(r1["id"], r2["id"])
+
+    def test_empty_source_ref_dedup_by_content(self):
+        """Empty source_ref + same content = dedup (backward compat)."""
+        r1 = self.store.store("same content")
+        r2 = self.store.store("same content")
+        self.assertFalse(r1["deduplicated"])
+        self.assertTrue(r2["deduplicated"])
+        self.assertEqual(r1["id"], r2["id"])
+
+    def test_empty_and_nonempty_source_ref_not_deduped(self):
+        """Empty source_ref and non-empty source_ref with same content = separate records."""
+        r1 = self.store.store("same content")  # source_ref=""
+        r2 = self.store.store("same content", source_ref="ref_a")
+        self.assertFalse(r1["deduplicated"])
+        self.assertFalse(r2["deduplicated"])
+        self.assertNotEqual(r1["id"], r2["id"])
+
+
 class TestGet(MemoryStoreTestBase):
     def test_get_existing(self):
         result = self.store.store("get me")

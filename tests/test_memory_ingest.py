@@ -16,7 +16,7 @@ from cccc.daemon.ops.memory_ops import (
     _extract_key_phrases,
     _suggest_kind,
     _ingest_signal,
-    _ingest_watermarks,
+    _WATERMARK_META_KEY,
     _get_memory_store,
     close_all_stores,
 )
@@ -246,8 +246,8 @@ class IngestOpsTestBase(unittest.TestCase):
         mock_group.ledger_path = self.group_path / "ledger.jsonl"
         self.mock_load_group.return_value = mock_group
 
-        # Clear watermarks
-        _ingest_watermarks.clear()
+        # Clear watermarks by closing stores (watermark now persisted in meta)
+        close_all_stores()
 
     def tearDown(self):
         close_all_stores()
@@ -353,8 +353,8 @@ class TestHandleMemoryIngestRaw(IngestOpsTestBase):
         self.assertEqual(resp.result["imported"], 2)
         self.assertEqual(resp.result["skipped"], 0)
 
-    def test_raw_dedup(self):
-        """Duplicate content is skipped."""
+    def test_raw_different_source_ref_not_deduped(self):
+        """Different source_ref (event_id) + same content = separate records."""
         events = [
             _make_chat_event("e1", "alice", "same message"),
             _make_chat_event("e2", "alice", "same message"),
@@ -362,8 +362,26 @@ class TestHandleMemoryIngestRaw(IngestOpsTestBase):
         self._write_ledger(events)
         resp = handle_memory_ingest({"group_id": self.group_id, "mode": "raw"})
         self.assertTrue(resp.ok)
-        self.assertEqual(resp.result["imported"], 1)
-        self.assertEqual(resp.result["skipped"], 1)
+        # Different event_ids → different source_refs → both imported
+        self.assertEqual(resp.result["imported"], 2)
+        self.assertEqual(resp.result["skipped"], 0)
+
+    def test_raw_same_source_ref_idempotent(self):
+        """Same source_ref (event_id) + same content = idempotent (deduped)."""
+        events = [_make_chat_event("e1", "alice", "same message")]
+        self._write_ledger(events)
+
+        # First ingest
+        resp1 = handle_memory_ingest({"group_id": self.group_id, "mode": "raw", "reset_watermark": True})
+        self.assertTrue(resp1.ok)
+        self.assertEqual(resp1.result["imported"], 1)
+
+        # Second ingest with reset_watermark to re-process the same event
+        resp2 = handle_memory_ingest({"group_id": self.group_id, "mode": "raw", "reset_watermark": True})
+        self.assertTrue(resp2.ok)
+        # Same event_id e1 → same source_ref → deduped
+        self.assertEqual(resp2.result["imported"], 0)
+        self.assertEqual(resp2.result["skipped"], 1)
 
     def test_raw_actor_filter(self):
         events = [
@@ -457,7 +475,8 @@ class TestWatermark(IngestOpsTestBase):
         self._write_ledger(events)
 
         handle_memory_ingest({"group_id": self.group_id})
-        self.assertIn(self.group_id, _ingest_watermarks)
+        store = _get_memory_store(self.group_id)
+        self.assertIsNotNone(store.get_meta(_WATERMARK_META_KEY))
 
         # Reset and re-process
         resp = handle_memory_ingest({"group_id": self.group_id, "reset_watermark": True})
@@ -486,10 +505,8 @@ class TestWatermark(IngestOpsTestBase):
         self._write_ledger(events)
 
         handle_memory_ingest({"group_id": self.group_id})
-        self.assertEqual(_ingest_watermarks.get(self.group_id), "e1")
-
-        # Different group has no watermark
-        self.assertNotIn("g_other", _ingest_watermarks)
+        store = _get_memory_store(self.group_id)
+        self.assertEqual(store.get_meta(_WATERMARK_META_KEY), "e1")
 
 
 class TestIngestLimit(IngestOpsTestBase):

@@ -275,15 +275,29 @@ class TestRecallLikeWildcardEscape(RecallTestBase):
 
 
 class TestRecallHitCount(RecallTestBase):
-    """Test hit_count increment on recall."""
+    """Test hit_count increment on recall (requires track_hit=True)."""
 
-    def test_hit_count_increments(self):
-        """recall() increments hit_count for all returned memories."""
+    def test_no_side_effects_by_default(self):
+        """recall() without track_hit does NOT change hit_count."""
+        r = self.store.store("no side effect test")
+        self.store.recall("side effect")
+        mem = self.store.get(r["id"])
+        self.assertEqual(mem["hit_count"], 0)
+
+    def test_no_side_effects_last_recalled_at(self):
+        """recall() without track_hit does NOT update last_recalled_at."""
+        r = self.store.store("no side effect recall")
+        self.store.recall("side effect")
+        mem = self.store.get(r["id"])
+        self.assertEqual(mem["last_recalled_at"], "")
+
+    def test_hit_count_increments_with_track_hit(self):
+        """recall(track_hit=True) increments hit_count for returned memories."""
         r = self.store.store("hit counter test")
         mem_before = self.store.get(r["id"])
         self.assertEqual(mem_before["hit_count"], 0)
 
-        results = self.store.recall("counter")
+        results = self.store.recall("counter", track_hit=True)
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0]["hit_count"], 1)
 
@@ -291,19 +305,19 @@ class TestRecallHitCount(RecallTestBase):
         mem_after = self.store.get(r["id"])
         self.assertEqual(mem_after["hit_count"], 1)
 
-    def test_hit_count_accumulates(self):
-        """Multiple recalls accumulate hit_count."""
+    def test_hit_count_accumulates_with_track_hit(self):
+        """Multiple recalls with track_hit=True accumulate hit_count."""
         r = self.store.store("accumulate me")
-        self.store.recall("accumulate")
-        self.store.recall("accumulate")
-        self.store.recall("accumulate")
+        self.store.recall("accumulate", track_hit=True)
+        self.store.recall("accumulate", track_hit=True)
+        self.store.recall("accumulate", track_hit=True)
         mem = self.store.get(r["id"])
         self.assertEqual(mem["hit_count"], 3)
 
-    def test_hit_count_no_query(self):
-        """recall without query also increments hit_count."""
+    def test_hit_count_no_query_with_track_hit(self):
+        """recall without query but with track_hit=True also increments."""
         r = self.store.store("no query hit")
-        self.store.recall()
+        self.store.recall(track_hit=True)
         mem = self.store.get(r["id"])
         self.assertEqual(mem["hit_count"], 1)
 
@@ -311,7 +325,7 @@ class TestRecallHitCount(RecallTestBase):
         """Only returned (matching) memories get hit_count incremented."""
         r1 = self.store.store("apple fruit", kind="fact")
         r2 = self.store.store("banana fruit", kind="fact")
-        self.store.recall("apple")
+        self.store.recall("apple", track_hit=True)
         m1 = self.store.get(r1["id"])
         m2 = self.store.get(r2["id"])
         self.assertEqual(m1["hit_count"], 1)

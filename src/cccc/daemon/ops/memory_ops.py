@@ -17,6 +17,7 @@ from ...contracts.v1 import DaemonResponse, DaemonError
 from ...kernel.group import load_group
 from ...kernel.ledger import read_last_lines
 from ...kernel.memory import MEMORY_KINDS, MemoryStore
+from ...kernel.memory_export import export_markdown, export_manifest
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -220,9 +221,7 @@ def handle_memory_stats(args: Dict[str, Any]) -> DaemonResponse:
 # memory_ingest op (T098)
 # =============================================================================
 
-# Watermark: {group_id: last_ingest_event_id}
-# In-process memory only; resets on daemon restart. Phase 2 may persist to memory.db.
-_ingest_watermarks: Dict[str, str] = {}
+_WATERMARK_META_KEY = "ingest_watermark"
 
 _DEFAULT_INGEST_LIMIT = 50
 _MAX_INGEST_LIMIT = 200
@@ -413,10 +412,10 @@ def handle_memory_ingest(args: Dict[str, Any]) -> DaemonResponse:
     lines = read_last_lines(group.ledger_path, limit)
     events = _parse_chat_events(lines)
 
-    # Apply watermark
+    # Apply watermark (persisted in memory_meta)
     if reset_watermark:
-        _ingest_watermarks.pop(group_id, None)
-    watermark = _ingest_watermarks.get(group_id, "")
+        store.delete_meta(_WATERMARK_META_KEY)
+    watermark = store.get_meta(_WATERMARK_META_KEY, "")
     events, watermark_found = _filter_after_watermark(events, watermark)
 
     # Update watermark to last event processed.
@@ -433,14 +432,131 @@ def handle_memory_ingest(args: Dict[str, Any]) -> DaemonResponse:
     else:
         result = _ingest_raw(events, store, group_id, actor_filter)
 
-    # Persist watermark only when safe (watermark was found or fresh start)
+    # Persist watermark to memory_meta (survives daemon restart)
     if new_watermark:
-        _ingest_watermarks[group_id] = new_watermark
+        store.set_meta(_WATERMARK_META_KEY, new_watermark)
 
     result["watermark"] = new_watermark or watermark
     result["watermark_stale"] = not watermark_found and bool(watermark)
     result["mode"] = mode
     return DaemonResponse(ok=True, result=result)
+
+
+# =============================================================================
+# memory_delete op
+# =============================================================================
+
+
+def handle_memory_delete(args: Dict[str, Any]) -> DaemonResponse:
+    """Delete a single memory by ID."""
+    group_id = str(args.get("group_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+
+    store = _get_memory_store(group_id)
+    if store is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+
+    memory_id = str(args.get("id") or "").strip()
+    if not memory_id:
+        return _error("missing_id", "missing memory id")
+
+    deleted = store.delete(memory_id)
+    return DaemonResponse(ok=True, result={"deleted": deleted})
+
+
+# =============================================================================
+# memory_solidify_batch op (Step 2)
+# =============================================================================
+
+
+def handle_memory_solidify_batch(args: Dict[str, Any]) -> DaemonResponse:
+    """Batch solidify draft memories, optionally filtered by milestone/kind."""
+    group_id = str(args.get("group_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+
+    store = _get_memory_store(group_id)
+    if store is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+
+    kwargs: Dict[str, Any] = {}
+    milestone_id = str(args.get("milestone_id") or "").strip()
+    if milestone_id:
+        kwargs["milestone_id"] = milestone_id
+    kind = str(args.get("kind") or "").strip()
+    if kind:
+        kwargs["kind"] = kind
+
+    try:
+        result = store.solidify_batch(**kwargs)
+    except ValueError as e:
+        return _error("validation_error", str(e))
+
+    return DaemonResponse(ok=True, result=result)
+
+
+# =============================================================================
+# memory_export op (Step 3)
+# =============================================================================
+
+
+def handle_memory_export(args: Dict[str, Any]) -> DaemonResponse:
+    """Export memories as Markdown + manifest.
+
+    Writes memory.md and manifest.json to the group's state directory.
+    Returns the manifest and file paths.
+    """
+    group_id = str(args.get("group_id") or "").strip()
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+
+    store = _get_memory_store(group_id)
+    if store is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+
+    include_draft = bool(args.get("include_draft"))
+    output_dir = str(args.get("output_dir") or "").strip()
+    if not output_dir:
+        output_dir = str(group.path / "state")
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    md = export_markdown(store, include_draft=include_draft)
+
+    # Count exported memories
+    count = 0
+    for line in md.split("\n"):
+        if line.startswith("### ["):
+            count += 1
+
+    manifest = export_manifest(md, group_id=group_id, memory_count=count)
+
+    md_path = os.path.join(output_dir, "memory.md")
+    manifest_path = os.path.join(output_dir, "manifest.json")
+
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write(md)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+
+    # Record export in meta
+    store.set_meta("last_export", json.dumps({
+        "sha256": manifest["sha256"],
+        "memory_count": count,
+        "at": manifest["exported_at"],
+        "md_path": md_path,
+    }))
+
+    return DaemonResponse(ok=True, result={
+        "manifest": manifest,
+        "md_path": md_path,
+        "manifest_path": manifest_path,
+    })
 
 
 # =============================================================================
@@ -457,4 +573,10 @@ def try_handle_memory_op(op: str, args: Dict[str, Any]) -> Optional[DaemonRespon
         return handle_memory_stats(args)
     if op == "memory_ingest":
         return handle_memory_ingest(args)
+    if op == "memory_solidify_batch":
+        return handle_memory_solidify_batch(args)
+    if op == "memory_export":
+        return handle_memory_export(args)
+    if op == "memory_delete":
+        return handle_memory_delete(args)
     return None

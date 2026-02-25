@@ -2349,6 +2349,21 @@ def _handle_memory_namespace(name: str, arguments: Dict[str, Any]) -> Optional[D
         gid = _resolve_group_id(arguments)
         return _call_daemon_or_raise({"op": "memory_stats", "args": {"group_id": gid}})
 
+    if name == "cccc_memory_export":
+        gid = _resolve_group_id(arguments)
+        args = {"group_id": gid}
+        if arguments.get("include_draft"):
+            args["include_draft"] = True
+        output_dir = arguments.get("output_dir")
+        if output_dir:
+            args["output_dir"] = str(output_dir)
+        return _call_daemon_or_raise({"op": "memory_export", "args": args})
+
+    if name == "cccc_memory_delete":
+        gid = _resolve_group_id(arguments)
+        memory_id = str(arguments.get("id") or "").strip()
+        return _call_daemon_or_raise({"op": "memory_delete", "args": {"group_id": gid, "id": memory_id}})
+
     return None
 
 
