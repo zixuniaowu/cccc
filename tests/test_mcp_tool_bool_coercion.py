@@ -507,6 +507,31 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
         self.assertEqual(args.get("solid_max_hit"), 2)
         self.assertEqual(args.get("limit"), 50)
 
+    def test_memory_guide_valid_topics_return_non_empty_markdown(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        for topic in ("store", "search", "consolidation", "lifecycle"):
+            out = mcp_server.handle_tool_call("cccc_memory_guide", {"topic": topic})
+            self.assertEqual(out.get("topic"), topic)
+            self.assertEqual(out.get("source"), "builtin")
+            self.assertEqual(out.get("version"), "1")
+            markdown = str(out.get("markdown") or "")
+            self.assertTrue(markdown.strip(), msg=f"markdown should not be empty for topic={topic}")
+
+    def test_memory_guide_invalid_topic_raises_validation_error(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with self.assertRaises(mcp_server.MCPError) as cm:
+            mcp_server.handle_tool_call("cccc_memory_guide", {"topic": "invalid-topic"})
+        self.assertEqual(cm.exception.code, "validation_error")
+
+    def test_memory_guide_missing_topic_raises_validation_error(self) -> None:
+        from cccc.ports.mcp import server as mcp_server
+
+        with self.assertRaises(mcp_server.MCPError) as cm:
+            mcp_server.handle_tool_call("cccc_memory_guide", {})
+        self.assertEqual(cm.exception.code, "validation_error")
+
 
 if __name__ == "__main__":
     unittest.main()

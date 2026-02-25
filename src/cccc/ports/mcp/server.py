@@ -80,6 +80,7 @@ from ...kernel.actors import get_effective_role
 from ...kernel.group import load_group
 from ...kernel.inbox import is_message_for_actor
 from ...kernel.ledger import read_last_lines
+from ...kernel.memory_guide import build_memory_guide
 from ...kernel.prompt_files import HELP_FILENAME, load_builtin_help_markdown as _load_builtin_help_markdown, read_group_prompt_file
 from ...util.conv import coerce_bool
 from .common import (
@@ -2305,6 +2306,15 @@ def _handle_terminal_namespace(name: str, arguments: Dict[str, Any]) -> Optional
 
 
 def _handle_memory_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if name == "cccc_memory_guide":
+        topic = str(arguments.get("topic") or "").strip()
+        if not topic:
+            raise MCPError("validation_error", "missing topic")
+        try:
+            return build_memory_guide(topic)
+        except ValueError as e:
+            raise MCPError("validation_error", str(e))
+
     if name == "cccc_memory_store":
         gid = _resolve_group_id(arguments)
         args: Dict[str, Any] = {"group_id": gid}

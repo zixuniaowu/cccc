@@ -44,6 +44,19 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
         self.assertNotIn("language", opt_props)
         self.assertNotIn("lang", opt_props)
 
+    def test_memory_guide_topic_enum_is_strict(self) -> None:
+        spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_memory_guide"), None)
+        self.assertIsInstance(spec, dict)
+        schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+        self.assertIsInstance(schema, dict)
+        props = schema.get("properties") if isinstance(schema, dict) else {}
+        self.assertIsInstance(props, dict)
+        topic = props.get("topic") if isinstance(props, dict) else {}
+        self.assertIsInstance(topic, dict)
+        self.assertEqual(topic.get("enum"), ["store", "search", "consolidation", "lifecycle"])
+        required = schema.get("required") if isinstance(schema, dict) else []
+        self.assertEqual(required, ["topic"])
+
 
     def test_memory_kind_enum_matches_kernel(self) -> None:
         """W4 regression: MCP kind enums must match kernel MEMORY_KINDS."""

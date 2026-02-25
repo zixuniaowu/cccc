@@ -69,22 +69,16 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertIn("Notes are sticky notes", prompt)
             self.assertIn("Memory is a notebook", prompt)
 
-            # 6 MCP tools mentioned
+            # Memory tool list mentioned
+            self.assertIn("cccc_memory_guide", prompt)
             self.assertIn("cccc_memory_store", prompt)
             self.assertIn("cccc_memory_search", prompt)
             self.assertIn("cccc_memory_ingest", prompt)
             self.assertIn("cccc_memory_stats", prompt)
             self.assertIn("cccc_memory_delete", prompt)
             self.assertIn("cccc_memory_decay", prompt)
-
-            # Strategy guidance
-            self.assertIn("conservative", prompt)
-
-            # Milestone archival reminder
-            self.assertIn("milestone completes", prompt)
-
-            # Auto-solidify mention
-            self.assertIn("auto-solidify", prompt)
+            self.assertIn("cccc_memory_export", prompt)
+            self.assertIn("Call cccc_memory_guide(topic) before complex memory operations for best practices.", prompt)
         finally:
             cleanup()
 
@@ -114,24 +108,17 @@ class TestSystemPromptMemory(unittest.TestCase):
         self.assertIn("Memory is a notebook", text)
 
         # Tool guidance
+        self.assertIn("cccc_memory_guide", text)
         self.assertIn("cccc_memory_store", text)
         self.assertIn("cccc_memory_search", text)
         self.assertIn("cccc_memory_ingest", text)
         self.assertIn("cccc_memory_stats", text)
         self.assertIn("cccc_memory_delete", text)
         self.assertIn("cccc_memory_decay", text)
+        self.assertIn("cccc_memory_export", text)
 
-        # Strategy
-        self.assertIn("conservative", text)
-        self.assertIn("aggressive", text)
-
-        # Milestone archival
-        self.assertIn("milestone completes", text)
-        self.assertIn("Notes", text)
-        self.assertIn("Memory", text)
-
-        # Auto-solidify threshold
-        self.assertIn("3 recalls", text)
+        # Guide call-to-action
+        self.assertIn("Call cccc_memory_guide(topic) before complex memory operations for best practices.", text)
 
 
 if __name__ == "__main__":

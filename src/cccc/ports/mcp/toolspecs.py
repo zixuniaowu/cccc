@@ -1722,6 +1722,21 @@ MCP_TOOLS = [
     },
     # memory.* namespace - agent-driven memory system
     {
+        "name": "cccc_memory_guide",
+        "description": "Get topic-specific best-practice guidance for complex memory operations (read-only).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "enum": ["store", "search", "consolidation", "lifecycle"],
+                    "description": "Guide topic",
+                },
+            },
+            "required": ["topic"],
+        },
+    },
+    {
         "name": "cccc_memory_store",
         "description": (
             "Store or update a memory.\n\n"
