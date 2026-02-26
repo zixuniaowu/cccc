@@ -1,5 +1,6 @@
 """Tests for daemon memory_ops (T097)."""
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 import tempfile
 import unittest
@@ -79,6 +80,18 @@ class TestConnectionPoolCache(MemoryOpsTestBase):
         self.assertGreater(len(_store_cache), 0)
         close_all_stores()
         self.assertEqual(len(_store_cache), 0)
+
+    def test_concurrent_get_same_group_returns_single_cached_instance(self):
+        """Thread-safe cache access: concurrent gets should converge to one instance."""
+        close_all_stores()
+        with patch("cccc.daemon.ops.memory_ops.MemoryStore") as mock_store_cls:
+            mock_store_cls.side_effect = lambda *_a, **_k: MagicMock()
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                stores = list(pool.map(lambda _: _get_memory_store(self.group_id), range(16)))
+        self.assertTrue(all(s is not None for s in stores))
+        first = stores[0]
+        self.assertTrue(all(s is first for s in stores))
+        self.assertEqual(len(_store_cache), 1)
 
 
 class TestHandleMemoryStore(MemoryOpsTestBase):
@@ -231,6 +244,29 @@ class TestHandleMemoryStore(MemoryOpsTestBase):
             "group_id": self.group_id,
             "id": mem_id,
             "status": "INVALID_STATUS",
+        })
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "validation_error")
+
+    def test_create_invalid_source_type_returns_validation_error(self):
+        resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "bad source type",
+            "source_type": "INVALID_SOURCE",
+        })
+        self.assertFalse(resp.ok)
+        self.assertEqual(resp.error.code, "validation_error")
+
+    def test_update_invalid_source_type_returns_validation_error(self):
+        create_resp = handle_memory_store({
+            "group_id": self.group_id,
+            "content": "original source type",
+        })
+        mem_id = create_resp.result["id"]
+        resp = handle_memory_store({
+            "group_id": self.group_id,
+            "id": mem_id,
+            "source_type": "INVALID_SOURCE",
         })
         self.assertFalse(resp.ok)
         self.assertEqual(resp.error.code, "validation_error")

@@ -71,7 +71,6 @@ from __future__ import annotations
 import mimetypes
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -83,6 +82,49 @@ from ...kernel.ledger import read_last_lines
 from ...kernel.memory_guide import build_memory_guide
 from ...kernel.prompt_files import HELP_FILENAME, load_builtin_help_markdown as _load_builtin_help_markdown, read_group_prompt_file
 from ...util.conv import coerce_bool
+from .handlers.context import (
+    _handle_context_namespace as _handle_context_namespace_impl,
+    context_get,
+    context_sync,
+    milestone_complete,
+    milestone_create,
+    milestone_update,
+    note_add,
+    note_remove,
+    note_update,
+    presence_clear,
+    presence_get,
+    presence_update,
+    reference_add,
+    reference_remove,
+    reference_update,
+    sketch_update,
+    task_create,
+    task_list,
+    task_update,
+    vision_update,
+)
+from .handlers.debug import (
+    _handle_debug_namespace as _handle_debug_namespace_impl,
+    _handle_terminal_namespace as _handle_terminal_namespace_impl,
+    debug_snapshot,
+    debug_tail_logs,
+    terminal_tail,
+)
+from .handlers.headless import (
+    _handle_headless_namespace as _handle_headless_namespace_impl,
+    headless_ack_message,
+    headless_set_status,
+    headless_status,
+)
+from .handlers.memory import _handle_memory_namespace as _handle_memory_namespace_impl
+from .handlers.notify import (
+    _handle_notify_namespace as _handle_notify_namespace_impl,
+    notify_ack,
+    notify_send,
+)
+from .utils.help_markdown import _select_help_markdown
+from .utils.space_args import _infer_artifact_language_from_source, _normalize_space_query_options_mcp
 from .common import (
     MCPError,
     _call_daemon_or_raise,
@@ -96,203 +138,6 @@ from .toolspecs import MCP_TOOLS
 
 
 _CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
-
-_HELP_ROLE_HEADER_RE = re.compile(r"^##\s*@role:\s*(\w+)\s*$", re.IGNORECASE)
-_HELP_ACTOR_HEADER_RE = re.compile(r"^##\s*@actor:\s*(.+?)\s*$", re.IGNORECASE)
-_HELP_H2_RE = re.compile(r"^##(?!#)\s+.*$")
-_CJK_HAN_RE = re.compile(r"[\u4e00-\u9fff]")
-_CJK_KANA_RE = re.compile(r"[\u3040-\u30ff]")
-_CJK_HANGUL_RE = re.compile(r"[\uac00-\ud7af]")
-_SPACE_QUERY_OPTION_KEYS = {"source_ids"}
-
-
-def _select_help_markdown(markdown: str, *, role: Optional[str], actor_id: Optional[str]) -> str:
-    """Filter CCCC_HELP markdown by optional conditional blocks.
-
-    Supported markers (level-2 headings):
-    - "## @role: foreman|peer"
-    - "## @actor: <actor_id>"
-
-    Untagged content is always included. Tagged blocks are filtered only when the selector is known.
-
-    A tagged block starts at its marker heading and ends at the next level-2 heading.
-    Within tagged blocks, prefer "###" for subheadings (so "##" can remain a block boundary).
-    """
-    raw = str(markdown or "")
-    if not raw.strip():
-        return raw
-
-    role_norm = str(role or "").strip().casefold()
-    actor_norm = str(actor_id or "").strip()
-    lines = raw.splitlines()
-    keep_trailing_newline = raw.endswith("\n")
-
-    out: list[str] = []
-    buf: list[str] = []
-    tag_kind: Optional[str] = None
-    tag_value: str = ""
-
-    def _include_block() -> bool:
-        if tag_kind is None:
-            return True
-        if tag_kind == "role":
-            if not role_norm:
-                return True
-            return role_norm == str(tag_value or "").strip().casefold()
-        if tag_kind == "actor":
-            if not actor_norm:
-                return False
-            return actor_norm == str(tag_value or "").strip()
-        return True
-
-    def _flush() -> None:
-        nonlocal buf
-        if buf and _include_block():
-            out.extend(buf)
-        buf = []
-
-    for ln in lines:
-        m_role = _HELP_ROLE_HEADER_RE.match(ln)
-        m_actor = _HELP_ACTOR_HEADER_RE.match(ln)
-        is_h2 = bool(_HELP_H2_RE.match(ln))
-
-        if m_role or m_actor:
-            _flush()
-            if m_role:
-                tag_kind = "role"
-                tag_value = str(m_role.group(1) or "").strip()
-                role_label = tag_value.strip().casefold()
-                if role_label == "foreman":
-                    ln = "## Foreman"
-                elif role_label == "peer":
-                    ln = "## Peer"
-                else:
-                    ln = f"## Role: {tag_value}"
-            else:
-                tag_kind = "actor"
-                tag_value = str(m_actor.group(1) or "").strip()
-                ln = "## Notes for you"
-            buf.append(ln)
-            continue
-
-        if is_h2:
-            _flush()
-            tag_kind = None
-            tag_value = ""
-
-        buf.append(ln)
-    _flush()
-
-    out_text = "\n".join(out)
-    if keep_trailing_newline:
-        out_text += "\n"
-    return out_text
-
-
-def _infer_language_from_text(text: str) -> str:
-    raw = str(text or "")
-    if not raw.strip():
-        return ""
-    if _CJK_KANA_RE.search(raw):
-        return "ja"
-    if _CJK_HANGUL_RE.search(raw):
-        return "ko"
-    if _CJK_HAN_RE.search(raw):
-        return "zh-CN"
-    return ""
-
-
-def _infer_artifact_language_from_source(source_hint: str) -> str:
-    source = str(source_hint or "").strip()
-    if not source:
-        return ""
-    try:
-        p = Path(source).expanduser().resolve()
-    except Exception:
-        p = None
-    if p is not None and p.exists() and p.is_file():
-        try:
-            blob = p.read_bytes()[:8192]
-            text = blob.decode("utf-8", errors="ignore")
-            hint = _infer_language_from_text(text)
-            if hint:
-                return hint
-        except Exception:
-            return ""
-    return _infer_language_from_text(source)
-
-
-def _normalize_space_query_options_mcp(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    allowed_top_level = {"group_id", "provider", "query", "options", "by"}
-    top_keys = {str(k or "").strip() for k in arguments.keys()}
-    top_keys.discard("")
-    unknown_top = sorted(k for k in top_keys if k not in allowed_top_level)
-    if unknown_top:
-        if any(k in {"language", "lang"} for k in unknown_top):
-            raise MCPError(
-                code="invalid_request",
-                message=(
-                    "cccc_space_query does not support top-level language/lang. "
-                    "NotebookLM query API has no language parameter; put language requirements in query text."
-                ),
-            )
-        raise MCPError(
-            code="invalid_request",
-            message=(
-                "cccc_space_query unsupported top-level args: "
-                f"{', '.join(unknown_top)}. Supported args: group_id, provider, query, options."
-            ),
-        )
-
-    options_raw = arguments.get("options")
-    if options_raw is None:
-        options: Dict[str, Any] = {}
-    elif isinstance(options_raw, dict):
-        options = dict(options_raw)
-    else:
-        raise MCPError(code="invalid_request", message="cccc_space_query options must be an object")
-
-    unsupported_options = sorted(k for k in options.keys() if str(k or "").strip() not in _SPACE_QUERY_OPTION_KEYS)
-    if unsupported_options:
-        if any(str(k or "").strip() in {"language", "lang"} for k in unsupported_options):
-            raise MCPError(
-                code="invalid_request",
-                message=(
-                    "cccc_space_query options do not support language/lang. "
-                    "NotebookLM query API has no language parameter; put language requirements in query text."
-                ),
-            )
-        raise MCPError(
-            code="invalid_request",
-            message=(
-                "cccc_space_query unsupported options: "
-                f"{', '.join(str(k or '').strip() for k in unsupported_options)}. "
-                "Supported options: source_ids."
-            ),
-        )
-
-    if "source_ids" in options:
-        raw_source_ids = options.get("source_ids")
-        if raw_source_ids is None:
-            options["source_ids"] = []
-        elif not isinstance(raw_source_ids, list):
-            raise MCPError(
-                code="invalid_request",
-                message="cccc_space_query options.source_ids must be an array of non-empty strings",
-            )
-        else:
-            source_ids: List[str] = []
-            for idx, item in enumerate(raw_source_ids):
-                sid = str(item or "").strip()
-                if not sid:
-                    raise MCPError(
-                        code="invalid_request",
-                        message=f"cccc_space_query options.source_ids[{idx}] must be a non-empty string",
-                    )
-                source_ids.append(sid)
-            options["source_ids"] = source_ids
-
-    return options
 
 
 # =============================================================================
@@ -1326,315 +1171,6 @@ def project_info(*, group_id: str) -> Dict[str, Any]:
 
 
 # =============================================================================
-# Context Tools (all via daemon IPC)
-# =============================================================================
-
-
-def context_get(*, group_id: str, include_archived: bool = False) -> Dict[str, Any]:
-    """Get full context.
-
-    By default, archived milestones are hidden to reduce cognitive load.
-    """
-    result = _call_daemon_or_raise({"op": "context_get", "args": {"group_id": group_id}})
-    if include_archived:
-        return result
-
-    milestones = result.get("milestones")
-    if isinstance(milestones, list):
-        result["milestones"] = [
-            m
-            for m in milestones
-            if isinstance(m, dict) and str(m.get("status") or "").strip().lower() != "archived"
-        ]
-
-    tasks_summary = result.get("tasks_summary")
-    if isinstance(tasks_summary, dict):
-        try:
-            active = int(tasks_summary.get("active") or 0)
-            planned = int(tasks_summary.get("planned") or 0)
-            done = int(tasks_summary.get("done") or 0)
-            tasks_summary["total"] = active + planned + done
-        except Exception:
-            pass
-
-    return result
-
-
-def context_sync(*, group_id: str, ops: List[Dict[str, Any]], dry_run: bool = False) -> Dict[str, Any]:
-    """Batch sync context operations"""
-    return _call_daemon_or_raise({
-        "op": "context_sync",
-        "args": {"group_id": group_id, "ops": ops, "dry_run": dry_run},
-    })
-
-
-def task_list(
-    *, group_id: str, task_id: Optional[str] = None, include_archived: bool = False
-) -> Dict[str, Any]:
-    """List tasks.
-
-    By default, archived tasks are hidden to reduce cognitive load.
-    """
-    args: Dict[str, Any] = {"group_id": group_id}
-    if task_id:
-        args["task_id"] = task_id
-    result = _call_daemon_or_raise({"op": "task_list", "args": args})
-    if include_archived:
-        return result
-
-    if "task" in result and isinstance(result.get("task"), dict):
-        task = result.get("task")
-        status = str(task.get("status") or "").strip().lower() if isinstance(task, dict) else ""
-        if status == "archived":
-            raise MCPError(code="archived_hidden", message="archived task is hidden by default")
-        return result
-
-    tasks = result.get("tasks")
-    if isinstance(tasks, list):
-        result["tasks"] = [
-            t
-            for t in tasks
-            if isinstance(t, dict) and str(t.get("status") or "").strip().lower() != "archived"
-        ]
-    return result
-
-
-def presence_get(*, group_id: str) -> Dict[str, Any]:
-    """Get presence status"""
-    return _call_daemon_or_raise({"op": "presence_get", "args": {"group_id": group_id}})
-
-
-# Convenience wrappers (all delegate to context_sync)
-
-
-def vision_update(*, group_id: str, vision: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "vision.update", "vision": vision}])
-
-
-def sketch_update(*, group_id: str, sketch: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "sketch.update", "sketch": sketch}])
-
-
-def milestone_create(*, group_id: str, name: str, description: str, status: str = "planned") -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{
-        "op": "milestone.create", "name": name, "description": description, "status": status
-    }])
-
-
-def milestone_update(
-    *, group_id: str, milestone_id: str,
-    name: Optional[str] = None, description: Optional[str] = None, status: Optional[str] = None
-) -> Dict[str, Any]:
-    op: Dict[str, Any] = {"op": "milestone.update", "milestone_id": milestone_id}
-    if name is not None:
-        op["name"] = name
-    if description is not None:
-        op["description"] = description
-    if status is not None:
-        op["status"] = status
-    return context_sync(group_id=group_id, ops=[op])
-
-
-def milestone_complete(*, group_id: str, milestone_id: str, outcomes: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{
-        "op": "milestone.complete", "milestone_id": milestone_id, "outcomes": outcomes
-    }])
-
-
-def task_create(
-    *, group_id: str, name: str, goal: str, steps: List[Dict[str, str]],
-    milestone_id: Optional[str] = None, assignee: Optional[str] = None
-) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{
-        "op": "task.create", "name": name, "goal": goal, "steps": steps,
-        "milestone_id": milestone_id, "assignee": assignee
-    }])
-
-
-def task_update(
-    *, group_id: str, task_id: str,
-    status: Optional[str] = None, name: Optional[str] = None, goal: Optional[str] = None,
-    assignee: Optional[str] = None, milestone_id: Optional[str] = None,
-    step_id: Optional[str] = None, step_status: Optional[str] = None
-) -> Dict[str, Any]:
-    op: Dict[str, Any] = {"op": "task.update", "task_id": task_id}
-    if status is not None:
-        op["status"] = status
-    if name is not None:
-        op["name"] = name
-    if goal is not None:
-        op["goal"] = goal
-    if assignee is not None:
-        op["assignee"] = assignee
-    if milestone_id is not None:
-        op["milestone_id"] = milestone_id
-    if step_id is not None and step_status is not None:
-        op["step_id"] = step_id
-        op["step_status"] = step_status
-    return context_sync(group_id=group_id, ops=[op])
-
-
-def note_add(*, group_id: str, content: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "note.add", "content": content}])
-
-
-def note_update(*, group_id: str, note_id: str, content: Optional[str] = None) -> Dict[str, Any]:
-    op: Dict[str, Any] = {"op": "note.update", "note_id": note_id}
-    if content is not None:
-        op["content"] = content
-    return context_sync(group_id=group_id, ops=[op])
-
-
-def note_remove(*, group_id: str, note_id: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "note.remove", "note_id": note_id}])
-
-
-def reference_add(*, group_id: str, url: str, note: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "reference.add", "url": url, "note": note}])
-
-
-def reference_update(
-    *, group_id: str, reference_id: str,
-    url: Optional[str] = None, note: Optional[str] = None
-) -> Dict[str, Any]:
-    op: Dict[str, Any] = {"op": "reference.update", "reference_id": reference_id}
-    if url is not None:
-        op["url"] = url
-    if note is not None:
-        op["note"] = note
-    return context_sync(group_id=group_id, ops=[op])
-
-
-def reference_remove(*, group_id: str, reference_id: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "reference.remove", "reference_id": reference_id}])
-
-
-def presence_update(*, group_id: str, agent_id: str, status: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "presence.update", "agent_id": agent_id, "status": status}])
-
-
-def presence_clear(*, group_id: str, agent_id: str) -> Dict[str, Any]:
-    return context_sync(group_id=group_id, ops=[{"op": "presence.clear", "agent_id": agent_id}])
-
-
-# =============================================================================
-# Headless Runner Tools (for MCP-driven agents)
-# =============================================================================
-
-
-def headless_status(*, group_id: str, actor_id: str) -> Dict[str, Any]:
-    """Get headless session status"""
-    return _call_daemon_or_raise({
-        "op": "headless_status",
-        "args": {"group_id": group_id, "actor_id": actor_id},
-    })
-
-
-def headless_set_status(
-    *, group_id: str, actor_id: str, status: str, task_id: Optional[str] = None
-) -> Dict[str, Any]:
-    """Update headless session status"""
-    return _call_daemon_or_raise({
-        "op": "headless_set_status",
-        "args": {"group_id": group_id, "actor_id": actor_id, "status": status, "task_id": task_id},
-    })
-
-
-def headless_ack_message(*, group_id: str, actor_id: str, message_id: str) -> Dict[str, Any]:
-    """Acknowledge processed message"""
-    return _call_daemon_or_raise({
-        "op": "headless_ack_message",
-        "args": {"group_id": group_id, "actor_id": actor_id, "message_id": message_id},
-    })
-
-
-# =============================================================================
-# System Notification Tools
-# =============================================================================
-
-
-def notify_send(
-    *, group_id: str, actor_id: str, kind: str, title: str, message: str,
-    target_actor_id: Optional[str] = None, priority: str = "normal", requires_ack: bool = False
-) -> Dict[str, Any]:
-    """Send system notification"""
-    return _call_daemon_or_raise({
-        "op": "system_notify",
-        "args": {
-            "group_id": group_id,
-            "by": actor_id,
-            "kind": kind,
-            "priority": priority,
-            "title": title,
-            "message": message,
-            "target_actor_id": target_actor_id,
-            "requires_ack": requires_ack,
-        },
-    })
-
-
-def notify_ack(*, group_id: str, actor_id: str, notify_event_id: str) -> Dict[str, Any]:
-    """Acknowledge system notification"""
-    return _call_daemon_or_raise({
-        "op": "notify_ack",
-        "args": {"group_id": group_id, "actor_id": actor_id, "notify_event_id": notify_event_id, "by": actor_id},
-    })
-
-
-# =============================================================================
-# Debug Tools (developer mode)
-# =============================================================================
-
-
-def debug_snapshot(*, group_id: str, actor_id: str) -> Dict[str, Any]:
-    """Get a structured debug snapshot (developer mode only; user+foreman only)."""
-    return _call_daemon_or_raise({
-        "op": "debug_snapshot",
-        "args": {"group_id": group_id, "by": actor_id},
-    })
-
-
-def terminal_tail(
-    *,
-    group_id: str,
-    actor_id: str,
-    target_actor_id: str,
-    max_chars: int = 8000,
-    strip_ansi: bool = True,
-) -> Dict[str, Any]:
-    """Tail an actor terminal transcript (subject to group policy; may include sensitive stdout/stderr)."""
-    return _call_daemon_or_raise({
-        "op": "terminal_tail",
-        "args": {
-            "group_id": group_id,
-            "actor_id": str(target_actor_id or ""),
-            "by": actor_id,
-            "max_chars": int(max_chars or 8000),
-            "strip_ansi": bool(strip_ansi),
-        },
-    })
-
-
-def debug_tail_logs(
-    *,
-    group_id: str,
-    actor_id: str,
-    component: str,
-    lines: int = 200,
-) -> Dict[str, Any]:
-    """Tail CCCC local logs (developer mode only; user+foreman only)."""
-    return _call_daemon_or_raise({
-        "op": "debug_tail_logs",
-        "args": {
-            "group_id": group_id,
-            "by": actor_id,
-            "component": str(component or ""),
-            "lines": int(lines or 200),
-        },
-    })
-
-
-# =============================================================================
 # Tool Call Handler
 # =============================================================================
 
@@ -2114,309 +1650,90 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
 
 
 def _handle_context_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if name == "cccc_context_get":
-        gid = _resolve_group_id(arguments)
-        return context_get(group_id=gid, include_archived=coerce_bool(arguments.get("include_archived"), default=False))
-
-    if name == "cccc_context_sync":
-        gid = _resolve_group_id(arguments)
-        ops_raw = arguments.get("ops")
-        return context_sync(
-            group_id=gid,
-            ops=list(ops_raw) if isinstance(ops_raw, list) else [],
-            dry_run=coerce_bool(arguments.get("dry_run"), default=False),
-        )
-
-    if name == "cccc_vision_update":
-        gid = _resolve_group_id(arguments)
-        return vision_update(group_id=gid, vision=str(arguments.get("vision") or ""))
-
-    if name == "cccc_sketch_update":
-        gid = _resolve_group_id(arguments)
-        return sketch_update(group_id=gid, sketch=str(arguments.get("sketch") or ""))
-
-    if name == "cccc_milestone_create":
-        gid = _resolve_group_id(arguments)
-        return milestone_create(
-            group_id=gid,
-            name=str(arguments.get("name") or ""),
-            description=str(arguments.get("description") or ""),
-            status=str(arguments.get("status") or "planned"),
-        )
-
-    if name == "cccc_milestone_update":
-        gid = _resolve_group_id(arguments)
-        return milestone_update(
-            group_id=gid,
-            milestone_id=str(arguments.get("milestone_id") or ""),
-            name=arguments.get("name"),
-            description=arguments.get("description"),
-            status=arguments.get("status"),
-        )
-
-    if name == "cccc_milestone_complete":
-        gid = _resolve_group_id(arguments)
-        return milestone_complete(
-            group_id=gid,
-            milestone_id=str(arguments.get("milestone_id") or ""),
-            outcomes=str(arguments.get("outcomes") or ""),
-        )
-
-    if name == "cccc_task_list":
-        gid = _resolve_group_id(arguments)
-        return task_list(
-            group_id=gid,
-            task_id=arguments.get("task_id"),
-            include_archived=coerce_bool(arguments.get("include_archived"), default=False),
-        )
-
-    if name == "cccc_task_create":
-        gid = _resolve_group_id(arguments)
-        steps_raw = arguments.get("steps")
-        return task_create(
-            group_id=gid,
-            name=str(arguments.get("name") or ""),
-            goal=str(arguments.get("goal") or ""),
-            steps=list(steps_raw) if isinstance(steps_raw, list) else [],
-            milestone_id=arguments.get("milestone_id"),
-            assignee=arguments.get("assignee"),
-        )
-
-    if name == "cccc_task_update":
-        gid = _resolve_group_id(arguments)
-        return task_update(
-            group_id=gid,
-            task_id=str(arguments.get("task_id") or ""),
-            status=arguments.get("status"),
-            name=arguments.get("name"),
-            goal=arguments.get("goal"),
-            assignee=arguments.get("assignee"),
-            milestone_id=arguments.get("milestone_id"),
-            step_id=arguments.get("step_id"),
-            step_status=arguments.get("step_status"),
-        )
-
-    if name == "cccc_note_add":
-        gid = _resolve_group_id(arguments)
-        return note_add(group_id=gid, content=str(arguments.get("content") or ""))
-
-    if name == "cccc_note_update":
-        gid = _resolve_group_id(arguments)
-        return note_update(group_id=gid, note_id=str(arguments.get("note_id") or ""), content=arguments.get("content"))
-
-    if name == "cccc_note_remove":
-        gid = _resolve_group_id(arguments)
-        return note_remove(group_id=gid, note_id=str(arguments.get("note_id") or ""))
-
-    if name == "cccc_reference_add":
-        gid = _resolve_group_id(arguments)
-        return reference_add(group_id=gid, url=str(arguments.get("url") or ""), note=str(arguments.get("note") or ""))
-
-    if name == "cccc_reference_update":
-        gid = _resolve_group_id(arguments)
-        return reference_update(
-            group_id=gid,
-            reference_id=str(arguments.get("reference_id") or ""),
-            url=arguments.get("url"),
-            note=arguments.get("note"),
-        )
-
-    if name == "cccc_reference_remove":
-        gid = _resolve_group_id(arguments)
-        return reference_remove(group_id=gid, reference_id=str(arguments.get("reference_id") or ""))
-
-    if name == "cccc_presence_get":
-        gid = _resolve_group_id(arguments)
-        return presence_get(group_id=gid)
-
-    if name == "cccc_presence_update":
-        gid = _resolve_group_id(arguments)
-        self_aid = _resolve_self_actor_id(arguments)
-        agent_id = str(arguments.get("agent_id") or "").strip() or self_aid
-        return presence_update(group_id=gid, agent_id=agent_id, status=str(arguments.get("status") or ""))
-
-    if name == "cccc_presence_clear":
-        gid = _resolve_group_id(arguments)
-        self_aid = _resolve_self_actor_id(arguments)
-        agent_id = str(arguments.get("agent_id") or "").strip() or self_aid
-        return presence_clear(group_id=gid, agent_id=agent_id)
-
-    return None
+    return _handle_context_namespace_impl(
+        name,
+        arguments,
+        resolve_group_id=_resolve_group_id,
+        resolve_self_actor_id=_resolve_self_actor_id,
+        coerce_bool=coerce_bool,
+        context_get_fn=context_get,
+        context_sync_fn=context_sync,
+        vision_update_fn=vision_update,
+        sketch_update_fn=sketch_update,
+        milestone_create_fn=milestone_create,
+        milestone_update_fn=milestone_update,
+        milestone_complete_fn=milestone_complete,
+        task_list_fn=task_list,
+        task_create_fn=task_create,
+        task_update_fn=task_update,
+        note_add_fn=note_add,
+        note_update_fn=note_update,
+        note_remove_fn=note_remove,
+        reference_add_fn=reference_add,
+        reference_update_fn=reference_update,
+        reference_remove_fn=reference_remove,
+        presence_get_fn=presence_get,
+        presence_update_fn=presence_update,
+        presence_clear_fn=presence_clear,
+    )
 
 
 def _handle_headless_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if name == "cccc_headless_status":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return headless_status(group_id=gid, actor_id=aid)
-
-    if name == "cccc_headless_set_status":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return headless_set_status(
-            group_id=gid,
-            actor_id=aid,
-            status=str(arguments.get("status") or ""),
-            task_id=arguments.get("task_id"),
-        )
-
-    if name == "cccc_headless_ack_message":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return headless_ack_message(group_id=gid, actor_id=aid, message_id=str(arguments.get("message_id") or ""))
-
-    return None
+    return _handle_headless_namespace_impl(
+        name,
+        arguments,
+        resolve_group_id=_resolve_group_id,
+        resolve_self_actor_id=_resolve_self_actor_id,
+        headless_status_fn=headless_status,
+        headless_set_status_fn=headless_set_status,
+        headless_ack_message_fn=headless_ack_message,
+    )
 
 
 def _handle_notify_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if name == "cccc_notify_send":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return notify_send(
-            group_id=gid,
-            actor_id=aid,
-            kind=str(arguments.get("kind") or "info"),
-            title=str(arguments.get("title") or ""),
-            message=str(arguments.get("message") or ""),
-            target_actor_id=arguments.get("target_actor_id"),
-            priority=str(arguments.get("priority") or "normal"),
-            requires_ack=coerce_bool(arguments.get("requires_ack"), default=False),
-        )
-
-    if name == "cccc_notify_ack":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return notify_ack(group_id=gid, actor_id=aid, notify_event_id=str(arguments.get("notify_event_id") or ""))
-
-    return None
+    return _handle_notify_namespace_impl(
+        name,
+        arguments,
+        resolve_group_id=_resolve_group_id,
+        resolve_self_actor_id=_resolve_self_actor_id,
+        notify_send_fn=notify_send,
+        notify_ack_fn=notify_ack,
+        coerce_bool_fn=coerce_bool,
+    )
 
 
 def _handle_terminal_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if name == "cccc_terminal_tail":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return terminal_tail(
-            group_id=gid,
-            actor_id=aid,
-            target_actor_id=str(arguments.get("target_actor_id") or ""),
-            max_chars=min(max(int(arguments.get("max_chars") or 8000), 1), 100000),
-            strip_ansi=coerce_bool(arguments.get("strip_ansi"), default=True),
-        )
-    return None
+    return _handle_terminal_namespace_impl(
+        name,
+        arguments,
+        resolve_group_id=_resolve_group_id,
+        resolve_self_actor_id=_resolve_self_actor_id,
+        terminal_tail_fn=terminal_tail,
+        coerce_bool_fn=coerce_bool,
+    )
 
 
 def _handle_memory_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if name == "cccc_memory_guide":
-        topic = str(arguments.get("topic") or "").strip()
-        if not topic:
-            raise MCPError("validation_error", "missing topic")
-        try:
-            return build_memory_guide(topic)
-        except ValueError as e:
-            raise MCPError("validation_error", str(e))
-
-    if name == "cccc_memory_store":
-        gid = _resolve_group_id(arguments)
-        args: Dict[str, Any] = {"group_id": gid}
-        for field in ("id", "content", "kind", "status", "confidence", "source_type",
-                       "source_ref", "scope_key", "actor_id", "task_id", "milestone_id",
-                       "event_ts", "strategy"):
-            val = arguments.get(field)
-            if val is not None:
-                args[field] = val
-        if "tags" in arguments:
-            args["tags"] = arguments["tags"]
-        if arguments.get("solidify"):
-            args["solidify"] = True
-        return _call_daemon_or_raise({"op": "memory_store", "args": args})
-
-    if name == "cccc_memory_search":
-        gid = _resolve_group_id(arguments)
-        args = {"group_id": gid}
-        for field in ("query", "status", "kind", "actor_id", "task_id", "milestone_id",
-                       "confidence", "since", "until"):
-            val = arguments.get(field)
-            if val is not None:
-                args[field] = val
-        if "tags" in arguments:
-            args["tags"] = arguments["tags"]
-        if "limit" in arguments:
-            args["limit"] = arguments["limit"]
-        if "track_hit" in arguments:
-            args["track_hit"] = coerce_bool(arguments.get("track_hit"), default=False)
-        return _call_daemon_or_raise({"op": "memory_search", "args": args})
-
-    if name == "cccc_memory_ingest":
-        gid = _resolve_group_id(arguments)
-        args = {"group_id": gid}
-        for field in ("mode", "limit", "actor_id"):
-            val = arguments.get(field)
-            if val is not None:
-                args[field] = val
-        if arguments.get("reset_watermark"):
-            args["reset_watermark"] = True
-        return _call_daemon_or_raise({"op": "memory_ingest", "args": args})
-
-    if name == "cccc_memory_stats":
-        gid = _resolve_group_id(arguments)
-        return _call_daemon_or_raise({"op": "memory_stats", "args": {"group_id": gid}})
-
-    if name == "cccc_memory_export":
-        gid = _resolve_group_id(arguments)
-        args = {"group_id": gid}
-        if arguments.get("include_draft"):
-            args["include_draft"] = True
-        output_dir = arguments.get("output_dir")
-        if output_dir:
-            args["output_dir"] = str(output_dir)
-        return _call_daemon_or_raise({"op": "memory_export", "args": args})
-
-    if name == "cccc_memory_delete":
-        gid = _resolve_group_id(arguments)
-        args: Dict[str, Any] = {"group_id": gid}
-        memory_id = str(arguments.get("id") or "").strip()
-        if memory_id:
-            args["id"] = memory_id
-
-        raw_ids = arguments.get("ids")
-        if raw_ids is not None:
-            if not isinstance(raw_ids, list):
-                raise MCPError("validation_error", "ids must be an array of strings")
-            args["ids"] = [str(x) for x in raw_ids]
-
-        if "id" not in args and "ids" not in args:
-            raise MCPError("missing_id", "missing memory id or ids")
-
-        return _call_daemon_or_raise({"op": "memory_delete", "args": args})
-
-    if name == "cccc_memory_decay":
-        gid = _resolve_group_id(arguments)
-        args: Dict[str, Any] = {"group_id": gid}
-        for field in ("draft_days", "zero_hit_days", "solid_review_days", "solid_max_hit", "limit"):
-            val = arguments.get(field)
-            if val is not None:
-                args[field] = val
-        return _call_daemon_or_raise({"op": "memory_decay", "args": args})
-
-    return None
+    return _handle_memory_namespace_impl(
+        name,
+        arguments,
+        resolve_group_id=_resolve_group_id,
+        coerce_bool=coerce_bool,
+        call_daemon_or_raise=_call_daemon_or_raise,
+        mcp_error_cls=MCPError,
+        build_memory_guide=build_memory_guide,
+    )
 
 
 def _handle_debug_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    if name == "cccc_debug_snapshot":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return debug_snapshot(group_id=gid, actor_id=aid)
-
-    if name == "cccc_debug_tail_logs":
-        gid = _resolve_group_id(arguments)
-        aid = _resolve_self_actor_id(arguments)
-        return debug_tail_logs(
-            group_id=gid,
-            actor_id=aid,
-            component=str(arguments.get("component") or ""),
-            lines=min(max(int(arguments.get("lines") or 200), 1), 10000),
-        )
-    return None
+    return _handle_debug_namespace_impl(
+        name,
+        arguments,
+        resolve_group_id=_resolve_group_id,
+        resolve_self_actor_id=_resolve_self_actor_id,
+        debug_snapshot_fn=debug_snapshot,
+        debug_tail_logs_fn=debug_tail_logs,
+    )
 
 
 def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:

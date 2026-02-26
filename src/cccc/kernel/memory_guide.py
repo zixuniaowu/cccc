@@ -9,10 +9,11 @@ _MEMORY_GUIDES: Dict[str, str] = {
     "store": """## Memory Store Best Practices
 
 Before storing a new memory:
-1. Search for related memories: `cccc_memory_search(query="<your topic>", tags=["<relevant-tag>"])`
-2. If a related memory exists and content has evolved -> update it: `cccc_memory_store(id="<existing_id>", content="<updated>")`
-3. If a related memory exists but is outdated -> delete old + store new: `cccc_memory_delete(id="<old>")` then `cccc_memory_store(...)`
-4. Only create a new memory if no related entry exists.
+1. Always run a quick consolidation pass first: `cccc_memory_ingest(mode="signal")` + `cccc_memory_search(...)`.
+2. Search for related memories before writing: `cccc_memory_search(query="<your topic>", tags=["<relevant-tag>"])`.
+3. If a related memory exists and content has evolved -> update it: `cccc_memory_store(id="<existing_id>", content="<updated>")`.
+4. If a related memory exists but is outdated -> delete old + store new: `cccc_memory_delete(id="<old>")` then `cccc_memory_store(...)`.
+5. Only create a new memory if no related entry exists.
 
 This prevents memory fragmentation and contradictions.
 """,
@@ -21,8 +22,8 @@ This prevents memory fragmentation and contradictions.
 Use targeted recall before broad recall:
 1. Start with clear keywords in `query` (nouns, identifiers, milestone/task IDs).
 2. Add structured filters (`status`, `kind`, `tags`, `since/until`) to reduce noise.
-3. Keep `track_hit=false` for normal lookup.
-4. Use `track_hit=true` only on explicit reinforcement paths (e.g., confirmed reuse), because it increments hit_count and can auto-solidify drafts at threshold.
+3. Keep `track_hit=false` for normal lookup and exploration.
+4. Use `track_hit=true` only on explicit reinforcement paths (confirmed reuse/accepted decision/verified fact), because it increments hit_count and can auto-solidify drafts at threshold.
 5. Results are ordered solid-first, then recency. Prefer solid memories for stable decisions; use draft memories as candidates to verify.
 """,
     "consolidation": """## Memory Consolidation Workflow
@@ -62,4 +63,3 @@ def build_memory_guide(topic: str) -> Dict[str, str]:
         "source": "builtin",
         "version": _GUIDE_VERSION,
     }
-

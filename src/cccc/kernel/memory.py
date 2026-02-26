@@ -25,7 +25,7 @@ from ..util.time import parse_utc_iso, utc_now_iso
 
 MEMORY_KINDS = ("observation", "decision", "preference", "fact", "instruction", "context", "relation")
 MEMORY_STATUSES = ("draft", "solid")
-MEMORY_SOURCE_TYPES = ("manual", "chat_ingest", "milestone_report", "agent_extract")
+MEMORY_SOURCE_TYPES = ("manual", "chat_ingest", "milestone_report", "agent_extract", "reflection")
 MEMORY_CONFIDENCE_LEVELS = ("low", "medium", "high")
 
 SCHEMA_VERSION = 2
@@ -126,16 +126,6 @@ CREATE TABLE IF NOT EXISTS memories (
     last_recalled_at TEXT NOT NULL DEFAULT ''
 );
 
-CREATE TABLE IF NOT EXISTS memory_relations (
-    from_id TEXT NOT NULL,
-    to_id TEXT NOT NULL,
-    relation TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    PRIMARY KEY (from_id, to_id, relation),
-    FOREIGN KEY (from_id) REFERENCES memories(id) ON DELETE CASCADE,
-    FOREIGN KEY (to_id) REFERENCES memories(id) ON DELETE CASCADE
-);
-
 CREATE TABLE IF NOT EXISTS memory_tags (
     memory_id TEXT NOT NULL,
     tag TEXT NOT NULL,
@@ -184,8 +174,6 @@ CREATE INDEX IF NOT EXISTS idx_memories_content_hash ON memories(content_hash);
 CREATE INDEX IF NOT EXISTS idx_memories_confidence ON memories(confidence);
 CREATE INDEX IF NOT EXISTS idx_memories_last_recalled_at ON memories(last_recalled_at);
 CREATE INDEX IF NOT EXISTS idx_memory_tags_memory_id ON memory_tags(memory_id);
-CREATE INDEX IF NOT EXISTS idx_memory_relations_from ON memory_relations(from_id);
-CREATE INDEX IF NOT EXISTS idx_memory_relations_to ON memory_relations(to_id);
 """
 
 
@@ -223,6 +211,16 @@ class MemoryStore:
             self._conn.commit()
         elif v < SCHEMA_VERSION:
             self._migrate(v)
+        # YAGNI cleanup: remove legacy relation artifacts kept from old versions.
+        self._drop_legacy_relation_artifacts()
+
+    def _drop_legacy_relation_artifacts(self) -> None:
+        """Remove deprecated relation table/indexes if present."""
+        assert self._conn is not None
+        self._conn.execute("DROP INDEX IF EXISTS idx_memory_relations_from")
+        self._conn.execute("DROP INDEX IF EXISTS idx_memory_relations_to")
+        self._conn.execute("DROP TABLE IF EXISTS memory_relations")
+        self._conn.commit()
 
     def _migrate(self, from_version: int) -> None:
         """Run incremental migrations from from_version to SCHEMA_VERSION."""
@@ -319,6 +317,7 @@ class MemoryStore:
 
         # Enum validation
         _validate_enum(kind, MEMORY_KINDS, "kind")
+        _validate_enum(source_type, MEMORY_SOURCE_TYPES, "source_type")
         _validate_enum(status, MEMORY_STATUSES, "status")
         _validate_enum(confidence, MEMORY_CONFIDENCE_LEVELS, "confidence")
         if strategy and strategy not in MEMORY_STRATEGIES:
@@ -506,6 +505,8 @@ class MemoryStore:
             _validate_enum(status, MEMORY_STATUSES, "status")
         if confidence is not None:
             _validate_enum(confidence, MEMORY_CONFIDENCE_LEVELS, "confidence")
+        if source_type is not None:
+            _validate_enum(source_type, MEMORY_SOURCE_TYPES, "source_type")
 
         existing = self.get(memory_id)
         if existing is None:
@@ -709,19 +710,12 @@ class MemoryStore:
             (self.group_id,),
         ).fetchone()["c"]
 
-        relation_count = self._conn.execute(
-            "SELECT COUNT(*) as c FROM memory_relations mr "
-            "JOIN memories m ON mr.from_id = m.id WHERE m.group_id = ?",
-            (self.group_id,),
-        ).fetchone()["c"]
-
         return {
             "total": total,
             "by_status": by_status,
             "by_kind": by_kind,
             "by_source_type": by_source,
             "tag_count": tag_count,
-            "relation_count": relation_count,
         }
 
     # -- Decay / stale candidate discovery --

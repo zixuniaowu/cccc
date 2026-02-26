@@ -532,8 +532,8 @@ class TestIngestLimit(IngestOpsTestBase):
 class TestIngestStaleWatermark(IngestOpsTestBase):
     """T100: Test that stale watermark does not skip messages."""
 
-    def test_stale_watermark_does_not_advance(self):
-        """When watermark is not found in the window, don't advance it."""
+    def test_stale_watermark_auto_expands_window(self):
+        """When watermark is stale in current window, ingest auto-expands and advances safely."""
         # Write initial events and ingest
         events = [_make_chat_event(f"e{i}", "alice", f"msg {i}") for i in range(5)]
         self._write_ledger(events)
@@ -547,9 +547,10 @@ class TestIngestStaleWatermark(IngestOpsTestBase):
 
         resp2 = handle_memory_ingest({"group_id": self.group_id, "limit": 5})
         self.assertTrue(resp2.ok)
-        # Stale watermark: processes the 5 visible events but does NOT advance watermark
-        self.assertEqual(resp2.result["watermark"], "e4")  # unchanged
-        self.assertTrue(resp2.result.get("watermark_stale", False))
+        # Auto expansion finds e4 and processes all unseen events (e5-e14)
+        self.assertEqual(resp2.result["events_processed"], 10)
+        self.assertEqual(resp2.result["watermark"], "e14")
+        self.assertFalse(resp2.result.get("watermark_stale", False))
 
     def test_stale_watermark_recovers_with_larger_limit(self):
         """Stale watermark can be recovered by increasing limit."""

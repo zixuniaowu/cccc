@@ -1778,6 +1778,7 @@ MCP_TOOLS = [
                 },
                 "source_type": {
                     "type": "string",
+                    "enum": ["manual", "chat_ingest", "milestone_report", "agent_extract", "reflection"],
                     "description": "Source type (e.g. chat_ingest, manual, reflection)",
                 },
                 "source_ref": {
@@ -1944,7 +1945,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_memory_stats",
-        "description": "Get memory statistics for the group (total count, by status, by kind, tag count, relation count).",
+        "description": "Get memory statistics for the group (total count, by status, by kind, source type, tag count).",
         "inputSchema": {
             "type": "object",
             "properties": {

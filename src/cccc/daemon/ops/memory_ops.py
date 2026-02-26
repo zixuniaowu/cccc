@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
@@ -31,14 +32,16 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
 
 _MAX_CACHED_STORES = 8
 _store_cache: Dict[str, MemoryStore] = {}
+_store_cache_lock = threading.Lock()
 
 
 def _get_memory_store(group_id: str) -> Optional[MemoryStore]:
     """Get or create a MemoryStore for a group, with simple LRU cache."""
-    if group_id in _store_cache:
-        # Move to end for proper LRU ordering (most recently used = last)
-        _store_cache[group_id] = _store_cache.pop(group_id)
-        return _store_cache[group_id]
+    with _store_cache_lock:
+        if group_id in _store_cache:
+            # Move to end for proper LRU ordering (most recently used = last)
+            _store_cache[group_id] = _store_cache.pop(group_id)
+            return _store_cache[group_id]
 
     group = load_group(group_id)
     if group is None:
@@ -47,21 +50,34 @@ def _get_memory_store(group_id: str) -> Optional[MemoryStore]:
     db_path = str(group.path / "memory.db")
     store = MemoryStore(db_path, group_id=group_id)
 
-    # Simple LRU: evict oldest if at capacity
-    if len(_store_cache) >= _MAX_CACHED_STORES:
-        oldest_key = next(iter(_store_cache))
-        evicted = _store_cache.pop(oldest_key)
-        evicted.close()
+    evicted: Optional[MemoryStore] = None
+    with _store_cache_lock:
+        # Another thread may have created it while we were opening DB.
+        existing = _store_cache.get(group_id)
+        if existing is not None:
+            _store_cache[group_id] = _store_cache.pop(group_id)
+            store.close()
+            return _store_cache[group_id]
 
-    _store_cache[group_id] = store
+        # Simple LRU: evict oldest if at capacity.
+        if len(_store_cache) >= _MAX_CACHED_STORES:
+            oldest_key = next(iter(_store_cache))
+            evicted = _store_cache.pop(oldest_key)
+
+        _store_cache[group_id] = store
+
+    if evicted is not None:
+        evicted.close()
     return store
 
 
 def close_all_stores() -> None:
     """Close all cached stores (for clean shutdown)."""
-    for store in _store_cache.values():
+    with _store_cache_lock:
+        stores = list(_store_cache.values())
+        _store_cache.clear()
+    for store in stores:
         store.close()
-    _store_cache.clear()
 
 
 # =============================================================================
@@ -242,6 +258,7 @@ _WATERMARK_META_KEY = "ingest_watermark"
 
 _DEFAULT_INGEST_LIMIT = 50
 _MAX_INGEST_LIMIT = 200
+_MAX_INGEST_EXPANSION_LIMIT = 200_000
 
 
 def _parse_chat_events(lines: List[str]) -> List[Dict[str, Any]]:
@@ -425,15 +442,29 @@ def handle_memory_ingest(args: Dict[str, Any]) -> DaemonResponse:
     actor_filter = str(args.get("actor_id") or "").strip()
     reset_watermark = bool(args.get("reset_watermark"))
 
-    # Read ledger lines
-    lines = read_last_lines(group.ledger_path, limit)
-    events = _parse_chat_events(lines)
-
     # Apply watermark (persisted in memory_meta)
     if reset_watermark:
         store.delete_meta(_WATERMARK_META_KEY)
     watermark = store.get_meta(_WATERMARK_META_KEY, "")
-    events, watermark_found = _filter_after_watermark(events, watermark)
+
+    # Read ledger lines; if watermark is stale in current window, expand progressively
+    # until watermark is found or we hit file head.
+    read_limit = limit
+    lines = read_last_lines(group.ledger_path, read_limit)
+    parsed_events = _parse_chat_events(lines)
+    events, watermark_found = _filter_after_watermark(parsed_events, watermark)
+
+    while watermark and not watermark_found:
+        if len(lines) < read_limit:
+            # We already reached file head.
+            break
+        next_limit = min(read_limit * 2, _MAX_INGEST_EXPANSION_LIMIT)
+        if next_limit <= read_limit:
+            break
+        read_limit = next_limit
+        lines = read_last_lines(group.ledger_path, read_limit)
+        parsed_events = _parse_chat_events(lines)
+        events, watermark_found = _filter_after_watermark(parsed_events, watermark)
 
     # Update watermark to last event processed.
     # Only advance watermark when the previous watermark was found in the window,

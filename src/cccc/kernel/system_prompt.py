@@ -26,6 +26,8 @@ def _memory_policy_lines(group_id: str) -> List[str]:
         "- cccc_memory_decay: identify stale cleanup candidates (non-destructive).",
         "- cccc_memory_delete: delete low-value memories intentionally (single/batch).",
         "- cccc_memory_export: export read-only memory.md + manifest.",
+        "- Before storing, run consolidation first (ingest signal + search related memories).",
+        "- Use cccc_memory_search(track_hit=true) only for confirmed reinforcement paths that should contribute to auto-solidify.",
         "- Call cccc_memory_guide(topic) before complex memory operations for best practices.",
     ]
 

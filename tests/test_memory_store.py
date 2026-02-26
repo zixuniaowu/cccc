@@ -32,7 +32,6 @@ class TestSchema(MemoryStoreTestBase):
             ).fetchall()
         }
         self.assertIn("memories", tables)
-        self.assertIn("memory_relations", tables)
         self.assertIn("memory_tags", tables)
         self.assertIn("memory_fts", tables)
 
@@ -62,8 +61,6 @@ class TestSchema(MemoryStoreTestBase):
             "idx_memories_content_hash",
             "idx_memories_confidence",
             "idx_memory_tags_memory_id",
-            "idx_memory_relations_from",
-            "idx_memory_relations_to",
         }
         for idx in expected:
             self.assertIn(idx, index_names, f"Missing index: {idx}")
@@ -390,7 +387,6 @@ class TestStats(MemoryStoreTestBase):
         self.assertEqual(s["by_status"], {})
         self.assertEqual(s["by_kind"], {})
         self.assertEqual(s["tag_count"], 0)
-        self.assertEqual(s["relation_count"], 0)
 
     def test_stats_with_data(self):
         self.store.store("a", kind="observation", status="draft", tags=["t1"])

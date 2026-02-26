@@ -9,6 +9,7 @@ from cccc.kernel.memory import (
     MemoryStore,
     SCHEMA_VERSION,
     MEMORY_KINDS,
+    MEMORY_SOURCE_TYPES,
     MEMORY_STATUSES,
     MEMORY_CONFIDENCE_LEVELS,
 )
@@ -231,6 +232,11 @@ class TestEnumValidation(MemoryMetaTestBase):
         with self.assertRaises(ValueError):
             self.store.store("content", confidence="invalid_conf")
 
+    def test_store_invalid_source_type_rejected(self):
+        """store() rejects invalid source_type."""
+        with self.assertRaises(ValueError):
+            self.store.store("content", source_type="invalid_source")
+
     def test_store_invalid_strategy_rejected(self):
         """store() rejects invalid strategy."""
         with self.assertRaises(ValueError):
@@ -259,6 +265,19 @@ class TestEnumValidation(MemoryMetaTestBase):
         result = self.store.store("content3")
         with self.assertRaises(ValueError):
             self.store.update(result["id"], confidence="bad_conf")
+
+    def test_update_invalid_source_type_rejected(self):
+        """update() rejects invalid source_type."""
+        result = self.store.store("content4")
+        with self.assertRaises(ValueError):
+            self.store.update(result["id"], source_type="invalid_source")
+
+    def test_store_valid_source_type_reflection_accepted(self):
+        """store() accepts reflection source_type for existing data compatibility."""
+        self.assertIn("reflection", MEMORY_SOURCE_TYPES)
+        result = self.store.store("reflection memory", source_type="reflection")
+        mem = self.store.get(result["id"])
+        self.assertEqual(mem["source_type"], "reflection")
 
     def test_recall_invalid_kind_rejected(self):
         """recall() rejects invalid kind filter."""
