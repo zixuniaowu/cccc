@@ -91,5 +91,103 @@ class TestMcpCapabilityUse(unittest.TestCase):
         call_mock.assert_not_called()
 
 
+    def test_memory_read_tools_skip_actor_id_injection(self) -> None:
+        """capability_use should NOT inject actor_id for read-only memory tools.
+
+        Bug: capability_use auto-injects actor_id=caller into all tool_args,
+        causing memory_search to filter by caller's actor_id unintentionally.
+        Read-only memory tools should search across all actors by default.
+        """
+        from cccc.ports.mcp.server import capability_use
+
+        read_only_tools = [
+            "cccc_memory_search",
+            "cccc_memory_stats",
+            "cccc_memory_decay",
+            "cccc_memory_export",
+        ]
+        for tool_name in read_only_tools:
+            with self.subTest(tool=tool_name):
+                with patch(
+                    "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
+                    return_value={"state": "ready", "refresh_required": True, "enabled": True},
+                ), patch(
+                    "cccc.ports.mcp.server.handle_tool_call",
+                    return_value={"ok": True},
+                ) as call_mock:
+                    capability_use(
+                        group_id="g1",
+                        by="peer-1",
+                        actor_id="peer-1",
+                        capability_id="pack:context-advanced",
+                        tool_name=tool_name,
+                        tool_arguments={"query": "test"},
+                    )
+
+                call_mock.assert_called_once()
+                tool_args = call_mock.call_args.args[1] if len(call_mock.call_args.args) > 1 else {}
+                # actor_id should NOT be injected for read-only memory tools
+                self.assertNotIn("actor_id", tool_args,
+                    f"{tool_name}: actor_id should not be auto-injected for read-only memory tools")
+
+    def test_memory_write_tools_still_inject_actor_id(self) -> None:
+        """capability_use should still inject actor_id for write memory tools."""
+        from cccc.ports.mcp.server import capability_use
+
+        write_tools = [
+            "cccc_memory_store",
+            "cccc_memory_delete",
+            "cccc_memory_ingest",
+        ]
+        for tool_name in write_tools:
+            with self.subTest(tool=tool_name):
+                with patch(
+                    "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
+                    return_value={"state": "ready", "refresh_required": True, "enabled": True},
+                ), patch(
+                    "cccc.ports.mcp.server.handle_tool_call",
+                    return_value={"ok": True},
+                ) as call_mock:
+                    capability_use(
+                        group_id="g1",
+                        by="peer-1",
+                        actor_id="peer-1",
+                        capability_id="pack:context-advanced",
+                        tool_name=tool_name,
+                        tool_arguments={"content": "test"},
+                    )
+
+                call_mock.assert_called_once()
+                tool_args = call_mock.call_args.args[1] if len(call_mock.call_args.args) > 1 else {}
+                # actor_id SHOULD be injected for write tools
+                self.assertEqual(str(tool_args.get("actor_id") or ""), "peer-1",
+                    f"{tool_name}: actor_id should be auto-injected for write memory tools")
+
+    def test_memory_read_tool_with_explicit_actor_id_preserved(self) -> None:
+        """If caller explicitly passes actor_id, it should be preserved even for read tools."""
+        from cccc.ports.mcp.server import capability_use
+
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
+            return_value={"state": "ready", "refresh_required": True, "enabled": True},
+        ), patch(
+            "cccc.ports.mcp.server.handle_tool_call",
+            return_value={"ok": True},
+        ) as call_mock:
+            capability_use(
+                group_id="g1",
+                by="peer-1",
+                actor_id="peer-1",
+                capability_id="pack:context-advanced",
+                tool_name="cccc_memory_search",
+                tool_arguments={"query": "test", "actor_id": "specific-actor"},
+            )
+
+        call_mock.assert_called_once()
+        tool_args = call_mock.call_args.args[1] if len(call_mock.call_args.args) > 1 else {}
+        # Explicit actor_id should be preserved
+        self.assertEqual(str(tool_args.get("actor_id") or ""), "specific-actor")
+
+
 if __name__ == "__main__":
     unittest.main()

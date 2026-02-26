@@ -193,11 +193,18 @@ def capability_use(
             details={},
         )
 
+    # Read-only memory tools should not have actor_id auto-injected,
+    # as it would unintentionally filter results to the caller's own memories.
+    _MEMORY_READ_ONLY_TOOLS = frozenset({
+        "cccc_memory_search", "cccc_memory_stats",
+        "cccc_memory_decay", "cccc_memory_export",
+    })
+
     if "group_id" not in tool_args:
         tool_args["group_id"] = group_id
     if "by" not in tool_args:
         tool_args["by"] = by
-    if "actor_id" not in tool_args:
+    if "actor_id" not in tool_args and call_tool not in _MEMORY_READ_ONLY_TOOLS:
         tool_args["actor_id"] = target_actor
 
     from ..server import handle_tool_call
