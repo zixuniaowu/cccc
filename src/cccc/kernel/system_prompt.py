@@ -174,6 +174,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "- No fabrication: do not invent facts/results/sources. Investigate first; mark hypotheses.",
         "- Visible chat MUST be sent via MCP: cccc_message_send / cccc_message_reply.",
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
+        "- Keep MCP surface lean: prefer cccc_capability_use for one-step use; pin stable skills via actor-scope capability_enable; uninstall unused external capabilities after work.",
     ]
     memory_lines = _memory_policy_lines(group_id)
     if memory_lines:

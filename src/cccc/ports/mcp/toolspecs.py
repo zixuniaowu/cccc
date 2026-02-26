@@ -491,6 +491,252 @@ MCP_TOOLS = [
         },
     },
     {
+        "name": "cccc_capability_search",
+        "description": (
+            "Search capability registry for progressive disclosure.\n"
+            "Returns built-in packs and synced external catalog entries with qualification/trust/freshness metadata.\n"
+            "When local hits are empty, daemon may augment from remote MCP Registry and backfill local snapshot."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query across id/name/description/tags",
+                    "default": "",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["", "mcp_toolpack", "skill"],
+                    "description": "Optional kind filter",
+                    "default": "",
+                },
+                "source_id": {
+                    "type": "string",
+                    "description": "Optional source filter (e.g., mcp_registry_official, anthropic_skills)",
+                    "default": "",
+                },
+                "trust_tier": {
+                    "type": "string",
+                    "description": "Optional trust tier filter (e.g., builtin, official, community)",
+                    "default": "",
+                },
+                "qualification_status": {
+                    "type": "string",
+                    "description": "Optional qualification status filter (qualified/manual_review/blocked)",
+                    "default": "",
+                },
+                "include_external": {
+                    "type": "boolean",
+                    "description": "Include external source snapshot records in results (default true)",
+                    "default": True,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return",
+                    "default": 30,
+                    "minimum": 1,
+                    "maximum": 200,
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_capability_enable",
+        "description": (
+            "Enable/disable a capability by scope.\n"
+            "Scopes: group, actor, session (TTL).\n"
+            "For skills (kind=skill), this is also the pin/unpin control (actor scope recommended).\n"
+            "Use cccc_capability_state after mutation, then re-list tools if refresh_required=true."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Target actor ID for scope=actor/session (defaults to by)",
+                },
+                "capability_id": {
+                    "type": "string",
+                    "description": "Capability ID from cccc_capability_search",
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["group", "actor", "session"],
+                    "description": "Enable scope",
+                    "default": "session",
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "true=enable, false=disable",
+                    "default": True,
+                },
+                "cleanup": {
+                    "type": "boolean",
+                    "description": (
+                        "When enabled=false, also attempt cache cleanup.\n"
+                        "If the capability is still bound elsewhere, cleanup is skipped safely."
+                    ),
+                    "default": False,
+                },
+                "approve": {
+                    "type": "boolean",
+                    "description": (
+                        "Approval signal for manual-review capabilities. "
+                        "Required to enable external records with qualification_status=manual_review."
+                    ),
+                    "default": False,
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional short audit reason for this capability mutation",
+                    "default": "",
+                },
+                "ttl_seconds": {
+                    "type": "integer",
+                    "description": "TTL for session scope (seconds)",
+                    "default": 3600,
+                    "minimum": 60,
+                    "maximum": 86400,
+                },
+            },
+            "required": ["capability_id"],
+        },
+    },
+    {
+        "name": "cccc_capability_state",
+        "description": (
+            "Read effective capability exposure and visible MCP tool names for current caller scope.\n"
+            "Also returns active/pinned skills and external binding states.\n"
+            "Use this when a capability appears hidden or after enable/disable changes."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "cccc_capability_uninstall",
+        "description": (
+            "Remove an external capability installation from CCCC runtime cache and revoke its bindings.\n"
+            "This is an admin operation (user/foreman). Use when a capability is no longer needed."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "capability_id": {
+                    "type": "string",
+                    "description": "Capability ID to uninstall",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional short audit reason for uninstall",
+                    "default": "",
+                },
+            },
+            "required": ["capability_id"],
+        },
+    },
+    {
+        "name": "cccc_capability_use",
+        "description": (
+            "One-step capability use: auto-enable capability (session scope by default) and optionally call a tool.\n"
+            "For skills (kind=skill), this returns skill capsule payload and applies declared dependencies.\n"
+            "For built-in pack tools, capability_id can be omitted when tool_name uniquely maps to a pack."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "group_id": {
+                    "type": "string",
+                    "description": "Working group ID (optional if CCCC_GROUP_ID is set)",
+                },
+                "by": {
+                    "type": "string",
+                    "description": "Your actor ID (optional if CCCC_ACTOR_ID is set)",
+                },
+                "actor_id": {
+                    "type": "string",
+                    "description": "Target actor ID (defaults to by)",
+                },
+                "capability_id": {
+                    "type": "string",
+                    "description": "Optional capability ID; may be inferred from built-in pack tool_name",
+                    "default": "",
+                },
+                "tool_name": {
+                    "type": "string",
+                    "description": "Tool to call after enable (optional)",
+                    "default": "",
+                },
+                "tool_arguments": {
+                    "type": "object",
+                    "description": "Arguments for tool call",
+                    "default": {},
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": ["group", "actor", "session"],
+                    "description": "Enable scope",
+                    "default": "session",
+                },
+                "approve": {
+                    "type": "boolean",
+                    "description": "Approval signal for manual-review capabilities",
+                    "default": False,
+                },
+                "ttl_seconds": {
+                    "type": "integer",
+                    "description": "TTL for session scope (seconds)",
+                    "default": 3600,
+                    "minimum": 60,
+                    "maximum": 86400,
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Optional short audit reason",
+                    "default": "",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "cccc_space_status",
         "description": (
             "Read Group Space status for the current group "

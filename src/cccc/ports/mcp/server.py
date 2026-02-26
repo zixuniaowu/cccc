@@ -21,6 +21,11 @@ cccc.* namespace (collaboration control plane):
 - cccc_actor_start: Start actor
 - cccc_actor_stop: Stop actor
 - cccc_runtime_list: List available agent runtimes
+- cccc_capability_search: Search capability registry (progressive disclosure)
+- cccc_capability_enable: Enable/disable capability packs by scope
+- cccc_capability_state: Read effective visible tool surface
+- cccc_capability_uninstall: Uninstall cached external capability + revoke bindings
+- cccc_capability_use: One-step enable+call convenience helper
 - cccc_space_status: Read Group Space provider/binding/queue status
 - cccc_space_capabilities: Read Group Space local file policy + ingest schema matrix
 - cccc_space_bind: Bind or unbind Group Space provider mapping
@@ -80,6 +85,7 @@ from ...kernel.group import load_group
 from ...kernel.inbox import is_message_for_actor
 from ...kernel.ledger import read_last_lines
 from ...kernel.memory_guide import build_memory_guide
+from ...kernel.capabilities import CORE_TOOL_NAMES, BUILTIN_CAPABILITY_PACKS
 from ...kernel.prompt_files import HELP_FILENAME, load_builtin_help_markdown as _load_builtin_help_markdown, read_group_prompt_file
 from ...util.conv import coerce_bool
 from .handlers.context import (
@@ -139,6 +145,55 @@ from .toolspecs import MCP_TOOLS
 
 _CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
 
+def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str) -> str:
+    base = str(markdown or "")
+    if not base.strip():
+        return base
+    if "## Active Skills (Runtime)" in base:
+        return base
+    gid = str(group_id or "").strip()
+    aid = str(actor_id or "").strip()
+    if not gid or not aid:
+        return base
+    try:
+        state = _call_daemon_or_raise(
+            {"op": "capability_state", "args": {"group_id": gid, "actor_id": aid, "by": aid}},
+            timeout_s=3.0,
+        )
+    except Exception:
+        return base
+    active = state.get("active_skills") if isinstance(state, dict) else []
+    pinned = state.get("pinned_skills") if isinstance(state, dict) else []
+    active_list = active if isinstance(active, list) else []
+    pinned_list = pinned if isinstance(pinned, list) else []
+    if not active_list and not pinned_list:
+        return base
+    lines: List[str] = ["## Active Skills (Runtime)"]
+    if pinned_list:
+        lines.append("- pinned:")
+        for item in pinned_list[:8]:
+            if not isinstance(item, dict):
+                continue
+            sid = str(item.get("capability_id") or "").strip()
+            name = str(item.get("name") or sid).strip()
+            desc = str(item.get("description_short") or "").strip()
+            line = f"  - {name} ({sid})"
+            if desc:
+                line += f": {desc[:120]}"
+            lines.append(line)
+    if active_list:
+        lines.append("- active_now:")
+        for item in active_list[:8]:
+            if not isinstance(item, dict):
+                continue
+            sid = str(item.get("capability_id") or "").strip()
+            name = str(item.get("name") or sid).strip()
+            desc = str(item.get("description_short") or "").strip()
+            line = f"  - {name} ({sid})"
+            if desc:
+                line += f": {desc[:120]}"
+            lines.append(line)
+    return base.rstrip() + "\n\n" + "\n".join(lines).rstrip() + "\n"
 
 # =============================================================================
 # Inbox Tools
@@ -200,7 +255,11 @@ def bootstrap(
     actors = al.get("actors") if isinstance(al, dict) else None
 
     help_payload: Dict[str, Any] = {
-        "markdown": _select_help_markdown(_CCCC_HELP_BUILTIN, role=None, actor_id=None),
+        "markdown": _append_runtime_skill_digest(
+            _select_help_markdown(_CCCC_HELP_BUILTIN, role=None, actor_id=None),
+            group_id=group_id,
+            actor_id=actor_id,
+        ),
         "source": "cccc.resources/cccc-help.md",
     }
     try:
@@ -210,12 +269,20 @@ def bootstrap(
             pf = read_group_prompt_file(g, HELP_FILENAME)
             if pf.found and isinstance(pf.content, str) and pf.content.strip():
                 help_payload = {
-                    "markdown": _select_help_markdown(pf.content, role=role, actor_id=actor_id),
+                    "markdown": _append_runtime_skill_digest(
+                        _select_help_markdown(pf.content, role=role, actor_id=actor_id),
+                        group_id=group_id,
+                        actor_id=actor_id,
+                    ),
                     "source": str(pf.path or ""),
                 }
             else:
                 help_payload = {
-                    "markdown": _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=actor_id),
+                    "markdown": _append_runtime_skill_digest(
+                        _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=actor_id),
+                        group_id=group_id,
+                        actor_id=actor_id,
+                    ),
                     "source": "cccc.resources/cccc-help.md",
                 }
     except Exception:
@@ -672,6 +739,211 @@ def runtime_list() -> Dict[str, Any]:
             }
             for e in pool
         ],
+    }
+
+
+def capability_search(
+    *,
+    group_id: str,
+    actor_id: str,
+    query: str = "",
+    kind: str = "",
+    source_id: str = "",
+    trust_tier: str = "",
+    qualification_status: str = "",
+    limit: int = 30,
+    include_external: bool = True,
+) -> Dict[str, Any]:
+    """Search capability registry (built-in packs + synced external catalogs)."""
+    return _call_daemon_or_raise(
+        {
+            "op": "capability_search",
+            "args": {
+                "group_id": group_id,
+                "actor_id": actor_id,
+                "by": actor_id,
+                "query": str(query or ""),
+                "kind": str(kind or ""),
+                "source_id": str(source_id or ""),
+                "trust_tier": str(trust_tier or ""),
+                "qualification_status": str(qualification_status or ""),
+                "limit": int(limit or 30),
+                "include_external": bool(include_external),
+            },
+        }
+    )
+
+
+def capability_enable(
+    *,
+    group_id: str,
+    by: str,
+    capability_id: str,
+    scope: str = "session",
+    enabled: bool = True,
+    cleanup: bool = False,
+    approve: bool = False,
+    reason: str = "",
+    ttl_seconds: int = 3600,
+    actor_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Enable/disable a capability for group/actor/session scope."""
+    target_actor = str(actor_id or by).strip()
+    return _call_daemon_or_raise(
+        {
+            "op": "capability_enable",
+            "args": {
+                "group_id": group_id,
+                "by": str(by or ""),
+                "actor_id": target_actor,
+                "capability_id": str(capability_id or ""),
+                "scope": str(scope or "session"),
+                "enabled": bool(enabled),
+                "cleanup": bool(cleanup),
+                "approve": bool(approve),
+                "reason": str(reason or ""),
+                "ttl_seconds": int(ttl_seconds or 3600),
+            },
+        }
+    )
+
+
+def capability_state(*, group_id: str, actor_id: str) -> Dict[str, Any]:
+    """Return effective capability exposure and visible tool names for caller scope."""
+    return _call_daemon_or_raise(
+        {
+            "op": "capability_state",
+            "args": {
+                "group_id": group_id,
+                "actor_id": actor_id,
+                "by": actor_id,
+            },
+        }
+    )
+
+
+def capability_uninstall(
+    *,
+    group_id: str,
+    by: str,
+    capability_id: str,
+    reason: str = "",
+) -> Dict[str, Any]:
+    """Uninstall an external capability runtime cache entry and revoke bindings."""
+    return _call_daemon_or_raise(
+        {
+            "op": "capability_uninstall",
+            "args": {
+                "group_id": group_id,
+                "by": str(by or ""),
+                "actor_id": str(by or ""),
+                "capability_id": str(capability_id or ""),
+                "reason": str(reason or ""),
+            },
+        }
+    )
+
+
+def capability_use(
+    *,
+    group_id: str,
+    by: str,
+    actor_id: Optional[str] = None,
+    capability_id: str = "",
+    tool_name: str = "",
+    tool_arguments: Optional[Dict[str, Any]] = None,
+    scope: str = "session",
+    approve: bool = False,
+    ttl_seconds: int = 3600,
+    reason: str = "",
+) -> Dict[str, Any]:
+    """One-step capability use: enable then optionally call tool."""
+    target_actor = str(actor_id or by).strip()
+    cap_id = str(capability_id or "").strip()
+    call_tool = str(tool_name or "").strip()
+    tool_args = dict(tool_arguments) if isinstance(tool_arguments, dict) else {}
+
+    if not cap_id and call_tool:
+        candidates = [
+            pack_id
+            for pack_id, pack in BUILTIN_CAPABILITY_PACKS.items()
+            if isinstance(pack, dict) and call_tool in set(pack.get("tool_names") or ())
+        ]
+        if len(candidates) == 1:
+            cap_id = str(candidates[0])
+        elif len(candidates) > 1:
+            raise MCPError(
+                code="capability_use_ambiguous_tool",
+                message=f"tool maps to multiple capabilities: {call_tool}",
+                details={"candidates": candidates},
+            )
+
+    if not cap_id:
+        raise MCPError(
+            code="missing_capability_id",
+            message="missing capability_id (and could not infer from tool_name)",
+            details={},
+        )
+
+    enable_result = capability_enable(
+        group_id=group_id,
+        by=by,
+        actor_id=target_actor,
+        capability_id=cap_id,
+        scope=scope,
+        enabled=True,
+        approve=approve,
+        ttl_seconds=ttl_seconds,
+        reason=reason,
+    )
+    state = str(enable_result.get("state") or "").strip().lower()
+    if state != "ready":
+        return {
+            "group_id": group_id,
+            "actor_id": target_actor,
+            "capability_id": cap_id,
+            "enabled": False,
+            "enable_result": enable_result,
+            "tool_called": False,
+        }
+
+    if not call_tool:
+        out = {
+            "group_id": group_id,
+            "actor_id": target_actor,
+            "capability_id": cap_id,
+            "enabled": True,
+            "enable_result": enable_result,
+            "tool_called": False,
+        }
+        skill_payload = enable_result.get("skill") if isinstance(enable_result, dict) else None
+        if isinstance(skill_payload, dict):
+            out["skill"] = skill_payload
+        return out
+    if call_tool == "cccc_capability_use":
+        raise MCPError(
+            code="capability_use_invalid_tool",
+            message="cccc_capability_use cannot recursively call itself",
+            details={},
+        )
+
+    if "group_id" not in tool_args:
+        tool_args["group_id"] = group_id
+    if "by" not in tool_args:
+        tool_args["by"] = by
+    if "actor_id" not in tool_args:
+        tool_args["actor_id"] = target_actor
+
+    tool_result = handle_tool_call(call_tool, tool_args)
+    return {
+        "group_id": group_id,
+        "actor_id": target_actor,
+        "capability_id": cap_id,
+        "enabled": True,
+        "enable_result": enable_result,
+        "tool_called": True,
+        "tool_name": call_tool,
+        "tool_result": tool_result,
     }
 
 
@@ -1191,11 +1463,19 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 pf = read_group_prompt_file(g, HELP_FILENAME)
                 if pf.found and isinstance(pf.content, str) and pf.content.strip():
                     return {
-                        "markdown": _select_help_markdown(pf.content, role=role, actor_id=aid),
+                        "markdown": _append_runtime_skill_digest(
+                            _select_help_markdown(pf.content, role=role, actor_id=aid),
+                            group_id=gid,
+                            actor_id=aid,
+                        ),
                         "source": str(pf.path or ""),
                     }
         return {
-            "markdown": _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
+            "markdown": _append_runtime_skill_digest(
+                _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
+                group_id=gid,
+                actor_id=aid,
+            ),
             "source": "cccc.resources/cccc-help.md",
         }
 
@@ -1374,6 +1654,72 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
 
     if name == "cccc_runtime_list":
         return runtime_list()
+
+    if name == "cccc_capability_search":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return capability_search(
+            group_id=gid,
+            actor_id=aid,
+            query=str(arguments.get("query") or ""),
+            kind=str(arguments.get("kind") or ""),
+            source_id=str(arguments.get("source_id") or ""),
+            trust_tier=str(arguments.get("trust_tier") or ""),
+            qualification_status=str(arguments.get("qualification_status") or ""),
+            limit=min(max(int(arguments.get("limit") or 30), 1), 200),
+            include_external=coerce_bool(arguments.get("include_external"), default=True),
+        )
+
+    if name == "cccc_capability_enable":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        actor_id = str(arguments.get("actor_id") or by).strip()
+        return capability_enable(
+            group_id=gid,
+            by=by,
+            actor_id=actor_id,
+            capability_id=str(arguments.get("capability_id") or ""),
+            scope=str(arguments.get("scope") or "session"),
+            enabled=coerce_bool(arguments.get("enabled"), default=True),
+            cleanup=coerce_bool(arguments.get("cleanup"), default=False),
+            approve=coerce_bool(arguments.get("approve"), default=False),
+            reason=str(arguments.get("reason") or ""),
+            ttl_seconds=min(max(int(arguments.get("ttl_seconds") or 3600), 60), 24 * 3600),
+        )
+
+    if name == "cccc_capability_state":
+        gid = _resolve_group_id(arguments)
+        aid = _resolve_self_actor_id(arguments)
+        return capability_state(group_id=gid, actor_id=aid)
+
+    if name == "cccc_capability_uninstall":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        return capability_uninstall(
+            group_id=gid,
+            by=by,
+            capability_id=str(arguments.get("capability_id") or ""),
+            reason=str(arguments.get("reason") or ""),
+        )
+
+    if name == "cccc_capability_use":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        actor_id = str(arguments.get("actor_id") or by).strip()
+        raw_tool_args = arguments.get("tool_arguments")
+        tool_args = dict(raw_tool_args) if isinstance(raw_tool_args, dict) else {}
+        return capability_use(
+            group_id=gid,
+            by=by,
+            actor_id=actor_id,
+            capability_id=str(arguments.get("capability_id") or ""),
+            tool_name=str(arguments.get("tool_name") or ""),
+            tool_arguments=tool_args,
+            scope=str(arguments.get("scope") or "session"),
+            approve=coerce_bool(arguments.get("approve"), default=False),
+            ttl_seconds=min(max(int(arguments.get("ttl_seconds") or 3600), 60), 24 * 3600),
+            reason=str(arguments.get("reason") or ""),
+        )
 
     if name == "cccc_space_status":
         gid = _resolve_group_id(arguments)
@@ -1750,4 +2096,90 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         out = handler(name, arguments)
         if out is not None:
             return out
+    # Dynamic capability tools are resolved by daemon capability runtime.
+    gid = _env_str("CCCC_GROUP_ID")
+    aid = _env_str("CCCC_ACTOR_ID")
+    if gid and aid:
+        try:
+            return _call_daemon_or_raise(
+                {
+                    "op": "capability_tool_call",
+                    "args": {
+                        "group_id": gid,
+                        "actor_id": aid,
+                        "by": aid,
+                        "tool_name": str(name or ""),
+                        "arguments": arguments if isinstance(arguments, dict) else {},
+                    },
+                },
+                timeout_s=120.0,
+            )
+        except MCPError as e:
+            if e.code != "capability_tool_not_found":
+                raise
     raise MCPError(code="unknown_tool", message=f"unknown tool: {name}")
+
+
+def list_tools_for_caller() -> List[Dict[str, Any]]:
+    """Resolve visible tool specs for current caller scope.
+
+    Behavior:
+    1) full profile opt-out via CCCC_MCP_TOOL_PROFILE=full
+    2) default: core + enabled capability packs from daemon capability_state
+    3) daemon failure fallback: core-only
+    """
+    gid = _env_str("CCCC_GROUP_ID")
+    aid = _env_str("CCCC_ACTOR_ID")
+    profile = str(os.environ.get("CCCC_MCP_TOOL_PROFILE") or "").strip().lower()
+    state: Dict[str, Any] = {}
+    if gid and aid:
+        try:
+            state = _call_daemon_or_raise(
+                {
+                    "op": "capability_state",
+                    "args": {"group_id": gid, "actor_id": aid, "by": aid},
+                },
+                timeout_s=4.0,
+            )
+        except Exception:
+            state = {}
+
+    if profile == "full":
+        visible = {str(spec.get("name") or "").strip() for spec in MCP_TOOLS if isinstance(spec, dict)}
+    else:
+        tools_raw = state.get("visible_tools") if isinstance(state, dict) else []
+        if not isinstance(tools_raw, list):
+            tools_raw = []
+        visible = {str(x).strip() for x in tools_raw if str(x).strip()}
+        if not visible:
+            visible = set(CORE_TOOL_NAMES)
+
+    dynamic_raw = state.get("dynamic_tools") if isinstance(state, dict) else []
+    dynamic_specs: List[Dict[str, Any]] = []
+    if isinstance(dynamic_raw, list):
+        for item in dynamic_raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            schema = item.get("inputSchema")
+            if not isinstance(schema, dict):
+                schema = {"type": "object", "properties": {}, "required": []}
+            dynamic_specs.append(
+                {
+                    "name": name,
+                    "description": str(item.get("description") or "").strip()
+                    or f"Dynamic capability tool ({name})",
+                    "inputSchema": schema,
+                }
+            )
+
+    out = [spec for spec in MCP_TOOLS if str(spec.get("name") or "") in visible]
+    existing = {str(spec.get("name") or "") for spec in out}
+    for spec in dynamic_specs:
+        name = str(spec.get("name") or "")
+        if name and name not in existing:
+            out.append(spec)
+            existing.add(name)
+    return out

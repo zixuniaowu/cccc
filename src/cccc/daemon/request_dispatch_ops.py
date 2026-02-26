@@ -30,6 +30,7 @@ from .ops.group_space_ops import try_handle_group_space_op
 from .ops.group_ops import try_handle_group_core_op
 from .ops.group_bootstrap_ops import try_handle_group_bootstrap_op
 from .ops.registry_ops import try_handle_registry_op
+from .ops.capability_ops import try_handle_capability_op
 from .ops.im_ops import try_handle_im_op
 from .ops.runner_ops import try_handle_headless_op
 from .ops.memory_ops import try_handle_memory_op
@@ -172,6 +173,10 @@ def dispatch_request(
     registry_resp = try_handle_registry_op(op, args)
     if registry_resp is not None:
         return registry_resp, False
+
+    capability_resp = try_handle_capability_op(op, args)
+    if capability_resp is not None:
+        return capability_resp, False
 
     group_lifecycle_resp = try_handle_group_lifecycle_op(
         op,
