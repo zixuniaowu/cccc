@@ -9,7 +9,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
         from cccc.ports.mcp.server import capability_use
 
         with patch(
-            "cccc.ports.mcp.server.capability_enable",
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
             return_value={"state": "ready", "refresh_required": True, "enabled": True},
         ) as enable_mock, patch(
             "cccc.ports.mcp.server.handle_tool_call",
@@ -38,7 +38,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
         from cccc.ports.mcp.server import capability_use
 
         with patch(
-            "cccc.ports.mcp.server.capability_enable",
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
             return_value={"state": "pending_approval", "refresh_required": False, "enabled": False},
         ) as enable_mock, patch(
             "cccc.ports.mcp.server.handle_tool_call",
@@ -61,7 +61,7 @@ class TestMcpCapabilityUse(unittest.TestCase):
         from cccc.ports.mcp.server import capability_use
 
         with patch(
-            "cccc.ports.mcp.server.capability_enable",
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
             return_value={
                 "state": "ready",
                 "refresh_required": False,

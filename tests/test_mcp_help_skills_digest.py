@@ -10,10 +10,10 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         from cccc.ports.mcp.server import handle_tool_call
 
         with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "peer-1"}, clear=False), patch(
-            "cccc.ports.mcp.server.load_group",
+            "cccc.ports.mcp.handlers.cccc_core.load_group",
             return_value=None,
         ), patch(
-            "cccc.ports.mcp.server._call_daemon_or_raise",
+            "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
             return_value={
                 "active_skills": [
                     {
