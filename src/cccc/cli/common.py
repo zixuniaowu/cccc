@@ -549,4 +549,4 @@ def _default_entry() -> int:
 
 
 # Export helper symbols (including leading underscore names) for CLI submodules.
-__all__ = [name for name in globals().keys() if not name.startswith("__")]
+__all__ = [name for name in globals().keys() if not name.startswith("__") or name == "__version__"]

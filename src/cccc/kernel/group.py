@@ -21,6 +21,13 @@ _DEFAULT_AUTOMATION_STANDUP_SNIPPET = """{{interval_minutes}} minutes have passe
 
 ⚠️ CRITICAL REMINDER: ALL responses MUST use cccc_message_send or cccc_message_reply. NEVER output text directly to terminal — terminal output is invisible to users. This applies to you AND all peers you coordinate.
 
+## Part 0: Memory recall (apply past experience)
+Before alignment, recall relevant memories:
+1. Extract 2-3 keywords from current Sketch (work type, key technologies, active milestone).
+2. Run `cccc_memory_search(query=<keywords>, actor_id="")` for each keyword set.
+3. If relevant memories found, briefly list them and apply insights to Part 1 alignment and Part 2 decisions.
+This step makes past experience actionable — skip it and we waste what we learned.
+
 ## Part 1: Alignment checkpoint
 - Direction: Re-check goals/constraints/DoD (PROJECT.md if present; otherwise user + Context). Are we drifting?
 - Rigor: Which key points are evidence vs hypotheses? What needs investigation/verification next?
@@ -35,7 +42,7 @@ After the alignment check, perform these steps:
 4. Run `cccc_memory_decay` to identify stale candidates. Delete obvious low-value entries with `cccc_memory_delete`.
 5. Briefly report what you consolidated or cleaned (1-2 lines max).
 
-Keep it human and direct. Do not skip Part 2 — memory evolution is how we get smarter over time.
+Keep it human and direct. Do not skip any part — memory recall + evolution is how we get smarter over time.
 """
 
 LOGGER = logging.getLogger(__name__)
