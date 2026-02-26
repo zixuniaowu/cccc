@@ -9,8 +9,8 @@ import sys
 import time
 from pathlib import Path
 
-from ..kernel.group import load_group
-from ..util.conv import coerce_bool
+from ...kernel.group import load_group
+from ...util.conv import coerce_bool
 
 logger = logging.getLogger("cccc.daemon.server")
 

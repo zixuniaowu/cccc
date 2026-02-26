@@ -17,10 +17,10 @@ from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
-from ..providers.notebooklm.health import parse_notebooklm_auth_json
-from ..providers.notebooklm.compat import probe_notebooklm_vendor
-from ..providers.notebooklm.errors import NotebookLMProviderError
-from ..paths import ensure_home
+from ...providers.notebooklm.health import parse_notebooklm_auth_json
+from ...providers.notebooklm.compat import probe_notebooklm_vendor
+from ...providers.notebooklm.errors import NotebookLMProviderError
+from ...paths import ensure_home
 from .group_space_store import (
     get_space_provider_state,
     load_space_provider_secrets,
@@ -549,7 +549,7 @@ def _run_coroutine_sync(coro: Any) -> Any:
 
 def _verify_storage_state(storage_state: Dict[str, Any]) -> None:
     try:
-        from ..providers.notebooklm._vendor.notebooklm.auth import (
+        from ...providers.notebooklm._vendor.notebooklm.auth import (
             extract_cookies_from_storage,
             fetch_tokens,
         )

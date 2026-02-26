@@ -21,19 +21,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from ..contracts.v1 import AutomationRule, AutomationRuleSet, SystemNotifyData
-from ..kernel.actors import list_actors, find_foreman
-from ..kernel.group import Group, load_group, get_group_state
-from ..kernel.inbox import iter_events, is_message_for_actor, get_cursor, get_obligation_status_batch
-from ..kernel.ledger import append_event
-from ..kernel.terminal_transcript import get_terminal_transcript_settings
-from ..kernel.messaging import enabled_recipient_actor_ids
-from ..runners import pty as pty_runner
-from ..runners import headless as headless_runner
-from .delivery import flush_pending_messages, queue_system_notify
-from ..util.conv import coerce_bool
-from ..util.fs import atomic_write_json, read_json
-from ..util.time import parse_utc_iso, utc_now_iso
+from ...contracts.v1 import AutomationRule, AutomationRuleSet, SystemNotifyData
+from ...kernel.actors import list_actors, find_foreman
+from ...kernel.group import Group, load_group, get_group_state
+from ...kernel.inbox import iter_events, is_message_for_actor, get_cursor, get_obligation_status_batch
+from ...kernel.ledger import append_event
+from ...kernel.terminal_transcript import get_terminal_transcript_settings
+from ...kernel.messaging import enabled_recipient_actor_ids
+from ...runners import pty as pty_runner
+from ...runners import headless as headless_runner
+from ..messaging.delivery import flush_pending_messages, queue_system_notify
+from ...util.conv import coerce_bool
+from ...util.fs import atomic_write_json, read_json
+from ...util.time import parse_utc_iso, utc_now_iso
 
 
 @dataclass(frozen=True)
@@ -469,7 +469,7 @@ def _terminal_tail_snippet(group: Group, *, actor_id: str, lines: int) -> str:
 
     text = raw_text
     try:
-        from ..util.terminal_render import render_transcript
+        from ...util.terminal_render import render_transcript
 
         text = render_transcript(text, compact=True)
     except Exception:
@@ -1209,8 +1209,8 @@ class AutomationManager:
     def _daemon_automation_call(self, *, op: str, args: Dict[str, Any]) -> Tuple[bool, str]:
         """Invoke daemon ops from automation thread without duplicating server logic."""
         try:
-            from ..contracts.v1 import DaemonRequest
-            from .server import handle_request
+            from ...contracts.v1 import DaemonRequest
+            from ..server import handle_request
 
             req = DaemonRequest(op=op, args=args)
             resp, _ = handle_request(req)

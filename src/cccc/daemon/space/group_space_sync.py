@@ -8,10 +8,10 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from ..kernel.actors import find_actor, find_foreman
-from ..kernel.group import load_group
-from ..kernel.ledger import append_event
-from ..util.fs import atomic_write_json, read_json
+from ...kernel.actors import find_actor, find_foreman
+from ...kernel.group import load_group
+from ...kernel.ledger import append_event
+from ...util.fs import atomic_write_json, read_json
 from .group_space_paths import (
     resolve_space_root_from_group,
     resolve_space_root,

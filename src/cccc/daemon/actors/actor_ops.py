@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Optional
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.actors import find_actor, get_effective_role, list_actors
 from ...kernel.group import load_group
-from ..private_env_ops import mask_private_env_value
+from .private_env_ops import mask_private_env_value
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool

@@ -12,8 +12,8 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from ...contracts.v1 import DaemonResponse, DaemonError
-from ..group_space_projection import sync_group_space_projection
-from ..group_space_store import enqueue_space_job, get_space_binding, get_space_provider_state
+from ..space.group_space_projection import sync_group_space_projection
+from ..space.group_space_store import enqueue_space_job, get_space_binding, get_space_provider_state
 from ...kernel.group import load_group
 from ...kernel.context import (
     ContextStorage,
@@ -414,7 +414,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 # Memory hook: solidify_batch → export for this milestone
                 # Best-effort, never blocks the main flow
                 try:
-                    from .memory_ops import handle_memory_solidify_batch, handle_memory_export
+                    from ..memory.memory_ops import handle_memory_solidify_batch, handle_memory_export
                     solidify_result = handle_memory_solidify_batch({
                         "group_id": group_id,
                         "milestone_id": milestone_id,
@@ -425,7 +425,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     })
                     # Record hook results in memory_meta
                     try:
-                        from .memory_ops import _get_memory_store
+                        from ..memory.memory_ops import _get_memory_store
                         _store = _get_memory_store(group_id)
                         if _store is not None:
                             import json as _json

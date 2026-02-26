@@ -21,7 +21,7 @@ from ...kernel.messaging import (
 from ...kernel.registry import load_registry
 from ...kernel.scope import detect_scope
 from ...util.time import utc_now_iso
-from ..delivery import get_headless_targets_for_message, queue_chat_message
+from .delivery import get_headless_targets_for_message, queue_chat_message
 
 logger = logging.getLogger("cccc.daemon.server")
 

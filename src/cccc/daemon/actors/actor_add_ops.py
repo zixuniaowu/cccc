@@ -11,7 +11,7 @@ from ...kernel.inbox import set_cursor
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
 from ...kernel.runtime import get_runtime_command_with_flags
-from ..actor_profile_runtime import apply_profile_link_to_actor
+from .actor_profile_runtime import apply_profile_link_to_actor
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:

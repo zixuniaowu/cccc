@@ -12,7 +12,7 @@ from ...kernel.permissions import require_group_permission
 from ...util.conv import coerce_bool
 from ...util.fs import atomic_write_json, read_json
 from ...util.time import utc_now_iso
-from ..automation import (
+from .engine import (
     _load_ruleset as load_automation_ruleset,
     automation_supported_vars,
     build_automation_status,

@@ -6,8 +6,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict
 
-from ..paths import ensure_home
-from ..util.fs import atomic_write_json, read_json
+from ...paths import ensure_home
+from ...util.fs import atomic_write_json, read_json
 
 _PRIVATE_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PRIVATE_ENV_MAX_VALUE_CHARS = 200_000

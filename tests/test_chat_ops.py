@@ -26,7 +26,7 @@ class TestChatOps(unittest.TestCase):
         return handle_request(DaemonRequest.model_validate({"op": op, "args": args}))
 
     def test_try_handle_unknown_chat_op_returns_none(self) -> None:
-        from cccc.daemon.ops.chat_ops import try_handle_chat_op
+        from cccc.daemon.messaging.chat_ops import try_handle_chat_op
 
         self.assertIsNone(
             try_handle_chat_op(

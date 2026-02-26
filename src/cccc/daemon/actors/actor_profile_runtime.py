@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
-from ..kernel.actors import find_actor, update_actor
+from ...kernel.actors import find_actor, update_actor
 
 PROFILE_CONTROLLED_FIELDS = ("runtime", "runner", "command", "submit", "env")
 

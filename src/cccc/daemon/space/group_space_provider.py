@@ -5,8 +5,8 @@ import inspect
 import secrets
 from typing import Any, Dict
 
-from ..providers.notebooklm.adapter import get_notebooklm_adapter
-from ..providers.notebooklm.errors import NotebookLMProviderError
+from ...providers.notebooklm.adapter import get_notebooklm_adapter
+from ...providers.notebooklm.errors import NotebookLMProviderError
 from .group_space_store import get_space_provider_state, load_space_provider_secrets
 
 _NOTEBOOKLM_AUTH_KEY = "NOTEBOOKLM_AUTH_JSON"

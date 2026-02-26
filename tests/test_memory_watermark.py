@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from cccc.daemon.ops.memory_ops import (
+from cccc.daemon.memory.memory_ops import (
     handle_memory_ingest,
     _get_memory_store,
     close_all_stores,
@@ -40,7 +40,7 @@ class WatermarkPersistenceTestBase(unittest.TestCase):
                 f.write(json.dumps(ev) + "\n")
 
         # Mock load_group to return a fake group
-        self._group_patcher = patch("cccc.daemon.ops.memory_ops.load_group")
+        self._group_patcher = patch("cccc.daemon.memory.memory_ops.load_group")
         self._mock_load = self._group_patcher.start()
 
         class FakeGroup:
@@ -55,7 +55,7 @@ class WatermarkPersistenceTestBase(unittest.TestCase):
         self._mock_load.return_value = FakeGroup(self.group_dir, self.ledger_path)
 
         # Patch read_last_lines to use real file
-        self._lines_patcher = patch("cccc.daemon.ops.memory_ops.read_last_lines")
+        self._lines_patcher = patch("cccc.daemon.memory.memory_ops.read_last_lines")
         self._mock_lines = self._lines_patcher.start()
         with open(self.ledger_path) as f:
             self._all_lines = f.readlines()
@@ -132,7 +132,7 @@ class TestWatermarkPersistence(WatermarkPersistenceTestBase):
 
     def test_no_module_level_watermark_dict(self):
         """Module-level _ingest_watermarks dict should be removed."""
-        import cccc.daemon.ops.memory_ops as mod
+        import cccc.daemon.memory.memory_ops as mod
         # The old _ingest_watermarks dict should no longer exist
         self.assertFalse(hasattr(mod, "_ingest_watermarks"),
                          "_ingest_watermarks module-level dict should be removed")

@@ -245,7 +245,7 @@ class TestImRevokeSemantics(unittest.TestCase):
         self._td.cleanup()
 
     def test_revoke_also_unsubscribes_chat(self) -> None:
-        from cccc.daemon.ops import im_ops
+        from cccc.daemon.im import im_ops
         from cccc.ports.im.subscribers import SubscriberManager
 
         km = KeyManager(self.state_dir)
@@ -259,7 +259,7 @@ class TestImRevokeSemantics(unittest.TestCase):
         self.assertTrue(sm.is_subscribed("chat1", 0))
 
         fake_group = SimpleNamespace(path=self.group_path)
-        with patch("cccc.daemon.ops.im_ops._load_km", return_value=(None, km, fake_group)):
+        with patch("cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)):
             resp = im_ops.handle_im_revoke_chat({"group_id": "g_demo", "chat_id": "chat1", "thread_id": 0})
 
         self.assertTrue(resp.ok, getattr(resp, "error", None))
@@ -274,12 +274,12 @@ class TestImRevokeSemantics(unittest.TestCase):
         self.assertFalse(sm2.is_subscribed("chat1", 0))
 
     def test_list_pending_returns_generated_key(self) -> None:
-        from cccc.daemon.ops import im_ops
+        from cccc.daemon.im import im_ops
 
         km = KeyManager(self.state_dir)
         key = km.generate_key("chat2", 0, "telegram")
         fake_group = SimpleNamespace(path=self.group_path)
-        with patch("cccc.daemon.ops.im_ops._load_km", return_value=(None, km, fake_group)):
+        with patch("cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)):
             resp = im_ops.handle_im_list_pending({"group_id": "g_demo"})
 
         self.assertTrue(resp.ok, getattr(resp, "error", None))
@@ -290,12 +290,12 @@ class TestImRevokeSemantics(unittest.TestCase):
         self.assertEqual(pending[0].get("key"), key)
 
     def test_reject_pending_is_idempotent(self) -> None:
-        from cccc.daemon.ops import im_ops
+        from cccc.daemon.im import im_ops
 
         km = KeyManager(self.state_dir)
         key = km.generate_key("chat3", 0, "telegram")
         fake_group = SimpleNamespace(path=self.group_path)
-        with patch("cccc.daemon.ops.im_ops._load_km", return_value=(None, km, fake_group)):
+        with patch("cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)):
             first = im_ops.handle_im_reject_pending({"group_id": "g_demo", "key": key})
             second = im_ops.handle_im_reject_pending({"group_id": "g_demo", "key": key})
 
@@ -307,11 +307,11 @@ class TestImRevokeSemantics(unittest.TestCase):
         self.assertFalse(bool(second_result.get("rejected")))
 
     def test_reject_pending_requires_key(self) -> None:
-        from cccc.daemon.ops import im_ops
+        from cccc.daemon.im import im_ops
 
         km = KeyManager(self.state_dir)
         fake_group = SimpleNamespace(path=self.group_path)
-        with patch("cccc.daemon.ops.im_ops._load_km", return_value=(None, km, fake_group)):
+        with patch("cccc.daemon.im.im_ops._load_km", return_value=(None, km, fake_group)):
             resp = im_ops.handle_im_reject_pending({"group_id": "g_demo", "key": ""})
 
         self.assertFalse(resp.ok)
@@ -553,7 +553,7 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
 
 
 try:
-    from cccc.daemon.ops.im_ops import _load_km
+    from cccc.daemon.im.im_ops import _load_km
     _HAS_DAEMON_DEPS = True
 except ImportError:
     _HAS_DAEMON_DEPS = False

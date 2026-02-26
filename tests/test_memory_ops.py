@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 
 from cccc.contracts.v1 import DaemonResponse
-from cccc.daemon.ops.memory_ops import (
+from cccc.daemon.memory.memory_ops import (
     handle_memory_store,
     handle_memory_search,
     handle_memory_stats,
@@ -30,7 +30,7 @@ class MemoryOpsTestBase(unittest.TestCase):
         self._td = tempfile.TemporaryDirectory()
         self.group_id = "g_ops_test"
         # Patch load_group to return a mock group pointing to temp dir
-        self._patcher = patch("cccc.daemon.ops.memory_ops.load_group")
+        self._patcher = patch("cccc.daemon.memory.memory_ops.load_group")
         self.mock_load_group = self._patcher.start()
         import pathlib
         mock_group = MagicMock()
@@ -84,7 +84,7 @@ class TestConnectionPoolCache(MemoryOpsTestBase):
     def test_concurrent_get_same_group_returns_single_cached_instance(self):
         """Thread-safe cache access: concurrent gets should converge to one instance."""
         close_all_stores()
-        with patch("cccc.daemon.ops.memory_ops.MemoryStore") as mock_store_cls:
+        with patch("cccc.daemon.memory.memory_ops.MemoryStore") as mock_store_cls:
             mock_store_cls.side_effect = lambda *_a, **_k: MagicMock()
             with ThreadPoolExecutor(max_workers=8) as pool:
                 stores = list(pool.map(lambda _: _get_memory_store(self.group_id), range(16)))

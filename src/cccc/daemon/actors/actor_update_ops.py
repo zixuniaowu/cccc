@@ -13,7 +13,7 @@ from ...kernel.permissions import require_actor_permission
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
-from ..actor_profile_runtime import (
+from .actor_profile_runtime import (
     PROFILE_CONTROLLED_FIELDS,
     actor_profile_id,
     apply_profile_link_to_actor,

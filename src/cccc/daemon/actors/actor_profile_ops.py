@@ -9,8 +9,8 @@ from ...kernel.actors import find_actor
 from ...kernel.group import load_group
 from ...kernel.registry import load_registry
 from ...util.conv import coerce_bool
-from ..actor_profile_runtime import apply_profile_link_to_actor, clear_actor_link_metadata
-from ..actor_profile_store import (
+from .actor_profile_runtime import apply_profile_link_to_actor, clear_actor_link_metadata
+from .actor_profile_store import (
     ProfileRevisionMismatchError,
     delete_actor_profile,
     delete_actor_profile_secrets,
@@ -21,7 +21,7 @@ from ..actor_profile_store import (
     upsert_actor_profile,
     validate_actor_profile_id,
 )
-from ..private_env_ops import (
+from .private_env_ops import (
     PRIVATE_ENV_MAX_KEYS,
     coerce_private_env_value,
     load_actor_private_env,

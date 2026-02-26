@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 from cccc.kernel.memory import MEMORY_KINDS
-from cccc.daemon.ops.memory_ops import (
+from cccc.daemon.memory.memory_ops import (
     handle_memory_ingest,
     handle_memory_search,
     _parse_chat_events,
@@ -239,7 +239,7 @@ class IngestOpsTestBase(unittest.TestCase):
         self.group_path = pathlib.Path(self._td.name)
 
         # Patch load_group
-        self._patcher = patch("cccc.daemon.ops.memory_ops.load_group")
+        self._patcher = patch("cccc.daemon.memory.memory_ops.load_group")
         self.mock_load_group = self._patcher.start()
         mock_group = MagicMock()
         mock_group.path = self.group_path

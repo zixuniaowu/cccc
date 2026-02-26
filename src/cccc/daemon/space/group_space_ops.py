@@ -16,8 +16,8 @@ from ...contracts.v1 import DaemonError, DaemonResponse, SpaceBinding
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
-from ..group_space_paths import resolve_space_root_from_group
-from ..group_space_provider import (
+from .group_space_paths import resolve_space_root_from_group
+from .group_space_provider import (
     SpaceProviderError,
     provider_delete_source,
     provider_create_space,
@@ -32,15 +32,15 @@ from ..group_space_provider import (
 )
 from ...providers.notebooklm.errors import NotebookLMProviderError
 from ...providers.notebooklm.health import notebooklm_health_check, parse_notebooklm_auth_json
-from ..notebooklm_auth_flow import (
+from .notebooklm_auth_flow import (
     cancel_notebooklm_auth_flow,
     get_notebooklm_auth_flow_status,
     start_notebooklm_auth_flow,
 )
-from ..group_space_sync import group_space_local_file_policy, read_group_space_sync_state, sync_group_space_files
-from ..group_space_projection import sync_group_space_projection
-from ..group_space_runtime import acquire_space_provider_write, execute_space_job, retry_space_job, run_space_query
-from ..group_space_store import (
+from .group_space_sync import group_space_local_file_policy, read_group_space_sync_state, sync_group_space_files
+from .group_space_projection import sync_group_space_projection
+from .group_space_runtime import acquire_space_provider_write, execute_space_job, retry_space_job, run_space_query
+from .group_space_store import (
     cancel_space_job,
     describe_space_provider_credential_state,
     enqueue_space_job,

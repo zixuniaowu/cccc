@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from ..kernel.group import load_group
+from ...kernel.group import load_group
 
 SPACE_DIR_NAME = "space"
 SPACE_INDEX_FILENAME = ".space-index.json"

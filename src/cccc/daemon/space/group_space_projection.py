@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from ..util.fs import atomic_write_json, read_json
-from ..util.time import utc_now_iso
+from ...util.fs import atomic_write_json, read_json
+from ...util.time import utc_now_iso
 from .group_space_paths import (
     resolve_space_root,
     space_state_path,

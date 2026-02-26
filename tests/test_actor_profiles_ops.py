@@ -368,7 +368,7 @@ class TestActorProfilesOps(unittest.TestCase):
             )
             self.assertTrue(add.ok, getattr(add, "error", None))
 
-            from cccc.daemon.actor_profile_store import delete_actor_profile, delete_actor_profile_secrets
+            from cccc.daemon.actors.actor_profile_store import delete_actor_profile, delete_actor_profile_secrets
 
             delete_actor_profile(pid)
             delete_actor_profile_secrets(pid)

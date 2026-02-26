@@ -9,9 +9,9 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, Optional, Set
 
-from ..kernel.group import load_group
-from ..kernel.inbox import is_message_for_actor
-from ..util.time import parse_utc_iso, utc_now_iso
+from ...kernel.group import load_group
+from ...kernel.inbox import is_message_for_actor
+from ...util.time import parse_utc_iso, utc_now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ def _tail_events(group_id: str, *, max_lines: int = 2000) -> list[Dict[str, Any]
     if g is None:
         return []
     try:
-        from ..kernel.ledger import read_last_lines
+        from ...kernel.ledger import read_last_lines
 
         lines = read_last_lines(g.ledger_path, int(max_lines))
     except Exception:
