@@ -5,12 +5,11 @@
 // this causes the controlled value to overwrite the DOM mid-composition,
 // breaking CJK input.
 //
-// Solution: Maintain a local state that tracks the input value independently.
-// During composition, the local state is decoupled from external state so
-// re-renders cannot overwrite the DOM. On compositionEnd, the final composed
-// value is flushed to the external onChange handler.
+// Solution: Derive the display value from composition state — use the
+// buffered local value during composition, and the external value otherwise.
+// This avoids useEffect-based sync entirely.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 type InputElement = HTMLInputElement | HTMLTextAreaElement;
 
@@ -22,7 +21,7 @@ interface UseIMECompositionOptions {
 }
 
 interface UseIMECompositionReturn {
-  /** Bind this to the element's value prop. Returns local state, immune to external re-renders during composition. */
+  /** Bind this to the element's value prop. Immune to external re-renders during composition. */
   value: string;
   /** Bind to onChange. */
   onChange: (e: React.ChangeEvent<InputElement>) => void;
@@ -37,15 +36,12 @@ export function useIMEComposition({
   onChange,
 }: UseIMECompositionOptions): UseIMECompositionReturn {
   const [localValue, setLocalValue] = useState(value);
+  const [isComposing, setIsComposing] = useState(false);
   const composingRef = useRef(false);
 
-  // Sync local state from external value when not composing.
-  // This handles programmatic resets and normal external updates.
-  useEffect(() => {
-    if (!composingRef.current) {
-      setLocalValue(value);
-    }
-  }, [value]);
+  // Derive display value: during composition use buffered local value,
+  // otherwise use external value directly (no sync needed).
+  const displayValue = isComposing ? localValue : value;
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<InputElement>) => {
@@ -64,11 +60,13 @@ export function useIMEComposition({
 
   const handleCompositionStart = useCallback(() => {
     composingRef.current = true;
+    setIsComposing(true);
   }, []);
 
   const handleCompositionEnd = useCallback(
     (e: React.CompositionEvent<InputElement>) => {
       composingRef.current = false;
+      setIsComposing(false);
       // Flush the final composed value to external state.
       const finalValue = e.currentTarget.value;
       setLocalValue(finalValue);
@@ -78,7 +76,7 @@ export function useIMEComposition({
   );
 
   return {
-    value: localValue,
+    value: displayValue,
     onChange: handleChange,
     onCompositionStart: handleCompositionStart,
     onCompositionEnd: handleCompositionEnd,

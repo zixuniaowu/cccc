@@ -47,6 +47,7 @@ CORE_TOOL_NAMES: Tuple[str, ...] = (
     "cccc_presence_get",
     "cccc_presence_update",
     "cccc_presence_clear",
+    "cccc_group_set_state",
 )
 
 
@@ -57,7 +58,6 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
         "description": "Group-level lifecycle controls and group list operations.",
         "tool_names": (
             "cccc_group_list",
-            "cccc_group_set_state",
         ),
         "tags": ("group", "admin"),
     },
