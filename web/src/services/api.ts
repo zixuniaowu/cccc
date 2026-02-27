@@ -618,12 +618,7 @@ export async function updateVision(groupId: string, vision: string) {
   });
 }
 
-export async function updateSketch(groupId: string, sketch: string) {
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/context`, {
-    method: "POST",
-    body: JSON.stringify({ ops: [{ op: "sketch.update", sketch }], by: "user" }),
-  });
-}
+
 
 export async function fetchSettings(groupId: string) {
   return apiJson<{ settings: GroupSettings }>(

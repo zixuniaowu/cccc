@@ -25,13 +25,13 @@ class RecallTestBase(unittest.TestCase):
         self.store.store(
             "SQLite FTS5 全文搜索引擎性能优异",
             kind="fact", status="solid", actor_id="peer-arch",
-            task_id="T001", milestone_id="M1", confidence="high",
+            task_id="T001", confidence="high",
             tags=["database", "search"],
         )
         self.store.store(
             "Memory system uses SQLite for persistent storage",
             kind="observation", status="draft", actor_id="peer-impl",
-            task_id="T002", milestone_id="M1", confidence="medium",
+            task_id="T002", confidence="medium",
             tags=["database", "memory"],
         )
         self.store.store(
@@ -98,11 +98,6 @@ class TestRecallNoQuery(RecallTestBase):
         self._seed_data()
         t001 = self.store.recall(task_id="T001")
         self.assertEqual(len(t001), 2)
-
-    def test_recall_filter_milestone_id(self):
-        self._seed_data()
-        m1 = self.store.recall(milestone_id="M1")
-        self.assertEqual(len(m1), 2)
 
     def test_recall_filter_confidence(self):
         self._seed_data()

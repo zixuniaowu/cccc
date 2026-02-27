@@ -134,7 +134,6 @@ class TestHandleMemoryStore(MemoryOpsTestBase):
             "scope_key": "s_test",
             "actor_id": "peer-impl",
             "task_id": "T097",
-            "milestone_id": "M7",
             "event_ts": "2026-02-25T00:00:00Z",
             "tags": ["test", "memory"],
             "strategy": "aggressive",
@@ -364,7 +363,7 @@ class TestHandleMemorySearch(MemoryOpsTestBase):
         mem = resp.result["memories"][0]
         for key in ("id", "content", "kind", "status", "confidence",
                      "source_type", "source_ref", "group_id", "scope_key",
-                     "actor_id", "task_id", "milestone_id", "event_ts",
+                     "actor_id", "task_id", "event_ts",
                      "created_at", "updated_at", "last_recalled_at",
                      "content_hash", "hit_count", "tags", "summary", "depth"):
             self.assertIn(key, mem, f"Missing key: {key}")
