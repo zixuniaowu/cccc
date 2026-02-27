@@ -153,7 +153,7 @@ class TestRecallFTS(RecallTestBase):
 
     def test_fts_basic(self):
         self._seed_data()
-        results = self.store.recall("SQLite")
+        results = self.store.recall("SQLite", depth="L2")
         self.assertGreater(len(results), 0)
         for m in results:
             self.assertIn("SQLite", m["content"])
@@ -199,7 +199,7 @@ class TestRecallCJK(RecallTestBase):
     def test_cjk_like_supplement(self):
         """CJK query with len >= 2 uses LIKE supplement."""
         self._seed_data()
-        results = self.store.recall("中文界面")
+        results = self.store.recall("中文界面", depth="L2")
         self.assertGreater(len(results), 0)
         found_content = [m["content"] for m in results]
         self.assertTrue(any("中文界面" in c for c in found_content))
@@ -253,7 +253,7 @@ class TestRecallLikeWildcardEscape(RecallTestBase):
         self.store.store("cut")
         self.store.store("cot")
         # If _ were unescaped, "c_t" would match all three via LIKE
-        results = self.store.recall("c_t")
+        results = self.store.recall("c_t", depth="L2")
         # Only exact substring match, not wildcard
         for m in results:
             self.assertIn("c_t", m["content"])
@@ -262,7 +262,7 @@ class TestRecallLikeWildcardEscape(RecallTestBase):
         """CJK query containing % doesn't cause wildcard expansion."""
         self.store.store("内存占用100%满了")
         self.store.store("完全不相关的内容")
-        results = self.store.recall("100%满")
+        results = self.store.recall("100%满", depth="L2")
         # Should find the first one, not both
         found = [m for m in results if "100%" in m["content"]]
         self.assertGreater(len(found), 0)
@@ -380,7 +380,7 @@ class TestRecallFTSScoreSorting(RecallTestBase):
         time.sleep(0.01)
         self.store.store("second created", status="solid")
 
-        results = self.store.recall()
+        results = self.store.recall(depth="L2")
         solids = [m for m in results if m["status"] == "solid"]
         self.assertEqual(len(solids), 2)
         # Second created should come first (created_at DESC)
@@ -391,7 +391,7 @@ class TestRecallFTSScoreSorting(RecallTestBase):
         self.store.store("SQLite FTS5 full-text search", status="solid")
         self.store.store("unrelated content about cats", status="solid")
 
-        results = self.store.recall("SQLite FTS5")
+        results = self.store.recall("SQLite FTS5", depth="L2")
         matching = [m for m in results if "SQLite" in m["content"]]
         self.assertGreater(len(matching), 0)
         for m in matching:
@@ -407,8 +407,8 @@ class TestRecallScoping(RecallTestBase):
         other = MemoryStore(self.db_path, group_id="g_other")
         try:
             other.store("other group memory")
-            mine = self.store.recall("memory")
-            theirs = other.recall("memory")
+            mine = self.store.recall("memory", depth="L2")
+            theirs = other.recall("memory", depth="L2")
             self.assertEqual(len(mine), 1)
             self.assertIn("my group", mine[0]["content"])
             self.assertEqual(len(theirs), 1)

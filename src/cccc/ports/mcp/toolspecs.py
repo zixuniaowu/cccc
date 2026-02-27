@@ -2066,6 +2066,10 @@ MCP_TOOLS = [
                     "description": "Immediately solidify after store/update (default false)",
                     "default": False,
                 },
+                "summary": {
+                    "type": "string",
+                    "description": "L0 summary of the memory (manual, for token-efficient recall)",
+                },
             },
             "required": [],
         },
@@ -2141,6 +2145,12 @@ MCP_TOOLS = [
                     "default": 20,
                     "minimum": 1,
                     "maximum": 100,
+                },
+                "depth": {
+                    "type": "string",
+                    "enum": ["L0", "L2"],
+                    "description": "Return depth: L0=summary only (default, saves tokens), L2=full content+summary",
+                    "default": "L0",
                 },
             },
             "required": [],

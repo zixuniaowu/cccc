@@ -25,6 +25,7 @@ Use targeted recall before broad recall:
 3. Keep `track_hit=false` for normal lookup and exploration.
 4. Use `track_hit=true` only on explicit reinforcement paths (confirmed reuse/accepted decision/verified fact), because it increments hit_count and can auto-solidify drafts at threshold.
 5. Results are ordered solid-first, then recency. Prefer solid memories for stable decisions; use draft memories as candidates to verify.
+6. Default depth is L0 (returns summary only). Use `depth='L2'` when you need full content, or fetch a single memory by id via `get(id)`.
 """,
     "consolidation": """## Memory Consolidation Workflow
 

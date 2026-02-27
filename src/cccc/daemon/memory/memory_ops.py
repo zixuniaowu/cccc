@@ -109,7 +109,7 @@ def handle_memory_store(args: Dict[str, Any]) -> DaemonResponse:
         if content:
             update_kwargs["content"] = content
         for field in ("kind", "status", "confidence", "source_type", "source_ref",
-                       "actor_id", "task_id", "milestone_id", "event_ts"):
+                       "actor_id", "task_id", "milestone_id", "event_ts", "summary"):
             if field in args:
                 update_kwargs[field] = str(args[field] or "")
         if "tags" in args:
@@ -135,7 +135,8 @@ def handle_memory_store(args: Dict[str, Any]) -> DaemonResponse:
 
     store_kwargs: Dict[str, Any] = {}
     for field in ("kind", "source_type", "source_ref", "status", "confidence",
-                   "scope_key", "actor_id", "task_id", "milestone_id", "event_ts", "strategy"):
+                   "scope_key", "actor_id", "task_id", "milestone_id", "event_ts", "strategy",
+                   "summary"):
         val = args.get(field)
         if val is not None:
             store_kwargs[field] = str(val)
@@ -158,9 +159,8 @@ def handle_memory_store(args: Dict[str, Any]) -> DaemonResponse:
 
 def _memory_to_dict(mem: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize memory dict for response."""
-    return {
+    out: Dict[str, Any] = {
         "id": mem.get("id", ""),
-        "content": mem.get("content", ""),
         "kind": mem.get("kind", ""),
         "source_type": mem.get("source_type", ""),
         "source_ref": mem.get("source_ref", ""),
@@ -178,7 +178,16 @@ def _memory_to_dict(mem: Dict[str, Any]) -> Dict[str, Any]:
         "content_hash": mem.get("content_hash", ""),
         "hit_count": mem.get("hit_count", 0),
         "tags": mem.get("tags", []),
+        "summary": mem.get("summary", ""),
     }
+    # depth field is set by recall(); content may be omitted at L0
+    if "depth" in mem:
+        out["depth"] = mem["depth"]
+    if "content" in mem:
+        out["content"] = mem["content"]
+    elif "depth" not in mem:
+        out["content"] = ""
+    return out
 
 
 # =============================================================================
@@ -213,6 +222,10 @@ def handle_memory_search(args: Dict[str, Any]) -> DaemonResponse:
 
     if "track_hit" in args:
         recall_kwargs["track_hit"] = coerce_bool(args.get("track_hit"), default=False)
+
+    depth = str(args.get("depth") or "L0").strip()
+    if depth:
+        recall_kwargs["depth"] = depth
 
     limit = args.get("limit")
     if limit is not None:

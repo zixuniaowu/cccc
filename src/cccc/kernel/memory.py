@@ -28,7 +28,7 @@ MEMORY_STATUSES = ("draft", "solid")
 MEMORY_SOURCE_TYPES = ("manual", "chat_ingest", "milestone_report", "agent_extract", "reflection")
 MEMORY_CONFIDENCE_LEVELS = ("low", "medium", "high")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 AUTO_SOLIDIFY_HIT_THRESHOLD = 3
 
@@ -123,7 +123,8 @@ CREATE TABLE IF NOT EXISTS memories (
     updated_at TEXT NOT NULL,
     content_hash TEXT NOT NULL DEFAULT '',
     hit_count INTEGER NOT NULL DEFAULT 0,
-    last_recalled_at TEXT NOT NULL DEFAULT ''
+    last_recalled_at TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS memory_tags (
@@ -241,6 +242,11 @@ class MemoryStore:
                 "CREATE INDEX IF NOT EXISTS idx_memories_last_recalled_at "
                 "ON memories(last_recalled_at)"
             )
+        if from_version < 3:
+            # v2 → v3: add summary column
+            self._conn.execute(
+                "ALTER TABLE memories ADD COLUMN summary TEXT NOT NULL DEFAULT ''"
+            )
         # Bump version
         self._conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
         self._conn.commit()
@@ -307,6 +313,7 @@ class MemoryStore:
         tags: Optional[List[str]] = None,
         memory_id: Optional[str] = None,
         strategy: str = "",
+        summary: str = "",
     ) -> Dict[str, Any]:
         """Store a new memory. Returns the created memory dict.
 
@@ -356,12 +363,12 @@ class MemoryStore:
             """INSERT INTO memories
                (id, content, kind, source_type, source_ref, status, confidence,
                 group_id, scope_key, actor_id, task_id, milestone_id,
-                event_ts, created_at, updated_at, content_hash)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                event_ts, created_at, updated_at, content_hash, summary)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 mid, content, kind, source_type, source_ref, status, confidence,
                 self.group_id, scope_key, actor_id, task_id, milestone_id,
-                event_ts, now, now, c_hash,
+                event_ts, now, now, c_hash, summary,
             ),
         )
 
@@ -494,6 +501,7 @@ class MemoryStore:
         milestone_id: Optional[str] = None,
         event_ts: Optional[str] = None,
         tags: Optional[List[str]] = None,
+        summary: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """Update a memory. Returns updated memory dict or None if not found."""
         assert self._conn is not None
@@ -547,6 +555,9 @@ class MemoryStore:
         if event_ts is not None:
             sets.append("event_ts = ?")
             vals.append(event_ts)
+        if summary is not None:
+            sets.append("summary = ?")
+            vals.append(summary)
 
         if sets:
             now = utc_now_iso()
@@ -896,6 +907,7 @@ class MemoryStore:
         until: str = "",
         limit: int = 20,
         track_hit: bool = False,
+        depth: str = "L0",
     ) -> List[Dict[str, Any]]:
         """Structured memory recall with FTS5 search and filters.
 
@@ -908,8 +920,17 @@ class MemoryStore:
         When track_hit=True, increments hit_count and updates last_recalled_at
         on all returned memories, and auto-solidifies drafts reaching the threshold.
         Default is False (no side effects on query).
+
+        depth controls returned fields:
+        - "L0" (default): returns summary instead of content (saves tokens).
+          If summary is empty, falls back to content[:150]+"…".
+        - "L2": returns full content + summary.
         """
         assert self._conn is not None
+
+        # Validate depth
+        if depth not in ("L0", "L2"):
+            raise ValueError(f"Invalid depth: {depth!r}. Must be 'L0' or 'L2'.")
 
         # Enum validation for filters
         if kind:
@@ -972,6 +993,18 @@ class MemoryStore:
                 m["last_recalled_at"] = now
                 if m.get("status") == "draft" and new_hit >= AUTO_SOLIDIFY_HIT_THRESHOLD:
                     m["status"] = "solid"
+
+        # Apply depth projection
+        for m in results:
+            m["depth"] = depth
+            if depth == "L0":
+                summary = m.get("summary", "")
+                if not summary:
+                    full = m.get("content", "")
+                    summary = (full[:150] + "\u2026") if len(full) > 150 else full
+                m["summary"] = summary
+                m.pop("content", None)
+            # depth == "L2": keep both content and summary as-is
 
         return results
 

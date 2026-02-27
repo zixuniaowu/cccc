@@ -20,7 +20,7 @@ def _memory_policy_lines(group_id: str) -> List[str]:
         "- Memory vs Notes: Notes are sticky notes (temporary, in Context), Memory is a notebook (persistent, in memory.db).",
         "- cccc_memory_guide: topic-specific memory best practices (store/search/consolidation/lifecycle).",
         "- cccc_memory_store: create/update memories.",
-        "- cccc_memory_search: recall memories via FTS5 + filters.",
+        "- cccc_memory_search: recall memories via FTS5 + filters (default depth=L0 returns summary; depth=L2 returns full content).",
         "- cccc_memory_ingest: ingest recent chat into memory (signal/raw).",
         "- cccc_memory_stats: inspect memory health metrics.",
         "- cccc_memory_decay: identify stale cleanup candidates (non-destructive).",

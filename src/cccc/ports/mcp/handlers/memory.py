@@ -39,6 +39,7 @@ def _handle_memory_namespace(
             "milestone_id",
             "event_ts",
             "strategy",
+            "summary",
         ):
             val = arguments.get(field)
             if val is not None:
@@ -62,6 +63,9 @@ def _handle_memory_namespace(
             args["limit"] = arguments["limit"]
         if "track_hit" in arguments:
             args["track_hit"] = coerce_bool(arguments.get("track_hit"), default=False)
+        depth = arguments.get("depth")
+        if depth is not None:
+            args["depth"] = str(depth)
         return call_daemon_or_raise({"op": "memory_search", "args": args})
 
     if name == "cccc_memory_ingest":
