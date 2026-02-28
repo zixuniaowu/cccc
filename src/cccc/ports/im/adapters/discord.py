@@ -37,6 +37,19 @@ def _resolve_proxy() -> Optional[str]:
         return None
 
 
+def _sanitize_proxy_url(url: str) -> str:
+    """Strip userinfo (credentials) from a proxy URL for safe logging."""
+    try:
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(url)
+        if parsed.username or parsed.password:
+            replaced = parsed._replace(netloc=f"***@{parsed.hostname}" + (f":{parsed.port}" if parsed.port else ""))
+            return urlunparse(replaced)
+    except Exception:
+        pass
+    return url
+
+
 class DiscordAdapter(IMAdapter):
     """
     Discord adapter using discord.py Gateway.
@@ -83,7 +96,11 @@ class DiscordAdapter(IMAdapter):
 
         Requires discord.py package.
         """
-        # Clear message queue on reconnect to avoid duplicate messages
+        # Reset state so reconnect attempts don't see stale signals.
+        self._ready_event.clear()
+        self._connected = False
+        self._connect_error: Optional[str] = None
+
         with self._queue_lock:
             self._message_queue.clear()
 
@@ -93,15 +110,13 @@ class DiscordAdapter(IMAdapter):
             self._log("[error] discord.py not installed. Run: pip install discord.py")
             return False
 
-        # Create client with message content intent and proxy support
         intents = discord.Intents.default()
         intents.message_content = True
         proxy = _resolve_proxy()
         if proxy:
-            self._log(f"[connect] Using proxy: {proxy}")
+            self._log(f"[connect] Using proxy: {_sanitize_proxy_url(proxy)}")
         self._client = discord.Client(intents=intents, proxy=proxy)
 
-        # Register event handlers
         @self._client.event
         async def on_ready():
             self._log(f"[connect] Connected as {self._client.user}")
@@ -110,9 +125,6 @@ class DiscordAdapter(IMAdapter):
         @self._client.event
         async def on_message(message):
             await self._handle_message(message)
-
-        # Start event loop in background thread
-        self._connect_error: Optional[str] = None
 
         def run_loop():
             self._loop = asyncio.new_event_loop()
@@ -123,13 +135,14 @@ class DiscordAdapter(IMAdapter):
                 self._connect_error = str(e)
                 self._log(f"[error] Discord client error: {e}")
             finally:
+                # Unblock the wait() below so connect() doesn't hang when
+                # the client crashes before on_ready fires.
                 self._ready_event.set()
                 self._loop.close()
 
         self._thread = threading.Thread(target=run_loop, daemon=True)
         self._thread.start()
 
-        # Wait for ready with timeout
         if self._ready_event.wait(timeout=30):
             if self._connect_error:
                 self._log(f"[error] Discord connection failed: {self._connect_error}")
