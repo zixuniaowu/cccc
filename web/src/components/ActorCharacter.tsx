@@ -8,8 +8,10 @@ const TORSO_GEO = new THREE.BoxGeometry(0.35, 0.5, 0.25);
 const HEAD_GEO = new THREE.BoxGeometry(0.28, 0.28, 0.25);
 const ARM_GEO = new THREE.BoxGeometry(0.12, 0.4, 0.15);
 const LEG_GEO = new THREE.BoxGeometry(0.14, 0.25, 0.18);
-const CROWN_GEO = new THREE.ConeGeometry(0.15, 0.2, 4);
-const CROWN_MAT = new THREE.MeshStandardMaterial({ color: "#fbbf24", flatShading: true });
+// MC-style blocky crown: band + 3 tooth points
+const CROWN_BAND_GEO = new THREE.BoxGeometry(0.32, 0.05, 0.29);
+const CROWN_POINT_GEO = new THREE.BoxGeometry(0.07, 0.09, 0.07);
+const CROWN_MAT = new THREE.MeshStandardMaterial({ color: "#fbbf24" });
 
 // Runtime → body color mapping
 const RUNTIME_BODY_COLORS: Record<string, string> = {
@@ -24,6 +26,77 @@ const RUNTIME_BODY_COLORS: Record<string, string> = {
   opencode: "#06b6d4", // cyan-deep
   custom:   "#fb923c", // orange
 };
+
+// Runtime → face label (MVP text logos)
+const RUNTIME_FACE: Record<string, string> = {
+  claude:   "C",
+  gemini:   "G",
+  codex:    "Cx",
+  grok:     "Gk",
+  copilot:  "Cp",
+  aider:    "A",
+  roo:      "R",
+  neovate:  "N",
+  opencode: "O",
+  custom:   "?",
+};
+
+// Runtime → PNG logo paths (served from /public/logos/, prefixed with Vite base)
+const _base = import.meta.env.BASE_URL;
+const RUNTIME_LOGO: Record<string, string> = {
+  claude: `${_base}logos/claude.png`,
+  codex: `${_base}logos/codex.png`,
+  gemini: `${_base}logos/gemini.png`,
+};
+
+// Cached textures for head face logos
+const FACE_TEX_CACHE = new Map<string, THREE.CanvasTexture>();
+
+function getFaceTexture(label: string, bg: string): THREE.CanvasTexture {
+  const key = `txt:${label}:${bg}`;
+  let t = FACE_TEX_CACHE.get(key);
+  if (t) return t;
+  const s = 64;
+  const c = document.createElement("canvas");
+  c.width = s;
+  c.height = s;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, s, s);
+  ctx.fillStyle = "#fff";
+  ctx.font = label.length > 1 ? "bold 26px monospace" : "bold 36px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(label, s / 2, s / 2);
+  t = new THREE.CanvasTexture(c);
+  FACE_TEX_CACHE.set(key, t);
+  return t;
+}
+
+// PNG texture loader with body-color background fill (covers rounded corners)
+function getPngTexture(path: string, bgColor: string): THREE.CanvasTexture {
+  const key = `png:${path}:${bgColor}`;
+  let t = FACE_TEX_CACHE.get(key);
+  if (t) return t;
+  const size = 128;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  t = new THREE.CanvasTexture(canvas);
+  t.colorSpace = THREE.SRGBColorSpace;
+  FACE_TEX_CACHE.set(key, t);
+  const tex = t;
+  const img = new Image();
+  img.onload = () => {
+    const ctx = canvas.getContext("2d")!;
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, size, size);
+    ctx.drawImage(img, 0, 0, size, size);
+    tex.needsUpdate = true;
+  };
+  img.src = path;
+  return t;
+}
 
 // Deterministic fallback palette
 const PALETTE = [
@@ -85,9 +158,29 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     const hasFocus = !!agent.focus;
     const isForeman = role === "foreman";
 
-    // Shared material per agent (1 instead of 6)
+    // Shared material per agent (body color)
     const mat = useMemo(() => new THREE.MeshStandardMaterial({ color, flatShading: true }), [color]);
     useEffect(() => () => { mat.dispose(); }, [mat]);
+
+    // Head face texture: PNG logo if available, else text fallback
+    const faceLabel = runtime
+      ? (RUNTIME_FACE[runtime] || runtime.charAt(0).toUpperCase())
+      : agent.id.charAt(0).toUpperCase();
+    const logoPath = runtime ? RUNTIME_LOGO[runtime] : undefined;
+    const faceMat = useMemo(() => {
+      if (logoPath) {
+        const tex = getPngTexture(logoPath, color);
+        return new THREE.MeshStandardMaterial({ map: tex, flatShading: true });
+      }
+      const tex = getFaceTexture(faceLabel, color);
+      return new THREE.MeshStandardMaterial({ map: tex, flatShading: true });
+    }, [logoPath, faceLabel, color]);
+    useEffect(() => () => { faceMat.dispose(); }, [faceMat]);
+    // Material array: all sides = body color, front face (-Z, index 5) = logo
+    const headMats = useMemo(
+      () => [mat, mat, mat, mat, mat, faceMat],
+      [mat, faceMat],
+    );
 
     const focusText = agent.focus
       ? agent.focus.length > 40
@@ -99,15 +192,20 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       <group ref={ref} position={position} rotation={[0, rotationY, 0]}>
         {/* Body parts — named for animation targeting via PART_INDEX */}
         <mesh name="torso" position={[0, 0.55, 0]} castShadow geometry={TORSO_GEO} material={mat} />
-        <mesh name="head" position={[0, 1.0, 0]} castShadow geometry={HEAD_GEO} material={mat} />
+        <mesh name="head" position={[0, 1.0, 0]} castShadow geometry={HEAD_GEO} material={headMats} />
         <mesh name="leftArm" position={[-0.25, 0.5, 0]} castShadow geometry={ARM_GEO} material={mat} />
         <mesh name="rightArm" position={[0.25, 0.5, 0]} castShadow geometry={ARM_GEO} material={mat} />
         <mesh name="leftLeg" position={[-0.1, 0.12, 0]} castShadow geometry={LEG_GEO} material={mat} />
         <mesh name="rightLeg" position={[0.1, 0.12, 0]} castShadow geometry={LEG_GEO} material={mat} />
 
-        {/* Foreman crown (gold low-poly cone) */}
+        {/* Foreman crown (MC-style blocky gold crown) */}
         {isForeman && (
-          <mesh position={[0, 1.28, 0]} castShadow geometry={CROWN_GEO} material={CROWN_MAT} />
+          <group position={[0, 1.165, 0]}>
+            <mesh castShadow geometry={CROWN_BAND_GEO} material={CROWN_MAT} />
+            <mesh position={[0, 0.065, -0.1]} castShadow geometry={CROWN_POINT_GEO} material={CROWN_MAT} />
+            <mesh position={[-0.11, 0.065, 0.09]} castShadow geometry={CROWN_POINT_GEO} material={CROWN_MAT} />
+            <mesh position={[0.11, 0.065, 0.09]} castShadow geometry={CROWN_POINT_GEO} material={CROWN_MAT} />
+          </group>
         )}
 
         {/* Status bubble above head */}

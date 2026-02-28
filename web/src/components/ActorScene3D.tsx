@@ -289,8 +289,7 @@ function Scene({ agents, actors, isDark, camZ }: SceneProps) {
         maxDistance={camZ * 2}
         maxPolarAngle={Math.PI / 2.2}
         target={[0, 0.5, 0]}
-        autoRotate
-        autoRotateSpeed={0.3}
+        autoRotate={false}
       />
     </>
   );
