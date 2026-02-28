@@ -543,6 +543,13 @@ def _maybe_autostart_running_groups() -> None:
         throttle_reset_actor=lambda gid, aid: THROTTLE.reset_actor(gid, aid, keep_pending=True),
         automation_on_resume=AUTOMATION.on_resume,
         get_group_state=get_group_state,
+        resolve_linked_actor_before_start=lambda grp, aid: _resolve_linked_actor_before_start(
+            grp,
+            aid,
+            get_actor_profile=_get_actor_profile,
+            load_actor_profile_secrets=_load_actor_profile_secrets,
+            update_actor_private_env=_update_actor_private_env,
+        ),
     )
 
 

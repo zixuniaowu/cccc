@@ -106,18 +106,18 @@ def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str)
     enabled_caps = state.get("enabled_capabilities") if isinstance(state, dict) else []
     hidden_caps = state.get("hidden_capabilities") if isinstance(state, dict) else []
     active = state.get("active_skills") if isinstance(state, dict) else []
-    pinned = state.get("pinned_skills") if isinstance(state, dict) else []
+    autoload = state.get("autoload_skills") if isinstance(state, dict) else []
     enabled_list = enabled_caps if isinstance(enabled_caps, list) else []
     hidden_list = hidden_caps if isinstance(hidden_caps, list) else []
     active_list = active if isinstance(active, list) else []
-    pinned_list = pinned if isinstance(pinned, list) else []
+    autoload_list = autoload if isinstance(autoload, list) else []
     sections: List[str] = []
 
-    if active_list or pinned_list:
+    if active_list or autoload_list:
         lines: List[str] = ["## Active Skills (Runtime)"]
-        if pinned_list:
-            lines.append("- pinned:")
-            for item in pinned_list[:8]:
+        if autoload_list:
+            lines.append("- autoload:")
+            for item in autoload_list[:8]:
                 if not isinstance(item, dict):
                     continue
                 sid = str(item.get("capability_id") or "").strip()

@@ -8,6 +8,8 @@ class TestPromptDefaults(unittest.TestCase):
         from cccc.kernel.prompt_files import DEFAULT_PREAMBLE_BODY
 
         body = str(DEFAULT_PREAMBLE_BODY or "")
+        self.assertIn("Todo loop (runtime-first):", body)
+        self.assertIn("runtime todo list as first-line cache", body)
         self.assertIn("Gap handling (default policy):", body)
         self.assertIn("If information is insufficient, investigate first", body)
         self.assertIn("If capability is insufficient, use capability control plane", body)

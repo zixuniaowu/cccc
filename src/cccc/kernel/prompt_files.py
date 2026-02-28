@@ -27,12 +27,19 @@ Execution loop:
   - agent short-term state via `cccc_context_agent(action=update, agent_id=<self>, ...)`
   - minimum payload each update: `focus` + `next_action` + `what_changed` (and `active_task_id` when applicable)
 
+Todo loop (runtime-first):
+- Use your runtime todo list as first-line cache for parallel user asks; add one item per concrete ask.
+- Reconcile before every reply: this-turn new asks are added, finished asks are checked off, pending asks keep a next step.
+- Keep todo capacity high when needed for parallel requests (target soft >=80, hard >=120 if runtime supports).
+- Only promote into `cccc_task` when tracking must be shared across actors or long-horizon.
+
 Gap handling (default policy):
 - If information is insufficient, investigate first (Context/PROJECT.md/inbox/memory; then web if allowed) before escalating.
 - If capability is insufficient, use capability control plane before declaring blocked:
   - fast path: `cccc_capability_use(...)`
   - discovery path: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)` -> `cccc_capability_use(capability_id=...)`
   - if `refresh_required=true`, relist/reconnect then retry.
+  - if enable fails, read `diagnostics` + `resolution_plan`; retry what you can fix, ask user only for real env/permission blockers.
 
 Memory handoff:
 - Context = short-term execution memory; memory.db = long-term reusable memory.

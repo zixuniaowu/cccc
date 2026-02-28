@@ -72,6 +72,17 @@ CCCC is a collaboration hub, not an orchestration engine:
 - Mark read only when you intentionally acknowledge handling (or intentionally bulk-ack).
 - For task messages (`reply_required=true`), do not stop at mark-read: send a reply tied to the original event.
 
+### Todo (runtime-first)
+
+- Use runtime todo list as first-line cache for parallel asks; do not rely on inbox as todo.
+- For each concrete user ask/question, create one separate todo item immediately (no generic merge item).
+- Before every reply, run a quick todo reconciliation:
+  - this-turn new asks are added
+  - completed asks are checked off
+  - pending asks keep one next action
+- Keep todo capacity high when parallel asks are common (recommended soft `>=80`, hard `>=120` if runtime supports).
+- Promote to shared `cccc_task` only when tracking must be shared across actors, span long horizon, or user explicitly asks for formal task tracking.
+
 ### Terminal (local runtime I/O)
 
 - Terminal output is not delivered as chat; do not rely on it for coordination.
@@ -161,7 +172,8 @@ Files sent from Web/IM are stored under `CCCC_HOME/groups/<group_id>/state/blobs
   2. discovery path: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)`
   3. then `cccc_capability_use(capability_id=..., scope="session")`
   4. if response has `refresh_required=true`, relist/reconnect then retry
-  5. remote fallback can augment both MCP and skill search when local results are insufficient
+  5. if still not ready, read `diagnostics` + `resolution_plan`: fix agent-action items first, ask user only for real env/permission requirements
+  6. remote fallback can augment both MCP and skill search when local results are insufficient
 
 ### Capability hygiene (keep MCP surface lean)
 
@@ -171,7 +183,9 @@ Files sent from Web/IM are stored under `CCCC_HOME/groups/<group_id>/state/blobs
 - Fast path for execution: `cccc_capability_use` (auto-enable + optional tool call)
 - Skills use the same control plane:
   - One-off skill activation: `cccc_capability_use(capability_id=skill:..., scope=session)`
-  - Pin/unpin stable skill baseline: `cccc_capability_enable(scope=actor, enabled=true|false)`
+  - Keep stable startup baseline in actor/profile `capability_autoload`
+  - capability-skill is runtime capsule activation (not a full local skill package install)
+  - if you need full local skill scripts/assets, install a normal skill package into `$CODEX_HOME/skills`
 - Verify current exposure: `cccc_capability_state`
 - Emergency deny (runtime side effects): `cccc_capability_block(scope=group, blocked=true, reason=...)`
 - Recovery after verification: `cccc_capability_block(scope=group, blocked=false)`
@@ -180,6 +194,9 @@ Files sent from Web/IM are stored under `CCCC_HOME/groups/<group_id>/state/blobs
 - After task completion, clean up unused external capability cache/bindings:
   `cccc_capability_uninstall` (user/foreman)
 - If enable/uninstall returns `refresh_required=true`, relist tools or reconnect runtime.
+- If `cccc_capability_use` returns `enabled=false`, treat `resolution_plan` as next-step contract:
+  - `needs_agent_action`: retry after environment/runtime adjustments you can perform.
+  - `needs_user_input`: request required keys/permissions explicitly from the user.
 
 ### Automation tools (when needed)
 

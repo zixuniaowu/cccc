@@ -170,8 +170,12 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
         "- Keep Context fresh at key transitions (start/milestone/blocker/resume/done): update tasks + your agent state.",
         '- Agent-state minimum each update: focus + next_action + what_changed (and active_task_id when applicable).',
+        "- Todo-first discipline: when user raises a concrete request/question, add a separate runtime todo item before branching work.",
+        "- Keep parallel asks as separate todo items; do not collapse unrelated asks into one generic item.",
+        "- Promote into shared cccc_task only when it needs multi-actor, long-horizon, or user-explicit tracking.",
         "- Gap policy: info gap -> search evidence first (Context/PROJECT/memory/inbox, then web if allowed); capability gap -> use cccc_capability_use (or search then use).",
         "- If capability ops return refresh_required=true, relist/reconnect then retry.",
+        "- On capability install/enable failure, inspect diagnostics/resolution_plan first; only escalate when blockers require real user input (keys/permissions).",
         "- Detailed collaboration workflow lives in cccc_help (refresh when nudged).",
     ]
     memory_lines = _memory_policy_lines(group_id)

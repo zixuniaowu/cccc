@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
+import shutil
 import hashlib
+import time
 from importlib import resources as pkg_resources
 import subprocess
 import threading
@@ -37,23 +40,30 @@ _SOURCE_IDS = (
     "mcp_registry_official",
     "anthropic_skills",
     "github_skills_curated",
-    "github_skills_remote",
-    "agentskills_remote",
     "skillsmp_remote",
     "clawhub_remote",
-    "agentskills_validator",
+    "openclaw_skills_remote",
+    "clawskills_remote",
 )
 
 _MCP_REGISTRY_BASE = "https://registry.modelcontextprotocol.io"
 _MCP_REGISTRY_PAGE_LIMIT = 100
 _GITHUB_API_BASE = "https://api.github.com"
 _RAW_GITHUB_BASE = "https://raw.githubusercontent.com"
+_OPENCLAW_SKILLS_TREE_API = f"{_GITHUB_API_BASE}/repos/openclaw/skills/git/trees/main?recursive=1"
+_OPENCLAW_SKILLS_BLOB_BASE = "https://raw.githubusercontent.com/openclaw/skills/main"
+_CLAWSKILLS_DATA_URL_DEFAULT = "https://clawskills.co/skills-data.js"
 _SKILL_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_ARG_TEMPLATE_RE = re.compile(r"\{[a-zA-Z_][a-zA-Z0-9_]*\}")
+_ENV_FORWARD_TEMPLATE_RE = re.compile(r"^([A-Z][A-Z0-9_]*)=\{[a-zA-Z_][a-zA-Z0-9_]*\}$")
+_CLAWSKILLS_ENTRY_RE = re.compile(r"\{[^{}]*\}")
 _STATE_LOCK = threading.RLock()
 _CATALOG_LOCK = threading.RLock()
 _RUNTIME_LOCK = threading.RLock()
 _AUDIT_LOCK = threading.RLock()
 _POLICY_LOCK = threading.RLock()
+_REMOTE_SOURCE_CACHE_LOCK = threading.RLock()
+_OPENCLAW_TREE_CACHE: Dict[str, Any] = {"fetched_at": 0.0, "paths": []}
 
 _LEVEL_INDEXED = "indexed"
 _LEVEL_MOUNTED = "mounted"
@@ -141,11 +151,10 @@ def _new_catalog_doc() -> Dict[str, Any]:
             "mcp_registry_official": _source_state_template("never"),
             "anthropic_skills": _source_state_template("never"),
             "github_skills_curated": _source_state_template("never"),
-            "github_skills_remote": _source_state_template("never"),
-            "agentskills_remote": _source_state_template("never"),
             "skillsmp_remote": _source_state_template("never"),
             "clawhub_remote": _source_state_template("never"),
-            "agentskills_validator": _source_state_template("never"),
+            "openclaw_skills_remote": _source_state_template("never"),
+            "clawskills_remote": _source_state_template("never"),
         },
         "records": {},
     }
@@ -160,6 +169,7 @@ def _new_runtime_doc() -> Dict[str, Any]:
         "artifacts": {},
         "capability_artifacts": {},
         "actor_instances": {},
+        "recent_success": {},
     }
 
 
@@ -388,6 +398,7 @@ def _normalize_runtime_doc(raw: Any) -> Dict[str, Any]:
                 "invoker": dict(item.get("invoker")) if isinstance(item.get("invoker"), dict) else {},
                 "tools": tools,
                 "last_error": str(item.get("last_error") or "").strip(),
+                "last_error_code": str(item.get("last_error_code") or "").strip(),
                 "updated_at": str(item.get("updated_at") or "").strip() or now,
                 "capability_ids": cap_ids,
             }
@@ -451,6 +462,9 @@ def _normalize_runtime_doc(raw: Any) -> Dict[str, Any]:
                 ),
                 "tools": tools or (list((existing or {}).get("tools") or [])),
                 "last_error": str(item.get("last_error") or (existing or {}).get("last_error") or "").strip(),
+                "last_error_code": str(
+                    item.get("last_error_code") or (existing or {}).get("last_error_code") or ""
+                ).strip(),
                 "updated_at": str(item.get("updated_at") or (existing or {}).get("updated_at") or "").strip() or now,
                 "capability_ids": merged_caps,
             }
@@ -501,9 +515,29 @@ def _normalize_runtime_doc(raw: Any) -> Dict[str, Any]:
             if clean_group:
                 actor_instances[gid] = clean_group
 
+    recent_success_raw = doc.get("recent_success")
+    recent_success: Dict[str, Dict[str, Any]] = {}
+    if isinstance(recent_success_raw, dict):
+        for capability_id, row in recent_success_raw.items():
+            cid = str(capability_id or "").strip()
+            if not cid or not isinstance(row, dict):
+                continue
+            count = int(row.get("success_count") or 0)
+            if count <= 0:
+                continue
+            recent_success[cid] = {
+                "capability_id": cid,
+                "success_count": count,
+                "last_success_at": str(row.get("last_success_at") or "").strip() or now,
+                "last_group_id": str(row.get("last_group_id") or "").strip(),
+                "last_actor_id": str(row.get("last_actor_id") or "").strip(),
+                "last_action": str(row.get("last_action") or "").strip(),
+            }
+
     doc["artifacts"] = artifacts
     doc["capability_artifacts"] = capability_artifacts
     doc["actor_instances"] = actor_instances
+    doc["recent_success"] = recent_success
     return doc
 
 
@@ -553,6 +587,53 @@ def _runtime_capability_artifacts(runtime_doc: Dict[str, Any]) -> Dict[str, str]
 def _runtime_actor_bindings(runtime_doc: Dict[str, Any]) -> Dict[str, Dict[str, Dict[str, Dict[str, Any]]]]:
     raw = runtime_doc.get("actor_instances")
     return raw if isinstance(raw, dict) else {}
+
+
+def _runtime_recent_success(runtime_doc: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    raw = runtime_doc.get("recent_success")
+    return raw if isinstance(raw, dict) else {}
+
+
+def _record_runtime_recent_success(
+    runtime_doc: Dict[str, Any],
+    *,
+    capability_id: str,
+    group_id: str = "",
+    actor_id: str = "",
+    action: str = "",
+) -> None:
+    cap_id = str(capability_id or "").strip()
+    if not cap_id:
+        return
+    now_iso = utc_now_iso()
+    mapping = _runtime_recent_success(runtime_doc)
+    prior = mapping.get(cap_id) if isinstance(mapping.get(cap_id), dict) else {}
+    count = max(0, int(prior.get("success_count") or 0)) + 1
+    row: Dict[str, Any] = {
+        "capability_id": cap_id,
+        "success_count": count,
+        "last_success_at": now_iso,
+        "last_group_id": str(group_id or prior.get("last_group_id") or "").strip(),
+        "last_actor_id": str(actor_id or prior.get("last_actor_id") or "").strip(),
+        "last_action": str(action or prior.get("last_action") or "").strip(),
+    }
+    mapping[cap_id] = row
+    keep_limit = _quota_limit("CCCC_CAPABILITY_RECENT_SUCCESS_LIMIT", 512, minimum=50, maximum=5000)
+    if len(mapping) > keep_limit:
+        ranked = sorted(
+            (
+                (
+                    str(v.get("last_success_at") or ""),
+                    str(k),
+                )
+                for k, v in mapping.items()
+                if isinstance(v, dict)
+            )
+        )
+        overflow = max(0, len(mapping) - keep_limit)
+        for _, key in ranked[:overflow]:
+            mapping.pop(str(key), None)
+    runtime_doc["recent_success"] = mapping
 
 
 def _set_runtime_capability_artifact(
@@ -639,6 +720,13 @@ def _binding_state_allows_external_tool(state: Any) -> bool:
     if not token:
         return False
     return token in {"ready", "ready_cached", "tool_call_failed"}
+
+
+def _install_state_allows_external_tool(state: Any) -> bool:
+    token = str(state or "").strip().lower()
+    if not token:
+        return False
+    return token in {"installed", "installed_degraded"}
 
 
 def _set_runtime_actor_binding(
@@ -896,12 +984,11 @@ def _policy_default_compiled() -> Dict[str, Any]:
             "cccc_builtin": _LEVEL_ENABLED,
             "anthropic_skills": _LEVEL_MOUNTED,
             "github_skills_curated": _LEVEL_MOUNTED,
-            "github_skills_remote": _LEVEL_MOUNTED,
-            "agentskills_remote": _LEVEL_MOUNTED,
             "skillsmp_remote": _LEVEL_MOUNTED,
             "clawhub_remote": _LEVEL_MOUNTED,
+            "openclaw_skills_remote": _LEVEL_MOUNTED,
+            "clawskills_remote": _LEVEL_MOUNTED,
             "mcp_registry_official": _LEVEL_MOUNTED,
-            "agentskills_validator": _LEVEL_INDEXED,
         },
         "capability_levels": {},
         "skill_source_levels": {},
@@ -1716,24 +1803,394 @@ def _normalize_discovered_tools(capability_id: str, tools: Any) -> List[Dict[str
     return out
 
 
-def _npx_package_command(rec: Dict[str, Any]) -> Optional[List[str]]:
+def _normalize_registry_argument_entries(raw: Any) -> List[Dict[str, str]]:
+    out: List[Dict[str, str]] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        arg_type = str(item.get("type") or "positional").strip().lower()
+        if arg_type not in {"positional", "named"}:
+            arg_type = "positional"
+        value = str(item.get("value") or "").strip()
+        name = str(item.get("name") or "").strip()
+        if arg_type == "named":
+            if not name:
+                continue
+            out.append({"type": "named", "name": name, "value": value})
+            continue
+        if not value:
+            continue
+        out.append({"type": "positional", "value": value})
+    return out
+
+
+def _normalize_registry_env_names(raw: Any, *, required_only: bool) -> List[str]:
+    out: List[str] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if required_only and (not bool(item.get("isRequired"))):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name or name in out:
+            continue
+        out.append(name)
+    return out
+
+
+def _extract_required_env_from_runtime_arguments(raw: Any) -> List[str]:
+    out: List[str] = []
+    if not isinstance(raw, list):
+        return out
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("type") or "").strip().lower() != "named":
+            continue
+        if str(item.get("name") or "").strip() not in {"-e", "--env"}:
+            continue
+        value = str(item.get("value") or "").strip()
+        match = _ENV_FORWARD_TEMPLATE_RE.fullmatch(value)
+        if not match:
+            continue
+        env_name = str(match.group(1) or "").strip()
+        if not env_name:
+            continue
+        variables = item.get("variables") if isinstance(item.get("variables"), dict) else {}
+        # Only treat as required when variable metadata explicitly marks it required.
+        is_required = False
+        for var_cfg in variables.values():
+            if isinstance(var_cfg, dict) and bool(var_cfg.get("isRequired")):
+                is_required = True
+                break
+        if is_required and env_name not in out:
+            out.append(env_name)
+    return out
+
+
+def _literal_registry_argument_tokens(entries: List[Dict[str, str]]) -> Tuple[Optional[List[str]], str]:
+    tokens: List[str] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        arg_type = str(item.get("type") or "positional").strip().lower()
+        if arg_type == "named":
+            name = str(item.get("name") or "").strip()
+            value = str(item.get("value") or "").strip()
+            if not name:
+                continue
+            tokens.append(name)
+            if value:
+                if _ARG_TEMPLATE_RE.search(value):
+                    return None, "unsupported_argument_template"
+                tokens.append(value)
+            continue
+        value = str(item.get("value") or "").strip()
+        if not value:
+            continue
+        if _ARG_TEMPLATE_RE.search(value):
+            return None, "unsupported_argument_template"
+        tokens.append(value)
+    return tokens, ""
+
+
+def _oci_runtime_argument_tokens(entries: List[Dict[str, str]]) -> Tuple[Optional[List[str]], List[str], str]:
+    tokens: List[str] = []
+    forwarded_envs: List[str] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        arg_type = str(item.get("type") or "positional").strip().lower()
+        if arg_type == "named":
+            name = str(item.get("name") or "").strip()
+            value = str(item.get("value") or "").strip()
+            if not name:
+                continue
+            if value:
+                match = _ENV_FORWARD_TEMPLATE_RE.fullmatch(value)
+                if name in {"-e", "--env"} and match:
+                    env_name = str(match.group(1) or "").strip()
+                    if not env_name:
+                        continue
+                    tokens.extend([name, env_name])
+                    if env_name not in forwarded_envs:
+                        forwarded_envs.append(env_name)
+                    continue
+                if _ARG_TEMPLATE_RE.search(value):
+                    return None, [], "unsupported_runtime_argument_template"
+                tokens.extend([name, value])
+            else:
+                tokens.append(name)
+            continue
+        value = str(item.get("value") or "").strip()
+        if not value:
+            continue
+        if _ARG_TEMPLATE_RE.search(value):
+            return None, [], "unsupported_runtime_argument_template"
+        tokens.append(value)
+    return tokens, forwarded_envs, ""
+
+
+def _required_environment_names(rec: Dict[str, Any]) -> List[str]:
+    install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+    raw = install_spec.get("required_env")
+    out: List[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            name = str(item or "").strip()
+            if name and name not in out:
+                out.append(name)
+    return out
+
+
+def _missing_required_environment_names(rec: Dict[str, Any]) -> List[str]:
+    missing: List[str] = []
+    for name in _required_environment_names(rec):
+        value = str(os.environ.get(name) or "").strip()
+        if value:
+            continue
+        missing.append(name)
+    return missing
+
+
+def _normalize_registry_type_token(raw: str) -> str:
+    token = str(raw or "").strip().lower()
+    if token in {"", "npm", "node", "npmjs"}:
+        return "npm"
+    if token in {"pypi", "python", "pip", "pipx", "uvx", "uv"}:
+        return "pypi"
+    if token in {"oci", "docker", "container", "podman", "ghcr", "ghcr.io"}:
+        return "oci"
+    return token
+
+
+def _effective_registry_type(install_spec: Dict[str, Any]) -> str:
+    spec = install_spec if isinstance(install_spec, dict) else {}
+    declared = _normalize_registry_type_token(str(spec.get("registry_type") or ""))
+    if declared in {"npm", "pypi", "oci"}:
+        return declared
+    runtime_hint = _normalize_registry_type_token(str(spec.get("runtime_hint") or ""))
+    if runtime_hint in {"pypi", "oci"}:
+        return runtime_hint
+    identifier = str(spec.get("identifier") or "").strip().lower()
+    if identifier.startswith(("ghcr.io/", "docker.io/", "quay.io/")):
+        return "oci"
+    return declared or "npm"
+
+
+def _tool_name_aliases(raw: str) -> List[str]:
+    name = str(raw or "").strip()
+    if not name:
+        return []
+    out: List[str] = []
+    for token in (name, name.replace("-", "_"), name.replace("_", "-")):
+        if token and token not in out:
+            out.append(token)
+    return out
+
+
+def _is_unknown_tool_error_message(msg: str) -> bool:
+    text = str(msg or "").strip().lower()
+    return "unknown tool" in text or "tool not found" in text
+
+
+def _npx_package_command(rec: Dict[str, Any]) -> Tuple[Optional[List[str]], str]:
     install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
     identifier = str(install_spec.get("identifier") or "").strip()
     if not identifier:
-        return None
+        return None, "missing_package_identifier"
     version = str(install_spec.get("version") or "").strip()
     pkg = identifier
     if version and "@" in identifier[1:]:
         pkg = identifier
     elif version:
         pkg = f"{identifier}@{version}"
+    package_args = _normalize_registry_argument_entries(install_spec.get("package_arguments"))
+    package_tokens, package_reason = _literal_registry_argument_tokens(package_args)
+    if package_tokens is None:
+        return None, package_reason or "unsupported_package_arguments"
+    runtime_hint_raw = str(install_spec.get("runtime_hint") or "").strip().lower()
+    if runtime_hint_raw and runtime_hint_raw not in {"auto", "npx"}:
+        runtime_hint = _normalize_registry_type_token(runtime_hint_raw)
+        if runtime_hint != "npm":
+            return None, "unsupported_runtime_hint"
+    return ["npx", "-y", pkg, *(package_tokens or [])], ""
+
+
+def _pypi_package_commands(rec: Dict[str, Any]) -> Tuple[List[List[str]], str]:
+    install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+    identifier = str(install_spec.get("identifier") or "").strip()
+    if not identifier:
+        return [], "missing_package_identifier"
+    version = str(install_spec.get("version") or "").strip()
+    base_spec = identifier
+    if version and "@" in identifier[1:]:
+        base_spec = identifier
+    elif version:
+        base_spec = f"{identifier}@{version}"
+
+    runtime_entries = _normalize_registry_argument_entries(install_spec.get("runtime_arguments"))
+    package_entries = _normalize_registry_argument_entries(install_spec.get("package_arguments"))
+    runtime_tokens, runtime_reason = _literal_registry_argument_tokens(runtime_entries)
+    if runtime_tokens is None:
+        return [], runtime_reason or "unsupported_runtime_arguments"
+    package_tokens, package_reason = _literal_registry_argument_tokens(package_entries)
+    if package_tokens is None:
+        return [], package_reason or "unsupported_package_arguments"
+
     runtime_hint = str(install_spec.get("runtime_hint") or "").strip().lower()
-    if runtime_hint and runtime_hint not in {"npx"}:
-        return None
-    return ["npx", "-y", pkg]
+    if runtime_hint and runtime_hint not in {"uvx", "pipx", "python", "auto"}:
+        return [], "unsupported_runtime_hint"
+
+    # Prefer uvx for modern pypi MCP servers; fall back to pipx where needed.
+    runners: List[str] = []
+    if runtime_hint in {"", "uvx", "python", "auto"}:
+        runners.append("uvx")
+    if runtime_hint in {"", "pipx", "python", "auto"}:
+        runners.append("pipx")
+
+    commands: List[List[str]] = []
+    for runner in runners:
+        if runner == "uvx":
+            cmd = ["uvx", *((runtime_tokens or [base_spec]))]
+            cmd.extend(package_tokens or [])
+            commands.append(cmd)
+            continue
+        # pipx does not understand runtimeArguments shape; use --spec + entrypoint fallback.
+        cmd = ["pipx", "run", "--spec", base_spec, identifier]
+        cmd.extend(package_tokens or [])
+        commands.append(cmd)
+    return commands, ""
 
 
-def _stdio_mcp_roundtrip(command: List[str], requests: List[Dict[str, Any]], *, timeout_s: float) -> List[Dict[str, Any]]:
+def _oci_package_commands(rec: Dict[str, Any]) -> Tuple[List[List[str]], str]:
+    install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+    image = str(install_spec.get("identifier") or "").strip()
+    if not image:
+        return [], "missing_package_identifier"
+
+    runtime_entries = _normalize_registry_argument_entries(install_spec.get("runtime_arguments"))
+    package_entries = _normalize_registry_argument_entries(install_spec.get("package_arguments"))
+    runtime_tokens, forwarded_envs, runtime_reason = _oci_runtime_argument_tokens(runtime_entries)
+    if runtime_tokens is None:
+        return [], runtime_reason or "unsupported_runtime_arguments"
+    package_tokens, package_reason = _literal_registry_argument_tokens(package_entries)
+    if package_tokens is None:
+        return [], package_reason or "unsupported_package_arguments"
+
+    runtime_hint = str(install_spec.get("runtime_hint") or "").strip().lower()
+    if runtime_hint and runtime_hint not in {"docker", "podman", "container", "oci", "auto"}:
+        return [], "unsupported_runtime_hint"
+    engines: List[str] = []
+    if runtime_hint in {"podman"}:
+        engines.append("podman")
+    elif runtime_hint in {"docker"}:
+        engines.append("docker")
+    else:
+        engines.extend(["docker", "podman"])
+
+    required_env = _required_environment_names(rec)
+    env_names = install_spec.get("env_names") if isinstance(install_spec.get("env_names"), list) else []
+    all_env_forward: List[str] = []
+    for token in [*forwarded_envs, *required_env, *[str(x).strip() for x in env_names if str(x).strip()]]:
+        if token and token not in all_env_forward:
+            all_env_forward.append(token)
+
+    commands: List[List[str]] = []
+    for engine in engines:
+        cmd = [engine, "run", "-i", "--rm"]
+        for env_name in all_env_forward:
+            cmd.extend(["-e", env_name])
+        cmd.extend(runtime_tokens or [])
+        cmd.append(image)
+        cmd.extend(package_tokens or [])
+        commands.append(cmd)
+    return commands, ""
+
+
+def _package_stdio_command_candidates(rec: Dict[str, Any]) -> Tuple[List[List[str]], str]:
+    install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+    registry_type = _effective_registry_type(install_spec)
+    if registry_type == "npm":
+        command, reason = _npx_package_command(rec)
+        if not command:
+            return [], reason
+        commands: List[List[str]] = [command]
+        identifier = str(install_spec.get("identifier") or "").strip()
+        version = str(install_spec.get("version") or "").strip()
+        if identifier and version:
+            fallback_spec = dict(install_spec)
+            fallback_spec["version"] = ""
+            fallback_rec = dict(rec)
+            fallback_rec["install_spec"] = fallback_spec
+            fallback_command, fallback_reason = _npx_package_command(fallback_rec)
+            if fallback_command and fallback_command not in commands:
+                commands.append(fallback_command)
+            elif (not fallback_command) and fallback_reason:
+                return commands, reason
+        return commands, reason
+    if registry_type == "pypi":
+        return _pypi_package_commands(rec)
+    if registry_type == "oci":
+        return _oci_package_commands(rec)
+    return [], f"unsupported_registry_type:{registry_type}"
+
+
+def _choose_available_command(commands: List[List[str]]) -> List[List[str]]:
+    if not isinstance(commands, list):
+        return []
+    if len(commands) <= 1:
+        return commands
+    available: List[List[str]] = []
+    unavailable: List[List[str]] = []
+    for cmd in commands:
+        if not isinstance(cmd, list) or not cmd:
+            continue
+        exe = str(cmd[0] or "").strip()
+        if exe and shutil.which(exe):
+            available.append(cmd)
+        else:
+            unavailable.append(cmd)
+    return [*available, *unavailable]
+
+
+def _installer_label_for_command(rec: Dict[str, Any], command: List[str]) -> str:
+    install_spec = rec.get("install_spec") if isinstance(rec.get("install_spec"), dict) else {}
+    registry_type = _effective_registry_type(install_spec)
+    exe = str((command or [None])[0] or "").strip().lower()
+    if registry_type == "npm":
+        return "npm_npx"
+    if registry_type == "pypi":
+        if exe == "pipx":
+            return "pypi_pipx"
+        return "pypi_uvx"
+    if registry_type == "oci":
+        if exe == "podman":
+            return "oci_podman"
+        return "oci_docker"
+    return f"{registry_type}_stdio"
+
+
+def _stdio_mcp_roundtrip(
+    command: List[str],
+    requests: List[Dict[str, Any]],
+    *,
+    timeout_s: float,
+    env_override: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
+    env: Optional[Dict[str, str]] = None
+    if isinstance(env_override, dict):
+        merged = dict(os.environ)
+        for key, value in env_override.items():
+            k = str(key or "").strip()
+            if not k:
+                continue
+            merged[k] = str(value or "")
+        env = merged
     proc = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
@@ -1742,6 +2199,7 @@ def _stdio_mcp_roundtrip(command: List[str], requests: List[Dict[str, Any]], *, 
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=env,
     )
     input_blob = "\n".join(json.dumps(req, ensure_ascii=False) for req in requests) + "\n"
     try:
@@ -1843,11 +2301,9 @@ def _supported_external_install_record(rec: Dict[str, Any]) -> Tuple[bool, str]:
             return False, "missing_remote_url"
         return False, f"unsupported_remote_transport:{transport or 'unknown'}"
     if install_mode == "package":
-        registry_type = str(spec.get("registry_type") or "").strip().lower()
-        if registry_type and registry_type != "npm":
-            return False, f"unsupported_registry_type:{registry_type}"
-        if _npx_package_command(rec) is None:
-            return False, "unsupported_runtime_hint"
+        commands, reason = _package_stdio_command_candidates(rec)
+        if not commands:
+            return False, (reason or "unsupported_runtime_hint")
         return True, ""
     return False, f"unsupported_install_mode:{install_mode or 'unknown'}"
 
@@ -1879,18 +2335,150 @@ def _external_artifact_cache_key(rec: Dict[str, Any], *, capability_id: str) -> 
         if url:
             return f"remote_only::{url}"
     if install_mode == "package":
-        registry_type = str(spec.get("registry_type") or "").strip().lower() or "npm"
+        registry_type = _effective_registry_type(spec)
         identifier = str(spec.get("identifier") or "").strip()
         version = str(spec.get("version") or "").strip()
         runtime_hint = str(spec.get("runtime_hint") or "").strip().lower()
+        runtime_args = spec.get("runtime_arguments") if isinstance(spec.get("runtime_arguments"), list) else []
+        package_args = spec.get("package_arguments") if isinstance(spec.get("package_arguments"), list) else []
+        args_digest = ""
+        if runtime_args or package_args:
+            try:
+                args_payload = json.dumps(
+                    {"runtime": runtime_args, "package": package_args},
+                    ensure_ascii=False,
+                    sort_keys=True,
+                )
+                args_digest = hashlib.sha1(args_payload.encode("utf-8")).hexdigest()[:8]
+            except Exception:
+                args_digest = ""
         if identifier:
-            return f"package::{registry_type}::{identifier}::{version}::{runtime_hint}"
+            return f"package::{registry_type}::{identifier}::{version}::{runtime_hint}::{args_digest}"
     return f"capability::{str(capability_id or '').strip()}"
 
 
 def _external_artifact_id(rec: Dict[str, Any], *, capability_id: str) -> str:
     key = _external_artifact_cache_key(rec, capability_id=capability_id)
     return f"art_{hashlib.sha1(key.encode('utf-8')).hexdigest()[:16]}"
+
+
+def _is_package_probe_degradable_error(err: Exception) -> bool:
+    if isinstance(err, TimeoutError):
+        return True
+    text = str(err or "").strip().lower()
+    if not text:
+        return False
+    return any(
+        token in text
+        for token in (
+            "stdio mcp request timed out",
+            "tools/list returned no tools",
+            "tools/list failed: missing response",
+            "missing response",
+        )
+    )
+
+
+def _classify_external_install_error(err: Exception) -> Dict[str, Any]:
+    message = str(err or "").strip()
+    text = message.lower()
+    out: Dict[str, Any] = {
+        "code": "install_failed",
+        "message": message,
+        "retryable": False,
+    }
+    if not message:
+        return out
+
+    if message.startswith("missing_required_env:"):
+        raw_names = [x.strip() for x in message.split(":", 1)[1].split(",")]
+        names = [x for x in raw_names if x]
+        out["code"] = "missing_required_env"
+        out["required_env"] = names
+        return out
+    if message.startswith("unsupported_registry_type:"):
+        out["code"] = "unsupported_registry_type"
+        out["registry_type"] = message.split(":", 1)[1].strip()
+        return out
+    if message.startswith("unsupported_install_mode:"):
+        out["code"] = "unsupported_install_mode"
+        out["install_mode"] = message.split(":", 1)[1].strip()
+        return out
+    if message.startswith("unsupported_runtime_hint"):
+        out["code"] = "unsupported_runtime_hint"
+        return out
+    if message.startswith("missing_package_identifier"):
+        out["code"] = "missing_package_identifier"
+        return out
+    if message.startswith("missing_remote_url"):
+        out["code"] = "missing_remote_url"
+        return out
+    if "probe_failed" in text:
+        out["code"] = "probe_failed"
+        out["retryable"] = True
+        return out
+    if isinstance(err, TimeoutError) or ("timed out" in text) or ("timeout" in text):
+        out["code"] = "probe_timeout"
+        out["retryable"] = True
+        return out
+    if isinstance(err, FileNotFoundError):
+        out["code"] = "runtime_binary_missing"
+        return out
+    if "permission denied while trying to connect to the docker daemon socket" in text:
+        out["code"] = "runtime_permission_denied"
+        return out
+    if "permission denied" in text and ("docker.sock" in text or "podman" in text):
+        out["code"] = "runtime_permission_denied"
+        return out
+    if "cannot find module" in text or "module_not_found" in text:
+        out["code"] = "runtime_dependency_missing"
+        return out
+    if "stdio mcp exited with code" in text:
+        out["code"] = "runtime_start_failed"
+        return out
+    if any(token in text for token in ("name or service not known", "temporary failure in name resolution", "nodename nor servname provided")):
+        out["code"] = "network_dns_failure"
+        out["retryable"] = True
+        return out
+    if any(token in text for token in ("connection refused", "connection reset", "network is unreachable")):
+        out["code"] = "network_unreachable"
+        out["retryable"] = True
+        return out
+    if "http error 401" in text or "unauthorized" in text:
+        out["code"] = "upstream_unauthorized"
+        return out
+    if "http error 403" in text or "forbidden" in text:
+        out["code"] = "upstream_forbidden"
+        return out
+    return out
+
+
+def _diagnostics_from_install_error(err: Exception) -> List[Dict[str, Any]]:
+    info = _classify_external_install_error(err)
+    code = str(info.get("code") or "install_failed")
+    message = str(info.get("message") or str(err or "")).strip()
+    diag: Dict[str, Any] = {
+        "code": code,
+        "message": message,
+        "retryable": bool(info.get("retryable")),
+    }
+    required_env = info.get("required_env")
+    if isinstance(required_env, list) and required_env:
+        diag["required_env"] = [str(x).strip() for x in required_env if str(x).strip()]
+    action_hints: List[str] = []
+    if code == "missing_required_env":
+        action_hints.append("set_required_env_then_retry")
+    elif code == "runtime_binary_missing":
+        action_hints.append("install_or_expose_runtime_binary_then_retry")
+    elif code == "runtime_permission_denied":
+        action_hints.append("grant_runtime_permission_then_retry")
+    elif code in {"runtime_dependency_missing", "runtime_start_failed"}:
+        action_hints.append("retry_with_safe_runtime_flags_or_different_version")
+    elif code in {"probe_timeout", "network_dns_failure", "network_unreachable"}:
+        action_hints.append("retry_or_fix_network_then_retry")
+    if action_hints:
+        diag["action_hints"] = action_hints
+    return [diag]
 
 
 def _artifact_entry_from_install(
@@ -1909,6 +2497,7 @@ def _artifact_entry_from_install(
         "invoker": dict(install.get("invoker")) if isinstance(install.get("invoker"), dict) else {},
         "tools": list(install.get("tools") or []) if isinstance(install.get("tools"), list) else [],
         "last_error": str(install.get("last_error") or "").strip(),
+        "last_error_code": str(install.get("last_error_code") or "").strip(),
         "updated_at": str(install.get("updated_at") or "").strip() or utc_now_iso(),
         "capability_ids": [str(capability_id or "").strip()] if str(capability_id or "").strip() else [],
     }
@@ -1959,9 +2548,12 @@ def _install_external_capability(rec: Dict[str, Any], *, capability_id: str) -> 
         }
 
     if install_mode == "package":
-        command = _npx_package_command(rec)
-        if not command:
-            raise ValueError("unsupported_runtime_hint")
+        commands, reason = _package_stdio_command_candidates(rec)
+        if not commands:
+            raise ValueError(reason or "unsupported_runtime_hint")
+        missing_env = _missing_required_environment_names(rec)
+        if missing_env:
+            raise ValueError("missing_required_env:" + ",".join(sorted(set(missing_env))))
         requests = [
             {
                 "jsonrpc": "2.0",
@@ -1975,16 +2567,80 @@ def _install_external_capability(rec: Dict[str, Any], *, capability_id: str) -> 
             },
             {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
         ]
-        responses = _stdio_mcp_roundtrip(command, requests, timeout_s=15.0)
-        tools_result = _extract_jsonrpc_result(responses, req_id=2, operation="tools/list")
-        tools = _normalize_discovered_tools(capability_id, tools_result.get("tools"))
-        if not tools:
-            raise RuntimeError("package tools/list returned no tools")
+        commands = _choose_available_command(commands)
+        probe_timeout_s = float(max(5, min(_env_int("CCCC_CAPABILITY_PACKAGE_PROBE_TIMEOUT_SECONDS", 30), 120)))
+        last_error: Optional[Exception] = None
+        preferred_error: Optional[Exception] = None
+        chosen_command: List[str] = []
+        chosen_env: Dict[str, str] = {}
+        tools: List[Dict[str, Any]] = []
+        for command in commands:
+            attempt_envs: List[Dict[str, str]] = [{}]
+            exe = str((command or [""])[0] or "").strip().lower()
+            if exe == "npx":
+                attempt_envs.append(
+                    {
+                        "PUPPETEER_SKIP_DOWNLOAD": "1",
+                        "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD": "1",
+                        "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
+                    }
+                )
+            for env_try in attempt_envs:
+                try:
+                    if env_try:
+                        responses = _stdio_mcp_roundtrip(
+                            command,
+                            requests,
+                            timeout_s=probe_timeout_s,
+                            env_override=env_try,
+                        )
+                    else:
+                        responses = _stdio_mcp_roundtrip(command, requests, timeout_s=probe_timeout_s)
+                    tools_result = _extract_jsonrpc_result(responses, req_id=2, operation="tools/list")
+                    tools = _normalize_discovered_tools(capability_id, tools_result.get("tools"))
+                    if not tools:
+                        raise RuntimeError("package tools/list returned no tools")
+                    chosen_command = list(command)
+                    chosen_env = dict(env_try)
+                    break
+                except FileNotFoundError as e:
+                    last_error = e
+                    if preferred_error is None:
+                        preferred_error = e
+                    continue
+                except Exception as e:
+                    last_error = e
+                    preferred_error = e
+                    continue
+            if chosen_command:
+                break
+        if not chosen_command:
+            effective_error = preferred_error if isinstance(preferred_error, Exception) else last_error
+            if isinstance(effective_error, Exception) and commands and _is_package_probe_degradable_error(effective_error):
+                fallback_command = list(commands[0])
+                classified = _classify_external_install_error(effective_error)
+                return {
+                    "state": "installed_degraded",
+                    "installer": _installer_label_for_command(rec, fallback_command),
+                    "install_mode": "package",
+                    "invoker": {"type": "package_stdio", "command": fallback_command},
+                    "tools": [],
+                    "last_error": str(effective_error),
+                    "last_error_code": str(classified.get("code") or "probe_timeout"),
+                    "retryable": bool(classified.get("retryable")),
+                    "updated_at": utc_now_iso(),
+                }
+            if isinstance(effective_error, Exception):
+                raise effective_error
+            raise RuntimeError("package install failed: no runnable command candidate")
+        invoker: Dict[str, Any] = {"type": "package_stdio", "command": chosen_command}
+        if chosen_env:
+            invoker["env"] = chosen_env
         return {
             "state": "installed",
-            "installer": "npm_npx",
+            "installer": _installer_label_for_command(rec, chosen_command),
             "install_mode": "package",
-            "invoker": {"type": "npm_stdio", "command": command},
+            "invoker": invoker,
             "tools": tools,
             "last_error": "",
             "updated_at": utc_now_iso(),
@@ -2011,11 +2667,12 @@ def _invoke_installed_external_tool(
             {"name": real_tool_name, "arguments": arguments if isinstance(arguments, dict) else {}},
             timeout_s=30.0,
         )
-    if invoker_type == "npm_stdio":
+    if invoker_type in {"npm_stdio", "package_stdio"}:
         command = invoker.get("command")
         cmd = [str(x) for x in command] if isinstance(command, list) else []
         if not cmd:
-            raise ValueError("missing_npm_command")
+            raise ValueError("missing_package_command")
+        env_override = invoker.get("env") if isinstance(invoker.get("env"), dict) else {}
         requests = [
             {
                 "jsonrpc": "2.0",
@@ -2037,9 +2694,51 @@ def _invoke_installed_external_tool(
                 },
             },
         ]
-        responses = _stdio_mcp_roundtrip(cmd, requests, timeout_s=45.0)
+        call_timeout_s = float(max(5, min(_env_int("CCCC_CAPABILITY_PACKAGE_CALL_TIMEOUT_SECONDS", 45), 180)))
+        if env_override:
+            responses = _stdio_mcp_roundtrip(
+                cmd,
+                requests,
+                timeout_s=call_timeout_s,
+                env_override=env_override,
+            )
+        else:
+            responses = _stdio_mcp_roundtrip(cmd, requests, timeout_s=call_timeout_s)
         return _extract_jsonrpc_result(responses, req_id=2, operation="tools/call")
     raise ValueError(f"unsupported_invoker:{invoker_type or 'unknown'}")
+
+
+def _invoke_installed_external_tool_with_aliases(
+    install: Dict[str, Any],
+    *,
+    requested_tool_name: str,
+    arguments: Dict[str, Any],
+) -> Tuple[Dict[str, Any], str]:
+    names = _tool_name_aliases(requested_tool_name)
+    if not names:
+        token = str(requested_tool_name or "").strip()
+        if not token:
+            raise ValueError("missing_tool_name")
+        names = [token]
+    last_unknown_error: Optional[Exception] = None
+    for name in names:
+        try:
+            return (
+                _invoke_installed_external_tool(
+                    install,
+                    real_tool_name=name,
+                    arguments=arguments,
+                ),
+                name,
+            )
+        except Exception as e:
+            if _is_unknown_tool_error_message(str(e)):
+                last_unknown_error = e
+                continue
+            raise
+    if isinstance(last_unknown_error, Exception):
+        raise last_unknown_error
+    raise RuntimeError(f"unknown tool: {requested_tool_name}")
 
 
 def _sync_mcp_registry_source(catalog: Dict[str, Any], *, force: bool = False) -> int:
@@ -2144,174 +2843,19 @@ def _remote_search_mcp_registry_records(*, query: str, limit: int) -> List[Dict[
     return out
 
 
-def _github_search_skill_repositories(*, query: str, limit: int) -> List[Dict[str, Any]]:
-    q = str(query or "").strip()
-    if not q:
-        return []
-    lim = max(1, min(int(limit or 20), 50))
-    params: Dict[str, str] = {
-        "q": f"{q} skill in:name,description,readme",
-        "per_page": str(lim),
-        "page": "1",
-        "sort": "stars",
-        "order": "desc",
-    }
-    url = f"{_GITHUB_API_BASE}/search/repositories?{urlencode(params)}"
-    data = _http_get_json_obj(url, headers=_github_headers(), timeout=8.0)
-    items = data.get("items")
-    if not isinstance(items, list):
-        return []
-    return [item for item in items if isinstance(item, dict)]
-
-
-def _github_repo_skill_paths(full_name: str, default_branch: str, *, max_paths: int) -> List[str]:
-    name = str(full_name or "").strip()
-    if "/" not in name:
-        return []
-    branch = str(default_branch or "main").strip() or "main"
-    url = f"{_GITHUB_API_BASE}/repos/{name}/git/trees/{quote(branch, safe='')}?recursive=1"
-    data = _http_get_json_obj(url, headers=_github_headers(), timeout=12.0)
-    tree = data.get("tree")
-    if not isinstance(tree, list):
-        return []
-    out: List[str] = []
-    seen: set[str] = set()
-    for item in tree:
-        if not isinstance(item, dict):
-            continue
-        item_type = str(item.get("type") or "").strip().lower()
-        if item_type != "blob":
-            continue
-        path = str(item.get("path") or "").strip().replace("\\", "/")
-        if not path or not path.lower().endswith("skill.md"):
-            continue
-        if path in seen:
-            continue
-        seen.add(path)
-        out.append(path)
-        if len(out) >= max(1, int(max_paths or 1)):
-            break
-    return out
-
-
-def _remote_search_github_skill_records(
-    *,
-    query: str,
-    limit: int,
-    source_id: str = "github_skills_remote",
-    source_tier: str = "tier2",
-    trust_tier: str = "tier2",
-    extra_tags: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
-    if not _env_bool("CCCC_CAPABILITY_SOURCE_GITHUB_SKILLS_REMOTE_ENABLED", True):
-        return []
-    q = str(query or "").strip()
-    if not q:
-        return []
-    lim = max(1, min(int(limit or 20), 100))
-    repo_probe_max = max(1, min(_env_int("CCCC_CAPABILITY_SEARCH_REMOTE_SKILL_REPO_PROBE_MAX", 8), 30))
-    repo_rows = _github_search_skill_repositories(query=q, limit=max(lim, repo_probe_max))
-    now_iso = utc_now_iso()
-    out: List[Dict[str, Any]] = []
-    seen: set[str] = set()
-    for repo in repo_rows:
-        if len(out) >= lim:
-            break
-        full_name = str(repo.get("full_name") or "").strip()
-        default_branch = str(repo.get("default_branch") or "main").strip() or "main"
-        paths: List[str] = []
-        try:
-            paths = _github_repo_skill_paths(
-                full_name,
-                default_branch,
-                max_paths=max(1, min(_env_int("CCCC_CAPABILITY_SEARCH_REMOTE_SKILL_PATHS_PER_REPO", 6), 20)),
-            )
-        except Exception:
-            paths = []
-        if not paths:
-            continue
-        if len(paths) > repo_probe_max:
-            paths = paths[:repo_probe_max]
-        for path in paths:
-            if len(out) >= lim:
-                break
-            full_name = str(repo.get("full_name") or "").strip()
-            if "/" not in full_name:
-                continue
-            owner, repo_name = full_name.split("/", 1)
-            owner_tok = _sanitize_skill_id_token(owner, default="owner")
-            repo_tok = _sanitize_skill_id_token(repo_name, default="repo")
-            parts = [p for p in path.split("/") if p]
-            skill_hint = parts[-2] if len(parts) >= 2 else repo_tok
-            skill_tok = _sanitize_skill_id_token(skill_hint, default="skill")
-            source_record_id = f"{full_name}:{path}"
-            rec_hash = hashlib.sha1(source_record_id.encode("utf-8")).hexdigest()[:8]
-            cap_id = f"skill:github:{owner_tok}:{repo_tok}:{skill_tok}-{rec_hash}"
-            if cap_id in seen:
-                continue
-            seen.add(cap_id)
-            description_short = str(repo.get("description") or "").strip()
-            if not description_short:
-                description_short = f"Remote GitHub skill candidate from {full_name}/{path}"
-            source_uri = f"https://github.com/{full_name}/blob/{quote(default_branch, safe='')}/{quote(path, safe='/')}"
-            capsule_text = (
-                f"Skill: {skill_tok}\n"
-                f"Summary: {description_short}\n"
-                f"Source: {source_uri}"
-            ).strip()
-            out.append(
-                {
-                    "capability_id": cap_id,
-                    "kind": "skill",
-                    "name": skill_tok,
-                    "description_short": description_short,
-                    "tags": ["skill", "external", "github", "remote_search", *(extra_tags or [])],
-                    "source_id": str(source_id or "github_skills_remote"),
-                    "source_tier": str(source_tier or "tier2"),
-                    "source_uri": source_uri,
-                    "source_record_id": source_record_id,
-                    "source_record_version": "",
-                    "updated_at_source": now_iso,
-                    "last_synced_at": now_iso,
-                    "sync_state": "remote",
-                    "install_mode": "builtin",
-                    "install_spec": {},
-                    "requirements": {},
-                    "license": "",
-                    "trust_tier": str(trust_tier or "tier2"),
-                    "qualification_status": _QUAL_QUALIFIED,
-                    "qualification_reasons": [],
-                    "health_status": "remote",
-                    "enable_supported": True,
-                    "capsule_text": capsule_text,
-                    "requires_capabilities": [],
-                }
-            )
-    return out
-
-
-def _remote_search_agentskills_records(*, query: str, limit: int) -> List[Dict[str, Any]]:
-    if not _env_bool("CCCC_CAPABILITY_SOURCE_AGENTSKILLS_REMOTE_ENABLED", True):
-        return []
-    q = str(query or "").strip()
-    if not q:
-        return []
-    lim = max(1, min(int(limit or 20), 100))
-    # AgentSkills is a format baseline (not a dedicated hosted marketplace).
-    # We reuse GitHub SKILL.md discovery and label these hits as agentskills-aligned feed.
-    return _remote_search_github_skill_records(
-        query=q,
-        limit=lim,
-        source_id="agentskills_remote",
-        source_tier="tier1",
-        trust_tier="tier1",
-        extra_tags=["agentskills"],
-    )
-
-
 _SKILLSMP_SKILL_URL_RE = re.compile(r"https?://skillsmp\.com/skills/[^\s)\]]+")
 _SKILLSMP_DATE_RE = re.compile(r"\s+\d{4}-\d{2}-\d{2}\s*$")
-_CLAWHUB_LINK_RE = re.compile(r"\[([^\]]{1,4000})\]\((https?://clawhub\.ai/[^)\s]+)\)")
+
+
+def _js_literal_to_text(raw: Any) -> str:
+    s = str(raw or "").strip()
+    if not s:
+        return ""
+    try:
+        parsed = ast.literal_eval(s)
+        return str(parsed or "")
+    except Exception:
+        return s.strip("'\"")
 
 
 def _skillsmp_proxy_search_url(query: str) -> str:
@@ -2398,82 +2942,469 @@ def _parse_skillsmp_proxy_search_markdown(markdown: str, *, limit: int) -> List[
     return rows
 
 
+def _skillsmp_api_search_url(query: str, *, page: int, limit: int) -> str:
+    base = str(os.environ.get("CCCC_CAPABILITY_SKILLSMP_API_BASE") or "").strip()
+    if not base:
+        base = "https://skillsmp.com/api/v1/skills/search"
+    params = {
+        "q": str(query or "").strip(),
+        "page": str(max(1, int(page or 1))),
+        "limit": str(max(1, min(int(limit or 20), 100))),
+        "sortBy": "stars",
+    }
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}{urlencode(params)}"
+
+
+def _parse_skillsmp_api_payload(data: Dict[str, Any], *, limit: int) -> List[Dict[str, Any]]:
+    now_iso = utc_now_iso()
+    rows: List[Dict[str, Any]] = []
+    candidates: List[Any] = []
+    for key in ("items", "skills", "results", "data"):
+        value = data.get(key)
+        if isinstance(value, list):
+            candidates = value
+            break
+        if isinstance(value, dict):
+            for nested_key in ("items", "skills", "results"):
+                nested = value.get(nested_key)
+                if isinstance(nested, list):
+                    candidates = nested
+                    break
+            if candidates:
+                break
+
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        slug = _sanitize_skill_id_token(str(item.get("slug") or item.get("id") or ""), default="")
+        name = _sanitize_skill_id_token(str(item.get("name") or item.get("displayName") or slug), default="skill")
+        if not slug:
+            continue
+        summary = str(
+            item.get("summary")
+            or item.get("description")
+            or item.get("desc")
+            or ""
+        ).strip()
+        if not summary:
+            summary = f"SkillsMP skill candidate ({name})"
+        source_uri = f"https://skillsmp.com/skills/{slug}"
+        source_record_id = source_uri
+        rec_hash = hashlib.sha1(source_record_id.encode("utf-8")).hexdigest()[:8]
+        rows.append(
+            {
+                "capability_id": f"skill:skillsmp:{slug}-{rec_hash}",
+                "kind": "skill",
+                "name": name,
+                "description_short": summary[:600],
+                "tags": ["skill", "external", "skillsmp", "remote_search"],
+                "source_id": "skillsmp_remote",
+                "source_tier": "tier2",
+                "source_uri": source_uri,
+                "source_record_id": source_record_id,
+                "source_record_version": str(item.get("version") or ""),
+                "updated_at_source": now_iso,
+                "last_synced_at": now_iso,
+                "sync_state": "remote",
+                "install_mode": "builtin",
+                "install_spec": {},
+                "requirements": {},
+                "license": "",
+                "trust_tier": "tier2",
+                "qualification_status": _QUAL_QUALIFIED,
+                "qualification_reasons": [],
+                "health_status": "remote",
+                "enable_supported": True,
+                "capsule_text": f"Skill: {name}\nSummary: {summary[:1000]}\nSource: {source_uri}",
+                "requires_capabilities": [],
+            }
+        )
+        if len(rows) >= max(1, int(limit or 20)):
+            break
+    return rows
+
+
 def _remote_search_skillsmp_records(*, query: str, limit: int) -> List[Dict[str, Any]]:
     if not _env_bool("CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED", True):
         return []
     q = str(query or "").strip()
     if not q:
         return []
+    timeout_s = float(max(3, min(_env_int("CCCC_CAPABILITY_SKILLSMP_REMOTE_TIMEOUT_SECONDS", 10), 25)))
+    api_key = str(os.environ.get("CCCC_CAPABILITY_SKILLSMP_API_KEY") or "").strip()
+    api_error = ""
+    if api_key:
+        try:
+            api_url = _skillsmp_api_search_url(q, page=1, limit=limit)
+            api_data = _http_get_json_obj(
+                api_url,
+                headers={"Authorization": f"Bearer {api_key}", "User-Agent": "cccc-capability-sync/1.0"},
+                timeout=timeout_s,
+            )
+            api_rows = _parse_skillsmp_api_payload(api_data, limit=limit)
+            if api_rows:
+                return api_rows
+            api_error = "skillsmp_api_empty"
+        except HTTPError as e:
+            if int(getattr(e, "code", 0) or 0) == 401:
+                api_error = "skillsmp_api_auth_failed"
+            else:
+                api_error = f"skillsmp_api_http_{int(getattr(e, 'code', 0) or 0)}"
+        except Exception as e:
+            api_error = f"skillsmp_api_failed:{e}"
+
     url = _skillsmp_proxy_search_url(q)
-    timeout_s = float(max(3, min(_env_int("CCCC_CAPABILITY_SKILLSMP_REMOTE_TIMEOUT_SECONDS", 10), 20)))
     text = _http_get_text(url, headers={"User-Agent": "cccc-capability-sync/1.0"}, timeout=timeout_s)
     rows = _parse_skillsmp_proxy_search_markdown(text, limit=limit)
     if rows:
         return rows
     lowered = text.lower()
+    if "missing_api_key" in lowered or "authorization header is required" in lowered:
+        raise RuntimeError("skillsmp_api_key_required")
     if "cloudflare" in lowered and "blocked" in lowered:
         raise RuntimeError("skillsmp_blocked_by_cloudflare")
+    if "loading skills" in lowered:
+        if api_error:
+            raise RuntimeError(f"{api_error};skillsmp_loading_only")
+        raise RuntimeError("skillsmp_loading_only")
+    if api_error:
+        raise RuntimeError(f"{api_error};skillsmp_empty_or_unparsable")
     raise RuntimeError("skillsmp_empty_or_unparsable")
 
 
-def _clawhub_proxy_url(query: str) -> str:
-    base = str(os.environ.get("CCCC_CAPABILITY_CLAWHUB_PROXY_BASE") or "").strip()
+def _clawhub_api_url(*, query: str, limit: int, cursor: str = "") -> str:
+    base = str(os.environ.get("CCCC_CAPABILITY_CLAWHUB_API_BASE") or "").strip()
     if not base:
-        base = "https://r.jina.ai/http://clawhub.ai/skills?focus=search"
-    token = quote(str(query or "").strip())
-    if "{query}" in base:
-        return base.replace("{query}", token)
-    return base
+        base = "https://clawhub.ai/api/v1/skills"
+    params: Dict[str, str] = {
+        "limit": str(max(1, min(int(limit or 20), 100))),
+    }
+    q = str(query or "").strip()
+    if q:
+        params["q"] = q
+    cur = str(cursor or "").strip()
+    if cur:
+        params["cursor"] = cur
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}{urlencode(params)}"
 
 
-def _parse_clawhub_proxy_markdown(markdown: str, *, query: str, limit: int) -> List[Dict[str, Any]]:
-    text = str(markdown or "")
-    if not text.strip():
+def _clawhub_item_to_record(item: Dict[str, Any], *, now_iso: str) -> Optional[Dict[str, Any]]:
+    slug = _sanitize_skill_id_token(str(item.get("slug") or ""), default="")
+    if not slug:
+        return None
+    source_uri = f"https://clawhub.ai/skills/{slug}"
+    source_record_id = source_uri
+    rec_hash = hashlib.sha1(source_record_id.encode("utf-8")).hexdigest()[:8]
+    name = _sanitize_skill_id_token(str(item.get("displayName") or slug), default="skill")
+    description = str(item.get("summary") or "").strip()
+    if not description:
+        description = f"ClawHub skill candidate ({name})"
+    tags: List[str] = ["skill", "external", "clawhub", "remote_search"]
+    stats = item.get("stats") if isinstance(item.get("stats"), dict) else {}
+    if int(stats.get("stars") or 0) > 0:
+        tags.append("starred")
+    version = ""
+    latest_version = item.get("latestVersion")
+    if isinstance(latest_version, dict):
+        version = str(latest_version.get("version") or "").strip()
+    else:
+        tags_obj = item.get("tags") if isinstance(item.get("tags"), dict) else {}
+        version = str(tags_obj.get("latest") or "").strip()
+
+    return {
+        "capability_id": f"skill:clawhub:{slug}-{rec_hash}",
+        "kind": "skill",
+        "name": name,
+        "description_short": description[:600],
+        "tags": tags,
+        "source_id": "clawhub_remote",
+        "source_tier": "tier2",
+        "source_uri": source_uri,
+        "source_record_id": source_record_id,
+        "source_record_version": version,
+        "updated_at_source": now_iso,
+        "last_synced_at": now_iso,
+        "sync_state": "remote",
+        "install_mode": "builtin",
+        "install_spec": {},
+        "requirements": {},
+        "license": "",
+        "trust_tier": "tier2",
+        "qualification_status": _QUAL_QUALIFIED,
+        "qualification_reasons": [],
+        "health_status": "remote",
+        "enable_supported": True,
+        "capsule_text": f"Skill: {name}\nSummary: {description[:1000]}\nSource: {source_uri}",
+        "requires_capabilities": [],
+    }
+
+
+def _query_tokens_match(tokens: List[str], text: str) -> bool:
+    if not tokens:
+        return True
+    hay = str(text or "").lower()
+    return all(tok in hay for tok in tokens)
+
+
+def _remote_search_clawhub_records(*, query: str, limit: int) -> List[Dict[str, Any]]:
+    if not _env_bool("CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED", True):
         return []
-    query_tokens = [t for t in re.split(r"[^a-z0-9]+", str(query or "").lower()) if t]
+    q = str(query or "").strip()
+    if not q:
+        return []
+    query_tokens = _tokenize_search_text(q)
+    timeout_s = float(max(3, min(_env_int("CCCC_CAPABILITY_CLAWHUB_REMOTE_TIMEOUT_SECONDS", 10), 25)))
+    max_pages = max(1, min(_env_int("CCCC_CAPABILITY_CLAWHUB_REMOTE_MAX_PAGES", 5), 15))
+    page_size = max(1, min(_env_int("CCCC_CAPABILITY_CLAWHUB_REMOTE_PAGE_SIZE", 50), 100))
+    requested = max(1, min(int(limit or 20), 100))
     rows: List[Dict[str, Any]] = []
-    seen: set[str] = set()
+    seen_caps: set[str] = set()
     now_iso = utc_now_iso()
+    cursor = ""
+    page = 0
+    saw_payload = False
+    while len(rows) < requested and page < max_pages:
+        url = _clawhub_api_url(query=q, limit=page_size, cursor=cursor)
+        data = _http_get_json_obj(url, timeout=timeout_s)
+        items = data.get("items")
+        if not isinstance(items, list):
+            break
+        saw_payload = True
+        page += 1
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            rec = _clawhub_item_to_record(item, now_iso=now_iso)
+            if not isinstance(rec, dict):
+                continue
+            search_text = " ".join(
+                [
+                    str(rec.get("name") or ""),
+                    str(rec.get("description_short") or ""),
+                    str(item.get("slug") or ""),
+                    str(item.get("displayName") or ""),
+                ]
+            )
+            if not _query_tokens_match(query_tokens, search_text):
+                continue
+            cap_id = str(rec.get("capability_id") or "")
+            if not cap_id or cap_id in seen_caps:
+                continue
+            seen_caps.add(cap_id)
+            rows.append(rec)
+            if len(rows) >= requested:
+                break
+        cursor = str(data.get("nextCursor") or "").strip()
+        if not cursor:
+            break
+    if rows:
+        return rows[:requested]
+    if saw_payload:
+        return []
+    raise RuntimeError("clawhub_empty_or_unparsable")
 
-    def _match_query(hay: str) -> bool:
-        if not query_tokens:
-            return True
-        h = str(hay or "").lower()
-        return all(tok in h for tok in query_tokens)
 
-    for label_raw, href in _CLAWHUB_LINK_RE.findall(text):
-        source_uri = str(href or "").strip().rstrip(").,")
-        if not source_uri:
+def _openclaw_tree_paths() -> List[str]:
+    ttl_seconds = max(60, min(_env_int("CCCC_CAPABILITY_OPENCLAW_TREE_CACHE_TTL_SECONDS", 3600), 86_400))
+    now = time.time()
+    with _REMOTE_SOURCE_CACHE_LOCK:
+        cache_paths = _OPENCLAW_TREE_CACHE.get("paths")
+        fetched_at = float(_OPENCLAW_TREE_CACHE.get("fetched_at") or 0.0)
+        if isinstance(cache_paths, list) and cache_paths and (now - fetched_at) < ttl_seconds:
+            return [str(x) for x in cache_paths if str(x).strip()]
+
+    data = _http_get_json_obj(_OPENCLAW_SKILLS_TREE_API, headers=_github_headers(), timeout=12.0)
+    tree = data.get("tree")
+    if not isinstance(tree, list):
+        return []
+    paths: List[str] = []
+    for item in tree:
+        if not isinstance(item, dict):
             continue
-        # ClawHub skill links are typically /<owner_or_id>/<skill_slug>.
-        parts = [p for p in source_uri.replace("https://clawhub.ai/", "").split("/") if p]
-        if len(parts) < 2:
+        if str(item.get("type") or "").strip().lower() != "blob":
             continue
-        if parts[0] in {"skills", "upload", "import", "search"}:
+        path = str(item.get("path") or "").strip().replace("\\", "/")
+        if not path.lower().endswith("skill.md"):
             continue
-        slug = parts[-1]
-        if slug in {"skills", "upload", "import", "search"}:
-            continue
-        source_record_id = source_uri
+        paths.append(path)
+    paths = sorted(set(paths))
+    with _REMOTE_SOURCE_CACHE_LOCK:
+        _OPENCLAW_TREE_CACHE["fetched_at"] = now
+        _OPENCLAW_TREE_CACHE["paths"] = list(paths)
+    return paths
+
+
+def _openclaw_frontmatter_for_path(path: str) -> Tuple[Dict[str, Any], str]:
+    safe_path = "/".join(part for part in str(path or "").split("/") if part and part not in {".", ".."})
+    if not safe_path:
+        return {}, ""
+    url = f"{_OPENCLAW_SKILLS_BLOB_BASE}/{quote(safe_path, safe='/')}"
+    text = _http_get_text(url, headers=_github_headers(), timeout=8.0)
+    try:
+        frontmatter, body = _split_frontmatter(text)
+        return frontmatter, body
+    except Exception:
+        return {}, text
+
+
+def _remote_search_openclaw_skill_records(*, query: str, limit: int) -> List[Dict[str, Any]]:
+    if not _env_bool("CCCC_CAPABILITY_SOURCE_OPENCLAW_SKILLS_REMOTE_ENABLED", True):
+        return []
+    q = str(query or "").strip()
+    if not q:
+        return []
+    query_tokens = _tokenize_search_text(q)
+    requested = max(1, min(int(limit or 20), 100))
+    paths = _openclaw_tree_paths()
+    if not paths:
+        return []
+
+    candidates: List[str] = []
+    for path in paths:
+        hay = path.lower()
+        if _query_tokens_match(query_tokens, hay):
+            candidates.append(path)
+    if not candidates:
+        return []
+
+    fetch_frontmatter_max = max(
+        0,
+        min(_env_int("CCCC_CAPABILITY_OPENCLAW_FRONTMATTER_FETCH_MAX", 10), 40),
+    )
+    now_iso = utc_now_iso()
+    out: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for idx, path in enumerate(candidates[: max(requested * 3, requested)]):
+        source_record_id = f"openclaw/skills:{path}"
         rec_hash = hashlib.sha1(source_record_id.encode("utf-8")).hexdigest()[:8]
-        skill_name = _sanitize_skill_id_token(slug, default="skill")
-        cap_id = f"skill:clawhub:{skill_name}-{rec_hash}"
+        tokens = [p for p in path.split("/") if p]
+        slug_hint = tokens[-2] if len(tokens) >= 2 else tokens[-1]
+        skill_name = _sanitize_skill_id_token(slug_hint, default="skill")
+        cap_id = f"skill:openclaw:{skill_name}-{rec_hash}"
         if cap_id in seen:
             continue
-        label = " ".join(str(label_raw or "").split())
-        if not _match_query(f"{label} {source_uri} {skill_name}"):
-            continue
-        description = re.sub(r"\s+by@[^ ]+.*$", "", label).strip()
+        seen.add(cap_id)
+        source_uri = f"https://github.com/openclaw/skills/blob/main/{quote(path, safe='/')}"
+        frontmatter: Dict[str, Any] = {}
+        body = ""
+        if idx < fetch_frontmatter_max:
+            try:
+                frontmatter, body = _openclaw_frontmatter_for_path(path)
+            except Exception:
+                frontmatter = {}
+                body = ""
+        if frontmatter:
+            maybe_name = _sanitize_skill_id_token(str(frontmatter.get("name") or ""), default=skill_name)
+            if maybe_name:
+                skill_name = maybe_name
+            description = str(frontmatter.get("description") or "").strip()
+            requires_capabilities = _extract_skill_dependencies(frontmatter)
+            capsule_text = _extract_skill_capsule(frontmatter, body)
+            license_text = str(frontmatter.get("license") or "").strip()
+        else:
+            description = ""
+            requires_capabilities = []
+            capsule_text = ""
+            license_text = ""
+
         if not description:
-            description = f"ClawHub skill candidate ({skill_name})"
-        rows.append(
+            description = f"OpenClaw skill candidate ({skill_name}) from {path}"
+        if not capsule_text:
+            capsule_text = f"Skill: {skill_name}\nSummary: {description}\nSource: {source_uri}"
+        out.append(
             {
                 "capability_id": cap_id,
                 "kind": "skill",
                 "name": skill_name,
                 "description_short": description[:600],
-                "tags": ["skill", "external", "clawhub", "remote_search"],
-                "source_id": "clawhub_remote",
+                "tags": ["skill", "external", "openclaw", "remote_search"],
+                "source_id": "openclaw_skills_remote",
+                "source_tier": "tier2",
+                "source_uri": source_uri,
+                "source_record_id": source_record_id,
+                "source_record_version": "",
+                "updated_at_source": now_iso,
+                "last_synced_at": now_iso,
+                "sync_state": "remote",
+                "install_mode": "builtin",
+                "install_spec": {},
+                "requirements": {},
+                "license": license_text,
+                "trust_tier": "tier2",
+                "qualification_status": _QUAL_QUALIFIED,
+                "qualification_reasons": [],
+                "health_status": "remote",
+                "enable_supported": True,
+                "capsule_text": capsule_text[:2400],
+                "requires_capabilities": requires_capabilities[:32],
+            }
+        )
+        if len(out) >= requested:
+            break
+    return out
+
+
+def _parse_clawskills_data_js(*, script: str, query: str, limit: int) -> List[Dict[str, Any]]:
+    text = str(script or "")
+    if not text.strip():
+        return []
+    start = text.find("var SKILLS_DATA")
+    if start < 0:
+        return []
+    list_start = text.find("[", start)
+    list_end = text.rfind("]")
+    if list_start < 0 or list_end < 0 or list_end <= list_start:
+        return []
+    payload = text[list_start : list_end + 1]
+    tokens = _tokenize_search_text(query)
+    requested = max(1, min(int(limit or 20), 100))
+    rows: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    now_iso = utc_now_iso()
+    for obj_match in _CLAWSKILLS_ENTRY_RE.finditer(payload):
+        obj_text = str(obj_match.group(0) or "").strip()
+        if not obj_text:
+            continue
+        fields: Dict[str, str] = {}
+        for key_match in re.finditer(r"([a-zA-Z_][a-zA-Z0-9_]*)\s*:\s*('(?:\\\\'|[^'])*'|\"(?:\\\\\"|[^\"])*\")", obj_text):
+            key = str(key_match.group(1) or "").strip().lower()
+            value = _js_literal_to_text(key_match.group(2))
+            if key:
+                fields[key] = value
+        slug = _sanitize_skill_id_token(fields.get("slug"), default="")
+        if not slug:
+            continue
+        name = _sanitize_skill_id_token(fields.get("name"), default=slug)
+        desc = str(fields.get("desc") or fields.get("description") or "").strip()
+        category = str(fields.get("category") or "").strip()
+        author = _sanitize_skill_id_token(fields.get("author"), default="")
+        hay = " ".join([slug, name, desc, category, author]).lower()
+        if not _query_tokens_match(tokens, hay):
+            continue
+        source_uri = f"https://clawskills.co/#skill-{slug}"
+        source_record_id = f"clawskills:{slug}"
+        rec_hash = hashlib.sha1(source_record_id.encode("utf-8")).hexdigest()[:8]
+        cap_id = f"skill:clawskills:{slug}-{rec_hash}"
+        if cap_id in seen:
+            continue
+        seen.add(cap_id)
+        if not desc:
+            desc = f"clawskills.co skill candidate ({name})"
+        tags = ["skill", "external", "clawskills", "remote_search"]
+        if category:
+            tags.append(_sanitize_skill_id_token(category, default="category"))
+        if author:
+            tags.append(f"author:{author}")
+        rows.append(
+            {
+                "capability_id": cap_id,
+                "kind": "skill",
+                "name": name,
+                "description_short": desc[:600],
+                "tags": tags,
+                "source_id": "clawskills_remote",
                 "source_tier": "tier2",
                 "source_uri": source_uri,
                 "source_record_id": source_record_id,
@@ -2490,34 +3421,30 @@ def _parse_clawhub_proxy_markdown(markdown: str, *, query: str, limit: int) -> L
                 "qualification_reasons": [],
                 "health_status": "remote",
                 "enable_supported": True,
-                "capsule_text": f"Skill: {skill_name}\nSummary: {description[:1000]}\nSource: {source_uri}",
+                "capsule_text": f"Skill: {name}\nSummary: {desc[:1000]}\nSource: {source_uri}",
                 "requires_capabilities": [],
             }
         )
-        seen.add(cap_id)
-        if len(rows) >= max(1, int(limit or 20)):
+        if len(rows) >= requested:
             break
     return rows
 
 
-def _remote_search_clawhub_records(*, query: str, limit: int) -> List[Dict[str, Any]]:
-    if not _env_bool("CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED", True):
+def _remote_search_clawskills_records(*, query: str, limit: int) -> List[Dict[str, Any]]:
+    if not _env_bool("CCCC_CAPABILITY_SOURCE_CLAWSKILLS_REMOTE_ENABLED", True):
         return []
     q = str(query or "").strip()
     if not q:
         return []
-    url = _clawhub_proxy_url(q)
-    timeout_s = float(max(3, min(_env_int("CCCC_CAPABILITY_CLAWHUB_REMOTE_TIMEOUT_SECONDS", 10), 20)))
+    url = str(os.environ.get("CCCC_CAPABILITY_CLAWSKILLS_DATA_URL") or "").strip() or _CLAWSKILLS_DATA_URL_DEFAULT
+    timeout_s = float(max(3, min(_env_int("CCCC_CAPABILITY_CLAWSKILLS_REMOTE_TIMEOUT_SECONDS", 12), 30)))
     text = _http_get_text(url, headers={"User-Agent": "cccc-capability-sync/1.0"}, timeout=timeout_s)
-    rows = _parse_clawhub_proxy_markdown(text, query=q, limit=limit)
+    rows = _parse_clawskills_data_js(script=text, query=q, limit=limit)
     if rows:
         return rows
-    lowered = text.lower()
-    if "cloudflare" in lowered and "blocked" in lowered:
-        raise RuntimeError("clawhub_blocked_by_cloudflare")
-    if "loading skills" in lowered:
-        raise RuntimeError("clawhub_search_loading_only")
-    raise RuntimeError("clawhub_empty_or_unparsable")
+    if "var SKILLS_DATA" in text:
+        return []
+    raise RuntimeError("clawskills_empty_or_unparsable")
 
 
 def _remote_search_skill_records(*, query: str, limit: int, source_filter: str = "") -> List[Dict[str, Any]]:
@@ -2545,25 +3472,30 @@ def _remote_search_skill_records(*, query: str, limit: int, source_filter: str =
             max(1, min(_env_int("CCCC_CAPABILITY_SEARCH_REMOTE_SKILLSMP_LIMIT", requested), 100)),
         ),
         (
-            "agentskills",
-            "agentskills_remote",
-            _remote_search_agentskills_records,
-            max(1, min(_env_int("CCCC_CAPABILITY_SEARCH_REMOTE_AGENTSKILLS_LIMIT", requested), 100)),
-        ),
-        (
             "clawhub",
             "clawhub_remote",
             _remote_search_clawhub_records,
             max(1, min(_env_int("CCCC_CAPABILITY_SEARCH_REMOTE_CLAWHUB_LIMIT", requested), 100)),
         ),
         (
-            "github",
-            "github_skills_remote",
-            _remote_search_github_skill_records,
-            max(1, min(_env_int("CCCC_CAPABILITY_SEARCH_REMOTE_GITHUB_SKILL_LIMIT", requested), 100)),
+            "openclaw",
+            "openclaw_skills_remote",
+            _remote_search_openclaw_skill_records,
+            max(1, min(_env_int("CCCC_CAPABILITY_SEARCH_REMOTE_OPENCLAW_LIMIT", requested), 100)),
+        ),
+        (
+            "clawskills",
+            "clawskills_remote",
+            _remote_search_clawskills_records,
+            max(1, min(_env_int("CCCC_CAPABILITY_SEARCH_REMOTE_CLAWSKILLS_LIMIT", requested), 100)),
         ),
     ]
-    if source_hint in {"skillsmp_remote", "agentskills_remote", "clawhub_remote", "github_skills_remote"}:
+    if source_hint in {
+        "skillsmp_remote",
+        "clawhub_remote",
+        "openclaw_skills_remote",
+        "clawskills_remote",
+    }:
         adapters = [item for item in adapters if str(item[1] or "").strip().lower() == source_hint]
     for source_name, _source_id, fn, source_limit in adapters:
         if len(out) >= requested:
@@ -2620,14 +3552,28 @@ def _normalize_mcp_registry_record(raw: Any, *, synced_at: str) -> Optional[Dict
     if packages:
         install_mode = "package"
         pkg = packages[0] if isinstance(packages[0], dict) else {}
+        runtime_arguments = _normalize_registry_argument_entries(pkg.get("runtimeArguments"))
+        package_arguments = _normalize_registry_argument_entries(pkg.get("packageArguments"))
+        required_env = _normalize_registry_env_names(pkg.get("environmentVariables"), required_only=True)
+        required_env_from_runtime = _extract_required_env_from_runtime_arguments(pkg.get("runtimeArguments"))
+        for env_name in required_env_from_runtime:
+            if env_name not in required_env:
+                required_env.append(env_name)
+        env_names = _normalize_registry_env_names(pkg.get("environmentVariables"), required_only=False)
+        raw_registry_type = str(pkg.get("registryType") or "").strip()
         install_spec = {
-            "registry_type": str(pkg.get("registryType") or "").strip(),
+            "registry_type": _normalize_registry_type_token(raw_registry_type),
+            "registry_type_raw": raw_registry_type,
             "identifier": str(pkg.get("identifier") or "").strip(),
             "version": str(pkg.get("version") or server.get("version") or "").strip(),
             "runtime_hint": str(pkg.get("runtimeHint") or "").strip(),
             "transport": str((pkg.get("transport") or {}).get("type") or "").strip()
             if isinstance(pkg.get("transport"), dict)
             else "",
+            "runtime_arguments": runtime_arguments,
+            "package_arguments": package_arguments,
+            "required_env": required_env,
+            "env_names": env_names,
         }
     elif remotes:
         install_mode = "remote_only"
@@ -2863,19 +3809,6 @@ def _sync_anthropic_skills_source(catalog: Dict[str, Any], *, force: bool = Fals
         return 0
 
 
-def _mark_agentskills_validator_state(catalog: Dict[str, Any], *, force: bool = False) -> None:
-    state = catalog["sources"]["agentskills_validator"]
-    interval_s = max(60, _env_int("CCCC_CAPABILITY_AGENTSKILLS_SYNC_INTERVAL_SECONDS", 24 * 3600))
-    stale = _catalog_staleness_seconds(str(state.get("last_synced_at") or ""))
-    if (not force) and stale is not None and stale < interval_s and str(state.get("sync_state") or "") == "fresh":
-        return
-    state["sync_state"] = "fresh"
-    state["last_synced_at"] = utc_now_iso()
-    state["staleness_seconds"] = 0
-    state["error"] = ""
-    state["record_count"] = 0
-
-
 def _mark_source_disabled(catalog: Dict[str, Any], source_id: str) -> None:
     sources = catalog.get("sources") if isinstance(catalog.get("sources"), dict) else {}
     state = sources.get(source_id) if isinstance(sources.get(source_id), dict) else _source_state_template("never")
@@ -2990,13 +3923,6 @@ def _sync_catalog(catalog_doc: Dict[str, Any], *, force: bool) -> Dict[str, Any]
     else:
         _mark_source_disabled(catalog_doc, "anthropic_skills")
         upserted["anthropic_skills"] = 0
-
-    if _env_bool("CCCC_CAPABILITY_SOURCE_AGENTSKILLS_VALIDATOR_ENABLED", True):
-        _mark_agentskills_validator_state(catalog_doc, force=force)
-        upserted["agentskills_validator"] = 0
-    else:
-        _mark_source_disabled(catalog_doc, "agentskills_validator")
-        upserted["agentskills_validator"] = 0
 
     pruned = _prune_catalog_records(catalog_doc)
     _refresh_source_record_counts(catalog_doc)
@@ -3590,25 +4516,33 @@ def _render_source_states(catalog_doc: Dict[str, Any]) -> Dict[str, Dict[str, An
     return out
 
 
+def _normalize_capability_id_list(raw: Any) -> List[str]:
+    out: List[str] = []
+    if not isinstance(raw, list):
+        return out
+    seen: set[str] = set()
+    for item in raw:
+        cap_id = str(item or "").strip()
+        if not cap_id or cap_id in seen:
+            continue
+        seen.add(cap_id)
+        out.append(cap_id)
+    return out
+
+
 def _normalize_profile_capability_defaults(raw: Any) -> Dict[str, Any]:
     if not isinstance(raw, dict):
-        return {"pinned_capabilities": [], "default_scope": "actor", "session_ttl_seconds": 3600}
+        return {"autoload_capabilities": [], "default_scope": "actor", "session_ttl_seconds": 3600}
     scope = str(raw.get("default_scope") or "actor").strip().lower()
     if scope not in {"actor", "session"}:
         scope = "actor"
-    ttl = int(raw.get("session_ttl_seconds") or 3600)
+    try:
+        ttl = int(raw.get("session_ttl_seconds") or 3600)
+    except Exception:
+        ttl = 3600
     ttl = max(60, min(ttl, 24 * 3600))
-    pins_raw = raw.get("pinned_capabilities")
-    seen: set[str] = set()
-    pins: List[str] = []
-    if isinstance(pins_raw, list):
-        for item in pins_raw:
-            cap_id = str(item or "").strip()
-            if not cap_id or cap_id in seen:
-                continue
-            seen.add(cap_id)
-            pins.append(cap_id)
-    return {"pinned_capabilities": pins, "default_scope": scope, "session_ttl_seconds": ttl}
+    autoload = _normalize_capability_id_list(raw.get("autoload_capabilities"))
+    return {"autoload_capabilities": autoload, "default_scope": scope, "session_ttl_seconds": ttl}
 
 
 def apply_actor_profile_capability_defaults(
@@ -3619,7 +4553,7 @@ def apply_actor_profile_capability_defaults(
     capability_defaults: Any,
 ) -> Dict[str, Any]:
     cfg = _normalize_profile_capability_defaults(capability_defaults)
-    requested = list(cfg.get("pinned_capabilities") or [])
+    requested = list(cfg.get("autoload_capabilities") or [])
     scope = str(cfg.get("default_scope") or "actor")
     ttl_seconds = int(cfg.get("session_ttl_seconds") or 3600)
     if not requested:
@@ -3664,6 +4598,299 @@ def apply_actor_profile_capability_defaults(
         "scope": scope,
         "ttl_seconds": ttl_seconds,
     }
+
+
+def apply_actor_capability_autoload(
+    *,
+    group_id: str,
+    actor_id: str,
+    autoload_capabilities: Any,
+    scope: str = "actor",
+    ttl_seconds: int = 3600,
+    reason: str = "actor_autoload",
+) -> Dict[str, Any]:
+    requested = _normalize_capability_id_list(autoload_capabilities)
+    eff_scope = str(scope or "actor").strip().lower()
+    if eff_scope not in {"actor", "session"}:
+        eff_scope = "actor"
+    try:
+        eff_ttl = int(ttl_seconds or 3600)
+    except Exception:
+        eff_ttl = 3600
+    eff_ttl = max(60, min(eff_ttl, 24 * 3600))
+    if not requested:
+        return {
+            "requested_count": 0,
+            "applied": [],
+            "skipped": [],
+            "scope": eff_scope,
+            "ttl_seconds": eff_ttl,
+        }
+
+    applied: List[str] = []
+    skipped: List[Dict[str, str]] = []
+    for cap_id in requested:
+        resp = handle_capability_enable(
+            {
+                "group_id": group_id,
+                "by": "user",
+                "actor_id": actor_id,
+                "capability_id": cap_id,
+                "scope": eff_scope,
+                "enabled": True,
+                "ttl_seconds": eff_ttl,
+                "reason": reason,
+            }
+        )
+        if not bool(resp.ok):
+            code = str((resp.error.code if resp.error else "") or "enable_failed")
+            skipped.append({"capability_id": cap_id, "reason": code})
+            continue
+        result = resp.result if isinstance(resp.result, dict) else {}
+        state = str(result.get("state") or "").strip().lower()
+        if state == "ready" and bool(result.get("enabled", True)):
+            applied.append(cap_id)
+            continue
+        reason_code = str(result.get("reason") or state or "not_ready")
+        skipped.append({"capability_id": cap_id, "reason": reason_code})
+    return {
+        "requested_count": len(requested),
+        "applied": applied,
+        "skipped": skipped,
+        "scope": eff_scope,
+        "ttl_seconds": eff_ttl,
+    }
+
+
+def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
+    query = str(args.get("query") or "").strip()
+    limit = max(1, min(int(args.get("limit") or 400), 2000))
+    include_indexed = bool(args.get("include_indexed", True))
+
+    try:
+        with _POLICY_LOCK:
+            snapshot = _allowlist_effective_snapshot()
+            policy = _allowlist_policy()
+        effective_doc = snapshot.get("effective") if isinstance(snapshot.get("effective"), dict) else {}
+        source_levels = policy.get("source_levels") if isinstance(policy.get("source_levels"), dict) else {}
+
+        with _CATALOG_LOCK:
+            catalog_path, catalog_doc = _load_catalog_doc()
+            if _ensure_curated_catalog_records(catalog_doc, policy=policy):
+                _save_catalog_doc(catalog_path, catalog_doc)
+            source_states = _render_source_states(catalog_doc)
+            records = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
+            external_rows = [dict(v) for v in records.values() if isinstance(v, dict)]
+
+        with _STATE_LOCK:
+            state_path, state_doc = _load_state_doc()
+            blocked_caps_all, blocked_mutated = _collect_blocked_capabilities(state_doc, group_id="")
+            if blocked_mutated:
+                _save_state_doc(state_path, state_doc)
+
+        blocked_global: Dict[str, Dict[str, Any]] = {}
+        for cap_id, row in blocked_caps_all.items():
+            if not isinstance(row, dict):
+                continue
+            if str(row.get("scope") or "").strip().lower() != "global":
+                continue
+            blocked_global[str(cap_id)] = dict(row)
+
+        with _RUNTIME_LOCK:
+            _, runtime_doc = _load_runtime_doc()
+            capability_artifacts = _runtime_capability_artifacts(runtime_doc)
+            artifacts = _runtime_artifacts(runtime_doc)
+            recent_success = _runtime_recent_success(runtime_doc)
+
+        entries: Dict[str, Dict[str, Any]] = {}
+
+        def _upsert_entry(row: Dict[str, Any]) -> None:
+            cap_id = str(row.get("capability_id") or "").strip()
+            if not cap_id:
+                return
+            current = entries.get(cap_id) if isinstance(entries.get(cap_id), dict) else {}
+            merged = dict(current)
+            merged.update({k: v for k, v in row.items() if v not in (None, "", [], {}) or k not in merged})
+            merged["capability_id"] = cap_id
+            entries[cap_id] = merged
+
+        for row in _build_builtin_search_records():
+            if isinstance(row, dict):
+                _upsert_entry(row)
+        for row in external_rows:
+            if isinstance(row, dict):
+                _upsert_entry(row)
+
+        for cap_id, row in recent_success.items():
+            cid = str(cap_id or "").strip()
+            if not cid:
+                continue
+            if cid in entries:
+                continue
+            kind = "skill" if cid.startswith("skill:") else ("mcp_toolpack" if cid.startswith("mcp:") else "")
+            _upsert_entry(
+                {
+                    "capability_id": cid,
+                    "kind": kind,
+                    "name": _display_name_from_capability_id(cid),
+                    "description_short": "Recently successful capability",
+                    "source_id": "runtime_recent_success",
+                    "sync_state": "runtime",
+                    "qualification_status": _QUAL_QUALIFIED,
+                }
+            )
+
+        source_cfg_map: Dict[str, Dict[str, Any]] = {}
+        effective_sources = effective_doc.get("sources") if isinstance(effective_doc.get("sources"), list) else []
+        for row in effective_sources:
+            if not isinstance(row, dict):
+                continue
+            sid = str(row.get("source_id") or "").strip()
+            if not sid:
+                continue
+            source_cfg_map[sid] = {
+                "enabled": bool(row.get("enabled", True)),
+                "rationale": str(row.get("rationale") or "").strip(),
+            }
+
+        rows: List[Dict[str, Any]] = []
+        for cap_id, rec in entries.items():
+            kind = str(rec.get("kind") or "").strip()
+            source_id = str(rec.get("source_id") or "").strip()
+            policy_level = _effective_policy_level(
+                policy,
+                capability_id=cap_id,
+                kind=kind,
+                source_id=source_id,
+                actor_role="",
+            )
+            if (not include_indexed) and (not _policy_level_visible(policy_level)):
+                continue
+            blocked = blocked_global.get(cap_id) if isinstance(blocked_global.get(cap_id), dict) else None
+            enable_supported = _record_enable_supported(rec, capability_id=cap_id)
+            recent_row = recent_success.get(cap_id) if isinstance(recent_success.get(cap_id), dict) else {}
+            artifact_id = str(capability_artifacts.get(cap_id) or "").strip()
+            artifact = artifacts.get(artifact_id) if artifact_id and isinstance(artifacts.get(artifact_id), dict) else {}
+            install_state = str(artifact.get("state") or "").strip()
+            install_error_code = str(artifact.get("last_error_code") or "").strip()
+            install_error = str(artifact.get("last_error") or "").strip()
+            recent_payload: Dict[str, Any] = {}
+            if recent_row:
+                recent_payload = {
+                    "success_count": int(recent_row.get("success_count") or 0),
+                    "last_success_at": str(recent_row.get("last_success_at") or ""),
+                    "last_group_id": str(recent_row.get("last_group_id") or ""),
+                    "last_actor_id": str(recent_row.get("last_actor_id") or ""),
+                    "last_action": str(recent_row.get("last_action") or ""),
+                }
+            blocked_reason = str((blocked or {}).get("reason") or "").strip() if isinstance(blocked, dict) else ""
+            item: Dict[str, Any] = {
+                "capability_id": cap_id,
+                "kind": kind,
+                "name": str(rec.get("name") or _display_name_from_capability_id(cap_id)),
+                "description_short": str(rec.get("description_short") or ""),
+                "source_id": source_id,
+                "source_uri": str(rec.get("source_uri") or ""),
+                "source_tier": str(rec.get("source_tier") or ""),
+                "trust_tier": str(rec.get("trust_tier") or ""),
+                "license": str(rec.get("license") or ""),
+                "sync_state": str(rec.get("sync_state") or ""),
+                "policy_level": policy_level,
+                "enable_supported": bool(enable_supported),
+                "qualification_status": str(rec.get("qualification_status") or _QUAL_QUALIFIED),
+                "install_mode": str(rec.get("install_mode") or ""),
+                "tags": [str(x).strip() for x in (rec.get("tags") if isinstance(rec.get("tags"), list) else []) if str(x).strip()],
+                "blocked_global": bool(blocked),
+                "autoload_candidate": bool(enable_supported and (not blocked) and (_policy_level_visible(policy_level) or bool(recent_payload))),
+                "policy_visible": bool(_policy_level_visible(policy_level)),
+            }
+            if blocked_reason:
+                item["blocked_reason"] = blocked_reason
+            if recent_payload:
+                item["recent_success"] = recent_payload
+            if install_state:
+                item["cached_install_state"] = install_state
+            if install_error_code:
+                item["cached_install_error_code"] = install_error_code
+            if install_error:
+                item["cached_install_error"] = install_error
+            if cap_id.startswith("pack:"):
+                item["tool_count"] = int(rec.get("tool_count") or 0)
+                tool_names = rec.get("tool_names") if isinstance(rec.get("tool_names"), list) else []
+                if tool_names:
+                    item["tool_names"] = [str(x).strip() for x in tool_names if str(x).strip()]
+            rows.append(item)
+
+        if query:
+            rows = [row for row in rows if _search_matches(query, row)]
+
+        def _rank(row: Dict[str, Any]) -> Tuple[int, int, int, str]:
+            blocked_penalty = 1 if bool(row.get("blocked_global")) else 0
+            recent = row.get("recent_success") if isinstance(row.get("recent_success"), dict) else {}
+            recent_count = int(recent.get("success_count") or 0)
+            recent_ts = str(recent.get("last_success_at") or "")
+            cap_id = str(row.get("capability_id") or "")
+            builtin_bias = 0 if cap_id.startswith("pack:") else 1
+            return (
+                blocked_penalty,
+                builtin_bias,
+                -recent_count,
+                f"{recent_ts}:{str(row.get('name') or cap_id).lower()}",
+            )
+
+        rows.sort(key=_rank)
+        items = rows[:limit]
+
+        source_ids = sorted(
+            {
+                *_SOURCE_IDS,
+                *(source_states.keys() if isinstance(source_states, dict) else []),
+                *(source_levels.keys() if isinstance(source_levels, dict) else []),
+                *(source_cfg_map.keys() if isinstance(source_cfg_map, dict) else []),
+            }
+        )
+        sources: Dict[str, Dict[str, Any]] = {}
+        for source_id in source_ids:
+            state = source_states.get(source_id) if isinstance(source_states.get(source_id), dict) else {}
+            cfg = source_cfg_map.get(source_id) if isinstance(source_cfg_map.get(source_id), dict) else {}
+            sources[source_id] = {
+                "source_id": source_id,
+                "enabled": bool(cfg.get("enabled", True)),
+                "source_level": _normalize_policy_level(source_levels.get(source_id), default=_LEVEL_INDEXED),
+                "rationale": str(cfg.get("rationale") or ""),
+                "sync_state": str(state.get("sync_state") or "never"),
+                "last_synced_at": str(state.get("last_synced_at") or ""),
+                "staleness_seconds": int(state.get("staleness_seconds") or 0),
+                "record_count": int(state.get("record_count") or 0),
+                "error": str(state.get("error") or ""),
+            }
+
+        blocked_list: List[Dict[str, Any]] = []
+        for cap_id, row in sorted(blocked_global.items(), key=lambda x: str(x[0])):
+            blocked_list.append(
+                {
+                    "capability_id": str(cap_id),
+                    "scope": "global",
+                    "reason": str(row.get("reason") or ""),
+                    "by": str(row.get("by") or ""),
+                    "blocked_at": str(row.get("blocked_at") or ""),
+                    "expires_at": str(row.get("expires_at") or ""),
+                }
+            )
+
+        return DaemonResponse(
+            ok=True,
+            result={
+                "items": items,
+                "count": len(items),
+                "query": query,
+                "sources": sources,
+                "blocked_capabilities": blocked_list,
+                "allowlist_revision": str(snapshot.get("revision") or ""),
+            },
+        )
+    except Exception as e:
+        return _error("capability_overview_failed", str(e))
 
 
 def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
@@ -4217,6 +5444,17 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     ttl_seconds=ttl_seconds,
                 )
                 _save_state_doc(state_path, state_doc)
+            if enabled:
+                with _RUNTIME_LOCK:
+                    runtime_path, runtime_doc = _load_runtime_doc()
+                    _record_runtime_recent_success(
+                        runtime_doc,
+                        capability_id=capability_id,
+                        group_id=group_id,
+                        actor_id=actor_id,
+                        action="enable",
+                    )
+                    _save_runtime_doc(runtime_path, runtime_doc)
             _audit("ready", state="ready", details={"builtin": True})
             return DaemonResponse(
                 ok=True,
@@ -4235,7 +5473,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                 },
             )
 
-        # External capability path (M2): limited to remote_only + npm package via npx.
+        # External capability path (M2): supports remote_only + package (npm/pypi/oci).
         with _CATALOG_LOCK:
             catalog_path, catalog_doc = _load_catalog_doc()
             if _ensure_curated_catalog_records(catalog_doc, policy=policy):
@@ -4545,6 +5783,13 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     state="ready_skill",
                     last_error="",
                 )
+                _record_runtime_recent_success(
+                    runtime_doc,
+                    capability_id=capability_id,
+                    group_id=group_id,
+                    actor_id=actor_id,
+                    action="enable",
+                )
                 _save_runtime_doc(runtime_path, runtime_doc)
 
             capsule = str(rec.get("capsule_text") or "").strip()
@@ -4589,6 +5834,15 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
 
         supported, unsupported_reason = _supported_external_install_record(rec)
         if not supported:
+            reason_code = unsupported_reason or "unsupported_external_installer"
+            diagnostics = [
+                {
+                    "code": str(reason_code),
+                    "message": str(reason_code),
+                    "retryable": False,
+                    "action_hints": ["switch_to_supported_installer_or_runtime"],
+                }
+            ]
             _audit("failed", state="failed", error_code=unsupported_reason or "unsupported_external_installer")
             return DaemonResponse(
                 ok=True,
@@ -4601,8 +5855,9 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                     "enabled": False,
                     "state": "failed",
                     "refresh_required": False,
-                    "reason": unsupported_reason or "unsupported_external_installer",
+                    "reason": reason_code,
                     "policy_level": policy_level,
+                    "diagnostics": diagnostics,
                 },
             )
 
@@ -4620,7 +5875,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
             if mapped_artifact_id:
                 artifact_id = mapped_artifact_id
             existing = existing_mapped if isinstance(existing_mapped, dict) else artifacts_quota.get(artifact_id)
-            if isinstance(existing, dict) and str(existing.get("state") or "").strip() == "installed":
+            if isinstance(existing, dict) and _install_state_allows_external_tool(existing.get("state")):
                 install = dict(existing)
                 reused_cached_install = True
             else:
@@ -4648,6 +5903,8 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
             try:
                 install = _install_external_capability(rec, capability_id=capability_id)
             except Exception as e:
+                install_error = _classify_external_install_error(e)
+                error_code = str(install_error.get("code") or "install_failed")
                 with _RUNTIME_LOCK:
                     runtime_path, runtime_doc = _load_runtime_doc()
                     failed_artifact = _artifact_entry_from_install(
@@ -4658,6 +5915,7 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                             "invoker": {},
                             "tools": [],
                             "last_error": str(e),
+                            "last_error_code": error_code,
                             "updated_at": utc_now_iso(),
                         },
                         artifact_id=artifact_id,
@@ -4680,21 +5938,31 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                         last_error=str(e),
                     )
                     _save_runtime_doc(runtime_path, runtime_doc)
-                _audit("failed", state="failed", error_code="install_failed", details={"error": str(e)})
+                _audit("failed", state="failed", error_code=error_code, details={"error": str(e)})
+                reason = f"install_failed:{error_code}"
+                result: Dict[str, Any] = {
+                    "action_id": action_id,
+                    "group_id": group_id,
+                    "actor_id": actor_id,
+                    "capability_id": capability_id,
+                    "scope": scope,
+                    "enabled": False,
+                    "state": "failed",
+                    "refresh_required": False,
+                    "reason": reason,
+                    "install_error_code": error_code,
+                    "retryable": bool(install_error.get("retryable")),
+                    "policy_level": policy_level,
+                    "diagnostics": _diagnostics_from_install_error(e),
+                }
+                required_env = install_error.get("required_env")
+                if isinstance(required_env, list) and required_env:
+                    result["required_env"] = [str(x).strip() for x in required_env if str(x).strip()]
+                if str(e):
+                    result["error"] = str(e)
                 return DaemonResponse(
                     ok=True,
-                    result={
-                        "action_id": action_id,
-                        "group_id": group_id,
-                        "actor_id": actor_id,
-                        "capability_id": capability_id,
-                        "scope": scope,
-                        "enabled": False,
-                        "state": "failed",
-                        "refresh_required": False,
-                        "reason": f"install_failed:{str(e)}",
-                        "policy_level": policy_level,
-                    },
+                    result=result,
                 )
 
             with _RUNTIME_LOCK:
@@ -4753,27 +6021,52 @@ def handle_capability_enable(args: Dict[str, Any]) -> DaemonResponse:
                 ttl_seconds=ttl_seconds,
             )
             _save_state_doc(state_path, state_doc)
+        with _RUNTIME_LOCK:
+            runtime_path, runtime_doc = _load_runtime_doc()
+            _record_runtime_recent_success(
+                runtime_doc,
+                capability_id=capability_id,
+                group_id=group_id,
+                actor_id=actor_id,
+                action="enable",
+            )
+            _save_runtime_doc(runtime_path, runtime_doc)
 
         tools = install.get("tools") if isinstance(install.get("tools"), list) else []
         _audit("ready", state="ready", details={"installed_tool_count": len(tools)})
+        install_state = str(install.get("state") or "").strip() or "installed"
+        degraded = install_state == "installed_degraded"
+        result: Dict[str, Any] = {
+            "action_id": action_id,
+            "group_id": group_id,
+            "actor_id": actor_id,
+            "capability_id": capability_id,
+            "scope": scope,
+            "enabled": True,
+            "state": "ready",
+            "refresh_required": True,
+            "wait": "relist_or_reconnect",
+            "refresh_mode": "relist_or_reconnect",
+            "installed_tool_count": len(tools),
+            "installer": str(install.get("installer") or ""),
+            "reused_cached_install": bool(reused_cached_install),
+            "policy_level": policy_level,
+            "install_state": install_state,
+            "degraded": degraded,
+        }
+        install_error_code = str(install.get("last_error_code") or "").strip()
+        if install_error_code:
+            result["install_error_code"] = install_error_code
+        if degraded:
+            degraded_reason = str(install.get("last_error") or "").strip()
+            if degraded_reason:
+                result["degraded_reason"] = degraded_reason
+            result["degraded_call_hint"] = (
+                "tools_not_listed_call_capability_use_with_capability_id_and_real_tool_name"
+            )
         return DaemonResponse(
             ok=True,
-            result={
-                "action_id": action_id,
-                "group_id": group_id,
-                "actor_id": actor_id,
-                "capability_id": capability_id,
-                "scope": scope,
-                "enabled": True,
-                "state": "ready",
-                "refresh_required": True,
-                "wait": "relist_or_reconnect",
-                "refresh_mode": "relist_or_reconnect",
-                "installed_tool_count": len(tools),
-                "installer": str(install.get("installer") or ""),
-                "reused_cached_install": bool(reused_cached_install),
-                "policy_level": policy_level,
-            },
+            result=result,
         )
     except LookupError as e:
         _audit("failed", state="failed", error_code="group_not_found", details={"error": str(e)})
@@ -4823,6 +6116,8 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
         dynamic_tools: List[Dict[str, Any]] = []
         install_state_by_cap: Dict[str, str] = {}
         install_artifact_by_cap: Dict[str, str] = {}
+        install_error_by_cap: Dict[str, str] = {}
+        install_error_code_by_cap: Dict[str, str] = {}
         actor_binding_state_by_cap: Dict[str, Dict[str, str]] = {}
         with _RUNTIME_LOCK:
             _, runtime_doc = _load_runtime_doc()
@@ -4848,6 +6143,8 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                         continue
                     install_state_by_cap[cid] = str(install.get("state") or "").strip()
                     install_artifact_by_cap[cid] = aid
+                    install_error_by_cap[cid] = str(install.get("last_error") or "").strip()
+                    install_error_code_by_cap[cid] = str(install.get("last_error_code") or "").strip()
             if isinstance(per_actor_bindings, dict):
                 for cap_id, item in per_actor_bindings.items():
                     if not isinstance(item, dict):
@@ -4868,7 +6165,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                 install = artifacts.get(artifact_id) if isinstance(artifacts, dict) else None
                 if not isinstance(install, dict):
                     continue
-                if str(install.get("state") or "") != "installed":
+                if not _install_state_allows_external_tool(install.get("state")):
                     continue
                 binding_state = str((binding or {}).get("state") or "").strip() if isinstance(binding, dict) else ""
                 if not _binding_state_allows_external_tool(binding_state):
@@ -4999,6 +6296,34 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                 if isinstance(rec, dict) and str(cid) and (not str(cid).startswith("pack:"))
             }
 
+        actors = group.doc.get("actors") if isinstance(group.doc.get("actors"), list) else []
+        actor_record = next(
+            (
+                a
+                for a in actors
+                if isinstance(a, dict) and str(a.get("id") or "").strip() == actor_id
+            ),
+            {},
+        )
+        actor_autoload_capabilities = _normalize_capability_id_list(
+            actor_record.get("capability_autoload") if isinstance(actor_record, dict) else []
+        )
+        profile_id = str(actor_record.get("profile_id") or "").strip() if isinstance(actor_record, dict) else ""
+        profile_autoload_capabilities: List[str] = []
+        if profile_id:
+            try:
+                from ..actors.actor_profile_store import get_actor_profile as _get_actor_profile
+
+                profile_doc = _get_actor_profile(profile_id)
+                if isinstance(profile_doc, dict):
+                    defaults_cfg = _normalize_profile_capability_defaults(profile_doc.get("capability_defaults"))
+                    profile_autoload_capabilities = list(defaults_cfg.get("autoload_capabilities") or [])
+            except Exception:
+                profile_autoload_capabilities = []
+        effective_autoload_capabilities = _normalize_capability_id_list(
+            [*profile_autoload_capabilities, *actor_autoload_capabilities]
+        )
+
         active_skills: List[Dict[str, Any]] = []
         for cap_id in enabled_caps_effective:
             rec = external_records.get(cap_id)
@@ -5023,16 +6348,14 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                 }
             )
 
-        pinned_skill_ids = set(group_enabled_map.get(group_id) or [])
-        pinned_skill_ids.update(set(per_group_actor.get(actor_id) or []))
-        pinned_skills: List[Dict[str, Any]] = []
-        for cap_id in sorted(pinned_skill_ids):
+        autoload_skills: List[Dict[str, Any]] = []
+        for cap_id in effective_autoload_capabilities:
             rec = external_records.get(cap_id)
             if not isinstance(rec, dict):
                 continue
             if str(rec.get("kind") or "").strip().lower() != "skill":
                 continue
-            pinned_skills.append(
+            autoload_skills.append(
                 {
                     "capability_id": cap_id,
                     "name": str(rec.get("name") or cap_id),
@@ -5079,13 +6402,17 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                         }
                     )
                     continue
-                if state and state != "installed":
+                if state and (not _install_state_allows_external_tool(state)):
+                    install_error = str(install_error_by_cap.get(cap_id) or "").strip()
+                    install_error_code = str(install_error_code_by_cap.get(cap_id) or "").strip()
                     hidden_capabilities.append(
                         {
                             "capability_id": cap_id,
                             "reason": "install_failed",
                             "state": state,
                             "policy_level": policy_level,
+                            **({"install_error_code": install_error_code} if install_error_code else {}),
+                            **({"install_error": install_error} if install_error else {}),
                         }
                     )
                     continue
@@ -5142,14 +6469,24 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                     entry["last_error"] = str(binding.get("last_error") or "").strip()
             else:
                 entry["mode"] = "mcp"
+                entry["install_state"] = install_state or "unknown"
                 entry["state"] = str(binding.get("state") or (install_state or "unknown"))
                 artifact_id = str(binding.get("artifact_id") or install_artifact_by_cap.get(cap_id) or "").strip()
                 if artifact_id:
                     entry["artifact_id"] = artifact_id
+                install_error = str(install_error_by_cap.get(cap_id) or "").strip()
+                install_error_code = str(install_error_code_by_cap.get(cap_id) or "").strip()
                 if str(binding.get("last_error") or "").strip():
                     entry["last_error"] = str(binding.get("last_error") or "").strip()
+                elif install_state == "installed_degraded":
+                    entry["state"] = "ready_degraded"
+                    entry["last_error"] = install_error or "probe_timeout"
+                    if install_error_code:
+                        entry["last_error_code"] = install_error_code
                 elif install_state and install_state != "installed":
-                    entry["last_error"] = "install_not_ready"
+                    entry["last_error"] = install_error or "install_not_ready"
+                    if install_error_code:
+                        entry["last_error_code"] = install_error_code
             external_binding_states[cap_id] = entry
 
         blocked_capabilities: List[Dict[str, str]] = []
@@ -5179,7 +6516,10 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                 "dynamic_tool_dropped": dynamic_tool_dropped,
                 "enabled_capabilities": enabled_caps_effective,
                 "active_skills": active_skills,
-                "pinned_skills": pinned_skills,
+                "autoload_skills": autoload_skills,
+                "autoload_capabilities": effective_autoload_capabilities,
+                "actor_autoload_capabilities": actor_autoload_capabilities,
+                "profile_autoload_capabilities": profile_autoload_capabilities,
                 "hidden_capabilities": hidden_capabilities,
                 "external_binding_states": external_binding_states,
                 "precedence_chain": ["session", "actor", "group"],
@@ -5405,6 +6745,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             )
 
         removed_bindings = 0
+        has_remaining_binding = False
         with _STATE_LOCK:
             state_path, state_doc = _load_state_doc()
             removed_bindings = _remove_capability_bindings(
@@ -5412,27 +6753,35 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
                 group_id=group_id,
                 capability_id=capability_id,
             )
+            has_remaining_binding = _has_any_binding_for_capability(state_doc, capability_id=capability_id)
             if removed_bindings > 0:
                 _save_state_doc(state_path, state_doc)
 
         removed_installation = False
         removed_runtime_bindings = 0
+        cleanup_skipped_reason = ""
         with _RUNTIME_LOCK:
             runtime_path, runtime_doc = _load_runtime_doc()
-            removed_artifact_id = _remove_runtime_capability_artifact(
+            removed_runtime_bindings = _remove_runtime_group_capability_bindings(
                 runtime_doc,
+                group_id=group_id,
                 capability_id=capability_id,
             )
-            if removed_artifact_id:
-                removed_installation = _remove_runtime_artifact_if_unreferenced(
+            runtime_changed = bool(removed_runtime_bindings > 0)
+            if has_remaining_binding:
+                cleanup_skipped_reason = "cleanup_skipped_capability_still_bound"
+            else:
+                removed_artifact_id = _remove_runtime_capability_artifact(
                     runtime_doc,
-                    artifact_id=removed_artifact_id,
+                    capability_id=capability_id,
                 )
-            removed_runtime_bindings = _remove_runtime_capability_bindings_all_groups(
-                runtime_doc,
-                capability_id=capability_id,
-            )
-            if removed_installation or removed_runtime_bindings > 0:
+                if removed_artifact_id:
+                    removed_installation = _remove_runtime_artifact_if_unreferenced(
+                        runtime_doc,
+                        artifact_id=removed_artifact_id,
+                    )
+                    runtime_changed = True
+            if runtime_changed:
                 _save_runtime_doc(runtime_path, runtime_doc)
 
         refresh_required = bool(removed_bindings > 0 or removed_installation or removed_runtime_bindings > 0)
@@ -5443,6 +6792,7 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
                 "removed_bindings": int(removed_bindings),
                 "removed_installation": bool(removed_installation),
                 "removed_runtime_bindings": int(removed_runtime_bindings),
+                "cleanup_skipped_reason": cleanup_skipped_reason,
             },
         )
         result: Dict[str, Any] = {
@@ -5456,6 +6806,8 @@ def handle_capability_uninstall(args: Dict[str, Any]) -> DaemonResponse:
             "removed_runtime_bindings": int(removed_runtime_bindings),
             "refresh_required": refresh_required,
         }
+        if cleanup_skipped_reason:
+            result["cleanup_skipped_reason"] = cleanup_skipped_reason
         if refresh_required:
             result["wait"] = "relist_or_reconnect"
             result["refresh_mode"] = "relist_or_reconnect"
@@ -5535,6 +6887,15 @@ def handle_capability_tool_call(args: Dict[str, Any]) -> DaemonResponse:
                     details={"tool_name": tool_name, "blocked_capabilities": blocked_ids},
                 )
 
+        target_capability_id = ""
+        target_artifact_id = ""
+        target_install: Dict[str, Any] = {}
+        real_tool_name = ""
+        resolved_tool_name = tool_name
+        tool_aliases = set(_tool_name_aliases(tool_name))
+        if not tool_aliases:
+            tool_aliases = {tool_name}
+
         with _RUNTIME_LOCK:
             _, runtime_doc = _load_runtime_doc()
             artifacts = _runtime_artifacts(runtime_doc)
@@ -5552,6 +6913,7 @@ def handle_capability_tool_call(args: Dict[str, Any]) -> DaemonResponse:
             )
             matches: List[Tuple[str, str, Dict[str, Any], str, str]] = []
             available_by_cap: Dict[str, set[str]] = {}
+            direct_fallback: Optional[Tuple[str, str, Dict[str, Any]]] = None
             for capability_id in candidate_caps:
                 binding = per_actor_bindings.get(capability_id) if isinstance(per_actor_bindings, dict) else None
                 binding_state = str((binding or {}).get("state") or "").strip() if isinstance(binding, dict) else ""
@@ -5563,9 +6925,13 @@ def handle_capability_tool_call(args: Dict[str, Any]) -> DaemonResponse:
                 install = artifacts.get(artifact_id) if isinstance(artifacts, dict) else None
                 if not isinstance(install, dict):
                     continue
-                if str(install.get("state") or "") != "installed":
+                if not _install_state_allows_external_tool(install.get("state")):
                     continue
                 tools = install.get("tools") if isinstance(install.get("tools"), list) else []
+                if not tools:
+                    if capability_id_hint and capability_id == capability_id_hint:
+                        direct_fallback = (capability_id, artifact_id, install)
+                    continue
                 for tool in tools:
                     if not isinstance(tool, dict):
                         continue
@@ -5576,40 +6942,49 @@ def handle_capability_tool_call(args: Dict[str, Any]) -> DaemonResponse:
                     names = available_by_cap.setdefault(capability_id, set())
                     names.add(synthetic_name)
                     names.add(real_name)
-                    if tool_name != synthetic_name and tool_name != real_name:
+                    if (
+                        tool_name != synthetic_name
+                        and tool_name != real_name
+                        and synthetic_name not in tool_aliases
+                        and real_name not in tool_aliases
+                    ):
                         continue
                     matches.append((capability_id, artifact_id, install, real_name, synthetic_name))
 
             if not matches:
-                details: Dict[str, Any] = {}
-                if capability_id_hint:
-                    available = sorted(available_by_cap.get(capability_id_hint) or [])
-                    if available:
-                        details["available_tools"] = available[:64]
-                    details["capability_id"] = capability_id_hint
-                return _error("capability_tool_not_found", f"tool not found or not enabled: {tool_name}", details=details)
-
-            if len(matches) > 1:
-                candidates = [
-                    {
-                        "capability_id": cap_id,
-                        "tool_name": synthetic,
-                        "real_tool_name": real,
-                    }
-                    for cap_id, _, _, real, synthetic in matches
-                ]
-                return _error(
-                    "capability_tool_ambiguous",
-                    f"tool resolves to multiple enabled capabilities: {tool_name}",
-                    details={"tool_name": tool_name, "candidates": candidates},
-                )
-
-            target_capability_id, target_artifact_id, target_install, real_tool_name, resolved_tool_name = matches[0]
+                if capability_id_hint and isinstance(direct_fallback, tuple):
+                    target_capability_id, target_artifact_id, target_install = direct_fallback
+                    real_tool_name = tool_name
+                    resolved_tool_name = tool_name
+                else:
+                    details: Dict[str, Any] = {}
+                    if capability_id_hint:
+                        available = sorted(available_by_cap.get(capability_id_hint) or [])
+                        if available:
+                            details["available_tools"] = available[:64]
+                        details["capability_id"] = capability_id_hint
+                    return _error("capability_tool_not_found", f"tool not found or not enabled: {tool_name}", details=details)
+            else:
+                if len(matches) > 1:
+                    candidates = [
+                        {
+                            "capability_id": cap_id,
+                            "tool_name": synthetic,
+                            "real_tool_name": real,
+                        }
+                        for cap_id, _, _, real, synthetic in matches
+                    ]
+                    return _error(
+                        "capability_tool_ambiguous",
+                        f"tool resolves to multiple enabled capabilities: {tool_name}",
+                        details={"tool_name": tool_name, "candidates": candidates},
+                    )
+                target_capability_id, target_artifact_id, target_install, real_tool_name, resolved_tool_name = matches[0]
 
         try:
-            result = _invoke_installed_external_tool(
+            result, resolved_real_tool_name = _invoke_installed_external_tool_with_aliases(
                 target_install,
-                real_tool_name=real_tool_name,
+                requested_tool_name=real_tool_name,
                 arguments=arguments,
             )
         except Exception as e:
@@ -5637,6 +7012,40 @@ def handle_capability_tool_call(args: Dict[str, Any]) -> DaemonResponse:
 
         with _RUNTIME_LOCK:
             path, doc = _load_runtime_doc()
+            artifacts2 = _runtime_artifacts(doc)
+            install2 = artifacts2.get(target_artifact_id) if isinstance(artifacts2, dict) else None
+            if isinstance(install2, dict):
+                tools2 = install2.get("tools") if isinstance(install2.get("tools"), list) else []
+                has_tool = any(
+                    isinstance(item, dict)
+                    and str(item.get("real_tool_name") or "").strip() == str(resolved_real_tool_name or "").strip()
+                    for item in tools2
+                )
+                if (not has_tool) and str(resolved_real_tool_name or "").strip():
+                    used_names = {
+                        str(item.get("name") or "").strip()
+                        for item in tools2
+                        if isinstance(item, dict)
+                    }
+                    tools2.append(
+                        {
+                            "name": _build_synthetic_tool_name(
+                                target_capability_id,
+                                str(resolved_real_tool_name or ""),
+                                used=used_names,
+                            ),
+                            "real_tool_name": str(resolved_real_tool_name or ""),
+                            "description": f"{resolved_real_tool_name} tool",
+                            "inputSchema": {"type": "object", "properties": {}, "required": []},
+                        }
+                    )
+                install2["tools"] = tools2
+                install2["last_error"] = ""
+                if str(install2.get("state") or "").strip().lower() == "installed_degraded" and tools2:
+                    install2["state"] = "installed"
+                install2["updated_at"] = utc_now_iso()
+                artifacts2[target_artifact_id] = install2
+                doc["artifacts"] = artifacts2
             _set_runtime_actor_binding(
                 doc,
                 group_id=group_id,
@@ -5646,6 +7055,13 @@ def handle_capability_tool_call(args: Dict[str, Any]) -> DaemonResponse:
                 state="ready",
                 last_error="",
             )
+            _record_runtime_recent_success(
+                doc,
+                capability_id=target_capability_id,
+                group_id=group_id,
+                actor_id=actor_id,
+                action="tool_call",
+            )
             _save_runtime_doc(path, doc)
 
         return DaemonResponse(
@@ -5653,7 +7069,7 @@ def handle_capability_tool_call(args: Dict[str, Any]) -> DaemonResponse:
             result={
                 "tool_name": tool_name,
                 "resolved_tool_name": resolved_tool_name,
-                "real_tool_name": real_tool_name,
+                "real_tool_name": resolved_real_tool_name,
                 "capability_id": target_capability_id,
                 "result": result,
             },
@@ -5673,6 +7089,8 @@ def try_handle_capability_op(op: str, args: Dict[str, Any]) -> Optional[DaemonRe
         return handle_capability_allowlist_update(args)
     if op == "capability_allowlist_reset":
         return handle_capability_allowlist_reset(args)
+    if op == "capability_overview":
+        return handle_capability_overview(args)
     if op == "capability_search":
         return handle_capability_search(args)
     if op == "capability_enable":

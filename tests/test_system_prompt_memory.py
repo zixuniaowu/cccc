@@ -73,6 +73,7 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertIn("cccc_memory(action=search)", prompt)
             self.assertIn('cccc_memory_admin(action="ingest", mode="signal")', prompt)
             self.assertIn("cccc_memory(action=guide, topic=...)", prompt)
+            self.assertIn("Todo-first discipline", prompt)
             self.assertIn("Gap policy: info gap -> search evidence first", prompt)
         finally:
             cleanup()

@@ -212,6 +212,11 @@ MCP_TOOLS = [
                 "title": {"type": "string"},
                 "command": {"type": "array", "items": {"type": "string"}},
                 "env": {"type": "object", "additionalProperties": {"type": "string"}},
+                "capability_autoload": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Actor startup autoload capability ids (applies on actor start/restart).",
+                },
                 "profile_id": {"type": "string"},
             }
         ),
@@ -293,7 +298,11 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_capability_use",
-        "description": "One-step capability use: enable capability and optionally call a target tool.",
+        "description": (
+            "One-step capability use: enable capability and optionally call a target tool. "
+            "For skill:* capabilities this is runtime capsule activation (not full local skill package install). "
+            "If enable is not ready, inspect diagnostics/resolution_plan and resolve blockers before retry."
+        ),
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
