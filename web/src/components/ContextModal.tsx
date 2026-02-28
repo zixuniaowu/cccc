@@ -5,7 +5,6 @@ import { GroupContext, ProjectMdInfo, Task } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { MarkdownRenderer } from "./MarkdownRenderer";
-import { MermaidDiagram } from "./MermaidDiagram";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { ModalFrame } from "./modals/ModalFrame";
 import { ProjectSavedNotifyModal } from "./modals/context/ProjectSavedNotifyModal";
@@ -22,7 +21,7 @@ interface ContextModalProps {
 }
 
 type ContextOp = { op: string } & Record<string, unknown>;
-type ContextTabId = "strategy" | "execution" | "charter";
+type ContextTabId = "strategy" | "execution";
 
 export function ContextModal({
   isOpen,
@@ -61,8 +60,6 @@ export function ContextModal({
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [tasksBusy, setTasksBusy] = useState(false);
   const [tasksError, setTasksError] = useState("");
-  const [showMermaidModal, setShowMermaidModal] = useState(false);
-  const [mermaidZoom, setMermaidZoom] = useState(1);
 
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState("");
@@ -79,7 +76,7 @@ export function ContextModal({
     if (tabStorageKey && typeof window !== "undefined") {
       try {
         const raw = String(window.sessionStorage.getItem(tabStorageKey) || "").trim();
-        if (raw === "strategy" || raw === "execution" || raw === "charter") {
+        if (raw === "strategy" || raw === "execution") {
           nextTab = raw;
         }
       } catch {
@@ -117,8 +114,6 @@ export function ContextModal({
     setProjectError("");
     setEditingProject(false);
     setEditingOverview(false);
-    setShowMermaidModal(false);
-    setMermaidZoom(1);
     setNotifyError("");
     setShowNotifyModal(false);
 
@@ -308,9 +303,6 @@ export function ContextModal({
     }
   };
 
-  const zoomInMermaid = () => setMermaidZoom((z) => Math.min(2.5, Math.round((z + 0.1) * 10) / 10));
-  const zoomOutMermaid = () => setMermaidZoom((z) => Math.max(0.6, Math.round((z - 0.1) * 10) / 10));
-  const resetMermaidZoom = () => setMermaidZoom(1);
 
   // Task card renderer (shared across status groups)
   const renderTaskCard = (tk: Task, showArchive: boolean) => (
@@ -368,7 +360,6 @@ export function ContextModal({
   const agentStates = context?.presence?.agents || [];
   const agentCount = agentStates.length;
   const blockedAgentCount = agentStates.filter((a) => Array.isArray(a.blockers) && a.blockers.length > 0).length;
-  const mermaidChart = String(context?.overview?.mermaid || "").trim();
   const sectionCardClass = classNames(
     "rounded-2xl border p-4 shadow-sm",
     isDark ? "border-slate-700/80 bg-slate-900/45" : "border-gray-200 bg-white/85"
@@ -385,10 +376,6 @@ export function ContextModal({
     {
       id: "execution",
       label: tr("context.tabExecution", "Execution"),
-    },
-    {
-      id: "charter",
-      label: tr("context.tabCharter", "Charter"),
     },
   ];
 
@@ -636,35 +623,80 @@ export function ContextModal({
                           )}
                       </div>
 
-                      {context?.overview?.mermaid ? (
-                        <div className="mt-3">
-                          <div className={`mb-1 text-[11px] font-medium uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-400"}`}>
-                            {tr("context.overviewMermaid", "Project Panorama")}
-                          </div>
-                          <div className={classNames("mb-2 text-[11px]", isDark ? "text-slate-500" : "text-gray-500")}>
-                            {tr("context.diagramHint", "Click diagram to open full-screen and zoom")}
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setMermaidZoom(1);
-                              setShowMermaidModal(true);
-                            }}
-                            className={classNames(
-                              "w-full cursor-zoom-in text-left rounded-xl border p-2 overflow-hidden transition-colors",
-                              isDark ? "border-slate-700 bg-slate-950/40 hover:bg-slate-900/60" : "border-gray-200 bg-white hover:bg-gray-50"
-                            )}
-                          >
-                            <MermaidDiagram
-                              chart={String(context.overview.mermaid)}
-                              isDark={isDark}
-                              fitMode="contain"
-                              className="max-h-[520px] min-h-[280px]"
-                            />
-                          </button>
-                        </div>
-                      ) : null}
                     </>
+                  )}
+                </div>
+              </section>
+
+              <section className={sectionCardClass}>
+                <div className={sectionTitleClass}>{t("context.projectMd")}</div>
+                <div className="mt-2">
+                  <div className="flex items-center justify-between mb-2 gap-2">
+                    <div className="min-w-0">
+                      <div className={`text-[11px] truncate ${isDark ? "text-slate-500" : "text-gray-500"}`} title={projectPathLabel}>
+                        {projectBusy ? t("common:loading") : projectMd?.found ? projectPathLabel : projectMd?.path ? t("context.missingPath", { path: projectMd.path }) : t("context.missingLabel")}
+                      </div>
+                    </div>
+                    {!editingProject && (
+                      <button
+                        onClick={handleEditProject}
+                        disabled={projectBusy || !groupId}
+                        className={`text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50 ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
+                          }`}
+                      >
+                        {projectMd?.found ? `✏️ ${t("context.editButton")}` : `＋ ${t("context.createButton")}`}
+                      </button>
+                    )}
+                  </div>
+                  {projectError && (
+                    <div className={`mb-2 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
+                      }`}>
+                      {projectError}
+                    </div>
+                  )}
+                  {editingProject ? (
+                    <div className="space-y-2">
+                      <textarea
+                        value={projectText}
+                        onChange={(e) => setProjectText(e.target.value)}
+                        className={`w-full h-72 px-3 py-2 border rounded-lg text-sm resize-none font-mono transition-colors ${isDark
+                          ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
+                          : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                          }`}
+                        placeholder={t("context.writePlaceholder")}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleSaveProject}
+                          disabled={projectBusy || !groupId}
+                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
+                        >
+                          {projectBusy ? t("common:loading") : t("common:save")}
+                        </button>
+                        <button
+                          onClick={() => setEditingProject(false)}
+                          disabled={projectBusy}
+                          className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${isDark
+                            ? "bg-slate-700 hover:bg-slate-600 text-slate-200"
+                            : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                            }`}
+                        >
+                          {t("common:cancel")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className={`px-3 py-2 rounded-lg text-sm min-h-[80px] max-h-[64vh] overflow-auto ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"
+                      }`}>
+                      {projectMd?.found && projectMd.content ? (
+                        <MarkdownRenderer
+                          content={String(projectMd.content)}
+                          isDark={isDark}
+                        />
+                      ) : (
+                        <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>{t("context.noProjectMd")}</span>
+                      )}
+                    </div>
                   )}
                 </div>
               </section>
@@ -860,83 +892,6 @@ export function ContextModal({
             </div>
           ) : null}
 
-          {activeTab === "charter" ? (
-            <div className="space-y-4">
-              <section className={sectionCardClass}>
-                <div className={sectionTitleClass}>{t("context.projectMd")}</div>
-                <div className="mt-2">
-                  <div className="flex items-center justify-between mb-2 gap-2">
-                    <div className="min-w-0">
-                      <div className={`text-[11px] truncate ${isDark ? "text-slate-500" : "text-gray-500"}`} title={projectPathLabel}>
-                        {projectBusy ? t("common:loading") : projectMd?.found ? projectPathLabel : projectMd?.path ? t("context.missingPath", { path: projectMd.path }) : t("context.missingLabel")}
-                      </div>
-                    </div>
-                    {!editingProject && (
-                      <button
-                        onClick={handleEditProject}
-                        disabled={projectBusy || !groupId}
-                        className={`text-xs min-h-[36px] px-2 rounded transition-colors disabled:opacity-50 ${isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-700"
-                          }`}
-                      >
-                        {projectMd?.found ? `✏️ ${t("context.editButton")}` : `＋ ${t("context.createButton")}`}
-                      </button>
-                    )}
-                  </div>
-                  {projectError && (
-                    <div className={`mb-2 text-xs rounded-lg border px-3 py-2 ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
-                      }`}>
-                      {projectError}
-                    </div>
-                  )}
-                  {editingProject ? (
-                    <div className="space-y-2">
-                      <textarea
-                        value={projectText}
-                        onChange={(e) => setProjectText(e.target.value)}
-                        className={`w-full h-72 px-3 py-2 border rounded-lg text-sm resize-none font-mono transition-colors ${isDark
-                          ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
-                          : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                          }`}
-                        placeholder={t("context.writePlaceholder")}
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={handleSaveProject}
-                          disabled={projectBusy || !groupId}
-                          className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors"
-                        >
-                          {projectBusy ? t("common:loading") : t("common:save")}
-                        </button>
-                        <button
-                          onClick={() => setEditingProject(false)}
-                          disabled={projectBusy}
-                          className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${isDark
-                            ? "bg-slate-700 hover:bg-slate-600 text-slate-200"
-                            : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-                            }`}
-                        >
-                          {t("common:cancel")}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className={`px-3 py-2 rounded-lg text-sm min-h-[80px] max-h-[64vh] overflow-auto ${isDark ? "bg-slate-800/50 text-slate-300" : "bg-gray-50 text-gray-700"
-                      }`}>
-                      {projectMd?.found && projectMd.content ? (
-                        <MarkdownRenderer
-                          content={String(projectMd.content)}
-                          isDark={isDark}
-                        />
-                      ) : (
-                        <span className={isDark ? "text-slate-500 italic" : "text-gray-400 italic"}>{t("context.noProjectMd")}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </section>
-            </div>
-          ) : null}
-
           {syncBusy && (
             <div className={classNames(
               "text-[11px] italic",
@@ -947,93 +902,6 @@ export function ContextModal({
           )}
         </div>
       </ModalFrame>
-
-      {showMermaidModal && mermaidChart ? (
-        <div className="fixed inset-0 z-overlay flex items-center justify-center p-2 sm:p-4">
-          <div
-            className={isDark ? "absolute inset-0 bg-black/75" : "absolute inset-0 bg-black/60"}
-            onPointerDown={(e) => {
-              if (e.target !== e.currentTarget) return;
-              setShowMermaidModal(false);
-            }}
-            aria-hidden="true"
-          />
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={tr("context.overviewMermaid", "Project Panorama")}
-            className={classNames(
-              "relative w-full max-w-[98vw] rounded-xl border shadow-2xl p-3 sm:p-4",
-              isDark ? "bg-slate-950 border-slate-700" : "bg-white border-gray-200"
-            )}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <div>
-                <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>
-                  {tr("context.overviewMermaid", "Project Panorama")}
-                </div>
-                <div className={classNames("text-[11px]", isDark ? "text-slate-500" : "text-gray-500")}>
-                  {tr("context.zoomLevel", "Zoom {{percent}}%", { percent: Math.round(mermaidZoom * 100) })}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={zoomOutMermaid}
-                  className={classNames(
-                    "px-2 py-1 rounded text-xs border min-h-[32px]",
-                    isDark ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  )}
-                >
-                  {tr("context.zoomOut", "Zoom -")}
-                </button>
-                <button
-                  type="button"
-                  onClick={resetMermaidZoom}
-                  className={classNames(
-                    "px-2 py-1 rounded text-xs border min-h-[32px]",
-                    isDark ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  )}
-                >
-                  {tr("context.zoomReset", "Reset")}
-                </button>
-                <button
-                  type="button"
-                  onClick={zoomInMermaid}
-                  className={classNames(
-                    "px-2 py-1 rounded text-xs border min-h-[32px]",
-                    isDark ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  )}
-                >
-                  {tr("context.zoomIn", "Zoom +")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowMermaidModal(false)}
-                  className={classNames(
-                    "px-2.5 py-1 rounded text-xs border min-h-[32px]",
-                    isDark ? "border-slate-600 text-slate-200 hover:bg-slate-800" : "border-gray-300 text-gray-700 hover:bg-gray-100"
-                  )}
-                >
-                  {tr("context.close", "Close")}
-                </button>
-              </div>
-            </div>
-
-            <div className={classNames("rounded-lg border overflow-auto h-[82vh] p-3", isDark ? "border-slate-700 bg-slate-900/40" : "border-gray-200 bg-gray-50")}>
-              <div
-                style={{
-                  transform: `scale(${mermaidZoom})`,
-                  transformOrigin: "top left",
-                  width: `${100 / mermaidZoom}%`,
-                }}
-              >
-                <MermaidDiagram chart={mermaidChart} isDark={isDark} fitMode="natural" className="min-h-[76vh]" />
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       <ProjectSavedNotifyModal
         isOpen={showNotifyModal}

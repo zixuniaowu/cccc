@@ -30,6 +30,7 @@ from ...kernel.context import (
     Step,
     StepStatus,
     AgentState,
+    AgentsData,
     _utc_now_iso,
 )
 from ...kernel.ledger import append_event
@@ -253,6 +254,18 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     context = storage.load_context()
     tasks = storage.list_tasks()
     presence = storage.load_presence()
+
+    # Filter presence agents to only include current group actors.
+    # presence.yaml may contain stale entries from removed actors.
+    actor_ids = {
+        str(a.get("id") or "").strip()
+        for a in storage.group.doc.get("actors", [])
+        if isinstance(a, dict) and str(a.get("id") or "").strip()
+    }
+    if actor_ids:
+        presence = AgentsData(
+            agents=[a for a in presence.agents if a.id in actor_ids],
+        )
 
     # Build tasks summary
     non_archived = [t for t in tasks if t.status != TaskStatus.ARCHIVED]
