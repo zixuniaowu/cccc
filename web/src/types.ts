@@ -250,6 +250,7 @@ export type GroupContext = {
   };
   active_tasks?: Task[];
   agents?: AgentState[];
+  presence?: { agents?: AgentState[] };
 };
 
 export type ProjectMdInfo = {

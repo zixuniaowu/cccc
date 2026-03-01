@@ -10,9 +10,10 @@ interface PanoramaTabProps {
   actors?: Actor[];
   tasks?: Task[];
   isDark: boolean;
+  groupId?: string;
 }
 
-export function PanoramaTab({ agents, actors, tasks, isDark }: PanoramaTabProps) {
+export function PanoramaTab({ agents, actors, tasks, isDark, groupId }: PanoramaTabProps) {
   if (agents.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -33,7 +34,7 @@ export function PanoramaTab({ agents, actors, tasks, isDark }: PanoramaTabProps)
         </div>
       }
     >
-      <ActorScene3D agents={agents} actors={actors} tasks={tasks} isDark={isDark} className="flex-1" />
+      <ActorScene3D agents={agents} actors={actors} tasks={tasks} isDark={isDark} groupId={groupId} className="flex-1" />
     </Suspense>
   );
 }

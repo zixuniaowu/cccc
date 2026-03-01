@@ -14,6 +14,7 @@ interface ActorScene3DProps {
   actors?: Actor[];
   tasks?: Task[];
   isDark: boolean;
+  groupId?: string;
   className?: string;
 }
 
@@ -113,10 +114,11 @@ interface SceneProps {
   actors?: Actor[];
   tasks?: Task[];
   isDark: boolean;
+  groupId?: string;
   camZ: number;
 }
 
-function Scene({ agents, actors, tasks, isDark, camZ }: SceneProps) {
+function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: SceneProps) {
   const characterRefs = useRef<Map<string, THREE.Group>>(new Map());
 
   const actorMap = useMemo(() => {
@@ -265,7 +267,7 @@ function Scene({ agents, actors, tasks, isDark, camZ }: SceneProps) {
   );
 }
 
-export function ActorScene3D({ agents, actors, tasks, isDark, className }: ActorScene3DProps) {
+export function ActorScene3D({ agents, actors, tasks, isDark, groupId, className }: ActorScene3DProps) {
   const taskCount = tasks?.length ?? 0;
   const camZ = useMemo(() => {
     const radius = siteRadius(agents.length);
@@ -277,7 +279,7 @@ export function ActorScene3D({ agents, actors, tasks, isDark, className }: Actor
   return (
     <div className={className} style={{ minHeight: 280 }}>
       <Canvas
-        shadows
+        shadows={{ type: THREE.PCFShadowMap }}
         camera={{
           position: [camZ * 0.6, camZ * 0.5, camZ],
           fov: 45,
@@ -291,7 +293,7 @@ export function ActorScene3D({ agents, actors, tasks, isDark, className }: Actor
         gl={{ antialias: true, alpha: false }}
       >
         <Suspense fallback={null}>
-          <Scene agents={agents} actors={actors} tasks={tasks} isDark={isDark} camZ={camZ} />
+          <Scene agents={agents} actors={actors} tasks={tasks} isDark={isDark} groupId={groupId} camZ={camZ} />
         </Suspense>
       </Canvas>
     </div>

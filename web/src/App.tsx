@@ -540,11 +540,12 @@ export default function App() {
               <ErrorBoundary>
                 <PanoramaTab
                   agents={(groupContext?.agents || []).filter(
-                    (a) => actors.some((act) => act.id === a.id && act.enabled !== false)
+                    (a) => actors.some((act) => act.id === a.id)
                   )}
                   actors={actors}
                   tasks={groupContext?.active_tasks}
                   isDark={isDark}
+                  groupId={selectedGroupId}
                 />
               </ErrorBoundary>
             </div>
