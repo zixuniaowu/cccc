@@ -29,7 +29,7 @@ import {
 } from "../stores";
 import { getAckRecipientIdsForEvent, getRecipientActorIdsForEvent } from "../hooks/useSSE";
 import * as api from "../services/api";
-import { ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, SupportedRuntime } from "../types";
+import { Actor, ActorProfile, RUNTIME_INFO, LedgerEvent, GroupSettings, ChatMessageData, SupportedRuntime } from "../types";
 
 interface AppModalsProps {
   isDark: boolean;
@@ -548,7 +548,7 @@ export function AppModals({
     await handleSaveEditActor(payload, { restart: true });
   };
 
-  const _applyEditingActor = (actor: Record<string, unknown>) => {
+  const applyEditingActor = useCallback((actor: Record<string, unknown>) => {
     const runtime = String(actor.runtime || "").trim();
     setEditActorRuntime((runtime || "codex") as SupportedRuntime);
     setEditActorCommand(Array.isArray(actor.command) ? actor.command.join(" ") : "");
@@ -556,8 +556,8 @@ export function AppModals({
     setEditActorCapabilityAutoloadText(
       formatCapabilityIdInput((actor as { capability_autoload?: unknown[] }).capability_autoload)
     );
-    setEditingActor(actor as any);
-  };
+    setEditingActor(actor as Actor);
+  }, [setEditActorRuntime, setEditActorCommand, setEditActorTitle, setEditActorCapabilityAutoloadText, setEditingActor]);
 
   useEffect(() => {
     if (!editingActor) return;
@@ -580,8 +580,8 @@ export function AppModals({
         String(
           normalizeCapabilityIdList((latest as { capability_autoload?: unknown[] }).capability_autoload).join("\u0000")
         );
-    if (changed) _applyEditingActor(latest as Record<string, unknown>);
-  }, [actors, editingActor]);
+    if (changed) applyEditingActor(latest as Record<string, unknown>);
+  }, [actors, editingActor, applyEditingActor]);
 
   const handleSaveEditActorAsProfile = async (): Promise<SaveActorProfileResult | void> => {
     if (!editingActor || !selectedGroupId) return;

@@ -187,17 +187,6 @@ function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: Scene
     [agents, actorMap, buildTargetMap],
   );
 
-  const refCallbacks = useMemo(() => {
-    const map = new Map<string, (el: THREE.Group | null) => void>();
-    for (const agent of agents) {
-      map.set(agent.id, (el: THREE.Group | null) => {
-        if (el) characterRefs.current.set(agent.id, el);
-        else characterRefs.current.delete(agent.id);
-      });
-    }
-    return map;
-  }, [agents]);
-
   useCharacterAnimation({
     agents, actorMap, layout, buildTargetMap, characterRefs,
     staticMode: true,
@@ -240,7 +229,10 @@ function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: Scene
         return (
           <ActorCharacter
             key={agent.id}
-            ref={refCallbacks.get(agent.id)}
+            ref={(el: THREE.Group | null) => {
+              if (el) characterRefs.current.set(agent.id, el);
+              else characterRefs.current.delete(agent.id);
+            }}
             agent={agent}
             position={item?.charPos || [0, 0, 0]}
             rotationY={item?.charRotY}

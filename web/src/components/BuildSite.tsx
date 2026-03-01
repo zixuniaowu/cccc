@@ -74,12 +74,12 @@ export const BuildSite = forwardRef<BuildSiteHandle, BuildSiteProps>(
     const cx = -(blueprint.gridSize[0] - 1) * bs / 2;
     const cz = -(blueprint.gridSize[2] - 1) * bs / 2;
 
-    // Solid block instances (new blocks start at scale 0 for pop animation)
+    // Solid block instances (useFrame handles pop-in animation scale)
     const solidBlocks = useMemo((): BlockInstance[] =>
-      sortedBlocks.slice(0, solidCount).map((bl, i) => ({
+      sortedBlocks.slice(0, solidCount).map((bl) => ({
         position: [cx + bl.x * bs, bl.y * bs, cz + bl.z * bs] as [number, number, number],
         color: bl.color,
-        scale: animMap.current.has(i) ? 0 : bs,
+        scale: bs,
       })),
       [sortedBlocks, solidCount, bs, cx, cz],
     );
@@ -97,7 +97,7 @@ export const BuildSite = forwardRef<BuildSiteHandle, BuildSiteProps>(
 
     // Keep solidBlocks ref in sync for useFrame access (avoids stale closure)
     const solidBlocksRef = useRef(solidBlocks);
-    solidBlocksRef.current = solidBlocks;
+    useEffect(() => { solidBlocksRef.current = solidBlocks; });
 
     // Pop animation: update animating blocks each frame via imperative handle
     useFrame(() => {

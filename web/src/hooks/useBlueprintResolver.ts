@@ -29,23 +29,13 @@ export function useBlueprintResolver(task: Task | null): BlueprintResolverResult
     if (!task) return null;
     const match = matchBlueprint(task);
     return BLUEPRINTS[match.blueprintId] ?? null;
-  }, [task?.id, task?.name, task?.goal]);
+  }, [task]);
 
-  // Worker-validated version (replaces predefined once ready)
-  const [workerBp, setWorkerBp] = useState<Blueprint | null>(null);
+  // Async worker result, keyed by blueprint id to avoid stale state
+  const [workerResult, setWorkerResult] = useState<{ forId: string; bp: Blueprint } | null>(null);
 
   useEffect(() => {
-    if (!predefined) {
-      setWorkerBp(null);
-      return;
-    }
-
-    // Cache hit: use previously validated blueprint
-    const cached = validatedCache.get(predefined.id);
-    if (cached) {
-      setWorkerBp(cached);
-      return;
-    }
+    if (!predefined || validatedCache.has(predefined.id)) return;
 
     // Validate through Worker (background, non-blocking)
     let cancelled = false;
@@ -58,13 +48,13 @@ export function useBlueprintResolver(task: Task | null): BlueprintResolverResult
         if (cancelled) return;
         const bp: Blueprint = { ...predefined, blocks, gridSize };
         validatedCache.set(predefined.id, bp);
-        setWorkerBp(bp);
+        setWorkerResult({ forId: predefined.id, bp });
       })
       .catch(() => {
         // Fallback: use predefined as-is on Worker error
         if (cancelled) return;
         validatedCache.set(predefined.id, predefined);
-        setWorkerBp(predefined);
+        setWorkerResult({ forId: predefined.id, bp: predefined });
       });
 
     return () => {
@@ -72,8 +62,10 @@ export function useBlueprintResolver(task: Task | null): BlueprintResolverResult
     };
   }, [predefined]);
 
-  // Return predefined immediately; swap to Worker-validated once cached
-  const blueprint = workerBp ?? predefined;
+  // Resolution: module cache > matching worker result > predefined
+  const cached = predefined ? validatedCache.get(predefined.id) ?? null : null;
+  const matchedWorkerBp = workerResult != null && workerResult.forId === predefined?.id ? workerResult.bp : null;
+  const blueprint = cached ?? matchedWorkerBp ?? predefined;
   return {
     blueprint,
     loading: false,

@@ -4,7 +4,7 @@
 import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { hashCode, deriveAnimState, PART_INDEX } from "../components/ActorCharacter";
+import { hashCode, deriveAnimState, PART_INDEX } from "../utils/actorUtils";
 import {
   type PoseTarget, type PoseContext, type DerivedState,
   BASE_Y, SLEEP, LOCOMOTION, PATROL,

@@ -2,7 +2,7 @@
 // Holds each selection for a minimum duration before re-rolling
 
 import { useRef, useCallback } from "react";
-import { hashCode } from "../components/ActorCharacter";
+import { hashCode } from "../utils/actorUtils";
 import {
   type DerivedState, type BehaviorEntry, BEHAVIOR_POOLS,
 } from "../data/animationProfiles";

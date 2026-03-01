@@ -65,9 +65,10 @@ function BuildPlot({
 }
 
 export function BuildZone({ tasks, baseZ, isDark }: BuildZoneProps) {
+  const taskCount = tasks.length;
   const positions = useMemo(
-    () => tasks.map((_, i) => computeGridPosition(i, tasks.length, baseZ)),
-    [tasks.length, baseZ],
+    () => Array.from({ length: taskCount }, (_, i) => computeGridPosition(i, taskCount, baseZ)),
+    [taskCount, baseZ],
   );
 
   if (tasks.length === 0) return null;
