@@ -220,7 +220,7 @@ The error envelope shape in §5.2 is **normative**: daemons MUST return errors u
 Common codes used by CCCC v0.4.x include (non-exhaustive):
 - `invalid_request`, `unknown_op`
 - `missing_group_id`, `group_not_found`
-- `missing_actor_id`, `actor_not_found`, `actor_not_running`
+- `missing_actor_id`, `actor_not_found`, `actor_not_running`, `not_pty_actor`
 - `permission_denied`
 - `invalid_patch`, `invalid_template`, `confirmation_required`
 
@@ -2041,6 +2041,7 @@ After a successful handshake, the connection becomes a raw PTY stream (see §4.4
 
 Notes:
 - `term_resize` MUST be sent over a separate daemon connection (the PTY stream is not NDJSON).
+- `term_attach` returns `not_pty_actor` when the actor is not effectively running on the PTY runner.
 
 ### 8.12 Ledger Maintenance
 

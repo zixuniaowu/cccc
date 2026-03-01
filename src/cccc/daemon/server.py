@@ -939,6 +939,7 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
                     ),
                     load_group=load_group,
                     find_actor=find_actor,
+                    effective_runner_kind=_effective_runner_kind,
                     supported_stream_kinds=_supported_stream_kinds,
                     start_events_stream=lambda sock2, group_id, by, kinds, since_event_id, since_ts: _start_events_stream(
                         sock=sock2,
