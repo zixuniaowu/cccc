@@ -539,7 +539,7 @@ export default function App() {
             >
               <ErrorBoundary>
                 <PanoramaTab
-                  agents={(groupContext?.presence?.agents || []).filter(
+                  agents={(groupContext?.agents || []).filter(
                     (a) => actors.some((act) => act.id === a.id && act.enabled !== false)
                   )}
                   actors={actors}
@@ -554,8 +554,8 @@ export default function App() {
               {renderedActorIds.map((actorId) => {
                 const actor = actors.find((a) => a.id === actorId) || null;
                 const isVisible = activeTab === actorId && activeTab !== "chat" && activeTab !== "panorama";
-                const presence =
-                  (groupContext?.presence?.agents || []).find((p) => p.id === (actor?.id || "")) || null;
+                const agentState =
+                  (groupContext?.agents || []).find((p) => p.id === (actor?.id || "")) || null;
 
                 return (
                   <div key={actorId} className={isVisible ? "flex min-h-0 flex-col flex-1" : "hidden"}>
@@ -563,7 +563,7 @@ export default function App() {
                     <ActorTab
                       actor={actor}
                       groupId={selectedGroupId}
-                      presenceAgent={presence}
+                      agentState={agentState}
                       termEpoch={actor ? getTermEpoch(actor.id) : 0}
                       busy={busy}
                       isDark={isDark}

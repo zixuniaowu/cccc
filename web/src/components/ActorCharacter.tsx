@@ -1,7 +1,7 @@
 import React, { useMemo, useEffect } from "react";
 import { Html } from "@react-three/drei";
 import * as THREE from "three";
-import type { PresenceAgent } from "../types";
+import type { AgentState } from "../types";
 
 // Shared geometry instances (module-level singletons, never disposed)
 const TORSO_GEO = new THREE.BoxGeometry(0.35, 0.5, 0.25);
@@ -107,8 +107,8 @@ const PALETTE = [
 // Animation state types and derivation
 export type AgentAnimState = "blocked" | "working" | "thinking" | "idle";
 
-/** Derive animation state from agent presence data. Priority: blocked > working > thinking > idle */
-export function deriveAnimState(agent: PresenceAgent): AgentAnimState {
+/** Derive animation state from agent state data. Priority: blocked > working > thinking > idle */
+export function deriveAnimState(agent: AgentState): AgentAnimState {
   if (Array.isArray(agent.blockers) && agent.blockers.length > 0) return "blocked";
   if (agent.active_task_id && agent.focus) return "working";
   if (agent.focus || agent.next_action) return "thinking";
@@ -142,7 +142,7 @@ function agentColor(id: string, runtime?: string): string {
 }
 
 export interface ActorCharacterProps {
-  agent: PresenceAgent;
+  agent: AgentState;
   position: [number, number, number];
   rotationY?: number;
   isDark: boolean;

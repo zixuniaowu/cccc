@@ -1,12 +1,12 @@
 import { lazy, Suspense } from "react";
-import type { PresenceAgent, Actor } from "../types";
+import type { AgentState, Actor } from "../types";
 
 const ActorScene3D = lazy(() =>
   import("../components/ActorScene3D").then((m) => ({ default: m.ActorScene3D }))
 );
 
 interface PanoramaTabProps {
-  agents: PresenceAgent[];
+  agents: AgentState[];
   actors?: Actor[];
   isDark: boolean;
 }

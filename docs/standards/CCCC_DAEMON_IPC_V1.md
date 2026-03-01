@@ -1661,21 +1661,19 @@ Result:
     root_count: number
   }
   active_tasks: Array<Record<string, unknown>>
-  presence: {
-    agents: Array<{
-      id: string
-      active_task_id?: string | null
-      focus: string
-      blockers: string[]
-      next_action: string
-      what_changed: string
-      decision_delta: string
-      environment: string
-      user_profile: string
-      notes: string
-      updated_at: string
-    }>
-  }
+  agents: Array<{
+    id: string
+    active_task_id?: string | null
+    focus: string
+    blockers: string[]
+    next_action: string
+    what_changed: string
+    decision_delta: string
+    environment: string
+    user_profile: string
+    notes: string
+    updated_at: string
+  }>
 }
 ```
 
@@ -1885,7 +1883,7 @@ Result:
 { tasks?: Array<Record<string, unknown>>; task?: Record<string, unknown> }
 ```
 
-`presence_get` has been removed in v2. Presence/agent state is returned in `context_get.result.presence.agents`.
+`presence_get` has been removed in v2. Agent state is returned in `context_get.result.agents`.
 
 ### 8.9 Headless Runner
 

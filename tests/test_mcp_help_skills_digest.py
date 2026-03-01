@@ -68,16 +68,14 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         ), patch(
             "cccc.ports.mcp.server._call_daemon_or_raise",
             return_value={
-                "presence": {
-                    "agents": [
-                        {
-                            "id": "peer-1",
-                            "focus": "test focus",
-                            "next_action": "do next",
-                            "what_changed": "updated",
-                        }
-                    ]
-                }
+                "agents": [
+                    {
+                        "id": "peer-1",
+                        "focus": "test focus",
+                        "next_action": "do next",
+                        "what_changed": "updated",
+                    }
+                ]
             },
         ):
             out = handle_tool_call("cccc_help", {})

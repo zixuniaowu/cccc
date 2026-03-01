@@ -46,8 +46,7 @@ def _build_context_hygiene_hint(*, context: Dict[str, Any], actor_id: str) -> Di
     }
     if not aid or not isinstance(context, dict):
         return hint
-    presence = context.get("presence") if isinstance(context.get("presence"), dict) else {}
-    agents = presence.get("agents") if isinstance(presence.get("agents"), list) else []
+    agents = context.get("agents") if isinstance(context.get("agents"), list) else []
     target: Optional[Dict[str, Any]] = None
     aid_lower = aid.lower()
     for item in agents:

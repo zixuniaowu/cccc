@@ -8,6 +8,7 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { ModalFrame } from "./modals/ModalFrame";
 import { ProjectSavedNotifyModal } from "./modals/context/ProjectSavedNotifyModal";
+import { useUIStore } from "../stores/useUIStore";
 
 interface ContextModalProps {
   isOpen: boolean;
@@ -22,6 +23,7 @@ interface ContextModalProps {
 
 type ContextOp = { op: string } & Record<string, unknown>;
 type ContextTabId = "strategy" | "execution";
+type AgentState = NonNullable<GroupContext["agents"]>[number];
 
 export function ContextModal({
   isOpen,
@@ -64,6 +66,9 @@ export function ContextModal({
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState("");
   const [activeTab, setActiveTab] = useState<ContextTabId>("strategy");
+  const [blockingTaskId, setBlockingTaskId] = useState("");
+  const [blockReason, setBlockReason] = useState("");
+  const uiActiveTab = useUIStore((s) => s.activeTab);
 
   const tabStorageKey = useMemo(() => {
     const gid = String(groupId || "").trim();
@@ -154,24 +159,88 @@ export function ContextModal({
     };
   }, [groupId, isOpen, t]);
 
-  const tasksByStatus = useMemo(() => {
+  const rawAgentStates = context?.agents;
+  const agentStates = useMemo(
+    () => (Array.isArray(rawAgentStates) ? rawAgentStates : []),
+    [rawAgentStates]
+  );
+  const agentById = useMemo(() => {
+    const map = new Map<string, AgentState>();
+    for (const agent of agentStates) {
+      map.set(String(agent.id || "").trim(), agent);
+    }
+    return map;
+  }, [agentStates]);
+  const knownAgentIds = useMemo(() => new Set(Array.from(agentById.keys())), [agentById]);
+
+  const currentActorId = useMemo(() => {
+    const tab = String(uiActiveTab || "").trim();
+    if (!tab || tab === "chat" || tab === "panorama") return "";
+    if (knownAgentIds.has(tab)) return tab;
+    return "";
+  }, [knownAgentIds, uiActiveTab]);
+
+  const taskViews = useMemo(() => {
     const list = Array.isArray(tasks) ? tasks : [];
     const normalize = (s: unknown) => String(s || "planned").toLowerCase();
-    const active: Task[] = [];
-    const planned: Task[] = [];
-    const done: Task[] = [];
+
+    const myActive: Task[] = [];
+    const blocked: Task[] = [];
+    const unassigned: Task[] = [];
+    const activeOthers: Task[] = [];
+    const plannedAssigned: Task[] = [];
+    const doneQueue: Task[] = [];
     const archived: Task[] = [];
-    const other: Task[] = [];
+
+    const isTaskBlocked = (tk: Task): boolean => {
+      const assignee = String(tk.assignee || "").trim();
+      if (!assignee) return false;
+      const agent = agentById.get(assignee);
+      if (!agent) return false;
+      const blockers = Array.isArray(agent.blockers)
+        ? agent.blockers.filter((x: unknown) => String(x || "").trim())
+        : [];
+      if (blockers.length === 0) return false;
+      const activeTask = String(agent.active_task_id || "").trim();
+      if (activeTask) return activeTask === tk.id;
+      return true;
+    };
+
     for (const tk of list) {
       const st = normalize(tk.status);
-      if (st === "active") active.push(tk);
-      else if (st === "done") done.push(tk);
-      else if (st === "archived") archived.push(tk);
-      else if (st === "planned") planned.push(tk);
-      else other.push(tk);
+      const assignee = String(tk.assignee || "").trim();
+      if (st === "archived") {
+        archived.push(tk);
+        continue;
+      }
+      if (st === "done") {
+        doneQueue.push(tk);
+        continue;
+      }
+      if (st === "active" && isTaskBlocked(tk)) {
+        blocked.push(tk);
+        continue;
+      }
+      if (st === "active" && currentActorId && assignee === currentActorId) {
+        myActive.push(tk);
+        continue;
+      }
+      if (!assignee && (st === "planned" || st === "active")) {
+        unassigned.push(tk);
+        continue;
+      }
+      if (st === "active") {
+        activeOthers.push(tk);
+        continue;
+      }
+      if (st === "planned") {
+        plannedAssigned.push(tk);
+        continue;
+      }
     }
-    return { active, planned, done, archived, other };
-  }, [tasks]);
+
+    return { myActive, blocked, unassigned, activeOthers, plannedAssigned, doneQueue, archived };
+  }, [agentById, currentActorId, tasks]);
 
   const runOps = async (ops: ContextOp[]): Promise<boolean> => {
     if (!groupId) return false;
@@ -214,6 +283,67 @@ export function ContextModal({
 
   const handleRestoreTask = async (taskId: string) => {
     await runOps([{ op: "task.restore", task_id: taskId }]);
+  };
+
+  const handleClaimTask = async (task: Task) => {
+    if (!currentActorId) {
+      setSyncError(tr("context.claimNeedsActorTab", "Select an agent tab first, then claim."));
+      return;
+    }
+    const status = String(task.status || "").toLowerCase();
+    const ops: ContextOp[] = [{ op: "task.update", task_id: task.id, assignee: currentActorId }];
+    if (status === "planned") {
+      ops.push({ op: "task.status", task_id: task.id, status: "active" });
+    }
+    await runOps(ops);
+  };
+
+  const handleMarkDone = async (taskId: string) => {
+    await runOps([{ op: "task.status", task_id: taskId, status: "done" }]);
+  };
+
+  const handleStartBlock = (taskId: string) => {
+    setBlockingTaskId(taskId);
+    setBlockReason("");
+    setSyncError("");
+  };
+
+  const handleCancelBlock = () => {
+    setBlockingTaskId("");
+    setBlockReason("");
+  };
+
+  const handleMarkBlocked = async (task: Task) => {
+    const reason = String(blockReason || "").trim();
+    if (!reason) {
+      setSyncError(tr("context.blockReasonRequired", "Write a blocker reason first."));
+      return;
+    }
+    const assignee = String(task.assignee || "").trim();
+    const targetActorId = assignee || currentActorId;
+    if (!targetActorId) {
+      setSyncError(tr("context.blockNeedsActor", "Cannot mark blocked: task has no assignee and no active agent tab."));
+      return;
+    }
+
+    const existingAgent = agentById.get(targetActorId);
+    const existingBlockers = Array.isArray(existingAgent?.blockers)
+      ? existingAgent!.blockers.map((x: unknown) => String(x || "").trim()).filter(Boolean)
+      : [];
+    const nextBlockers = existingBlockers.includes(reason) ? existingBlockers : [...existingBlockers, reason];
+    const ok = await runOps([
+      {
+        op: "agent.update",
+        agent_id: targetActorId,
+        active_task_id: task.id,
+        blockers: nextBlockers,
+        what_changed: `${task.id} blocked`,
+      },
+    ]);
+    if (ok) {
+      setBlockingTaskId("");
+      setBlockReason("");
+    }
   };
 
   const handleEditVision = () => {
@@ -303,9 +433,22 @@ export function ContextModal({
     }
   };
 
+  const actionBtnClass = classNames(
+    "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
+    isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+  );
 
-  // Task card renderer (shared across status groups)
-  const renderTaskCard = (tk: Task, showArchive: boolean) => (
+  const renderTaskCard = (
+    tk: Task,
+    opts: {
+      allowClaim?: boolean;
+      allowBlock?: boolean;
+      allowDone?: boolean;
+      allowArchive?: boolean;
+      allowRestore?: boolean;
+      showBlockedHint?: boolean;
+    }
+  ) => (
     <div key={tk.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
       <div className="flex items-start gap-2">
         <span className={`text-[11px] px-1.5 py-0.5 rounded ${isDark ? "bg-slate-700 text-slate-300" : "bg-gray-200 text-gray-700"}`}>
@@ -327,37 +470,142 @@ export function ContextModal({
               {tk.assignee ? t("context.assigneeLabel", { name: tk.assignee }) : ""}
             </div>
           ) : null}
+          {opts.showBlockedHint ? (
+            <div className={`text-[11px] mt-1 ${isDark ? "text-rose-300" : "text-rose-700"}`}>
+              {tr("context.blockedFromAgentState", "Blocked signal comes from assignee agent state.")}
+            </div>
+          ) : null}
+
+          {opts.allowBlock && blockingTaskId === tk.id ? (
+            <div className="mt-2 space-y-2">
+              <textarea
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                placeholder={tr("context.blockReasonPlaceholder", "What is blocking this task?")}
+                className={classNames(
+                  "w-full h-20 px-2 py-1.5 border rounded text-xs resize-none",
+                  isDark
+                    ? "bg-slate-900/70 border-slate-700 text-slate-200 focus:border-slate-500"
+                    : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
+                )}
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  disabled={syncBusy}
+                  onClick={() => void handleMarkBlocked(tk)}
+                  className={actionBtnClass}
+                >
+                  {tr("context.confirmBlock", "Confirm block")}
+                </button>
+                <button
+                  type="button"
+                  disabled={syncBusy}
+                  onClick={handleCancelBlock}
+                  className={actionBtnClass}
+                >
+                  {t("common:cancel")}
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
-        {showArchive ? (
-          <button
-            type="button"
-            disabled={syncBusy}
-            onClick={() => void handleArchiveTask(tk.id)}
-            className={classNames(
-              "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
-              isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-            )}
-          >
-            {t("context.archive")}
-          </button>
-        ) : (
-          <button
-            type="button"
-            disabled={syncBusy}
-            onClick={() => void handleRestoreTask(tk.id)}
-            className={classNames(
-              "text-[11px] px-2 py-0.5 rounded flex-shrink-0 transition-colors disabled:opacity-50",
-              isDark ? "bg-slate-700 text-slate-300 hover:bg-slate-600" : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-            )}
-          >
-            {t("context.restore")}
-          </button>
-        )}
+        <div className="flex flex-col items-end gap-1.5">
+          {opts.allowClaim ? (
+            <button
+              type="button"
+              disabled={syncBusy || !currentActorId}
+              onClick={() => void handleClaimTask(tk)}
+              className={actionBtnClass}
+              title={!currentActorId ? tr("context.claimNeedsActorTab", "Select an agent tab first, then claim.") : ""}
+            >
+              {tr("context.claim", "Claim")}
+            </button>
+          ) : null}
+          {opts.allowBlock ? (
+            <button
+              type="button"
+              disabled={syncBusy || blockingTaskId === tk.id}
+              onClick={() => handleStartBlock(tk.id)}
+              className={actionBtnClass}
+            >
+              {tr("context.block", "Block")}
+            </button>
+          ) : null}
+          {opts.allowDone ? (
+            <button
+              type="button"
+              disabled={syncBusy}
+              onClick={() => void handleMarkDone(tk.id)}
+              className={actionBtnClass}
+            >
+              {tr("context.done", "Done")}
+            </button>
+          ) : null}
+          {opts.allowArchive ? (
+            <button
+              type="button"
+              disabled={syncBusy}
+              onClick={() => void handleArchiveTask(tk.id)}
+              className={actionBtnClass}
+            >
+              {t("context.archive")}
+            </button>
+          ) : null}
+          {opts.allowRestore ? (
+            <button
+              type="button"
+              disabled={syncBusy}
+              onClick={() => void handleRestoreTask(tk.id)}
+              className={actionBtnClass}
+            >
+              {t("context.restore")}
+            </button>
+          ) : null}
+        </div>
       </div>
     </div>
   );
 
-  const agentStates = context?.presence?.agents || [];
+  const renderTaskBucket = (
+    title: string,
+    items: Task[],
+    emptyText: string,
+    opts: {
+      open?: boolean;
+      allowClaim?: boolean;
+      allowBlock?: boolean;
+      allowDone?: boolean;
+      allowArchive?: boolean;
+      allowRestore?: boolean;
+      showBlockedHint?: boolean;
+    }
+  ) => (
+    <details open={opts.open ?? false}>
+      <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+        {title} ({items.length})
+      </summary>
+      <div className="mt-2 space-y-2">
+        {items.length === 0 ? (
+          <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
+            {emptyText}
+          </div>
+        ) : (
+          items.map((tk) =>
+            renderTaskCard(tk, {
+              allowClaim: opts.allowClaim,
+              allowBlock: opts.allowBlock,
+              allowDone: opts.allowDone,
+              allowArchive: opts.allowArchive,
+              allowRestore: opts.allowRestore,
+              showBlockedHint: opts.showBlockedHint,
+            })
+          )
+        )}
+      </div>
+    </details>
+  );
+
   const agentCount = agentStates.length;
   const blockedAgentCount = agentStates.filter((a) => Array.isArray(a.blockers) && a.blockers.length > 0).length;
   const sectionCardClass = classNames(
@@ -736,63 +984,66 @@ export function ContextModal({
                         </div>
                       ) : (
                         <div className="space-y-2">
-                          {(tasksByStatus.active.length + tasksByStatus.planned.length + tasksByStatus.done.length + tasksByStatus.archived.length + tasksByStatus.other.length) === 0 ? (
+                          {(taskViews.myActive.length + taskViews.blocked.length + taskViews.unassigned.length + taskViews.activeOthers.length + taskViews.plannedAssigned.length + taskViews.doneQueue.length + taskViews.archived.length) === 0 ? (
                             <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
                               {t("context.noTasks")}
                             </div>
                           ) : (
                             <>
-                              <details open>
-                                <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                                  {t("context.statusActive")} ({tasksByStatus.active.length})
-                                </summary>
-                                <div className="mt-2 space-y-2">
-                                  {tasksByStatus.active.length === 0 ? (
-                                    <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                      {t("context.noActiveTask")}
-                                    </div>
-                                  ) : tasksByStatus.active.map((tk) => renderTaskCard(tk, true))}
+                              {!currentActorId ? (
+                                <div className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800/60 text-slate-400" : "bg-gray-50 text-gray-600"}`}>
+                                  {tr("context.selectAgentForQuickActions", "Select an agent tab to enable quick claim/block actions.")}
                                 </div>
-                              </details>
+                              ) : null}
 
-                              <details open>
-                                <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                                  {t("context.statusPlanned")} ({tasksByStatus.planned.length})
-                                </summary>
-                                <div className="mt-2 space-y-2">
-                                  {tasksByStatus.planned.length === 0 ? (
-                                    <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                      {t("context.noPlannedTasks")}
-                                    </div>
-                                  ) : tasksByStatus.planned.map((tk) => renderTaskCard(tk, true))}
-                                </div>
-                              </details>
+                              {renderTaskBucket(
+                                tr("context.viewMyActive", "My Active"),
+                                taskViews.myActive,
+                                tr("context.noMyActiveTasks", "No active tasks assigned to current agent."),
+                                { open: true, allowBlock: true, allowDone: true, allowArchive: true }
+                              )}
 
-                              <details>
-                                <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                                  {t("context.statusDone")} ({tasksByStatus.done.length})
-                                </summary>
-                                <div className="mt-2 space-y-2">
-                                  {tasksByStatus.done.length === 0 ? (
-                                    <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                      {t("context.noDoneTasks")}
-                                    </div>
-                                  ) : tasksByStatus.done.map((tk) => renderTaskCard(tk, true))}
-                                </div>
-                              </details>
+                              {renderTaskBucket(
+                                tr("context.viewBlocked", "Blocked"),
+                                taskViews.blocked,
+                                tr("context.noBlockedTasks", "No blocked active tasks."),
+                                { open: true, allowDone: true, allowArchive: true, showBlockedHint: true }
+                              )}
 
-                              <details>
-                                <summary className={classNames("cursor-pointer select-none text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
-                                  {t("context.statusArchived")} ({tasksByStatus.archived.length})
-                                </summary>
-                                <div className="mt-2 space-y-2">
-                                  {tasksByStatus.archived.length === 0 ? (
-                                    <div className={`px-3 py-2 rounded-lg text-sm italic ${isDark ? "bg-slate-800/50 text-slate-500" : "bg-gray-50 text-gray-400"}`}>
-                                      {t("context.noArchivedTasks")}
-                                    </div>
-                                  ) : tasksByStatus.archived.map((tk) => renderTaskCard(tk, false))}
-                                </div>
-                              </details>
+                              {renderTaskBucket(
+                                tr("context.viewUnassigned", "Unassigned"),
+                                taskViews.unassigned,
+                                tr("context.noUnassignedTasks", "No unassigned planned/active tasks."),
+                                { open: true, allowClaim: true, allowArchive: true }
+                              )}
+
+                              {renderTaskBucket(
+                                tr("context.viewActiveOthers", "Active (Others)"),
+                                taskViews.activeOthers,
+                                tr("context.noActiveOthersTasks", "No active tasks assigned to other agents."),
+                                { open: false, allowArchive: true }
+                              )}
+
+                              {renderTaskBucket(
+                                tr("context.viewPlannedAssigned", "Planned (Assigned)"),
+                                taskViews.plannedAssigned,
+                                tr("context.noPlannedAssignedTasks", "No planned tasks assigned yet."),
+                                { open: false, allowClaim: true, allowArchive: true }
+                              )}
+
+                              {renderTaskBucket(
+                                tr("context.viewDoneQueue", "Done Queue"),
+                                taskViews.doneQueue,
+                                tr("context.noDoneQueue", "No done tasks pending closure."),
+                                { open: false, allowArchive: true }
+                              )}
+
+                              {renderTaskBucket(
+                                tr("context.statusArchived", "archived"),
+                                taskViews.archived,
+                                t("context.noArchivedTasks"),
+                                { open: false, allowRestore: true }
+                              )}
                             </>
                           )}
                         </div>
@@ -810,9 +1061,9 @@ export function ContextModal({
               <section className={sectionCardClass}>
                 <div className={sectionTitleClass}>{tr("context.agents", "Agent State")}</div>
                 <div className="mt-2">
-                  {context?.presence?.agents && context.presence.agents.length > 0 ? (
+                  {context?.agents && context.agents.length > 0 ? (
                     <div className="space-y-2">
-                      {context.presence.agents.map((a) => (
+                      {context.agents.map((a) => (
                         <div key={a.id} className={`px-3 py-2 rounded-lg ${isDark ? "bg-slate-800/50" : "bg-gray-50"}`}>
                           <div className="flex items-center gap-2">
                             <span className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{a.id}</span>

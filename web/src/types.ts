@@ -174,7 +174,7 @@ export type CapabilityBlockEntry = {
   expires_at?: string;
 };
 
-export type PresenceAgent = {
+export type AgentState = {
   id: string;
   active_task_id?: string | null;
   focus?: string | null;
@@ -249,9 +249,7 @@ export type GroupContext = {
     root_count?: number;
   };
   active_tasks?: Task[];
-  presence?: {
-    agents?: PresenceAgent[];
-  };
+  agents?: AgentState[];
 };
 
 export type ProjectMdInfo = {

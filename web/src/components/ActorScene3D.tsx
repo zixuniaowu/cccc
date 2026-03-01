@@ -3,11 +3,11 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { ActorCharacter, hashCode, deriveAnimState, PART_INDEX } from "./ActorCharacter";
 import { Workstation } from "./OfficeFurniture";
-import type { PresenceAgent, Actor } from "../types";
+import type { AgentState, Actor } from "../types";
 import * as THREE from "three";
 
 interface ActorScene3DProps {
-  agents: PresenceAgent[];
+  agents: AgentState[];
   actors?: Actor[];
   isDark: boolean;
   className?: string;
@@ -38,7 +38,7 @@ function layoutRadius(agentCount: number): number {
 }
 
 function computeWorkstationLayout(
-  agents: PresenceAgent[],
+  agents: AgentState[],
   actorMap: Map<string, Actor>,
 ): LayoutItem[] {
   const count = agents.length;
@@ -88,7 +88,7 @@ function computeWorkstationLayout(
 
 // ── Scene ──
 interface SceneProps {
-  agents: PresenceAgent[];
+  agents: AgentState[];
   actors?: Actor[];
   isDark: boolean;
   camZ: number;
