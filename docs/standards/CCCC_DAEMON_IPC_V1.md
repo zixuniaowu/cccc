@@ -1885,6 +1885,24 @@ Result:
 
 `presence_get` has been removed in v2. Agent state is returned in `context_get.result.agents`.
 
+#### `blueprint_generate`
+
+Generate a blueprint for a task (currently returns a predefined blueprint ID; LLM integration planned).
+
+Args:
+```ts
+{ task_id: string; task_name?: string; task_goal?: string; theme_hint?: string }
+```
+
+Result:
+```ts
+{ source: "predefined" | "llm"; blueprint_id: string; variant?: number }
+```
+
+Notes:
+- Current implementation uses deterministic FNV-1a hashing on `task_id` to select from predefined blueprints (`shield`, `house`, `rocket`).
+- Returns error code `missing_task_id` if `task_id` is empty.
+
 ### 8.9 Headless Runner
 
 #### `headless_status`

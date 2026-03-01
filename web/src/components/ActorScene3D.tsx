@@ -1,85 +1,105 @@
-import { Suspense, useMemo, useRef, useCallback } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Suspense, useMemo, useRef } from "react";
+import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
-import { ActorCharacter, hashCode, deriveAnimState, PART_INDEX } from "./ActorCharacter";
-import { Workstation } from "./OfficeFurniture";
-import type { AgentState, Actor } from "../types";
+import { ActorCharacter } from "./ActorCharacter";
+import { BuildZone } from "./BuildZone";
+import { MCGround, MCBed } from "./MCFurniture";
+import { computeGridPosition } from "../utils/buildLayout";
+import { useCharacterAnimation, type LayoutItem } from "../hooks/useCharacterAnimation";
+import type { AgentState, Actor, Task } from "../types";
 import * as THREE from "three";
 
 interface ActorScene3DProps {
   agents: AgentState[];
   actors?: Actor[];
+  tasks?: Task[];
   isDark: boolean;
   className?: string;
 }
 
-// ── MC Grass Block ground (green top, brown sides) ──
-const GROUND_GEO = new THREE.BoxGeometry(20, 0.5, 20);
-const GRASS_TOP = new THREE.MeshStandardMaterial({ color: "#5B8731", flatShading: true });
-const DIRT_SIDE = new THREE.MeshStandardMaterial({ color: "#8B6B3E", flatShading: true });
-// Material array order: [+X, -X, +Y, -Y, +Z, -Z]
-const GROUND_MATS = [DIRT_SIDE, DIRT_SIDE, GRASS_TOP, DIRT_SIDE, DIRT_SIDE, DIRT_SIDE];
+// ── Worker layout (construction site mode) ──
 
-function MCGround() {
-  return <mesh position={[0, -0.25, 0]} receiveShadow geometry={GROUND_GEO} material={GROUND_MATS} />;
+function siteRadius(agentCount: number): number {
+  return Math.max(2, agentCount * 0.6 + 1);
 }
 
-// ── Workstation layout ──
-interface LayoutItem {
-  charPos: [number, number, number];
-  wsPos: [number, number, number];
-  charRotY: number;
-  wsRotY: number;
-}
-
-function layoutRadius(agentCount: number): number {
-  const peerCount = Math.max(0, agentCount - 1);
-  return Math.max(2.5, peerCount * 0.7 + 1);
-}
-
-function computeWorkstationLayout(
+function computeWorkerLayout(
   agents: AgentState[],
   actorMap: Map<string, Actor>,
-): LayoutItem[] {
+  buildTargetMap: Map<string, [number, number, number]>,
+): Map<string, LayoutItem> {
   const count = agents.length;
-  if (count === 0) return [];
+  if (count === 0) return new Map();
 
   const foremanIdx = agents.findIndex((a) => actorMap.get(a.id)?.role === "foreman");
-  const peerCount = foremanIdx >= 0 ? count - 1 : count;
-  const radius = layoutRadius(count);
-  const gap = 0.7;
+  const radius = siteRadius(count);
 
-  const items: LayoutItem[] = [];
-  let pi = 0;
+  const bedZBase = -radius - 1.2;
+  const bedSpacing = 1.2;
 
+  const items = new Map<string, LayoutItem>();
+  const idleAgentIds: string[] = [];
+
+  // First pass: assign foreman + task-assigned workers
+  // buildTargetMap already includes per-worker spread for co-workers
   for (let i = 0; i < count; i++) {
+    const agentId = agents[i].id;
+    const bx = (i - (count - 1) / 2) * bedSpacing;
+    const bedPosition: [number, number, number] = [bx, 0, bedZBase];
+    const bedRotation = 0;
+    const buildTarget = buildTargetMap.get(agentId);
+
     if (i === foremanIdx) {
-      // Foreman: center-back (positive Z)
-      const fz = radius * 0.5;
-      const ry = Math.atan2(0, fz + gap); // 0 — faces -Z toward center
-      items.push({
-        charPos: [0, 0, fz + gap],
-        wsPos: [0, 0, fz],
+      items.set(agentId, {
+        agentId,
+        charPos: [radius * 1.0, 0, -radius * 0.4],
+        charRotY: Math.PI * 0.8,
+        bedPos: bedPosition,
+        bedRotY: bedRotation,
+        isForeman: true,
+      });
+    } else if (buildTarget) {
+      const wx = buildTarget[0];
+      const wz = buildTarget[2] + 1.0;
+      const ry = Math.atan2(buildTarget[0] - wx, buildTarget[2] - wz) + Math.PI;
+      items.set(agentId, {
+        agentId,
+        charPos: [wx, 0, wz],
         charRotY: ry,
-        wsRotY: ry + Math.PI,
+        bedPos: bedPosition,
+        bedRotY: bedRotation,
+        isForeman: false,
       });
     } else {
-      // Peers on semi-circle arc in front (negative Z half)
-      const span = Math.min(Math.PI * 0.8, Math.max(0.6, peerCount * 0.4));
-      const theta =
-        peerCount > 1 ? -span / 2 + pi * (span / (peerCount - 1)) : 0;
-      const x = radius * Math.sin(theta);
-      const z = -radius * Math.cos(theta);
-      const cx = (radius + gap) * Math.sin(theta);
-      const cz = -(radius + gap) * Math.cos(theta);
-      const ry = Math.atan2(cx, cz); // face toward center
-      items.push({
-        charPos: [cx, 0, cz],
-        wsPos: [x, 0, z],
-        charRotY: ry,
-        wsRotY: ry + Math.PI,
+      // Idle worker: store bed info, defer position
+      idleAgentIds.push(agentId);
+      items.set(agentId, {
+        agentId,
+        charPos: [0, 0, 0],
+        charRotY: 0,
+        bedPos: bedPosition,
+        bedRotY: bedRotation,
+        isForeman: false,
       });
-      pi++;
+    }
+  }
+
+  // Second pass: spread idle workers on arc behind build zone
+  const idleCount = idleAgentIds.length;
+  if (idleCount > 0) {
+    const idleRadius = radius * 1.3;
+    const spread = Math.PI * 0.7;
+    const baseAngle = Math.PI; // behind scene (negative z)
+    for (let j = 0; j < idleCount; j++) {
+      const angle = idleCount > 1
+        ? baseAngle + ((j / (idleCount - 1)) - 0.5) * spread
+        : baseAngle;
+      const x = Math.sin(angle) * idleRadius;
+      const z = Math.cos(angle) * idleRadius;
+      const ry = Math.atan2(-x, -z) + Math.PI; // face center (mesh faces -Z)
+      const item = items.get(idleAgentIds[j])!;
+      item.charPos = [x, 0, z];
+      item.charRotY = ry;
     }
   }
 
@@ -87,16 +107,17 @@ function computeWorkstationLayout(
 }
 
 // ── Scene ──
+
 interface SceneProps {
   agents: AgentState[];
   actors?: Actor[];
+  tasks?: Task[];
   isDark: boolean;
   camZ: number;
 }
 
-function Scene({ agents, actors, isDark, camZ }: SceneProps) {
+function Scene({ agents, actors, tasks, isDark, camZ }: SceneProps) {
   const characterRefs = useRef<Map<string, THREE.Group>>(new Map());
-  const refCallbacks = useRef<Map<string, (el: THREE.Group | null) => void>>(new Map());
 
   const actorMap = useMemo(() => {
     const m = new Map<string, Actor>();
@@ -104,132 +125,84 @@ function Scene({ agents, actors, isDark, camZ }: SceneProps) {
     return m;
   }, [actors]);
 
-  const layout = useMemo(
-    () => computeWorkstationLayout(agents, actorMap),
-    [agents, actorMap],
-  );
-
-  // Stable callback ref factory (same function per id across renders)
-  const getRef = useCallback((id: string) => {
-    let cb = refCallbacks.current.get(id);
-    if (!cb) {
-      cb = (el: THREE.Group | null) => {
-        if (el) characterRefs.current.set(id, el);
-        else characterRefs.current.delete(id);
-      };
-      refCallbacks.current.set(id, cb);
+  const taskMap = useMemo(() => {
+    const m = new Map<string, { idx: number; name: string }>();
+    if (!tasks || tasks.length === 0) return m;
+    for (let i = 0; i < tasks.length; i++) {
+      m.set(tasks[i].id, { idx: i, name: tasks[i].name });
     }
-    return cb;
-  }, []);
+    return m;
+  }, [tasks]);
 
-  // Body part base positions (must match ActorCharacter JSX)
-  const BASE_Y = { torso: 0.55, head: 1.0, leftArm: 0.5, rightArm: 0.5, leftLeg: 0.12, rightLeg: 0.12 };
+  // Filter tasks for BuildZone display: all active + up to 3 most recent done
+  const visibleTasks = useMemo(() => {
+    if (!tasks || tasks.length === 0) return [];
+    const active = tasks.filter(t => t.status !== "done" && t.status !== "archived");
+    const done = tasks.filter(t => t.status === "done" || t.status === "archived");
+    return [...active, ...done.slice(0, 3)];
+  }, [tasks]);
 
-  // Unified animation with lerp smoothing (~0.5s transitions)
-  useFrame((state, delta) => {
-    const t = state.clock.elapsedTime;
-    const lf = 1 - Math.exp(-6 * delta); // lerp factor: ~95% at 0.5s
-
-    for (let i = 0; i < agents.length; i++) {
-      const agent = agents[i];
-      const group = characterRefs.current.get(agent.id);
-      if (!group || group.children.length < 6) continue;
-
-      const item = layout[i];
-      if (!item) continue;
-
-      const baseX = item.charPos[0];
-      const baseY = item.charPos[1];
-      const baseZ = item.charPos[2];
-      const phase = hashCode(agent.id) * 0.1;
-      const animState = deriveAnimState(agent);
-
-      const torso = group.children[PART_INDEX.torso];
-      const head = group.children[PART_INDEX.head];
-      const lArm = group.children[PART_INDEX.leftArm];
-      const rArm = group.children[PART_INDEX.rightArm];
-      const lLeg = group.children[PART_INDEX.leftLeg];
-      const rLeg = group.children[PART_INDEX.rightLeg];
-
-      // Compute target pose based on animation state
-      let gY = baseY, gX = baseX, gZ = baseZ;
-      let tRx = 0, tPy = BASE_Y.torso;
-      let hRx = 0, hRy = 0, hPy = BASE_Y.head;
-      let laRx = 0, laRz = 0, laPy = BASE_Y.leftArm;
-      let raRx = 0, raRz = 0, raPy = BASE_Y.rightArm;
-      let llPy = BASE_Y.leftLeg, rlPy = BASE_Y.rightLeg;
-      let llRx = 0, rlRx = 0;
-
-      switch (animState) {
-        case "working": {
-          gY = baseY + Math.sin(t * 1.2 + phase) * 0.04;
-          tRx = 0.08;
-          hRx = 0.12;
-          laRx = Math.sin(t * 8 + phase) * 0.3;
-          raRx = Math.sin(t * 8 + phase + Math.PI) * 0.3;
-          break;
-        }
-        case "thinking": {
-          gY = baseY + Math.sin(t * 0.8 + phase) * 0.03;
-          hRy = Math.sin(t * 1.5 + phase) * 0.25;
-          raRz = -0.6;
-          raRx = -0.4;
-          raPy = BASE_Y.rightArm + 0.1;
-          break;
-        }
-        case "blocked": {
-          gY = baseY + Math.sin(t * 2 + phase) * 0.03;
-          // Pace along character's local X axis (perpendicular to facing)
-          const pace = Math.sin(t * 2 + phase) * 0.15;
-          const cosR = Math.cos(item.charRotY);
-          const sinR = Math.sin(item.charRotY);
-          gX = baseX + pace * cosR;
-          gZ = baseZ - pace * sinR;
-          hRx = 0.15;
-          llPy = BASE_Y.leftLeg + Math.max(0, Math.sin(t * 4 + phase)) * 0.08;
-          rlPy = BASE_Y.rightLeg + Math.max(0, Math.sin(t * 4 + phase + Math.PI)) * 0.08;
-          laRx = Math.sin(t * 2 + phase) * 0.15;
-          raRx = Math.sin(t * 2 + phase + Math.PI) * 0.15;
-          break;
-        }
-        case "idle":
-        default: {
-          gY = baseY + Math.sin(t * 0.6 + phase) * 0.02;
-          tPy = BASE_Y.torso - 0.03;
-          hPy = BASE_Y.head - 0.03;
-          hRx = 0.1;
-          laPy = BASE_Y.leftArm - 0.03;
-          raPy = BASE_Y.rightArm - 0.03;
-          break;
+  const buildTargetMap = useMemo(() => {
+    const map = new Map<string, [number, number, number]>();
+    // Group agents by task to spread co-workers apart
+    const taskAgents = new Map<string, string[]>();
+    for (const agent of agents) {
+      if (!agent.active_task_id) continue;
+      const entry = taskMap.get(agent.active_task_id);
+      if (!entry) continue;
+      const list = taskAgents.get(agent.active_task_id) ?? [];
+      list.push(agent.id);
+      taskAgents.set(agent.active_task_id, list);
+    }
+    // Assign per-worker offset so co-workers don't overlap
+    for (const [taskId, agentIds] of taskAgents) {
+      const entry = taskMap.get(taskId)!;
+      const base = computeGridPosition(entry.idx, taskMap.size);
+      for (let j = 0; j < agentIds.length; j++) {
+        const spread = agentIds.length > 1
+          ? (j - (agentIds.length - 1) / 2) * 1.0
+          : 0;
+        map.set(agentIds[j], [base[0] + spread, base[1], base[2]]);
+      }
+    }
+    // Fallback: task assignee field (for agents without active_task_id)
+    if (tasks) {
+      const agentIds = new Set(agents.map(a => a.id));
+      for (const task of tasks) {
+        if (task.assignee && agentIds.has(task.assignee) && !map.has(task.assignee)) {
+          const entry = taskMap.get(task.id);
+          if (entry) {
+            map.set(task.assignee, computeGridPosition(entry.idx, taskMap.size));
+          }
         }
       }
-
-      // Lerp all values for smooth state transitions
-      const L = THREE.MathUtils.lerp;
-      group.position.x = L(group.position.x, gX, lf);
-      group.position.y = L(group.position.y, gY, lf);
-      group.position.z = L(group.position.z, gZ, lf);
-      torso.rotation.x = L(torso.rotation.x, tRx, lf);
-      torso.position.y = L(torso.position.y, tPy, lf);
-      head.rotation.x = L(head.rotation.x, hRx, lf);
-      head.rotation.y = L(head.rotation.y, hRy, lf);
-      head.position.y = L(head.position.y, hPy, lf);
-      lArm.rotation.x = L(lArm.rotation.x, laRx, lf);
-      lArm.rotation.z = L(lArm.rotation.z, laRz, lf);
-      lArm.position.y = L(lArm.position.y, laPy, lf);
-      rArm.rotation.x = L(rArm.rotation.x, raRx, lf);
-      rArm.rotation.z = L(rArm.rotation.z, raRz, lf);
-      rArm.position.y = L(rArm.position.y, raPy, lf);
-      lLeg.rotation.x = L(lLeg.rotation.x, llRx, lf);
-      lLeg.position.y = L(lLeg.position.y, llPy, lf);
-      rLeg.rotation.x = L(rLeg.rotation.x, rlRx, lf);
-      rLeg.position.y = L(rLeg.position.y, rlPy, lf);
     }
+    return map;
+  }, [agents, tasks, taskMap]);
+
+  const layout = useMemo(
+    () => computeWorkerLayout(agents, actorMap, buildTargetMap),
+    [agents, actorMap, buildTargetMap],
+  );
+
+  const refCallbacks = useMemo(() => {
+    const map = new Map<string, (el: THREE.Group | null) => void>();
+    for (const agent of agents) {
+      map.set(agent.id, (el: THREE.Group | null) => {
+        if (el) characterRefs.current.set(agent.id, el);
+        else characterRefs.current.delete(agent.id);
+      });
+    }
+    return map;
+  }, [agents]);
+
+  useCharacterAnimation({
+    agents, actorMap, layout, buildTargetMap, characterRefs,
+    staticMode: true,
   });
 
   return (
     <>
-      {/* Lighting */}
       <ambientLight intensity={isDark ? 0.35 : 0.6} />
       <directionalLight
         position={[5, 8, 5]}
@@ -243,32 +216,29 @@ function Scene({ agents, actors, isDark, camZ }: SceneProps) {
         intensity={isDark ? 0.15 : 0.25}
       />
 
-      {/* MC Grass Block ground */}
       <MCGround />
 
-      {/* Workstations */}
-      {layout.map((item, i) => {
-        const agent = agents[i];
-        if (!agent) return null;
-        const anim = deriveAnimState(agent);
-        return (
-          <Workstation
-            key={`ws-${agent.id}`}
-            position={item.wsPos}
-            rotation={item.wsRotY}
-            isOn={anim === "working" || anim === "thinking"}
-          />
-        );
-      })}
+      {visibleTasks.length > 0 && (
+        <BuildZone tasks={visibleTasks} baseZ={0} isDark={isDark} />
+      )}
 
-      {/* Characters */}
-      {agents.map((agent, i) => {
+      {[...layout.values()].map((item) => (
+        <MCBed
+          key={`bed-${item.agentId}`}
+          position={item.bedPos}
+          rotationY={item.bedRotY}
+        />
+      ))}
+
+      {agents.map((agent) => {
         const actor = actorMap.get(agent.id);
-        const item = layout[i];
+        const running = actor?.running !== false && actor?.enabled !== false;
+        const item = layout.get(agent.id);
+        const taskEntry = agent.active_task_id ? taskMap.get(agent.active_task_id) : undefined;
         return (
           <ActorCharacter
             key={agent.id}
-            ref={getRef(agent.id)}
+            ref={refCallbacks.get(agent.id)}
             agent={agent}
             position={item?.charPos || [0, 0, 0]}
             rotationY={item?.charRotY}
@@ -276,30 +246,33 @@ function Scene({ agents, actors, isDark, camZ }: SceneProps) {
             role={actor?.role}
             runtime={actor?.runtime}
             title={actor?.title}
+            isRunning={running}
+            activeTaskName={taskEntry?.name.replace(/^T\d+:\s*/, "")}
           />
         );
       })}
 
-      {/* Camera controls */}
       <OrbitControls
-        enablePan={false}
+        enablePan={true}
         enableZoom={true}
         enableRotate={true}
         minDistance={2}
-        maxDistance={camZ * 2}
-        maxPolarAngle={Math.PI / 2.2}
+        maxDistance={camZ * 3}
+        maxPolarAngle={Math.PI / 2.05}
         target={[0, 0.5, 0]}
-        autoRotate={false}
       />
     </>
   );
 }
 
-export function ActorScene3D({ agents, actors, isDark, className }: ActorScene3DProps) {
+export function ActorScene3D({ agents, actors, tasks, isDark, className }: ActorScene3DProps) {
+  const taskCount = tasks?.length ?? 0;
   const camZ = useMemo(() => {
-    const radius = layoutRadius(agents.length);
-    return Math.max(4, radius * 2 + 2);
-  }, [agents.length]);
+    const radius = siteRadius(agents.length);
+    const buildDepth = taskCount > 0 ? Math.ceil(taskCount / 3) * 2.5 + 2 : 0;
+    const restAreaDepth = 2.5;
+    return Math.max(5, radius + buildDepth + restAreaDepth + 2);
+  }, [agents.length, taskCount]);
 
   return (
     <div className={className} style={{ minHeight: 280 }}>
@@ -318,7 +291,7 @@ export function ActorScene3D({ agents, actors, isDark, className }: ActorScene3D
         gl={{ antialias: true, alpha: false }}
       >
         <Suspense fallback={null}>
-          <Scene agents={agents} actors={actors} isDark={isDark} camZ={camZ} />
+          <Scene agents={agents} actors={actors} tasks={tasks} isDark={isDark} camZ={camZ} />
         </Suspense>
       </Canvas>
     </div>

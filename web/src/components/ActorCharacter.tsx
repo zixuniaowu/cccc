@@ -105,14 +105,55 @@ const PALETTE = [
 ];
 
 // Animation state types and derivation
-export type AgentAnimState = "blocked" | "working" | "thinking" | "idle";
+export type AgentAnimState = "offline" | "blocked" | "working" | "thinking" | "idle";
 
-/** Derive animation state from agent state data. Priority: blocked > working > thinking > idle */
-export function deriveAnimState(agent: AgentState): AgentAnimState {
+/**
+ * Freshness threshold: context updates happen at key transitions in multi-agent
+ * systems, not every minute. 30 minutes balances accuracy with realistic update cadence.
+ */
+const FRESHNESS_MS = 30 * 60_000; // 30 minutes
+
+/** Derive animation state from agent state data. Priority: offline > blocked > working > thinking > idle */
+export function deriveAnimState(agent: AgentState, isRunning?: boolean): AgentAnimState {
+  if (isRunning === false) return "offline";
   if (Array.isArray(agent.blockers) && agent.blockers.length > 0) return "blocked";
-  if (agent.active_task_id && agent.focus) return "working";
-  if (agent.focus || agent.next_action) return "thinking";
+
+  const age = agent.updated_at
+    ? Date.now() - new Date(agent.updated_at).getTime()
+    : Infinity;
+  const fresh = age <= FRESHNESS_MS;
+
+  // Has active task → working (if fresh + focus) or thinking (minimum)
+  if (agent.active_task_id) {
+    return (agent.focus && fresh) ? "working" : "thinking";
+  }
+  // Has focus/next_action but no task → thinking (if fresh) or idle (if stale)
+  if (agent.focus || agent.next_action) {
+    return fresh ? "thinking" : "idle";
+  }
   return "idle";
+}
+
+/** Map animation state to a short Chinese status label for the 3D scene HUD */
+export function deriveStatusLabel(
+  animState: AgentAnimState,
+  hasActiveTask: boolean,
+  isForeman = false,
+): { text: string; color: string } {
+  switch (animState) {
+    case "working":
+      return isForeman
+        ? { text: "指挥中", color: "#4ade80" }
+        : { text: "建造中", color: "#4ade80" };
+    case "thinking":
+      return { text: "思考中", color: "#facc15" };
+    case "blocked":
+      return { text: "受阻", color: "#f87171" };
+    case "idle":
+      return { text: "待命", color: "#94a3b8" };
+    case "offline":
+      return { text: "离线", color: "#64748b" };
+  }
 }
 
 // Body part name → child index mapping (for unified useFrame animation)
@@ -149,17 +190,28 @@ export interface ActorCharacterProps {
   role?: string;
   runtime?: string;
   title?: string;
+  isRunning?: boolean;
+  activeTaskName?: string;
 }
 
 export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>(
-  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title }, ref) {
+  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title, isRunning, activeTaskName }, ref) {
     const color = agentColor(agent.id, runtime);
-    const hasBlockers = Array.isArray(agent.blockers) && agent.blockers.length > 0;
-    const hasFocus = !!agent.focus;
     const isForeman = role === "foreman";
+    const isOffline = isRunning === false;
 
-    // Shared material per agent (body color)
-    const mat = useMemo(() => new THREE.MeshStandardMaterial({ color, flatShading: true }), [color]);
+    // Shared material per agent (body color; gray + semi-transparent when offline)
+    const mat = useMemo(() => {
+      if (isOffline) {
+        return new THREE.MeshStandardMaterial({
+          color: "#6b7280",
+          flatShading: true,
+          transparent: true,
+          opacity: 0.55,
+        });
+      }
+      return new THREE.MeshStandardMaterial({ color, flatShading: true });
+    }, [color, isOffline]);
     useEffect(() => () => { mat.dispose(); }, [mat]);
 
     // Head face texture: PNG logo if available, else text fallback
@@ -168,13 +220,21 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       : agent.id.charAt(0).toUpperCase();
     const logoPath = runtime ? RUNTIME_LOGO[runtime] : undefined;
     const faceMat = useMemo(() => {
+      if (isOffline) {
+        return new THREE.MeshStandardMaterial({
+          color: "#6b7280",
+          flatShading: true,
+          transparent: true,
+          opacity: 0.55,
+        });
+      }
       if (logoPath) {
         const tex = getPngTexture(logoPath, color);
         return new THREE.MeshStandardMaterial({ map: tex, flatShading: true });
       }
       const tex = getFaceTexture(faceLabel, color);
       return new THREE.MeshStandardMaterial({ map: tex, flatShading: true });
-    }, [logoPath, faceLabel, color]);
+    }, [logoPath, faceLabel, color, isOffline]);
     useEffect(() => () => { faceMat.dispose(); }, [faceMat]);
     // Material array: all sides = body color, front face (-Z, index 5) = logo
     const headMats = useMemo(
@@ -182,11 +242,8 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       [mat, faceMat],
     );
 
-    const focusText = agent.focus
-      ? agent.focus.length > 40
-        ? agent.focus.slice(0, 40) + "..."
-        : agent.focus
-      : "";
+    const animState = deriveAnimState(agent, isRunning);
+    const statusLabel = deriveStatusLabel(animState, !!agent.active_task_id, isForeman);
 
     return (
       <group ref={ref} position={position} rotation={[0, rotationY, 0]}>
@@ -221,7 +278,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
               border: `1px solid ${isDark ? "rgba(100,116,139,0.4)" : "rgba(209,213,219,0.8)"}`,
               borderRadius: 8,
               padding: "4px 8px",
-              minWidth: 60,
+              minWidth: 48,
               maxWidth: 180,
               textAlign: "center",
               boxShadow: isDark
@@ -229,7 +286,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
                 : "0 2px 8px rgba(0,0,0,0.1)",
             }}
           >
-            {/* Agent name */}
+            {/* Agent title */}
             <div
               style={{
                 fontSize: 11,
@@ -244,62 +301,35 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
               {title || agent.id}
             </div>
 
-            {/* Task ID */}
-            {agent.active_task_id && (
-              <div
-                style={{
-                  fontSize: 9,
-                  color: isDark ? "#94a3b8" : "#6b7280",
-                  marginTop: 2,
-                  lineHeight: "12px",
-                }}
-              >
-                {agent.active_task_id}
-              </div>
-            )}
+            {/* Short status label */}
+            <div
+              style={{
+                fontSize: 9,
+                color: statusLabel.color,
+                marginTop: 2,
+                fontWeight: 500,
+                lineHeight: "12px",
+              }}
+            >
+              {statusLabel.text}
+            </div>
 
-            {/* Focus */}
-            {focusText && (
+            {/* Active task name */}
+            {activeTaskName && (
               <div
                 style={{
-                  fontSize: 9,
-                  color: isDark ? "#cbd5e1" : "#374151",
+                  fontSize: 8,
+                  color: isDark ? "#94a3b8" : "#9ca3af",
                   marginTop: 2,
-                  lineHeight: "12px",
-                  wordBreak: "break-word",
+                  lineHeight: "10px",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
                 }}
               >
-                {focusText}
-              </div>
-            )}
-
-            {/* Blockers indicator */}
-            {hasBlockers && (
-              <div
-                style={{
-                  fontSize: 9,
-                  color: "#f87171",
-                  marginTop: 2,
-                  fontWeight: 600,
-                  lineHeight: "12px",
-                }}
-              >
-                BLOCKED
-              </div>
-            )}
-
-            {/* Idle indicator */}
-            {!hasFocus && !hasBlockers && (
-              <div
-                style={{
-                  fontSize: 9,
-                  color: isDark ? "#64748b" : "#9ca3af",
-                  marginTop: 1,
-                  fontStyle: "italic",
-                  lineHeight: "12px",
-                }}
-              >
-                idle
+                {activeTaskName.length > 25
+                  ? activeTaskName.slice(0, 25) + "..."
+                  : activeTaskName}
               </div>
             )}
           </div>

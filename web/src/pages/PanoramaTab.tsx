@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import type { AgentState, Actor } from "../types";
+import type { AgentState, Actor, Task } from "../types";
 
 const ActorScene3D = lazy(() =>
   import("../components/ActorScene3D").then((m) => ({ default: m.ActorScene3D }))
@@ -8,10 +8,11 @@ const ActorScene3D = lazy(() =>
 interface PanoramaTabProps {
   agents: AgentState[];
   actors?: Actor[];
+  tasks?: Task[];
   isDark: boolean;
 }
 
-export function PanoramaTab({ agents, actors, isDark }: PanoramaTabProps) {
+export function PanoramaTab({ agents, actors, tasks, isDark }: PanoramaTabProps) {
   if (agents.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -32,7 +33,7 @@ export function PanoramaTab({ agents, actors, isDark }: PanoramaTabProps) {
         </div>
       }
     >
-      <ActorScene3D agents={agents} actors={actors} isDark={isDark} className="flex-1" />
+      <ActorScene3D agents={agents} actors={actors} tasks={tasks} isDark={isDark} className="flex-1" />
     </Suspense>
   );
 }

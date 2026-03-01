@@ -543,6 +543,7 @@ export default function App() {
                     (a) => actors.some((act) => act.id === a.id && act.enabled !== false)
                   )}
                   actors={actors}
+                  tasks={groupContext?.active_tasks}
                   isDark={isDark}
                 />
               </ErrorBoundary>
