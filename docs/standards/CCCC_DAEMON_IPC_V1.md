@@ -523,8 +523,11 @@ Notes:
 1. Built-in capability packs (`pack:*`) are directly enable-able and can change MCP exposure.
 2. Skills (`kind=skill`) use the same `capability_enable` op for activate/deactivate and can auto-apply
    declared dependencies.
-3. External MCP execution path is constrained to supported installers (`remote_only`, npm via `npx`, pypi via `uvx/pipx`, OCI via `docker/podman`);
-   unsupported install metadata returns `state=failed`.
+3. External MCP execution path supports `remote_only`, `package`, and `command`.
+4. `package` mode supports npm (`npx`), pypi (`uvx`/`pipx`), OCI (`docker`/`podman`) and can fall back to
+   command candidates when package metadata is incomplete.
+5. External enable runs preflight first (required env, runtime binary availability, remote URL sanity) and returns
+   `reason=preflight_failed:<code>` on deterministic blockers.
 
 Args:
 ```ts
@@ -559,11 +562,21 @@ Result:
   retryable?: boolean
   install_error_code?: string
   required_env?: string[]
+  missing_binaries?: string[]
   policy_level?: "indexed" | "mounted" | "enabled" | "pinned"
   install_state?: "installed" | "installed_degraded" | "install_failed"
   degraded?: boolean
   degraded_reason?: string
   degraded_call_hint?: string
+  fallback_from?: "package"
+  fallback_reason?: string
+  preflight?: {
+    ok: boolean
+    code: string
+    message: string
+    required_env?: string[]
+    missing_binaries?: string[]
+  }
   diagnostics?: Array<{
     code: string
     message: string
@@ -762,6 +775,99 @@ Operational notes:
    - packaged default: `cccc.resources/capability-allowlist.default.yaml`
    - user overlay: `CCCC_HOME/config/capability-allowlist.user.yaml`
    - effective policy: deterministic merge (`default <- overlay`).
+
+#### `capability_import`
+
+Import one normalized capability record prepared by the caller (agent-driven parsing), then optionally enable it.
+
+Notes:
+
+1. This op does not parse arbitrary web/forum text; caller must provide structured `record`.
+2. `kind=mcp_toolpack` requires `install_mode` + `install_spec`.
+3. `kind=skill` requires `capsule_text`.
+4. `dry_run=true` validates/probes only (no catalog persistence).
+5. `command*` and `fallback_command*` may be provided as top-level shortcuts; daemon copies them into
+   `install_spec` when missing.
+6. `record.source_id` is optional; empty or unknown source ids are normalized to `manual_import`.
+
+Args:
+```ts
+{
+  group_id: string
+  by?: string
+  actor_id?: string
+  record: {
+    capability_id: string                 // mcp:* or skill:*
+    kind: "mcp_toolpack" | "skill"
+    name?: string
+    description_short?: string
+    source_id?: string // optional; unknown/empty -> manual_import
+    source_uri?: string
+    source_record_id?: string
+    source_record_version?: string
+    updated_at_source?: string
+    source_tier?: string
+    trust_tier?: string
+    qualification_status?: "qualified" | "unavailable" | "blocked"
+    qualification_reasons?: string[]
+    tags?: string[]
+    license?: string
+    install_mode?: "remote_only" | "package" | "command" // mcp_toolpack only
+    install_spec?: Record<string, unknown>    // mcp_toolpack only
+    command?: string | string[]               // command mode shortcut
+    command_candidates?: Array<string | string[]> // command mode/fallback candidates
+    fallback_command?: string | string[]      // optional package->command fallback
+    fallback_command_candidates?: Array<string | string[]> // optional package->command fallback candidates
+    capsule_text?: string                     // skill only
+    requires_capabilities?: string[]          // skill only
+  }
+  dry_run?: boolean                // default false
+  probe?: boolean                  // default true
+  enable_after_import?: boolean    // default false
+  scope?: "group" | "actor" | "session"
+  ttl_seconds?: number
+  reason?: string
+}
+```
+
+Result:
+```ts
+{
+  action_id: string
+  group_id: string
+  actor_id: string
+  capability_id: string
+  kind: "mcp_toolpack" | "skill"
+  dry_run: boolean
+  imported: boolean
+  deduped?: boolean
+  record: Record<string, unknown>
+  probe: {
+    state: "ready" | "failed" | "skipped"
+    kind?: "mcp_toolpack" | "skill"
+    reason?: string
+    tool_count?: number
+    tool_names?: string[]
+    install_error_code?: string
+    install_error?: string
+  }
+  diagnostics: Array<{
+    code: string
+    message: string
+    retryable?: boolean
+    required_env?: string[]
+    action_hints?: string[]
+  }>
+  effective_policy_level: "indexed" | "mounted" | "enabled" | "pinned"
+  enableable_now: boolean
+  enable_block_reason?: "policy_level_indexed" | "qualification_blocked" | "capability_unavailable"
+  enable_after_import: boolean
+  enable_result?: Record<string, unknown> // same shape family as capability_enable
+  refresh_required: boolean
+  state: "ready" | "failed"
+  reason?: string
+}
+```
 
 #### `capability_allowlist_get`
 

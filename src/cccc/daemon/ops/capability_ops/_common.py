@@ -17,6 +17,7 @@ from ....kernel.group import load_group
 from ....paths import ensure_home
 
 _SOURCE_IDS = (
+    "manual_import",
     "mcp_registry_official",
     "anthropic_skills",
     "github_skills_curated",
@@ -162,4 +163,3 @@ def _env_bool(name: str, default: bool) -> bool:
 def _quota_limit(name: str, default: int, *, minimum: int = 1, maximum: int = 10_000) -> int:
     raw = _env_int(name, default)
     return max(minimum, min(int(raw or default), maximum))
-

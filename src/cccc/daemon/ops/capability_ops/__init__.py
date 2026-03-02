@@ -192,6 +192,9 @@ from ._install import (  # noqa: F401
     _oci_runtime_argument_tokens,
     _required_environment_names,
     _missing_required_environment_names,
+    _command_stdio_command_candidates,
+    _package_fallback_command_candidates,
+    _preflight_external_install,
     _normalize_registry_type_token,
     _effective_registry_type,
     _tool_name_aliases,
@@ -236,6 +239,7 @@ from ._handlers import (  # noqa: F401
     _normalize_profile_capability_defaults,
     apply_actor_profile_capability_defaults,
     apply_actor_capability_autoload,
+    handle_capability_import,
     handle_capability_uninstall,
     handle_capability_tool_call,
 )
@@ -259,6 +263,8 @@ def try_handle_capability_op(op: str, args: Dict[str, Any]) -> Optional[DaemonRe
         return handle_capability_block(args)
     if op == "capability_state":
         return handle_capability_state(args)
+    if op == "capability_import":
+        return handle_capability_import(args)
     if op == "capability_uninstall":
         return handle_capability_uninstall(args)
     if op == "capability_tool_call":

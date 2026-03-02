@@ -15,6 +15,7 @@ level_semantics:
 defaults:
   source_level:
     cccc_builtin: enabled
+    manual_import: mounted
     anthropic_skills: mounted
     github_skills_curated: mounted
     skillsmp_remote: mounted
@@ -45,6 +46,9 @@ sources:
   - source_id: cccc_builtin
     enabled: true
     rationale: "Core CCCC packs; always available."
+  - source_id: manual_import
+    enabled: true
+    rationale: "Agent/user imported records from arbitrary external references."
   - source_id: anthropic_skills
     enabled: true
     rationale: "Official Anthropic skill source."

@@ -1,4 +1,4 @@
-"""MCP tool schemas for CCCC (30-entry consolidated surface)."""
+"""MCP tool schemas for CCCC consolidated surface."""
 
 from __future__ import annotations
 
@@ -282,6 +282,100 @@ MCP_TOOLS = [
         "name": "cccc_capability_state",
         "description": "Get caller-effective capability state and visible/dynamic tools.",
         "inputSchema": _obj({**_COMMON_GROUP, **_COMMON_ACTOR}),
+    },
+    {
+        "name": "cccc_capability_import",
+        "description": (
+            "Import an agent-prepared normalized capability record (mcp_toolpack or skill) from any external source. "
+            "Daemon performs validation/probe/persist and can optionally enable after import. "
+            "record.source_id is optional; empty/unknown values are normalized to manual_import. "
+            "Use dry_run=true first when record quality is uncertain."
+        ),
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                **_COMMON_BY,
+                "actor_id": {"type": "string"},
+                "record": _obj(
+                    {
+                        "capability_id": {"type": "string", "description": "mcp:* or skill:*"},
+                        "kind": {"type": "string", "enum": ["mcp_toolpack", "skill"]},
+                        "name": {"type": "string"},
+                        "description_short": {"type": "string"},
+                        "source_id": {
+                            "type": "string",
+                            "description": "Optional source id; empty/unknown values are normalized to manual_import.",
+                        },
+                        "source_uri": {"type": "string"},
+                        "source_record_id": {"type": "string"},
+                        "source_record_version": {"type": "string"},
+                        "updated_at_source": {"type": "string"},
+                        "trust_tier": {"type": "string"},
+                        "source_tier": {"type": "string"},
+                        "qualification_status": {"type": "string", "enum": ["qualified", "unavailable", "blocked"]},
+                        "qualification_reasons": {"type": "array", "items": {"type": "string"}},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "license": {"type": "string"},
+                        "install_mode": {
+                            "type": "string",
+                            "enum": ["remote_only", "package", "command"],
+                            "description": "Required for mcp_toolpack imports",
+                        },
+                        "install_spec": {
+                            "type": "object",
+                            "description": "Required for mcp_toolpack imports",
+                        },
+                        "command": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                            ],
+                            "description": "Command mode shortcut; alternatively provide install_spec.command",
+                        },
+                        "command_candidates": {
+                            "type": "array",
+                            "items": {
+                                "anyOf": [
+                                    {"type": "string"},
+                                    {"type": "array", "items": {"type": "string"}},
+                                ]
+                            },
+                            "description": "Optional command candidates for command mode/fallback",
+                        },
+                        "fallback_command": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "array", "items": {"type": "string"}},
+                            ],
+                            "description": "Optional package->command fallback command (top-level shortcut or install_spec.fallback_command).",
+                        },
+                        "fallback_command_candidates": {
+                            "type": "array",
+                            "items": {
+                                "anyOf": [
+                                    {"type": "string"},
+                                    {"type": "array", "items": {"type": "string"}},
+                                ]
+                            },
+                            "description": "Optional package->command fallback candidates (top-level shortcut or install_spec.fallback_command_candidates).",
+                        },
+                        "capsule_text": {
+                            "type": "string",
+                            "description": "Required for skill imports",
+                        },
+                        "requires_capabilities": {"type": "array", "items": {"type": "string"}},
+                    },
+                    required=["capability_id", "kind"],
+                ),
+                "dry_run": {"type": "boolean", "default": False},
+                "probe": {"type": "boolean", "default": True},
+                "enable_after_import": {"type": "boolean", "default": False},
+                "scope": {"type": "string", "enum": ["session", "actor", "group"], "default": "session"},
+                "ttl_seconds": {"type": "integer", "default": 3600, "minimum": 60, "maximum": 86400},
+                "reason": {"type": "string", "default": ""},
+            },
+            required=["record"],
+        ),
     },
     {
         "name": "cccc_capability_uninstall",

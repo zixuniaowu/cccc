@@ -20,6 +20,7 @@ CORE_TOOL_NAMES: Tuple[str, ...] = (
     "cccc_capability_enable",
     "cccc_capability_block",
     "cccc_capability_state",
+    "cccc_capability_import",
     "cccc_capability_uninstall",
     "cccc_capability_use",
     "cccc_inbox_list",
