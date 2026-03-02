@@ -362,10 +362,11 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             provided = str(websocket.query_params.get("token") or "").strip()
             cookie = ""
             try:
-                cookie = str(getattr(websocket, "cookies", {}) or {}).get("cccc_web_token") or ""
+                cookies = getattr(websocket, "cookies", None) or {}
+                cookie = str(cookies.get("cccc_web_token", "") or "").strip()
             except Exception:
                 cookie = ""
-            if provided != token and str(cookie).strip() != token:
+            if provided != token and cookie != token:
                 await websocket.close(code=4401)
                 return
 
