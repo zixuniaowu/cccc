@@ -2495,6 +2495,15 @@ class TestCapabilityOps(unittest.TestCase):
             with patch(
                 "cccc.daemon.ops.capability_ops._http_get_json_obj",
                 return_value=registry_payload,
+            ), patch.dict(
+                os.environ,
+                {
+                    "CCCC_CAPABILITY_SOURCE_SKILLSMP_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_CLAWHUB_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_OPENCLAW_SKILLS_REMOTE_ENABLED": "0",
+                    "CCCC_CAPABILITY_SOURCE_CLAWSKILLS_REMOTE_ENABLED": "0",
+                },
+                clear=False,
             ):
                 resp, _ = self._call(
                     "capability_search",
