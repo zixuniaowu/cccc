@@ -195,6 +195,15 @@ export function useCharacterAnimation({
         ) + Math.PI;
       }
 
+      // Compensate arm/leg rotation for pivot shift from geometry center to joint:
+      // joint-to-tip distance doubled → halve and negate rotation (translate flips visual direction).
+      pose.laRx *= -0.5;
+      pose.raRx *= -0.5;
+      pose.laRz *= -0.5;
+      pose.raRz *= -0.5;
+      pose.llRx *= -0.5;
+      pose.rlRx *= -0.5;
+
       // ── Apply lerp to all body parts ──
       const torso = group.children[PART_INDEX.torso];
       const head = group.children[PART_INDEX.head];

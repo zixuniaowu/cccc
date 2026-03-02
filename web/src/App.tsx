@@ -121,7 +121,7 @@ export default function App() {
   const [ccccHome, setCcccHome] = React.useState("");
 
   // Custom hooks
-  const { connectStream, fetchContext, scheduleActorWarmupRefresh, cleanup: cleanupSSE } = useSSE({
+  const { connectStream, fetchContext, scheduleActorWarmupRefresh, contextRefreshTimerRef, cleanup: cleanupSSE } = useSSE({
     activeTabRef,
     chatAtBottomRef,
     actorsRef,
@@ -208,6 +208,21 @@ export default function App() {
     setShowScrollButton(!atBottom);
     if (atBottom) setChatUnreadCount(0);
   }, [activeTab, setChatUnreadCount, setShowScrollButton]);
+
+  // BUG-1 + BUG-3: Refresh context on panorama tab activation + periodic polling fallback
+  useEffect(() => {
+    if (activeTab !== "panorama" || !selectedGroupId) return;
+    // Immediate fetch on tab switch (skip if SSE debounce timer is already pending)
+    if (!contextRefreshTimerRef.current) {
+      void fetchContext(selectedGroupId);
+    }
+    // 12s polling fallback while panorama tab is active
+    const intervalId = window.setInterval(() => {
+      void fetchContext(selectedGroupId);
+    }, 12_000);
+    return () => window.clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedGroupId]);
 
   // Keep visited actor tabs mounted (sticky) so their terminal sessions do not reconnect/replay on tab switches.
   useEffect(() => {

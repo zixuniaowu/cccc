@@ -274,8 +274,14 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     planned_count = sum(1 for t in non_archived if t.status == TaskStatus.PLANNED)
     root_count = sum(1 for t in non_archived if t.is_root)
 
-    # Active tasks (non-archived)
-    active_tasks = [_task_to_dict(t) for t in non_archived if t.status != TaskStatus.DONE]
+    # Active tasks (non-archived, non-done) + most recent done tasks for UI transition
+    _active = [t for t in non_archived if t.status != TaskStatus.DONE]
+    _recent_done = sorted(
+        [t for t in non_archived if t.status == TaskStatus.DONE],
+        key=lambda t: t.updated_at or "",
+        reverse=True,
+    )[:5]
+    active_tasks = [_task_to_dict(t) for t in _active] + [_task_to_dict(t) for t in _recent_done]
 
     # Build overview.manual
     manual = context.overview.manual if context.overview else OverviewManual()
