@@ -1757,6 +1757,8 @@ Result:
       updated_by: string
       updated_at: string
     }
+  }
+  panorama: {
     mermaid: string
   }
   tasks_summary: {
@@ -1819,160 +1821,233 @@ Result:
 }
 ```
 
-#### `memory_store`
-
-Args:
-```ts
-{
-  group_id: string
-  id?: string           // memory ID for update mode (omit for create)
-  content?: string      // required for create, optional for update
-  kind?: string
-  status?: string
-  confidence?: string
-  source_type?: string
-  source_ref?: string
-  scope_key?: string
-  actor_id?: string
-  task_id?: string
-  event_ts?: string
-  tags?: string[]
-  strategy?: string     // "aggressive" | "conservative" | "task-completion"
-  solidify?: boolean    // immediately solidify after store/update
-}
-```
-
-Result (create): `{ id, content_hash, created_at, status, deduplicated }`
-Result (update): `{ memory: Record<string, unknown>, updated: true }`
-
-#### `memory_search`
-
-Args:
-```ts
-{
-  group_id: string
-  query?: string        // FTS5 full-text query
-  status?: string
-  kind?: string
-  actor_id?: string
-  task_id?: string
-  confidence?: string
-  tags?: string[]
-  since?: string        // ISO 8601
-  until?: string        // ISO 8601
-  track_hit?: boolean   // default false; when true increments hit_count and may auto-solidify
-  limit?: number        // 1-100, default 20
-}
-```
-
-Result: `{ memories: Array<Record<string, unknown>>, count: number }`
-
-#### `memory_stats`
+#### `memory_reme_layout_get`
 
 Args:
 ```ts
 { group_id: string }
 ```
 
-Result: `{ total, by_status, by_kind, tag_count, relation_count }`
-
-#### `memory_ingest`
-
-Args:
+Result:
 ```ts
 {
-  group_id: string
-  mode?: "signal" | "raw"    // default "signal"
-  limit?: number             // ledger lines to read (1-200, default 50)
-  actor_id?: string          // filter by actor (raw mode only)
-  reset_watermark?: boolean  // re-process previously ingested events
+  group_label: string
+  memory_root: string
+  memory_file: string
+  daily_dir: string
+  today_daily_file: string
+  backend: { name: "local"; vector_enabled: false; fts_enabled: true }
 }
 ```
 
-Result (signal mode): `{ signals: Array<{actor_id, messages_count, suggested_kind, key_phrases, time_range, topic}>, events_processed, watermark, mode }`
-Result (raw mode): `{ imported, skipped, watermark, mode }`
-
-#### `memory_solidify_batch`
+#### `memory_reme_index_sync`
 
 Args:
 ```ts
 {
   group_id: string
-  task_id?: string       // filter by task
-  kind?: string          // filter by kind
-}
-```
-
-Result: `{ solidified: number, ids: string[] }`
-
-#### `memory_export`
-
-Args:
-```ts
-{
-  group_id: string
-  include_draft?: boolean  // include draft memories (default: false)
-  output_dir?: string      // output directory override
-}
-```
-
-Result: `{ manifest: { group_id, sha256, memory_count, exported_at, format }, md_path: string, manifest_path: string }`
-
-#### `memory_delete`
-
-Args:
-```ts
-{
-  group_id: string
-  id?: string     // single memory ID
-  ids?: string[]  // batch memory IDs
-}
-```
-
-Result: `{ deleted: boolean, deleted_count: number, ids: string[] }`
-
-#### `memory_decay`
-
-Find stale memory candidates for cleanup/decay (safe: read-only, no auto-delete).
-
-Args:
-```ts
-{
-  group_id: string
-  draft_days?: number        // default 30
-  zero_hit_days?: number     // default 14
-  solid_review_days?: number // default 120
-  solid_max_hit?: number     // default 1
-  limit?: number             // default 100
+  mode?: "scan" | "rebuild"   // default "scan"
 }
 ```
 
 Result:
 ```ts
 {
-  candidates: Array<{
-    id: string
-    content_preview: string
-    kind: string
-    status: "draft" | "solid"
-    hit_count: number
-    created_at: string
-    last_recalled_at: string
-    age_days: number
-    reasons: string[]
-    recommended_action: "delete_candidate" | "review_candidate"
-    priority: "low" | "medium" | "high"
+  indexed_files: number
+  indexed_chunks: number
+  watched_paths: string[]
+  last_sync_at: string
+}
+```
+
+#### `memory_reme_search`
+
+Args:
+```ts
+{
+  group_id: string
+  query: string
+  max_results?: number           // 1..50, default 5
+  min_score?: number             // 0..1, default 0.1
+  sources?: string[]             // default ["memory"]
+  vector_weight?: number         // 0..1 (optional)
+  candidate_multiplier?: number  // 1..20 (optional)
+}
+```
+
+Result:
+```ts
+{
+  hits: Array<{
+    path: string
+    start_line: number
+    end_line: number
     score: number
+    snippet: string
+    source: string
+    raw_metric?: number
+    metadata: Record<string, unknown>
   }>
   count: number
-  delete_candidate_count: number
-  review_candidate_count: number
-  config: {
-    draft_days: number
-    zero_hit_days: number
-    solid_review_days: number
-    solid_max_hit: number
-    limit: number
+  took_ms: number
+}
+```
+
+#### `memory_reme_get`
+
+Args:
+```ts
+{
+  group_id: string
+  path: string
+  offset?: number   // 1-indexed, default 1
+  limit?: number    // default 200
+}
+```
+
+Result:
+```ts
+{
+  path: string
+  offset: number
+  limit: number
+  total_lines: number
+  content: string
+}
+```
+
+#### `memory_reme_context_check`
+
+Args:
+```ts
+{
+  group_id: string
+  messages: Array<{ role: string; name?: string; content: string }>
+  context_window_tokens?: number
+  reserve_tokens?: number
+  keep_recent_tokens?: number
+}
+```
+
+Result:
+```ts
+{
+  needs_compaction: boolean
+  token_count: number
+  threshold: number
+  messages_to_summarize: Array<Record<string, unknown>>
+  turn_prefix_messages: Array<Record<string, unknown>>
+  left_messages: Array<Record<string, unknown>>
+  is_split_turn: boolean
+  cut_index: number
+}
+```
+
+#### `memory_reme_compact`
+
+Args:
+```ts
+{
+  group_id: string
+  messages_to_summarize: Array<{ role: string; name?: string; content: string }>
+  turn_prefix_messages?: Array<{ role: string; name?: string; content: string }>
+  previous_summary?: string
+  language?: string
+  return_prompt?: boolean
+}
+```
+
+Result:
+```ts
+{ summary: string } | { prompt: Record<string, string> }
+```
+
+#### `memory_reme_daily_flush`
+
+Args:
+```ts
+{
+  group_id: string
+  messages: Array<{ role: string; name?: string; content: string }>
+  date?: string               // YYYY-MM-DD
+  version?: string            // default "default"
+  language?: string           // default "en"
+  return_prompt?: boolean
+  signal_pack?: Record<string, unknown>
+  signal_pack_token_budget?: number // default 320
+  dedup_intent?: "new" | "update" | "supersede" | "silent" // default "new"
+  dedup_query?: string
+}
+```
+
+Result:
+```ts
+{
+  status: "written" | "silent"
+  reason?: "empty_summary" | "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
+  target_file: string
+  content_hash: string
+  bytes_written: number
+  signal_pack?: {
+    schema: string
+    token_budget: number
+    token_estimate: number
+    truncated: boolean
+  }
+  dedup?: {
+    intent: "new" | "update" | "supersede" | "silent"
+    query: string
+    candidate_count: number
+    top_score: number
+    precheck_decision: "new" | "update" | "supersede" | "silent"
+    final_decision: "new" | "update" | "supersede" | "silent"
+    final_reason: "accepted" | "empty_summary" | "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
+    decision: "new" | "update" | "supersede" | "silent" // alias of final_decision
+    hits: Array<{ path: string; start_line: number; score: number }>
+    error?: string
+  }
+}
+```
+
+#### `memory_reme_write`
+
+Args:
+```ts
+{
+  group_id: string
+  target: "memory" | "daily"
+  content: string
+  date?: string               // required when target="daily"
+  mode?: "append" | "replace" // default "append"
+  idempotency_key?: string
+  actor_id?: string
+  source_refs?: string[]
+  tags?: string[]
+  supersedes?: string[]
+  dedup_intent?: "new" | "update" | "supersede" | "silent" // default "new"
+  dedup_query?: string
+}
+```
+
+Result:
+```ts
+{
+  file_path: string
+  line_count: number
+  content_hash: string
+  status: "written" | "silent"
+  reason?: "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
+  dedup?: {
+    intent: "new" | "update" | "supersede" | "silent"
+    query: string
+    candidate_count: number
+    top_score: number
+    precheck_decision: "new" | "update" | "supersede" | "silent"
+    final_decision: "new" | "update" | "supersede" | "silent"
+    final_reason: "accepted" | "precheck_silent" | "persistence_idempotency_key" | "persistence_content_hash"
+    decision: "new" | "update" | "supersede" | "silent" // alias of final_decision
+    hits: Array<{ path: string; start_line: number; score: number }>
+    error?: string
   }
 }
 ```

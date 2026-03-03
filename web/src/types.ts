@@ -269,6 +269,8 @@ export type GroupContext = {
   vision?: string | null;
   overview?: {
     manual?: OverviewManual;
+  };
+  panorama?: {
     mermaid?: string;
   };
   tasks_summary?: {
@@ -280,7 +282,6 @@ export type GroupContext = {
   };
   active_tasks?: Task[];
   agents?: AgentState[];
-  presence?: { agents?: AgentState[] };
 };
 
 export type ProjectMdInfo = {

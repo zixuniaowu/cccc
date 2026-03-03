@@ -49,15 +49,8 @@ def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None)
     return DaemonResponse(ok=False, error=DaemonError(code=code, message=message, details=(details or {})))
 
 
-def _normalize_status_token(value: str) -> str:
-    s = str(value or "").strip().lower()
-    if s == "pending":
-        return "planned"
-    return s
-
-
 def _parse_task_status(value: Any) -> TaskStatus:
-    s = _normalize_status_token(str(value or "planned"))
+    s = str(value or "planned").strip().lower()
     try:
         return TaskStatus(s)
     except ValueError as e:
@@ -293,8 +286,8 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
         "updated_at": manual.updated_at,
     }
 
-    # Compute overview.mermaid (daemon projection)
-    overview_mermaid = storage.compute_overview_mermaid(
+    # Compute panorama projection (daemon, read-only)
+    panorama_mermaid = storage.compute_panorama_mermaid(
         tasks=tasks,
         agents_state=agents_state,
         overview=context.overview,
@@ -323,8 +316,8 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
         "vision": context.vision,
         "overview": {
             "manual": overview_manual,
-            "mermaid": overview_mermaid,
         },
+        "panorama": {"mermaid": panorama_mermaid},
         "tasks_summary": {
             "total": len(non_archived),
             "done": done_count,
@@ -528,7 +521,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     raise ValueError(perm_err)
 
                 new_status = _parse_task_status(item.get("status"))
-                prev_status_value = _normalize_status_token(_status_value(task.status))
+                prev_status_value = _status_value(task.status)
 
                 if new_status == TaskStatus.ARCHIVED:
                     if prev_status_value and prev_status_value != "archived":
@@ -582,41 +575,60 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                             f"Auto-synced agent {assignee_id} from {task_id} status={status_label}",
                         )
 
-                # Memory hook: root task completion triggers solidify+export.
-                # dry_run must be side-effect free.
-                if (not dry_run) and new_status == TaskStatus.DONE and task.is_root:
+                # ReMe memory hooks (hard-cut): task status transitions write daily lane;
+                # root-done additionally promotes one stable entry to MEMORY.md.
+                if not dry_run:
                     try:
-                        from ..memory.memory_ops import handle_memory_solidify_batch, handle_memory_export
-                        solidify_result = handle_memory_solidify_batch({
-                            "group_id": group_id,
-                            "task_id": task_id,
-                        })
-                        export_result = handle_memory_export({
-                            "group_id": group_id,
-                        })
-                        try:
-                            from ..memory.memory_ops import _get_memory_store
-                            _store = _get_memory_store(group_id)
-                            if _store is not None:
-                                import json as _json
-                                _store.set_meta(
-                                    f"root_task_hook:{task_id}",
-                                    _json.dumps({
-                                        "solidified": solidify_result.result.get("solidified", 0) if solidify_result.ok else 0,
-                                        "exported": export_result.ok,
-                                        "at": _utc_now_iso(),
-                                    }),
-                                )
-                        except Exception:
-                            logger.exception(
-                                "memory_root_task_hook_meta_record_failed group_id=%s task_id=%s",
-                                group_id, task_id,
-                            )
+                        from ..memory.memory_ops import handle_memory_reme_write
+
+                        lifecycle_note = (
+                            f"Task status update: id={task_id}, name={str(task.name or '').strip()}, "
+                            f"from={prev_status_value or 'unknown'}, to={new_status.value}, by={by}, at={task.updated_at}"
+                        )
+                        handle_memory_reme_write(
+                            {
+                                "group_id": group_id,
+                                "target": "daily",
+                                "date": _utc_now_iso()[:10],
+                                "mode": "append",
+                                "content": lifecycle_note,
+                                "idempotency_key": f"task_status:{task_id}:{prev_status_value or 'unknown'}->{new_status.value}:{task.updated_at}",
+                                "actor_id": by,
+                                "tags": ["task_status", new_status.value],
+                                "source_refs": [f"task:{task_id}"],
+                            }
+                        )
                     except Exception:
                         logger.exception(
-                            "memory_root_task_hook_failed group_id=%s task_id=%s",
-                            group_id, task_id,
+                            "memory_task_status_hook_failed group_id=%s task_id=%s status=%s",
+                            group_id, task_id, new_status.value,
                         )
+
+                    if new_status == TaskStatus.DONE and task.is_root:
+                        try:
+                            from ..memory.memory_ops import handle_memory_reme_write
+
+                            promotion_note = (
+                                f"Root task completed: id={task_id}, name={str(task.name or '').strip()}, "
+                                f"goal={str(task.goal or '').strip()}, by={by}, at={task.updated_at}"
+                            )
+                            handle_memory_reme_write(
+                                {
+                                    "group_id": group_id,
+                                    "target": "memory",
+                                    "mode": "append",
+                                    "content": promotion_note,
+                                    "idempotency_key": f"root_task_done:{task_id}",
+                                    "actor_id": by,
+                                    "tags": ["root_task_done", "stable"],
+                                    "source_refs": [f"task:{task_id}"],
+                                }
+                            )
+                        except Exception:
+                            logger.exception(
+                                "memory_root_task_hook_failed group_id=%s task_id=%s",
+                                group_id, task_id,
+                            )
 
             # --- Task Move ---
             elif op_name == "task.move":
@@ -659,10 +671,10 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 if task.status != TaskStatus.ARCHIVED:
                     raise ValueError(f"Task is not archived: {task_id}")
 
-                target_raw = str(getattr(task, "archived_from", "") or "planned")
-                target = _normalize_status_token(target_raw)
-                if target == "archived":
-                    target = "planned"
+                target_raw = str(getattr(task, "archived_from", "") or "planned").strip().lower()
+                if target_raw not in {"planned", "active", "done"}:
+                    target_raw = "planned"
+                target = target_raw
                 new_status = _parse_task_status(target)
 
                 task.status = new_status

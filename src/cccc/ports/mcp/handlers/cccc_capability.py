@@ -514,15 +514,15 @@ def capability_use(
         tool_args["by"] = by
 
     # Read-only memory actions should not have actor_id auto-injected,
-    # otherwise search-like operations are unintentionally narrowed to caller scope.
+    # otherwise search/get-like operations are unintentionally narrowed to caller scope.
     skip_actor_injection = False
     if call_tool == "cccc_memory":
         mem_action = str(tool_args.get("action") or "search").strip().lower()
-        if mem_action in {"guide", "search", "stats"}:
+        if mem_action in {"layout_get", "search", "get"}:
             skip_actor_injection = True
     elif call_tool == "cccc_memory_admin":
-        mem_admin_action = str(tool_args.get("action") or "ingest").strip().lower()
-        if mem_admin_action in {"export", "decay"}:
+        mem_admin_action = str(tool_args.get("action") or "index_sync").strip().lower()
+        if mem_admin_action in {"index_sync", "context_check", "compact", "daily_flush"}:
             skip_actor_injection = True
 
     if "actor_id" not in tool_args and not skip_actor_injection:

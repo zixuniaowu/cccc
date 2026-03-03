@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from ...kernel.memory import MEMORY_KINDS, MEMORY_SOURCE_TYPES
-
 _CCCC_HELP_DESCRIPTION = (
     "Load the effective collaboration playbook for this group "
     "(role-aware, on-demand, with runtime quick-use hints). "
@@ -39,7 +37,7 @@ MCP_TOOLS = [
     {
         "name": "cccc_bootstrap",
         "description": (
-            "One-call bootstrap: group + actors + help + PROJECT.md + context + inbox + optional ledger tail."
+            "One-call bootstrap: group + actors + help + PROJECT.md + context + inbox + optional ledger tail + memory_recall_gate."
         ),
         "inputSchema": _obj(
             {
@@ -497,7 +495,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_context_get",
-        "description": "Get context snapshot (vision/overview/tasks/agents).",
+        "description": "Get context snapshot (vision/overview/panorama/tasks/agents).",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -599,57 +597,62 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_memory",
-        "description": "Memory primary ops: action=guide|store|search|stats.",
+        "description": "ReMe file-memory primary ops: action=layout_get|search|get|write.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
-                "action": {"type": "string", "enum": ["guide", "store", "search", "stats"], "default": "search"},
-                "topic": {"type": "string", "enum": ["store", "search", "consolidation", "lifecycle"]},
-                "id": {"type": "string"},
-                "content": {"type": "string"},
-                "kind": {"type": "string", "enum": list(MEMORY_KINDS)},
-                "status": {"type": "string"},
-                "confidence": {"type": "string"},
-                "source_type": {"type": "string", "enum": list(MEMORY_SOURCE_TYPES)},
-                "source_ref": {"type": "string"},
-                "scope_key": {"type": "string"},
-                "actor_id": {"type": "string"},
-                "task_id": {"type": "string"},
-                "event_ts": {"type": "string"},
-                "strategy": {"type": "string"},
-                "tags": {"type": "array", "items": {"type": "string"}},
-                "solidify": {"type": "boolean", "default": False},
+                "action": {"type": "string", "enum": ["layout_get", "search", "get", "write"], "default": "search"},
                 "query": {"type": "string"},
-                "since": {"type": "string"},
-                "until": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 500},
-                "track_hit": {"type": "boolean", "default": False},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 50, "default": 5},
+                "min_score": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.1},
+                "sources": {"type": "array", "items": {"type": "string"}},
+                "vector_weight": {"type": "number", "minimum": 0, "maximum": 1},
+                "candidate_multiplier": {"type": "number", "minimum": 1, "maximum": 20},
+                "path": {"type": "string"},
+                "offset": {"type": "integer", "minimum": 1},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 5000},
+                "target": {"type": "string", "enum": ["memory", "daily"]},
+                "content": {"type": "string"},
+                "date": {"type": "string", "description": "YYYY-MM-DD (required when target=daily)"},
+                "mode": {"type": "string", "enum": ["append", "replace"], "default": "append"},
+                "idempotency_key": {"type": "string"},
+                "actor_id": {"type": "string"},
+                "source_refs": {"type": "array", "items": {"type": "string"}},
+                "tags": {"type": "array", "items": {"type": "string"}},
+                "supersedes": {"type": "array", "items": {"type": "string"}},
+                "dedup_intent": {"type": "string", "enum": ["new", "update", "supersede", "silent"], "default": "new"},
+                "dedup_query": {"type": "string"},
             }
         ),
     },
     {
         "name": "cccc_memory_admin",
-        "description": "Memory admin ops: action=ingest|export|delete|decay.",
+        "description": "ReMe file-memory admin ops: action=index_sync|context_check|compact|daily_flush.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 "action": {
                     "type": "string",
-                    "enum": ["ingest", "export", "delete", "decay"],
-                    "default": "ingest",
+                    "enum": ["index_sync", "context_check", "compact", "daily_flush"],
+                    "default": "index_sync",
                 },
-                "mode": {"type": "string"},
-                "limit": {"type": "integer", "minimum": 1, "maximum": 2000},
+                "mode": {"type": "string", "enum": ["scan", "rebuild"], "default": "scan"},
+                "messages": {"type": "array", "items": {"type": "object"}},
+                "messages_to_summarize": {"type": "array", "items": {"type": "object"}},
+                "turn_prefix_messages": {"type": "array", "items": {"type": "object"}},
+                "previous_summary": {"type": "string"},
+                "context_window_tokens": {"type": "integer", "minimum": 1024},
+                "reserve_tokens": {"type": "integer", "minimum": 0},
+                "keep_recent_tokens": {"type": "integer", "minimum": 256},
+                "return_prompt": {"type": "boolean", "default": False},
+                "date": {"type": "string", "description": "YYYY-MM-DD"},
+                "version": {"type": "string", "default": "default"},
+                "language": {"type": "string", "default": "en"},
                 "actor_id": {"type": "string"},
-                "reset_watermark": {"type": "boolean", "default": False},
-                "include_draft": {"type": "boolean", "default": False},
-                "output_dir": {"type": "string"},
-                "id": {"type": "string"},
-                "ids": {"type": "array", "items": {"type": "string"}},
-                "draft_days": {"type": "integer"},
-                "zero_hit_days": {"type": "integer"},
-                "solid_review_days": {"type": "integer"},
-                "solid_max_hit": {"type": "integer"},
+                "signal_pack": {"type": "object"},
+                "signal_pack_token_budget": {"type": "integer", "minimum": 64, "maximum": 4096, "default": 320},
+                "dedup_intent": {"type": "string", "enum": ["new", "update", "supersede", "silent"], "default": "new"},
+                "dedup_query": {"type": "string"},
             }
         ),
     },
