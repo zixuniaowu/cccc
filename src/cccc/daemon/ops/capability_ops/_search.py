@@ -971,7 +971,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
             dynamic_tools = dynamic_tools[:max_dynamic_tools_visible]
 
         visible_tools = sorted(
-            set(resolve_visible_tool_names(builtin_enabled))
+            set(resolve_visible_tool_names(builtin_enabled, actor_role=actor_role))
             | {str(x.get("name") or "").strip() for x in dynamic_tools if isinstance(x, dict)}
         )
 

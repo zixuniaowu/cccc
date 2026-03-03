@@ -174,6 +174,36 @@ export type CapabilityBlockEntry = {
   expires_at?: string;
 };
 
+export type CapabilityEnabledEntry = {
+  capability_id: string;
+  scope?: string;
+  actor_id?: string;
+  enabled_at?: string;
+  expires_at?: string;
+  ttl_seconds?: number;
+  reason?: string;
+  tool_count?: number;
+  tool_names?: string[];
+};
+
+export type CapabilityStateResult = {
+  group_id: string;
+  actor_id: string;
+  enabled: CapabilityEnabledEntry[];
+  dynamic_tools?: Array<{ name: string; capability_id: string; description?: string }>;
+};
+
+export type CapabilityImportRecord = {
+  capability_id: string;
+  kind: "mcp_toolpack" | "skill";
+  install_mode: "command" | "package" | "remote_only";
+  install_spec?: { command?: string; package?: string; url?: string };
+  name?: string;
+  description_short?: string;
+  source_id?: string;
+  [key: string]: unknown;
+};
+
 export type AgentState = {
   id: string;
   active_task_id?: string | null;

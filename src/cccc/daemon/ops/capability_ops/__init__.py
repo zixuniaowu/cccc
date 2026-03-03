@@ -37,7 +37,6 @@ from ._common import (  # noqa: F401
     _LEVEL_ENABLED,
     _LEVEL_PINNED,
     _LEVELS,
-    _POLICY_LEVEL_ORDER,
     _POLICY_CACHE,
     _QUAL_QUALIFIED,
     _QUAL_BLOCKED,

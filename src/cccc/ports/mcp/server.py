@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 from ...kernel.actors import get_effective_role
 from ...kernel.blobs import resolve_blob_attachment_path, store_blob_bytes
 from ...kernel.group import load_group
-from ...kernel.capabilities import CORE_TOOL_NAMES
+from ...kernel.capabilities import CORE_ADMIN_TOOLS, CORE_TOOL_NAMES
 from ...kernel.memory_guide import build_memory_guide
 from ...kernel.prompt_files import HELP_FILENAME, read_group_prompt_file
 from ...util.conv import coerce_bool
@@ -823,15 +823,26 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
         except Exception:
             state = {}
 
+    # Determine actor role for admin tool gating.
+    actor_role = ""
+    if gid and aid and aid != "user":
+        try:
+            group = load_group(gid)
+            actor_role = str(get_effective_role(group, aid) or "").strip().lower()
+        except Exception:
+            pass
+    admin_excluded = set(CORE_ADMIN_TOOLS) if actor_role == "peer" else set()
+
     if profile == "full":
         visible = {str(spec.get("name") or "").strip() for spec in MCP_TOOLS if isinstance(spec, dict)}
+        visible -= admin_excluded
     else:
         tools_raw = state.get("visible_tools") if isinstance(state, dict) else []
         if not isinstance(tools_raw, list):
             tools_raw = []
         visible = {str(x).strip() for x in tools_raw if str(x).strip()}
         if not visible:
-            visible = set(CORE_TOOL_NAMES)
+            visible = set(CORE_TOOL_NAMES) - admin_excluded
 
     dynamic_raw = state.get("dynamic_tools") if isinstance(state, dict) else []
     dynamic_specs: List[Dict[str, Any]] = []

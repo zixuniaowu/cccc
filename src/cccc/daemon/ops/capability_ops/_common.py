@@ -48,15 +48,9 @@ _OPENCLAW_TREE_CACHE: Dict[str, Any] = {"fetched_at": 0.0, "paths": []}
 
 _LEVEL_INDEXED = "indexed"
 _LEVEL_MOUNTED = "mounted"
-_LEVEL_ENABLED = "enabled"
+_LEVEL_ENABLED = "mounted"  # alias: enabled merged into mounted (3→2 level simplification)
 _LEVEL_PINNED = "pinned"
-_LEVELS = {_LEVEL_INDEXED, _LEVEL_MOUNTED, _LEVEL_ENABLED, _LEVEL_PINNED}
-_POLICY_LEVEL_ORDER = {
-    _LEVEL_INDEXED: 0,
-    _LEVEL_MOUNTED: 1,
-    _LEVEL_ENABLED: 2,
-    _LEVEL_PINNED: 3,
-}
+_LEVELS = {_LEVEL_INDEXED, _LEVEL_MOUNTED, _LEVEL_PINNED}
 _POLICY_CACHE: Dict[str, Any] = {
     "key": "",
     "compiled": None,
