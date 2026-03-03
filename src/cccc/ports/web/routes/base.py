@@ -410,7 +410,7 @@ def register_base_routes(app: FastAPI, *, ctx: RouteContext) -> None:
                         "is_dir": entry.is_dir(),
                     })
             except PermissionError:
-                return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": f"Cannot read: {path}"}}
+                return {"ok": False, "error": {"code": "PERMISSION_DENIED", "message": f"Permission denied: {path}"}}
 
             return {
                 "ok": True,
