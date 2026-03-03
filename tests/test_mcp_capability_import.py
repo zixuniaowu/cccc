@@ -43,12 +43,16 @@ class TestMcpCapabilityImport(unittest.TestCase):
         self.assertEqual(str(args.get("record", {}).get("capability_id") or ""), "skill:github:demo:triage")
 
     def test_mcp_router_capability_import_accepts_actor_id_without_by(self) -> None:
+        import os
         from cccc.ports.mcp.server import handle_tool_call
 
         with patch(
             "cccc.ports.mcp.server.capability_import",
             return_value={"ok": True, "state": "ready"},
-        ) as import_mock:
+        ) as import_mock, patch.dict(
+            os.environ,
+            {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "peer-1"},
+        ):
             result = handle_tool_call(
                 "cccc_capability_import",
                 {

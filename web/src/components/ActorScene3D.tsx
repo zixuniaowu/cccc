@@ -3,7 +3,7 @@ import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { ActorCharacter } from "./ActorCharacter";
 import { BuildZone } from "./BuildZone";
-import { MCGround, MCBed } from "./MCFurniture";
+import { MCGround, InstancedBeds, type BedInstance } from "./MCFurniture";
 import { computeGridPosition } from "../utils/buildLayout";
 import { useCharacterAnimation, type LayoutItem } from "../hooks/useCharacterAnimation";
 import type { AgentState, Actor, Task } from "../types";
@@ -192,6 +192,11 @@ function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: Scene
     staticMode: true,
   });
 
+  const bedInstances: BedInstance[] = useMemo(
+    () => [...layout.values()].map((item) => ({ position: item.bedPos, rotationY: item.bedRotY })),
+    [layout],
+  );
+
   return (
     <>
       <ambientLight intensity={isDark ? 0.35 : 0.6} />
@@ -213,13 +218,7 @@ function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: Scene
         <BuildZone tasks={visibleTasks} baseZ={0} isDark={isDark} />
       )}
 
-      {[...layout.values()].map((item) => (
-        <MCBed
-          key={`bed-${item.agentId}`}
-          position={item.bedPos}
-          rotationY={item.bedRotY}
-        />
-      ))}
+      <InstancedBeds beds={bedInstances} />
 
       {agents.map((agent) => {
         const actor = actorMap.get(agent.id);
@@ -242,6 +241,8 @@ function Scene({ agents, actors, tasks, isDark, groupId: _groupId, camZ }: Scene
             title={actor?.title}
             isRunning={running}
             activeTaskName={taskEntry?.name.replace(/^T\d+:\s*/, "")}
+            focus={agent.focus || undefined}
+            blockerText={agent.blockers?.length ? agent.blockers[0] : undefined}
           />
         );
       })}

@@ -116,6 +116,22 @@ function agentColor(id: string, runtime?: string): string {
   return PALETTE[hashCode(id) % PALETTE.length];
 }
 
+// Module-level body material cache: shared across agents with same color/state
+const BODY_MAT_CACHE = new Map<string, THREE.MeshStandardMaterial>();
+const OFFLINE_MAT = new THREE.MeshStandardMaterial({
+  color: "#6b7280", flatShading: true, transparent: true, opacity: 0.55,
+});
+
+function getBodyMaterial(color: string, offline: boolean): THREE.MeshStandardMaterial {
+  if (offline) return OFFLINE_MAT;
+  let mat = BODY_MAT_CACHE.get(color);
+  if (!mat) {
+    mat = new THREE.MeshStandardMaterial({ color, flatShading: true });
+    BODY_MAT_CACHE.set(color, mat);
+  }
+  return mat;
+}
+
 export interface ActorCharacterProps {
   agent: AgentState;
   position: [number, number, number];
@@ -126,27 +142,18 @@ export interface ActorCharacterProps {
   title?: string;
   isRunning?: boolean;
   activeTaskName?: string;
+  focus?: string;
+  blockerText?: string;
 }
 
 export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>(
-  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title, isRunning, activeTaskName }, ref) {
+  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title, isRunning, activeTaskName, focus, blockerText }, ref) {
     const color = agentColor(agent.id, runtime);
     const isForeman = role === "foreman";
     const isOffline = isRunning === false;
 
-    // Shared material per agent (body color; gray + semi-transparent when offline)
-    const mat = useMemo(() => {
-      if (isOffline) {
-        return new THREE.MeshStandardMaterial({
-          color: "#6b7280",
-          flatShading: true,
-          transparent: true,
-          opacity: 0.55,
-        });
-      }
-      return new THREE.MeshStandardMaterial({ color, flatShading: true });
-    }, [color, isOffline]);
-    useEffect(() => () => { mat.dispose(); }, [mat]);
+    // Shared cached material (body color; gray + semi-transparent when offline)
+    const mat = getBodyMaterial(color, isOffline);
 
     // Head face texture: PNG logo if available, else text fallback
     const faceLabel = runtime
@@ -154,14 +161,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       : agent.id.charAt(0).toUpperCase();
     const logoPath = runtime ? RUNTIME_LOGO[runtime] : undefined;
     const faceMat = useMemo(() => {
-      if (isOffline) {
-        return new THREE.MeshStandardMaterial({
-          color: "#6b7280",
-          flatShading: true,
-          transparent: true,
-          opacity: 0.55,
-        });
-      }
+      if (isOffline) return OFFLINE_MAT;
       if (logoPath) {
         const tex = getPngTexture(logoPath, color);
         return new THREE.MeshStandardMaterial({ map: tex, flatShading: true });
@@ -169,7 +169,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       const tex = getFaceTexture(faceLabel, color);
       return new THREE.MeshStandardMaterial({ map: tex, flatShading: true });
     }, [logoPath, faceLabel, color, isOffline]);
-    useEffect(() => () => { faceMat.dispose(); }, [faceMat]);
+    useEffect(() => () => { if (faceMat !== OFFLINE_MAT) faceMat.dispose(); }, [faceMat]);
     // Material array: all sides = body color, front face (-Z, index 5) = logo
     const headMats = useMemo(
       () => [mat, mat, mat, mat, mat, faceMat],
@@ -179,8 +179,16 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     const animState = deriveAnimState(agent, isRunning);
     const statusLabel = deriveStatusLabel(animState, !!agent.active_task_id, isForeman);
 
+    // Pre-truncate long text before bubble key to avoid unnecessary texture rebuilds
+    const MAX_TASK = 25;
+    const MAX_FOCUS = 30;
+    const MAX_BLOCKER = 30;
+    const _taskText = activeTaskName ? (activeTaskName.length > MAX_TASK ? activeTaskName.slice(0, MAX_TASK) + "\u2026" : activeTaskName) : "";
+    const _focusText = focus ? (focus.length > MAX_FOCUS ? focus.slice(0, MAX_FOCUS) + "\u2026" : focus) : "";
+    const _blockerText = blockerText ? (blockerText.length > MAX_BLOCKER ? blockerText.slice(0, MAX_BLOCKER) + "\u2026" : blockerText) : "";
+
     // Status bubble texture (GPU sprite replaces Html DOM overlay for performance)
-    const _bubbleKey = `${title || agent.id}|${statusLabel.text}|${statusLabel.color}|${activeTaskName || ""}|${isDark ? 1 : 0}|${color}`;
+    const _bubbleKey = `${title || agent.id}|${statusLabel.text}|${statusLabel.color}|${_taskText}|${_focusText}|${_blockerText}|${isDark ? 1 : 0}|${color}`;
     const { bubbleTex, bubbleScale } = useMemo(() => {
       const DPR = 2;
       const CW = 180 * DPR;
@@ -192,7 +200,9 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       const gap = 3 * DPR;
 
       let h = padY + titleFs * 1.3 + gap + statusFs * 1.3;
-      if (activeTaskName) h += gap + taskFs * 1.3;
+      if (_taskText) h += gap + taskFs * 1.3;
+      if (_focusText) h += gap + taskFs * 1.3;
+      if (_blockerText) h += gap + taskFs * 1.3;
       h += padY;
       const CH = Math.ceil(h);
 
@@ -233,16 +243,42 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       ctx.fillText(statusLabel.text, CW / 2, y);
       y += statusFs * 1.3 + gap;
 
-      // Task name
-      if (activeTaskName) {
+      // Task name (pre-truncated via _taskText)
+      if (_taskText) {
         ctx.font = `400 ${taskFs}px sans-serif`;
         ctx.fillStyle = isDark ? "#94a3b8" : "#9ca3af";
-        let tkText = activeTaskName.length > 25 ? activeTaskName.slice(0, 25) + "\u2026" : activeTaskName;
+        let tkText = _taskText;
         if (ctx.measureText(tkText).width > maxTW) {
           while (ctx.measureText(tkText + "\u2026").width > maxTW && tkText.length > 1) tkText = tkText.slice(0, -1);
           tkText += "\u2026";
         }
         ctx.fillText(tkText, CW / 2, y);
+        y += taskFs * 1.3 + gap;
+      }
+
+      // Focus text (pre-truncated via _focusText)
+      if (_focusText) {
+        ctx.font = `400 ${taskFs}px sans-serif`;
+        ctx.fillStyle = isDark ? "#94a3b8" : "#9ca3af";
+        let fText = _focusText;
+        if (ctx.measureText(fText).width > maxTW) {
+          while (ctx.measureText(fText + "\u2026").width > maxTW && fText.length > 1) fText = fText.slice(0, -1);
+          fText += "\u2026";
+        }
+        ctx.fillText(fText, CW / 2, y);
+        y += taskFs * 1.3 + gap;
+      }
+
+      // Blocker text (red, pre-truncated via _blockerText)
+      if (_blockerText) {
+        ctx.font = `500 ${taskFs}px sans-serif`;
+        ctx.fillStyle = isDark ? "#f87171" : "#dc2626";
+        let bText = _blockerText;
+        if (ctx.measureText(bText).width > maxTW) {
+          while (ctx.measureText(bText + "\u2026").width > maxTW && bText.length > 1) bText = bText.slice(0, -1);
+          bText += "\u2026";
+        }
+        ctx.fillText(bText, CW / 2, y);
       }
 
       const tex = new THREE.CanvasTexture(canvas);

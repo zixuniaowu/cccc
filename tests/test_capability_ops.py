@@ -1390,6 +1390,8 @@ class TestCapabilityOps(unittest.TestCase):
             cleanup()
 
     def test_default_policy_surfaces_risky_third_party_mcp_not_hidden(self) -> None:
+        """Risky third-party MCPs (desktop-commander) are indexed by default policy,
+        so they are hidden from normal search results (policy_hidden_count > 0)."""
         _, cleanup = self._with_home()
         try:
             gid = self._create_group()
@@ -1419,11 +1421,10 @@ class TestCapabilityOps(unittest.TestCase):
                 ),
                 None,
             )
-            self.assertIsNotNone(row)
-            item = row if isinstance(row, dict) else {}
-            self.assertEqual(str(item.get("policy_level") or ""), "mounted")
-            self.assertIn(str(item.get("qualification_status") or ""), {"qualified", "unavailable"})
-            self.assertIn(str(item.get("enable_hint") or ""), {"enable_now", "unsupported"})
+            # desktop-commander is indexed in default allowlist → hidden from search
+            self.assertIsNone(row)
+            diag = result.get("search_diagnostics") if isinstance(result.get("search_diagnostics"), dict) else {}
+            self.assertGreater(int(diag.get("policy_hidden_count") or 0), 0)
         finally:
             cleanup()
 
@@ -2607,6 +2608,11 @@ class TestCapabilityOps(unittest.TestCase):
                 },
                 clear=False,
             ):
+                # Override allowlist so openclaw_skills_remote is mounted (visible in search)
+                self._write_allowlist_override(
+                    extra="    openclaw_skills_remote: mounted\n",
+                )
+                ops._POLICY_CACHE.clear()
                 resp, _ = self._call(
                     "capability_search",
                     {
@@ -3472,9 +3478,9 @@ class TestCapabilityOps(unittest.TestCase):
             result = resp.result if isinstance(resp.result, dict) else {}
             record = result.get("record") if isinstance(result.get("record"), dict) else {}
             self.assertEqual(str(record.get("source_id") or ""), "manual_import")
-            self.assertEqual(str(result.get("effective_policy_level") or ""), "mounted")
-            self.assertTrue(bool(result.get("enableable_now")))
-            self.assertEqual(str(result.get("enable_block_reason") or ""), "")
+            self.assertEqual(str(result.get("effective_policy_level") or ""), "indexed")
+            self.assertFalse(bool(result.get("enableable_now")))
+            self.assertEqual(str(result.get("enable_block_reason") or ""), "policy_level_indexed")
         finally:
             cleanup()
 
