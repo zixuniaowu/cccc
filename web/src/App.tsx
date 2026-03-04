@@ -112,6 +112,14 @@ export default function App() {
   const chatAtBottomRef = useRef<boolean>(true);
   const chatScrollMemoryRef = useRef<Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>>({});
   const actorsRef = useRef<Actor[]>([]);
+
+  // Hide Panorama tab when browser lacks GPU/3D support
+  const canRender3D = useMemo(() => {
+    try {
+      const canvas = document.createElement("canvas");
+      return !!(navigator.gpu || canvas.getContext("webgl2"));
+    } catch { return false; }
+  }, []);
   const prevGroupIdRef = useRef<string | null>(null);
   // Local state
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
@@ -503,6 +511,7 @@ export default function App() {
                   }
               }
               canAddAgent={!webReadOnly && !!selectedGroupId}
+              showPanorama={canRender3D}
             />
           )}
 

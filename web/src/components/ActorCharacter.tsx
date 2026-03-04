@@ -180,9 +180,9 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     const statusLabel = deriveStatusLabel(animState, !!agent.active_task_id, isForeman);
 
     // Pre-truncate long text before bubble key to avoid unnecessary texture rebuilds
-    const MAX_TASK = 25;
-    const MAX_FOCUS = 30;
-    const MAX_BLOCKER = 30;
+    const MAX_TASK = 35;
+    const MAX_FOCUS = 42;
+    const MAX_BLOCKER = 42;
     const _taskText = activeTaskName ? (activeTaskName.length > MAX_TASK ? activeTaskName.slice(0, MAX_TASK) + "\u2026" : activeTaskName) : "";
     const _focusText = focus ? (focus.length > MAX_FOCUS ? focus.slice(0, MAX_FOCUS) + "\u2026" : focus) : "";
     const _blockerText = blockerText ? (blockerText.length > MAX_BLOCKER ? blockerText.slice(0, MAX_BLOCKER) + "\u2026" : blockerText) : "";
@@ -191,81 +191,90 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     const _bubbleKey = `${title || agent.id}|${statusLabel.text}|${statusLabel.color}|${_taskText}|${_focusText}|${_blockerText}|${isDark ? 1 : 0}|${color}`;
     const { bubbleTex, bubbleScale } = useMemo(() => {
       const DPR = 2;
-      const CW = 180 * DPR;
-      const padX = 8 * DPR;
-      const padY = 5 * DPR;
-      const titleFs = 11 * DPR;
-      const statusFs = 9 * DPR;
-      const taskFs = 8 * DPR;
-      const gap = 3 * DPR;
+      const CW = 220 * DPR;
+      const padX = 10 * DPR;
+      const padY = 7 * DPR;
+      const titleFs = 13 * DPR;
+      const statusFs = 11 * DPR;
+      const taskFs = 9 * DPR;
+      const gap = 4 * DPR;
 
+      const shadowMargin = 10 * DPR; // extra canvas space for drop shadow
       let h = padY + titleFs * 1.3 + gap + statusFs * 1.3;
       if (_taskText) h += gap + taskFs * 1.3;
       if (_focusText) h += gap + taskFs * 1.3;
       if (_blockerText) h += gap + taskFs * 1.3;
       h += padY;
-      const CH = Math.ceil(h);
+      const boxH = Math.ceil(h);
+      const CH = boxH + shadowMargin;
 
       const canvas = document.createElement("canvas");
-      canvas.width = CW;
+      canvas.width = CW + shadowMargin;
       canvas.height = CH;
       const ctx = canvas.getContext("2d")!;
 
-      const bg = isDark ? "rgba(15,23,42,0.92)" : "rgba(255,255,255,0.95)";
-      const border = isDark ? "rgba(100,116,139,0.4)" : "rgba(209,213,219,0.8)";
+      const ox = shadowMargin / 2; // offset to center box within padded canvas
+      const bg = isDark ? "rgba(15,23,42,0.96)" : "rgba(255,255,255,0.98)";
+      const border = isDark ? "rgba(100,116,139,0.6)" : "rgba(156,163,175,0.9)";
       ctx.beginPath();
-      ctx.roundRect(0, 0, CW, CH, 8 * DPR);
+      ctx.roundRect(ox, 0, CW, boxH, 8 * DPR);
+      // Drop shadow for depth against green scene
+      ctx.shadowColor = "rgba(0,0,0,0.30)";
+      ctx.shadowBlur = 6 * DPR;
+      ctx.shadowOffsetY = 2 * DPR;
       ctx.fillStyle = bg;
       ctx.fill();
+      ctx.shadowColor = "transparent";
       ctx.strokeStyle = border;
-      ctx.lineWidth = DPR;
+      ctx.lineWidth = 1.5 * DPR;
       ctx.stroke();
 
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
+      const cx = ox + CW / 2; // text center x within padded canvas
       let y = padY;
       const maxTW = CW - padX * 2;
 
       // Title
-      ctx.font = `600 ${titleFs}px sans-serif`;
+      ctx.font = `700 ${titleFs}px sans-serif`;
       ctx.fillStyle = color;
       let tText = title || agent.id;
       if (ctx.measureText(tText).width > maxTW) {
         while (ctx.measureText(tText + "\u2026").width > maxTW && tText.length > 1) tText = tText.slice(0, -1);
         tText += "\u2026";
       }
-      ctx.fillText(tText, CW / 2, y);
+      ctx.fillText(tText, cx, y);
       y += titleFs * 1.3 + gap;
 
       // Status
-      ctx.font = `500 ${statusFs}px sans-serif`;
+      ctx.font = `600 ${statusFs}px sans-serif`;
       ctx.fillStyle = statusLabel.color;
-      ctx.fillText(statusLabel.text, CW / 2, y);
+      ctx.fillText(statusLabel.text, cx, y);
       y += statusFs * 1.3 + gap;
 
       // Task name (pre-truncated via _taskText)
       if (_taskText) {
-        ctx.font = `400 ${taskFs}px sans-serif`;
-        ctx.fillStyle = isDark ? "#94a3b8" : "#9ca3af";
+        ctx.font = `500 ${taskFs}px sans-serif`;
+        ctx.fillStyle = isDark ? "#cbd5e1" : "#4b5563";
         let tkText = _taskText;
         if (ctx.measureText(tkText).width > maxTW) {
           while (ctx.measureText(tkText + "\u2026").width > maxTW && tkText.length > 1) tkText = tkText.slice(0, -1);
           tkText += "\u2026";
         }
-        ctx.fillText(tkText, CW / 2, y);
+        ctx.fillText(tkText, cx, y);
         y += taskFs * 1.3 + gap;
       }
 
       // Focus text (pre-truncated via _focusText)
       if (_focusText) {
-        ctx.font = `400 ${taskFs}px sans-serif`;
-        ctx.fillStyle = isDark ? "#94a3b8" : "#9ca3af";
+        ctx.font = `500 ${taskFs}px sans-serif`;
+        ctx.fillStyle = isDark ? "#cbd5e1" : "#4b5563";
         let fText = _focusText;
         if (ctx.measureText(fText).width > maxTW) {
           while (ctx.measureText(fText + "\u2026").width > maxTW && fText.length > 1) fText = fText.slice(0, -1);
           fText += "\u2026";
         }
-        ctx.fillText(fText, CW / 2, y);
+        ctx.fillText(fText, cx, y);
         y += taskFs * 1.3 + gap;
       }
 
@@ -278,13 +287,14 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
           while (ctx.measureText(bText + "\u2026").width > maxTW && bText.length > 1) bText = bText.slice(0, -1);
           bText += "\u2026";
         }
-        ctx.fillText(bText, CW / 2, y);
+        ctx.fillText(bText, cx, y);
       }
 
       const tex = new THREE.CanvasTexture(canvas);
       tex.colorSpace = THREE.SRGBColorSpace;
-      const worldW = 0.9;
-      return { bubbleTex: tex, bubbleScale: [worldW, worldW * (CH / CW)] as [number, number] };
+      const actualCW = CW + shadowMargin;
+      const worldW = 1.15;
+      return { bubbleTex: tex, bubbleScale: [worldW, worldW * (CH / actualCW)] as [number, number] };
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [_bubbleKey]);
     useEffect(() => () => { bubbleTex.dispose(); }, [bubbleTex]);
@@ -310,7 +320,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
         )}
 
         {/* Status bubble above head — GPU-rendered sprite (no DOM overhead) */}
-        <sprite position={[0, isForeman ? 1.65 : 1.55, 0]} scale={[bubbleScale[0], bubbleScale[1], 1]}>
+        <sprite position={[0, isForeman ? 1.75 : 1.65, 0]} scale={[bubbleScale[0], bubbleScale[1], 1]}>
           <spriteMaterial map={bubbleTex} transparent depthWrite={false} />
         </sprite>
       </group>
