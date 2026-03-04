@@ -212,7 +212,7 @@ def _check_permission(
         return None
 
     # Peer restrictions
-    if op_name in ("vision.update", "overview.manual.update", "task.move"):
+    if op_name in ("vision.update", "overview.manual.update", "task.move", "meta.merge"):
         return f"Permission denied: {op_name} requires foreman or user"
 
     if op_name in ("task.restore",):
@@ -327,6 +327,7 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
         },
         "active_tasks": active_tasks,
         "agents": agents_out,
+        "meta": context.meta if isinstance(context.meta, dict) else {},
     }
 
     return DaemonResponse(ok=True, result=result)
@@ -735,6 +736,44 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 agent.updated_at = _utc_now_iso()
                 agents_dirty = True
                 _mark_change(idx, op_name, f"Cleared agent {agent_id}")
+
+            # --- Meta Merge ---
+            elif op_name == "meta.merge":
+                perm_err = _check_permission(by, op_name, group_id)
+                if perm_err:
+                    raise ValueError(perm_err)
+
+                data = item.get("data")
+                if not isinstance(data, dict):
+                    raise ValueError(f"op[{idx}] meta.merge requires 'data' dict")
+
+                # Key allowlist — only known safe keys may be written
+                _META_ALLOWED_KEYS = {"panorama_blueprint"}
+                bad_keys = set(data.keys()) - _META_ALLOWED_KEYS
+                if bad_keys:
+                    raise ValueError(
+                        f"op[{idx}] meta.merge: disallowed keys {sorted(bad_keys)}. "
+                        f"Allowed: {sorted(_META_ALLOWED_KEYS)}"
+                    )
+
+                if not isinstance(context.meta, dict):
+                    context.meta = {}
+                context.meta.update(data)
+
+                # Size guard — total serialised meta must stay under 100 KB
+                import json as _json
+                _meta_size = len(_json.dumps(context.meta, ensure_ascii=False).encode())
+                if _meta_size > 100_000:
+                    # Roll back the merge
+                    for k in data:
+                        context.meta.pop(k, None)
+                    raise ValueError(
+                        f"op[{idx}] meta.merge: resulting meta size {_meta_size} bytes exceeds 100 KB limit"
+                    )
+
+                context_dirty = True
+                keys = ", ".join(sorted(data.keys()))
+                _mark_change(idx, op_name, f"Merged meta keys: {keys}")
 
             else:
                 raise ValueError(f"Unknown operation: {op_name}")

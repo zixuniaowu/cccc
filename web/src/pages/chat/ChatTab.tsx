@@ -151,6 +151,7 @@ export function ChatTab({
     fileInputRef,
     chatAtBottomRef,
     chatScrollMemoryRef,
+    scrollRef,
   });
 
   const { t } = useTranslation('chat');

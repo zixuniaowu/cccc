@@ -5,7 +5,7 @@ import { forwardRef, useRef, useMemo, useEffect, useImperativeHandle } from "rea
 import * as THREE from "three";
 
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
-const MAX_INSTANCES = 64;
+const MAX_INSTANCES = 512;
 
 // Scratch objects for matrix/color computation (synchronous use only)
 const _obj = new THREE.Object3D();

@@ -204,12 +204,24 @@ export default function App() {
     onTabChange: handleTabChange,
   });
 
-  // Keep refs in sync
+  // Keep refs in sync + scroll to bottom when returning to chat tab
   useEffect(() => {
     activeTabRef.current = activeTab;
     if (activeTab !== "chat") return;
     const el = eventContainerRef.current;
     if (!el) return;
+
+    // If user was at bottom before switching away, scroll to bottom on return
+    // (new messages may have arrived while on another tab)
+    if (chatAtBottomRef.current) {
+      requestAnimationFrame(() => {
+        el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+      });
+      setShowScrollButton(false);
+      setChatUnreadCount(0);
+      return;
+    }
+
     const threshold = 100;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
     chatAtBottomRef.current = atBottom;
@@ -568,6 +580,7 @@ export default function App() {
                   )}
                   actors={actors}
                   tasks={groupContext?.active_tasks}
+                  panoramaBlueprint={groupContext?.meta?.panorama_blueprint}
                   isDark={isDark}
                   groupId={selectedGroupId}
                 />

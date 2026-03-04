@@ -27,6 +27,8 @@ interface UseChatTabOptions {
   chatScrollMemoryRef?: React.MutableRefObject<
     Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>
   >;
+  /** Scroll container ref for programmatic scrolling (e.g. after send) */
+  scrollRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
 
 export function useChatTab({
@@ -38,6 +40,7 @@ export function useChatTab({
   fileInputRef,
   chatAtBottomRef,
   chatScrollMemoryRef,
+  scrollRef,
 }: UseChatTabOptions) {
   // ============ Stores ============
   const {
@@ -333,6 +336,16 @@ export function useChatTab({
         url.searchParams.delete("tab");
         window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
       }
+      // After sending, scroll to bottom so the user sees their new message
+      if (chatAtBottomRef) chatAtBottomRef.current = true;
+      setShowScrollButton(false);
+      setChatUnreadCount(0);
+      const scrollEl = scrollRef?.current;
+      if (scrollEl) {
+        requestAnimationFrame(() => {
+          scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: "auto" });
+        });
+      }
       onMessageSent?.();
     } finally {
       setBusy("");
@@ -354,6 +367,10 @@ export function useChatTab({
     clearDraft,
     closeChatWindow,
     fileInputRef,
+    chatAtBottomRef,
+    scrollRef,
+    setShowScrollButton,
+    setChatUnreadCount,
     onMessageSent,
   ]);
 

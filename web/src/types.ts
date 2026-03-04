@@ -264,6 +264,23 @@ export type OverviewManual = {
   updated_at?: string | null;
 };
 
+// LLM-generated project blueprint for 3D panorama building
+export type ProjectBlueprintBlock = {
+  x: number;
+  y: number;
+  z: number;
+  color: string;
+  order: number;
+};
+
+export type ProjectBlueprint = {
+  version: 1;
+  style_note: string;
+  blocks: ProjectBlueprintBlock[];
+  gridSize: [number, number, number];
+  blockScale: number;
+};
+
 export type GroupContext = {
   version?: string;
   vision?: string | null;
@@ -272,6 +289,9 @@ export type GroupContext = {
   };
   panorama?: {
     mermaid?: string;
+  };
+  meta?: {
+    panorama_blueprint?: ProjectBlueprint | null;
   };
   tasks_summary?: {
     total: number;
