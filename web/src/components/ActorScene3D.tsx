@@ -13,6 +13,7 @@ interface ActorScene3DProps {
   actors?: Actor[];
   tasks?: Task[];
   panoramaBlueprint?: ProjectBlueprint | null;
+  projectStatus?: string | null;
   isDark: boolean;
   groupId?: string;
   className?: string;
@@ -20,8 +21,13 @@ interface ActorScene3DProps {
 
 // ── Worker layout (surround center building) ──
 
-function siteRadius(agentCount: number): number {
-  return Math.max(2, agentCount * 0.6 + 1);
+function siteRadius(agentCount: number, blueprint?: ProjectBlueprint | null): number {
+  const base = Math.max(2, agentCount * 0.6 + 1);
+  if (blueprint) {
+    const footprint = Math.max(blueprint.gridSize[0], blueprint.gridSize[2]) * blueprint.blockScale / 2;
+    return Math.max(base, footprint + 2.0);
+  }
+  return base;
 }
 
 /** Place on arc around origin, facing center (mesh default faces -Z) */
@@ -35,11 +41,21 @@ function arcPlace(angle: number, r: number): { pos: [number, number, number]; ro
 function computeWorkerLayout(
   agents: AgentState[],
   actorMap: Map<string, Actor>,
+  blueprint?: ProjectBlueprint | null,
+  tasks?: Task[],
 ): Map<string, LayoutItem> {
   const count = agents.length;
   if (count === 0) return new Map();
 
-  const radius = siteRadius(count);
+  // Build task status lookup
+  const taskStatusMap = new Map<string, string>();
+  if (tasks) {
+    for (const t of tasks) {
+      if (t.status) taskStatusMap.set(t.id, t.status);
+    }
+  }
+
+  const radius = siteRadius(count, blueprint);
   const workRadius = radius * 0.9;
   const idleRadius = radius * 1.2;
   const bedRadius = radius + 1.5;
@@ -54,7 +70,9 @@ function computeWorkerLayout(
     const agent = agents[i];
     const actor = actorMap.get(agent.id);
     const running = actor?.running !== false && actor?.enabled !== false;
-    if (running && agent.active_task_id) {
+    const ts = agent.active_task_id ? taskStatusMap.get(agent.active_task_id) : undefined;
+    const taskDone = ts === "done" || ts === "archived";
+    if (running && agent.active_task_id && !taskDone) {
       workingIds.push(agent.id);
     } else {
       idleIds.push(agent.id);
@@ -122,12 +140,13 @@ interface SceneProps {
   actors?: Actor[];
   tasks?: Task[];
   panoramaBlueprint?: ProjectBlueprint | null;
+  projectStatus?: string | null;
   isDark: boolean;
   groupId?: string;
   camZ: number;
 }
 
-function Scene({ agents, actors, tasks, panoramaBlueprint, isDark, groupId: _groupId, camZ }: SceneProps) {
+function Scene({ agents, actors, tasks, panoramaBlueprint, projectStatus, isDark, groupId: _groupId, camZ }: SceneProps) {
   const characterRefs = useRef<Map<string, THREE.Group>>(new Map());
 
   const actorMap = useMemo(() => {
@@ -137,10 +156,10 @@ function Scene({ agents, actors, tasks, panoramaBlueprint, isDark, groupId: _gro
   }, [actors]);
 
   const taskMap = useMemo(() => {
-    const m = new Map<string, { idx: number; name: string }>();
+    const m = new Map<string, { idx: number; name: string; status?: string | null }>();
     if (!tasks || tasks.length === 0) return m;
     for (let i = 0; i < tasks.length; i++) {
-      m.set(tasks[i].id, { idx: i, name: tasks[i].name });
+      m.set(tasks[i].id, { idx: i, name: tasks[i].name, status: tasks[i].status });
     }
     return m;
   }, [tasks]);
@@ -165,12 +184,21 @@ function Scene({ agents, actors, tasks, panoramaBlueprint, isDark, groupId: _gro
   }, [agents, tasks]);
 
   const layout = useMemo(
-    () => computeWorkerLayout(agents, actorMap),
-    [agents, actorMap],
+    () => computeWorkerLayout(agents, actorMap, panoramaBlueprint, tasks),
+    [agents, actorMap, panoramaBlueprint, tasks],
   );
 
+  const taskStatusMap = useMemo(() => {
+    const m = new Map<string, string>();
+    if (!tasks) return m;
+    for (const t of tasks) {
+      if (t.status) m.set(t.id, t.status);
+    }
+    return m;
+  }, [tasks]);
+
   useCharacterAnimation({
-    agents, actorMap, layout, buildTargetMap, characterRefs,
+    agents, actorMap, layout, buildTargetMap, characterRefs, taskStatusMap,
     staticMode: true,
   });
 
@@ -196,7 +224,7 @@ function Scene({ agents, actors, tasks, panoramaBlueprint, isDark, groupId: _gro
 
       <MCGround />
 
-      <ProjectBuilding blueprint={panoramaBlueprint} tasks={tasks} isDark={isDark} />
+      <ProjectBuilding blueprint={panoramaBlueprint} tasks={tasks} isDark={isDark} projectStatus={projectStatus} />
 
       <InstancedBeds beds={bedInstances} />
 
@@ -220,7 +248,9 @@ function Scene({ agents, actors, tasks, panoramaBlueprint, isDark, groupId: _gro
             runtime={actor?.runtime}
             title={actor?.title}
             isRunning={running}
+            idleSeconds={actor?.idle_seconds}
             activeTaskName={taskEntry?.name.replace(/^T\d+:\s*/, "")}
+            taskStatus={taskEntry?.status || undefined}
             focus={agent.focus || undefined}
             blockerText={agent.blockers?.length ? agent.blockers[0] : undefined}
           />
@@ -248,12 +278,12 @@ function Scene({ agents, actors, tasks, panoramaBlueprint, isDark, groupId: _gro
 
 type RenderMode = "loading" | "webgpu" | "webgl";
 
-export function ActorScene3D({ agents, actors, tasks, panoramaBlueprint, isDark, groupId, className }: ActorScene3DProps) {
+export function ActorScene3D({ agents, actors, tasks, panoramaBlueprint, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
   const camZ = useMemo(() => {
-    const radius = siteRadius(agents.length);
+    const radius = siteRadius(agents.length, panoramaBlueprint);
     const sceneExtent = radius + 2; // beds at radius + 1.5
     return Math.max(5, sceneExtent * 2 + 1);
-  }, [agents.length]);
+  }, [agents.length, panoramaBlueprint]);
 
   // Phase 1: detect WebGPU + dynamically load three/webgpu module
   const [renderMode, setRenderMode] = useState<RenderMode>("loading");
@@ -378,7 +408,7 @@ export function ActorScene3D({ agents, actors, tasks, panoramaBlueprint, isDark,
         gl={glProp}
       >
         <Suspense fallback={null}>
-          <Scene agents={agents} actors={actors} tasks={tasks} panoramaBlueprint={panoramaBlueprint} isDark={isDark} groupId={groupId} camZ={camZ} />
+          <Scene agents={agents} actors={actors} tasks={tasks} panoramaBlueprint={panoramaBlueprint} projectStatus={projectStatus} isDark={isDark} groupId={groupId} camZ={camZ} />
         </Suspense>
       </Canvas>
     </div>

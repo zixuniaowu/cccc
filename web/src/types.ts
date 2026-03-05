@@ -79,6 +79,7 @@ export type Actor = {
   title?: string;
   enabled?: boolean;
   running?: boolean;  // Actual process running status
+  idle_seconds?: number | null;  // Seconds since last PTY output (null if not running/headless)
   command?: string[];
   env?: Record<string, string>;
   capability_autoload?: string[];
@@ -292,6 +293,7 @@ export type GroupContext = {
   };
   meta?: {
     panorama_blueprint?: ProjectBlueprint | null;
+    project_status?: string | null;
   };
   tasks_summary?: {
     total: number;

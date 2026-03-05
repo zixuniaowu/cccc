@@ -8,6 +8,7 @@ import {
   isChatReadEvent,
   isChatAckEvent,
   isChatMessageEvent,
+  isActorActivityEvent,
   extractChatReadData,
   extractChatAckData,
   initializeReadStatus,
@@ -36,6 +37,7 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     updateReadStatus,
     updateAckStatus,
     updateReplyStatus,
+    updateActorActivity,
     setGroupContext,
     refreshActors,
   } = useGroupStore();
@@ -118,6 +120,15 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
             contextRefreshTimerRef.current = null;
             void fetchContext(groupId);
           }, 150);
+          return;
+        }
+
+        // Actor activity - lightweight idle_seconds update (no full refresh)
+        if (isActorActivityEvent(ev)) {
+          const actors = ev.data?.actors;
+          if (Array.isArray(actors) && actors.length > 0) {
+            updateActorActivity(actors);
+          }
           return;
         }
 

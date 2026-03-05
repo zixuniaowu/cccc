@@ -95,6 +95,7 @@ from .serve_ops import (
     start_automation_thread,
     start_space_jobs_thread,
     start_space_sync_thread,
+    start_actor_activity_thread,
     bind_server_socket,
     write_daemon_addr,
     start_bootstrap_thread,
@@ -872,6 +873,20 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
         tick_space_sync=_tick_space_sync,
         interval_seconds=30.0,
     )
+
+    try:
+        from .messaging.streaming import EVENT_BROADCASTER as _activity_broadcaster
+
+        start_actor_activity_thread(
+            stop_event=stop_event,
+            home=p.home,
+            pty_supervisor=pty_runner.SUPERVISOR,
+            event_broadcaster=_activity_broadcaster,
+            load_group=load_group,
+            interval_seconds=10.0,
+        )
+    except Exception:
+        logger.warning("Failed to start actor activity thread")
 
     transport = _desired_daemon_transport()
     if transport == "unix" and getattr(socket, "AF_UNIX", None) is None:

@@ -46,6 +46,7 @@ interface GroupState {
   prependEvents: (events: LedgerEvent[]) => void;
   setChatWindow: (w: GroupState["chatWindow"]) => void;
   setActors: (actors: Actor[]) => void;
+  updateActorActivity: (updates: Array<{ id: string; idle_seconds: number; running: boolean }>) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;
   setRuntimes: (runtimes: RuntimeInfo[]) => void;
@@ -182,6 +183,21 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       };
     }),
   setActors: (actors) => set({ actors }),
+  updateActorActivity: (updates) =>
+    set((state) => {
+      if (!state.actors.length || !updates.length) return state;
+      const map = new Map(updates.map((u) => [u.id, u]));
+      let changed = false;
+      const next = state.actors.map((a) => {
+        const u = map.get(a.id);
+        if (u && a.idle_seconds !== u.idle_seconds) {
+          changed = true;
+          return { ...a, idle_seconds: u.idle_seconds };
+        }
+        return a;
+      });
+      return changed ? { actors: next } : state;
+    }),
   setGroupContext: (ctx) => set({ groupContext: ctx }),
   setGroupSettings: (settings) => set({ groupSettings: settings }),
   setRuntimes: (runtimes) => set({ runtimes }),
