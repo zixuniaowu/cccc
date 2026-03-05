@@ -15,6 +15,7 @@ interface ProjectBuildingProps {
   blueprint: ProjectBlueprint | null | undefined;
   tasks?: Task[];
   isDark: boolean;
+  projectStatus?: string | null;
 }
 
 /** Convert a validated ProjectBlueprint into the internal Blueprint format */
@@ -48,7 +49,7 @@ const FALLBACK_BLUEPRINT: Blueprint = {
     order: i,
   })),
   gridSize: [3, 3, 3],
-  blockScale: 0.15,
+  blockScale: 0.35,
 };
 
 const POP_DURATION = 0.3;
@@ -101,6 +102,55 @@ function FallbackLabel({ isDark }: { isDark: boolean }) {
 
   return (
     <sprite position={[0, 0.8, 0]} scale={[labelState.scale[0], labelState.scale[1], 1]}>
+      <spriteMaterial map={labelState.tex} transparent depthWrite={false} />
+    </sprite>
+  );
+}
+
+// Status label sprite above the building
+function StatusLabel({ text, isDark, buildingHeight }: { text: string; isDark: boolean; buildingHeight: number }) {
+  const labelState = useMemo(() => {
+    const DPR = 2;
+    const fs = 10 * DPR;
+    const canvas = document.createElement("canvas");
+    // Measure text width to size canvas dynamically
+    const measureCtx = canvas.getContext("2d")!;
+    measureCtx.font = `600 ${fs}px sans-serif`;
+    const textWidth = measureCtx.measureText(text).width;
+    const padX = 12 * DPR;
+    const padY = 6 * DPR;
+    const CW = Math.ceil(textWidth + padX * 2);
+    const CH = Math.ceil(fs * 1.3 + padY * 2);
+    canvas.width = CW;
+    canvas.height = CH;
+    const ctx = canvas.getContext("2d")!;
+
+    // Rounded-rect background — blue translucent
+    ctx.beginPath();
+    ctx.roundRect(0, 0, CW, CH, 6 * DPR);
+    ctx.fillStyle = isDark ? "rgba(37,99,235,0.9)" : "rgba(59,130,246,0.85)";
+    ctx.fill();
+
+    // White text
+    ctx.font = `600 ${fs}px sans-serif`;
+    ctx.fillStyle = "#ffffff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(text, CW / 2, CH / 2);
+
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const worldW = Math.max(0.6, Math.min(1.4, CW / DPR / 120));
+    return { tex, scale: [worldW, worldW * (CH / CW)] as [number, number] };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [text, isDark]);
+
+  useEffect(() => {
+    return () => { labelState.tex.dispose(); };
+  }, [labelState.tex]);
+
+  return (
+    <sprite position={[0, buildingHeight + 0.3, 0]} scale={[labelState.scale[0], labelState.scale[1], 1]}>
       <spriteMaterial map={labelState.tex} transparent depthWrite={false} />
     </sprite>
   );
@@ -241,7 +291,7 @@ function LayeredBuilding({ blueprint, tasks }: {
   );
 }
 
-export function ProjectBuilding({ blueprint: rawBlueprint, tasks, isDark }: ProjectBuildingProps) {
+export function ProjectBuilding({ blueprint: rawBlueprint, tasks, isDark, projectStatus }: ProjectBuildingProps) {
   const resolved = useMemo(() => {
     if (!rawBlueprint) return null;
     return parseBlueprint(rawBlueprint);
@@ -251,6 +301,14 @@ export function ProjectBuilding({ blueprint: rawBlueprint, tasks, isDark }: Proj
     () => (resolved ? toInternalBlueprint(resolved) : null),
     [resolved],
   );
+
+  // Calculate building height for status label positioning
+  const buildingHeight = useMemo(() => {
+    if (internalBlueprint) {
+      return internalBlueprint.gridSize[1] * internalBlueprint.blockScale;
+    }
+    return FALLBACK_BLUEPRINT.gridSize[1] * FALLBACK_BLUEPRINT.blockScale;
+  }, [internalBlueprint]);
 
   if (!internalBlueprint) {
     // Fallback: grey placeholder cube with hint label
@@ -264,9 +322,19 @@ export function ProjectBuilding({ blueprint: rawBlueprint, tasks, isDark }: Proj
           isDark={isDark}
         />
         <FallbackLabel isDark={isDark} />
+        {projectStatus && (
+          <StatusLabel text={projectStatus} isDark={isDark} buildingHeight={buildingHeight} />
+        )}
       </group>
     );
   }
 
-  return <LayeredBuilding blueprint={internalBlueprint} tasks={tasks} />;
+  return (
+    <group>
+      <LayeredBuilding blueprint={internalBlueprint} tasks={tasks} />
+      {projectStatus && (
+        <StatusLabel text={projectStatus} isDark={isDark} buildingHeight={buildingHeight} />
+      )}
+    </group>
+  );
 }

@@ -530,5 +530,253 @@ class TestContextV2Ops(unittest.TestCase):
             cleanup()
 
 
+    # =========================================================================
+    # meta.merge — project_status validation
+    # =========================================================================
+
+    def test_meta_merge_project_status_rejects_non_string(self) -> None:
+        """project_status must be string or null — integer should be rejected."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"project_status": 123}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("string or null", str(resp.error.message).lower())
+        finally:
+            cleanup()
+
+    def test_meta_merge_project_status_rejects_over_100_chars(self) -> None:
+        """project_status exceeding 100 characters should be rejected."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            long_text = "x" * 101
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"project_status": long_text}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("100", str(resp.error.message))
+        finally:
+            cleanup()
+
+    def test_meta_merge_project_status_accepts_null(self) -> None:
+        """project_status=null should be accepted (clears the label)."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            # First set a value
+            resp1, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"project_status": "优化中"}}],
+            })
+            self.assertTrue(resp1.ok, getattr(resp1, "error", None))
+            # Then clear with null
+            resp2, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"project_status": None}}],
+            })
+            self.assertTrue(resp2.ok, getattr(resp2, "error", None))
+        finally:
+            cleanup()
+
+    def test_meta_merge_peer_permission_denied(self) -> None:
+        """Peer callers should be rejected from meta.merge."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            # Add a peer actor to the group
+            self._call("actor_upsert", {
+                "group_id": gid, "actor_id": "peer-worker",
+                "role": "peer", "title": "Worker",
+            })
+            # Peer tries to meta.merge — should fail
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "peer-worker",
+                "ops": [{"op": "meta.merge", "data": {"project_status": "test"}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("permission denied", str(resp.error.message).lower())
+        finally:
+            cleanup()
+
+
+    # =========================================================================
+    # meta.merge — panorama_blueprint schema validation
+    # =========================================================================
+
+    _VALID_BLUEPRINT = {
+        "version": 1,
+        "style_note": "Test house",
+        "gridSize": [3, 3, 3],
+        "blockScale": 0.15,
+        "blocks": [
+            {"x": i % 3, "y": i // 9, "z": (i // 3) % 3, "color": "#6b7280", "order": i}
+            for i in range(27)
+        ],
+    }
+
+    def test_meta_merge_valid_blueprint_accepted(self) -> None:
+        """A well-formed blueprint should be accepted."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": self._VALID_BLUEPRINT}}],
+            })
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+        finally:
+            cleanup()
+
+    def test_meta_merge_blueprint_null_accepted(self) -> None:
+        """null blueprint should be accepted (clears the blueprint)."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": None}}],
+            })
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+        finally:
+            cleanup()
+
+    def test_meta_merge_blueprint_bad_version_rejected(self) -> None:
+        """Blueprint with version != 1 should be rejected."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            bad_bp = {**self._VALID_BLUEPRINT, "version": 2}
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": bad_bp}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("version must be 1", str(resp.error.message))
+        finally:
+            cleanup()
+
+    def test_meta_merge_blueprint_bad_gridsize_rejected(self) -> None:
+        """Blueprint with invalid gridSize should be rejected."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            bad_bp = {**self._VALID_BLUEPRINT, "gridSize": [25, 3, 3]}
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": bad_bp}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("gridSize", str(resp.error.message))
+        finally:
+            cleanup()
+
+    def test_meta_merge_blueprint_bad_order_rejected(self) -> None:
+        """Blueprint with non-contiguous order values should be rejected."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            bad_blocks = [
+                {"x": 0, "y": 0, "z": 0, "color": "#aaa", "order": 0},
+                {"x": 1, "y": 0, "z": 0, "color": "#bbb", "order": 5},  # gap
+            ]
+            bad_bp = {**self._VALID_BLUEPRINT, "blocks": bad_blocks, "gridSize": [3, 1, 1]}
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": bad_bp}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("order values must cover", str(resp.error.message))
+        finally:
+            cleanup()
+
+    def test_meta_merge_blueprint_coord_out_of_range_rejected(self) -> None:
+        """Blueprint with block coordinates outside gridSize should be rejected."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            bad_blocks = [
+                {"x": 10, "y": 0, "z": 0, "color": "#aaa", "order": 0},  # x >= gridSize[0]
+            ]
+            bad_bp = {**self._VALID_BLUEPRINT, "blocks": bad_blocks, "gridSize": [3, 3, 3]}
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": bad_bp}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("blocks[0].x", str(resp.error.message))
+        finally:
+            cleanup()
+
+
+    def test_meta_merge_blueprint_over_500_blocks_rejected(self) -> None:
+        """Blueprint with more than 500 blocks should be rejected."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            big_blocks = [
+                {"x": i % 20, "y": (i // 20) % 20, "z": (i // 400) % 20, "color": "#aaa", "order": i}
+                for i in range(501)
+            ]
+            bad_bp = {**self._VALID_BLUEPRINT, "blocks": big_blocks, "gridSize": [20, 20, 20]}
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": bad_bp}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("1..500", str(resp.error.message))
+        finally:
+            cleanup()
+
+    def test_meta_merge_blueprint_bool_gridsize_rejected(self) -> None:
+        """Blueprint with boolean in gridSize should be rejected (bool is int subclass)."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            bad_bp = {**self._VALID_BLUEPRINT, "gridSize": [True, 3, 3]}
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": bad_bp}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("gridSize", str(resp.error.message))
+        finally:
+            cleanup()
+
+    def test_meta_merge_blueprint_nan_blockscale_rejected(self) -> None:
+        """Blueprint with NaN blockScale should be rejected."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            bad_bp = {**self._VALID_BLUEPRINT, "blockScale": float("nan")}
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": bad_bp}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("finite positive", str(resp.error.message))
+        finally:
+            cleanup()
+
+    def test_meta_merge_blueprint_missing_style_note_rejected(self) -> None:
+        """Blueprint without style_note key should be rejected."""
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            bad_bp = {k: v for k, v in self._VALID_BLUEPRINT.items() if k != "style_note"}
+            resp, _ = self._call("context_sync", {
+                "group_id": gid, "by": "user",
+                "ops": [{"op": "meta.merge", "data": {"panorama_blueprint": bad_bp}}],
+            })
+            self.assertFalse(resp.ok)
+            self.assertIn("style_note is required", str(resp.error.message))
+        finally:
+            cleanup()
+
+
 if __name__ == "__main__":
     unittest.main()

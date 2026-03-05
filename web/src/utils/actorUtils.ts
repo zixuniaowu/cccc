@@ -17,6 +17,7 @@ export function deriveAnimState(
   agent: AgentState,
   isRunning?: boolean,
   lastActivityAt?: number,
+  taskStatus?: string,
 ): AgentAnimState {
   if (isRunning === false) return "offline";
   if (Array.isArray(agent.blockers) && agent.blockers.length > 0) return "blocked";
@@ -35,6 +36,10 @@ export function deriveAnimState(
     : Infinity;
   const fresh = age <= FRESHNESS_MS;
 
+  // Has active task but task is already done/archived → treat as idle/thinking
+  if (agent.active_task_id && (taskStatus === "done" || taskStatus === "archived")) {
+    return (agent.focus && fresh) ? "thinking" : "idle";
+  }
   // Has active task → working (if fresh + focus) or thinking (minimum)
   if (agent.active_task_id) {
     return (agent.focus && fresh) ? "working" : "thinking";

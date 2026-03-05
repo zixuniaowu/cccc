@@ -187,6 +187,68 @@ def _queue_group_space_context_sync(
 # =============================================================================
 
 
+def _validate_blueprint_schema(bp: Any, op_idx: int) -> None:
+    """Validate panorama_blueprint conforms to the expected schema."""
+    import math as _math
+
+    pfx = f"op[{op_idx}] meta.merge panorama_blueprint"
+
+    if not isinstance(bp, dict):
+        raise ValueError(f"{pfx}: must be a dict")
+
+    # version
+    if bp.get("version") != 1:
+        raise ValueError(f"{pfx}: version must be 1")
+
+    # style_note — must be present and a string
+    if "style_note" not in bp:
+        raise ValueError(f"{pfx}: style_note is required")
+    if not isinstance(bp["style_note"], str):
+        raise ValueError(f"{pfx}: style_note must be a string")
+
+    # gridSize — use type() to exclude bool subclass
+    gs = bp.get("gridSize")
+    if not isinstance(gs, list) or len(gs) != 3:
+        raise ValueError(f"{pfx}: gridSize must be a 3-element list")
+    for i, v in enumerate(gs):
+        if type(v) is not int or v < 1 or v > 20:
+            raise ValueError(f"{pfx}: gridSize[{i}] must be int 1..20")
+
+    # blockScale — exclude bool and NaN/Inf
+    bs = bp.get("blockScale")
+    if isinstance(bs, bool) or not isinstance(bs, (int, float)) or not _math.isfinite(bs) or bs <= 0:
+        raise ValueError(f"{pfx}: blockScale must be a finite positive number")
+
+    # blocks
+    blocks = bp.get("blocks")
+    if not isinstance(blocks, list) or len(blocks) < 1 or len(blocks) > 500:
+        raise ValueError(f"{pfx}: blocks must be a list of 1..500 items")
+
+    orders = set()
+    for bi, blk in enumerate(blocks):
+        if not isinstance(blk, dict):
+            raise ValueError(f"{pfx}: blocks[{bi}] must be a dict")
+        for coord, dim_idx in [("x", 0), ("y", 1), ("z", 2)]:
+            val = blk.get(coord)
+            if type(val) is not int or val < 0 or val >= gs[dim_idx]:
+                raise ValueError(
+                    f"{pfx}: blocks[{bi}].{coord} must be int 0..{gs[dim_idx] - 1}"
+                )
+        if not isinstance(blk.get("color"), str) or not blk["color"]:
+            raise ValueError(f"{pfx}: blocks[{bi}].color must be a non-empty string")
+        order = blk.get("order")
+        if type(order) is not int:
+            raise ValueError(f"{pfx}: blocks[{bi}].order must be an integer")
+        orders.add(order)
+
+    # order values must cover 0..len(blocks)-1
+    expected_orders = set(range(len(blocks)))
+    if orders != expected_orders:
+        raise ValueError(
+            f"{pfx}: order values must cover 0..{len(blocks) - 1} exactly"
+        )
+
+
 def _check_permission(
     by: str, op_name: str, group_id: str,
     task: Optional[Task] = None,
@@ -748,13 +810,32 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     raise ValueError(f"op[{idx}] meta.merge requires 'data' dict")
 
                 # Key allowlist — only known safe keys may be written
-                _META_ALLOWED_KEYS = {"panorama_blueprint"}
+                _META_ALLOWED_KEYS = {"panorama_blueprint", "project_status"}
                 bad_keys = set(data.keys()) - _META_ALLOWED_KEYS
                 if bad_keys:
                     raise ValueError(
                         f"op[{idx}] meta.merge: disallowed keys {sorted(bad_keys)}. "
                         f"Allowed: {sorted(_META_ALLOWED_KEYS)}"
                     )
+
+                # Validate panorama_blueprint schema
+                if "panorama_blueprint" in data:
+                    bp = data["panorama_blueprint"]
+                    if bp is not None:
+                        _validate_blueprint_schema(bp, idx)
+
+                # Validate project_status: must be string or null, max 100 chars
+                if "project_status" in data:
+                    ps = data["project_status"]
+                    if ps is not None:
+                        if not isinstance(ps, str):
+                            raise ValueError(
+                                f"op[{idx}] meta.merge: project_status must be a string or null"
+                            )
+                        if len(ps) > 100:
+                            raise ValueError(
+                                f"op[{idx}] meta.merge: project_status exceeds 100 characters"
+                            )
 
                 if not isinstance(context.meta, dict):
                     context.meta = {}
