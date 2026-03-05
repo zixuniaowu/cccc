@@ -169,10 +169,11 @@ export interface ActorCharacterProps {
   taskStatus?: string;
   focus?: string;
   blockerText?: string;
+  onCharacterClick?: () => void;
 }
 
 export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>(
-  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title, isRunning, idleSeconds, activeTaskName, taskStatus, focus, blockerText }, ref) {
+  function ActorCharacter({ agent, position, rotationY = 0, isDark, role, runtime, title, isRunning, idleSeconds, activeTaskName, taskStatus, focus, blockerText, onCharacterClick }, ref) {
     const color = agentColor(agent.id, runtime);
     const isForeman = role === "foreman";
     const isOffline = isRunning === false;
@@ -257,6 +258,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
       ringMatRef.current = RING_MAT_ACTIVE.clone();
     }
     useEffect(() => () => { ringMatRef.current?.dispose(); }, []);
+    useEffect(() => () => { document.body.style.cursor = "auto"; }, []);
 
     // Breathing animation for active ring
     useFrame(({ clock }) => {
@@ -421,7 +423,14 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     useEffect(() => () => { bubbleTex.dispose(); }, [bubbleTex]);
 
     return (
-      <group ref={ref} position={position} rotation={rotationTuple}>
+      <group
+        ref={ref}
+        position={position}
+        rotation={rotationTuple}
+        onClick={(e) => { e.stopPropagation(); onCharacterClick?.(); }}
+        onPointerOver={() => { document.body.style.cursor = "pointer"; }}
+        onPointerOut={() => { document.body.style.cursor = "auto"; }}
+      >
         {/* Body parts — named for animation targeting via PART_INDEX (indices 0-5 must stay stable) */}
         <mesh name="torso" position={[0, 0.55, 0]} castShadow geometry={TORSO_GEO} material={mat} />
         <mesh name="head" position={[0, 1.0, 0]} castShadow geometry={HEAD_GEO} material={headMats} />

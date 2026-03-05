@@ -5,6 +5,7 @@ import { ActorCharacter } from "./ActorCharacter";
 import { ProjectBuilding } from "./ProjectBuilding";
 import { MCGround, InstancedBeds, type BedInstance } from "./MCFurniture";
 import { useCharacterAnimation, type LayoutItem } from "../hooks/useCharacterAnimation";
+import { useFirstPersonFollow } from "../hooks/useFirstPersonFollow";
 import type { AgentState, Actor, Task, ProjectBlueprint, GroupContext } from "../types";
 import * as THREE from "three";
 
@@ -151,9 +152,11 @@ interface SceneProps {
   isDark: boolean;
   groupId?: string;
   camZ: number;
+  followTarget: string | null;
+  onCharacterClick: (agentId: string) => void;
 }
 
-function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId: _groupId, camZ }: SceneProps) {
+function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId: _groupId, camZ, followTarget, onCharacterClick }: SceneProps) {
   const characterRefs = useRef<Map<string, THREE.Group>>(new Map());
   // Cache position/rotation so R3F doesn't re-apply unchanged values
   // (re-applying would override useFrame-driven locomotion, e.g. walking to bed)
@@ -174,29 +177,32 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
     return m;
   }, [tasks]);
 
-  // Build target: working agents point to center building [0,0,0]
+  const layout = useMemo(
+    () => computeWorkerLayout(agents, actorMap, panoramaBlueprint, tasks),
+    [agents, actorMap, panoramaBlueprint, tasks],
+  );
+
+  // Build target: working agents stay at their work station (charPos on arc),
+  // NOT [0,0,0] which would drive them into the building
   const buildTargetMap = useMemo(() => {
     const map = new Map<string, [number, number, number]>();
     for (const agent of agents) {
       if (agent.active_task_id) {
-        map.set(agent.id, [0, 0, 0]);
+        const item = layout.get(agent.id);
+        map.set(agent.id, item?.charPos ?? [0, 0, 0]);
       }
     }
     if (tasks) {
       const agentIds = new Set(agents.map((a) => a.id));
       for (const task of tasks) {
         if (task.assignee && agentIds.has(task.assignee) && !map.has(task.assignee)) {
-          map.set(task.assignee, [0, 0, 0]);
+          const item = layout.get(task.assignee);
+          map.set(task.assignee, item?.charPos ?? [0, 0, 0]);
         }
       }
     }
     return map;
-  }, [agents, tasks]);
-
-  const layout = useMemo(
-    () => computeWorkerLayout(agents, actorMap, panoramaBlueprint, tasks),
-    [agents, actorMap, panoramaBlueprint, tasks],
-  );
+  }, [agents, tasks, layout]);
 
   const taskStatusMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -211,6 +217,8 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
     agents, actorMap, layout, buildTargetMap, characterRefs, taskStatusMap,
     staticMode: true,
   });
+
+  useFirstPersonFollow({ targetId: followTarget, characterRefs });
 
   const bedInstances: BedInstance[] = useMemo(
     () => [...layout.values()].map((item) => ({ position: item.bedPos, rotationY: item.bedRotY })),
@@ -270,6 +278,7 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
             taskStatus={taskEntry?.status || undefined}
             focus={agent.focus || undefined}
             blockerText={agent.blockers?.length ? agent.blockers[0] : undefined}
+            onCharacterClick={() => onCharacterClick(agent.id)}
           />
         );
       })}
@@ -277,6 +286,7 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
       <OrbitControls
         makeDefault
         enableDamping={false}
+        enabled={followTarget === null}
         enablePan={true}
         enableZoom={true}
         enableRotate={true}
@@ -296,6 +306,12 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
 type RenderMode = "loading" | "webgpu" | "webgl";
 
 export function ActorScene3D({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
+  const [followTarget, setFollowTarget] = useState<string | null>(null);
+
+  const handleCharacterClick = useCallback((agentId: string) => {
+    setFollowTarget((prev) => (prev === agentId ? null : agentId));
+  }, []);
+
   const camZ = useMemo(() => {
     const radius = siteRadius(agents.length, panoramaBlueprint);
     const sceneExtent = Math.max(radius + 1, 10); // beds along platform edge (±9)
@@ -423,9 +439,10 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, panoramaBlue
         camera={cameraConfig}
         style={canvasStyle}
         gl={glProp}
+        onPointerMissed={() => setFollowTarget(null)}
       >
         <Suspense fallback={null}>
-          <Scene agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} panoramaBlueprint={panoramaBlueprint} projectStatus={projectStatus} isDark={isDark} groupId={groupId} camZ={camZ} />
+          <Scene agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} panoramaBlueprint={panoramaBlueprint} projectStatus={projectStatus} isDark={isDark} groupId={groupId} camZ={camZ} followTarget={followTarget} onCharacterClick={handleCharacterClick} />
         </Suspense>
       </Canvas>
     </div>

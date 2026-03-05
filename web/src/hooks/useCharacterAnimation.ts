@@ -185,12 +185,12 @@ export function useCharacterAnimation({
         loco.speed = THREE.MathUtils.lerp(loco.speed, 0, lfFast);
       }
 
-      // Face build target when arrived (workers only)
+      // Face building center when arrived (workers only)
       // Character mesh faces -Z, so add PI to atan2 result
       if (!shouldMove && buildTarget && !item.isForeman) {
         pose.gRy = Math.atan2(
-          buildTarget[0] - pose.gX,
-          buildTarget[2] - pose.gZ,
+          0 - pose.gX,
+          0 - pose.gZ,
         ) + Math.PI;
       }
       // Foreman faces scene center when stationary
