@@ -373,6 +373,19 @@ class DingTalkAdapter(IMAdapter):
                             pass
 
                         # Build event dict for _enqueue_message
+                        # Parse content field: may be JSON string or dict,
+                        # contains downloadCode/fileName for file/picture/video/audio
+                        raw_content = data.get('content', {})
+                        if isinstance(raw_content, str):
+                            try:
+                                parsed_content = json.loads(raw_content)
+                            except (json.JSONDecodeError, ValueError):
+                                parsed_content = {}
+                        elif isinstance(raw_content, dict):
+                            parsed_content = raw_content
+                        else:
+                            parsed_content = {}
+
                         event = {
                             "msgtype": data.get('msgtype', 'text'),
                             "robotCode": data.get('robotCode', ''),
@@ -388,18 +401,25 @@ class DingTalkAdapter(IMAdapter):
                             "sessionWebhook": data.get('sessionWebhook', ''),
                             "sessionWebhookExpiredTime": data.get('sessionWebhookExpiredTime', 0),
                             "createAt": data.get('createAt', 0),
-                            # richText content is inside content.richText (not top-level)
-                            "richText": data.get('content', {}).get('richText', []),
-                            # picture/file fields
-                            "downloadCode": data.get('downloadCode', ''),
-                            "fileName": data.get('fileName', ''),
+                            # richText content is inside content.richText
+                            "richText": parsed_content.get('richText', []),
+                            # picture/file/video/audio fields: check both top-level and content
+                            "downloadCode": data.get('downloadCode', '') or parsed_content.get('downloadCode', ''),
+                            "fileName": data.get('fileName', '') or parsed_content.get('fileName', ''),
                         }
 
-                        # Extract text content (text is also a dict)
+                        # Extract text content (text is usually a dict like {"content": "..."})
                         text_data = data.get('text', {})
                         if text_data:
-                            event["text"] = {"content": text_data.get('content', '')}
-                            adapter._log("[stream] text message received")
+                            if isinstance(text_data, dict):
+                                event["text"] = {"content": text_data.get('content', '')}
+                            elif isinstance(text_data, str):
+                                # Defensive: some DingTalk versions may return text as plain string
+                                event["text"] = {"content": text_data}
+                                adapter._log(f"[stream] text_data is str (not dict): {text_data[:100]!r}")
+                            else:
+                                adapter._log(f"[stream] text_data unexpected type: {type(text_data).__name__}")
+                            adapter._log(f"[stream] text message received, msgtype={data.get('msgtype')}, convType={data.get('conversationType')}")
 
                         # Enqueue the message
                         if adapter._enqueue_message(event):
