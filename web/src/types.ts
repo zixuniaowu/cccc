@@ -334,6 +334,8 @@ export type GroupSettings = {
   terminal_transcript_visibility: "off" | "foreman" | "all";
   terminal_transcript_notify_tail: boolean;
   terminal_transcript_notify_lines: number;
+
+  panorama_enabled: boolean;
 };
 
 export type RemoteAccessState = {

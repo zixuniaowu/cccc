@@ -869,7 +869,7 @@ export function SettingsModal({
                 />
               )}
 
-              {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} />}
+              {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} settings={settings} onUpdateSettings={onUpdateSettings} />}
 
               {activeTab === "space" && (
                 <GroupSpaceTab

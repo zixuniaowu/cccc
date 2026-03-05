@@ -177,6 +177,13 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     const isForeman = role === "foreman";
     const isOffline = isRunning === false;
 
+    // Cache rotation tuple to prevent R3F re-applying on re-render
+    // (which would fight useFrame-driven rotation, e.g. sleeping face-up)
+    const rotationTuple = useMemo(
+      () => [0, rotationY, 0] as [number, number, number],
+      [rotationY],
+    );
+
     // Shared cached material (body color; gray + semi-transparent when offline)
     const mat = getBodyMaterial(color, isOffline);
 
@@ -414,7 +421,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     useEffect(() => () => { bubbleTex.dispose(); }, [bubbleTex]);
 
     return (
-      <group ref={ref} position={position} rotation={[0, rotationY, 0]}>
+      <group ref={ref} position={position} rotation={rotationTuple}>
         {/* Body parts — named for animation targeting via PART_INDEX (indices 0-5 must stay stable) */}
         <mesh name="torso" position={[0, 0.55, 0]} castShadow geometry={TORSO_GEO} material={mat} />
         <mesh name="head" position={[0, 1.0, 0]} castShadow geometry={HEAD_GEO} material={headMats} />

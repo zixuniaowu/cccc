@@ -165,6 +165,10 @@ class GroupSettingsRequest(BaseModel):
     terminal_transcript_visibility: Optional[Literal["off", "foreman", "all"]] = None
     terminal_transcript_notify_tail: Optional[bool] = None
     terminal_transcript_notify_lines: Optional[int] = None
+
+    # Features
+    panorama_enabled: Optional[bool] = None
+
     by: str = Field(default="user")
 
 

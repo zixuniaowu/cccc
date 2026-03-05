@@ -416,6 +416,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
         automation = group.doc.get("automation") if isinstance(group.doc.get("automation"), dict) else {}
         delivery = group.doc.get("delivery") if isinstance(group.doc.get("delivery"), dict) else {}
+        features = group.doc.get("features") if isinstance(group.doc.get("features"), dict) else {}
         from ....kernel.terminal_transcript import get_terminal_transcript_settings
         from ....kernel.messaging import get_default_send_to
 
@@ -443,6 +444,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
                     "terminal_transcript_visibility": str(tt.get("visibility") or "foreman"),
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": _safe_int(tt.get("notify_lines", 20), default=20, min_value=1, max_value=80),
+                    "panorama_enabled": coerce_bool(features.get("panorama_enabled"), default=False),
                 }
             }
         }
@@ -491,6 +493,9 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
             patch["terminal_transcript_notify_tail"] = bool(req.terminal_transcript_notify_tail)
         if req.terminal_transcript_notify_lines is not None:
             patch["terminal_transcript_notify_lines"] = max(1, min(80, int(req.terminal_transcript_notify_lines)))
+
+        if req.panorama_enabled is not None:
+            patch["panorama_enabled"] = bool(req.panorama_enabled)
 
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}

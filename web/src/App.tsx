@@ -47,6 +47,7 @@ export default function App() {
     groupDoc,
     actors,
     groupContext,
+    groupSettings,
     setSelectedGroupId,
     refreshGroups,
     refreshActors,
@@ -113,13 +114,14 @@ export default function App() {
   const chatScrollMemoryRef = useRef<Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>>({});
   const actorsRef = useRef<Actor[]>([]);
 
-  // Hide Panorama tab when browser lacks GPU/3D support
+  // Hide Panorama tab when browser lacks GPU/3D support or feature is disabled
   const canRender3D = useMemo(() => {
     try {
       const canvas = document.createElement("canvas");
       return !!(navigator.gpu || canvas.getContext("webgl2"));
     } catch { return false; }
   }, []);
+  const showPanorama = canRender3D && !!groupSettings?.panorama_enabled;
   const prevGroupIdRef = useRef<string | null>(null);
   // Local state
   const [showMentionMenu, setShowMentionMenu] = React.useState(false);
@@ -229,9 +231,16 @@ export default function App() {
     if (atBottom) setChatUnreadCount(0);
   }, [activeTab, setChatUnreadCount, setShowScrollButton]);
 
+  // Auto-fallback: switch away from panorama tab when feature is disabled
+  useEffect(() => {
+    if (!showPanorama && activeTab === "panorama") {
+      setActiveTab("chat");
+    }
+  }, [showPanorama, activeTab, setActiveTab]);
+
   // BUG-1 + BUG-3: Refresh context on panorama tab activation + periodic polling fallback
   useEffect(() => {
-    if (activeTab !== "panorama" || !selectedGroupId) return;
+    if (!showPanorama || activeTab !== "panorama" || !selectedGroupId) return;
     // Immediate fetch on tab switch (skip if SSE debounce timer is already pending)
     if (!contextRefreshTimerRef.current) {
       void fetchContext(selectedGroupId);
@@ -523,7 +532,7 @@ export default function App() {
                   }
               }
               canAddAgent={!webReadOnly && !!selectedGroupId}
-              showPanorama={canRender3D}
+              showPanorama={showPanorama}
             />
           )}
 
@@ -570,8 +579,8 @@ export default function App() {
             </div>
             {/* Panorama Tab */}
             <div
-              className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "panorama" ? "" : "invisible pointer-events-none"}`}
-              aria-hidden={activeTab !== "panorama"}
+              className={`absolute inset-0 flex min-h-0 flex-col ${showPanorama && activeTab === "panorama" ? "" : "invisible pointer-events-none"}`}
+              aria-hidden={!showPanorama || activeTab !== "panorama"}
             >
               <ErrorBoundary>
                 <PanoramaTab

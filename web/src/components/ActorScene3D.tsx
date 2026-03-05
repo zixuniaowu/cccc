@@ -25,8 +25,11 @@ interface ActorScene3DProps {
 function siteRadius(agentCount: number, blueprint?: ProjectBlueprint | null): number {
   const base = Math.max(2, agentCount * 0.6 + 1);
   if (blueprint) {
-    const footprint = Math.max(blueprint.gridSize[0], blueprint.gridSize[2]) * blueprint.blockScale / 2;
-    return Math.max(base, footprint + 3.5);
+    // Use diagonal distance so characters clear building corners
+    const halfX = blueprint.gridSize[0] * blueprint.blockScale / 2;
+    const halfZ = blueprint.gridSize[2] * blueprint.blockScale / 2;
+    const footprint = Math.sqrt(halfX * halfX + halfZ * halfZ);
+    return Math.max(base, footprint + 4.0);
   }
   return base;
 }
@@ -59,7 +62,6 @@ function computeWorkerLayout(
   const radius = siteRadius(count, blueprint);
   const workRadius = radius * 0.9;
   const idleRadius = radius * 1.2;
-  const bedRadius = radius + 2.5;
 
   const foremanIdx = agents.findIndex((a) => actorMap.get(a.id)?.role === "foreman");
 
@@ -80,12 +82,15 @@ function computeWorkerLayout(
     }
   }
 
-  // Beds: back arc, evenly distributed for all agents
-  const bedSpread = Math.PI * 0.8;
+  // Beds: line up along platform back edge (z = -9), evenly spaced
+  const platformMargin = 9; // platform half-size (10) minus 1 margin
+  const bedXSpan = platformMargin * 2 - 2; // usable x range: -8 to +8
   function bedPlace(idx: number): { pos: [number, number, number]; rotY: number } {
     const t = count > 1 ? idx / (count - 1) : 0.5;
-    const angle = Math.PI + (t - 0.5) * bedSpread;
-    return arcPlace(angle, bedRadius);
+    const x = (t - 0.5) * bedXSpan;
+    const z = -platformMargin;
+    // All beds parallel: pillow toward edge (-Z), blanket toward center (+Z)
+    return { pos: [x, 0, z], rotY: 0 };
   }
 
   const items = new Map<string, LayoutItem>();
@@ -150,6 +155,9 @@ interface SceneProps {
 
 function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId: _groupId, camZ }: SceneProps) {
   const characterRefs = useRef<Map<string, THREE.Group>>(new Map());
+  // Cache position/rotation so R3F doesn't re-apply unchanged values
+  // (re-applying would override useFrame-driven locomotion, e.g. walking to bed)
+  const posCache = useRef(new Map<string, [number, number, number]>());
 
   const actorMap = useMemo(() => {
     const m = new Map<string, Actor>();
@@ -235,6 +243,13 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
         const running = actor?.running !== false && actor?.enabled !== false;
         const item = layout.get(agent.id);
         const taskEntry = agent.active_task_id ? taskMap.get(agent.active_task_id) : undefined;
+        // Maintain referential equality so R3F doesn't re-apply position on re-render
+        // (which would override useFrame-driven animation like walking to bed)
+        const newPos = item?.charPos || [0, 0, 0] as [number, number, number];
+        const cached = posCache.current.get(agent.id);
+        const stablePos = (cached && cached[0] === newPos[0] && cached[1] === newPos[1] && cached[2] === newPos[2])
+          ? cached
+          : (posCache.current.set(agent.id, newPos as [number, number, number]), newPos as [number, number, number]);
         return (
           <ActorCharacter
             key={agent.id}
@@ -243,7 +258,7 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
               else characterRefs.current.delete(agent.id);
             }}
             agent={agent}
-            position={item?.charPos || [0, 0, 0]}
+            position={stablePos}
             rotationY={item?.charRotY}
             isDark={isDark}
             role={actor?.role}
@@ -283,7 +298,7 @@ type RenderMode = "loading" | "webgpu" | "webgl";
 export function ActorScene3D({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
   const camZ = useMemo(() => {
     const radius = siteRadius(agents.length, panoramaBlueprint);
-    const sceneExtent = radius + 2; // beds at radius + 2.5
+    const sceneExtent = Math.max(radius + 1, 10); // beds along platform edge (±9)
     return Math.max(5, sceneExtent * 2 + 1);
   }, [agents.length, panoramaBlueprint]);
 
