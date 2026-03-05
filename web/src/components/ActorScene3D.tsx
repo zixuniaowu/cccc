@@ -5,13 +5,14 @@ import { ActorCharacter } from "./ActorCharacter";
 import { ProjectBuilding } from "./ProjectBuilding";
 import { MCGround, InstancedBeds, type BedInstance } from "./MCFurniture";
 import { useCharacterAnimation, type LayoutItem } from "../hooks/useCharacterAnimation";
-import type { AgentState, Actor, Task, ProjectBlueprint } from "../types";
+import type { AgentState, Actor, Task, ProjectBlueprint, GroupContext } from "../types";
 import * as THREE from "three";
 
 interface ActorScene3DProps {
   agents: AgentState[];
   actors?: Actor[];
   tasks?: Task[];
+  tasksSummary?: GroupContext["tasks_summary"];
   panoramaBlueprint?: ProjectBlueprint | null;
   projectStatus?: string | null;
   isDark: boolean;
@@ -25,7 +26,7 @@ function siteRadius(agentCount: number, blueprint?: ProjectBlueprint | null): nu
   const base = Math.max(2, agentCount * 0.6 + 1);
   if (blueprint) {
     const footprint = Math.max(blueprint.gridSize[0], blueprint.gridSize[2]) * blueprint.blockScale / 2;
-    return Math.max(base, footprint + 2.0);
+    return Math.max(base, footprint + 3.5);
   }
   return base;
 }
@@ -58,7 +59,7 @@ function computeWorkerLayout(
   const radius = siteRadius(count, blueprint);
   const workRadius = radius * 0.9;
   const idleRadius = radius * 1.2;
-  const bedRadius = radius + 1.5;
+  const bedRadius = radius + 2.5;
 
   const foremanIdx = agents.findIndex((a) => actorMap.get(a.id)?.role === "foreman");
 
@@ -80,7 +81,7 @@ function computeWorkerLayout(
   }
 
   // Beds: back arc, evenly distributed for all agents
-  const bedSpread = Math.PI * 0.6;
+  const bedSpread = Math.PI * 0.8;
   function bedPlace(idx: number): { pos: [number, number, number]; rotY: number } {
     const t = count > 1 ? idx / (count - 1) : 0.5;
     const angle = Math.PI + (t - 0.5) * bedSpread;
@@ -139,6 +140,7 @@ interface SceneProps {
   agents: AgentState[];
   actors?: Actor[];
   tasks?: Task[];
+  tasksSummary?: GroupContext["tasks_summary"];
   panoramaBlueprint?: ProjectBlueprint | null;
   projectStatus?: string | null;
   isDark: boolean;
@@ -146,7 +148,7 @@ interface SceneProps {
   camZ: number;
 }
 
-function Scene({ agents, actors, tasks, panoramaBlueprint, projectStatus, isDark, groupId: _groupId, camZ }: SceneProps) {
+function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId: _groupId, camZ }: SceneProps) {
   const characterRefs = useRef<Map<string, THREE.Group>>(new Map());
 
   const actorMap = useMemo(() => {
@@ -224,7 +226,7 @@ function Scene({ agents, actors, tasks, panoramaBlueprint, projectStatus, isDark
 
       <MCGround />
 
-      <ProjectBuilding blueprint={panoramaBlueprint} tasks={tasks} isDark={isDark} projectStatus={projectStatus} />
+      <ProjectBuilding blueprint={panoramaBlueprint} tasks={tasks} tasksSummary={tasksSummary} isDark={isDark} projectStatus={projectStatus} />
 
       <InstancedBeds beds={bedInstances} />
 
@@ -278,10 +280,10 @@ function Scene({ agents, actors, tasks, panoramaBlueprint, projectStatus, isDark
 
 type RenderMode = "loading" | "webgpu" | "webgl";
 
-export function ActorScene3D({ agents, actors, tasks, panoramaBlueprint, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
+export function ActorScene3D({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
   const camZ = useMemo(() => {
     const radius = siteRadius(agents.length, panoramaBlueprint);
-    const sceneExtent = radius + 2; // beds at radius + 1.5
+    const sceneExtent = radius + 2; // beds at radius + 2.5
     return Math.max(5, sceneExtent * 2 + 1);
   }, [agents.length, panoramaBlueprint]);
 
@@ -408,7 +410,7 @@ export function ActorScene3D({ agents, actors, tasks, panoramaBlueprint, project
         gl={glProp}
       >
         <Suspense fallback={null}>
-          <Scene agents={agents} actors={actors} tasks={tasks} panoramaBlueprint={panoramaBlueprint} projectStatus={projectStatus} isDark={isDark} groupId={groupId} camZ={camZ} />
+          <Scene agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} panoramaBlueprint={panoramaBlueprint} projectStatus={projectStatus} isDark={isDark} groupId={groupId} camZ={camZ} />
         </Suspense>
       </Canvas>
     </div>

@@ -1,5 +1,5 @@
 // ProjectBuilding: renders a single center building from LLM-generated blueprint
-// Three-layer visualization: done (solid) / active (pulsing) / planned (ghost)
+// Two-layer visualization: done (solid) / active (pulsing)
 // Falls back to a 3×3×3 grey placeholder when no blueprint is available
 
 import { useMemo, useRef, useEffect } from "react";
@@ -8,12 +8,13 @@ import * as THREE from "three";
 import { InstancedBlocks, type BlockInstance, type InstancedBlocksHandle } from "./InstancedBlocks";
 import { BuildSite } from "./BuildSite";
 import { parseBlueprint } from "../utils/blueprintSchema";
-import type { ProjectBlueprint, Task } from "../types";
+import type { ProjectBlueprint, Task, GroupContext } from "../types";
 import type { Blueprint } from "../data/blueprints";
 
 interface ProjectBuildingProps {
   blueprint: ProjectBlueprint | null | undefined;
   tasks?: Task[];
+  tasksSummary?: GroupContext["tasks_summary"];
   isDark: boolean;
   projectStatus?: string | null;
 }
@@ -53,7 +54,6 @@ const FALLBACK_BLUEPRINT: Blueprint = {
 };
 
 const POP_DURATION = 0.3;
-const GHOST_OPACITY = 0.15;
 
 function easeOutBack(x: number): number {
   const c1 = 1.70158;
@@ -156,10 +156,11 @@ function StatusLabel({ text, isDark, buildingHeight }: { text: string; isDark: b
   );
 }
 
-/** Three-layer building: done(solid) / active(pulsing) / planned(ghost) */
-function LayeredBuilding({ blueprint, tasks }: {
+/** Two-layer building: done(solid) / active(pulsing) */
+function LayeredBuilding({ blueprint, tasks, tasksSummary }: {
   blueprint: Blueprint;
   tasks?: Task[];
+  tasksSummary?: GroupContext["tasks_summary"];
 }) {
   const solidRef = useRef<InstancedBlocksHandle>(null);
   const activeGroupRef = useRef<THREE.Group>(null);
@@ -178,7 +179,15 @@ function LayeredBuilding({ blueprint, tasks }: {
   const cz = -(blueprint.gridSize[2] - 1) * bs / 2;
 
   // Calculate block counts from task statuses
+  // Prefer tasksSummary (full project counts) over active_tasks (small subset)
   const { doneCount, activeEndCount } = useMemo(() => {
+    if (tasksSummary && tasksSummary.total > 0) {
+      return {
+        doneCount: Math.floor(total * (tasksSummary.done / tasksSummary.total)),
+        activeEndCount: Math.floor(total * ((tasksSummary.done + tasksSummary.active) / tasksSummary.total)),
+      };
+    }
+    // Fallback: derive from tasks array
     if (!tasks || tasks.length === 0) {
       return { doneCount: total, activeEndCount: total };
     }
@@ -193,7 +202,7 @@ function LayeredBuilding({ blueprint, tasks }: {
       doneCount: Math.floor(total * clamp01(doneTasks / totalTasks)),
       activeEndCount: Math.floor(total * clamp01((doneTasks + activeTasks) / totalTasks)),
     };
-  }, [tasks, total]);
+  }, [tasksSummary, tasks, total]);
 
   // Pop-in animation when done count increases (skip initial mount)
   useEffect(() => {
@@ -224,16 +233,6 @@ function LayeredBuilding({ blueprint, tasks }: {
       scale: bs,
     })),
     [sortedBlocks, doneCount, activeEndCount, bs, cx, cz],
-  );
-
-  // Planned blocks: ghost at 15%
-  const plannedBlocks = useMemo((): BlockInstance[] =>
-    sortedBlocks.slice(activeEndCount).map((bl) => ({
-      position: [cx + bl.x * bs, bl.y * bs, cz + bl.z * bs] as [number, number, number],
-      color: bl.color,
-      scale: bs,
-    })),
-    [sortedBlocks, activeEndCount, bs, cx, cz],
   );
 
   // Keep ref in sync for useFrame
@@ -284,14 +283,11 @@ function LayeredBuilding({ blueprint, tasks }: {
           <InstancedBlocks blocks={activeBlocks} opacity={0.5} transparent />
         )}
       </group>
-      {plannedBlocks.length > 0 && (
-        <InstancedBlocks blocks={plannedBlocks} opacity={GHOST_OPACITY} transparent />
-      )}
     </group>
   );
 }
 
-export function ProjectBuilding({ blueprint: rawBlueprint, tasks, isDark, projectStatus }: ProjectBuildingProps) {
+export function ProjectBuilding({ blueprint: rawBlueprint, tasks, tasksSummary, isDark, projectStatus }: ProjectBuildingProps) {
   const resolved = useMemo(() => {
     if (!rawBlueprint) return null;
     return parseBlueprint(rawBlueprint);
@@ -331,7 +327,7 @@ export function ProjectBuilding({ blueprint: rawBlueprint, tasks, isDark, projec
 
   return (
     <group>
-      <LayeredBuilding blueprint={internalBlueprint} tasks={tasks} />
+      <LayeredBuilding blueprint={internalBlueprint} tasks={tasks} tasksSummary={tasksSummary} />
       {projectStatus && (
         <StatusLabel text={projectStatus} isDark={isDark} buildingHeight={buildingHeight} />
       )}

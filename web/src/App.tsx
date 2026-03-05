@@ -580,6 +580,7 @@ export default function App() {
                   )}
                   actors={actors}
                   tasks={groupContext?.active_tasks}
+                  tasksSummary={groupContext?.tasks_summary}
                   panoramaBlueprint={groupContext?.meta?.panorama_blueprint}
                   projectStatus={groupContext?.meta?.project_status}
                   isDark={isDark}
