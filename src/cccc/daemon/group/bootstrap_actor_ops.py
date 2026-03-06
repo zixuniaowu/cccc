@@ -23,6 +23,7 @@ def autostart_running_groups(
     supported_runtimes: tuple[str, ...],
     ensure_mcp_installed: Callable[[str, Path], bool],
     auto_mcp_runtimes: tuple[str, ...],
+    pty_supported: Optional[Callable[[], bool]] = None,
     merge_actor_env_with_private: Callable[[str, str, dict[str, Any]], dict[str, Any]],
     inject_actor_context_env: Callable[[dict[str, Any], str, str], dict[str, Any]],
     prepare_pty_env: Callable[[dict[str, Any]], dict[str, str]],

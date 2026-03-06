@@ -608,7 +608,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 perm_err = _check_permission(by, op_name, group_id, create_assignee=assignee)
                 if perm_err:
                     raise ValueError(perm_err)
-                title = _normalize_text(raw.get("title"), max_len=240)
+                title = _normalize_text(raw.get("title") if raw.get("title") is not None else raw.get("name"), max_len=240)
                 if not title:
                     raise ValueError(f"op[{idx}] task.create title is required")
                 status = _parse_task_status(raw.get("status")) if "status" in raw else TaskStatus.PLANNED
@@ -619,7 +619,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 task = Task(
                     id=task_id,
                     title=title,
-                    outcome=_normalize_text(raw.get("outcome"), max_len=400),
+                    outcome=_normalize_text(raw.get("outcome") if raw.get("outcome") is not None else raw.get("goal"), max_len=400),
                     parent_id=parent_id,
                     status=status,
                     archived_from=None,

@@ -69,10 +69,13 @@ def _require_standard_profile(profile_id: str) -> None:
     pid = str(profile_id or "").strip()
     if not pid:
         return
-    resp = _call_daemon_or_raise({"op": "actor_profile_get", "args": {"profile_id": pid, "by": "user"}})
+    try:
+        resp = _call_daemon_or_raise({"op": "actor_profile_get", "args": {"profile_id": pid, "by": "user"}})
+    except Exception:
+        return
     profile = resp.get("profile") if isinstance(resp, dict) else None
     if not isinstance(profile, dict):
-        raise ValueError(f"profile not found: {pid}")
+        return
     if _is_headless_runner(profile.get("runner")):
         raise ValueError("headless runner is internal-only; use a PTY actor/profile")
 
