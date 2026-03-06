@@ -164,7 +164,7 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.get("/api/v1/groups/{group_id}/context")
     async def group_context(group_id: str) -> Dict[str, Any]:
-        """Get full group context (vision/overview/panorama/tasks/agents)."""
+        """Get full group context (coordination/agent_states/projections)."""
         gid = str(group_id or "").strip()
 
         async def _fetch() -> Dict[str, Any]:
@@ -299,6 +299,17 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         try:
             atomic_write_text(project_md_path, str(req.content or ""), encoding="utf-8")
             content = project_md_path.read_text(encoding="utf-8", errors="replace")
+            try:
+                await ctx.daemon({
+                    "op": "context_sync",
+                    "args": {
+                        "group_id": group_id,
+                        "by": "user",
+                        "ops": [{"op": "coordination.brief.update", "project_brief_stale": True}],
+                    },
+                })
+            except Exception:
+                pass
             return {"ok": True, "result": {"found": True, "path": str(project_md_path), "content": content}}
         except Exception as e:
             return {"ok": False, "error": {"code": "WRITE_FAILED", "message": f"Failed to write PROJECT.md: {e}"}}
@@ -384,14 +395,15 @@ def register_group_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.post("/api/v1/groups/{group_id}/context")
     async def group_context_sync(group_id: str, request: Request) -> Dict[str, Any]:
-        """Update group context via batch operations (v2).
+        """Update group context via batch operations (v3).
 
-        Body: {"ops": [{"op": "vision.update", "vision": "..."}, ...], "by": "user"}
+        Body: {"ops": [{"op": "coordination.brief.update", ...}, ...], "by": "user"}
 
         Supported ops:
-        - vision.update, overview.manual.update
-        - task.create/update/status/move/restore
-        - agent.update/clear
+        - coordination.brief.update / coordination.note.add
+        - task.create/update/move/restore
+        - agent_state.update/clear
+        - meta.merge (advanced, restricted keys)
         """
         try:
             body = await request.json()

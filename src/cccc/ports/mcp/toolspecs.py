@@ -37,7 +37,7 @@ MCP_TOOLS = [
     {
         "name": "cccc_bootstrap",
         "description": (
-            "One-call bootstrap: group + actors + help + PROJECT.md + context + inbox + optional ledger tail + memory_recall_gate."
+            "Cold-start bootstrap: group + actors + help + PROJECT.md availability + lean recovery context + inbox + optional chat tail + memory_recall_gate."
         ),
         "inputSchema": _obj(
             {
@@ -56,7 +56,7 @@ MCP_TOOLS = [
                 },
                 "ledger_tail_limit": {
                     "type": "integer",
-                    "default": 10,
+                    "default": 0,
                     "minimum": 0,
                     "maximum": 1000,
                 },
@@ -194,7 +194,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_actor",
-        "description": "Actor operations: list/profile_list/add/remove/start/stop/restart.",
+        "description": "Actor operations: list/profile_list/add/remove/start/stop/restart. Standard actor creation uses PTY only.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -206,7 +206,6 @@ MCP_TOOLS = [
                 },
                 "actor_id": {"type": "string"},
                 "runtime": {"type": "string", "default": "codex"},
-                "runner": {"type": "string", "default": "pty"},
                 "title": {"type": "string"},
                 "command": {"type": "array", "items": {"type": "string"}},
                 "env": {"type": "object", "additionalProperties": {"type": "string"}},
@@ -495,7 +494,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_context_get",
-        "description": "Get context snapshot (vision/overview/panorama/tasks/agents).",
+        "description": "Get the context control-plane snapshot (coordination, agent states, attention, board, panorama projection).",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -505,7 +504,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_context_sync",
-        "description": "Batch context operations (atomic).",
+        "description": "Advanced atomic batch sync for context ops. Prefer higher-level coordination/task/agent_state tools unless you need one-shot multi-op writes.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
@@ -518,81 +517,89 @@ MCP_TOOLS = [
         ),
     },
     {
-        "name": "cccc_context_admin",
-        "description": "Context admin ops: action=vision_update|overview_update.",
+        "name": "cccc_coordination",
+        "description": "Shared control-plane tool: action=get|update_brief|add_decision|add_handoff.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 **_COMMON_ACTOR,
                 "action": {
                     "type": "string",
-                    "enum": ["vision_update", "overview_update"],
-                    "default": "vision_update",
+                    "enum": ["get", "update_brief", "add_decision", "add_handoff"],
+                    "default": "get",
                 },
-                "vision": {"type": "string"},
-                "roles": {"type": "array", "items": {"type": "string"}},
-                "collaboration_mode": {"type": "string"},
+                "include_archived": {"type": "boolean", "default": False},
+                "objective": {"type": "string"},
                 "current_focus": {"type": "string"},
+                "constraints": {"type": "array", "items": {"type": "string"}},
+                "project_brief": {"type": "string"},
+                "project_brief_stale": {"type": "boolean"},
+                "summary": {"type": "string"},
+                "task_id": {"type": "string"},
             }
         ),
     },
     {
         "name": "cccc_task",
-        "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|status|move|restore. Use for multi-actor/long-horizon/user-tracked work.",
+        "description": "Shared collaboration task hub (not runtime todo): action=list|create|update|move|restore. Use for multi-actor, long-horizon, or user-tracked work.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 **_COMMON_ACTOR,
                 "action": {
                     "type": "string",
-                    "enum": ["list", "create", "update", "status", "move", "restore"],
+                    "enum": ["list", "create", "update", "move", "restore"],
                     "default": "list",
                 },
                 "task_id": {"type": "string"},
                 "include_archived": {"type": "boolean", "default": False},
-                "name": {"type": "string"},
-                "goal": {"type": "string"},
-                "steps": {
+                "title": {"type": "string"},
+                "outcome": {"type": "string"},
+                "status": {"type": "string", "enum": ["planned", "active", "done", "archived"]},
+                "parent_id": {"type": "string"},
+                "assignee": {"type": "string"},
+                "priority": {"type": "string"},
+                "blocked_by": {"type": "array", "items": {"type": "string"}},
+                "waiting_on": {"type": "string", "enum": ["none", "user", "actor", "external"]},
+                "handoff_to": {"type": "string"},
+                "notes": {"type": "string"},
+                "checklist": {
                     "type": "array",
                     "items": {
                         "type": "object",
                         "properties": {
                             "id": {"type": "string"},
                             "text": {"type": "string"},
-                            "status": {"type": "string"},
+                            "status": {"type": "string", "enum": ["pending", "in_progress", "done"]},
                         },
-                        "required": [],
+                        "required": ["text"],
                     },
                 },
-                "parent_id": {"type": "string"},
-                "assignee": {"type": "string"},
-                "step_id": {"type": "string"},
-                "step_status": {"type": "string"},
-                "status": {"type": "string"},
-                "new_parent_id": {"type": "string"},
             }
         ),
     },
     {
-        "name": "cccc_context_agent",
-        "description": "Per-agent short-term execution state: action=update|clear. Keep focus/next_action/what_changed fresh; when evidence/scope changes, update or restructure immediately (use pending_confirm in text fields when objective is unclear). Use blockers for execution impediments (task UI 'Blocked' projection source).",
+        "name": "cccc_agent_state",
+        "description": "Per-actor working-memory tool: action=get|update|clear. Keep hot fields fresh; use warm fields only for recovery value.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 **_COMMON_ACTOR,
-                "action": {"type": "string", "enum": ["update", "clear"], "default": "update"},
-                "agent_id": {"type": "string"},
+                "action": {"type": "string", "enum": ["get", "update", "clear"], "default": "get"},
+                "actor_id": {"type": "string"},
+                "include_warm": {"type": "boolean", "default": True},
                 "active_task_id": {"type": "string"},
                 "focus": {"type": "string"},
                 "blockers": {"type": "array", "items": {"type": "string"}},
                 "next_action": {"type": "string"},
                 "what_changed": {"type": "string"},
-                "decision_delta": {"type": "string"},
-                "environment": {"type": "string"},
-                "user_profile": {"type": "string"},
-                "notes": {"type": "string"},
-            },
-            required=["agent_id"],
+                "open_loops": {"type": "array", "items": {"type": "string"}},
+                "commitments": {"type": "array", "items": {"type": "string"}},
+                "environment_summary": {"type": "string"},
+                "user_model": {"type": "string"},
+                "persona_notes": {"type": "string"},
+                "resume_hint": {"type": "string"},
+            }
         ),
     },
     {

@@ -35,9 +35,17 @@ class TestMcpBootstrapMemoryRecallGate(unittest.TestCase):
             cccc_context,
             "context_get",
             return_value={
-                "overview": {"manual": {"current_focus": "memory lifecycle"}},
-                "tasks": [{"id": "T001", "name": "B2 rollout", "status": "active"}],
-                "agents": [{"id": "peer1", "focus": "memory lane", "next_action": "verify recall gate"}],
+                "coordination": {
+                    "brief": {"current_focus": "memory lifecycle", "objective": "Ship memory"},
+                    "tasks": [{"id": "T001", "title": "B2 rollout", "outcome": "Ship memory", "status": "active", "assignee": "peer1"}],
+                    "recent_decisions": [],
+                    "recent_handoffs": [],
+                },
+                "agent_states": [{
+                    "id": "peer1",
+                    "hot": {"focus": "memory lane", "next_action": "verify recall gate", "active_task_id": "T001", "blockers": []},
+                    "warm": {"what_changed": "seeded", "resume_hint": "open memory lane"},
+                }],
             },
         ), patch.object(
             cccc_core, "inbox_list", return_value={"messages": []}

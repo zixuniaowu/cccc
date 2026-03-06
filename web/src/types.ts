@@ -84,6 +84,7 @@ export type Actor = {
   env?: Record<string, string>;
   capability_autoload?: string[];
   runner?: string;
+  runner_effective?: string;
   runtime?: string;
   submit?: "enter" | "newline" | "none";
   profile_id?: string;
@@ -205,17 +206,27 @@ export type CapabilityImportRecord = {
   [key: string]: unknown;
 };
 
-export type AgentState = {
-  id: string;
+export type AgentStateHot = {
   active_task_id?: string | null;
   focus?: string | null;
-  blockers?: string[];
   next_action?: string | null;
+  blockers?: string[];
+};
+
+export type AgentStateWarm = {
   what_changed?: string | null;
-  decision_delta?: string | null;
-  environment?: string | null;
-  user_profile?: string | null;
-  notes?: string | null;
+  open_loops?: string[];
+  commitments?: string[];
+  environment_summary?: string | null;
+  user_model?: string | null;
+  persona_notes?: string | null;
+  resume_hint?: string | null;
+};
+
+export type AgentState = {
+  id: string;
+  hot?: AgentStateHot | null;
+  warm?: AgentStateWarm | null;
   updated_at?: string | null;
 };
 
@@ -242,27 +253,38 @@ export type TaskStep = {
   status?: string | null;
 };
 
+export type TaskStatus = "planned" | "active" | "done" | "archived" | string;
+
+export type ChecklistStatus = "pending" | "in_progress" | "done" | string;
+
+export type TaskWaitingOn = "none" | "user" | "actor" | "external" | string;
+
+export type TaskChecklistItem = {
+  id: string;
+  text: string;
+  status?: ChecklistStatus | null;
+};
+
 export type Task = {
   id: string;
-  name: string;
-  goal?: string | null;
+  title?: string | null;
+  outcome?: string | null;
   parent_id?: string | null;
-  status?: string | null;
+  status?: TaskStatus | null;
+  archived_from?: string | null;
   assignee?: string | null;
+  priority?: string | null;
+  blocked_by?: string[];
+  waiting_on?: TaskWaitingOn | null;
+  handoff_to?: string | null;
+  notes?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  checklist?: TaskChecklistItem[];
   steps?: TaskStep[];
   current_step?: string | null;
   progress?: number | null;
   children?: Task[];
-};
-
-export type OverviewManual = {
-  roles?: string[];
-  collaboration_mode?: string | null;
-  current_focus?: string | null;
-  updated_by?: string | null;
-  updated_at?: string | null;
 };
 
 // LLM-generated project blueprint for 3D panorama building
@@ -282,28 +304,67 @@ export type ProjectBlueprint = {
   blockScale: number;
 };
 
+export type CoordinationBrief = {
+  objective?: string | null;
+  current_focus?: string | null;
+  constraints?: string[];
+  project_brief?: string | null;
+  project_brief_stale?: boolean;
+  updated_by?: string | null;
+  updated_at?: string | null;
+};
+
+export type CoordinationNote = {
+  at?: string | null;
+  by?: string | null;
+  summary?: string | null;
+  task_id?: string | null;
+};
+
+export type GroupTasksSummary = {
+  total: number;
+  done: number;
+  active: number;
+  planned: number;
+  archived?: number;
+  root_count?: number;
+};
+
+export type TaskBoardEntry = string | Partial<Task>;
+
+export type ContextAttention = {
+  blocked?: number | TaskBoardEntry[];
+  waiting_user?: number | TaskBoardEntry[];
+  pending_handoffs?: number | TaskBoardEntry[];
+};
+
+export type ContextBoard = {
+  planned?: TaskBoardEntry[];
+  active?: TaskBoardEntry[];
+  done?: TaskBoardEntry[];
+  archived?: TaskBoardEntry[];
+};
+
 export type GroupContext = {
   version?: string;
-  vision?: string | null;
-  overview?: {
-    manual?: OverviewManual;
+  coordination?: {
+    brief?: CoordinationBrief | null;
+    tasks?: Task[];
+    recent_decisions?: CoordinationNote[];
+    recent_handoffs?: CoordinationNote[];
   };
+  agent_states?: AgentState[];
+  attention?: ContextAttention | null;
+  board?: ContextBoard | null;
+  tasks_summary?: GroupTasksSummary;
   panorama?: {
-    mermaid?: string;
+    mermaid?: string | null;
   };
   meta?: {
     panorama_blueprint?: ProjectBlueprint | null;
     project_status?: string | null;
+    [key: string]: unknown;
   };
-  tasks_summary?: {
-    total: number;
-    done: number;
-    active: number;
-    planned: number;
-    root_count?: number;
-  };
-  active_tasks?: Task[];
-  agents?: AgentState[];
 };
 
 export type ProjectMdInfo = {

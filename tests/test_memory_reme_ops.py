@@ -132,26 +132,36 @@ class TestMemoryRemeOps(unittest.TestCase):
             from cccc.kernel.ledger import append_event
             from cccc.daemon.memory.memory_ops import run_auto_conversation_memory_cycle
 
-            # Seed context signals for signal_pack (vision + task + agent state).
+            # Seed context signals for signal_pack (coordination brief + task + agent state).
             seed_resp, _ = self._call(
                 "context_sync",
                 {
                     "group_id": gid,
                     "by": "user",
                     "ops": [
-                        {"op": "vision.update", "vision": "Ship reliable memory lifecycle."},
-                        {"op": "task.create", "name": "Memory Lane", "goal": "Auto flush with low noise"},
-                        {
-                            "op": "agent.update",
-                            "agent_id": "peer1",
-                            "focus": "memory lane",
-                            "next_action": "validate auto flush",
-                            "what_changed": "seeded",
-                        },
+                        {"op": "coordination.brief.update", "objective": "Ship reliable memory lifecycle.", "current_focus": "Memory lane"},
+                        {"op": "task.create", "title": "Memory Lane", "outcome": "Auto flush with low noise"},
                     ],
                 },
             )
             self.assertTrue(seed_resp.ok, getattr(seed_resp, "error", None))
+            agent_seed_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "peer1",
+                    "ops": [
+                        {
+                            "op": "agent_state.update",
+                            "actor_id": "peer1",
+                            "focus": "memory lane",
+                            "next_action": "validate auto flush",
+                            "what_changed": "seeded",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(agent_seed_resp.ok, getattr(agent_seed_resp, "error", None))
 
             group = load_group(gid)
             self.assertIsNotNone(group)
@@ -201,19 +211,25 @@ class TestMemoryRemeOps(unittest.TestCase):
             gid = self._create_group("reme-signal-pack")
             messages = [{"role": "user", "content": "Need memory compaction summary."}]
             large_signal_pack = {
-                "vision": "A" * 2000,
-                "overview_manual": {
+                "coordination_brief": {
+                    "objective": "A" * 2000,
                     "current_focus": "B" * 1200,
-                    "collaboration_mode": "C" * 1200,
-                    "roles": ["research", "implementation", "review", "ops", "qa", "pm", "design"],
+                    "constraints": ["research", "implementation", "review", "ops", "qa", "pm", "design"],
+                    "project_brief": "C" * 1200,
                 },
                 "tasks": {
                     "active": [f"active-{i} " + ("D" * 120) for i in range(20)],
                     "planned": [f"planned-{i} " + ("E" * 120) for i in range(20)],
                     "done_recent": [f"done-{i} " + ("F" * 120) for i in range(20)],
+                    "blocked": [f"blocked-{i} " + ("J" * 120) for i in range(20)],
+                    "waiting_user": [f"waiting-{i} " + ("K" * 120) for i in range(20)],
                 },
-                "agents": [
-                    {"id": f"a{i}", "focus": "G" * 400, "next_action": "H" * 400, "blockers": ["I" * 300]}
+                "agent_states": [
+                    {
+                        "id": f"a{i}",
+                        "hot": {"focus": "G" * 400, "next_action": "H" * 400, "blockers": ["I" * 300]},
+                        "warm": {"what_changed": "seeded", "resume_hint": "re-open memory lane"},
+                    }
                     for i in range(20)
                 ],
             }

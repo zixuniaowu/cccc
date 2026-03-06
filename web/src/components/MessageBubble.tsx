@@ -164,12 +164,12 @@ export const MessageBubble = memo(function MessageBubble({
     const dismiss = useDismiss(context);
     const { getReferenceProps, getFloatingProps } = useInteractions([hover, dismiss]);
     const { t } = useTranslation('chat');
-    const agentStateText = String(agentState?.focus || "").trim();
+    const agentStateText = String(agentState?.hot?.focus || "").trim();
     const agentStateDisplay = agentStateText || t('noAgentStateYet');
-    const stateTask = String(agentState?.active_task_id || "").trim();
-    const stateNext = String(agentState?.next_action || "").trim();
-    const stateChanged = String(agentState?.what_changed || "").trim();
-    const blockerCount = Array.isArray(agentState?.blockers) ? agentState.blockers.length : 0;
+    const stateTask = String(agentState?.hot?.active_task_id || "").trim();
+    const stateNext = String(agentState?.hot?.next_action || "").trim();
+    const stateChanged = String(agentState?.warm?.what_changed || "").trim();
+    const blockerCount = Array.isArray(agentState?.hot?.blockers) ? agentState.hot.blockers.length : 0;
 
 
     // Treat data as ChatMessageData.

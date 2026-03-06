@@ -35,6 +35,23 @@ function siteRadius(agentCount: number, blueprint?: ProjectBlueprint | null): nu
   return base;
 }
 
+function agentActiveTaskId(agent: AgentState): string {
+  return String(agent.hot?.active_task_id || "").trim();
+}
+
+function agentFocus(agent: AgentState): string {
+  return String(agent.hot?.focus || "").trim();
+}
+
+function agentBlocker(agent: AgentState): string | undefined {
+  const blockers = Array.isArray(agent.hot?.blockers) ? agent.hot.blockers : [];
+  return blockers.length > 0 ? String(blockers[0] || "").trim() || undefined : undefined;
+}
+
+function taskLabel(task: Task): string {
+  return String(task.title || task.id || "").trim();
+}
+
 /** Place on arc around origin, facing center (mesh default faces -Z) */
 function arcPlace(angle: number, r: number): { pos: [number, number, number]; rotY: number } {
   const x = Math.sin(angle) * r;
@@ -74,9 +91,10 @@ function computeWorkerLayout(
     const agent = agents[i];
     const actor = actorMap.get(agent.id);
     const running = actor?.running !== false && actor?.enabled !== false;
-    const ts = agent.active_task_id ? taskStatusMap.get(agent.active_task_id) : undefined;
+    const activeTaskId = agentActiveTaskId(agent);
+    const ts = activeTaskId ? taskStatusMap.get(activeTaskId) : undefined;
     const taskDone = ts === "done" || ts === "archived";
-    if (running && agent.active_task_id && !taskDone) {
+    if (running && activeTaskId && !taskDone) {
       workingIds.push(agent.id);
     } else {
       idleIds.push(agent.id);
@@ -172,7 +190,7 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
     const m = new Map<string, { idx: number; name: string; status?: string | null }>();
     if (!tasks || tasks.length === 0) return m;
     for (let i = 0; i < tasks.length; i++) {
-      m.set(tasks[i].id, { idx: i, name: tasks[i].name, status: tasks[i].status });
+      m.set(tasks[i].id, { idx: i, name: taskLabel(tasks[i]), status: tasks[i].status });
     }
     return m;
   }, [tasks]);
@@ -187,7 +205,7 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
   const buildTargetMap = useMemo(() => {
     const map = new Map<string, [number, number, number]>();
     for (const agent of agents) {
-      if (agent.active_task_id) {
+      if (agentActiveTaskId(agent)) {
         const item = layout.get(agent.id);
         map.set(agent.id, item?.charPos ?? [0, 0, 0]);
       }
@@ -251,7 +269,8 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
         const actor = actorMap.get(agent.id);
         const running = actor?.running !== false && actor?.enabled !== false;
         const item = layout.get(agent.id);
-        const taskEntry = agent.active_task_id ? taskMap.get(agent.active_task_id) : undefined;
+        const activeTaskId = agentActiveTaskId(agent);
+        const taskEntry = activeTaskId ? taskMap.get(activeTaskId) : undefined;
         // Maintain referential equality so R3F doesn't re-apply position on re-render
         // (which would override useFrame-driven animation like walking to bed)
         const newPos = item?.charPos || [0, 0, 0] as [number, number, number];
@@ -277,8 +296,8 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
             idleSeconds={actor?.idle_seconds}
             activeTaskName={taskEntry?.name.replace(/^T\d+:\s*/, "")}
             taskStatus={taskEntry?.status || undefined}
-            focus={agent.focus || undefined}
-            blockerText={agent.blockers?.length ? agent.blockers[0] : undefined}
+            focus={agentFocus(agent) || undefined}
+            blockerText={agentBlocker(agent)}
             onCharacterClick={() => onCharacterClick(agent.id)}
           />
         );

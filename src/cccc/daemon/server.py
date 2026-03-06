@@ -174,19 +174,13 @@ def _pty_backlog_bytes() -> int:
     return int(n)
 
 
-def _pty_supported() -> bool:
-    return bool(getattr(pty_runner, "PTY_SUPPORTED", True))
-
-
 def _effective_runner_kind(runner_kind: str) -> str:
-    """Return the effective runner kind for this platform.
+    """Return the effective runner kind for runtime decisions.
 
-    Windows (and some Python builds) cannot run PTY; treat PTY as headless.
+    Standard CCCC no longer auto-downgrades PTY actors to headless.
     """
-    rk = str(runner_kind or "").strip() or "pty"
-    if rk == "headless":
-        return "headless"
-    return "pty" if _pty_supported() else "headless"
+    rk = str(runner_kind or "").strip().lower() or "pty"
+    return "headless" if rk == "headless" else "pty"
 
 
 def _can_read_terminal_transcript(group: Any, *, by: str, target_actor_id: str) -> bool:
@@ -532,7 +526,6 @@ def _maybe_autostart_running_groups() -> None:
         supported_runtimes=SUPPORTED_RUNTIMES,
         ensure_mcp_installed=_ensure_mcp_installed,
         auto_mcp_runtimes=AUTO_MCP_RUNTIMES,
-        pty_supported=_pty_supported,
         merge_actor_env_with_private=_merge_actor_env_with_private,
         inject_actor_context_env=lambda env, gid, aid: _inject_actor_context_env(env, group_id=gid, actor_id=aid),
         prepare_pty_env=_prepare_pty_env,
@@ -679,7 +672,6 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
             best_effort_killpg=_best_effort_killpg,
         ),
         delete_group_private_env=_delete_group_private_env,
-        pty_supported=_pty_supported,
         find_scope_url=_find_scope_url,
         ensure_mcp_installed=_ensure_mcp_installed,
         merge_actor_env_with_private=_merge_actor_env_with_private,
@@ -708,11 +700,6 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
         delete_actor_private_env=_delete_actor_private_env,
         get_actor_profile=_get_actor_profile,
         load_actor_profile_secrets=_load_actor_profile_secrets,
-        warn_forced_headless=lambda group_id, actor_id: logger.warning(
-            "pty runner is not supported on this platform; forcing runner=headless for %s/%s",
-            group_id,
-            actor_id,
-        ),
         remove_headless_state=_remove_headless_state,
         remove_pty_state_if_pid=_remove_pty_state_if_pid,
         throttle_clear_actor=THROTTLE.clear_actor,

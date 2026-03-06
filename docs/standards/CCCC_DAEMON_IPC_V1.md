@@ -1748,40 +1748,60 @@ Result:
 ```ts
 {
   version: string
-  vision?: string
-  overview: {
-    manual: {
-      roles: string[]
-      collaboration_mode: string
+  coordination: {
+    brief: {
+      objective: string
       current_focus: string
+      constraints: string[]
+      project_brief: string
+      project_brief_stale: boolean
       updated_by: string
       updated_at: string
     }
+    tasks: Array<Record<string, unknown>>
+    recent_decisions: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
+    recent_handoffs: Array<{ at: string; by: string; summary: string; task_id?: string | null }>
   }
-  panorama: {
-    mermaid: string
-  }
+  agent_states: Array<{
+    id: string
+    hot: {
+      active_task_id?: string | null
+      focus?: string | null
+      blockers?: string[]
+      next_action?: string | null
+    }
+    warm: {
+      what_changed?: string | null
+      open_loops?: string[]
+      commitments?: string[]
+      environment_summary?: string | null
+      user_model?: string | null
+      persona_notes?: string | null
+      resume_hint?: string | null
+    }
+    updated_at?: string | null
+  }>
   tasks_summary: {
     total: number
     done: number
     active: number
     planned: number
-    root_count: number
+    archived: number
+    root_count?: number
   }
-  active_tasks: Array<Record<string, unknown>>
-  agents: Array<{
-    id: string
-    active_task_id?: string | null
-    focus: string
-    blockers: string[]
-    next_action: string
-    what_changed: string
-    decision_delta: string
-    environment: string
-    user_profile: string
-    notes: string
-    updated_at: string
-  }>
+  attention?: {
+    blocked?: number | Array<Record<string, unknown>>
+    waiting_user?: number | Array<Record<string, unknown>>
+    pending_handoffs?: number | Array<Record<string, unknown>>
+  }
+  board?: {
+    planned?: Array<Record<string, unknown>>
+    active?: Array<Record<string, unknown>>
+    done?: Array<Record<string, unknown>>
+    archived?: Array<Record<string, unknown>>
+  }
+  panorama?: { mermaid?: string | null }
+  meta?: Record<string, unknown>
 }
 ```
 
@@ -2064,7 +2084,7 @@ Result:
 { tasks?: Array<Record<string, unknown>>; task?: Record<string, unknown> }
 ```
 
-`presence_get` has been removed in v2. Agent state is returned in `context_get.result.agents`.
+`presence_get` has been removed. Agent state is returned in `context_get.result.agent_states`.
 
 #### `blueprint_generate`
 

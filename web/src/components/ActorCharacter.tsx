@@ -212,7 +212,7 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     // Convert PTY idle_seconds to lastActivityAt (epoch ms) for deriveAnimState
     const lastActivityAt = idleSeconds != null ? Date.now() - idleSeconds * 1000 : undefined;
     const animState = deriveAnimState(agent, isRunning, lastActivityAt, taskStatus);
-    const statusLabel = deriveStatusLabel(animState, !!agent.active_task_id, isForeman);
+    const statusLabel = deriveStatusLabel(animState, !!agent.hot?.active_task_id, isForeman);
 
     // Pre-truncate long text before bubble key to avoid unnecessary texture rebuilds
     const MAX_TASK = 35;

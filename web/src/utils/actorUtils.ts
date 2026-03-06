@@ -20,7 +20,7 @@ export function deriveAnimState(
   taskStatus?: string,
 ): AgentAnimState {
   if (isRunning === false) return "offline";
-  if (Array.isArray(agent.blockers) && agent.blockers.length > 0) return "blocked";
+  if (Array.isArray(agent.hot?.blockers) && agent.hot.blockers.length > 0) return "blocked";
 
   // WS-priority: use lastActivityAt when available
   if (lastActivityAt != null) {
@@ -37,15 +37,15 @@ export function deriveAnimState(
   const fresh = age <= FRESHNESS_MS;
 
   // Has active task but task is already done/archived → treat as idle/thinking
-  if (agent.active_task_id && (taskStatus === "done" || taskStatus === "archived")) {
-    return (agent.focus && fresh) ? "thinking" : "idle";
+  if (agent.hot?.active_task_id && (taskStatus === "done" || taskStatus === "archived")) {
+    return (agent.hot?.focus && fresh) ? "thinking" : "idle";
   }
   // Has active task → working (if fresh + focus) or thinking (minimum)
-  if (agent.active_task_id) {
-    return (agent.focus && fresh) ? "working" : "thinking";
+  if (agent.hot?.active_task_id) {
+    return (agent.hot?.focus && fresh) ? "working" : "thinking";
   }
   // Has focus/next_action but no task → thinking (if fresh) or idle (if stale)
-  if (agent.focus || agent.next_action) {
+  if (agent.hot?.focus || agent.hot?.next_action) {
     return fresh ? "thinking" : "idle";
   }
   return "idle";

@@ -20,8 +20,8 @@ class TestMcpCapabilityUse(unittest.TestCase):
                 by="peer-1",
                 actor_id="peer-1",
                 capability_id="",
-                tool_name="cccc_context_agent",
-                tool_arguments={"action": "update", "agent_id": "peer-1", "focus": "work"},
+                tool_name="cccc_agent_state",
+                tool_arguments={"action": "update", "actor_id": "peer-1", "focus": "work"},
             )
 
         self.assertTrue(bool(result.get("enabled")))

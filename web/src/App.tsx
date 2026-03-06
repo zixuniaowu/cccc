@@ -584,11 +584,11 @@ export default function App() {
             >
               <ErrorBoundary>
                 <PanoramaTab
-                  agents={(groupContext?.agents || []).filter(
+                  agents={(groupContext?.agent_states || []).filter(
                     (a) => actors.some((act) => act.id === a.id)
                   )}
                   actors={actors}
-                  tasks={groupContext?.active_tasks}
+                  tasks={groupContext?.coordination?.tasks || []}
                   tasksSummary={groupContext?.tasks_summary}
                   panoramaBlueprint={groupContext?.meta?.panorama_blueprint}
                   projectStatus={groupContext?.meta?.project_status}
@@ -605,7 +605,7 @@ export default function App() {
                 const actor = actors.find((a) => a.id === actorId) || null;
                 const isVisible = activeTab === actorId && activeTab !== "chat" && activeTab !== "panorama";
                 const agentState =
-                  (groupContext?.agents || []).find((p) => p.id === (actor?.id || "")) || null;
+                  (groupContext?.agent_states || []).find((p) => p.id === (actor?.id || "")) || null;
 
                 return (
                   <div key={actorId} className={isVisible ? "flex min-h-0 flex-col flex-1" : "hidden"}>

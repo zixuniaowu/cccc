@@ -39,45 +39,58 @@ def _trim_text(value: Any, *, max_chars: int) -> str:
     return text[: max_chars - 3].rstrip() + "..."
 
 
+def _find_actor_state(*, context: Dict[str, Any], actor_id: str) -> Optional[Dict[str, Any]]:
+    states = context.get("agent_states") if isinstance(context.get("agent_states"), list) else []
+    target = str(actor_id or "").strip().lower()
+    for item in states:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("id") or "").strip().lower() == target:
+            return item
+    return None
+
+
 def _memory_recall_query_from_context(*, context: Dict[str, Any], actor_id: str) -> str:
     tokens: List[str] = []
-    aid = str(actor_id or "").strip()
+    brief = context.get("coordination_brief") if isinstance(context.get("coordination_brief"), dict) else {}
+    for key in ("current_focus", "objective", "project_brief"):
+        text = _trim_text(brief.get(key), max_chars=120)
+        if text:
+            tokens.append(text)
+            if len(tokens) >= 2:
+                break
 
-    if isinstance(context.get("overview"), dict):
-        manual = context.get("overview", {}).get("manual")
-        if isinstance(manual, dict):
-            focus = _trim_text(manual.get("current_focus"), max_chars=120)
-            if focus:
-                tokens.append(focus)
+    actor_state = context.get("agent_state") if isinstance(context.get("agent_state"), dict) else {}
+    hot = actor_state.get("hot") if isinstance(actor_state.get("hot"), dict) else {}
+    warm = actor_state.get("warm") if isinstance(actor_state.get("warm"), dict) else {}
+    for value in (
+        hot.get("active_task_id"),
+        hot.get("focus"),
+        hot.get("next_action"),
+        warm.get("what_changed"),
+        warm.get("resume_hint"),
+    ):
+        text = _trim_text(value, max_chars=100)
+        if text:
+            tokens.append(text)
 
-    tasks = context.get("tasks") if isinstance(context.get("tasks"), list) else []
-    for t in tasks:
-        if not isinstance(t, dict):
-            continue
-        if str(t.get("status") or "").strip().lower() != "active":
-            continue
-        name = _trim_text(t.get("name"), max_chars=80)
-        if name:
-            tokens.append(name)
-        break
-
-    agents = context.get("agents") if isinstance(context.get("agents"), list) else []
-    for a in agents:
-        if not isinstance(a, dict):
-            continue
-        if str(a.get("id") or "").strip() != aid:
-            continue
-        for key in ("active_task_id", "focus", "next_action", "what_changed"):
-            text = _trim_text(a.get(key), max_chars=80)
-            if text:
-                tokens.append(text)
-        break
+    tasks = context.get("tasks") if isinstance(context.get("tasks"), dict) else {}
+    for bucket in ("assigned_active", "attention"):
+        items = tasks.get(bucket) if isinstance(tasks.get(bucket), list) else []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            title = _trim_text(item.get("title"), max_chars=90)
+            outcome = _trim_text(item.get("outcome"), max_chars=120)
+            if title:
+                tokens.append(title)
+            if outcome:
+                tokens.append(outcome)
+            break
 
     if not tokens:
         return "recent decisions constraints preferences"
-
-    # Keep deterministic order and compact query size.
-    merged = " | ".join(tokens[:4]).strip()
+    merged = " | ".join(tokens[:6]).strip()
     return _trim_text(merged, max_chars=240) or "recent decisions constraints preferences"
 
 
@@ -120,11 +133,8 @@ def _build_memory_recall_gate(*, group_id: str, actor_id: str, context: Dict[str
                         "snippet": _trim_text(item.get("snippet"), max_chars=220),
                     }
                 )
-        if compact_hits:
-            gate["status"] = "ready"
-            gate["hits"] = compact_hits
-        else:
-            gate["status"] = "empty"
+        gate["hits"] = compact_hits
+        gate["status"] = "ready" if compact_hits else "empty"
     except Exception as e:
         gate["status"] = "error"
         gate["error"] = str(e)
@@ -140,32 +150,28 @@ def _build_context_hygiene_hint(*, context: Dict[str, Any], actor_id: str) -> Di
         "age_seconds": None,
         "min_fields_ready": False,
         "update_command": (
-            'cccc_context_agent(action="update", agent_id="<self>", '
+            'cccc_agent_state(action="update", actor_id="<self>", '
             'focus="...", next_action="...", what_changed="...")'
         ),
         "recommendation": "update_agent_state_now",
     }
     if not aid or not isinstance(context, dict):
         return hint
-    agents = context.get("agents") if isinstance(context.get("agents"), list) else []
-    target: Optional[Dict[str, Any]] = None
-    aid_lower = aid.lower()
-    for item in agents:
-        if not isinstance(item, dict):
-            continue
-        item_id = str(item.get("id") or "").strip()
-        if not item_id:
-            continue
-        if item_id == aid or item_id.lower() == aid_lower:
-            target = item
-            break
+    target = _find_actor_state(context=context, actor_id=aid)
     if target is None:
         return hint
     hint["present"] = True
-    blockers = target.get("blockers") if isinstance(target.get("blockers"), list) else []
+    hot = target.get("hot") if isinstance(target.get("hot"), dict) else {}
+    warm = target.get("warm") if isinstance(target.get("warm"), dict) else {}
+    blockers = hot.get("blockers") if isinstance(hot.get("blockers"), list) else []
     min_fields_ready = any(
-        str(target.get(k) or "").strip()
-        for k in ("focus", "next_action", "what_changed")
+        str(value or "").strip()
+        for value in (
+            hot.get("focus"),
+            hot.get("next_action"),
+            warm.get("what_changed"),
+            warm.get("resume_hint"),
+        )
     ) or bool(blockers)
     hint["min_fields_ready"] = bool(min_fields_ready)
     updated_at = str(target.get("updated_at") or "").strip()
@@ -185,6 +191,164 @@ def _build_context_hygiene_hint(*, context: Dict[str, Any], actor_id: str) -> Di
         hint["recommendation"] = "fill_agent_state_basics"
     return hint
 
+
+def _estimate_payload_tokens(value: Any) -> int:
+    try:
+        return max(1, len(json.dumps(value, ensure_ascii=False, sort_keys=True)) // 4)
+    except Exception:
+        return max(1, len(str(value or "")) // 4)
+
+
+def _slim_task_for_bootstrap(task: Dict[str, Any]) -> Dict[str, Any]:
+    checklist = task.get("checklist") if isinstance(task.get("checklist"), list) else []
+    slim = {
+        "id": str(task.get("id") or ""),
+        "title": _trim_text(task.get("title"), max_chars=120),
+        "outcome": _trim_text(task.get("outcome"), max_chars=160),
+        "status": str(task.get("status") or ""),
+        "assignee": str(task.get("assignee") or ""),
+        "priority": str(task.get("priority") or ""),
+        "waiting_on": str(task.get("waiting_on") or "none"),
+        "handoff_to": str(task.get("handoff_to") or ""),
+        "notes": _trim_text(task.get("notes"), max_chars=240),
+        "checklist": [
+            {
+                "id": str(item.get("id") or ""),
+                "text": _trim_text(item.get("text"), max_chars=120),
+                "status": str(item.get("status") or "pending"),
+            }
+            for item in checklist[:3]
+            if isinstance(item, dict)
+        ],
+        "updated_at": task.get("updated_at"),
+    }
+    blocked_by = task.get("blocked_by") if isinstance(task.get("blocked_by"), list) else []
+    if blocked_by:
+        slim["blocked_by"] = [str(x) for x in blocked_by[:4]]
+    return {key: value for key, value in slim.items() if value not in (None, "", [], {})}
+
+
+def _build_bootstrap_context(*, context: Dict[str, Any], actor_id: str) -> Dict[str, Any]:
+    actor_state = _find_actor_state(context=context, actor_id=actor_id) or {
+        "id": str(actor_id or "").strip(),
+        "hot": {},
+        "warm": {},
+        "updated_at": None,
+    }
+    coordination = context.get("coordination") if isinstance(context.get("coordination"), dict) else {}
+    brief = coordination.get("brief") if isinstance(coordination.get("brief"), dict) else {}
+    tasks = coordination.get("tasks") if isinstance(coordination.get("tasks"), list) else []
+    recent_decisions = coordination.get("recent_decisions") if isinstance(coordination.get("recent_decisions"), list) else []
+    recent_handoffs = coordination.get("recent_handoffs") if isinstance(coordination.get("recent_handoffs"), list) else []
+    aid = str(actor_id or "").strip()
+
+    assigned_active: List[Dict[str, Any]] = []
+    actor_attention: List[Dict[str, Any]] = []
+    waiting_user: List[Dict[str, Any]] = []
+    global_blocked: List[Dict[str, Any]] = []
+
+    for raw in tasks:
+        if not isinstance(raw, dict):
+            continue
+        status = str(raw.get("status") or "").strip().lower()
+        if status in {"done", "archived"}:
+            continue
+        assignee = str(raw.get("assignee") or "").strip()
+        waiting_on = str(raw.get("waiting_on") or "none").strip().lower()
+        handoff_to = str(raw.get("handoff_to") or "").strip()
+        blocked_by = raw.get("blocked_by") if isinstance(raw.get("blocked_by"), list) else []
+        slim = _slim_task_for_bootstrap(raw)
+        if assignee == aid and status == "active":
+            assigned_active.append(slim)
+            continue
+        if assignee == aid or handoff_to == aid or waiting_on == "actor":
+            actor_attention.append(slim)
+            continue
+        if waiting_on == "user":
+            waiting_user.append(slim)
+            continue
+        if blocked_by or waiting_on == "external":
+            global_blocked.append(slim)
+
+    chosen: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _take(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+        picked: List[Dict[str, Any]] = []
+        for item in items:
+            tid = str(item.get("id") or "")
+            if not tid or tid in seen:
+                continue
+            seen.add(tid)
+            picked.append(item)
+            if len(picked) >= limit:
+                break
+        return picked
+
+    primary = _take(assigned_active, 3)
+    attention = _take(actor_attention, 2)
+    attention.extend(_take(waiting_user, max(0, 3 - len(attention))))
+    attention.extend(_take(global_blocked, max(0, 3 - len(attention))))
+
+    pack = {
+        "agent_state": {
+            "id": actor_state.get("id"),
+            "hot": actor_state.get("hot") if isinstance(actor_state.get("hot"), dict) else {},
+            "warm": {
+                "what_changed": str(((actor_state.get("warm") or {}).get("what_changed") if isinstance(actor_state.get("warm"), dict) else "") or ""),
+                "resume_hint": str(((actor_state.get("warm") or {}).get("resume_hint") if isinstance(actor_state.get("warm"), dict) else "") or ""),
+            },
+            "updated_at": actor_state.get("updated_at"),
+        },
+        "coordination_brief": {
+            "objective": _trim_text(brief.get("objective"), max_chars=180),
+            "current_focus": _trim_text(brief.get("current_focus"), max_chars=180),
+            "constraints": [str(x) for x in (brief.get("constraints") if isinstance(brief.get("constraints"), list) else [])[:6]],
+            "project_brief": _trim_text(brief.get("project_brief"), max_chars=260),
+            "project_brief_stale": bool(brief.get("project_brief_stale")),
+        },
+        "tasks": {
+            "assigned_active": primary,
+            "attention": attention,
+        },
+        "recent_decisions": [
+            {
+                "at": item.get("at"),
+                "by": item.get("by"),
+                "summary": _trim_text(item.get("summary"), max_chars=180),
+                "task_id": item.get("task_id"),
+            }
+            for item in recent_decisions[:2]
+            if isinstance(item, dict)
+        ],
+        "recent_handoffs": [
+            {
+                "at": item.get("at"),
+                "by": item.get("by"),
+                "summary": _trim_text(item.get("summary"), max_chars=180),
+                "task_id": item.get("task_id"),
+            }
+            for item in recent_handoffs[:2]
+            if isinstance(item, dict)
+        ],
+    }
+
+    hard_cap = 1100
+    while _estimate_payload_tokens(pack) > hard_cap and pack["recent_handoffs"]:
+        pack["recent_handoffs"].pop()
+    while _estimate_payload_tokens(pack) > hard_cap and pack["recent_decisions"]:
+        pack["recent_decisions"].pop()
+    while _estimate_payload_tokens(pack) > hard_cap and len(pack["tasks"]["attention"]) > 1:
+        pack["tasks"]["attention"].pop()
+    while _estimate_payload_tokens(pack) > hard_cap and len(pack["tasks"]["assigned_active"]) > 1:
+        pack["tasks"]["assigned_active"].pop()
+    if _estimate_payload_tokens(pack) > hard_cap:
+        for bucket in ("assigned_active", "attention"):
+            for item in pack["tasks"][bucket]:
+                item.pop("notes", None)
+                if isinstance(item.get("checklist"), list) and len(item["checklist"]) > 1:
+                    item["checklist"] = item["checklist"][:1]
+    return pack
 
 def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str) -> str:
     base = str(markdown or "")
@@ -325,20 +489,19 @@ def bootstrap(
     actor_id: str,
     inbox_limit: int = 50,
     inbox_kind_filter: str = "all",
-    ledger_tail_limit: int = 10,
+    ledger_tail_limit: int = 0,
     ledger_tail_max_chars: int = 8000,
 ) -> Dict[str, Any]:
-    """One-call session bootstrap for agents.
+    """One-call cold-start bootstrap for agents.
 
-    Returns:
-    - group: group metadata
-    - actors: actor list (roles + runtime)
-    - help: effective CCCC help playbook (markdown + source)
-    - project: PROJECT.md info
-    - context: group context
-    - inbox: unread messages
-    - ledger_tail: recent chat.message tail (optional)
-    - memory_recall_gate: mandatory recall pack before planning/execution
+    Hot path only:
+    - group / actors
+    - help entrypoint
+    - PROJECT.md availability metadata (not full content)
+    - lean context recovery pack
+    - inbox
+    - optional recent chat tail (off by default)
+    - memory recall gate
     """
     gi = _group_actor_mod.group_info(group_id=group_id)
     group = gi.get("group") if isinstance(gi, dict) else None
@@ -380,11 +543,19 @@ def bootstrap(
     except Exception:
         pass
 
-    project = project_info(group_id=group_id)
-    context = _context_mod.context_get(group_id=group_id)
+    project_full = project_info(group_id=group_id)
+    project = {
+        "found": bool(project_full.get("found")),
+        "path": project_full.get("path"),
+        "error": project_full.get("error"),
+    }
+    context_full = _context_mod.context_get(group_id=group_id, include_archived=True)
+    context = _build_bootstrap_context(
+        context=context_full if isinstance(context_full, dict) else {},
+        actor_id=actor_id,
+    )
     inbox = inbox_list(group_id=group_id, actor_id=actor_id, limit=int(inbox_limit or 50), kind_filter=inbox_kind_filter)
 
-    # Recent chat tail (for resuming mid-task). Keep it small: only chat.message.
     ledger_tail: List[Dict[str, Any]] = []
     ledger_tail_truncated = False
     try:
@@ -422,21 +593,20 @@ def bootstrap(
                         }
                     )
                 chat_events = chat_events[-limit:]
-
                 used = 0
                 for ev in chat_events:
                     remaining = max_chars - used
                     if remaining <= 0:
                         ledger_tail_truncated = True
                         break
-                    t = str(ev.get("text") or "")
-                    if len(t) > remaining:
-                        ev["text"] = t[:remaining]
+                    text_value = str(ev.get("text") or "")
+                    if len(text_value) > remaining:
+                        ev["text"] = text_value[:remaining]
                         ledger_tail_truncated = True
                         ledger_tail.append(ev)
                         break
                     ledger_tail.append(ev)
-                    used += len(t)
+                    used += len(text_value)
     except Exception:
         ledger_tail = []
         ledger_tail_truncated = False
@@ -449,17 +619,6 @@ def bootstrap(
     except Exception:
         last_event_id = ""
 
-    memory_guide: Optional[Dict[str, Any]] = None
-    try:
-        from ....kernel.memory_guide import build_memory_guide
-        memory_guide = build_memory_guide("lifecycle")
-    except Exception:
-        pass
-
-    context_hygiene = _build_context_hygiene_hint(
-        context=context if isinstance(context, dict) else {},
-        actor_id=actor_id,
-    )
     memory_recall_gate = _build_memory_recall_gate(
         group_id=group_id,
         actor_id=actor_id,
@@ -476,9 +635,7 @@ def bootstrap(
         "ledger_tail": ledger_tail,
         "ledger_tail_truncated": ledger_tail_truncated,
         "suggested_mark_read_event_id": last_event_id,
-        "context_hygiene": context_hygiene,
         "memory_recall_gate": memory_recall_gate,
-        "memory_guide": memory_guide,
     }
 
 

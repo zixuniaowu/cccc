@@ -258,8 +258,8 @@ class TestCapabilityOps(unittest.TestCase):
                     "ops": [
                         {
                             "op": "task.create",
-                            "name": "Automation reminder cleanup",
-                            "goal": "stabilize reminder jobs",
+                            "title": "Automation reminder cleanup",
+                            "outcome": "stabilize reminder jobs",
                             "assignee": "peer-1",
                         }
                     ],
@@ -279,8 +279,8 @@ class TestCapabilityOps(unittest.TestCase):
                     "by": "peer-1",
                     "ops": [
                         {
-                            "op": "agent.update",
-                            "agent_id": "peer-1",
+                            "op": "agent_state.update",
+                            "actor_id": "peer-1",
                             "active_task_id": task_id,
                             "focus": "automation schedule hygiene",
                         }

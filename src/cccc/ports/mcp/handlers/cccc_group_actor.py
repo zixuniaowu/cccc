@@ -61,6 +61,22 @@ def _sanitize_actors_for_agent(raw: Any) -> List[Dict[str, Any]]:
     return out
 
 
+def _is_headless_runner(value: Any) -> bool:
+    return str(value or "").strip().lower() == "headless"
+
+
+def _require_standard_profile(profile_id: str) -> None:
+    pid = str(profile_id or "").strip()
+    if not pid:
+        return
+    resp = _call_daemon_or_raise({"op": "actor_profile_get", "args": {"profile_id": pid, "by": "user"}})
+    profile = resp.get("profile") if isinstance(resp, dict) else None
+    if not isinstance(profile, dict):
+        raise ValueError(f"profile not found: {pid}")
+    if _is_headless_runner(profile.get("runner")):
+        raise ValueError("headless runner is internal-only; use a PTY actor/profile")
+
+
 def group_info(*, group_id: str) -> Dict[str, Any]:
     """Get group information"""
     res = _call_daemon_or_raise({"op": "group_show", "args": {"group_id": group_id}})
@@ -103,8 +119,13 @@ def actor_list(*, group_id: str) -> Dict[str, Any]:
 
 
 def actor_profile_list(*, by: str) -> Dict[str, Any]:
-    """List reusable Actor Profiles."""
-    return _call_daemon_or_raise({"op": "actor_profile_list", "args": {"by": by}})
+    """List reusable Actor Profiles (standard PTY profiles only)."""
+    resp = _call_daemon_or_raise({"op": "actor_profile_list", "args": {"by": by}})
+    profiles = resp.get("profiles") if isinstance(resp, dict) else None
+    if not isinstance(profiles, list):
+        return {"profiles": []}
+    filtered = [item for item in profiles if isinstance(item, dict) and not _is_headless_runner(item.get("runner"))]
+    return {"profiles": filtered}
 
 
 def actor_add(
@@ -115,12 +136,14 @@ def actor_add(
     profile_id: str = "",
     capability_autoload: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Add a new actor (foreman only). Role is auto-determined by position."""
+    """Add a new actor (foreman only). Standard MCP uses PTY actors only."""
+    if _is_headless_runner(runner):
+        raise ValueError("headless runner is internal-only; use a PTY actor/profile")
     req_args: Dict[str, Any] = {
         "group_id": group_id,
         "actor_id": actor_id,
         "runtime": runtime,
-        "runner": runner,
+        "runner": "pty",
         "title": title,
         "command": command or [],
         "env": env or {},
@@ -128,6 +151,7 @@ def actor_add(
     }
     pid = str(profile_id or "").strip()
     if pid:
+        _require_standard_profile(pid)
         req_args["profile_id"] = pid
     if isinstance(capability_autoload, list):
         req_args["capability_autoload"] = [str(x).strip() for x in capability_autoload if str(x or "").strip()]

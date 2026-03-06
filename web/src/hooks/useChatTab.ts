@@ -236,7 +236,7 @@ export function useChatTab({
 
   // Agent state snapshot
   const agentStates = useMemo(
-    () => groupContext?.agents || [],
+    () => groupContext?.agent_states || [],
     [groupContext]
   );
 

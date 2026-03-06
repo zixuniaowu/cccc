@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 
@@ -18,6 +18,76 @@ from ..schemas import (
 
 
 def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
+    async def _developer_mode_enabled() -> bool:
+        try:
+            resp = await ctx.daemon({"op": "observability_get"})
+            obs = (resp.get("result") or {}).get("observability") if isinstance(resp, dict) else None
+            return bool(obs.get("developer_mode")) if isinstance(obs, dict) else False
+        except Exception:
+            return False
+
+    def _runner_is_headless(value: Any) -> bool:
+        return str(value or "").strip().lower() == "headless"
+
+    def _headless_error(*, source: str) -> HTTPException:
+        return HTTPException(
+            status_code=400,
+            detail={
+                "code": "headless_internal_only",
+                "message": "Headless runner is internal-only. Standard Web uses PTY actors only.",
+                "details": {
+                    "source": source,
+                    "hint": "Use PTY actors/profiles in standard Web mode. Headless is reserved for internal/developer workflows.",
+                },
+            },
+        )
+
+    async def _profile_runner(profile_id: str) -> Optional[str]:
+        pid = str(profile_id or "").strip()
+        if not pid:
+            return None
+        try:
+            resp = await ctx.daemon({"op": "actor_profile_get", "args": {"profile_id": pid, "by": "user"}})
+        except Exception:
+            return None
+        if not bool(resp.get("ok")):
+            return None
+        profile = (resp.get("result") or {}).get("profile") if isinstance(resp, dict) else None
+        if not isinstance(profile, dict):
+            return None
+        return str(profile.get("runner") or "pty").strip().lower() or "pty"
+
+    async def _actor_runner(group_id: str, actor_id: str) -> Optional[str]:
+        gid = str(group_id or "").strip()
+        aid = str(actor_id or "").strip()
+        if not gid or not aid:
+            return None
+        try:
+            resp = await ctx.daemon({"op": "actor_list", "args": {"group_id": gid, "include_unread": False}})
+        except Exception:
+            return None
+        if not bool(resp.get("ok")):
+            return None
+        actors = (resp.get("result") or {}).get("actors") if isinstance(resp, dict) else None
+        if not isinstance(actors, list):
+            return None
+        for actor in actors:
+            if not isinstance(actor, dict):
+                continue
+            if str(actor.get("id") or "").strip() != aid:
+                continue
+            return str(actor.get("runner_effective") or actor.get("runner") or "pty").strip().lower() or "pty"
+        return None
+
+    async def _ensure_standard_web_runner(*, source: str, runner: Optional[str] = None, profile_id: str = "") -> None:
+        if await _developer_mode_enabled():
+            return
+        if _runner_is_headless(runner):
+            raise _headless_error(source=source)
+        profile_runner = await _profile_runner(profile_id)
+        if _runner_is_headless(profile_runner):
+            raise _headless_error(source=f"{source}:profile")
+
     @app.get("/api/v1/groups/{group_id}/actors")
     async def actors(group_id: str, include_unread: bool = False) -> Dict[str, Any]:
         gid = str(group_id or "").strip()
@@ -32,6 +102,7 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
         command = _normalize_command(req.command) or []
         env_private = dict(req.env_private) if isinstance(req.env_private, dict) else None
         profile_id = str(req.profile_id or "").strip()
+        await _ensure_standard_web_runner(source="actor_create", runner=str(req.runner or "pty"), profile_id=profile_id)
         return await ctx.daemon(
             {
                 "op": "actor_add",
@@ -56,6 +127,11 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.post("/api/v1/groups/{group_id}/actors/{actor_id}")
     async def actor_update(group_id: str, actor_id: str, req: ActorUpdateRequest) -> Dict[str, Any]:
+        await _ensure_standard_web_runner(
+            source="actor_update",
+            runner=str(req.runner or "") if req.runner is not None else None,
+            profile_id=str(req.profile_id or "").strip(),
+        )
         patch: Dict[str, Any] = {}
         # Note: role is ignored - auto-determined by position
         if req.title is not None:
@@ -94,6 +170,8 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.post("/api/v1/groups/{group_id}/actors/{actor_id}/start")
     async def actor_start(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
+        if not await _developer_mode_enabled() and _runner_is_headless(await _actor_runner(group_id, actor_id)):
+            raise _headless_error(source="actor_start")
         return await ctx.daemon({"op": "actor_start", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
 
     @app.post("/api/v1/groups/{group_id}/actors/{actor_id}/stop")
@@ -102,6 +180,8 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.post("/api/v1/groups/{group_id}/actors/{actor_id}/restart")
     async def actor_restart(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
+        if not await _developer_mode_enabled() and _runner_is_headless(await _actor_runner(group_id, actor_id)):
+            raise _headless_error(source="actor_restart")
         return await ctx.daemon({"op": "actor_restart", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
 
     @app.get("/api/v1/groups/{group_id}/actors/{actor_id}/env_private")
@@ -182,11 +262,25 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
 
     @app.get("/api/v1/actor_profiles")
     async def actor_profiles_list(by: str = "user") -> Dict[str, Any]:
-        return await ctx.daemon({"op": "actor_profile_list", "args": {"by": by}})
+        resp = await ctx.daemon({"op": "actor_profile_list", "args": {"by": by}})
+        if await _developer_mode_enabled():
+            return resp
+        result = resp.get("result") if isinstance(resp, dict) else None
+        profiles = result.get("profiles") if isinstance(result, dict) else None
+        if isinstance(profiles, list):
+            result["profiles"] = [
+                item for item in profiles if isinstance(item, dict) and not _runner_is_headless(item.get("runner"))
+            ]
+        return resp
 
     @app.get("/api/v1/actor_profiles/{profile_id}")
     async def actor_profiles_get(profile_id: str, by: str = "user") -> Dict[str, Any]:
-        return await ctx.daemon({"op": "actor_profile_get", "args": {"profile_id": profile_id, "by": by}})
+        resp = await ctx.daemon({"op": "actor_profile_get", "args": {"profile_id": profile_id, "by": by}})
+        if not await _developer_mode_enabled():
+            profile = (resp.get("result") or {}).get("profile") if isinstance(resp, dict) else None
+            if isinstance(profile, dict) and _runner_is_headless(profile.get("runner")):
+                raise _headless_error(source="actor_profile_get")
+        return resp
 
     @app.post("/api/v1/actor_profiles")
     async def actor_profiles_upsert(req: ActorProfileUpsertRequest) -> Dict[str, Any]:
@@ -198,8 +292,13 @@ def register_actor_routes(app: FastAPI, *, ctx: RouteContext) -> None:
                     "message": "Actor profile write endpoints are disabled in read-only (exhibit) mode.",
                 },
             )
+        profile_payload = dict(req.profile or {})
+        if not await _developer_mode_enabled():
+            if _runner_is_headless(profile_payload.get("runner")):
+                raise _headless_error(source="actor_profile_upsert")
+            profile_payload["runner"] = "pty"
         args: Dict[str, Any] = {
-            "profile": dict(req.profile or {}),
+            "profile": profile_payload,
             "by": req.by,
         }
         if req.expected_revision is not None:

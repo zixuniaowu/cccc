@@ -14,12 +14,7 @@ from ...contracts.v1.automation import AutomationRule
 
 
 def _default_runner_kind() -> str:
-    try:
-        from ...runners import pty as pty_runner
-
-        return "pty" if bool(getattr(pty_runner, "PTY_SUPPORTED", True)) else "headless"
-    except Exception:
-        return "headless"
+    return "pty"
 
 
 class CreateGroupRequest(BaseModel):

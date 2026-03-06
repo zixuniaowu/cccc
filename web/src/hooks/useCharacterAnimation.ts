@@ -75,7 +75,7 @@ export function useCharacterAnimation({
       const variant = hashCode(agent.id) % 3;
       const actor = actorMap.get(agent.id);
       const running = actor?.running !== false && actor?.enabled !== false;
-      const taskStatus = agent.active_task_id ? taskStatusMap?.get(agent.active_task_id) : undefined;
+      const taskStatus = agent.hot?.active_task_id ? taskStatusMap?.get(agent.hot.active_task_id) : undefined;
       const idleSec = actor?.idle_seconds;
       const lastActivity = idleSec != null ? Date.now() - idleSec * 1000 : undefined;
       const derived = deriveAnimState(agent, running, lastActivity, taskStatus) as DerivedState;
