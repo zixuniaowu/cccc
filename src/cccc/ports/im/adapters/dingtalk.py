@@ -406,7 +406,27 @@ class DingTalkAdapter(IMAdapter):
                             # picture/file/video/audio fields: check both top-level and content
                             "downloadCode": data.get('downloadCode', '') or parsed_content.get('downloadCode', ''),
                             "fileName": data.get('fileName', '') or parsed_content.get('fileName', ''),
+                            # audio fields: check both top-level and content
+                            "recognition": data.get('recognition', '') or parsed_content.get('recognition', ''),
+                            "duration": data.get('duration', 0) or parsed_content.get('duration', 0),
+                            # video fields
+                            "videoType": data.get('videoType', '') or parsed_content.get('videoType', ''),
+                            # file fields (DingTalk drive)
+                            "spaceId": data.get('spaceId', '') or parsed_content.get('spaceId', ''),
+                            "fileId": data.get('fileId', '') or parsed_content.get('fileId', ''),
                         }
+
+                        # Diagnostic logging for non-text message types
+                        msg_type_val = data.get('msgtype', '')
+                        if msg_type_val and msg_type_val != 'text':
+                            fn = event.get('fileName', '')
+                            fn_safe = f"*{fn[fn.rfind('.'):]}({len(fn)})" if fn and '.' in fn else f"({len(fn)}ch)" if fn else "(none)"
+                            adapter._log(
+                                f"[stream] non-text message: msgtype={msg_type_val} "
+                                f"content_keys={list(parsed_content.keys()) if parsed_content else '(empty)'} "
+                                f"downloadCode={'yes' if event.get('downloadCode') else 'no'} "
+                                f"fileName={fn_safe}"
+                            )
 
                         # Extract text content (text is usually a dict like {"content": "..."})
                         text_data = data.get('text', {})
@@ -562,6 +582,12 @@ class DingTalkAdapter(IMAdapter):
                 text = "[image]"
             elif msg_type == "file":
                 text = f"[file: {event.get('fileName', 'unknown')}]"
+            elif msg_type == "audio":
+                # Audio: prefer speech recognition text if available
+                recognition = str(event.get("recognition", "") or "").strip()
+                text = recognition if recognition else "[audio]"
+            elif msg_type == "video":
+                text = "[video]"
             else:
                 text = f"[{msg_type}]"
 
@@ -579,11 +605,33 @@ class DingTalkAdapter(IMAdapter):
                     "file_name": "image.png",
                 })
             elif msg_type == "file":
-                attachments.append({
+                attachment: Dict[str, Any] = {
                     "provider": "dingtalk",
                     "kind": "file",
                     "download_code": event.get("downloadCode", ""),
                     "file_name": event.get("fileName", "file"),
+                }
+                if event.get("spaceId"):
+                    attachment["space_id"] = event["spaceId"]
+                if event.get("fileId"):
+                    attachment["file_id"] = event["fileId"]
+                attachments.append(attachment)
+            elif msg_type == "audio":
+                attachments.append({
+                    "provider": "dingtalk",
+                    "kind": "audio",
+                    "download_code": event.get("downloadCode", ""),
+                    "file_name": "audio.amr",
+                    "duration": event.get("duration", 0),
+                })
+            elif msg_type == "video":
+                attachments.append({
+                    "provider": "dingtalk",
+                    "kind": "video",
+                    "download_code": event.get("downloadCode", ""),
+                    "file_name": "video.mp4",
+                    "duration": event.get("duration", 0),
+                    "video_type": event.get("videoType", ""),
                 })
             elif msg_type == "richText" and rich_text_attachments:
                 # Add attachments extracted from richText content

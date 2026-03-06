@@ -47,13 +47,13 @@ export function useFirstPersonFollow({ targetId, characterRefs }: UseFirstPerson
 
     if (snap) {
       camera.position.set(camX, camY, camZ);
-      camera.lookAt(lookX, lookY, lookZ);
     } else {
-      camera.position.x += (camX - camera.position.x) * alpha;
-      camera.position.y += (camY - camera.position.y) * alpha;
-      camera.position.z += (camZ - camera.position.z) * alpha;
-
-      camera.lookAt(lookX, lookY, lookZ);
+      camera.position.set(
+        camera.position.x + (camX - camera.position.x) * alpha,
+        camera.position.y + (camY - camera.position.y) * alpha,
+        camera.position.z + (camZ - camera.position.z) * alpha,
+      );
     }
+    camera.lookAt(lookX, lookY, lookZ);
   });
 }

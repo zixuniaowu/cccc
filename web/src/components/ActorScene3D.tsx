@@ -246,6 +246,7 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
 
       <InstancedBeds beds={bedInstances} />
 
+      {/* eslint-disable-next-line react-hooks/refs -- posCache ref read during render is intentional for referential equality */}
       {agents.map((agent) => {
         const actor = actorMap.get(agent.id);
         const running = actor?.running !== false && actor?.enabled !== false;
