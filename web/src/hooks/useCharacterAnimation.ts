@@ -116,6 +116,11 @@ export function useCharacterAnimation({
         ...overrides,
       };
 
+      if (!rule.locomotion && derived !== "offline") {
+        pose.gX = ctx.baseX;
+        pose.gZ = ctx.baseZ;
+      }
+
       // ── Locomotion ──
       let loco = locomotionRefs.current.get(agent.id);
       if (!loco) {
@@ -185,12 +190,11 @@ export function useCharacterAnimation({
         loco.speed = THREE.MathUtils.lerp(loco.speed, 0, lfFast);
       }
 
-      // Face building center when arrived (workers only)
-      // Character mesh faces -Z, so add PI to atan2 result
+      // 面向自己的目标区域，而不是硬编码朝场景中心。
       if (!shouldMove && buildTarget && !item.isForeman) {
         pose.gRy = Math.atan2(
-          0 - pose.gX,
-          0 - pose.gZ,
+          buildTarget[0] - pose.gX,
+          buildTarget[2] - pose.gZ,
         ) + Math.PI;
       }
       // Foreman faces scene center when stationary

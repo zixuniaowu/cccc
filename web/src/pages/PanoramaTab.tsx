@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import type { AgentState, Actor, Task, ProjectBlueprint, GroupContext } from "../types";
+import type { AgentState, Actor, Task, GroupContext } from "../types";
 
 const ActorScene3D = lazy(() =>
   import("../components/ActorScene3D").then((m) => ({ default: m.ActorScene3D }))
@@ -10,13 +10,12 @@ interface PanoramaTabProps {
   actors?: Actor[];
   tasks?: Task[];
   tasksSummary?: GroupContext["tasks_summary"];
-  panoramaBlueprint?: ProjectBlueprint | null;
   projectStatus?: string | null;
   isDark: boolean;
   groupId?: string;
 }
 
-export function PanoramaTab({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId }: PanoramaTabProps) {
+export function PanoramaTab({ agents, actors, tasks, tasksSummary, projectStatus, isDark, groupId }: PanoramaTabProps) {
   if (agents.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -37,7 +36,7 @@ export function PanoramaTab({ agents, actors, tasks, tasksSummary, panoramaBluep
         </div>
       }
     >
-      <ActorScene3D agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} panoramaBlueprint={panoramaBlueprint} projectStatus={projectStatus} isDark={isDark} groupId={groupId} className="flex-1" />
+      <ActorScene3D agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} projectStatus={projectStatus} isDark={isDark} groupId={groupId} className="flex-1" />
     </Suspense>
   );
 }

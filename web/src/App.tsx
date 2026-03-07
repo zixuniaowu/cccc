@@ -85,6 +85,7 @@ export default function App() {
   const { openModal } = useModalStore();
 
   const {
+    activeGroupId,
     destGroupId,
     composerFiles,
     replyTarget,
@@ -131,7 +132,7 @@ export default function App() {
   const [ccccHome, setCcccHome] = React.useState("");
 
   // Custom hooks
-  const { connectStream, fetchContext, scheduleActorWarmupRefresh, contextRefreshTimerRef, cleanup: cleanupSSE } = useSSE({
+  const { connectStream, fetchContext, contextRefreshTimerRef, cleanup: cleanupSSE } = useSSE({
     activeTabRef,
     chatAtBottomRef,
     actorsRef,
@@ -155,6 +156,7 @@ export default function App() {
     actors,
     groupDoc,
     selectedGroupId,
+    composerGroupId: activeGroupId,
     sendGroupId: computedSendGroupId,
   });
 
@@ -348,7 +350,6 @@ export default function App() {
 
     loadGroup(selectedGroupId);
     connectStream(selectedGroupId);
-    scheduleActorWarmupRefresh(selectedGroupId);
 
     return () => {
       cleanupSSE();
@@ -590,7 +591,6 @@ export default function App() {
                   actors={actors}
                   tasks={groupContext?.coordination?.tasks || []}
                   tasksSummary={groupContext?.tasks_summary}
-                  panoramaBlueprint={groupContext?.meta?.panorama_blueprint}
                   projectStatus={groupContext?.meta?.project_status}
                   isDark={isDark}
                   groupId={selectedGroupId}

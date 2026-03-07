@@ -2,11 +2,13 @@ import { Suspense, useMemo, useRef, useState, useEffect, useCallback } from "rea
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { ActorCharacter } from "./ActorCharacter";
-import { ProjectBuilding } from "./ProjectBuilding";
+import { SemanticMap } from "./SemanticMap";
+import { PanoramaRoom } from "./PanoramaRoom";
 import { MCGround, InstancedBeds, type BedInstance } from "./MCFurniture";
-import { useCharacterAnimation, type LayoutItem } from "../hooks/useCharacterAnimation";
+import { useCharacterAnimation } from "../hooks/useCharacterAnimation";
 import { useFirstPersonFollow } from "../hooks/useFirstPersonFollow";
-import type { AgentState, Actor, Task, ProjectBlueprint, GroupContext } from "../types";
+import type { AgentState, Actor, Task, GroupContext } from "../types";
+import { buildSemanticMapState, SEMANTIC_MAP_SCENE_EXTENT } from "../utils/panoramaSemanticMap";
 import * as THREE from "three";
 
 interface ActorScene3DProps {
@@ -14,25 +16,10 @@ interface ActorScene3DProps {
   actors?: Actor[];
   tasks?: Task[];
   tasksSummary?: GroupContext["tasks_summary"];
-  panoramaBlueprint?: ProjectBlueprint | null;
   projectStatus?: string | null;
   isDark: boolean;
   groupId?: string;
   className?: string;
-}
-
-// ── Worker layout (surround center building) ──
-
-function siteRadius(agentCount: number, blueprint?: ProjectBlueprint | null): number {
-  const base = Math.max(2, agentCount * 0.6 + 1);
-  if (blueprint) {
-    // Use diagonal distance so characters clear building corners
-    const halfX = blueprint.gridSize[0] * blueprint.blockScale / 2;
-    const halfZ = blueprint.gridSize[2] * blueprint.blockScale / 2;
-    const footprint = Math.sqrt(halfX * halfX + halfZ * halfZ);
-    return Math.max(base, footprint + 4.0);
-  }
-  return base;
 }
 
 function agentActiveTaskId(agent: AgentState): string {
@@ -52,112 +39,6 @@ function taskLabel(task: Task): string {
   return String(task.title || task.id || "").trim();
 }
 
-/** Place on arc around origin, facing center (mesh default faces -Z) */
-function arcPlace(angle: number, r: number): { pos: [number, number, number]; rotY: number } {
-  const x = Math.sin(angle) * r;
-  const z = Math.cos(angle) * r;
-  const rotY = Math.atan2(-x, -z) + Math.PI;
-  return { pos: [x, 0, z], rotY };
-}
-
-function computeWorkerLayout(
-  agents: AgentState[],
-  actorMap: Map<string, Actor>,
-  blueprint?: ProjectBlueprint | null,
-  tasks?: Task[],
-): Map<string, LayoutItem> {
-  const count = agents.length;
-  if (count === 0) return new Map();
-
-  // Build task status lookup
-  const taskStatusMap = new Map<string, string>();
-  if (tasks) {
-    for (const t of tasks) {
-      if (t.status) taskStatusMap.set(t.id, t.status);
-    }
-  }
-
-  const radius = siteRadius(count, blueprint);
-  const workRadius = radius * 0.9;
-  const idleRadius = radius * 1.2;
-
-  const foremanIdx = agents.findIndex((a) => actorMap.get(a.id)?.role === "foreman");
-
-  // Classify agents into working / idle
-  const workingIds: string[] = [];
-  const idleIds: string[] = [];
-  for (let i = 0; i < count; i++) {
-    if (i === foremanIdx) continue;
-    const agent = agents[i];
-    const actor = actorMap.get(agent.id);
-    const running = actor?.running !== false && actor?.enabled !== false;
-    const activeTaskId = agentActiveTaskId(agent);
-    const ts = activeTaskId ? taskStatusMap.get(activeTaskId) : undefined;
-    const taskDone = ts === "done" || ts === "archived";
-    if (running && activeTaskId && !taskDone) {
-      workingIds.push(agent.id);
-    } else {
-      idleIds.push(agent.id);
-    }
-  }
-
-  // Beds: line up along platform back edge (z = -9), evenly spaced
-  const platformMargin = 9; // platform half-size (10) minus 1 margin
-  const bedXSpan = platformMargin * 2 - 2; // usable x range: -8 to +8
-  function bedPlace(idx: number): { pos: [number, number, number]; rotY: number } {
-    const t = count > 1 ? idx / (count - 1) : 0.5;
-    const x = (t - 0.5) * bedXSpan;
-    const z = -platformMargin;
-    // All beds parallel: pillow toward edge (-Z), blanket toward center (+Z)
-    return { pos: [x, 0, z], rotY: 0 };
-  }
-
-  const items = new Map<string, LayoutItem>();
-  let bedIdx = 0;
-
-  // Foreman: front-right supervisory position
-  if (foremanIdx >= 0) {
-    const agentId = agents[foremanIdx].id;
-    const { pos, rotY } = arcPlace(Math.PI * 0.15, workRadius * 1.1);
-    const bed = bedPlace(bedIdx++);
-    items.set(agentId, {
-      agentId, charPos: pos, charRotY: rotY,
-      bedPos: bed.pos, bedRotY: bed.rotY,
-      isForeman: true,
-    });
-  }
-
-  // Working agents: front arc (±45° around center front)
-  const workArc = Math.PI * 0.5;
-  for (let i = 0; i < workingIds.length; i++) {
-    const t = workingIds.length > 1 ? i / (workingIds.length - 1) : 0.5;
-    const angle = (t - 0.5) * workArc;
-    const { pos, rotY } = arcPlace(angle, workRadius);
-    const bed = bedPlace(bedIdx++);
-    items.set(workingIds[i], {
-      agentId: workingIds[i], charPos: pos, charRotY: rotY,
-      bedPos: bed.pos, bedRotY: bed.rotY,
-      isForeman: false,
-    });
-  }
-
-  // Idle agents: back arc (~120°–240°)
-  const idleArc = Math.PI * 0.7;
-  for (let i = 0; i < idleIds.length; i++) {
-    const t = idleIds.length > 1 ? i / (idleIds.length - 1) : 0.5;
-    const angle = Math.PI + (t - 0.5) * idleArc;
-    const { pos, rotY } = arcPlace(angle, idleRadius);
-    const bed = bedPlace(bedIdx++);
-    items.set(idleIds[i], {
-      agentId: idleIds[i], charPos: pos, charRotY: rotY,
-      bedPos: bed.pos, bedRotY: bed.rotY,
-      isForeman: false,
-    });
-  }
-
-  return items;
-}
-
 // ── Scene ──
 
 interface SceneProps {
@@ -165,7 +46,6 @@ interface SceneProps {
   actors?: Actor[];
   tasks?: Task[];
   tasksSummary?: GroupContext["tasks_summary"];
-  panoramaBlueprint?: ProjectBlueprint | null;
   projectStatus?: string | null;
   isDark: boolean;
   groupId?: string;
@@ -174,11 +54,8 @@ interface SceneProps {
   onCharacterClick: (agentId: string) => void;
 }
 
-function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId: _groupId, camZ, followTarget, onCharacterClick }: SceneProps) {
+function Scene({ agents, actors, tasks, tasksSummary: _tasksSummary, projectStatus, isDark, groupId: _groupId, camZ, followTarget, onCharacterClick }: SceneProps) {
   const characterRefs = useRef<Map<string, THREE.Group>>(new Map());
-  // Cache position/rotation so R3F doesn't re-apply unchanged values
-  // (re-applying would override useFrame-driven locomotion, e.g. walking to bed)
-  const posCache = useRef(new Map<string, [number, number, number]>());
 
   const actorMap = useMemo(() => {
     const m = new Map<string, Actor>();
@@ -195,32 +72,12 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
     return m;
   }, [tasks]);
 
-  const layout = useMemo(
-    () => computeWorkerLayout(agents, actorMap, panoramaBlueprint, tasks),
-    [agents, actorMap, panoramaBlueprint, tasks],
+  const semanticMap = useMemo(
+    () => buildSemanticMapState(agents, actorMap, tasks),
+    [agents, actorMap, tasks],
   );
-
-  // Build target: working agents stay at their work station (charPos on arc),
-  // NOT [0,0,0] which would drive them into the building
-  const buildTargetMap = useMemo(() => {
-    const map = new Map<string, [number, number, number]>();
-    for (const agent of agents) {
-      if (agentActiveTaskId(agent)) {
-        const item = layout.get(agent.id);
-        map.set(agent.id, item?.charPos ?? [0, 0, 0]);
-      }
-    }
-    if (tasks) {
-      const agentIds = new Set(agents.map((a) => a.id));
-      for (const task of tasks) {
-        if (task.assignee && agentIds.has(task.assignee) && !map.has(task.assignee)) {
-          const item = layout.get(task.assignee);
-          map.set(task.assignee, item?.charPos ?? [0, 0, 0]);
-        }
-      }
-    }
-    return map;
-  }, [agents, tasks, layout]);
+  const layout = semanticMap.layout;
+  const buildTargetMap = semanticMap.buildTargetMap;
 
   const taskStatusMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -238,10 +95,7 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
 
   useFirstPersonFollow({ targetId: followTarget, characterRefs });
 
-  const bedInstances: BedInstance[] = useMemo(
-    () => [...layout.values()].map((item) => ({ position: item.bedPos, rotationY: item.bedRotY })),
-    [layout],
-  );
+  const bedInstances: BedInstance[] = semanticMap.bedInstances;
 
   return (
     <>
@@ -260,24 +114,18 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
 
       <MCGround />
 
-      <ProjectBuilding blueprint={panoramaBlueprint} tasks={tasks} tasksSummary={tasksSummary} isDark={isDark} projectStatus={projectStatus} />
+      <PanoramaRoom zones={semanticMap.zones} />
+
+      <SemanticMap zones={semanticMap.zones} isDark={isDark} projectStatus={projectStatus} />
 
       <InstancedBeds beds={bedInstances} />
 
-      {/* eslint-disable-next-line react-hooks/refs -- posCache ref read during render is intentional for referential equality */}
       {agents.map((agent) => {
         const actor = actorMap.get(agent.id);
         const running = actor?.running !== false && actor?.enabled !== false;
         const item = layout.get(agent.id);
         const activeTaskId = agentActiveTaskId(agent);
         const taskEntry = activeTaskId ? taskMap.get(activeTaskId) : undefined;
-        // Maintain referential equality so R3F doesn't re-apply position on re-render
-        // (which would override useFrame-driven animation like walking to bed)
-        const newPos = item?.charPos || [0, 0, 0] as [number, number, number];
-        const cached = posCache.current.get(agent.id);
-        const stablePos = (cached && cached[0] === newPos[0] && cached[1] === newPos[1] && cached[2] === newPos[2])
-          ? cached
-          : (posCache.current.set(agent.id, newPos as [number, number, number]), newPos as [number, number, number]);
         return (
           <ActorCharacter
             key={agent.id}
@@ -286,7 +134,7 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
               else characterRefs.current.delete(agent.id);
             }}
             agent={agent}
-            position={stablePos}
+            position={item?.charPos || [0, 0, 0]}
             rotationY={item?.charRotY}
             isDark={isDark}
             role={actor?.role}
@@ -325,7 +173,7 @@ function Scene({ agents, actors, tasks, tasksSummary, panoramaBlueprint, project
 
 type RenderMode = "loading" | "webgpu" | "webgl";
 
-export function ActorScene3D({ agents, actors, tasks, tasksSummary, panoramaBlueprint, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
+export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
   const [followTarget, setFollowTarget] = useState<string | null>(null);
 
   const handleCharacterClick = useCallback((agentId: string) => {
@@ -333,10 +181,8 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, panoramaBlue
   }, []);
 
   const camZ = useMemo(() => {
-    const radius = siteRadius(agents.length, panoramaBlueprint);
-    const sceneExtent = Math.max(radius + 1, 10); // beds along platform edge (±9)
-    return Math.max(5, sceneExtent * 2 + 1);
-  }, [agents.length, panoramaBlueprint]);
+    return Math.max(5, SEMANTIC_MAP_SCENE_EXTENT * 2 + 1);
+  }, []);
 
   // Phase 1: detect WebGPU + dynamically load three/webgpu module
   const [renderMode, setRenderMode] = useState<RenderMode>("loading");
@@ -408,7 +254,7 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, panoramaBlue
 
     renderer.init()
       .then(() => {
-        console.log("[ActorScene3D] WebGPU renderer initialized");
+        console.warn("[ActorScene3D] WebGPU renderer initialized");
         ready = true;
       })
       .catch((err: unknown) => {
@@ -417,7 +263,6 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, panoramaBlue
       });
 
     return renderer;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Placeholder while detecting WebGPU
@@ -462,7 +307,7 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, panoramaBlue
         onPointerMissed={() => setFollowTarget(null)}
       >
         <Suspense fallback={null}>
-          <Scene agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} panoramaBlueprint={panoramaBlueprint} projectStatus={projectStatus} isDark={isDark} groupId={groupId} camZ={camZ} followTarget={followTarget} onCharacterClick={handleCharacterClick} />
+          <Scene agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} projectStatus={projectStatus} isDark={isDark} groupId={groupId} camZ={camZ} followTarget={followTarget} onCharacterClick={handleCharacterClick} />
         </Suspense>
       </Canvas>
     </div>

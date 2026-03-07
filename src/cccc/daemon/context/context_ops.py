@@ -347,47 +347,6 @@ def _queue_group_space_context_sync(
     }
 
 
-def _validate_blueprint_schema(bp: Any, op_idx: int) -> None:
-    import math as _math
-
-    pfx = f"op[{op_idx}] meta.merge panorama_blueprint"
-    if not isinstance(bp, dict):
-        raise ValueError(f"{pfx}: must be a dict")
-    if bp.get("version") != 1:
-        raise ValueError(f"{pfx}: version must be 1")
-    if "style_note" not in bp or not isinstance(bp.get("style_note"), str):
-        raise ValueError(f"{pfx}: style_note must be a string")
-    grid = bp.get("gridSize")
-    if not isinstance(grid, list) or len(grid) != 3:
-        raise ValueError(f"{pfx}: gridSize must be a 3-element list")
-    for i, value in enumerate(grid):
-        if type(value) is not int or value < 1 or value > 20:
-            raise ValueError(f"{pfx}: gridSize[{i}] must be int 1..20")
-    block_scale = bp.get("blockScale")
-    if isinstance(block_scale, bool) or not isinstance(block_scale, (int, float)) or not _math.isfinite(block_scale) or block_scale <= 0:
-        raise ValueError(f"{pfx}: blockScale must be a finite positive number")
-    blocks = bp.get("blocks")
-    if not isinstance(blocks, list) or not (1 <= len(blocks) <= 500):
-        raise ValueError(f"{pfx}: blocks must be a list of 1..500 items")
-    orders = set()
-    for bi, blk in enumerate(blocks):
-        if not isinstance(blk, dict):
-            raise ValueError(f"{pfx}: blocks[{bi}] must be a dict")
-        for coord, dim_idx in (("x", 0), ("y", 1), ("z", 2)):
-            val = blk.get(coord)
-            if type(val) is not int or val < 0 or val >= grid[dim_idx]:
-                raise ValueError(f"{pfx}: blocks[{bi}].{coord} must be int 0..{grid[dim_idx] - 1}")
-        if not isinstance(blk.get("color"), str) or not blk.get("color"):
-            raise ValueError(f"{pfx}: blocks[{bi}].color must be a non-empty string")
-        order = blk.get("order")
-        if type(order) is not int:
-            raise ValueError(f"{pfx}: blocks[{bi}].order must be an integer")
-        orders.add(order)
-    expected_orders = set(range(len(blocks)))
-    if orders != expected_orders:
-        raise ValueError(f"{pfx}: order values must cover 0..{len(blocks) - 1} exactly")
-
-
 def _check_permission(
     by: str,
     op_name: str,
@@ -934,12 +893,10 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 data = raw.get("data")
                 if not isinstance(data, dict):
                     raise ValueError(f"op[{idx}] meta.merge requires data dict")
-                allowed = {"panorama_blueprint", "project_status"}
+                allowed = {"project_status"}
                 bad_keys = set(data.keys()) - allowed
                 if bad_keys:
                     raise ValueError(f"op[{idx}] meta.merge disallowed keys {sorted(bad_keys)}")
-                if "panorama_blueprint" in data and data.get("panorama_blueprint") is not None:
-                    _validate_blueprint_schema(data.get("panorama_blueprint"), idx)
                 if "project_status" in data:
                     project_status = data.get("project_status")
                     if project_status is not None:

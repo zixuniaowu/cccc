@@ -294,26 +294,5 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_meta_merge_valid_blueprint_accepted_and_invalid_rejected(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            gid = self._create_group()
-            valid = {
-                "version": 1,
-                "style_note": "minimal",
-                "gridSize": [4, 4, 4],
-                "blockScale": 1.0,
-                "blocks": [{"x": 0, "y": 0, "z": 0, "color": "#fff", "order": 0}],
-            }
-            ok_resp, _ = self._sync(gid, [{"op": "meta.merge", "data": {"panorama_blueprint": valid}}])
-            self.assertTrue(ok_resp.ok, getattr(ok_resp, "error", None))
-
-            bad_resp, _ = self._sync(gid, [{"op": "meta.merge", "data": {"panorama_blueprint": {**valid, "version": 2}}}])
-            self.assertFalse(bad_resp.ok)
-            self.assertIn("version must be 1", str(bad_resp.error.message).lower())
-        finally:
-            cleanup()
-
-
 if __name__ == "__main__":
     unittest.main()

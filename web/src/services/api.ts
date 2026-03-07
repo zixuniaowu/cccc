@@ -1423,6 +1423,52 @@ export async function stopRemoteAccess() {
   });
 }
 
+// ============ User Token management ============
+
+export interface UserTokenEntry {
+  token?: string;
+  token_id?: string;
+  token_preview?: string;
+  user_id: string;
+  is_admin: boolean;
+  allowed_groups: string[];
+  created_at: string;
+}
+
+export async function fetchTokens() {
+  return apiJson<{ tokens: UserTokenEntry[] }>("/api/v1/tokens");
+}
+
+export async function createToken(userId: string, isAdmin: boolean, allowedGroups: string[], customToken?: string) {
+  const body: Record<string, unknown> = {
+    user_id: userId,
+    is_admin: isAdmin,
+    allowed_groups: allowedGroups,
+  };
+  if (customToken?.trim()) body.custom_token = customToken.trim();
+  return apiJson<{ token: UserTokenEntry }>("/api/v1/tokens", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateToken(tokenId: string, updates: { allowed_groups?: string[]; is_admin?: boolean }) {
+  return apiJson<{ token: UserTokenEntry }>(`/api/v1/tokens/${encodeURIComponent(tokenId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+export async function revealToken(tokenId: string) {
+  return apiJson<{ token: string }>(`/api/v1/tokens/${encodeURIComponent(tokenId)}/reveal`);
+}
+
+export async function deleteToken(tokenId: string) {
+  return apiJson<{ deleted: boolean }>(`/api/v1/tokens/${encodeURIComponent(tokenId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function fetchGroupSpaceStatus(groupId: string, provider: string = "notebooklm") {
   return apiJson<GroupSpaceStatus>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/space/status?provider=${encodeURIComponent(provider)}`

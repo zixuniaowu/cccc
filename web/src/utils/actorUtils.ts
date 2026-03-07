@@ -20,13 +20,22 @@ export function deriveAnimState(
   taskStatus?: string,
 ): AgentAnimState {
   if (isRunning === false) return "offline";
-  if (Array.isArray(agent.hot?.blockers) && agent.hot.blockers.length > 0) return "blocked";
+
+  const hasActiveTask = !!(
+    agent.hot?.active_task_id &&
+    taskStatus !== "done" &&
+    taskStatus !== "archived"
+  );
+  const hasIntent = !!(agent.hot?.focus || agent.hot?.next_action);
+  const hasActiveBlocker = !!(hasActiveTask && Array.isArray(agent.hot?.blockers) && agent.hot.blockers.length > 0);
+
+  if (hasActiveBlocker) return "blocked";
 
   // WS-priority: use lastActivityAt when available
   if (lastActivityAt != null) {
     const gap = Date.now() - lastActivityAt;
-    if (gap < 10_000) return "working";        // < 10s → actively working
-    if (gap < 60_000) return "thinking";        // < 60s → thinking
+    if (hasActiveTask && gap < 10_000) return "working";   // < 10s + active task → actively working
+    if ((hasActiveTask || hasIntent) && gap < 60_000) return "thinking"; // 仅有活动但无任务，不再升级为 working
     if (gap >= 300_000) return "idle";           // ≥ 5min → idle
     // 60s–300s: fall through to agent-state recency logic below
   }
@@ -41,7 +50,7 @@ export function deriveAnimState(
     return (agent.hot?.focus && fresh) ? "thinking" : "idle";
   }
   // Has active task → working (if fresh + focus) or thinking (minimum)
-  if (agent.hot?.active_task_id) {
+  if (hasActiveTask) {
     return (agent.hot?.focus && fresh) ? "working" : "thinking";
   }
   // Has focus/next_action but no task → thinking (if fresh) or idle (if stale)
@@ -61,7 +70,7 @@ export function deriveStatusLabel(
     case "working":
       return isForeman
         ? { text: "指挥中", color: "#4ade80" }
-        : { text: "建造中", color: "#4ade80" };
+        : { text: "执行中", color: "#4ade80" };
     case "thinking":
       return { text: "思考中", color: "#facc15" };
     case "blocked":

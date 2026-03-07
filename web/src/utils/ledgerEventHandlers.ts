@@ -247,7 +247,6 @@ export function shouldIncrementUnread(
  * Event kinds that should trigger actor refresh.
  */
 const ACTOR_REFRESH_EVENTS = new Set([
-  "chat.message",
   "chat.read",
   "system.notify",
   "system.notify_ack",
