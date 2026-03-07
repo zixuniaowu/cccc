@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { useTranslation } from "react-i18next";
-import { apiJson, contextSync, updateCoordinationBrief, updateCoordinationTask } from "../services/api";
+import { addCoordinationNote, apiJson, contextSync, updateCoordinationBrief, updateCoordinationTask } from "../services/api";
 import type {
   AgentState,
   CoordinationBrief,
@@ -49,6 +49,11 @@ interface TaskDraft {
   handoffTo: string;
   notes: string;
   checklist: string;
+}
+
+interface NoteDraft {
+  summary: string;
+  taskId: string;
 }
 
 interface BoardColumns {
@@ -151,6 +156,39 @@ function taskToDraft(task: Task): TaskDraft {
     notes: String(task.notes || ""),
     checklist: checklistToText(task.checklist),
   };
+}
+
+function emptyTaskDraft(status: BoardStatus = "planned"): TaskDraft {
+  return {
+    title: "",
+    outcome: "",
+    status,
+    assignee: "",
+    priority: "",
+    parentId: "",
+    blockedBy: "",
+    waitingOn: "none",
+    handoffTo: "",
+    notes: "",
+    checklist: "",
+  };
+}
+
+function taskDraftDirty(draft: TaskDraft | null | undefined): boolean {
+  if (!draft) return false;
+  return !!(
+    draft.title.trim()
+    || draft.outcome.trim()
+    || draft.assignee.trim()
+    || draft.priority.trim()
+    || draft.parentId.trim()
+    || draft.blockedBy.trim()
+    || (draft.waitingOn && draft.waitingOn !== "none")
+    || draft.handoffTo.trim()
+    || draft.notes.trim()
+    || draft.checklist.trim()
+    || String(draft.status || "planned") !== "planned"
+  );
 }
 
 function countLike(value: number | TaskBoardEntry[] | undefined, fallback: number): number {
@@ -280,6 +318,44 @@ function noteTimestamp(note: CoordinationNote): string {
   return at ? formatTime(at) : "";
 }
 
+function emptyNoteDraft(): NoteDraft {
+  return { summary: "", taskId: "" };
+}
+
+function briefDraftMatches(brief: CoordinationBrief | null | undefined, draft: BriefDraft): boolean {
+  const currentConstraints = Array.isArray(brief?.constraints) ? brief.constraints.map((item) => String(item || "").trim()).filter(Boolean) : [];
+  const draftConstraints = parseLineList(draft.constraints);
+  return (
+    String(brief?.objective || "") === draft.objective
+    && String(brief?.current_focus || "") === draft.currentFocus
+    && JSON.stringify(currentConstraints) === JSON.stringify(draftConstraints)
+    && String(brief?.project_brief || "") === draft.projectBrief
+    && !!brief?.project_brief_stale === !!draft.projectBriefStale
+  );
+}
+
+function taskOptionLabel(task: Task): string {
+  const title = taskTitle(task);
+  return title ? `${task.id} · ${title}` : task.id;
+}
+
+function taskDraftMatches(task: Task | null | undefined, draft: TaskDraft | null | undefined): boolean {
+  if (!task || !draft) return false;
+  return (
+    taskTitle(task) === draft.title
+    && taskOutcome(task) === draft.outcome
+    && taskStatus(task) === draft.status
+    && String(task.assignee || "") === draft.assignee
+    && String(task.priority || "") === draft.priority
+    && String(task.parent_id || "") === draft.parentId
+    && listToText(task.blocked_by) === draft.blockedBy
+    && String(task.waiting_on || "none") === draft.waitingOn
+    && String(task.handoff_to || "") === draft.handoffTo
+    && String(task.notes || "") === draft.notes
+    && checklistToText(task.checklist) === draft.checklist
+  );
+}
+
 export function ContextModal({
   isOpen,
   onClose,
@@ -291,26 +367,18 @@ export function ContextModal({
   const { t } = useTranslation("modals");
   const tr = (key: string, fallback: string, vars?: Record<string, unknown>) =>
     String(t(key as never, { defaultValue: fallback, ...(vars || {}) } as never));
-  const { modalRef } = useModalA11y(isOpen, onClose);
 
   const [activeView, setActiveView] = useState<"coordination" | "agents">("coordination");
-  const [sidePanelMode, setSidePanelMode] = useState<"none" | "task" | "background">("none");
-  const [backgroundTab, setBackgroundTab] = useState<"brief" | "project" | "notes">("brief");
+  const [steeringTab, setSteeringTab] = useState<"summary" | "project" | "log">("summary");
   const [taskFilter, setTaskFilter] = useState<"all" | "blocked" | "waiting_user" | "handoff" | "unassigned">("all");
   const [assigneeFilter, setAssigneeFilter] = useState<string>("__all__");
   const [taskQuery, setTaskQuery] = useState("");
   const [dragTaskId, setDragTaskId] = useState("");
   const [editingBrief, setEditingBrief] = useState(false);
   const [briefDraft, setBriefDraft] = useState<BriefDraft>(briefToDraft(null));
+  const [taskEditorMode, setTaskEditorMode] = useState<"none" | "create" | "edit">("none");
   const [selectedTaskId, setSelectedTaskId] = useState("");
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
-  const [creatingColumn, setCreatingColumn] = useState<keyof BoardColumns | null>(null);
-  const [createDraft, setCreateDraft] = useState<{ title: string; outcome: string; assignee: string; priority: string }>({
-    title: "",
-    outcome: "",
-    assignee: "",
-    priority: "",
-  });
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState("");
 
@@ -322,6 +390,10 @@ export function ContextModal({
   const [projectText, setProjectText] = useState("");
   const [notifyAgents, setNotifyAgents] = useState(false);
   const [notifyError, setNotifyError] = useState("");
+  const [decisionDraft, setDecisionDraft] = useState<NoteDraft>(emptyNoteDraft());
+  const [handoffDraft, setHandoffDraft] = useState<NoteDraft>(emptyNoteDraft());
+  const [activityBusyKind, setActivityBusyKind] = useState<"decision" | "handoff" | null>(null);
+  const [activityError, setActivityError] = useState("");
 
   const brief = context?.coordination?.brief || null;
   const tasks = useMemo(() => (Array.isArray(context?.coordination?.tasks) ? context.coordination.tasks : []), [context]);
@@ -392,45 +464,83 @@ export function ContextModal({
     [tasks]
   );
 
+  const activeTaskOptions = useMemo(
+    () => tasks.filter((task) => taskStatus(task) !== "archived"),
+    [tasks]
+  );
+
+  const hasBriefUnsaved = useMemo(
+    () => editingBrief && !briefDraftMatches(brief, briefDraft),
+    [brief, briefDraft, editingBrief]
+  );
+
+  const hasProjectUnsaved = useMemo(
+    () => editingProject && projectText !== String(projectMd?.content || ""),
+    [editingProject, projectMd?.content, projectText]
+  );
+
+  const hasSteeringUnsaved = hasBriefUnsaved || hasProjectUnsaved;
+  const hasTaskUnsaved = useMemo(() => {
+    if (!taskDraft || taskEditorMode === "none") return false;
+    if (taskEditorMode === "create") return taskDraftDirty(taskDraft);
+    return !!selectedTask && !taskDraftMatches(selectedTask, taskDraft);
+  }, [selectedTask, taskDraft, taskEditorMode]);
+
+  const taskEditorVisible = taskEditorMode !== "none" && !!taskDraft;
+
+  const loadProjectMd = useCallback(async (force: boolean = false): Promise<ProjectMdInfo | null> => {
+    if (!groupId) return null;
+    if (!force && projectMd !== null) return projectMd;
+    setProjectBusy(true);
+    setProjectError("");
+    try {
+      const resp = await apiJson<ProjectMdInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/project_md`);
+      if (!resp.ok) {
+        setProjectMd(null);
+        setProjectError(resp.error?.message || tr("context.failedToLoadProject", "Failed to load PROJECT.md"));
+        return null;
+      }
+      setProjectMd(resp.result);
+      return resp.result ?? null;
+    } finally {
+      setProjectBusy(false);
+    }
+  }, [groupId, projectMd, tr]);
+
   useEffect(() => {
     if (!isOpen || !groupId) return;
-    let cancelled = false;
 
     setActiveView("coordination");
-    setSidePanelMode("none");
+    setSteeringTab("summary");
     setTaskFilter("all");
     setAssigneeFilter("__all__");
     setTaskQuery("");
     setDragTaskId("");
-    setCreatingColumn(null);
-    setCreateDraft({ title: "", outcome: "", assignee: "", priority: "" });
+    setTaskEditorMode("none");
     setSelectedTaskId("");
     setTaskDraft(null);
     setSyncError("");
     setEditingBrief(false);
+    setProjectMd(null);
+    setProjectBusy(false);
     setProjectError("");
     setProjectNotice("");
     setEditingProject(false);
+    setProjectText("");
     setNotifyError("");
     setNotifyAgents(false);
-
-    setProjectBusy(true);
-    void (async () => {
-      const resp = await apiJson<ProjectMdInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/project_md`);
-      if (cancelled) return;
-      if (!resp.ok) {
-        setProjectMd(null);
-        setProjectError(resp.error?.message || tr("context.failedToLoadProject", "Failed to load PROJECT.md"));
-      } else {
-        setProjectMd(resp.result);
-      }
-      setProjectBusy(false);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
+    setDecisionDraft(emptyNoteDraft());
+    setHandoffDraft(emptyNoteDraft());
+    setActivityBusyKind(null);
+    setActivityError("");
   }, [groupId, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !groupId) return;
+    if ((steeringTab === "project" || editingProject) && projectMd === null && !projectBusy) {
+      void loadProjectMd();
+    }
+  }, [editingProject, groupId, isOpen, loadProjectMd, projectBusy, projectMd, steeringTab]);
 
   const taskMatches = useCallback(
     (task: Task): boolean => {
@@ -485,27 +595,22 @@ export function ContextModal({
 
 
   useEffect(() => {
+    if (taskEditorMode !== "edit") return;
     if (!selectedTaskId) {
+      setTaskEditorMode("none");
       if (taskDraft) setTaskDraft(null);
-      if (sidePanelMode === "task") setSidePanelMode("none");
       return;
     }
     if (!selectedTask) {
       setSelectedTaskId("");
       setTaskDraft(null);
-      if (sidePanelMode === "task") setSidePanelMode("none");
-      return;
-    }
-    if (!taskMatches(selectedTask)) {
-      setSelectedTaskId("");
-      setTaskDraft(null);
-      if (sidePanelMode === "task") setSidePanelMode("none");
+      setTaskEditorMode("none");
       return;
     }
     if (!taskDraft) {
       setTaskDraft(taskToDraft(selectedTask));
     }
-  }, [selectedTaskId, selectedTask, sidePanelMode, taskDraft, taskMatches]);
+  }, [selectedTaskId, selectedTask, taskDraft, taskEditorMode]);
 
   const surfaceClass = classNames(
     "rounded-2xl border shadow-sm",
@@ -550,7 +655,7 @@ export function ContextModal({
         return;
       }
       await onRefreshContext();
-      if (selectedTaskId === task.id) {
+      if (selectedTaskId === task.id && taskEditorMode === "edit") {
         setTaskDraft((prev) => (prev ? { ...prev, status: nextStatus } : prev));
       }
     } finally {
@@ -626,8 +731,9 @@ export function ContextModal({
       <div ref={setNodeRef} style={style} className={classNames("group/task", isDragging && "z-20 opacity-80")}>
         <div
           {...attributes}
+          onClick={() => selectTask(task)}
           className={classNames(
-            "w-full rounded-2xl border p-3 text-left transition-all",
+            "w-full cursor-pointer rounded-2xl border p-3 text-left transition-all",
             blocked
               ? isDark ? "border-rose-500/30 bg-rose-500/5" : "border-rose-200 bg-rose-50/40"
               : selectedTaskId === task.id
@@ -640,10 +746,10 @@ export function ContextModal({
           )}
         >
           <div className="flex items-start justify-between gap-2">
-            <button type="button" onClick={() => selectTask(task)} className="min-w-0 flex-1 text-left">
+            <div className="min-w-0 flex-1 text-left">
               <div className={classNames("truncate text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{taskTitle(task)}</div>
               <div className={classNames("mt-1 text-xs", mutedTextClass)}>{task.id}</div>
-            </button>
+            </div>
             <div className="flex items-center gap-2">
               <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status, isDark))}>{status}</span>
               <button
@@ -663,7 +769,7 @@ export function ContextModal({
           </div>
 
           {taskOutcome(task) ? (
-            <button type="button" onClick={() => selectTask(task)} className={classNames("mt-2 block w-full text-left line-clamp-3 text-xs", subtleTextClass)}>{taskOutcome(task)}</button>
+            <div className={classNames("mt-2 block w-full text-left line-clamp-3 text-xs", subtleTextClass)}>{taskOutcome(task)}</div>
           ) : null}
 
           <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
@@ -680,7 +786,7 @@ export function ContextModal({
 
           <div className="mt-3 flex items-center gap-2 border-t pt-3" onClick={(event) => event.stopPropagation()}>
             <button type="button" onClick={() => void moveTaskToStatus(task, quickAction.next)} disabled={syncBusy} className={buttonSecondaryClass}>{quickAction.label}</button>
-            <button type="button" onClick={() => selectTask(task)} className={buttonSecondaryClass}>{tr("context.details", "Details")}</button>
+            <button type="button" onClick={() => selectTask(task)} className={buttonSecondaryClass}>{tr("context.edit", "Edit")}</button>
           </div>
         </div>
       </div>
@@ -689,7 +795,6 @@ export function ContextModal({
 
   const ColumnDropZone = ({ columnKey, label, items }: { columnKey: BoardStatus; label: string; items: Task[] }) => {
     const { setNodeRef, isOver } = useDroppable({ id: `column:${columnKey}`, data: { type: "column", status: columnKey } });
-    const canCreateHere = columnKey === "planned" || columnKey === "active";
     return (
       <section ref={setNodeRef} className={classNames(
         "rounded-2xl border p-3 transition-all",
@@ -702,14 +807,9 @@ export function ContextModal({
             <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{label}</div>
             <div className={classNames("mt-1 text-xs", mutedTextClass)}>{items.length} {tr("context.items", "items")}</div>
           </div>
-          {canCreateHere ? (
-            <button type="button" onClick={() => handleOpenCreate(columnKey)} className={buttonSecondaryClass}>{tr("context.add", "Add")}</button>
-          ) : (
-            <span className={classNames("rounded-full px-2 py-0.5 text-[11px]", isDark ? "bg-slate-800 text-slate-300" : "bg-white text-gray-600")}>{items.length}</span>
-          )}
+          <span className={classNames("rounded-full px-2 py-0.5 text-[11px]", isDark ? "bg-slate-800 text-slate-300" : "bg-white text-gray-600")}>{items.length}</span>
         </div>
         <div className="mt-3">
-          {renderQuickCreate(columnKey)}
           <div className="space-y-2">
             {items.length > 0 ? items.map((task) => <TaskCard key={task.id} task={task} />) : (
               <div className={classNames("rounded-lg border border-dashed px-3 py-5 text-xs", isDark ? "border-slate-800 text-slate-500" : "border-gray-200 text-gray-400")}>
@@ -722,46 +822,73 @@ export function ContextModal({
     );
   };
 
+  const confirmDiscardTaskChanges = useCallback(() => {
+    if (!hasTaskUnsaved || typeof window === "undefined") return true;
+    return window.confirm(tr("context.unsavedTaskConfirm", "You have unsaved task edits. Discard them and continue?"));
+  }, [hasTaskUnsaved, tr]);
+
   const selectTask = (task: Task) => {
+    if (selectedTaskId === task.id && taskEditorMode === "edit") return;
+    if (!confirmDiscardTaskChanges()) return;
     setSelectedTaskId(task.id);
     setTaskDraft(taskToDraft(task));
+    setTaskEditorMode("edit");
     setSyncError("");
     setActiveView("coordination");
-    setSidePanelMode("task");
   };
 
-  const closeTaskDrawer = () => {
-    setSidePanelMode("none");
+  const closeTaskEditor = () => {
+    if (!confirmDiscardTaskChanges()) return;
+    setTaskEditorMode("none");
     setSelectedTaskId("");
     setTaskDraft(null);
     setSyncError("");
   };
 
-  const closeBackgroundPanel = () => {
-    setSidePanelMode("none");
-    setEditingBrief(false);
-    setEditingProject(false);
-  };
-
-  const openBackgroundPanel = useCallback((tab: "brief" | "project" | "notes" = "brief", options?: { editBrief?: boolean; editProject?: boolean }) => {
+  const openSteeringTab = useCallback((tab: "summary" | "project" | "log") => {
+    if (!confirmDiscardTaskChanges()) return;
+    setTaskEditorMode("none");
     setActiveView("coordination");
-    setSidePanelMode("background");
-    setBackgroundTab(tab);
+    setSteeringTab(tab);
     setSelectedTaskId("");
     setTaskDraft(null);
     setSyncError("");
     setProjectNotice("");
     setProjectError("");
     setNotifyError("");
-    if (tab === "brief") {
-      setBriefDraft(briefToDraft(brief));
-    }
+    setActivityError("");
     if (tab === "project") {
-      setProjectText(String(projectMd?.content || ""));
+      void loadProjectMd();
     }
-    setEditingBrief(!!options?.editBrief);
-    setEditingProject(!!options?.editProject);
-  }, [brief, projectMd]);
+  }, [confirmDiscardTaskChanges, loadProjectMd]);
+
+  const handleSwitchActiveView = useCallback((next: "coordination" | "agents") => {
+    if (next === "agents") {
+      if (!confirmDiscardTaskChanges()) return;
+      setTaskEditorMode("none");
+      setSelectedTaskId("");
+      setTaskDraft(null);
+    }
+    setActiveView(next);
+  }, [confirmDiscardTaskChanges]);
+
+  const handleModalClose = useCallback(() => {
+    if (typeof window !== "undefined") {
+      if (hasSteeringUnsaved && hasTaskUnsaved) {
+        const ok = window.confirm(tr("context.unsavedCloseConfirm", "You have unsaved project and task changes. Discard them and close?"));
+        if (!ok) return;
+      } else if (hasSteeringUnsaved) {
+        const ok = window.confirm(tr("context.unsavedChangesConfirm", "You have unsaved changes in project steering. Discard them and close?"));
+        if (!ok) return;
+      } else if (hasTaskUnsaved) {
+        const ok = window.confirm(tr("context.unsavedTaskConfirm", "You have unsaved task edits. Discard them and continue?"));
+        if (!ok) return;
+      }
+    }
+    onClose();
+  }, [hasSteeringUnsaved, hasTaskUnsaved, onClose, tr]);
+
+  const { modalRef } = useModalA11y(isOpen, handleModalClose);
 
   const handleSaveBrief = async () => {
     if (!groupId) return;
@@ -787,7 +914,7 @@ export function ContextModal({
   };
 
   const handleSaveTask = async () => {
-    if (!groupId || !selectedTask || !taskDraft) return;
+    if (!groupId || !taskDraft) return;
     const title = taskDraft.title.trim();
     if (!title) {
       setSyncError(tr("context.taskTitleRequired", "Task title is required."));
@@ -797,6 +924,33 @@ export function ContextModal({
     setSyncBusy(true);
     setSyncError("");
     try {
+      if (taskEditorMode === "create") {
+        const resp = await contextSync(groupId, [{
+          op: "task.create",
+          title,
+          outcome: taskDraft.outcome,
+          status: taskDraft.status || "planned",
+          assignee: taskDraft.assignee.trim() || null,
+          priority: taskDraft.priority.trim() || null,
+          parent_id: taskDraft.parentId.trim() || null,
+          blocked_by: parseLineList(taskDraft.blockedBy),
+          waiting_on: taskDraft.waitingOn,
+          handoff_to: taskDraft.handoffTo.trim() || null,
+          notes: taskDraft.notes,
+          checklist: parseChecklist(taskDraft.checklist, []),
+        }]);
+        if (!resp.ok) {
+          setSyncError(resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+          return;
+        }
+        await onRefreshContext();
+        setTaskEditorMode("none");
+        setSelectedTaskId("");
+        setTaskDraft(null);
+        return;
+      }
+
+      if (!selectedTask) return;
       const resp = await updateCoordinationTask(groupId, {
         ...selectedTask,
         title,
@@ -822,90 +976,30 @@ export function ContextModal({
   };
 
   const handleResetTask = () => {
+    if (taskEditorMode === "create") {
+      setTaskDraft(emptyTaskDraft("planned"));
+      setSyncError("");
+      return;
+    }
     if (!selectedTask) return;
     setTaskDraft(taskToDraft(selectedTask));
     setSyncError("");
   };
 
-  const handleOpenCreate = (status: keyof BoardColumns) => {
-    setCreatingColumn(status);
-    setCreateDraft({ title: "", outcome: "", assignee: "", priority: "" });
+  const handleOpenCreate = (status: BoardStatus = "planned") => {
+    if (!confirmDiscardTaskChanges()) return;
+    setTaskEditorMode("create");
+    setSelectedTaskId("");
+    setTaskDraft(emptyTaskDraft(status));
     setSyncError("");
+    setActiveView("coordination");
   };
 
-  const handleCreateTask = async (status: keyof BoardColumns) => {
-    if (!groupId) return;
-    const title = createDraft.title.trim();
-    if (!title) {
-      setSyncError(tr("context.taskTitleRequired", "Task title is required."));
-      return;
-    }
-    setSyncBusy(true);
-    setSyncError("");
-    try {
-      const resp = await contextSync(groupId, [{
-        op: "task.create",
-        title,
-        outcome: createDraft.outcome,
-        status,
-        assignee: createDraft.assignee.trim() || null,
-        priority: createDraft.priority.trim() || null,
-      }]);
-      if (!resp.ok) {
-        setSyncError(resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
-        return;
-      }
-      await onRefreshContext();
-      setCreatingColumn(null);
-      setCreateDraft({ title: "", outcome: "", assignee: "", priority: "" });
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-
-  const renderQuickCreate = (status: BoardStatus) => {
-    if (creatingColumn !== status) return null;
-    return (
-      <div className={classNames("mb-3 rounded-xl border p-3", isDark ? "border-slate-700 bg-slate-950/50" : "border-gray-200 bg-white")}>
-        <div className={classNames("mb-2 text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.quickCreate", "Quick create")}</div>
-        <div className="space-y-2">
-          <input
-            value={createDraft.title}
-            onChange={(event) => setCreateDraft((prev) => ({ ...prev, title: event.target.value }))}
-            className={inputClass}
-            placeholder={tr("context.titleField", "Title")}
-          />
-          <textarea
-            value={createDraft.outcome}
-            onChange={(event) => setCreateDraft((prev) => ({ ...prev, outcome: event.target.value }))}
-            className={classNames(textareaClass, "min-h-[84px]")}
-            placeholder={tr("context.outcome", "Outcome")}
-          />
-          <div className="grid gap-2 sm:grid-cols-2">
-            <input
-              value={createDraft.assignee}
-              onChange={(event) => setCreateDraft((prev) => ({ ...prev, assignee: event.target.value }))}
-              className={inputClass}
-              placeholder={tr("context.assignee", "Assignee")}
-            />
-            <input
-              value={createDraft.priority}
-              onChange={(event) => setCreateDraft((prev) => ({ ...prev, priority: event.target.value }))}
-              className={inputClass}
-              placeholder={tr("context.priority", "Priority")}
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setCreatingColumn(null)} disabled={syncBusy} className={buttonSecondaryClass}>{tr("context.cancel", "Cancel")}</button>
-            <button type="button" onClick={() => void handleCreateTask(status)} disabled={syncBusy} className={buttonPrimaryClass}>{syncBusy ? tr("context.saving", "Saving…") : tr("context.createTask", "Create task")}</button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const handleEditProject = () => {
-    openBackgroundPanel("project", { editProject: true });
+  const handleEditProject = async () => {
+    openSteeringTab("project");
+    const loaded = await loadProjectMd(true);
+    setProjectText(String(loaded?.content || ""));
+    setEditingProject(true);
   };
 
   const handleSaveProject = async () => {
@@ -935,53 +1029,75 @@ export function ContextModal({
         });
         if (!notifyResp.ok) {
           setNotifyError(notifyResp.error?.message || tr("context.failedToNotify", "Failed to notify agents"));
-          notice = tr("context.projectSavedNotifyFailed", "PROJECT.md saved, but agent notification failed.");
+          notice = tr("context.projectSavedNotifyFailed", "PROJECT.md saved, but chat notification failed.");
         } else {
-          notice = tr("context.projectSavedAndNotified", "PROJECT.md saved and agents notified.");
+          notice = tr("context.projectSavedAndNotified", "PROJECT.md saved and the team was notified in chat.");
         }
       }
       setProjectNotice(notice);
+      setNotifyAgents(false);
     } finally {
       setProjectBusy(false);
     }
   };
 
-  const renderSidePanelShell = (body: ReactNode, onClose: () => void) => (
-    <>
-      <div
-        className="fixed inset-0 z-40 bg-slate-950/45 xl:hidden"
-        onPointerDown={(event) => {
-          if (event.target === event.currentTarget) onClose();
-        }}
-        aria-hidden="true"
-      />
-      <div className="fixed inset-x-0 bottom-0 top-20 z-50 xl:hidden">
-        <div className="h-full">{body}</div>
-      </div>
-      <div className="hidden xl:block xl:absolute xl:inset-y-0 xl:right-0 xl:w-[420px]">
-        {body}
-      </div>
-    </>
-  );
+  const handleAddCoordinationNote = async (kind: "decision" | "handoff") => {
+    if (!groupId) return;
+    const draft = kind === "decision" ? decisionDraft : handoffDraft;
+    const summary = String(draft.summary || "").trim();
+    if (!summary) {
+      setActivityError(tr("context.noteSummaryRequired", "Summary is required."));
+      return;
+    }
+    setActivityBusyKind(kind);
+    setActivityError("");
+    try {
+      const resp = await addCoordinationNote(groupId, kind, summary, String(draft.taskId || "").trim() || null);
+      if (!resp.ok) {
+        setActivityError(resp.error?.message || tr("context.failedToApplyChanges", "Failed to apply changes"));
+        return;
+      }
+      await onRefreshContext();
+      if (kind === "decision") {
+        setDecisionDraft(emptyNoteDraft());
+      } else {
+        setHandoffDraft(emptyNoteDraft());
+      }
+    } finally {
+      setActivityBusyKind(null);
+    }
+  };
 
-  const renderTaskDrawer = () => {
-    if (sidePanelMode !== "task" || !selectedTask || !taskDraft) return null;
-    const drawerBody = (
-      <aside className={classNames(surfaceClass, "h-full overflow-y-auto p-4")}>
+  const renderTaskEditorPanel = () => {
+    if (!taskEditorVisible || !taskDraft) {
+      return (
+        <section className={classNames(surfaceClass, "hidden xl:flex xl:min-h-[520px] xl:flex-col xl:justify-center xl:p-6") }>
+          <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.taskEditorEmptyTitle", "Select a task")}</div>
+          <div className={classNames("mt-2 text-sm", subtleTextClass)}>{tr("context.taskEditorEmptyHint", "Pick a card to edit, or create a new task from the button above.")}</div>
+        </section>
+      );
+    }
+
+    const isCreate = taskEditorMode === "create";
+    return (
+      <section className={classNames(surfaceClass, "p-4 xl:sticky xl:top-0 xl:max-h-[calc(94vh-8rem)] xl:overflow-y-auto")}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.taskDetails", "Task details")}</div>
-            <div className={classNames("mt-1 text-xs", mutedTextClass)}>{selectedTask.id}</div>
+            <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{isCreate ? tr("context.newTask", "New task") : tr("context.taskDetails", "Task editor")}</div>
+            <div className={classNames("mt-1 text-xs", mutedTextClass)}>{isCreate ? tr("context.newTaskHint", "Create a new shared task. Keep it lean; fill advanced fields only when they help coordination.") : (selectedTask?.id || "")}</div>
           </div>
           <div className="flex items-center gap-2">
-            <button type="button" onClick={handleResetTask} disabled={syncBusy} className={buttonSecondaryClass}>{tr("context.reset", "Reset")}</button>
-            <button type="button" onClick={closeTaskDrawer} className={buttonSecondaryClass}>{tr("context.close", "Close")}</button>
+            {hasTaskUnsaved ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", isDark ? "bg-amber-500/15 text-amber-200" : "bg-amber-50 text-amber-700")}>{tr("context.unsaved", "Unsaved")}</span> : null}
+            <button type="button" onClick={handleResetTask} disabled={syncBusy} className={buttonSecondaryClass}>{isCreate ? tr("context.clear", "Clear") : tr("context.reset", "Reset")}</button>
+            <button type="button" onClick={closeTaskEditor} className={buttonSecondaryClass}>{tr("context.close", "Close")}</button>
           </div>
         </div>
 
         <div className="mt-4 space-y-3">
           <div className="flex items-center justify-between gap-2">
-            <div className={classNames("text-xs", mutedTextClass)}>{selectedTask.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(selectedTask.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet")}</div>
+            <div className={classNames("text-xs", mutedTextClass)}>
+              {isCreate ? tr("context.editorInlineHint", "Editing stays inside the Tasks workspace so you can keep the board in view.") : (selectedTask?.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(selectedTask.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet"))}
+            </div>
             <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(taskDraft.status, isDark))}>{taskDraft.status}</span>
           </div>
 
@@ -1011,65 +1127,72 @@ export function ContextModal({
             </label>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-sm">
-              <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.priority", "Priority")}</span>
-              <input value={taskDraft.priority} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, priority: event.target.value } : prev)} className={inputClass} />
-            </label>
-            <label className="block text-sm">
-              <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.parentTask", "Parent task")}</span>
-              <input value={taskDraft.parentId} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, parentId: event.target.value } : prev)} className={inputClass} placeholder={tr("context.rootTask", "Root task")} />
-            </label>
-          </div>
+          <label className="block text-sm">
+            <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.priority", "Priority")}</span>
+            <input value={taskDraft.priority} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, priority: event.target.value } : prev)} className={inputClass} />
+          </label>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="block text-sm">
-              <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.blockedBy", "Blocked by")}</span>
-              <textarea value={taskDraft.blockedBy} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, blockedBy: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[90px]")} placeholder={tr("context.onePerLine", "One per line")} />
-            </label>
-            <div className="space-y-3">
+          <details className={classNames("rounded-xl border px-3 py-3", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50") }>
+            <summary className={classNames("cursor-pointer text-sm font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.advancedTaskFields", "Advanced details")}</summary>
+            <div className="mt-3 space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm">
+                  <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.parentTask", "Parent task")}</span>
+                  <input value={taskDraft.parentId} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, parentId: event.target.value } : prev)} className={inputClass} placeholder={tr("context.rootTask", "Root task")} />
+                </label>
+                <label className="block text-sm">
+                  <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.handoffTo", "Handoff to")}</span>
+                  <input value={taskDraft.handoffTo} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, handoffTo: event.target.value } : prev)} className={inputClass} />
+                </label>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="block text-sm">
+                  <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.blockedBy", "Blocked by")}</span>
+                  <textarea value={taskDraft.blockedBy} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, blockedBy: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[90px]")} placeholder={tr("context.onePerLine", "One per line")} />
+                </label>
+                <label className="block text-sm">
+                  <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.waitingOn", "Waiting on")}</span>
+                  <select value={taskDraft.waitingOn} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, waitingOn: event.target.value as TaskWaitingOn } : prev)} className={inputClass}>
+                    {WAITING_ON_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+              </div>
+
               <label className="block text-sm">
-                <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.waitingOn", "Waiting on")}</span>
-                <select value={taskDraft.waitingOn} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, waitingOn: event.target.value as TaskWaitingOn } : prev)} className={inputClass}>
-                  {WAITING_ON_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
+                <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.notes", "Notes")}</span>
+                <textarea value={taskDraft.notes} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, notes: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[100px]")} />
               </label>
+
               <label className="block text-sm">
-                <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.handoffTo", "Handoff to")}</span>
-                <input value={taskDraft.handoffTo} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, handoffTo: event.target.value } : prev)} className={inputClass} />
+                <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.checklist", "Checklist")}</span>
+                <textarea value={taskDraft.checklist} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, checklist: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[120px]")} placeholder={tr("context.checklistPlaceholder", "Use [ ], [~], [x] prefixes if useful.")} />
               </label>
             </div>
-          </div>
+          </details>
 
-          <label className="block text-sm">
-            <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.notes", "Notes")}</span>
-            <textarea value={taskDraft.notes} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, notes: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[100px]")} />
-          </label>
-
-          <label className="block text-sm">
-            <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.checklist", "Checklist")}</span>
-            <textarea value={taskDraft.checklist} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, checklist: event.target.value } : prev)} className={classNames(textareaClass, "min-h-[120px]")} placeholder={tr("context.checklistPlaceholder", "Use [ ], [~], [x] prefixes if useful.")} />
-          </label>
-
-          <div className={classNames("grid gap-2 rounded-xl border px-3 py-3 text-xs sm:grid-cols-2", isDark ? "border-slate-800 bg-slate-950/40 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-500")}>
-            <div>{tr("context.createdAt", "Created")}: {selectedTask.created_at ? formatFullTime(selectedTask.created_at) : "-"}</div>
-            <div>{tr("context.updatedAt", "Updated")}: {selectedTask.updated_at ? formatFullTime(selectedTask.updated_at) : "-"}</div>
-            <div>{tr("context.archivedFrom", "Archived from")}: {selectedTask.archived_from || "-"}</div>
-            <div>{tr("context.checklistItems", "Checklist items")}: {Array.isArray(selectedTask.checklist) ? selectedTask.checklist.length : 0}</div>
-          </div>
+          {isCreate ? (
+            <div className={classNames("rounded-xl border px-3 py-3 text-xs", isDark ? "border-slate-800 bg-slate-950/40 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-500")}>
+              {tr("context.newTaskHint", "Create a new shared task. Keep it lean; fill advanced fields only when they help coordination.")}
+            </div>
+          ) : selectedTask ? (
+            <div className={classNames("grid gap-2 rounded-xl border px-3 py-3 text-xs sm:grid-cols-2", isDark ? "border-slate-800 bg-slate-950/40 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-500")}>
+              <div>{tr("context.createdAt", "Created")}: {selectedTask.created_at ? formatFullTime(selectedTask.created_at) : "-"}</div>
+              <div>{tr("context.updatedAt", "Updated")}: {selectedTask.updated_at ? formatFullTime(selectedTask.updated_at) : "-"}</div>
+              <div>{tr("context.archivedFrom", "Archived from")}: {selectedTask.archived_from || "-"}</div>
+              <div>{tr("context.checklistItems", "Checklist items")}: {Array.isArray(selectedTask.checklist) ? selectedTask.checklist.length : 0}</div>
+            </div>
+          ) : null}
 
           <div className="flex items-center gap-2">
-            <button type="button" onClick={() => void handleSaveTask()} disabled={syncBusy} className={buttonPrimaryClass}>{syncBusy ? tr("context.saving", "Saving…") : tr("context.saveTask", "Save task")}</button>
+            <button type="button" onClick={() => void handleSaveTask()} disabled={syncBusy} className={buttonPrimaryClass}>{syncBusy ? tr("context.saving", "Saving…") : (isCreate ? tr("context.createTask", "Create task") : tr("context.saveTask", "Save task"))}</button>
           </div>
         </div>
-      </aside>
+      </section>
     );
-    return renderSidePanelShell(drawerBody, closeTaskDrawer);
   };
 
-  const renderBackgroundDrawer = () => {
-    if (sidePanelMode !== "background") return null;
-
+  const renderSteeringPanel = () => {
     const tabButtonClass = (active: boolean) => classNames(
       "rounded-lg px-3 py-2 text-sm font-medium transition-colors",
       active
@@ -1080,164 +1203,202 @@ export function ContextModal({
           ? "text-slate-300 hover:bg-slate-800"
           : "text-gray-600 hover:bg-white/80"
     );
-
     const notesCardClass = classNames("rounded-xl border p-3 text-sm", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-50");
 
-    const drawerBody = (
-      <aside className={classNames(surfaceClass, "h-full overflow-y-auto p-4")}>
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.projectSteering", "Project steering")}</div>
-            <div className={classNames("mt-1 text-xs", mutedTextClass)}>{tr("context.projectSteeringHint", "Project steering, durable notes, and repository-level reference live here.")}</div>
+    return (
+      <section className={classNames(surfaceClass, "p-4")}>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0 flex-1">
+              <div className={classNames("text-lg font-semibold", isDark ? "text-slate-50" : "text-gray-900")}>{brief?.objective || tr("context.noObjective", "No objective set")}</div>
+              <div className={classNames("mt-1 text-sm", subtleTextClass)}>{brief?.current_focus || tr("context.noCurrentFocus", "No current focus set")}</div>
+              {(brief?.project_brief_stale || (Array.isArray(brief?.constraints) && brief.constraints.length > 0)) ? (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {brief?.project_brief_stale ? <button type="button" onClick={() => { openSteeringTab("summary"); setEditingBrief(true); }} className={classNames("rounded-full px-2 py-1 text-[11px] transition-colors", isDark ? "bg-amber-500/15 text-amber-200 hover:bg-amber-500/25" : "bg-amber-50 text-amber-700 hover:bg-amber-100")}>{tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}</button> : null}
+                  {(brief?.constraints || []).slice(0, 6).map((constraint, index) => <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{constraint}</span>)}
+                </div>
+              ) : null}
+            </div>
+            <div className="flex flex-wrap items-center gap-2 xl:max-w-[18rem] xl:justify-end">
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-blue-500/15 text-blue-200" : "bg-blue-50 text-blue-700")}>{tr("context.active", "Active")} · {Number(tasksSummary.active || 0)}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blocked", "Blocked")} · {attentionCounts.blocked}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-violet-500/15 text-violet-200" : "bg-violet-50 text-violet-700")}>{tr("context.waitingUser", "Waiting user")} · {attentionCounts.waitingUser}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700")}>{tr("context.unassigned", "Unassigned")} · {unassignedCount}</span>
+            </div>
           </div>
-          <button type="button" onClick={closeBackgroundPanel} className={buttonSecondaryClass}>{tr("context.close", "Close")}</button>
-        </div>
 
-        <div className={classNames("mt-4 inline-flex rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
-          <button type="button" onClick={() => { setBackgroundTab("brief"); setEditingProject(false); }} className={tabButtonClass(backgroundTab === "brief")}>{tr("context.brief", "Brief")}</button>
-          <button type="button" onClick={() => { setBackgroundTab("project"); setEditingBrief(false); }} className={tabButtonClass(backgroundTab === "project")}>{t("context.projectMd", { defaultValue: "PROJECT.md" })}</button>
-          <button type="button" onClick={() => { setBackgroundTab("notes"); setEditingBrief(false); setEditingProject(false); }} className={tabButtonClass(backgroundTab === "notes")}>{tr("context.notes", "Notes")}</button>
-        </div>
-
-        <div className="mt-4">
-          {backgroundTab === "brief" ? (
-            <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.brief", "Brief")}</div>
-                  <div className={classNames("mt-1 text-xs", mutedTextClass)}>{brief?.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(brief.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet")}</div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {editingBrief ? (
-                    <>
-                      <button type="button" onClick={() => { setEditingBrief(false); setBriefDraft(briefToDraft(brief)); }} disabled={syncBusy} className={buttonSecondaryClass}>{tr("context.cancel", "Cancel")}</button>
-                      <button type="button" onClick={() => void handleSaveBrief()} disabled={syncBusy} className={buttonPrimaryClass}>{syncBusy ? tr("context.saving", "Saving…") : tr("context.saveBrief", "Save brief")}</button>
-                    </>
-                  ) : (
-                    <button type="button" onClick={() => openBackgroundPanel("brief", { editBrief: true })} className={buttonPrimaryClass}>{tr("context.editBrief", "Edit brief")}</button>
-                  )}
-                </div>
+          <div className={classNames("flex flex-col gap-3 border-t pt-4", isDark ? "border-slate-800" : "border-gray-200")}>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div>
+                <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.steering", "Project steering")}</div>
+                <div className={classNames("mt-1 text-xs", mutedTextClass)}>{tr("context.projectSteeringHint", "Steer the project here. Keep PROJECT.md as the full repository reference, and keep the working summary hot and short.")}</div>
               </div>
+            </div>
 
-              {editingBrief ? (
-                <div className="mt-4 grid gap-3">
-                  <label className="block text-sm">
-                    <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.objective", "Objective")}</span>
-                    <input value={briefDraft.objective} onChange={(event) => setBriefDraft((prev) => ({ ...prev, objective: event.target.value }))} className={inputClass} />
-                  </label>
-                  <label className="block text-sm">
-                    <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.currentFocus", "Current focus")}</span>
-                    <input value={briefDraft.currentFocus} onChange={(event) => setBriefDraft((prev) => ({ ...prev, currentFocus: event.target.value }))} className={inputClass} />
-                  </label>
-                  <label className="block text-sm">
-                    <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.constraints", "Constraints")}</span>
-                    <textarea value={briefDraft.constraints} onChange={(event) => setBriefDraft((prev) => ({ ...prev, constraints: event.target.value }))} className={classNames(textareaClass, "min-h-[110px]")} placeholder={tr("context.constraintsPlaceholder", "One per line")} />
-                  </label>
-                  <label className="block text-sm">
-                    <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.projectBrief", "Project brief")}</span>
-                    <textarea value={briefDraft.projectBrief} onChange={(event) => setBriefDraft((prev) => ({ ...prev, projectBrief: event.target.value }))} className={classNames(textareaClass, "min-h-[140px]")} />
-                  </label>
-                  <label className={classNames("flex items-center gap-2 rounded-lg border px-3 py-2 text-sm", isDark ? "border-slate-800 bg-slate-900 text-slate-200" : "border-gray-200 bg-white text-gray-800")}>
-                    <input type="checkbox" checked={briefDraft.projectBriefStale} onChange={(event) => setBriefDraft((prev) => ({ ...prev, projectBriefStale: event.target.checked }))} />
-                    {tr("context.projectBriefStale", "Mark project brief as stale")}
-                  </label>
-                </div>
-              ) : (
-                <div className="mt-4 space-y-3 text-sm">
-                  <div>
-                    <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.objective", "Objective")}</div>
-                    <div className={classNames("mt-1", subtleTextClass)}>{brief?.objective || tr("context.noObjective", "No objective set")}</div>
-                  </div>
-                  <div>
-                    <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.currentFocus", "Current focus")}</div>
-                    <div className={classNames("mt-1", subtleTextClass)}>{brief?.current_focus || tr("context.noCurrentFocus", "No current focus set")}</div>
-                  </div>
-                  <div>
-                    <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.constraints", "Constraints")}</div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {Array.isArray(brief?.constraints) && brief.constraints.length > 0 ? brief.constraints.map((constraint, index) => (
-                        <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", isDark ? "bg-slate-800 text-slate-200" : "bg-white text-gray-700")}>{constraint}</span>
-                      )) : <span className={mutedTextClass}>{tr("context.noConstraints", "No constraints set")}</span>}
-                      {brief?.project_brief_stale ? <button type="button" onClick={() => openBackgroundPanel("brief")} className={classNames("rounded-full px-2 py-1 text-[11px] transition-colors", isDark ? "bg-amber-500/15 text-amber-200 hover:bg-amber-500/25" : "bg-amber-50 text-amber-700 hover:bg-amber-100")}>{tr("context.projectBriefNeedsRefresh", "Brief needs refresh")}</button> : null}
-                    </div>
-                  </div>
-                  <div>
-                    <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.projectBrief", "Project brief")}</div>
-                    <div className={classNames("mt-1 whitespace-pre-wrap", subtleTextClass)}>{brief?.project_brief || tr("context.noProjectBrief", "No project brief set")}</div>
-                  </div>
-                </div>
-              )}
-            </section>
-          ) : null}
+            <div className={classNames("inline-flex w-fit rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
+              <button type="button" onClick={() => openSteeringTab("summary")} className={tabButtonClass(steeringTab === "summary")}>{tr("context.brief", "Summary")}</button>
+              <button type="button" onClick={() => openSteeringTab("project")} className={tabButtonClass(steeringTab === "project")}>{t("context.projectMd", { defaultValue: "PROJECT.md" })}</button>
+              <button type="button" onClick={() => openSteeringTab("log")} className={tabButtonClass(steeringTab === "log")}>{tr("context.activityLog", "Activity")}</button>
+            </div>
 
-          {backgroundTab === "project" ? (
-            <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{t("context.projectMd", { defaultValue: "PROJECT.md" })}</div>
-                  <div className={classNames("mt-1 text-xs", mutedTextClass)}>{projectBusy ? t("common:loading", { defaultValue: "Loading…" }) : projectPathLabel}</div>
+            {steeringTab === "summary" ? (
+              <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.brief", "Summary")}</div>
+                    <div className={classNames("mt-1 text-xs", mutedTextClass)}>{brief?.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(brief.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet")}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {editingBrief ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", isDark ? "bg-amber-500/15 text-amber-200" : "bg-amber-50 text-amber-700")}>{tr("context.unsaved", "Unsaved")}</span> : null}
+                    {editingBrief ? (
+                      <>
+                        <button type="button" onClick={() => { setEditingBrief(false); setBriefDraft(briefToDraft(brief)); }} disabled={syncBusy} className={buttonSecondaryClass}>{tr("context.cancel", "Cancel")}</button>
+                        <button type="button" onClick={() => void handleSaveBrief()} disabled={syncBusy} className={buttonPrimaryClass}>{syncBusy ? tr("context.saving", "Saving…") : tr("context.saveBrief", "Save summary")}</button>
+                      </>
+                    ) : (
+                      <button type="button" onClick={() => { openSteeringTab("summary"); setEditingBrief(true); }} className={buttonPrimaryClass}>{t("context.editButton", { defaultValue: "Edit" })}</button>
+                    )}
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {editingProject ? <button type="button" onClick={() => { setEditingProject(false); setProjectText(String(projectMd?.content || "")); }} disabled={projectBusy} className={buttonSecondaryClass}>{tr("context.cancel", "Cancel")}</button> : null}
-                  <button type="button" onClick={handleEditProject} className={buttonPrimaryClass}>{editingProject ? tr("context.editing", "Editing") : (projectMd?.found ? t("context.editButton", { defaultValue: "Edit" }) : t("context.createButton", { defaultValue: "Create" }))}</button>
-                </div>
-              </div>
-              {projectError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{projectError}</div> : null}
-              {notifyError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{notifyError}</div> : null}
-              {projectNotice ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700")}>{projectNotice}</div> : null}
-              <div className="mt-4">
-                {editingProject ? (
-                  <>
-                    <textarea value={projectText} onChange={(event) => setProjectText(event.target.value)} className={classNames(textareaClass, "min-h-[280px]")} placeholder={t("context.writePlaceholder", { defaultValue: "Write your project constitution here…" })} />
-                    <label className={classNames("mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm", isDark ? "border-slate-800 bg-slate-900 text-slate-200" : "border-gray-200 bg-white text-gray-800")}>
-                      <input type="checkbox" checked={notifyAgents} onChange={(event) => setNotifyAgents(event.target.checked)} />
-                      {tr("context.notifyAgents", "Notify agents after save")}
+
+                {editingBrief ? (
+                  <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                    <label className="block text-sm lg:col-span-1">
+                      <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.objective", "Objective")}</span>
+                      <input value={briefDraft.objective} onChange={(event) => setBriefDraft((prev) => ({ ...prev, objective: event.target.value }))} className={inputClass} />
                     </label>
-                    <div className="mt-3 flex items-center gap-2">
-                      <button type="button" onClick={() => void handleSaveProject()} disabled={projectBusy} className={buttonPrimaryClass}>{projectBusy ? tr("context.saving", "Saving…") : tr("context.saveProject", "Save PROJECT.md")}</button>
-                    </div>
-                  </>
-                ) : projectMd?.found && projectMd.content ? (
-                  <div className={classNames("max-h-[32rem] overflow-y-auto rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-900/70" : "border-gray-200 bg-white")}>
-                    <MarkdownRenderer content={String(projectMd.content)} isDark={isDark} className={classNames("text-sm", subtleTextClass)} />
+                    <label className="block text-sm lg:col-span-1">
+                      <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.currentFocus", "Current focus")}</span>
+                      <input value={briefDraft.currentFocus} onChange={(event) => setBriefDraft((prev) => ({ ...prev, currentFocus: event.target.value }))} className={inputClass} />
+                    </label>
+                    <label className="block text-sm lg:col-span-2">
+                      <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.constraints", "Constraints")}</span>
+                      <textarea value={briefDraft.constraints} onChange={(event) => setBriefDraft((prev) => ({ ...prev, constraints: event.target.value }))} className={classNames(textareaClass, "min-h-[110px]")} placeholder={tr("context.constraintsPlaceholder", "One per line")} />
+                    </label>
+                    <label className="block text-sm lg:col-span-2">
+                      <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.projectBrief", "Working summary")}</span>
+                      <textarea value={briefDraft.projectBrief} onChange={(event) => setBriefDraft((prev) => ({ ...prev, projectBrief: event.target.value }))} className={classNames(textareaClass, "min-h-[180px]")} />
+                    </label>
+                    <label className={classNames("flex items-center gap-2 rounded-lg border px-3 py-2 text-sm lg:col-span-2", isDark ? "border-slate-800 bg-slate-900 text-slate-200" : "border-gray-200 bg-white text-gray-800")}>
+                      <input type="checkbox" checked={briefDraft.projectBriefStale} onChange={(event) => setBriefDraft((prev) => ({ ...prev, projectBriefStale: event.target.checked }))} />
+                      {tr("context.projectBriefStale", "Mark working summary as stale")}
+                    </label>
                   </div>
                 ) : (
-                  <div className={classNames("rounded-xl border border-dashed px-3 py-4 text-sm", isDark ? "border-slate-800 text-slate-500" : "border-gray-200 text-gray-400")}>{t("context.noProjectMd", { defaultValue: "No PROJECT.md found" })}</div>
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.projectBrief", "Working summary")}</div>
+                      <div className={classNames("mt-1 whitespace-pre-wrap text-sm", subtleTextClass)}>{brief?.project_brief || tr("context.noProjectBrief", "No working summary set")}</div>
+                    </div>
+                    <div>
+                      <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.constraints", "Constraints")}</div>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {Array.isArray(brief?.constraints) && brief.constraints.length > 0 ? brief.constraints.map((constraint, index) => (
+                          <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", isDark ? "bg-slate-800 text-slate-200" : "bg-white text-gray-700")}>{constraint}</span>
+                        )) : <span className={mutedTextClass}>{tr("context.noConstraints", "No constraints set")}</span>}
+                      </div>
+                    </div>
+                  </div>
                 )}
-              </div>
-            </section>
-          ) : null}
+              </section>
+            ) : null}
 
-          {backgroundTab === "notes" ? (
-            <div className="space-y-3">
+            {steeringTab === "project" ? (
               <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
-                <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.recentDecisions", "Recent decisions")}</div>
-                <div className="mt-3 space-y-2">
-                  {recentDecisions.length > 0 ? recentDecisions.map((note, index) => (
-                    <div key={`${note.summary}-${index}`} className={notesCardClass}>
-                      <div className={classNames("font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{note.summary}</div>
-                      <div className={classNames("mt-1 text-xs", mutedTextClass)}>{[note.by || "", note.task_id || "", noteTimestamp(note)].filter(Boolean).join(" · ") || tr("context.noMetadata", "No metadata")}</div>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{t("context.projectMd", { defaultValue: "PROJECT.md" })}</div>
+                    <div className={classNames("mt-1 text-xs", mutedTextClass)}>{projectBusy ? t("common:loading", { defaultValue: "Loading…" }) : projectPathLabel}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {editingProject ? <button type="button" onClick={() => { setEditingProject(false); setProjectText(String(projectMd?.content || "")); setNotifyAgents(false); }} disabled={projectBusy} className={buttonSecondaryClass}>{tr("context.cancel", "Cancel")}</button> : null}
+                    <button type="button" onClick={() => void handleEditProject()} className={buttonPrimaryClass}>{editingProject ? tr("context.editing", "Editing") : (projectMd?.found ? t("context.editButton", { defaultValue: "Edit" }) : t("context.createButton", { defaultValue: "Create" }))}</button>
+                  </div>
+                </div>
+                {projectError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{projectError}</div> : null}
+                {notifyError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{notifyError}</div> : null}
+                {projectNotice ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700")}>{projectNotice}</div> : null}
+                <div className="mt-4">
+                  {editingProject ? (
+                    <>
+                      <textarea value={projectText} onChange={(event) => setProjectText(event.target.value)} className={classNames(textareaClass, "min-h-[320px]")} />
+                      <label className={classNames("mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm", isDark ? "border-slate-800 bg-slate-900 text-slate-200" : "border-gray-200 bg-white text-gray-800")}>
+                        <input type="checkbox" checked={notifyAgents} onChange={(event) => setNotifyAgents(event.target.checked)} />
+                        {tr("context.notifyAgents", "Notify the team in chat (@all) after save")}
+                      </label>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button type="button" onClick={() => void handleSaveProject()} disabled={projectBusy} className={buttonPrimaryClass}>{projectBusy ? tr("context.saving", "Saving…") : tr("context.saveProject", "Save PROJECT.md")}</button>
+                      </div>
+                    </>
+                  ) : projectMd?.found && projectMd.content ? (
+                    <div className={classNames("max-h-[36rem] overflow-y-auto rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-900/70" : "border-gray-200 bg-white")}>
+                      <MarkdownRenderer content={String(projectMd.content)} isDark={isDark} className={classNames("text-sm", subtleTextClass)} />
                     </div>
-                  )) : <div className={classNames("text-sm", mutedTextClass)}>{tr("context.noRecentDecisions", "No recent decisions")}</div>}
+                  ) : (
+                    <div className={classNames("rounded-xl border border-dashed px-3 py-4 text-sm", isDark ? "border-slate-800 text-slate-500" : "border-gray-200 text-gray-400")}>{t("context.noProjectMd", { defaultValue: "No PROJECT.md found" })}</div>
+                  )}
                 </div>
               </section>
-              <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
-                <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.recentHandoffs", "Recent handoffs")}</div>
-                <div className="mt-3 space-y-2">
-                  {recentHandoffs.length > 0 ? recentHandoffs.map((note, index) => (
-                    <div key={`${note.summary}-${index}`} className={notesCardClass}>
-                      <div className={classNames("font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{note.summary}</div>
-                      <div className={classNames("mt-1 text-xs", mutedTextClass)}>{[note.by || "", note.task_id || "", noteTimestamp(note)].filter(Boolean).join(" · ") || tr("context.noMetadata", "No metadata")}</div>
+            ) : null}
+
+            {steeringTab === "log" ? (
+              <div className="space-y-3">
+                {activityError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{activityError}</div> : null}
+                <div className="grid gap-3 xl:grid-cols-2">
+                  <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.recentDecisions", "Recent decisions")}</div>
+                        <div className={classNames("mt-1 text-xs", mutedTextClass)}>{tr("context.activityWriteHint", "Capture durable decisions and handoffs here when chat alone is too transient.")}</div>
+                      </div>
                     </div>
-                  )) : <div className={classNames("text-sm", mutedTextClass)}>{tr("context.noRecentHandoffs", "No recent handoffs")}</div>}
+                    <div className={classNames("mt-3 rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-950/60" : "border-gray-200 bg-white")}>
+                      <textarea value={decisionDraft.summary} onChange={(event) => setDecisionDraft((prev) => ({ ...prev, summary: event.target.value }))} className={classNames(textareaClass, "min-h-[96px]")} placeholder={tr("context.decisionPlaceholder", "Record a durable project decision...")} />
+                      <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <select value={decisionDraft.taskId} onChange={(event) => setDecisionDraft((prev) => ({ ...prev, taskId: event.target.value }))} className={inputClass}>
+                          <option value="">{tr("context.noRelatedTask", "No related task")}</option>
+                          {activeTaskOptions.map((task) => <option key={task.id} value={task.id}>{taskOptionLabel(task)}</option>)}
+                        </select>
+                        <button type="button" onClick={() => void handleAddCoordinationNote("decision")} disabled={activityBusyKind !== null || !String(decisionDraft.summary || "").trim()} className={buttonPrimaryClass}>{activityBusyKind === "decision" ? tr("context.saving", "Saving…") : tr("context.addDecision", "Add decision")}</button>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {recentDecisions.length > 0 ? recentDecisions.map((note, index) => (
+                        <div key={`${note.summary}-${index}`} className={notesCardClass}>
+                          <div className={classNames("font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{note.summary}</div>
+                          <div className={classNames("mt-1 text-xs", mutedTextClass)}>{[note.by || "", note.task_id || "", noteTimestamp(note)].filter(Boolean).join(" · ") || tr("context.noMetadata", "No metadata")}</div>
+                        </div>
+                      )) : <div className={classNames("text-sm", mutedTextClass)}>{tr("context.noRecentDecisions", "No recent decisions")}</div>}
+                    </div>
+                  </section>
+                  <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.recentHandoffs", "Recent handoffs")}</div>
+                    <div className={classNames("mt-3 rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-950/60" : "border-gray-200 bg-white")}>
+                      <textarea value={handoffDraft.summary} onChange={(event) => setHandoffDraft((prev) => ({ ...prev, summary: event.target.value }))} className={classNames(textareaClass, "min-h-[96px]")} placeholder={tr("context.handoffPlaceholder", "Record a durable handoff or next-owner note...")} />
+                      <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <select value={handoffDraft.taskId} onChange={(event) => setHandoffDraft((prev) => ({ ...prev, taskId: event.target.value }))} className={inputClass}>
+                          <option value="">{tr("context.noRelatedTask", "No related task")}</option>
+                          {activeTaskOptions.map((task) => <option key={task.id} value={task.id}>{taskOptionLabel(task)}</option>)}
+                        </select>
+                        <button type="button" onClick={() => void handleAddCoordinationNote("handoff")} disabled={activityBusyKind !== null || !String(handoffDraft.summary || "").trim()} className={buttonPrimaryClass}>{activityBusyKind === "handoff" ? tr("context.saving", "Saving…") : tr("context.addHandoff", "Add handoff")}</button>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2">
+                      {recentHandoffs.length > 0 ? recentHandoffs.map((note, index) => (
+                        <div key={`${note.summary}-${index}`} className={notesCardClass}>
+                          <div className={classNames("font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{note.summary}</div>
+                          <div className={classNames("mt-1 text-xs", mutedTextClass)}>{[note.by || "", note.task_id || "", noteTimestamp(note)].filter(Boolean).join(" · ") || tr("context.noMetadata", "No metadata")}</div>
+                        </div>
+                      )) : <div className={classNames("text-sm", mutedTextClass)}>{tr("context.noRecentHandoffs", "No recent handoffs")}</div>}
+                    </div>
+                  </section>
                 </div>
-              </section>
-            </div>
-          ) : null}
+              </div>
+            ) : null}
+          </div>
         </div>
-      </aside>
+      </section>
     );
-    return renderSidePanelShell(drawerBody, closeBackgroundPanel);
   };
 
   const renderAgentsView = () => {
@@ -1326,32 +1487,20 @@ export function ContextModal({
   );
 
   const renderCoordinationView = () => {
-    const sidePanelOpen = sidePanelMode !== "none";
     return (
-      <div className={classNames("relative", sidePanelOpen ? "xl:pr-[440px]" : "")}>
+      <div className="space-y-4">
+        {renderSteeringPanel()}
+
         <section className={classNames(surfaceClass, "p-4")}>
           <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0 flex-1">
-                <div className={classNames("text-lg font-semibold", isDark ? "text-slate-50" : "text-gray-900")}>{brief?.objective || tr("context.noObjective", "No objective set")}</div>
-                <div className={classNames("mt-1 text-sm", subtleTextClass)}>{brief?.current_focus || tr("context.noCurrentFocus", "No current focus set")}</div>
-                {(brief?.project_brief_stale || (Array.isArray(brief?.constraints) && brief.constraints.length > 0)) ? (
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {brief?.project_brief_stale ? <button type="button" onClick={() => openBackgroundPanel("brief")} className={classNames("rounded-full px-2 py-1 text-[11px] transition-colors", isDark ? "bg-amber-500/15 text-amber-200 hover:bg-amber-500/25" : "bg-amber-50 text-amber-700 hover:bg-amber-100")}>{tr("context.projectBriefNeedsRefresh", "Brief needs refresh")}</button> : null}
-                    {(brief?.constraints || []).slice(0, 6).map((constraint, index) => <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{constraint}</span>)}
-                  </div>
-                ) : null}
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+              <div>
+                <div className={classNames("text-lg font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.tasks", "Tasks")}</div>
+                <div className={classNames("mt-1 text-sm", subtleTextClass)}>{tr("context.taskBoardHint", "Plan shared work here. Open a card only when you need blockers, handoffs, notes, or checklist detail.")}</div>
               </div>
-              <div className="flex flex-wrap items-start justify-end gap-2 xl:max-w-[16rem]">
-                <button type="button" onClick={() => openBackgroundPanel("brief")} className={sidePanelMode === "background" ? buttonPrimaryClass : buttonSecondaryClass}>{tr("context.steering", "Steering")}</button>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={() => handleOpenCreate("planned")} className={buttonPrimaryClass}>{tr("context.newTask", "New task")}</button>
               </div>
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-blue-500/15 text-blue-200" : "bg-blue-50 text-blue-700")}>{tr("context.active", "Active")} · {Number(tasksSummary.active || 0)}</span>
-              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blocked", "Blocked")} · {attentionCounts.blocked}</span>
-              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-violet-500/15 text-violet-200" : "bg-violet-50 text-violet-700")}>{tr("context.waitingUser", "Waiting user")} · {attentionCounts.waitingUser}</span>
-              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700")}>{tr("context.unassigned", "Unassigned")} · {unassignedCount}</span>
             </div>
 
             <div className={classNames("flex flex-col gap-3 border-t pt-4", isDark ? "border-slate-800" : "border-gray-200")}>
@@ -1400,19 +1549,24 @@ export function ContextModal({
               </div>
             ) : null}
 
-            <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setDragTaskId("")}>
-              <div className={classNames("grid gap-3", sidePanelOpen ? "md:grid-cols-2 2xl:grid-cols-4" : "md:grid-cols-2 xl:grid-cols-4")}>
-                <ColumnDropZone columnKey="planned" label={tr("context.planned", "Planned")} items={filteredBoard.planned} />
-                <ColumnDropZone columnKey="active" label={tr("context.active", "Active")} items={filteredBoard.active} />
-                <ColumnDropZone columnKey="done" label={tr("context.done", "Done")} items={filteredBoard.done} />
-                <ColumnDropZone columnKey="archived" label={tr("context.archived", "Archived")} items={filteredBoard.archived} />
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(340px,420px)]">
+              <div className="min-w-0">
+                <DndContext sensors={sensors} onDragStart={handleDragStart} onDragEnd={handleDragEnd} onDragCancel={() => setDragTaskId("")}>
+                  <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-4">
+                    <ColumnDropZone columnKey="planned" label={tr("context.planned", "Planned")} items={filteredBoard.planned} />
+                    <ColumnDropZone columnKey="active" label={tr("context.active", "Active")} items={filteredBoard.active} />
+                    <ColumnDropZone columnKey="done" label={tr("context.done", "Done")} items={filteredBoard.done} />
+                    <ColumnDropZone columnKey="archived" label={tr("context.archived", "Archived")} items={filteredBoard.archived} />
+                  </div>
+                  <DragOverlay>{dragTaskId && taskMap.get(dragTaskId) ? <TaskGhostCard task={taskMap.get(dragTaskId)!} /> : null}</DragOverlay>
+                </DndContext>
               </div>
-              <DragOverlay>{dragTaskId && taskMap.get(dragTaskId) ? <TaskGhostCard task={taskMap.get(dragTaskId)!} /> : null}</DragOverlay>
-            </DndContext>
+              <div className="min-w-0">
+                {renderTaskEditorPanel()}
+              </div>
+            </div>
           </div>
         </section>
-        {renderTaskDrawer()}
-        {renderBackgroundDrawer()}
       </div>
     );
   };
@@ -1420,7 +1574,7 @@ export function ContextModal({
   return (
     <ModalFrame
       isDark={isDark}
-      onClose={onClose}
+      onClose={handleModalClose}
       titleId="context-modal-title"
       title={t("context.title", { defaultValue: "Project Context" })}
       closeAriaLabel={t("context.closeAria", { defaultValue: "Close context modal" })}
@@ -1433,8 +1587,8 @@ export function ContextModal({
 
           <div className="flex items-center justify-end">
             <div className={classNames("inline-flex rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
-              <button type="button" onClick={() => setActiveView("coordination")} className={viewButtonClass(activeView === "coordination")}>{tr("context.coordination", "Coordination")}</button>
-              <button type="button" onClick={() => { setActiveView("agents"); setSidePanelMode("none"); setSelectedTaskId(""); setTaskDraft(null); }} className={viewButtonClass(activeView === "agents")}>{tr("context.agents", "Agents")}</button>
+              <button type="button" onClick={() => handleSwitchActiveView("coordination")} className={viewButtonClass(activeView === "coordination")}>{tr("context.coordination", "Coordination")}</button>
+              <button type="button" onClick={() => handleSwitchActiveView("agents")} className={viewButtonClass(activeView === "agents")}>{tr("context.agents", "Agents")}</button>
             </div>
           </div>
 

@@ -684,7 +684,7 @@ Result:
   dynamic_tool_limit: number
   dynamic_tool_dropped: number
   enabled_capabilities: string[]
-  active_skills?: Array<{
+  active_capsule_skills?: Array<{
     capability_id: string
     name: string
     description_short?: string

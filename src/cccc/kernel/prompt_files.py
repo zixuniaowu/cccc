@@ -16,9 +16,9 @@ PROMPTS_DIRNAME = "prompts"
 _MAX_FILE_BYTES = 512 * 1024  # Safety limit for prompt markdown files.
 
 DEFAULT_PREAMBLE_BODY = """Quick start:
-- Call `cccc_bootstrap` first. It returns the help entrypoint, PROJECT.md availability, a lean recovery context pack, inbox, optional chat tail, and `memory_recall_gate`.
+- Call `cccc_bootstrap` first. It returns `session`, `recovery`, `inbox_preview`, `memory_recall_gate`, and `next_calls` for cold-start recovery.
 - If the coordination brief is missing or stale, align on objective/focus first and update it via `cccc_coordination(action=update_brief, ...)`.
-- Call `cccc_help` only when you need the detailed workflow or edge-case guidance.
+- Call `cccc_help` only when you need the detailed workflow or edge-case guidance; use `cccc_project_info` / `cccc_context_get` for cold detail on demand.
 
 Execution checklist:
 - Keep visible coordination in MCP chat (`cccc_message_send` / `cccc_message_reply`).

@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ....kernel.actors import get_effective_role
 from ....kernel.group import load_group
-from ....kernel.inbox import is_message_for_actor
-from ....kernel.ledger import read_last_lines
-from ....kernel.prompt_files import HELP_FILENAME, load_builtin_help_markdown as _load_builtin_help_markdown, read_group_prompt_file
+from ....kernel.prompt_files import load_builtin_help_markdown as _load_builtin_help_markdown
 from ....util.time import parse_utc_iso
 from ..common import MCPError, _call_daemon_or_raise
-from ..utils.help_markdown import _select_help_markdown
 from . import cccc_group_actor as _group_actor_mod
 from . import context as _context_mod
 
@@ -51,46 +46,49 @@ def _find_actor_state(*, context: Dict[str, Any], actor_id: str) -> Optional[Dic
 
 
 def _memory_recall_query_from_context(*, context: Dict[str, Any], actor_id: str) -> str:
-    tokens: List[str] = []
-    brief = context.get("coordination_brief") if isinstance(context.get("coordination_brief"), dict) else {}
-    for key in ("current_focus", "objective", "project_brief"):
-        text = _trim_text(brief.get(key), max_chars=120)
-        if text:
-            tokens.append(text)
-            if len(tokens) >= 2:
-                break
-
     actor_state = context.get("agent_state") if isinstance(context.get("agent_state"), dict) else {}
     hot = actor_state.get("hot") if isinstance(actor_state.get("hot"), dict) else {}
     warm = actor_state.get("warm") if isinstance(actor_state.get("warm"), dict) else {}
-    for value in (
-        hot.get("active_task_id"),
-        hot.get("focus"),
-        hot.get("next_action"),
-        warm.get("what_changed"),
-        warm.get("resume_hint"),
-    ):
-        text = _trim_text(value, max_chars=100)
-        if text:
-            tokens.append(text)
-
+    brief = context.get("coordination_brief") if isinstance(context.get("coordination_brief"), dict) else {}
     tasks = context.get("tasks") if isinstance(context.get("tasks"), dict) else {}
-    for bucket in ("assigned_active", "attention"):
-        items = tasks.get(bucket) if isinstance(tasks.get(bucket), list) else []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            title = _trim_text(item.get("title"), max_chars=90)
-            outcome = _trim_text(item.get("outcome"), max_chars=120)
-            if title:
-                tokens.append(title)
-            if outcome:
-                tokens.append(outcome)
-            break
 
-    if not tokens:
+    ranked: List[tuple[int, str]] = []
+    seen: set[str] = set()
+
+    def _add(priority: int, value: Any, *, max_chars: int = 120) -> None:
+        text = _trim_text(value, max_chars=max_chars)
+        if not text:
+            return
+        normalized = text.casefold()
+        if normalized in seen:
+            return
+        seen.add(normalized)
+        ranked.append((priority, text))
+
+    _add(0, hot.get("active_task_id"), max_chars=48)
+    _add(1, hot.get("focus"), max_chars=120)
+    _add(2, hot.get("next_action"), max_chars=120)
+    _add(3, brief.get("current_focus"), max_chars=120)
+
+    assigned_active = tasks.get("assigned_active") if isinstance(tasks.get("assigned_active"), list) else []
+    attention = tasks.get("attention") if isinstance(tasks.get("attention"), list) else []
+    if assigned_active and isinstance(assigned_active[0], dict):
+        _add(4, assigned_active[0].get("title"), max_chars=100)
+        _add(5, assigned_active[0].get("outcome"), max_chars=120)
+    if attention and isinstance(attention[0], dict):
+        _add(8, attention[0].get("title"), max_chars=100)
+
+    _add(6, warm.get("what_changed"), max_chars=120)
+    _add(7, warm.get("resume_hint"), max_chars=120)
+    _add(9, brief.get("objective"), max_chars=120)
+    _add(10, warm.get("environment_summary"), max_chars=100)
+    _add(11, warm.get("user_model"), max_chars=100)
+    _add(12, warm.get("persona_notes"), max_chars=100)
+
+    if not ranked:
         return "recent decisions constraints preferences"
-    merged = " | ".join(tokens[:6]).strip()
+    ranked.sort(key=lambda item: item[0])
+    merged = " | ".join(text for _, text in ranked[:6]).strip()
     return _trim_text(merged, max_chars=240) or "recent decisions constraints preferences"
 
 
@@ -270,7 +268,6 @@ def _build_bootstrap_context(*, context: Dict[str, Any], actor_id: str) -> Dict[
         if blocked_by or waiting_on == "external":
             global_blocked.append(slim)
 
-    chosen: List[Dict[str, Any]] = []
     seen: set[str] = set()
 
     def _take(items: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
@@ -290,14 +287,22 @@ def _build_bootstrap_context(*, context: Dict[str, Any], actor_id: str) -> Dict[
     attention.extend(_take(waiting_user, max(0, 3 - len(attention))))
     attention.extend(_take(global_blocked, max(0, 3 - len(attention))))
 
+    raw_hot = actor_state.get("hot") if isinstance(actor_state.get("hot"), dict) else {}
+    raw_warm = actor_state.get("warm") if isinstance(actor_state.get("warm"), dict) else {}
+    warm = {
+        "what_changed": _trim_text(raw_warm.get("what_changed"), max_chars=180),
+        "resume_hint": _trim_text(raw_warm.get("resume_hint"), max_chars=180),
+        "environment_summary": _trim_text(raw_warm.get("environment_summary"), max_chars=160),
+        "user_model": _trim_text(raw_warm.get("user_model"), max_chars=160),
+        "persona_notes": _trim_text(raw_warm.get("persona_notes"), max_chars=160),
+    }
+    warm = {key: value for key, value in warm.items() if value}
+
     pack = {
         "agent_state": {
             "id": actor_state.get("id"),
-            "hot": actor_state.get("hot") if isinstance(actor_state.get("hot"), dict) else {},
-            "warm": {
-                "what_changed": str(((actor_state.get("warm") or {}).get("what_changed") if isinstance(actor_state.get("warm"), dict) else "") or ""),
-                "resume_hint": str(((actor_state.get("warm") or {}).get("resume_hint") if isinstance(actor_state.get("warm"), dict) else "") or ""),
-            },
+            "hot": raw_hot if isinstance(raw_hot, dict) else {},
+            "warm": warm,
             "updated_at": actor_state.get("updated_at"),
         },
         "coordination_brief": {
@@ -334,6 +339,16 @@ def _build_bootstrap_context(*, context: Dict[str, Any], actor_id: str) -> Dict[
     }
 
     hard_cap = 1100
+    optional_warm_drop_order = ("persona_notes", "user_model", "environment_summary")
+    while _estimate_payload_tokens(pack) > hard_cap and pack["agent_state"]["warm"]:
+        dropped = False
+        for field in optional_warm_drop_order:
+            if field in pack["agent_state"]["warm"]:
+                pack["agent_state"]["warm"].pop(field, None)
+                dropped = True
+                break
+        if not dropped:
+            break
     while _estimate_payload_tokens(pack) > hard_cap and pack["recent_handoffs"]:
         pack["recent_handoffs"].pop()
     while _estimate_payload_tokens(pack) > hard_cap and pack["recent_decisions"]:
@@ -349,6 +364,98 @@ def _build_bootstrap_context(*, context: Dict[str, Any], actor_id: str) -> Dict[
                 if isinstance(item.get("checklist"), list) and len(item["checklist"]) > 1:
                     item["checklist"] = item["checklist"][:1]
     return pack
+
+
+def _select_bootstrap_scope(group: Dict[str, Any]) -> Dict[str, Any]:
+    active_scope_key = str(group.get("active_scope_key") or "").strip()
+    scopes = group.get("scopes") if isinstance(group.get("scopes"), list) else []
+    selected: Dict[str, Any] = {}
+    for item in scopes:
+        if not isinstance(item, dict):
+            continue
+        if active_scope_key and str(item.get("scope_key") or "").strip() == active_scope_key:
+            selected = item
+            break
+    if not selected:
+        for item in scopes:
+            if isinstance(item, dict):
+                selected = item
+                break
+    if not selected:
+        return {}
+    return {
+        "scope_key": str(selected.get("scope_key") or "").strip(),
+        "path": str(selected.get("url") or "").strip(),
+    }
+
+
+def _build_bootstrap_session(*, group: Dict[str, Any], actors: List[Dict[str, Any]], actor_id: str, project: Dict[str, Any]) -> Dict[str, Any]:
+    current_actor = next(
+        (item for item in actors if isinstance(item, dict) and str(item.get("id") or "").strip() == str(actor_id or "").strip()),
+        {},
+    )
+    return {
+        "group_id": str(group.get("group_id") or "").strip(),
+        "group_title": str(group.get("title") or group.get("group_id") or "").strip(),
+        "actor_id": str(actor_id or "").strip(),
+        "role": str(current_actor.get("role") or "").strip(),
+        "runner": str(current_actor.get("runner") or "").strip(),
+        "active_scope": _select_bootstrap_scope(group),
+        "project_md": {
+            "found": bool(project.get("found")),
+            "path": project.get("path"),
+        },
+    }
+
+
+def _build_bootstrap_recovery(*, pack: Dict[str, Any]) -> Dict[str, Any]:
+    agent_state = pack.get("agent_state") if isinstance(pack.get("agent_state"), dict) else {}
+    return {
+        "coordination_brief": pack.get("coordination_brief") if isinstance(pack.get("coordination_brief"), dict) else {},
+        "self_state": {
+            "hot": agent_state.get("hot") if isinstance(agent_state.get("hot"), dict) else {},
+            "recovery": agent_state.get("warm") if isinstance(agent_state.get("warm"), dict) else {},
+            "updated_at": agent_state.get("updated_at"),
+        },
+        "task_slice": pack.get("tasks") if isinstance(pack.get("tasks"), dict) else {"assigned_active": [], "attention": []},
+        "recent_notes": {
+            "decisions": pack.get("recent_decisions") if isinstance(pack.get("recent_decisions"), list) else [],
+            "handoffs": pack.get("recent_handoffs") if isinstance(pack.get("recent_handoffs"), list) else [],
+        },
+    }
+
+
+def _build_bootstrap_inbox_preview(*, inbox: Dict[str, Any], limit: int) -> Dict[str, Any]:
+    raw_messages = inbox.get("messages") if isinstance(inbox.get("messages"), list) else []
+    has_more = bool(limit > 0 and len(raw_messages) > int(limit))
+    source_messages = raw_messages[: max(0, int(limit))] if limit > 0 else raw_messages
+    preview: List[Dict[str, Any]] = []
+    for item in source_messages:
+        if not isinstance(item, dict):
+            continue
+        data = item.get("data") if isinstance(item.get("data"), dict) else {}
+        text_source = (
+            data.get("text")
+            if isinstance(data.get("text"), str) and str(data.get("text") or "").strip()
+            else data.get("message")
+            if isinstance(data.get("message"), str) and str(data.get("message") or "").strip()
+            else data.get("title")
+        )
+        preview.append(
+            {
+                "id": str(item.get("id") or ""),
+                "ts": str(item.get("ts") or ""),
+                "by": str(item.get("by") or ""),
+                "kind": str(item.get("kind") or ""),
+                "reply_required": bool(data.get("reply_required") is True or data.get("requires_ack") is True),
+                "text_preview": _trim_text(text_source, max_chars=220),
+            }
+        )
+    return {
+        "messages": preview,
+        "truncated": has_more,
+    }
+
 
 def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str) -> str:
     base = str(markdown or "")
@@ -369,7 +476,7 @@ def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str)
         return base
     enabled_caps = state.get("enabled_capabilities") if isinstance(state, dict) else []
     hidden_caps = state.get("hidden_capabilities") if isinstance(state, dict) else []
-    active = state.get("active_skills") if isinstance(state, dict) else []
+    active = state.get("active_capsule_skills") if isinstance(state, dict) else []
     autoload = state.get("autoload_skills") if isinstance(state, dict) else []
     enabled_list = enabled_caps if isinstance(enabled_caps, list) else []
     hidden_list = hidden_caps if isinstance(hidden_caps, list) else []
@@ -489,153 +596,60 @@ def bootstrap(
     actor_id: str,
     inbox_limit: int = 50,
     inbox_kind_filter: str = "all",
-    ledger_tail_limit: int = 0,
-    ledger_tail_max_chars: int = 8000,
 ) -> Dict[str, Any]:
     """One-call cold-start bootstrap for agents.
 
-    Hot path only:
-    - group / actors
-    - help entrypoint
-    - PROJECT.md availability metadata (not full content)
-    - lean context recovery pack
-    - inbox
-    - optional recent chat tail (off by default)
+    Default payload is the minimum hot recovery packet:
+    - session
+    - recovery
+    - inbox preview
     - memory recall gate
+    - next-call hints for cold data
     """
     gi = _group_actor_mod.group_info(group_id=group_id)
-    group = gi.get("group") if isinstance(gi, dict) else None
+    group = gi.get("group") if isinstance(gi, dict) and isinstance(gi.get("group"), dict) else {}
 
     al = _group_actor_mod.actor_list(group_id=group_id)
-    actors = al.get("actors") if isinstance(al, dict) else None
-
-    help_payload: Dict[str, Any] = {
-        "markdown": _append_runtime_skill_digest(
-            _select_help_markdown(_CCCC_HELP_BUILTIN, role=None, actor_id=None),
-            group_id=group_id,
-            actor_id=actor_id,
-        ),
-        "source": "cccc.resources/cccc-help.md",
-    }
-    try:
-        g = load_group(str(group_id or "").strip())
-        if g is not None:
-            role = get_effective_role(g, str(actor_id or "").strip())
-            pf = read_group_prompt_file(g, HELP_FILENAME)
-            if pf.found and isinstance(pf.content, str) and pf.content.strip():
-                help_payload = {
-                    "markdown": _append_runtime_skill_digest(
-                        _select_help_markdown(pf.content, role=role, actor_id=actor_id),
-                        group_id=group_id,
-                        actor_id=actor_id,
-                    ),
-                    "source": str(pf.path or ""),
-                }
-            else:
-                help_payload = {
-                    "markdown": _append_runtime_skill_digest(
-                        _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=actor_id),
-                        group_id=group_id,
-                        actor_id=actor_id,
-                    ),
-                    "source": "cccc.resources/cccc-help.md",
-                }
-    except Exception:
-        pass
+    actors = al.get("actors") if isinstance(al, dict) and isinstance(al.get("actors"), list) else []
 
     project_full = project_info(group_id=group_id)
     project = {
         "found": bool(project_full.get("found")),
         "path": project_full.get("path"),
-        "error": project_full.get("error"),
     }
     context_full = _context_mod.context_get(group_id=group_id, include_archived=True)
-    context = _build_bootstrap_context(
+    recovery_pack = _build_bootstrap_context(
         context=context_full if isinstance(context_full, dict) else {},
         actor_id=actor_id,
     )
-    inbox = inbox_list(group_id=group_id, actor_id=actor_id, limit=int(inbox_limit or 50), kind_filter=inbox_kind_filter)
-
-    ledger_tail: List[Dict[str, Any]] = []
-    ledger_tail_truncated = False
-    try:
-        limit = int(ledger_tail_limit or 0)
-        max_chars = int(ledger_tail_max_chars or 0)
-        if limit > 0 and max_chars > 0:
-            g = load_group(str(group_id or "").strip())
-            if g is not None:
-                read_lines = min(2000, max(200, limit * 10))
-                lines = read_last_lines(g.ledger_path, read_lines)
-                chat_events: List[Dict[str, Any]] = []
-                for raw in lines:
-                    try:
-                        ev = json.loads(raw)
-                    except Exception:
-                        continue
-                    if not isinstance(ev, dict) or str(ev.get("kind") or "") != "chat.message":
-                        continue
-                    by = str(ev.get("by") or "").strip()
-                    if by != str(actor_id or "").strip() and not is_message_for_actor(g, actor_id=actor_id, event=ev):
-                        continue
-                    data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
-                    text = data.get("text") if isinstance(data, dict) else None
-                    if not isinstance(text, str) or not text:
-                        continue
-                    to = data.get("to") if isinstance(data, dict) else None
-                    to_list = [str(x) for x in to] if isinstance(to, list) else []
-                    chat_events.append(
-                        {
-                            "id": str(ev.get("id") or ""),
-                            "ts": str(ev.get("ts") or ""),
-                            "by": by,
-                            "to": to_list,
-                            "text": text,
-                        }
-                    )
-                chat_events = chat_events[-limit:]
-                used = 0
-                for ev in chat_events:
-                    remaining = max_chars - used
-                    if remaining <= 0:
-                        ledger_tail_truncated = True
-                        break
-                    text_value = str(ev.get("text") or "")
-                    if len(text_value) > remaining:
-                        ev["text"] = text_value[:remaining]
-                        ledger_tail_truncated = True
-                        ledger_tail.append(ev)
-                        break
-                    ledger_tail.append(ev)
-                    used += len(text_value)
-    except Exception:
-        ledger_tail = []
-        ledger_tail_truncated = False
-
-    last_event_id = ""
-    try:
-        msgs = inbox.get("messages") if isinstance(inbox, dict) else None
-        if isinstance(msgs, list) and msgs:
-            last_event_id = str((msgs[-1] if isinstance(msgs[-1], dict) else {}).get("id") or "").strip()
-    except Exception:
-        last_event_id = ""
+    preview_limit = max(1, int(inbox_limit or 50))
+    inbox = inbox_list(group_id=group_id, actor_id=actor_id, limit=preview_limit + 1, kind_filter=inbox_kind_filter)
 
     memory_recall_gate = _build_memory_recall_gate(
         group_id=group_id,
         actor_id=actor_id,
-        context=context if isinstance(context, dict) else {},
+        context=recovery_pack if isinstance(recovery_pack, dict) else {},
     )
 
     return {
-        "group": group,
-        "actors": actors,
-        "help": help_payload,
-        "project": project,
-        "context": context,
-        "inbox": inbox,
-        "ledger_tail": ledger_tail,
-        "ledger_tail_truncated": ledger_tail_truncated,
-        "suggested_mark_read_event_id": last_event_id,
+        "session": _build_bootstrap_session(
+            group=group if isinstance(group, dict) else {},
+            actors=[item for item in actors if isinstance(item, dict)],
+            actor_id=actor_id,
+            project=project,
+        ),
+        "recovery": _build_bootstrap_recovery(pack=recovery_pack if isinstance(recovery_pack, dict) else {}),
+        "inbox_preview": _build_bootstrap_inbox_preview(
+            inbox=inbox if isinstance(inbox, dict) else {},
+            limit=int(inbox_limit or 50),
+        ),
         "memory_recall_gate": memory_recall_gate,
+        "next_calls": {
+            "help": "cccc_help()",
+            "project_info": "cccc_project_info()",
+            "context_get": "cccc_context_get()",
+            "memory_search": 'cccc_memory(action="search", query=...)',
+        },
     }
 
 

@@ -37,7 +37,8 @@ MCP_TOOLS = [
     {
         "name": "cccc_bootstrap",
         "description": (
-            "Cold-start bootstrap: group + actors + help + PROJECT.md availability + lean recovery context + inbox + optional chat tail + memory_recall_gate."
+            "Cold-start bootstrap: session + recovery + inbox_preview + memory_recall_gate + next_calls. "
+            "Use cccc_help / cccc_project_info / cccc_context_get on demand for cold detail."
         ),
         "inputSchema": _obj(
             {
@@ -53,18 +54,6 @@ MCP_TOOLS = [
                     "type": "string",
                     "enum": ["all", "chat", "notify"],
                     "default": "all",
-                },
-                "ledger_tail_limit": {
-                    "type": "integer",
-                    "default": 0,
-                    "minimum": 0,
-                    "maximum": 1000,
-                },
-                "ledger_tail_max_chars": {
-                    "type": "integer",
-                    "default": 8000,
-                    "minimum": 0,
-                    "maximum": 100000,
                 },
             }
         ),
@@ -580,7 +569,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_agent_state",
-        "description": "Per-actor working-memory tool: action=get|update|clear. Keep hot fields fresh; use warm fields only for recovery value.",
+        "description": "Per-actor working-memory tool: action=get|update|clear. Keep hot fields fresh; use warm fields only when they improve recovery, recall, or signal quality.",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,

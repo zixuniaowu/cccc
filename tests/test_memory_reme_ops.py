@@ -342,5 +342,141 @@ class TestMemoryRemeOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_group_signal_pack_prioritizes_active_actor_and_keeps_rich_warm_fields(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("reme-signal-pack-rich")
+            from cccc.daemon.memory.memory_ops import _build_group_signal_pack
+
+            create_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "user",
+                    "ops": [
+                        {
+                            "op": "task.create",
+                            "title": "Primary Work",
+                            "outcome": "ship reliable recovery",
+                            "status": "active",
+                            "assignee": "peer1",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(create_resp.ok, getattr(create_resp, "error", None))
+
+            peer1_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "peer1",
+                    "ops": [
+                        {
+                            "op": "agent_state.update",
+                            "actor_id": "peer1",
+                            "focus": "primary work",
+                            "next_action": "verify bootstrap recovery",
+                            "what_changed": "picked up the active task",
+                            "resume_hint": "re-open the bootstrap tests",
+                            "environment_summary": "workspace has a small dirty tree",
+                            "user_model": "prefers concise evidence",
+                            "persona_notes": "do not overbuild the fix",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(peer1_resp.ok, getattr(peer1_resp, "error", None))
+
+            peer2_resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": gid,
+                    "by": "peer2",
+                    "ops": [
+                        {
+                            "op": "agent_state.update",
+                            "actor_id": "peer2",
+                            "focus": "secondary",
+                            "next_action": "wait",
+                            "what_changed": "idle",
+                            "resume_hint": "none",
+                            "environment_summary": "cold",
+                            "user_model": "secondary",
+                            "persona_notes": "secondary",
+                        }
+                    ],
+                },
+            )
+            self.assertTrue(peer2_resp.ok, getattr(peer2_resp, "error", None))
+
+            pack, meta = _build_group_signal_pack(gid, token_budget=4096)
+            self.assertIsInstance(pack, dict)
+            assert isinstance(pack, dict)
+            self.assertEqual(str(meta.get("schema") or ""), "v1")
+            agent_states = pack.get("agent_states") if isinstance(pack.get("agent_states"), list) else []
+            self.assertGreaterEqual(len(agent_states), 1)
+            first = agent_states[0] if isinstance(agent_states[0], dict) else {}
+            self.assertEqual(str(first.get("id") or ""), "peer1")
+            self.assertEqual(str(first.get("environment_summary") or ""), "workspace has a small dirty tree")
+            self.assertEqual(str(first.get("user_model") or ""), "prefers concise evidence")
+            self.assertEqual(str(first.get("persona_notes") or ""), "do not overbuild the fix")
+        finally:
+            cleanup()
+
+
+    def test_signal_pack_budget_drops_optional_rich_fields_before_core_hot_fields(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.memory.memory_ops import _normalize_signal_pack
+
+            payload = {
+                "coordination_brief": {
+                    "objective": "ship recovery",
+                    "current_focus": "bootstrap",
+                    "constraints": ["keep it lean"],
+                    "project_brief": "x" * 400,
+                },
+                "tasks": {
+                    "active": ["T001: Primary Work"],
+                    "planned": [],
+                    "done_recent": [],
+                    "blocked": [],
+                    "waiting_user": [],
+                },
+                "agent_states": [
+                    {
+                        "id": "peer1",
+                        "hot": {
+                            "active_task_id": "T001",
+                            "focus": "primary work",
+                            "next_action": "verify bootstrap",
+                            "blockers": ["none"],
+                        },
+                        "warm": {
+                            "what_changed": "picked up the task",
+                            "resume_hint": "re-open tests",
+                            "environment_summary": "workspace has a very long environment summary " * 8,
+                            "user_model": "user likes concise evidence " * 8,
+                            "persona_notes": "avoid overbuilding and keep low noise " * 8,
+                        },
+                    }
+                ],
+            }
+            pack, meta = _normalize_signal_pack(payload, token_budget=190)
+            self.assertIsInstance(pack, dict)
+            assert isinstance(pack, dict)
+            self.assertLessEqual(int(meta.get("token_estimate") or 0), int(meta.get("token_budget") or 0))
+            agent_states = pack.get("agent_states") if isinstance(pack.get("agent_states"), list) else []
+            self.assertGreaterEqual(len(agent_states), 1)
+            first = agent_states[0] if isinstance(agent_states[0], dict) else {}
+            self.assertEqual(str(first.get("id") or ""), "peer1")
+            self.assertEqual(str(first.get("active_task_id") or ""), "T001")
+            self.assertEqual(str(first.get("focus") or ""), "primary work")
+            self.assertEqual(str(first.get("next_action") or ""), "verify bootstrap")
+            self.assertNotIn("persona_notes", first)
+        finally:
+            cleanup()
+
 if __name__ == "__main__":
     unittest.main()

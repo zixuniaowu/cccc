@@ -230,8 +230,6 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             actor_id=aid,
             inbox_limit=min(max(int(arguments.get("inbox_limit") or 50), 1), 1000),
             inbox_kind_filter=str(arguments.get("inbox_kind_filter") or "all"),
-            ledger_tail_limit=min(max(int(arguments.get("ledger_tail_limit") or 0), 0), 1000),
-            ledger_tail_max_chars=min(max(int(arguments.get("ledger_tail_max_chars") or 8000), 0), 100000),
         )
 
     if name == "cccc_project_info":

@@ -125,25 +125,34 @@ def _sanitize_agents(items: Any, *, max_items: int) -> List[Dict[str, Any]]:
         hot = raw.get("hot") if isinstance(raw.get("hot"), dict) else {}
         warm = raw.get("warm") if isinstance(raw.get("warm"), dict) else {}
         row: Dict[str, Any] = {"id": aid}
-        active_task_id = _trim_text(hot.get("active_task_id"), max_chars=24)
+        active_task_id = _trim_text(hot.get("active_task_id") if hot else raw.get("active_task_id"), max_chars=24)
         if active_task_id:
             row["active_task_id"] = active_task_id
-        focus = _trim_text(hot.get("focus"), max_chars=120)
+        focus = _trim_text(hot.get("focus") if hot else raw.get("focus"), max_chars=120)
         if focus:
             row["focus"] = focus
-        next_action = _trim_text(hot.get("next_action"), max_chars=120)
+        next_action = _trim_text(hot.get("next_action") if hot else raw.get("next_action"), max_chars=120)
         if next_action:
             row["next_action"] = next_action
-        blockers_raw = hot.get("blockers") if isinstance(hot.get("blockers"), list) else []
+        blockers_raw = hot.get("blockers") if isinstance(hot.get("blockers"), list) else raw.get("blockers") if isinstance(raw.get("blockers"), list) else []
         blockers = [_trim_text(x, max_chars=80) for x in blockers_raw if str(x or "").strip()][:3]
         if blockers:
             row["blockers"] = blockers
-        what_changed = _trim_text(warm.get("what_changed"), max_chars=140)
+        what_changed = _trim_text(warm.get("what_changed") if warm else raw.get("what_changed"), max_chars=140)
         if what_changed:
             row["what_changed"] = what_changed
-        resume_hint = _trim_text(warm.get("resume_hint"), max_chars=140)
+        resume_hint = _trim_text(warm.get("resume_hint") if warm else raw.get("resume_hint"), max_chars=140)
         if resume_hint:
             row["resume_hint"] = resume_hint
+        environment_summary = _trim_text(warm.get("environment_summary") if warm else raw.get("environment_summary"), max_chars=120)
+        if environment_summary:
+            row["environment_summary"] = environment_summary
+        user_model = _trim_text(warm.get("user_model") if warm else raw.get("user_model"), max_chars=120)
+        if user_model:
+            row["user_model"] = user_model
+        persona_notes = _trim_text(warm.get("persona_notes") if warm else raw.get("persona_notes"), max_chars=120)
+        if persona_notes:
+            row["persona_notes"] = persona_notes
         if len(row) > 1:
             out.append(row)
     return out
@@ -157,15 +166,39 @@ def _fit_signal_pack_budget(signal_pack: Dict[str, Any], *, token_budget: int) -
     def _tokens() -> int:
         return _estimate_tokens(pack)
 
+    def _drop_optional_agent_fields() -> bool:
+        changed = False
+        rows = pack.get("agent_states") if isinstance(pack.get("agent_states"), list) else []
+        for field in ("persona_notes", "user_model", "environment_summary"):
+            field_dropped = False
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                if field in row:
+                    row.pop(field, None)
+                    changed = True
+                    field_dropped = True
+                    if _tokens() <= budget:
+                        return True
+            if field_dropped and _tokens() <= budget:
+                return True
+        return changed
+
     for path in (
         ("tasks", "done_recent"),
         ("tasks", "planned"),
         ("tasks", "blocked"),
         ("tasks", "waiting_user"),
+        ("agent_states_optional",),
         ("agent_states",),
         ("tasks", "active"),
     ):
         while _tokens() > budget:
+            if path == ("agent_states_optional",):
+                if not _drop_optional_agent_fields():
+                    break
+                truncated = True
+                continue
             if len(path) == 1:
                 arr = pack.get(path[0])
             else:
@@ -290,7 +323,9 @@ def _build_group_signal_pack(group_id: str, *, token_budget: int) -> tuple[Optio
         title = _trim_text(getattr(task, "title", ""), max_chars=64)
         return f"{tid}: {title}".strip(": ").strip()
 
-    active_tasks = [_task_line(t) for t in tasks if getattr(t, "status", TaskStatus.PLANNED) == TaskStatus.ACTIVE]
+    active_task_objs = [t for t in tasks if getattr(t, "status", TaskStatus.PLANNED) == TaskStatus.ACTIVE]
+    active_task_objs.sort(key=lambda t: str(getattr(t, "updated_at", "") or getattr(t, "created_at", "") or ""), reverse=True)
+    active_tasks = [_task_line(t) for t in active_task_objs]
     planned_tasks = [_task_line(t) for t in tasks if getattr(t, "status", TaskStatus.PLANNED) == TaskStatus.PLANNED]
     blocked_tasks = [
         _task_line(t)
@@ -307,6 +342,29 @@ def _build_group_signal_pack(group_id: str, *, token_budget: int) -> tuple[Optio
     done_tasks = [t for t in tasks if getattr(t, "status", TaskStatus.PLANNED) == TaskStatus.DONE]
     done_tasks.sort(key=lambda t: str(getattr(t, "updated_at", "") or ""), reverse=True)
     done_recent = [_task_line(t) for t in done_tasks[:6]]
+
+    prioritized_actor_ids: List[str] = []
+    seen_actor_ids: set[str] = set()
+
+    def _push_actor(actor_id: Any) -> None:
+        aid = str(actor_id or "").strip()
+        if not aid or aid in seen_actor_ids:
+            return
+        seen_actor_ids.add(aid)
+        prioritized_actor_ids.append(aid)
+
+    for task in active_task_objs:
+        _push_actor(getattr(task, "assignee", None))
+        _push_actor(getattr(task, "handoff_to", None))
+    for agent in sorted(agents_state.agents, key=lambda item: str(getattr(item, "updated_at", "") or ""), reverse=True):
+        hot = getattr(agent, "hot", None)
+        if getattr(hot, "active_task_id", None) or list(getattr(hot, "blockers", []) or []):
+            _push_actor(getattr(agent, "id", ""))
+    for agent in sorted(agents_state.agents, key=lambda item: str(getattr(item, "id", ""))):
+        _push_actor(getattr(agent, "id", ""))
+
+    agent_by_id = {str(getattr(agent, "id", "") or ""): agent for agent in agents_state.agents}
+    ordered_agents = [agent_by_id[aid] for aid in prioritized_actor_ids if aid in agent_by_id]
 
     base = {
         "schema": _SIGNAL_PACK_SCHEMA_VERSION,
@@ -335,9 +393,12 @@ def _build_group_signal_pack(group_id: str, *, token_budget: int) -> tuple[Optio
                 "warm": {
                     "what_changed": getattr(getattr(agent, "warm", None), "what_changed", ""),
                     "resume_hint": getattr(getattr(agent, "warm", None), "resume_hint", ""),
+                    "environment_summary": getattr(getattr(agent, "warm", None), "environment_summary", ""),
+                    "user_model": getattr(getattr(agent, "warm", None), "user_model", ""),
+                    "persona_notes": getattr(getattr(agent, "warm", None), "persona_notes", ""),
                 },
             }
-            for agent in sorted(agents_state.agents, key=lambda item: str(getattr(item, "id", "")))
+            for agent in ordered_agents
         ],
     }
     return _normalize_signal_pack(base, token_budget=token_budget)

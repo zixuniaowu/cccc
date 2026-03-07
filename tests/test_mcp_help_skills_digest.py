@@ -15,7 +15,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         ), patch(
             "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
             return_value={
-                "active_skills": [
+                "active_capsule_skills": [
                     {
                         "capability_id": "skill:anthropic:triage",
                         "name": "triage",

@@ -5,6 +5,8 @@ Always-on rules live in system/preamble; this file expands details, examples, an
 
 Run `cccc_help` anytime to refresh the effective playbook for this group.
 
+Cold start default: `cccc_bootstrap` gives a lean `session + recovery + inbox_preview + memory_recall_gate` packet. Pull `cccc_help`, `cccc_project_info`, or `cccc_context_get` only when you need colder detail.
+
 ## Quick Card
 
 1. No fabrication. Investigate first and verify before claiming done.
@@ -81,7 +83,7 @@ Run `cccc_help` anytime to refresh the effective playbook for this group.
 ### Inbox
 
 - Inbox is an unread queue, not a task board.
-- Read via `cccc_inbox_list`.
+- Bootstrap includes only `inbox_preview`; use `cccc_inbox_list` for the full unread queue.
 - Mark read intentionally via `cccc_inbox_mark_read`.
 - If `reply_required=true`, do not stop at mark-read: send a concrete reply.
 
