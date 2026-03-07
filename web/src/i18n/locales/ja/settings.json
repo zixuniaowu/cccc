@@ -782,7 +782,7 @@
     "startFailed": "リモートアクセスの開始に失敗しました。",
     "stopFailed": "リモートアクセスの停止に失敗しました。",
     "unsupported": "現在実行中の daemon は remote access 制御 API に未対応です。remote_access op を含む新しい daemon で再起動してください。",
-    "missingToken": "CCCC_WEB_TOKEN が未設定です。Token を設定するまでリモートアクセスは開始できません。",
+    "missingToken": "Token が未設定です。設定 > Tokens でユーザー Token を作成するか、CCCC_WEB_TOKEN を設定してください。",
     "loopbackBinding": "Web ホストがループバック（{{host}}）にバインドされています。外部端末から接続するには CCCC_WEB_HOST を到達可能アドレスに変更するか、CCCC_WEB_PUBLIC_URL を設定してください。",
     "nextStepsTitle": "次の手順",
     "tailscaleQuickTitle": "Tailscale クイックスタート",

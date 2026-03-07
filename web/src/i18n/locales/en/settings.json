@@ -782,7 +782,7 @@
     "startFailed": "Failed to start remote access.",
     "stopFailed": "Failed to stop remote access.",
     "unsupported": "This running daemon does not support remote access control APIs yet. Restart with a newer daemon build that includes remote_access ops.",
-    "missingToken": "CCCC_WEB_TOKEN is missing. Remote access start is blocked until token is configured.",
+    "missingToken": "No token configured. Create a User Token in Settings > Tokens, or set CCCC_WEB_TOKEN.",
     "loopbackBinding": "Web host is loopback ({{host}}). Remote devices cannot connect unless you set CCCC_WEB_HOST to a reachable address or set CCCC_WEB_PUBLIC_URL.",
     "nextStepsTitle": "Next steps",
     "tailscaleQuickTitle": "Tailscale Quick Start",
