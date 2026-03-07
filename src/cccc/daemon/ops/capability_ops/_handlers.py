@@ -110,8 +110,8 @@ def _build_import_readiness_preview(
             preview["enable_block_reason"] = code
             preview["next_step"] = "inspect"
         preview["probe_state"] = "failed"
-    elif str(probe_result.get("state") or "").strip().lower() == "ready":
-        preview["probe_state"] = "ready"
+    elif str(probe_result.get("state") or "").strip().lower() in {"ready", "runnable"}:
+        preview["probe_state"] = "runnable"
     elif str(probe_result.get("state") or "").strip().lower() == "skipped":
         preview["probe_state"] = "skipped"
     if diagnostics:

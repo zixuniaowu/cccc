@@ -926,6 +926,7 @@ export async function fetchCapabilityAllowlist() {
     overlay_error?: string;
     policy_source?: string;
     policy_error?: string;
+    external_capability_safety_mode?: string;
   }>(`/api/v1/capabilities/allowlist?by=user`);
 }
 
@@ -947,24 +948,26 @@ export async function updateCapabilityAllowlist(args: {
     effective: Record<string, unknown>;
     policy_source?: string;
     policy_error?: string;
+    external_capability_safety_mode?: string;
   }>(`/api/v1/capabilities/allowlist`, {
     method: "PUT",
     body: JSON.stringify(body),
   });
 }
 
-export async function blockCapabilityGlobal(groupId: string, capabilityId: string, blocked: boolean, reason: string = "") {
+export async function blockCapabilityGlobal(capabilityId: string, blocked: boolean, reason: string = "", groupId?: string) {
+  const body: Record<string, unknown> = {
+    by: "user",
+    actor_id: "user",
+    capability_id: capabilityId,
+    blocked,
+    reason,
+    scope: "global",
+  };
+  if (String(groupId || "").trim()) body.group_id = String(groupId || "").trim();
   return apiJson<Record<string, unknown>>(`/api/v1/capabilities/block`, {
     method: "POST",
-    body: JSON.stringify({
-      by: "user",
-      actor_id: "user",
-      group_id: groupId,
-      capability_id: capabilityId,
-      blocked,
-      reason,
-      scope: "global",
-    }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -1177,13 +1180,6 @@ export async function sendCrossGroupMessage(
       priority,
       reply_required: replyRequired,
     }),
-  });
-}
-
-export async function ackMessage(groupId: string, eventId: string) {
-  return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/events/${encodeURIComponent(eventId)}/ack`, {
-    method: "POST",
-    body: JSON.stringify({ by: "user" }),
   });
 }
 

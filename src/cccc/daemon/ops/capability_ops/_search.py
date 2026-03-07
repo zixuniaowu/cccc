@@ -133,8 +133,8 @@ def _display_name_from_capability_id(capability_id: str) -> str:
     return token or cid
 
 
-def _manual_import_policy_evidence(*, policy: Dict[str, Any], source_id: str, policy_level: str) -> Dict[str, str]:
-    if str(source_id or "").strip() != "manual_import":
+def _external_policy_evidence(*, policy: Dict[str, Any], source_id: str, policy_level: str) -> Dict[str, str]:
+    if str(source_id or "").strip() not in _SOURCE_IDS:
         return {}
     if _normalize_policy_level(policy_level) != _LEVEL_INDEXED:
         return {}
@@ -205,15 +205,19 @@ def _build_readiness_preview(
         preview["recent_success"] = dict(recent_success or {})
 
     if str(blocked_reason_code or "").strip():
+        code = str(blocked_reason_code or "").strip()
         preview["preview_status"] = "blocked"
-        preview["enable_block_reason"] = str(blocked_reason_code or "").strip()
-        preview["next_step"] = "fix_known_blocker"
+        preview["enable_block_reason"] = code
+        if code == "policy_level_indexed":
+            preview.update(_external_policy_evidence(policy=policy, source_id=source_id, policy_level=policy_level))
+        if "next_step" not in preview:
+            preview["next_step"] = "fix_known_blocker"
         return preview
 
     if not _policy_level_visible(policy_level):
         preview["preview_status"] = "blocked"
         preview["enable_block_reason"] = "policy_level_indexed"
-        preview.update(_manual_import_policy_evidence(policy=policy, source_id=source_id, policy_level=policy_level))
+        preview.update(_external_policy_evidence(policy=policy, source_id=source_id, policy_level=policy_level))
         if "next_step" not in preview:
             preview["next_step"] = "fix_known_blocker"
         return preview
@@ -274,7 +278,12 @@ def _search_matches(query: str, item: Dict[str, Any]) -> bool:
         " ".join(str(x) for x in (item.get("tags") or [])),
     ]
     haystack = " ".join(fields).lower()
-    return q in haystack
+    if q in haystack:
+        return True
+    tokens = _tokenize_search_text(q)
+    if not tokens:
+        return False
+    return any(tok in haystack for tok in tokens)
 
 
 def _score_item_tokens(item: Dict[str, Any], tokens: List[str]) -> int:

@@ -95,7 +95,6 @@ export interface MessageBubbleProps {
     isHighlighted?: boolean;
     onReply: () => void;
     onShowRecipients: () => void;
-    onAck?: (eventId: string) => void;
     onCopyLink?: (eventId: string) => void;
     onRelay?: (ev: LedgerEvent) => void;
     onOpenSource?: (srcGroupId: string, srcEventId: string) => void;
@@ -113,7 +112,6 @@ export const MessageBubble = memo(function MessageBubble({
     isHighlighted,
     onReply,
     onShowRecipients,
-    onAck,
     onCopyLink,
     onRelay,
     onOpenSource,
@@ -214,7 +212,29 @@ export const MessageBubble = memo(function MessageBubble({
             .map((id) => [id, !!readStatus[id]] as const);
     }, [actors, readStatus]);
 
+    const isDirectUserMessage = useMemo(() => {
+        if (isUserMessage) return false;
+        if (!Array.isArray(recipients)) return false;
+        const ids = recipients.map((id) => String(id || "").trim()).filter((id) => id);
+        return ids.length === 1 && ids[0] === "user";
+    }, [isUserMessage, recipients]);
+
+    const hideDirectUserObligationSummary = useMemo(() => {
+        if (isUserMessage) return false;
+        const os = ev._obligation_status;
+        if (os && typeof os === "object") {
+            const ids = Object.keys(os);
+            return ids.length === 1 && ids[0] === "user";
+        }
+        if (ackStatus && typeof ackStatus === "object") {
+            const ids = Object.keys(ackStatus);
+            return ids.length === 1 && ids[0] === "user";
+        }
+        return isDirectUserMessage;
+    }, [ackStatus, ev._obligation_status, isDirectUserMessage, isUserMessage]);
+
     const ackSummary = useMemo(() => {
+        if (hideDirectUserObligationSummary) return null;
         if ((!isAttention && !replyRequired) || !ackStatus || typeof ackStatus !== "object") return null;
         const ids = Object.keys(ackStatus);
         if (ids.length === 0) return null;
@@ -222,9 +242,10 @@ export const MessageBubble = memo(function MessageBubble({
         const needsUserAck =
             Object.prototype.hasOwnProperty.call(ackStatus, "user") && !ackStatus["user"] && !isUserMessage;
         return { done, total: ids.length, needsUserAck };
-    }, [ackStatus, isAttention, isUserMessage, replyRequired]);
+    }, [ackStatus, hideDirectUserObligationSummary, isAttention, isUserMessage, replyRequired]);
 
     const obligationSummary = useMemo(() => {
+        if (hideDirectUserObligationSummary) return null;
         const os = ev._obligation_status;
         if (!os || typeof os !== "object") return null;
         const ids = Object.keys(os);
@@ -237,7 +258,7 @@ export const MessageBubble = memo(function MessageBubble({
         }
         const done = ids.reduce((n, id) => n + (os[id]?.acked ? 1 : 0), 0);
         return { kind: "ack" as const, done, total: ids.length };
-    }, [ev._obligation_status]);
+    }, [ev._obligation_status, hideDirectUserObligationSummary]);
 
     const toLabel = useMemo(() => {
         if (hasDestination) {
@@ -709,23 +730,6 @@ export const MessageBubble = memo(function MessageBubble({
 
                     {!readOnly && (
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {ackSummary && ackSummary.needsUserAck && ev.id && !isUserMessage && !replyRequired && (
-                            <button
-                                type="button"
-                                className={classNames(
-                                    "touch-target-sm px-2.5 py-1 rounded-lg border text-[11px] font-semibold transition-colors",
-                                    isDark
-                                        ? "border-amber-700/60 bg-amber-900/30 text-amber-200 hover:bg-amber-900/50"
-                                        : "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100"
-                                )}
-                                onClick={() => onAck?.(String(ev.id))}
-                                aria-label={t('acknowledgeImportant')}
-                                disabled={!onAck}
-                                title={t('acknowledge')}
-                            >
-                                {t('acknowledge')}
-                            </button>
-                        )}
                         {ev.id && onCopyLink ? (
                             <button
                                 type="button"

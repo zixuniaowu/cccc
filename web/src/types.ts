@@ -127,6 +127,22 @@ export type CapabilityRecentSuccess = {
   last_action?: string;
 };
 
+export type CapabilityReadinessPreview = {
+  preview_status?: string;
+  next_step?: string;
+  preview_basis?: string[];
+  policy_level?: string;
+  enable_supported?: boolean;
+  install_mode?: string;
+  required_env?: string[];
+  missing_env?: string[];
+  cached_install_state?: string;
+  install_error_code?: string;
+  enable_block_reason?: string;
+  policy_source?: string;
+  policy_mode?: string;
+};
+
 export type CapabilityOverviewItem = {
   capability_id: string;
   kind?: string;
@@ -148,6 +164,7 @@ export type CapabilityOverviewItem = {
   blocked_reason?: string;
   autoload_candidate?: boolean;
   recent_success?: CapabilityRecentSuccess;
+  readiness_preview?: CapabilityReadinessPreview;
   cached_install_state?: string;
   cached_install_error_code?: string;
   cached_install_error?: string;

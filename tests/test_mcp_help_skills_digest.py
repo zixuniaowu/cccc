@@ -39,7 +39,7 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("## Gap Routing", markdown)
         self.assertIn("cccc_capability_search(kind=\"mcp_toolpack\")", markdown)
         self.assertIn("cccc_capability_use", markdown)
-        self.assertIn("capability-skill is runtime capsule activation", markdown)
+        self.assertIn("capsule skill is runtime capsule activation", markdown)
         self.assertIn("$CODEX_HOME/skills", markdown)
         self.assertIn("### Todo (runtime-first)", markdown)
         self.assertIn("Every concrete user ask/question (even simple) = one runtime todo item", markdown)

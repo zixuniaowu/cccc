@@ -55,7 +55,6 @@ export function useChatTab({
     closeChatWindow,
     openChatWindow,
     loadMoreHistory,
-    updateAckStatus,
   } = useGroupStore();
 
   const {
@@ -374,21 +373,6 @@ export function useChatTab({
     onMessageSent,
   ]);
 
-  const acknowledgeMessage = useCallback(
-    async (eventId: string) => {
-      const eid = String(eventId || "").trim();
-      if (!eid) return;
-      if (!selectedGroupId) return;
-      const resp = await api.ackMessage(selectedGroupId, eid);
-      if (!resp.ok) {
-        showError(`${resp.error.code}: ${resp.error.message}`);
-        return;
-      }
-      updateAckStatus(eid, "user");
-    },
-    [selectedGroupId, showError, updateAckStatus]
-  );
-
   const copyMessageLink = useCallback(
     async (eventId: string) => {
       const eid = String(eventId || "").trim();
@@ -597,7 +581,6 @@ export function useChatTab({
 
     // Actions
     sendMessage,
-    acknowledgeMessage,
     copyMessageLink,
     startReply,
     showRecipients,

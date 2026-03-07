@@ -885,7 +885,6 @@ export function SettingsModal({
                 <CapabilitiesTab
                   isDark={isDark}
                   isActive={scope === "global" && activeTab === "capabilities"}
-                  groupId={groupId}
                 />
               )}
 

@@ -195,6 +195,11 @@ class TestMcpCapabilityUse(unittest.TestCase):
         self.assertEqual(str(skill_payload.get("capability_id") or ""), "skill:anthropic:triage")
         self.assertEqual(str(result.get("skill_mode") or ""), "capsule_runtime")
         self.assertFalse(bool(result.get("full_local_skill_equivalent")))
+        self.assertFalse(bool(result.get("dynamic_tools_expected")))
+        runtime_visible_in = result.get("runtime_visible_in") if isinstance(result.get("runtime_visible_in"), list) else []
+        self.assertIn("active_capsule_skills", runtime_visible_in)
+        self.assertIn("active_capsule_skills", str(result.get("runtime_activation_evidence") or ""))
+        self.assertIn("dynamic_tools", str(result.get("next_step_hint") or ""))
         self.assertIn("$CODEX_HOME/skills", str(result.get("next_step_hint") or ""))
         enable_mock.assert_called_once()
         call_mock.assert_not_called()
@@ -222,6 +227,10 @@ class TestMcpCapabilityUse(unittest.TestCase):
         self.assertFalse(bool(result.get("enabled")))
         self.assertEqual(str(result.get("skill_mode") or ""), "capsule_runtime")
         self.assertFalse(bool(result.get("full_local_skill_equivalent")))
+        self.assertFalse(bool(result.get("dynamic_tools_expected")))
+        runtime_visible_in = result.get("runtime_visible_in") if isinstance(result.get("runtime_visible_in"), list) else []
+        self.assertIn("active_capsule_skills", runtime_visible_in)
+        self.assertIn("active_capsule_skills", str(result.get("runtime_activation_evidence") or ""))
         self.assertIn("$CODEX_HOME/skills", str(result.get("next_step_hint") or ""))
 
 

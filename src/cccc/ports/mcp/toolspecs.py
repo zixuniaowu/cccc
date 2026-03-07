@@ -275,7 +275,7 @@ MCP_TOOLS = [
             "Import an agent-prepared normalized capability record (mcp_toolpack or skill) from any external source. "
             "Daemon performs validation/probe/persist and can optionally enable after import. "
             "record.source_id is optional; empty/unknown values are normalized to manual_import. "
-            "Use dry_run=true first when record quality is uncertain."
+            "Dry runs return readiness_preview; external capability actionability follows external capability safety mode."
         ),
         "inputSchema": _obj(
             {
@@ -381,7 +381,8 @@ MCP_TOOLS = [
         "description": (
             "One-step capability use: enable capability and optionally call a target tool. "
             "For skill:* capabilities this is runtime capsule activation (not full local skill package install). "
-            "If enable is not ready, inspect diagnostics/resolution_plan and resolve blockers before retry."
+            "If enable returns activation_pending, relist/reconnect before claiming success; inspect diagnostics/resolution_plan for blockers. "
+            "For skill:* capsule runtime, success is primarily visible in capability_state.active_capsule_skills, not necessarily in dynamic_tools."
         ),
         "inputSchema": _obj(
             {

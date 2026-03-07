@@ -528,6 +528,7 @@ Notes:
    command candidates when package metadata is incomplete.
 5. External enable runs preflight first (required env, runtime binary availability, remote URL sanity) and returns
    `reason=preflight_failed:<code>` on deterministic blockers.
+6. `activation_pending` means relist/reconnect is still required; `runnable` means binding is live enough to try; `verified` is reserved for post-call proof, not plain enable.
 
 Args:
 ```ts
@@ -553,7 +554,7 @@ Result:
   capability_id: string
   scope: "group" | "actor" | "session"
   enabled: boolean
-  state: "ready" | "failed"
+  state: "activation_pending" | "runnable" | "blocked" | "disabled"
   refresh_required: boolean
   refresh_mode?: "relist_or_reconnect"
   wait?: "relist_or_reconnect"
@@ -641,7 +642,7 @@ Result:
   capability_id: string
   scope: "group" | "global"
   blocked: boolean
-  state: "ready"
+  state: "blocked" | "unblocked"
   removed_bindings: number
   removed_runtime_bindings: number
   refresh_required: boolean
@@ -843,7 +844,7 @@ Result:
   deduped?: boolean
   record: Record<string, unknown>
   probe: {
-    state: "ready" | "failed" | "skipped"
+    state: "runnable" | "failed" | "skipped"
     kind?: "mcp_toolpack" | "skill"
     reason?: string
     tool_count?: number
@@ -861,10 +862,22 @@ Result:
   effective_policy_level: "indexed" | "mounted" | "enabled" | "pinned"
   enableable_now: boolean
   enable_block_reason?: "policy_level_indexed" | "qualification_blocked" | "capability_unavailable"
+  readiness_preview?: {
+    preview_status: "blocked" | "enableable" | "needs_inspect"
+    next_step: string
+    preview_basis?: string[]
+    required_env?: string[]
+    missing_env?: string[]
+    cached_install_state?: string
+    install_error_code?: string
+    enable_block_reason?: "policy_level_indexed" | "qualification_blocked" | "capability_unavailable" | "missing_required_env"
+    policy_source?: "external_capability_safety_mode"
+    policy_mode?: "conservative"
+  }
   enable_after_import: boolean
   enable_result?: Record<string, unknown> // same shape family as capability_enable
   refresh_required: boolean
-  state: "ready" | "failed"
+  state: "blocked" | "enableable" | "needs_inspect" | "activation_pending" | "runnable" | "verified"
   reason?: string
 }
 ```
@@ -890,6 +903,7 @@ Result:
   overlay_error: string
   policy_source: string
   policy_error: string
+  external_capability_safety_mode: "normal" | "conservative"
 }
 ```
 
@@ -915,6 +929,7 @@ Result:
   overlay: Record<string, unknown>
   effective: Record<string, unknown>
   revision: string
+  external_capability_safety_mode: "normal" | "conservative"
 }
 ```
 
@@ -943,6 +958,7 @@ Result:
   effective: Record<string, unknown>
   policy_source: string
   policy_error: string
+  external_capability_safety_mode: "normal" | "conservative"
 }
 ```
 
@@ -973,6 +989,7 @@ Result:
   overlay_error: string
   policy_source: string
   policy_error: string
+  external_capability_safety_mode: "normal" | "conservative"
 }
 ```
 

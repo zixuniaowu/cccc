@@ -135,12 +135,13 @@ If one dimension is critically weak, narrow scope or add mitigation before imple
 1. fast path: `cccc_capability_use(...)`
 2. discovery: `cccc_capability_search(kind="mcp_toolpack"|"skill", query=...)`
 3. then `cccc_capability_use(capability_id=..., scope="session")`
-4. if `refresh_required=true`, relist/reconnect then retry
+4. if state is `activation_pending` or `refresh_required=true`, relist/reconnect then retry
 5. if still not ready, read `diagnostics` + `resolution_plan`; ask the user only for real env/permission blockers
 
 ## Capability Hygiene
 
 - Discover first: `cccc_capability_search`
+- Use `readiness_preview` from search/import dry-run to spot blockers before enable retries
 - Discover built-in packs without guessing keywords: `cccc_capability_search(kind="mcp_toolpack")`
 - Enable only what is needed now: `cccc_capability_enable` (prefer `scope=session`)
 - Fast path for execution: `cccc_capability_use`
@@ -151,7 +152,8 @@ If one dimension is critically weak, narrow scope or add mitigation before imple
 - Stop + best-effort cache cleanup: `cccc_capability_enable(enabled=false, cleanup=true)`
 - Cleanup unused external capability cache/bindings after work: `cccc_capability_uninstall`
 - Skill note:
-  - capability-skill is runtime capsule activation, not a full local skill-package install
+  - capsule skill is runtime capsule activation, not a full local skill-package install
+  - skill runtime success is primarily visible via `capability_state.active_capsule_skills`; `dynamic_tools` may stay unchanged
   - if you need full local skill scripts/assets, install a normal skill package into `$CODEX_HOME/skills`
 
 ## Role Notes
