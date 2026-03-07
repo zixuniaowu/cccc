@@ -3,7 +3,7 @@ import type { LayoutItem } from "../hooks/useCharacterAnimation";
 import type { Actor, AgentState, Task } from "../types";
 import { deriveAnimState, type AgentAnimState } from "./actorUtils";
 
-export type SemanticZoneKind = "foreman" | "blocked" | "task" | "thinking" | "idle" | "offline";
+export type SemanticZoneKind = "foreman" | "blocked" | "task" | "idle" | "offline";
 
 export interface SemanticZone {
   id: string;
@@ -24,7 +24,7 @@ export interface SemanticMapState {
   bedInstances: BedInstance[];
 }
 
-export const SEMANTIC_MAP_SCENE_EXTENT = 10;
+export const SEMANTIC_MAP_SCENE_EXTENT = 9;
 
 const TASK_ZONE_COLORS = ["#2563eb", "#0f766e", "#7c3aed"];
 
@@ -135,7 +135,6 @@ export function buildSemanticMapState(
 
   const foremanIds: string[] = [];
   const blockedIds: string[] = [];
-  const thinkingIds: string[] = [];
   const idleIds: string[] = [];
   const offlineIds: string[] = [];
   const taskGroups = new Map<string, string[]>();
@@ -163,12 +162,12 @@ export function buildSemanticMapState(
       continue;
     }
 
-    if (derived === "thinking") {
-      thinkingIds.push(agent.id);
+    if (isForeman && hasLiveTask && (derived === "working" || derived === "thinking")) {
+      foremanIds.push(agent.id);
       continue;
     }
 
-    if (!isForeman && derived === "working" && hasLiveTask) {
+    if (!isForeman && hasLiveTask && (derived === "working" || derived === "thinking")) {
       const bucket = taskGroups.get(activeTaskId) || [];
       bucket.push(agent.id);
       taskGroups.set(activeTaskId, bucket);
@@ -179,12 +178,12 @@ export function buildSemanticMapState(
   }
 
   const compressedTasks = compressTaskGroups(taskGroups, taskMap);
-  const taskZoneWidth = compressedTasks.length <= 1 ? 12 : compressedTasks.length === 2 ? 8 : 5.5;
+  const taskZoneWidth = compressedTasks.length <= 1 ? 10.2 : compressedTasks.length === 2 ? 6.8 : 4.5;
   const taskCenters = compressedTasks.length <= 1
     ? [0]
     : compressedTasks.length === 2
-      ? [-4.2, 4.2]
-      : [-5.5, 0, 5.5];
+      ? [-3.8, 3.8]
+      : [-4.8, 0, 4.8];
 
   const zones: SemanticZone[] = [
     {
@@ -193,8 +192,8 @@ export function buildSemanticMapState(
       label: "受阻区",
       subtitle: `${blockedIds.length} 人`,
       color: "#b91c1c",
-      center: [-5.5, 0, 6.5],
-      size: [5.5, 3.2],
+      center: [-4.8, 0, 4.9],
+      size: [4.6, 2.9],
       agentIds: blockedIds,
     },
     {
@@ -203,8 +202,8 @@ export function buildSemanticMapState(
       label: "指挥区",
       subtitle: `${foremanIds.length} 人`,
       color: "#c2410c",
-      center: [5.5, 0, 6.5],
-      size: [5.5, 3.2],
+      center: [4.8, 0, 4.9],
+      size: [4.6, 2.9],
       agentIds: foremanIds,
     },
     ...compressedTasks.map((taskGroup, index) => ({
@@ -214,28 +213,18 @@ export function buildSemanticMapState(
       subtitle: `${taskGroup.agentIds.length} 人`,
       color: TASK_ZONE_COLORS[index % TASK_ZONE_COLORS.length],
       center: [taskCenters[index] ?? 0, 0, 0] as [number, number, number],
-      size: [taskZoneWidth, 5.4] as [number, number],
+      size: [taskZoneWidth, 4.6] as [number, number],
       agentIds: taskGroup.agentIds,
       taskId: taskGroup.taskId,
     })),
-    {
-      id: "thinking",
-      kind: "thinking",
-      label: "思考区",
-      subtitle: `${thinkingIds.length} 人`,
-      color: "#7c3aed",
-      center: [0, 0, -6.5],
-      size: [5.2, 3.5],
-      agentIds: thinkingIds,
-    },
     {
       id: "idle",
       kind: "idle",
       label: "休闲区",
       subtitle: `${idleIds.length} 人`,
       color: "#0f766e",
-      center: [-6.2, 0, -6.5],
-      size: [5.1, 3.5],
+      center: [-4.8, 0, -4.4],
+      size: [4.4, 2.9],
       agentIds: idleIds,
     },
     {
@@ -244,8 +233,8 @@ export function buildSemanticMapState(
       label: "离线区",
       subtitle: `${offlineIds.length} 人`,
       color: "#475569",
-      center: [6.2, 0, -6.5],
-      size: [5.1, 3.5],
+      center: [4.8, 0, -4.4],
+      size: [4.4, 2.9],
       agentIds: offlineIds,
     },
   ];

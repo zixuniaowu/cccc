@@ -99,17 +99,24 @@ function Scene({ agents, actors, tasks, tasksSummary: _tasksSummary, projectStat
 
   return (
     <>
-      <ambientLight intensity={isDark ? 0.35 : 0.6} />
+      <ambientLight intensity={isDark ? 0.42 : 0.72} />
       <directionalLight
-        position={[5, 8, 5]}
-        intensity={isDark ? 0.7 : 0.9}
+        position={[4.5, 7.5, 4]}
+        intensity={isDark ? 0.85 : 1}
         castShadow
         shadow-mapSize-width={1024}
         shadow-mapSize-height={1024}
       />
       <directionalLight
-        position={[-3, 4, -3]}
-        intensity={isDark ? 0.15 : 0.25}
+        position={[-4, 4.5, -2.5]}
+        intensity={isDark ? 0.2 : 0.3}
+      />
+      <pointLight
+        position={[0, 4.25, -2.8]}
+        intensity={isDark ? 1 : 0.8}
+        distance={18}
+        decay={2}
+        color={isDark ? "#67e8f9" : "#60a5fa"}
       />
 
       <MCGround />
@@ -273,22 +280,22 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
         style={{
           minHeight: 280,
           borderRadius: 12,
-          background: isDark ? "#191970" : "#87CEEB",
+          background: isDark ? "#0f172a" : "#dbe4ee",
         }}
       />
     );
   }
 
   const cameraConfig = {
-    position: [camZ * 0.6, camZ * 0.5, camZ] as [number, number, number],
-    fov: 45,
+    position: [camZ * 0.55, camZ * 0.42, camZ * 0.88] as [number, number, number],
+    fov: 42,
     near: 0.1,
     far: 100,
   };
 
   const canvasStyle = {
     borderRadius: 12,
-    background: isDark ? "#191970" : "#87CEEB",
+    background: isDark ? "#0f172a" : "#dbe4ee",
   };
 
   const glProp = renderMode === "webgpu"

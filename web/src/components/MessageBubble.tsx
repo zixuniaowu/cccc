@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from 'react-i18next';
 
 import {
@@ -17,7 +17,7 @@ import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
-import { ImageIcon, FileIcon } from "./Icons";
+import { ImageIcon, FileIcon, CloseIcon } from "./Icons";
 
 
 function formatEventLine(ev: LedgerEvent): string {
@@ -41,7 +41,24 @@ function ImagePreview({
     isDark: boolean;
 }) {
     const [loadError, setLoadError] = useState(false);
+    const [isLightboxOpen, setIsLightboxOpen] = useState(false);
     const { t } = useTranslation('chat');
+
+    useEffect(() => {
+        if (!isLightboxOpen) {
+            return undefined;
+        }
+
+        // 支持 ESC 关闭，保持图片预览可快速退出。
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") {
+                setIsLightboxOpen(false);
+            }
+        };
+
+        window.addEventListener("keydown", handleKeyDown);
+        return () => window.removeEventListener("keydown", handleKeyDown);
+    }, [isLightboxOpen]);
 
     if (loadError) {
         // Fallback to file download link on error
@@ -66,20 +83,108 @@ function ImagePreview({
     }
 
     return (
-        <a
-            href={href}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block rounded-lg overflow-hidden max-w-full"
-        >
-            <img
-                src={href}
-                alt={alt}
-                className="max-w-full max-h-64 sm:max-h-80 object-contain rounded-lg"
-                loading="lazy"
-                onError={() => setLoadError(true)}
-            />
-        </a>
+        <>
+            <button
+                type="button"
+                className="group block max-w-full overflow-hidden rounded-lg"
+                onClick={() => setIsLightboxOpen(true)}
+                aria-label={t('openImagePreview', { name: alt })}
+                title={t('openImagePreview', { name: alt })}
+            >
+                <img
+                    src={href}
+                    alt={alt}
+                    className="max-w-full max-h-64 cursor-zoom-in object-contain rounded-lg transition-opacity group-hover:opacity-95 sm:max-h-80"
+                    loading="lazy"
+                    onError={() => setLoadError(true)}
+                />
+            </button>
+
+            {isLightboxOpen && (
+                <FloatingPortal>
+                    <div className="fixed inset-0 z-[80] flex items-center justify-center p-3 sm:p-6 animate-fade-in">
+                        <button
+                            type="button"
+                            className={classNames(
+                                "absolute inset-0",
+                                isDark ? "bg-black/80" : "bg-black/60"
+                            )}
+                            onClick={() => setIsLightboxOpen(false)}
+                            aria-label={t('common:close')}
+                        />
+
+                        <div
+                            className={classNames(
+                                "relative z-[81] flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border shadow-2xl",
+                                isDark ? "border-slate-700 bg-slate-950/95" : "border-gray-200 bg-white/95"
+                            )}
+                            role="dialog"
+                            aria-modal="true"
+                            aria-label={t('imagePreviewDialog')}
+                            onClick={(event) => event.stopPropagation()}
+                        >
+                            <div className={classNames(
+                                "flex items-center justify-between gap-3 border-b px-4 py-3",
+                                isDark ? "border-slate-800" : "border-gray-200"
+                            )}>
+                                <div className="min-w-0">
+                                    <p className={classNames(
+                                        "truncate text-sm font-medium",
+                                        isDark ? "text-slate-100" : "text-gray-900"
+                                    )}>
+                                        {alt}
+                                    </p>
+                                    <p className={classNames(
+                                        "text-xs",
+                                        isDark ? "text-slate-400" : "text-gray-500"
+                                    )}>
+                                        {t('imagePreviewHint')}
+                                    </p>
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                    <a
+                                        href={href}
+                                        download
+                                        className={classNames(
+                                            "inline-flex items-center rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                                            isDark
+                                                ? "bg-slate-800 text-slate-100 hover:bg-slate-700"
+                                                : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                                        )}
+                                        title={t('download', { name: alt })}
+                                    >
+                                        {t('download', { name: alt })}
+                                    </a>
+
+                                    <button
+                                        type="button"
+                                        onClick={() => setIsLightboxOpen(false)}
+                                        className={classNames(
+                                            "inline-flex items-center justify-center rounded-lg p-2 transition-colors",
+                                            isDark
+                                                ? "text-slate-300 hover:bg-slate-800 hover:text-slate-100"
+                                                : "text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+                                        )}
+                                        aria-label={t('common:close')}
+                                    >
+                                        <CloseIcon size={18} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="flex items-center justify-center overflow-auto p-4 sm:p-6">
+                                <img
+                                    src={href}
+                                    alt={alt}
+                                    className="max-h-[75vh] w-auto max-w-full rounded-xl object-contain"
+                                />
+                            </div>
+                        </div>
+                    </div>
+                </FloatingPortal>
+            )}
+        </>
     );
 }
 

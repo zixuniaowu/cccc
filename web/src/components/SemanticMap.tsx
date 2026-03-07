@@ -145,14 +145,6 @@ function createPatternTexture(kind: SemanticZoneKind, baseColor: string, accentC
       ctx.lineWidth = 10;
       ctx.stroke();
     }
-  } else if (kind === "thinking") {
-    for (let x = -size; x < size * 2; x += 24) {
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x + size * 0.5, size);
-      ctx.lineWidth = 3;
-      ctx.stroke();
-    }
   } else if (kind === "idle") {
     for (let y = 12; y < size; y += 20) {
       for (let x = 12; x < size; x += 20) {
@@ -210,20 +202,20 @@ function TerrainBackdrop({ isDark }: { isDark: boolean }) {
   const sand = isDark ? "#6b5d2e" : "#b59d5a";
   return (
     <group>
-      <mesh position={[-6.6, 0.012, -1.2]} rotation={[0, -0.28, 0]}>
-        <boxGeometry args={[4.8, 0.014, 6.2]} />
+      <mesh position={[-5.6, 0.012, -0.6]} rotation={[0, -0.22, 0]}>
+        <boxGeometry args={[3.6, 0.014, 4.8]} />
         <meshStandardMaterial color={forest} transparent opacity={0.22} />
       </mesh>
-      <mesh position={[6.4, 0.012, -0.8]} rotation={[0, 0.18, 0]}>
-        <boxGeometry args={[4.2, 0.014, 5.8]} />
+      <mesh position={[5.5, 0.012, -0.4]} rotation={[0, 0.16, 0]}>
+        <boxGeometry args={[3.4, 0.014, 4.6]} />
         <meshStandardMaterial color={water} transparent opacity={0.2} />
       </mesh>
-      <mesh position={[0, 0.011, 7.6]}>
-        <boxGeometry args={[12.8, 0.012, 1.3]} />
+      <mesh position={[0, 0.011, 6.2]}>
+        <boxGeometry args={[10.4, 0.012, 1]} />
         <meshStandardMaterial color={ridge} transparent opacity={0.18} />
       </mesh>
-      <mesh position={[0, 0.011, -7.8]}>
-        <boxGeometry args={[10.8, 0.012, 0.8]} />
+      <mesh position={[0, 0.011, -6.4]}>
+        <boxGeometry args={[8.8, 0.012, 0.6]} />
         <meshStandardMaterial color={sand} transparent opacity={0.16} />
       </mesh>
     </group>
@@ -236,10 +228,10 @@ function EdgeLandmarks({ isDark }: { isDark: boolean }) {
   return (
     <group>
       {[
-        [-8.3, 0.24, 7.1],
-        [8.1, 0.24, 7.0],
-        [-8.0, 0.24, -7.0],
-        [8.2, 0.24, -7.2],
+        [-6.7, 0.24, 5.8],
+        [6.7, 0.24, 5.8],
+        [-6.5, 0.24, -5.7],
+        [6.5, 0.24, -5.7],
       ].map((pos, index) => (
         <group key={`landmark-${index}`} position={pos as [number, number, number]}>
           <mesh>
@@ -313,21 +305,6 @@ function ZoneDecor({ zone, isDark }: { zone: SemanticZone; isDark: boolean }) {
   const metal = isDark ? "#cbd5e1" : "#94a3b8";
   const wood = isDark ? "#475569" : "#64748b";
   const accent = lightenHex(zone.color, 0.25);
-
-  if (zone.kind === "thinking") {
-    return (
-      <group>
-        <mesh position={[0, 0.12, 0.7]}>
-          <cylinderGeometry args={[0.36, 0.42, 0.2, 12]} />
-          <meshStandardMaterial color={accent} flatShading emissive={accent} emissiveIntensity={0.12} />
-        </mesh>
-        <mesh position={[0, 0.34, 0.7]}>
-          <boxGeometry args={[0.14, 0.28, 0.14]} />
-          <meshStandardMaterial color={metal} flatShading />
-        </mesh>
-      </group>
-    );
-  }
 
   if (zone.kind === "idle") {
     return (
