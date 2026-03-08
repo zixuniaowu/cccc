@@ -606,7 +606,6 @@
     },
     "accessControlTitle": "Access Tokens",
     "accessControlDescription": "Create admin or scoped Access Tokens. Scoped tokens can use only their assigned groups. Once at least one token exists, browsers without a token must sign in to use Web APIs, even on localhost.",
-    "tokenCount": "{{count}} configured",
     "userIdLabel": "User label",
     "userIdPlaceholder": "for example: owner, ops, analyst",
     "userIdRequired": "User label is required.",

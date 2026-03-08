@@ -606,7 +606,6 @@
     },
     "accessControlTitle": "アクセストークン",
     "accessControlDescription": "管理者またはスコープ付きアクセストークンを作成します。スコープ付きトークンは割り当てられたグループだけを利用できます。トークンが 1 つでも存在すると、localhost であってもトークンを持たないブラウザは Web API 利用前にサインインが必要です。",
-    "tokenCount": "{{count}} 件設定済み",
     "userIdLabel": "ユーザーラベル",
     "userIdPlaceholder": "例: owner, ops, analyst",
     "userIdRequired": "ユーザーラベルは必須です。",

@@ -11,7 +11,9 @@ function needsTokenLogin(resp: api.ApiResponse<unknown>): boolean {
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { isDark } = useTheme();
-  const [status, setStatus] = useState<AuthStatus>("checking");
+  const initialForceLogin = api.shouldForceTokenLogin();
+  const forceLoginRef = useRef(initialForceLogin);
+  const [status, setStatus] = useState<AuthStatus>(initialForceLogin ? "login" : "checking");
   const [token, setToken] = useState("");
   const [showToken, setShowToken] = useState(false);
   const [error, setError] = useState("");
@@ -27,12 +29,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (calledRef.current) return;
     calledRef.current = true;
-    if (api.shouldForceTokenLogin()) {
+    if (forceLoginRef.current) {
       api.clearAuthToken();
-      setStatus("login");
       return;
     }
+    let cancelled = false;
     api.fetchGroups().then((resp) => {
+      if (cancelled) return;
       if (resp.ok) {
         setStatus("authenticated");
       } else if (needsTokenLogin(resp)) {
@@ -43,6 +46,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         setStatus("authenticated");
       }
     });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Subscribe to mid-session 401s so the gate re-appears.

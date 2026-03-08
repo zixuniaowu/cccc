@@ -622,20 +622,17 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
             <h4 className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("webAccess.accessControlTitle")}</h4>
             <p className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("webAccess.accessControlDescription")}</p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, knownAccessTokenCount > 0 ? "good" : "neutral")}`}>
-              {t("webAccess.tokenCount", { count: knownAccessTokenCount })}
-            </div>
-            {canAccessGlobalSettings && knownAccessTokenCount > 0 ? (
+          {canAccessGlobalSettings && knownAccessTokenCount > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
                 onClick={() => openCreateDialog()}
                 className={primaryButtonClass(false)}
               >
-                {t("webAccess.createAccessToken")}
+                {t("common:create")}
               </button>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-4 space-y-3">
@@ -653,7 +650,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
                 onClick={() => openCreateDialog()}
                 className={`mt-4 ${primaryButtonClass(false)}`}
               >
-                {t("webAccess.createAccessToken")}
+                {t("common:create")}
               </button>
             </div>
           ) : (
@@ -971,20 +968,16 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
                         </div>
                       </div>
                     </label>
-
-                    {hasAdminToken && !isAdmin ? (
-                      <div className={`rounded-lg border px-3 py-3 ${isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-white"}`}>
-                        <div className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("webAccess.scopedTokenGroupsTitle")}</div>
-                        <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("webAccess.scopedTokenGroupsHint")}</div>
-                      </div>
-                    ) : null}
                   </div>
                 </div>
 
                 {hasAdminToken && !isAdmin ? (
-                  <div className={`mt-3 rounded-lg border p-3 ${isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-white"}`}>
-                    <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("webAccess.groupScopeTitle")}</div>
-                    <div className="mt-2 max-h-44 overflow-y-auto space-y-2 pr-1">
+                  <div className={`mt-4 rounded-lg border p-3 ${isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-white"}`}>
+                    <div className="flex flex-col gap-1">
+                      <div className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("webAccess.groupScopeTitle")}</div>
+                      <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("webAccess.scopedTokenGroupsHint")}</div>
+                    </div>
+                    <div className="mt-3 max-h-44 overflow-y-auto space-y-2 pr-1">
                       {groups.length === 0 ? (
                         <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("webAccess.noGroups")}</div>
                       ) : groups.map((group) => {

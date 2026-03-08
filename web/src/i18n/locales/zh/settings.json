@@ -606,7 +606,6 @@
     },
     "accessControlTitle": "访问令牌",
     "accessControlDescription": "创建管理员或受限访问令牌。受限令牌只能使用其被授权的工作组。只要至少存在一个令牌，没有令牌的浏览器在访问 Web API 时就必须先登录，即使是在 localhost 上。",
-    "tokenCount": "已配置 {{count}} 个",
     "userIdLabel": "用户标识",
     "userIdPlaceholder": "例如：owner、ops、analyst",
     "userIdRequired": "必须填写用户标识。",

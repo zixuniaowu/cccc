@@ -365,8 +365,8 @@ export function ContextModal({
   isDark,
 }: ContextModalProps) {
   const { t } = useTranslation("modals");
-  const tr = (key: string, fallback: string, vars?: Record<string, unknown>) =>
-    String(t(key as never, { defaultValue: fallback, ...(vars || {}) } as never));
+  const tr = useCallback((key: string, fallback: string, vars?: Record<string, unknown>) =>
+    String(t(key as never, { defaultValue: fallback, ...(vars || {}) } as never)), [t]);
 
   const [activeView, setActiveView] = useState<"coordination" | "agents">("coordination");
   const [steeringTab, setSteeringTab] = useState<"summary" | "project" | "log">("summary");

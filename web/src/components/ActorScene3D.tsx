@@ -1,4 +1,4 @@
-import { Suspense, useMemo, useRef, useState, useEffect, useCallback } from "react";
+import { Suspense, useMemo, useRef, useState, useEffect, useCallback, type ComponentProps } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import { ActorCharacter } from "./ActorCharacter";
@@ -180,6 +180,22 @@ function Scene({ agents, actors, tasks, tasksSummary: _tasksSummary, projectStat
 
 type RenderMode = "loading" | "webgpu" | "webgl";
 
+type WebGPUCanvas = HTMLCanvasElement | OffscreenCanvas;
+
+type WebGPURendererLike = THREE.WebGLRenderer & {
+  init: () => Promise<void>;
+};
+
+interface WebGPUModuleLike {
+  WebGPURenderer: new (params: {
+    canvas: HTMLCanvasElement;
+    antialias: boolean;
+    alpha: boolean;
+  }) => WebGPURendererLike;
+}
+
+type CanvasGlFactory = (canvas: WebGPUCanvas) => THREE.WebGLRenderer;
+
 export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
   const [followTarget, setFollowTarget] = useState<string | null>(null);
 
@@ -193,7 +209,7 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
 
   // Phase 1: detect WebGPU + dynamically load three/webgpu module
   const [renderMode, setRenderMode] = useState<RenderMode>("loading");
-  const gpuModRef = useRef<any>(null);
+  const gpuModRef = useRef<WebGPUModuleLike | null>(null);
 
   useEffect(() => {
     // WebGPU is opt-in via ?webgpu URL param (R3F v8 has limited WebGPU compat)
@@ -210,7 +226,7 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
     import("three/webgpu")
       .then((mod) => {
         if (cancelled) return;
-        gpuModRef.current = mod;
+        gpuModRef.current = mod as unknown as WebGPUModuleLike;
         setRenderMode("webgpu");
       })
       .catch(() => {
@@ -223,10 +239,13 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
   // Stable gl factory for WebGPU -- avoids re-creation on every render.
   // Uses a render-guard so R3F can keep frameloop="always" (required for
   // OrbitControls) while WebGPURenderer.init() resolves asynchronously.
-  const createWebGPURenderer = useCallback((canvas: HTMLCanvasElement) => {
+  const createWebGPURenderer = useCallback<CanvasGlFactory>((canvas) => {
     const GPU = gpuModRef.current;
+    if (!GPU) {
+      throw new Error("WebGPU module not loaded");
+    }
     const renderer = new GPU.WebGPURenderer({
-      canvas,
+      canvas: canvas as HTMLCanvasElement,
       antialias: true,
       alpha: false,
     });
@@ -234,8 +253,8 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
     renderer.shadowMap.type = THREE.PCFShadowMap;
 
     // XR stub -- prevents R3F v8 "xr.addEventListener is not a function" error
-    if (!(renderer as any).xr) {
-      (renderer as any).xr = {
+    if (!renderer.xr) {
+      const xrStub = {
         addEventListener: () => {},
         removeEventListener: () => {},
         getSession: () => null,
@@ -247,7 +266,8 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
         getCamera: () => new THREE.PerspectiveCamera(),
         setAnimationLoop: () => {},
         dispose: () => {},
-      };
+      } as unknown as THREE.WebXRManager;
+      Object.assign(renderer, { xr: xrStub });
     }
 
     // Guard: R3F calls gl.render() every frame via its rAF loop.
@@ -298,8 +318,8 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
     background: isDark ? "#0f172a" : "#dbe4ee",
   };
 
-  const glProp = renderMode === "webgpu"
-    ? (createWebGPURenderer as any)
+  const glProp: ComponentProps<typeof Canvas>["gl"] = renderMode === "webgpu"
+    ? createWebGPURenderer
     : { antialias: true, alpha: false };
 
   return (
