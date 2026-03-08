@@ -479,7 +479,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         has_cookie_token = False
         try:
             cookies = getattr(websocket, "cookies", None) or {}
-            has_cookie_token = bool(str(cookies.get("cccc_web_token") or "").strip())
+            has_cookie_token = bool(str(cookies.get("cccc_access_token") or "").strip())
         except Exception:
             has_cookie_token = False
         has_query_token = bool(str(websocket.query_params.get("token") or "").strip())

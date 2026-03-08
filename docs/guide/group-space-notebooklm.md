@@ -19,11 +19,7 @@ export CCCC_NOTEBOOKLM_REAL=1
 cccc
 ```
 
-If you expose Web outside localhost, also set a web token:
-
-```bash
-export CCCC_WEB_TOKEN="change-me"
-```
+If you expose Web outside localhost, first create an **Admin Access Token** in **Settings > Web Access** and keep the service behind a network boundary until that token exists.
 
 ## 2. Open Notebook Settings
 

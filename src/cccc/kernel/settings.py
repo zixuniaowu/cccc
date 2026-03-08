@@ -165,13 +165,12 @@ DEFAULT_OBSERVABILITY: Dict[str, Any] = {
 DEFAULT_REMOTE_ACCESS: Dict[str, Any] = {
     "provider": "off",          # off | manual | tailscale
     "mode": "tailnet_only",     # reserved for future extension
-    "enforce_web_token": True,  # security-first default
+    "require_access_token": True,  # security-first default
     "enabled": False,           # desired state for provider control
     # Optional Web binding/token overrides (empty means env/default fallback).
     "web_host": "",             # e.g. 192.168.1.20
     "web_port": 8848,            # 1..65535
     "web_public_url": "",       # e.g. https://cccc.example.com/ui/
-    "web_token": "",            # optional token override (plaintext in local settings)
     "updated_at": "",           # RFC3339 UTC timestamp (best-effort)
 }
 
@@ -257,12 +256,11 @@ def _merge_remote_access(raw: Any) -> Dict[str, Any]:
     mode = _as_str(raw.get("mode"), str(base["mode"]))
     base["mode"] = mode or str(DEFAULT_REMOTE_ACCESS["mode"])
 
-    base["enforce_web_token"] = _as_bool(raw.get("enforce_web_token"), bool(base["enforce_web_token"]))
+    base["require_access_token"] = _as_bool(raw.get("require_access_token"), bool(base["require_access_token"]))
     base["enabled"] = _as_bool(raw.get("enabled"), bool(base["enabled"]))
     base["web_host"] = str(raw.get("web_host") or "").strip()
     base["web_port"] = _as_int(raw.get("web_port"), int(base["web_port"]), min_value=1, max_value=65535)
     base["web_public_url"] = str(raw.get("web_public_url") or "").strip()
-    base["web_token"] = str(raw.get("web_token") or "").strip()
     base["updated_at"] = _as_str(raw.get("updated_at"), str(base["updated_at"]))
 
     if base["provider"] == "off":
@@ -352,10 +350,10 @@ def update_remote_access_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
         merged["mode"] = mode or str(DEFAULT_REMOTE_ACCESS["mode"])
         changed = True
 
-    if "enforce_web_token" in patch:
-        merged["enforce_web_token"] = _as_bool(
-            patch.get("enforce_web_token"),
-            bool(merged["enforce_web_token"]),
+    if "require_access_token" in patch:
+        merged["require_access_token"] = _as_bool(
+            patch.get("require_access_token"),
+            bool(merged["require_access_token"]),
         )
         changed = True
 
@@ -375,9 +373,6 @@ def update_remote_access_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
         merged["web_public_url"] = str(patch.get("web_public_url") or "").strip()
         changed = True
 
-    if "web_token" in patch:
-        merged["web_token"] = str(patch.get("web_token") or "").strip()
-        changed = True
 
     if "updated_at" in patch:
         merged["updated_at"] = _as_str(patch.get("updated_at"), str(merged.get("updated_at") or ""))

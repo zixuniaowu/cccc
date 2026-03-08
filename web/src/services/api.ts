@@ -20,6 +20,7 @@ import type {
   IMStatus,
   IMPlatform,
   RemoteAccessState,
+  WebAccessSession,
   GroupSpaceStatus,
   GroupSpaceRemoteSpace,
   GroupSpaceSource,
@@ -37,7 +38,7 @@ import type {
   TaskChecklistItem,
 } from "../types";
 
-// ============ Token management ============
+// ============ Access token auth ============
 
 // Extract and cache token from URL for dev mode (Vite doesn't proxy /ui/ to backend)
 let cachedToken: string | null = null;
@@ -1385,15 +1386,17 @@ export async function fetchRemoteAccessState() {
   return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access");
 }
 
+export async function fetchWebAccessSession() {
+  return apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session");
+}
+
 export async function updateRemoteAccessConfig(args: {
   provider?: "off" | "manual" | "tailscale";
   mode?: string;
-  enforceWebToken?: boolean;
+  requireAccessToken?: boolean;
   webHost?: string;
   webPort?: number;
   webPublicUrl?: string;
-  webToken?: string;
-  clearWebToken?: boolean;
 }) {
   return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access", {
     method: "PUT",
@@ -1401,12 +1404,10 @@ export async function updateRemoteAccessConfig(args: {
       by: "user",
       provider: args.provider,
       mode: args.mode,
-      enforce_web_token: args.enforceWebToken,
+      require_access_token: args.requireAccessToken,
       web_host: args.webHost,
       web_port: args.webPort,
       web_public_url: args.webPublicUrl,
-      web_token: args.webToken,
-      clear_web_token: args.clearWebToken,
     }),
   });
 }
@@ -1423,9 +1424,9 @@ export async function stopRemoteAccess() {
   });
 }
 
-// ============ User Token management ============
+// ============ Access token management ============
 
-export interface UserTokenEntry {
+export interface AccessTokenEntry {
   token?: string;
   token_id?: string;
   token_preview?: string;
@@ -1435,36 +1436,36 @@ export interface UserTokenEntry {
   created_at: string;
 }
 
-export async function fetchTokens() {
-  return apiJson<{ tokens: UserTokenEntry[] }>("/api/v1/tokens");
+export async function fetchAccessTokens() {
+  return apiJson<{ access_tokens: AccessTokenEntry[] }>("/api/v1/access-tokens");
 }
 
-export async function createToken(userId: string, isAdmin: boolean, allowedGroups: string[], customToken?: string) {
+export async function createAccessToken(userId: string, isAdmin: boolean, allowedGroups: string[], customToken?: string) {
   const body: Record<string, unknown> = {
     user_id: userId,
     is_admin: isAdmin,
     allowed_groups: allowedGroups,
   };
   if (customToken?.trim()) body.custom_token = customToken.trim();
-  return apiJson<{ token: UserTokenEntry }>("/api/v1/tokens", {
+  return apiJson<{ access_token: AccessTokenEntry }>("/api/v1/access-tokens", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export async function updateToken(tokenId: string, updates: { allowed_groups?: string[]; is_admin?: boolean }) {
-  return apiJson<{ token: UserTokenEntry }>(`/api/v1/tokens/${encodeURIComponent(tokenId)}`, {
+export async function updateAccessToken(tokenId: string, updates: { allowed_groups?: string[]; is_admin?: boolean }) {
+  return apiJson<{ access_token: AccessTokenEntry }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, {
     method: "PATCH",
     body: JSON.stringify(updates),
   });
 }
 
-export async function revealToken(tokenId: string) {
-  return apiJson<{ token: string }>(`/api/v1/tokens/${encodeURIComponent(tokenId)}/reveal`);
+export async function revealAccessToken(tokenId: string) {
+  return apiJson<{ token: string }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}/reveal`);
 }
 
-export async function deleteToken(tokenId: string) {
-  return apiJson<{ deleted: boolean }>(`/api/v1/tokens/${encodeURIComponent(tokenId)}`, {
+export async function deleteAccessToken(tokenId: string) {
+  return apiJson<{ deleted: boolean; access_tokens_remain?: boolean }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, {
     method: "DELETE",
   });
 }

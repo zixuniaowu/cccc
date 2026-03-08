@@ -2,10 +2,9 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 
-class TestWebTokens(unittest.TestCase):
+class TestAccessTokens(unittest.TestCase):
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
         td_ctx = tempfile.TemporaryDirectory()
@@ -21,50 +20,55 @@ class TestWebTokens(unittest.TestCase):
 
         return Path(td), cleanup
 
-    def test_create_lookup_list_delete_token(self) -> None:
-        from cccc.kernel.web_tokens import create_token, delete_token, list_tokens, lookup_token
+    def test_create_lookup_list_delete_access_token(self) -> None:
+        from cccc.kernel.access_tokens import (
+            create_access_token,
+            delete_access_token,
+            list_access_tokens,
+            lookup_access_token,
+        )
 
         _, cleanup = self._with_home()
         try:
-            created = create_token("user-a", allowed_groups=["g1", "g1", "g2"], is_admin=False)
+            created = create_access_token("user-a", allowed_groups=["g1", "g1", "g2"], is_admin=False)
             token = str(created.get("token") or "")
 
-            self.assertTrue(token.startswith("usr_"))
+            self.assertTrue(token.startswith("acc_"))
             self.assertEqual(str(created.get("user_id") or ""), "user-a")
             self.assertEqual(created.get("allowed_groups"), ["g1", "g2"])
 
-            looked_up = lookup_token(token)
+            looked_up = lookup_access_token(token)
             self.assertIsNotNone(looked_up)
             assert looked_up is not None
             self.assertEqual(str(looked_up.get("user_id") or ""), "user-a")
             self.assertEqual(looked_up.get("allowed_groups"), ["g1", "g2"])
 
-            listed = list_tokens()
+            listed = list_access_tokens()
             self.assertEqual(len(listed), 1)
             self.assertEqual(str(listed[0].get("token") or ""), token)
 
-            self.assertTrue(delete_token(token))
-            self.assertIsNone(lookup_token(token))
-            self.assertEqual(list_tokens(), [])
+            self.assertTrue(delete_access_token(token))
+            self.assertIsNone(lookup_access_token(token))
+            self.assertEqual(list_access_tokens(), [])
         finally:
             cleanup()
 
-    def test_load_tokens_tolerates_invalid_yaml(self) -> None:
-        from cccc.kernel.web_tokens import load_tokens
+    def test_load_access_tokens_tolerates_invalid_yaml(self) -> None:
+        from cccc.kernel.access_tokens import load_access_tokens
 
         home, cleanup = self._with_home()
         try:
-            (home / "web_tokens.yaml").write_text("tokens: [", encoding="utf-8")
-            self.assertEqual(load_tokens(), {})
+            (home / "access_tokens.yaml").write_text("tokens: [", encoding="utf-8")
+            self.assertEqual(load_access_tokens(), {})
         finally:
             cleanup()
 
-    def test_create_token_requires_user_id(self) -> None:
-        from cccc.kernel.web_tokens import create_token
+    def test_create_access_token_requires_user_id(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
 
         _, cleanup = self._with_home()
         try:
             with self.assertRaises(ValueError):
-                create_token("")
+                create_access_token("")
         finally:
             cleanup()

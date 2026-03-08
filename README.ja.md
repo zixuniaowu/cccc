@@ -247,7 +247,7 @@ localhost 外から Web UI にアクセスする場合：
 
 - **Cloudflare Tunnel**（推奨）— `cloudflared tunnel --url http://127.0.0.1:8848`
 - **Tailscale** — tailnet IP にバインド：`CCCC_WEB_HOST=$TAILSCALE_IP cccc`
-- ローカル以外のアクセスでは必ず `CCCC_WEB_TOKEN` を設定
+- ローカル以外へ公開する前に、まず **Settings > Web Access** で **Admin Access Token** を作成し、その完了まではネットワーク境界で保護してください。
 
 ## IM ブリッジ
 
@@ -335,7 +335,7 @@ CCCC は**協調カーネル** — 協調レイヤーを担い、外部の CI/CD
 
 ## セキュリティ
 
-- **Web UI は高権限。** ローカル以外のアクセスでは必ず `CCCC_WEB_TOKEN` を設定。
+- **Web UI は高権限。** ローカル以外へ公開する前に、まず **Settings > Web Access** で **Admin Access Token** を作成してください。
 - **Daemon IPC は認証なし。** デフォルトで localhost にのみバインド。
 - **IM ボットトークン** は環境変数から読み取り、設定ファイルには保存しない。
 - **ランタイム状態** は `CCCC_HOME`（`~/.cccc/`）に保持、リポジトリ内には置かない。
@@ -397,7 +397,7 @@ uv run cccc --help
 
 ```bash
 cd docker
-CCCC_WEB_TOKEN=your-secret docker compose up -d
+docker compose up -d  # その後 Settings > Web Access で Admin Access Token を作成してから公開
 ```
 
 Docker イメージには Claude Code、Codex CLI、Gemini CLI、Factory CLI がバンドル済み。完全な設定は [`docker/`](docker/) を参照。

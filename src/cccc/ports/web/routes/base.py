@@ -6,6 +6,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
+from ....kernel.access_tokens import list_access_tokens
 from ....kernel.scope import detect_scope
 from ..schemas import (
     DebugClearLogsRequest,
@@ -14,6 +15,7 @@ from ..schemas import (
     RemoteAccessConfigureRequest,
     RouteContext,
     check_group,
+    get_principal,
     require_admin,
     require_group,
 )
@@ -78,6 +80,26 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "home": str(ctx.home),
                 "daemon": "running" if daemon_ok else "stopped",
             }
+        }
+
+    @global_router.get("/api/v1/web_access/session")
+    async def web_access_session(request: Request) -> Dict[str, Any]:
+        principal = get_principal(request)
+        allowed_groups = getattr(principal, "allowed_groups", ()) or ()
+        groups = [str(item or "").strip() for item in allowed_groups if str(item or "").strip()]
+        login_active = bool(list_access_tokens())
+        return {
+            "ok": True,
+            "result": {
+                "web_access_session": {
+                    "login_active": login_active,
+                    "current_browser_signed_in": str(getattr(principal, "kind", "anonymous") or "anonymous") == "user",
+                    "principal_kind": str(getattr(principal, "kind", "anonymous") or "anonymous"),
+                    "user_id": str(getattr(principal, "user_id", "") or ""),
+                    "is_admin": bool(getattr(principal, "is_admin", False)),
+                    "allowed_groups": groups,
+                }
+            },
         }
 
     # debug/snapshot uses manual check_group (group_id from query param)
@@ -245,18 +267,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             args["provider"] = str(req.provider)
         if req.mode is not None:
             args["mode"] = str(req.mode or "").strip()
-        if req.enforce_web_token is not None:
-            args["enforce_web_token"] = bool(req.enforce_web_token)
+        if req.require_access_token is not None:
+            args["require_access_token"] = bool(req.require_access_token)
         if req.web_host is not None:
             args["web_host"] = str(req.web_host or "").strip()
         if req.web_port is not None:
             args["web_port"] = int(req.web_port)
         if req.web_public_url is not None:
             args["web_public_url"] = str(req.web_public_url or "").strip()
-        if req.clear_web_token:
-            args["clear_web_token"] = True
-        elif req.web_token is not None:
-            args["web_token"] = str(req.web_token or "").strip()
         return await ctx.daemon({"op": "remote_access_configure", "args": args})
 
     @global_router.post("/api/v1/remote_access/start", dependencies=[Depends(require_admin)])

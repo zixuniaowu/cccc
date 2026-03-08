@@ -264,5 +264,4 @@ cccc mcp                           # Start MCP server (stdio mode)
 | `CCCC_HOME` | `~/.cccc` | Runtime home directory |
 | `CCCC_WEB_HOST` | `127.0.0.1` | Web UI bind address |
 | `CCCC_WEB_PORT` | `8848` | Web UI port |
-| `CCCC_WEB_TOKEN` | (none) | Authentication token for Web UI |
 | `CCCC_LOG_LEVEL` | `INFO` | Log level |

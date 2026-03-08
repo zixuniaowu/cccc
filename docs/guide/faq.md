@@ -131,11 +131,7 @@ CCCC_WEB_HOST=$(tailscale ip -4) cccc
 
 ### Is it safe to expose the Web UI?
 
-Always set an authentication token:
-```bash
-export CCCC_WEB_TOKEN="your-secret-token"
-cccc
-```
+Before exposing the Web UI, create an **Admin Access Token** in **Settings > Web Access** and then sign in with that token.
 
 Use Cloudflare Access or Tailscale for additional security.
 

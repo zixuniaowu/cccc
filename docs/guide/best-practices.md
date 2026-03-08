@@ -237,13 +237,13 @@ If an agent keeps repeating:
 
 ### Remote Access
 
-- Always use `CCCC_WEB_TOKEN` for remote access
+- Create an **Admin Access Token** before any remote exposure
 - Prefer Cloudflare Access or Tailscale over raw exposure
 - Don't expose port 8848 directly to the internet
 
 ### Token Management
 
-- Store tokens in environment variables
+- Store access tokens in your password manager or secret store
 - Don't commit tokens to git
 - Rotate tokens periodically
 

@@ -10,12 +10,11 @@ services:
     container_name: cccc
     restart: unless-stopped
     ports:
-      - "${CCCC_PORT:-8848}:8848"
+      - "127.0.0.1:${CCCC_PORT:-8848}:8848"
     volumes:
       - cccc-data:/data
       - ${WORKSPACE_PATH:-.}:/workspace
     environment:
-      - CCCC_WEB_TOKEN=${CCCC_WEB_TOKEN:?Set CCCC_WEB_TOKEN in .env or environment}
       - ANTHROPIC_AUTH_TOKEN=${ANTHROPIC_AUTH_TOKEN:-}
       - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}

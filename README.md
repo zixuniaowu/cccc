@@ -255,7 +255,7 @@ For accessing the Web UI from outside localhost:
 
 - **Cloudflare Tunnel** (recommended) — `cloudflared tunnel --url http://127.0.0.1:8848`
 - **Tailscale** — bind to your tailnet IP: `CCCC_WEB_HOST=$TAILSCALE_IP cccc`
-- Always set `CCCC_WEB_TOKEN` for any non-local access
+- Before any non-local exposure, create an **Admin Access Token** in **Settings > Web Access** and keep the service behind a network boundary until that token exists.
 
 ## IM Bridges
 
@@ -343,7 +343,7 @@ CCCC is a **collaboration kernel** — it owns the coordination layer and stays 
 
 ## Security
 
-- **Web UI is high-privilege.** Always set `CCCC_WEB_TOKEN` for non-local access.
+- **Web UI is high-privilege.** Before non-local exposure, first create an **Admin Access Token** in **Settings > Web Access**.
 - **Daemon IPC has no authentication.** It binds to localhost by default.
 - **IM bot tokens** are read from environment variables, never stored in config files.
 - **Runtime state** lives in `CCCC_HOME` (`~/.cccc/`), not in your repository.
@@ -405,7 +405,7 @@ uv run cccc --help
 
 ```bash
 cd docker
-CCCC_WEB_TOKEN=your-secret docker compose up -d
+docker compose up -d  # then create an Admin Access Token in Settings > Web Access before exposing beyond localhost
 ```
 
 The Docker image bundles Claude Code, Codex CLI, Gemini CLI, and Factory CLI. See [`docker/`](docker/) for full configuration.

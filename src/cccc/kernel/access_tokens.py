@@ -10,12 +10,12 @@ from ..paths import ensure_home
 from ..util.fs import atomic_write_text
 from ..util.time import utc_now_iso
 
-_TOKEN_PREFIX = "usr_"
+_TOKEN_PREFIX = "acc_"
 
 
-def _web_tokens_path(home: Optional[Path] = None) -> Path:
+def _access_tokens_path(home: Optional[Path] = None) -> Path:
     base = Path(home) if home is not None else ensure_home()
-    return base / "web_tokens.yaml"
+    return base / "access_tokens.yaml"
 
 
 def _normalize_allowed_groups(raw: Any) -> List[str]:
@@ -43,7 +43,7 @@ def _normalize_entry(token: str, raw: Any) -> Optional[Dict[str, Any]]:
     updated_at = str(raw.get("updated_at") or "").strip() or created_at
     return {
         "token": tok,
-        "kind": "user",
+        "kind": "access",
         "user_id": user_id,
         "allowed_groups": _normalize_allowed_groups(raw.get("allowed_groups")),
         "is_admin": bool(raw.get("is_admin", False)),
@@ -52,8 +52,8 @@ def _normalize_entry(token: str, raw: Any) -> Optional[Dict[str, Any]]:
     }
 
 
-def load_tokens(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
-    path = _web_tokens_path(home)
+def load_access_tokens(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+    path = _access_tokens_path(home)
     if not path.exists():
         return {}
     try:
@@ -74,8 +74,8 @@ def load_tokens(home: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
     return out
 
 
-def save_tokens(tokens: Dict[str, Dict[str, Any]], home: Optional[Path] = None) -> None:
-    path = _web_tokens_path(home)
+def save_access_tokens(tokens: Dict[str, Dict[str, Any]], home: Optional[Path] = None) -> None:
+    path = _access_tokens_path(home)
     payload: Dict[str, Any] = {"tokens": {}}
     for token, entry in sorted(tokens.items(), key=lambda item: item[0]):
         normalized = _normalize_entry(token, entry)
@@ -94,21 +94,21 @@ def save_tokens(tokens: Dict[str, Dict[str, Any]], home: Optional[Path] = None) 
     )
 
 
-def lookup_token(token: str, home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+def lookup_access_token(token: str, home: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     tok = str(token or "").strip()
     if not tok:
         return None
-    return load_tokens(home).get(tok)
+    return load_access_tokens(home).get(tok)
 
 
-def _new_token_value(existing: Dict[str, Dict[str, Any]]) -> str:
+def _new_access_token_value(existing: Dict[str, Dict[str, Any]]) -> str:
     while True:
         candidate = f"{_TOKEN_PREFIX}{secrets.token_hex(16)}"
         if candidate not in existing:
             return candidate
 
 
-def create_token(
+def create_access_token(
     user_id: str,
     *,
     allowed_groups: Optional[List[str]] = None,
@@ -119,17 +119,17 @@ def create_token(
     uid = str(user_id or "").strip()
     if not uid:
         raise ValueError("user_id is required")
-    tokens = load_tokens(home)
+    tokens = load_access_tokens(home)
     now = utc_now_iso()
     if custom_token and str(custom_token).strip():
         token = str(custom_token).strip()
         if token in tokens:
-            raise ValueError("token already exists")
+            raise ValueError("access token already exists")
     else:
-        token = _new_token_value(tokens)
+        token = _new_access_token_value(tokens)
     entry = {
         "token": token,
-        "kind": "user",
+        "kind": "access",
         "user_id": uid,
         "allowed_groups": _normalize_allowed_groups(allowed_groups or []),
         "is_admin": bool(is_admin),
@@ -137,11 +137,11 @@ def create_token(
         "updated_at": now,
     }
     tokens[token] = entry
-    save_tokens(tokens, home)
+    save_access_tokens(tokens, home)
     return dict(entry)
 
 
-def update_token(
+def update_access_token(
     token: str,
     *,
     allowed_groups: Optional[List[str]] = None,
@@ -151,7 +151,7 @@ def update_token(
     tok = str(token or "").strip()
     if not tok:
         return None
-    tokens = load_tokens(home)
+    tokens = load_access_tokens(home)
     if tok not in tokens:
         return None
     entry = tokens[tok]
@@ -161,23 +161,23 @@ def update_token(
         entry["is_admin"] = bool(is_admin)
     entry["updated_at"] = utc_now_iso()
     tokens[tok] = entry
-    save_tokens(tokens, home)
+    save_access_tokens(tokens, home)
     return dict(entry)
 
 
-def delete_token(token: str, home: Optional[Path] = None) -> bool:
+def delete_access_token(token: str, home: Optional[Path] = None) -> bool:
     tok = str(token or "").strip()
     if not tok:
         return False
-    tokens = load_tokens(home)
+    tokens = load_access_tokens(home)
     if tok not in tokens:
         return False
     del tokens[tok]
-    save_tokens(tokens, home)
+    save_access_tokens(tokens, home)
     return True
 
 
-def list_tokens(home: Optional[Path] = None) -> List[Dict[str, Any]]:
-    items = list(load_tokens(home).values())
+def list_access_tokens(home: Optional[Path] = None) -> List[Dict[str, Any]]:
+    items = list(load_access_tokens(home).values())
     items.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("token") or "")), reverse=True)
     return items

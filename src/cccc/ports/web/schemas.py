@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,8 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ...contracts.v1.actor import ActorSubmit, AgentRuntime, RunnerKind
 from ...contracts.v1.automation import AutomationRule
-from ...kernel.settings import get_remote_access_settings
-from ...kernel.web_tokens import list_tokens, lookup_token
+from ...kernel.access_tokens import list_access_tokens, lookup_access_token
 
 
 def _default_runner_kind() -> str:
@@ -234,12 +232,10 @@ class RemoteAccessConfigureRequest(BaseModel):
     by: str = Field(default="user")
     provider: Optional[Literal["off", "manual", "tailscale"]] = None
     mode: Optional[str] = None
-    enforce_web_token: Optional[bool] = None
+    require_access_token: Optional[bool] = None
     web_host: Optional[str] = None
     web_port: Optional[int] = None
     web_public_url: Optional[str] = None
-    web_token: Optional[str] = None
-    clear_web_token: bool = False
 
 
 class GroupSpaceBindRequest(BaseModel):
@@ -379,19 +375,6 @@ class RouteContext:
     daemon: Callable[..., Awaitable[Dict[str, Any]]]
     cached_json: Callable[..., Awaitable[Dict[str, Any]]]
     apply_web_logging: Callable[..., None]
-    configured_web_token: Callable[[], str]
-
-
-def _configured_web_token() -> str:
-    """从 settings 优先读取旧 Web Token，再回退到环境变量。"""
-    try:
-        cfg = get_remote_access_settings()
-        token = str(cfg.get("web_token") or "").strip() if isinstance(cfg, dict) else ""
-        if token:
-            return token
-    except Exception:
-        pass
-    return str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
 
 
 def _anonymous_principal() -> Any:
@@ -399,7 +382,7 @@ def _anonymous_principal() -> Any:
 
 
 def _tokens_enabled() -> bool:
-    return bool(list_tokens()) or bool(_configured_web_token())
+    return bool(list_access_tokens())
 
 
 def _principal_kind(principal: Any) -> str:
@@ -488,7 +471,7 @@ def resolve_websocket_principal(websocket: WebSocket) -> Any:
     if not token:
         try:
             cookies = getattr(websocket, "cookies", None) or {}
-            token = str(cookies.get("cccc_web_token") or "").strip()
+            token = str(cookies.get("cccc_access_token") or "").strip()
         except Exception:
             token = ""
     if not token:
@@ -498,9 +481,7 @@ def resolve_websocket_principal(websocket: WebSocket) -> Any:
             token = ""
     if not token:
         return _anonymous_principal()
-    entry = lookup_token(token)
-    if not isinstance(entry, dict) and token == _configured_web_token():
-        return SimpleNamespace(kind="user", user_id="admin", allowed_groups=(), is_admin=True)
+    entry = lookup_access_token(token)
     if not isinstance(entry, dict):
         return _anonymous_principal()
     return SimpleNamespace(
@@ -512,5 +493,5 @@ def resolve_websocket_principal(websocket: WebSocket) -> Any:
 
 
 def websocket_tokens_active() -> bool:
-    """Check if token auth is actually configured (new tokens or legacy)."""
+    """Check if access-token auth is active for WebSocket flows."""
     return _tokens_enabled()

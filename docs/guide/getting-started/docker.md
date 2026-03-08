@@ -29,17 +29,16 @@ If build fails, check: Docker version >= 20.10, sufficient disk space, network a
 ## Step 3: Collect user config
 Ask each one individually:
 1. "What port do you want the Web UI on? (default: 8848)"
-2. "Set a CCCC_WEB_TOKEN for authentication (any random string you choose):"
-3. "Where are your project files? (absolute path, will be mounted to /workspace)"
-4. "Which AI agent API keys do you have? (ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY / GEMINI_API_KEY)"
+2. "Where are your project files? (absolute path, will be mounted to /workspace)"
+3. "Which AI agent API keys do you have? (ANTHROPIC_AUTH_TOKEN / OPENAI_API_KEY / GEMINI_API_KEY)"
+4. "Will this stay localhost-only until you create an Admin Access Token in Web Access?"
 
 ## Step 4: Run the container
 Build the docker run command from the user's answers:
   docker run -d \
-    -p {port}:8848 \
+    -p 127.0.0.1:{port}:8848 \
     -v cccc-data:/data \
     -v {project_path}:/workspace \
-    -e CCCC_WEB_TOKEN={token} \
     -e {API_KEY_ENV}={api_key} \
     --name cccc \
     cccc
@@ -59,7 +58,7 @@ Run these and report results:
 ## Optional: Docker Compose
 If user prefers Compose, point them to the bundled docker/docker-compose.yml:
   cp docker/.env.example docker/.env
-  # Edit docker/.env with their values (CCCC_WEB_TOKEN, API keys, port, workspace path, proxy)
+  # Edit docker/.env with port, API keys, workspace path, proxy, then create an Admin Access Token in Web Access before non-local exposure.
   # From project root:
   docker compose --env-file docker/.env -f docker/docker-compose.yml up -d --build
   # Or from docker directory:
@@ -69,9 +68,8 @@ If user prefers Compose, point them to the bundled docker/docker-compose.yml:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | CCCC_HOME | /data | Data directory |
-| CCCC_WEB_HOST | 0.0.0.0 | Web bind address |
+| CCCC_WEB_HOST | 0.0.0.0 | Web bind address inside the container |
 | CCCC_WEB_PORT | 8848 | Web port |
-| CCCC_WEB_TOKEN | (none) | Auth token (required) |
 | CCCC_DAEMON_TRANSPORT | tcp | IPC transport |
 | CCCC_DAEMON_HOST | 127.0.0.1 | Daemon bind address |
 | CCCC_DAEMON_PORT | 9765 | Daemon IPC port |
@@ -107,16 +105,15 @@ The build uses a multi-stage approach: first compiles the Web UI (Node.js), then
 
 ```bash
 docker run -d \
-  -p 8848:8848 \
+  -p 127.0.0.1:8848:8848 \
   -v cccc-data:/data \
   -v /path/to/your/projects:/workspace \
-  -e CCCC_WEB_TOKEN=your-secret-token \
   -e ANTHROPIC_AUTH_TOKEN=sk-ant-xxx \
   --name cccc \
   cccc
 ```
 
-Open `http://localhost:8848` in your browser to access the Web UI.
+Open `http://localhost:8848` in your browser. The sample command binds the host port to `127.0.0.1` on purpose, so you can safely create an **Admin Access Token** in **Settings > Web Access** before any broader exposure.
 
 ### 3. Verify
 
@@ -135,9 +132,8 @@ docker exec cccc cccc doctor
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CCCC_HOME` | `/data` | Data directory (groups, ledger, config) |
-| `CCCC_WEB_HOST` | `0.0.0.0` | Web server bind address |
+| `CCCC_WEB_HOST` | `0.0.0.0` | Web server bind address inside the container |
 | `CCCC_WEB_PORT` | `8848` | Web server port |
-| `CCCC_WEB_TOKEN` | _(none)_ | **Required.** Access token for Web UI authentication |
 | `CCCC_DAEMON_TRANSPORT` | `tcp` | Daemon IPC transport (`tcp` or `unix`) |
 | `CCCC_DAEMON_HOST` | `127.0.0.1` | Daemon bind address |
 | `CCCC_DAEMON_PORT` | `9765` | Daemon IPC port |
@@ -166,11 +162,10 @@ If you need to access the daemon IPC from outside the container (e.g. for SDK in
 
 ```bash
 docker run -d \
-  -p 8848:8848 \
-  -p 9765:9765 \
+  -p 127.0.0.1:8848:8848 \
+  -p 127.0.0.1:9765:9765 \
   -v cccc-data:/data \
   -v /path/to/projects:/workspace \
-  -e CCCC_WEB_TOKEN=your-secret-token \
   -e CCCC_DAEMON_HOST=0.0.0.0 \
   -e CCCC_DAEMON_ALLOW_REMOTE=1 \
   --name cccc \
@@ -200,7 +195,7 @@ The repo ships a ready-to-use `docker/docker-compose.yml`. First copy and edit t
 
 ```bash
 cp docker/.env.example docker/.env
-# Edit docker/.env — set CCCC_WEB_TOKEN, API keys, workspace path, etc.
+# Edit docker/.env — set API keys, workspace path, etc. Then create an Admin Access Token in Web Access before non-local exposure.
 ```
 
 Create the data volume (required on first run, as the compose file uses `external: true`):
@@ -249,6 +244,8 @@ docker compose --env-file docker/.env -f docker/docker-compose.yml down
 ### K8s Sidecar Pattern
 
 For Kubernetes deployments, the daemon defaults to `127.0.0.1:9765` — suitable for sidecar containers sharing the same Pod network namespace. No extra configuration needed for intra-Pod communication.
+
+Security note: the Docker examples now bind host ports to `127.0.0.1` by default. Keep that local-only posture until you have created an Admin Access Token in Web Access and intentionally chosen a remote boundary.
 
 ## Troubleshooting
 

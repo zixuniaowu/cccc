@@ -19,10 +19,10 @@ from starlette.concurrency import run_in_threadpool
 
 from ... import __version__
 from ...daemon.server import call_daemon
-from ...kernel.web_tokens import list_tokens, lookup_token
+from ...kernel.access_tokens import list_access_tokens, lookup_access_token
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
-from .schemas import RouteContext, _configured_web_token
+from .schemas import RouteContext
 
 logger = logging.getLogger("cccc.web")
 _WEB_LOG_FH: Optional[Any] = None
@@ -81,7 +81,7 @@ def _request_token_parts(request: Request) -> tuple[str, Literal["", "header", "
     if auth.lower().startswith("bearer "):
         return str(auth[7:] or "").strip(), "header"
 
-    cookie = str(request.cookies.get("cccc_web_token") or "").strip()
+    cookie = str(request.cookies.get("cccc_access_token") or "").strip()
     if cookie:
         return cookie, "cookie"
 
@@ -101,9 +101,7 @@ def _resolve_principal(request: Request) -> Principal:
     token = _request_token(request)
     if not token:
         return Principal(kind="anonymous")
-    entry = lookup_token(token)
-    if not isinstance(entry, dict) and token == _configured_web_token():
-        return Principal(kind="user", user_id="admin", is_admin=True)
+    entry = lookup_access_token(token)
     if not isinstance(entry, dict):
         return Principal(kind="anonymous")
     user_id = str(entry.get("user_id") or "").strip()
@@ -244,7 +242,7 @@ def create_app() -> FastAPI:
         provided_token, token_source = _request_token_parts(request)
         principal = _resolve_principal(request)
         stale_cookie = False
-        tokens_active = bool(list_tokens()) or bool(_configured_web_token())
+        tokens_active = bool(list_access_tokens())
         # header/query 是用户显式提供的认证材料，仍然严格按 401 收口；
         # cookie 在无 token 配置时允许匿名放行，并顺手清掉残留脏 cookie。
         if not _is_public_ui_path(request) and provided_token and principal.kind != "user":
@@ -267,15 +265,15 @@ def create_app() -> FastAPI:
 
         resp = await call_next(request)
         if stale_cookie:
-            resp.delete_cookie(key="cccc_web_token", path="/")
-        if principal.kind == "user" and provided_token and str(request.cookies.get("cccc_web_token") or "").strip() != provided_token:
+            resp.delete_cookie(key="cccc_access_token", path="/")
+        if principal.kind == "user" and provided_token and str(request.cookies.get("cccc_access_token") or "").strip() != provided_token:
             # Detect real protocol: env override > proxy header > request scheme
             # Set CCCC_WEB_SECURE=1 when behind HTTPS proxy that doesn't send X-Forwarded-Proto
             force_secure = str(os.environ.get("CCCC_WEB_SECURE") or "").strip().lower() in ("1", "true", "yes")
             forwarded_proto = str(request.headers.get("x-forwarded-proto") or "").strip().lower()
             actual_scheme = "https" if force_secure else (forwarded_proto if forwarded_proto in ("http", "https") else str(getattr(request.url, "scheme", "") or "").lower())
             resp.set_cookie(
-                key="cccc_web_token",
+                key="cccc_access_token",
                 value=provided_token,
                 httponly=True,
                 samesite="none" if actual_scheme == "https" else "lax",
@@ -362,7 +360,7 @@ def create_app() -> FastAPI:
     from .routes.messaging import create_routers as create_messaging_routers
     from .routes.actors import create_routers as create_actor_routers
     from .routes.im import register_im_routes
-    from .routes.tokens import create_routers as create_token_routers
+    from .routes.access_tokens import create_routers as create_access_token_routers
 
     route_ctx = RouteContext(
         home=home,
@@ -375,7 +373,6 @@ def create_app() -> FastAPI:
         daemon=_daemon,
         cached_json=_cached_json,
         apply_web_logging=_apply_web_logging,
-        configured_web_token=_configured_web_token,
     )
 
     register_base_routes(app, ctx=route_ctx)
@@ -387,7 +384,7 @@ def create_app() -> FastAPI:
     for router in create_actor_routers(route_ctx):
         app.include_router(router)
     register_im_routes(app, ctx=route_ctx)
-    for router in create_token_routers(route_ctx):
+    for router in create_access_token_routers(route_ctx):
         app.include_router(router)
 
     return app

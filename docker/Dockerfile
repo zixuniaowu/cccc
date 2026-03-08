@@ -73,7 +73,7 @@ ENV CCCC_DAEMON_TRANSPORT=tcp
 ENV CCCC_DAEMON_HOST=127.0.0.1
 ENV CCCC_DAEMON_PORT=9765
 
-# Web server - 0.0.0.0 for external access
+# Web server - bind all interfaces inside container; host publishing should stay loopback by default
 ENV CCCC_WEB_HOST=0.0.0.0
 ENV CCCC_WEB_PORT=8848
 

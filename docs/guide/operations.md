@@ -81,7 +81,7 @@ cccc daemon start
 ## 5) Secure Remote Access
 
 Required baseline:
-- Set `CCCC_WEB_TOKEN`.
+- Create an **Admin Access Token** in **Settings > Web Access** before any non-local exposure.
 - Use Cloudflare Access or Tailscale for network boundary.
 
 Do not:

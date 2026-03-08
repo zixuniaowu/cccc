@@ -9,9 +9,9 @@ import subprocess
 from typing import Any, Dict, Optional, Tuple
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ...kernel.access_tokens import list_access_tokens
 from ...kernel.events import publish_event
 from ...kernel.settings import get_remote_access_settings, update_remote_access_settings
-from ...kernel.web_tokens import list_tokens
 from ...util.conv import coerce_bool
 from ...util.time import utc_now_iso
 
@@ -35,8 +35,7 @@ def _supported_modes() -> set[str]:
 
 
 def _normalize_mode(raw: Any) -> str:
-    mode = str(raw or "").strip().lower() or "tailnet_only"
-    return mode
+    return str(raw or "").strip().lower() or "tailnet_only"
 
 
 def _mode_supported(mode: str) -> bool:
@@ -59,6 +58,10 @@ def _safe_web_port(raw: Any = None) -> int:
 def _is_loopback_host(host: str) -> bool:
     v = str(host or "").strip().lower()
     return v in ("127.0.0.1", "localhost", "::1")
+
+
+def _access_token_count() -> int:
+    return len(list_access_tokens())
 
 
 def _effective_web_binding(cfg: Dict[str, Any]) -> Dict[str, Any]:
@@ -86,11 +89,6 @@ def _effective_web_binding(cfg: Dict[str, Any]) -> Dict[str, Any]:
     public_url_source = "settings" if cfg_public_url else ("env" if env_public_url else "none")
     public_url = cfg_public_url or env_public_url
 
-    cfg_token = str(cfg.get("web_token") or "").strip()
-    env_token = str(os.environ.get("CCCC_WEB_TOKEN") or "").strip()
-    web_token_source = "settings" if cfg_token else ("env" if env_token else "none")
-    web_token = cfg_token or env_token
-
     return {
         "web_host": host,
         "web_host_source": host_source,
@@ -98,8 +96,6 @@ def _effective_web_binding(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "web_port_source": port_source,
         "web_public_url": (public_url or None),
         "web_public_url_source": public_url_source,
-        "web_token": web_token,
-        "web_token_source": web_token_source,
     }
 
 
@@ -173,21 +169,18 @@ def _tailscale_endpoint(doc: Dict[str, Any], *, web_port: int) -> Optional[str]:
     return f"http://{tail_ip}:{_safe_web_port(web_port)}/ui/"
 
 
-def _web_binding_diagnostics(*, provider: str, enforce_web_token: bool, mode: str, binding: Dict[str, Any]) -> Dict[str, Any]:
+def _web_binding_diagnostics(*, provider: str, require_access_token: bool, mode: str, binding: Dict[str, Any]) -> Dict[str, Any]:
     public_url = str(binding.get("web_public_url") or "").strip()
     host = str(binding.get("web_host") or "").strip() or "127.0.0.1"
     port = _safe_web_port(binding.get("web_port"))
     web_bind_loopback = _is_loopback_host(host)
     web_bind_reachable = bool(public_url) or (not web_bind_loopback)
-    token = str(binding.get("web_token") or "").strip()
-    has_user_tokens = bool(list_tokens())
-    token_present = bool(token) or has_user_tokens
-    token_source = str(binding.get("web_token_source") or "none")
-    if not token and has_user_tokens:
-        token_source = "user_tokens"
+    access_token_count = _access_token_count()
+    access_token_present = access_token_count > 0
     return {
-        "web_token_present": token_present if enforce_web_token else True,
-        "web_token_source": token_source,
+        "access_token_present": access_token_present if require_access_token else True,
+        "access_token_source": "store" if access_token_present else "none",
+        "access_token_count": access_token_count,
         "web_host": host,
         "web_host_source": str(binding.get("web_host_source") or "default"),
         "web_port": int(port),
@@ -201,22 +194,17 @@ def _web_binding_diagnostics(*, provider: str, enforce_web_token: bool, mode: st
     }
 
 
-def _remote_next_steps(
-    *,
-    provider: str,
-    status: str,
-    diagnostics: Dict[str, Any],
-) -> list[str]:
+def _remote_next_steps(*, provider: str, status: str, diagnostics: Dict[str, Any]) -> list[str]:
     out: list[str] = []
     if provider == "off":
         out.append("Choose provider=manual or provider=tailscale, then click Save.")
         return out
     if not bool(diagnostics.get("mode_supported")):
         out.append("Set remote access mode to tailnet_only.")
-    if not bool(diagnostics.get("web_token_present")):
-        out.append("Create a User Token in Settings > Tokens, or set CCCC_WEB_TOKEN.")
+    if not bool(diagnostics.get("access_token_present")):
+        out.append("Create an Admin Access Token in Settings > Web Access before exposing Web remotely.")
     if not bool(diagnostics.get("web_bind_reachable")):
-        out.append("Set Web host/public URL in Settings > Remote Access (or set CCCC_WEB_HOST/CCCC_WEB_PUBLIC_URL).")
+        out.append("Set Web host/public URL in Settings > Web Access (or set CCCC_WEB_HOST/CCCC_WEB_PUBLIC_URL).")
     if provider == "tailscale":
         if status == "not_installed":
             out.append("Install Tailscale and make sure 'tailscale' is in PATH.")
@@ -256,14 +244,19 @@ def _remote_unreachable_error(*, provider: str, diagnostics: Dict[str, Any]) -> 
 def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
     provider = str(cfg.get("provider") or "off").strip().lower()
     mode = _normalize_mode(cfg.get("mode"))
-    enforce_web_token = coerce_bool(cfg.get("enforce_web_token"), default=True)
+    require_access_token = coerce_bool(cfg.get("require_access_token"), default=True)
     enabled = coerce_bool(cfg.get("enabled"), default=False)
     updated_at = str(cfg.get("updated_at") or "").strip()
 
     status = "stopped"
     endpoint: Optional[str] = None
     binding = _effective_web_binding(cfg)
-    diagnostics = _web_binding_diagnostics(provider=provider, enforce_web_token=enforce_web_token, mode=mode, binding=binding)
+    diagnostics = _web_binding_diagnostics(
+        provider=provider,
+        require_access_token=require_access_token,
+        mode=mode,
+        binding=binding,
+    )
     tailscale_backend_state: Optional[str] = None
     tailscale_installed: Optional[bool] = None
 
@@ -299,6 +292,8 @@ def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if provider in ("manual", "tailscale") and enabled:
         if not bool(diagnostics.get("mode_supported")):
             status = "misconfigured"
+        elif require_access_token and not bool(diagnostics.get("access_token_present")):
+            status = "misconfigured"
         elif not bool(diagnostics.get("web_bind_reachable")) and not _allow_loopback_remote():
             status = "misconfigured"
 
@@ -309,7 +304,7 @@ def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "remote_access": {
             "provider": provider,
             "mode": mode,
-            "enforce_web_token": bool(enforce_web_token),
+            "require_access_token": bool(require_access_token),
             "enabled": bool(enabled),
             "status": status,
             "endpoint": endpoint,
@@ -319,8 +314,9 @@ def _remote_access_state_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
                 "web_host": str(binding.get("web_host") or "127.0.0.1"),
                 "web_port": int(binding.get("web_port") or 8848),
                 "web_public_url": binding.get("web_public_url"),
-                "web_token_configured": bool(str(binding.get("web_token") or "").strip()),
-                "web_token_source": str(binding.get("web_token_source") or "none"),
+                "access_token_configured": diagnostics["access_token_count"] > 0,
+                "access_token_count": diagnostics["access_token_count"],
+                "access_token_source": diagnostics["access_token_source"],
             },
             "next_steps": _remote_next_steps(provider=provider, status=status, diagnostics=diagnostics),
         }
@@ -333,11 +329,11 @@ def _require_user(by: str) -> Optional[DaemonResponse]:
     return None
 
 
-def _validate_secure_defaults(*, provider: str, enforce_web_token: bool) -> Optional[DaemonResponse]:
-    if provider != "off" and not enforce_web_token and not _allow_insecure_remote():
+def _validate_secure_defaults(*, provider: str, require_access_token: bool) -> Optional[DaemonResponse]:
+    if provider != "off" and not require_access_token and not _allow_insecure_remote():
         return _error(
             "remote_access_invalid_config",
-            "enforce_web_token=false is blocked by default; set CCCC_REMOTE_ALLOW_INSECURE=1 to override",
+            "require_access_token=false is blocked by default; set CCCC_REMOTE_ALLOW_INSECURE=1 to override",
         )
     return None
 
@@ -353,7 +349,7 @@ def _validate_mode_or_error(mode: str) -> Optional[DaemonResponse]:
 
 
 def handle_remote_access_state(args: Dict[str, Any]) -> DaemonResponse:
-    _ = str(args.get("by") or "user").strip()  # reserved for future policy
+    _ = str(args.get("by") or "user").strip()
     cfg = get_remote_access_settings()
     return DaemonResponse(ok=True, result=_remote_access_state_payload(cfg))
 
@@ -369,8 +365,8 @@ def handle_remote_access_configure(args: Dict[str, Any]) -> DaemonResponse:
         patch["provider"] = str(args.get("provider") or "").strip().lower()
     if "mode" in args:
         patch["mode"] = _normalize_mode(args.get("mode"))
-    if "enforce_web_token" in args:
-        patch["enforce_web_token"] = coerce_bool(args.get("enforce_web_token"), default=True)
+    if "require_access_token" in args:
+        patch["require_access_token"] = coerce_bool(args.get("require_access_token"), default=True)
     if "enabled" in args:
         patch["enabled"] = coerce_bool(args.get("enabled"), default=False)
     if "web_host" in args:
@@ -382,11 +378,6 @@ def handle_remote_access_configure(args: Dict[str, Any]) -> DaemonResponse:
             patch["web_port"] = args.get("web_port")
     if "web_public_url" in args:
         patch["web_public_url"] = str(args.get("web_public_url") or "").strip()
-    clear_web_token = coerce_bool(args.get("clear_web_token"), default=False)
-    if clear_web_token:
-        patch["web_token"] = ""
-    elif "web_token" in args:
-        patch["web_token"] = str(args.get("web_token") or "").strip()
     if not patch:
         cfg = get_remote_access_settings()
         return DaemonResponse(ok=True, result=_remote_access_state_payload(cfg))
@@ -394,14 +385,14 @@ def handle_remote_access_configure(args: Dict[str, Any]) -> DaemonResponse:
     current = get_remote_access_settings()
     provider = str(patch.get("provider") or current.get("provider") or "off").strip().lower()
     mode = _normalize_mode(patch.get("mode") if "mode" in patch else current.get("mode"))
-    enforce_web_token = coerce_bool(
-        patch.get("enforce_web_token") if "enforce_web_token" in patch else current.get("enforce_web_token"),
+    require_access_token = coerce_bool(
+        patch.get("require_access_token") if "require_access_token" in patch else current.get("require_access_token"),
         default=True,
     )
     invalid_mode = _validate_mode_or_error(mode)
     if invalid_mode is not None:
         return invalid_mode
-    invalid = _validate_secure_defaults(provider=provider, enforce_web_token=enforce_web_token)
+    invalid = _validate_secure_defaults(provider=provider, require_access_token=require_access_token)
     if invalid is not None:
         return invalid
 
@@ -414,7 +405,7 @@ def handle_remote_access_configure(args: Dict[str, Any]) -> DaemonResponse:
             "by": by or "user",
             "provider": cfg.get("provider"),
             "mode": cfg.get("mode"),
-            "enforce_web_token": bool(cfg.get("enforce_web_token")),
+            "require_access_token": bool(cfg.get("require_access_token")),
             "enabled": bool(cfg.get("enabled")),
         },
     )
@@ -430,20 +421,26 @@ def handle_remote_access_start(args: Dict[str, Any]) -> DaemonResponse:
     cfg = get_remote_access_settings()
     provider = str(cfg.get("provider") or "off").strip().lower()
     mode = _normalize_mode(cfg.get("mode"))
-    enforce_web_token = coerce_bool(cfg.get("enforce_web_token"), default=True)
+    require_access_token = coerce_bool(cfg.get("require_access_token"), default=True)
 
     invalid_mode = _validate_mode_or_error(mode)
     if invalid_mode is not None:
         return invalid_mode
-    invalid = _validate_secure_defaults(provider=provider, enforce_web_token=enforce_web_token)
+    invalid = _validate_secure_defaults(provider=provider, require_access_token=require_access_token)
     if invalid is not None:
         return invalid
     if provider == "off":
         return _error("remote_access_invalid_config", "remote access provider is off")
+
     binding = _effective_web_binding(cfg)
-    diagnostics = _web_binding_diagnostics(provider=provider, enforce_web_token=enforce_web_token, mode=mode, binding=binding)
-    if enforce_web_token and not bool(diagnostics.get("web_token_present")):
-        return _error("remote_access_invalid_config", "web token is required when enforce_web_token=true")
+    diagnostics = _web_binding_diagnostics(
+        provider=provider,
+        require_access_token=require_access_token,
+        mode=mode,
+        binding=binding,
+    )
+    if require_access_token and not bool(diagnostics.get("access_token_present")):
+        return _error("remote_access_invalid_config", "access token is required when require_access_token=true")
     if not bool(diagnostics.get("web_bind_reachable")) and not _allow_loopback_remote():
         return _remote_unreachable_error(provider=provider, diagnostics=diagnostics)
 

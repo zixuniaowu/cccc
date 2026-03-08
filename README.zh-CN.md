@@ -254,7 +254,7 @@ PTY 模式的 actor 通过终端注入接收消息，headless 模式通过系统
 
 - **Cloudflare Tunnel**（推荐）— `cloudflared tunnel --url http://127.0.0.1:8848`
 - **Tailscale** — 绑定 tailnet IP：`CCCC_WEB_HOST=$TAILSCALE_IP cccc`
-- 非本地访问时，务必设置 `CCCC_WEB_TOKEN`
+- 在对外暴露之前，先在 **Settings > Web Access** 中创建一个 **管理员访问令牌**，并在令牌创建完成前保持网络边界保护。
 
 ## IM 桥接
 
@@ -342,7 +342,7 @@ CCCC 是**协作内核** — 它拥有协调层，与外部 CI/CD、编排器、
 
 ## 安全
 
-- **Web UI 属高权限入口。** 非本地访问时，务必设置 `CCCC_WEB_TOKEN`。
+- **Web UI 属高权限入口。** 对外暴露之前，务必先在 **Settings > Web Access** 中创建 **管理员访问令牌**。
 - **Daemon IPC 无认证。** 默认仅绑定 localhost。
 - **IM bot token** 从环境变量读取，不存储在配置文件中。
 - **运行时状态** 存放在 `CCCC_HOME`（`~/.cccc/`），不在代码仓库内。
@@ -404,7 +404,7 @@ uv run cccc --help
 
 ```bash
 cd docker
-CCCC_WEB_TOKEN=your-secret docker compose up -d
+docker compose up -d  # 然后先在 Settings > Web Access 中创建管理员访问令牌，再对外暴露
 ```
 
 Docker 镜像内置 Claude Code、Codex CLI、Gemini CLI 和 Factory CLI。完整配置见 [`docker/`](docker/)。

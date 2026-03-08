@@ -2522,14 +2522,15 @@ Result:
   remote_access: {
     provider: "off" | "manual" | "tailscale"
     mode: string
-    enforce_web_token: boolean
+    require_access_token: boolean
     enabled: boolean
     status: "stopped" | "running" | "not_installed" | "not_authenticated" | "misconfigured" | "error"
     endpoint?: string | null
     updated_at?: string | null
     diagnostics?: {
-      web_token_present?: boolean
-      web_token_source?: "settings" | "env" | "none" | string
+      access_token_present?: boolean
+      access_token_source?: "store" | "none" | string
+      access_token_count?: number
       web_host?: string
       web_host_source?: "settings" | "env" | "default" | string
       web_port?: number
@@ -2547,8 +2548,9 @@ Result:
       web_host?: string
       web_port?: number
       web_public_url?: string | null
-      web_token_configured?: boolean
-      web_token_source?: "settings" | "env" | "none" | string
+      access_token_configured?: boolean
+      access_token_count?: number
+      access_token_source?: "store" | "none" | string
       [k: string]: unknown
     }
     next_steps?: string[]
@@ -2566,12 +2568,10 @@ Args:
   by?: string
   provider?: "off" | "manual" | "tailscale"
   mode?: string
-  enforce_web_token?: boolean
+  require_access_token?: boolean
   web_host?: string
   web_port?: number
   web_public_url?: string
-  web_token?: string
-  clear_web_token?: boolean
 }
 ```
 

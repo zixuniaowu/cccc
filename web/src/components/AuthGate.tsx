@@ -16,8 +16,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [showToken, setShowToken] = useState(false);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
   const calledRef = useRef(false);
   const { t } = useTranslation('layout');
+  const hostname = typeof window !== "undefined" ? String(window.location.hostname || "").trim().toLowerCase() : "";
+  const isLocalAccess = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
+  const localRecoveryPath = "~/.cccc/access_tokens.yaml";
 
   // 启动时探测受保护接口：若返回 401/403，说明 token 认证已启用且当前尚未登录。
   useEffect(() => {
@@ -142,6 +146,53 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         >
           {submitting ? t('verifying') : t('signIn')}
         </button>
+
+        <div className={`mt-4 border-t pt-4 ${isDark ? "border-slate-700" : "border-slate-200"}`}>
+          <button
+            type="button"
+            onClick={() => setShowRecovery((prev) => !prev)}
+            className={`text-xs underline underline-offset-4 transition-colors ${
+              isDark ? "text-slate-300 hover:text-slate-100" : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            {showRecovery ? t('hideRecovery') : t('forgotTokenCta')}
+          </button>
+
+          {showRecovery ? (
+            <div className={`mt-3 rounded-xl border p-4 text-left ${
+              isDark ? "border-slate-700 bg-slate-900/70" : "border-slate-200 bg-slate-50"
+            }`}>
+              <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-slate-900"}`}>{t('recoveryTitle')}</div>
+              <p className={`mt-2 text-xs leading-6 ${isDark ? "text-slate-300" : "text-slate-700"}`}>{t('recoveryIntro')}</p>
+
+              <div className="mt-3 space-y-3">
+                <div>
+                  <div className={`text-xs font-semibold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{t('recoveryBrowserTitle')}</div>
+                  <p className={`mt-1 text-xs leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>{t('recoveryBrowserBody')}</p>
+                </div>
+
+                {isLocalAccess ? (
+                  <div>
+                    <div className={`text-xs font-semibold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{t('recoveryLocalTitle')}</div>
+                    <ol className={`mt-1 list-decimal space-y-1 pl-4 text-xs leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                      <li>{t('recoveryLocalStep1')}</li>
+                      <li>{t('recoveryLocalStep2', { path: localRecoveryPath })}</li>
+                      <li>{t('recoveryLocalStep3')}</li>
+                      <li>{t('recoveryLocalStep4')}</li>
+                    </ol>
+                  </div>
+                ) : (
+                  <div>
+                    <div className={`text-xs font-semibold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{t('recoveryRemoteTitle')}</div>
+                    <p className={`mt-1 text-xs leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>{t('recoveryRemoteBody', { path: localRecoveryPath })}</p>
+                  </div>
+                )}
+              </div>
+
+              <p className={`mt-3 text-[11px] leading-5 ${isDark ? "text-slate-500" : "text-slate-500"}`}>{t('recoverySecurityNote')}</p>
+            </div>
+          ) : null}
+        </div>
       </form>
     </div>
   );

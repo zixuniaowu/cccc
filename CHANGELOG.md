@@ -99,7 +99,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/), and versions
 - **MCP toolspec normalization**: consistent indentation and formatting across all 1400+ lines of tool definitions.
 - **Web UI component extraction**: `ModalFrame`, `SettingsNavigation`, `ContextSectionJumpBar`, `ProjectSavedNotifyModal`, `ScopeTooltip` extracted from monolithic modal files.
 - **Docker deployment guide** with custom API endpoint configuration and proxy handling.
-- **Token-based authentication gate** (`CCCC_WEB_TOKEN`) and non-root Docker user support.
+- **Access-token authentication gate** and non-root Docker user support.
 - **Auto-wake disabled recipients**: agents are automatically started when they receive a message.
 - **Message mode selector** in the Web UI composer; reply-required workflow with digest nudges.
 - **DingTalk enhancements**: message deduplication, file sending via new API, stream mode documentation.
