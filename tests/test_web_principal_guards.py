@@ -99,6 +99,67 @@ class TestWebPrincipalGuards(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_empty_scoped_token_sees_no_groups(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            self._create_group("g1")
+            self._create_group("g2")
+            token = str(create_access_token("user-a", allowed_groups=[], is_admin=False).get("token") or "")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._create_client()
+                resp = client.get("/api/v1/groups", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 200)
+            groups = ((resp.json().get("result") or {}).get("groups") or [])
+            self.assertEqual(groups, [])
+        finally:
+            cleanup()
+
+    def test_empty_scoped_token_cannot_access_group_route(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("g1")
+            token = str(create_access_token("user-a", allowed_groups=[], is_admin=False).get("token") or "")
+            client = self._create_client()
+            resp = client.get(f"/api/v1/groups/{gid}", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 403)
+            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "permission_denied")
+        finally:
+            cleanup()
+
+    def test_group_delete_requires_admin_even_with_group_scope(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("g1")
+            token = str(create_access_token("user-a", allowed_groups=[gid], is_admin=False).get("token") or "")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._create_client()
+                resp = client.delete(f"/api/v1/groups/{gid}?confirm={gid}", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 403)
+            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "permission_denied")
+        finally:
+            cleanup()
+
+    def test_admin_can_delete_group(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("g1")
+            token = str(create_access_token("admin-user", is_admin=True).get("token") or "")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._create_client()
+                resp = client.delete(f"/api/v1/groups/{gid}?confirm={gid}", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(bool(resp.json().get("ok")))
+        finally:
+            cleanup()
+
     def test_websocket_terminal_checks_group_access(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 

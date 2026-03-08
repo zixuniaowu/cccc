@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { GroupMeta, RemoteAccessState, WebAccessSession } from "../../../types";
+import { InfoIcon } from "../../Icons";
+import { InfoPopover } from "./InfoPopover";
 import * as api from "../../../services/api";
 import { cardClass, inputClass, labelClass, primaryButtonClass } from "./types";
+import { useModalA11y } from "../../../hooks/useModalA11y";
 
 interface WebAccessTabProps {
   isDark: boolean;
@@ -61,6 +64,7 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   const [saveBusy, setSaveBusy] = useState(false);
   const [startBusy, setStartBusy] = useState(false);
   const [stopBusy, setStopBusy] = useState(false);
+  const [signOutBusy, setSignOutBusy] = useState(false);
   const [error, setError] = useState("");
   const [hint, setHint] = useState("");
 
@@ -74,36 +78,64 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   const [userId, setUserId] = useState("");
   const [customToken, setCustomToken] = useState("");
   const [isAdmin, setIsAdmin] = useState(false);
-  const [scopeAllGroups, setScopeAllGroups] = useState(true);
   const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newToken, setNewToken] = useState<string | null>(null);
+  const [newTokenAutoBound, setNewTokenAutoBound] = useState(false);
   const [copiedNewToken, setCopiedNewToken] = useState(false);
 
   const [editingTokenId, setEditingTokenId] = useState<string | null>(null);
   const [editGroups, setEditGroups] = useState<Set<string>>(new Set());
   const [editBusy, setEditBusy] = useState(false);
+  const [pendingDeleteTokenId, setPendingDeleteTokenId] = useState<string | null>(null);
+  const [deleteBusyTokenId, setDeleteBusyTokenId] = useState<string | null>(null);
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
 
   const accessTokenCount = accessTokens.length;
   const hasAdminToken = accessTokens.some((item) => item.is_admin);
-  const effectiveRequireAccessToken = provider === "off" ? accessTokenCount > 0 : requireAccessToken;
+  const knownAccessTokenCount = typeof session?.access_token_count === "number" ? session.access_token_count : accessTokenCount;
+  const loginActive = Boolean(session?.login_active ?? (knownAccessTokenCount > 0));
+  const canAccessGlobalSettings = Boolean(session?.can_access_global_settings ?? !loginActive);
+  const effectiveRequireAccessToken = provider === "off" ? knownAccessTokenCount > 0 : requireAccessToken;
 
   const pushHint = (value: string) => {
     setHint(value);
     window.setTimeout(() => setHint(""), 1800);
   };
 
+  const resetCreateDraft = useCallback(() => {
+    setCreateError("");
+    setNewToken(null);
+    setNewTokenAutoBound(false);
+    setCopiedNewToken(false);
+    setUserId("");
+    setCustomToken("");
+    setIsAdmin(false);
+    setSelectedGroups(new Set());
+  }, []);
+
+  const openCreateDialog = useCallback(() => {
+    resetCreateDraft();
+    setCreateDialogOpen(true);
+  }, [resetCreateDraft]);
+
+  const closeCreateDialog = useCallback(() => {
+    setCreateDialogOpen(false);
+    resetCreateDraft();
+  }, [resetCreateDraft]);
+
+  const { modalRef: createDialogRef } = useModalA11y(createDialogOpen, closeCreateDialog);
+
   const load = async () => {
     if (!isActive) return;
     setBusy(true);
     setError("");
     try {
-      const [pingResp, remoteResp, tokensResp, groupsResp, sessionResp] = await Promise.all([
+      const [pingResp, remoteResp, groupsResp, sessionResp] = await Promise.all([
         api.fetchPing(),
         api.fetchRemoteAccessState(),
-        api.fetchAccessTokens(),
         api.fetchGroups(),
         api.fetchWebAccessSession(),
       ]);
@@ -122,16 +154,28 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       } else if (!remoteResp.ok) {
         setError(remoteResp.error?.message || t("webAccess.loadFailed"));
       }
-      if (tokensResp.ok && tokensResp.result?.access_tokens) {
-        setAccessTokens(tokensResp.result.access_tokens);
-      } else if (!tokensResp.ok) {
-        setError(tokensResp.error?.message || t("webAccess.loadFailed"));
-      }
       if (groupsResp.ok && groupsResp.result?.groups) {
         setGroups(groupsResp.result.groups);
       }
+      let sessionState: WebAccessSession | null = null;
       if (sessionResp.ok && sessionResp.result?.web_access_session) {
-        setSession(sessionResp.result.web_access_session);
+        sessionState = sessionResp.result.web_access_session;
+        setSession(sessionState);
+      } else if (!sessionResp.ok) {
+        setError(sessionResp.error?.message || t("webAccess.loadFailed"));
+      }
+      const canAccessGlobal = Boolean(sessionState?.can_access_global_settings ?? !(sessionState?.login_active ?? false));
+      if (canAccessGlobal) {
+        const tokensResp = await api.fetchAccessTokens();
+        if (tokensResp.ok && tokensResp.result?.access_tokens) {
+          setAccessTokens(tokensResp.result.access_tokens);
+        } else if (!tokensResp.ok) {
+          setError(tokensResp.error?.message || t("webAccess.loadFailed"));
+        }
+      } else {
+        setAccessTokens([]);
+        setEditingTokenId(null);
+        setPendingDeleteTokenId(null);
       }
     } catch {
       setError(t("webAccess.loadFailed"));
@@ -146,9 +190,18 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   }, [isActive]);
 
   useEffect(() => {
-    if (!scopeAllGroups) return;
-    setSelectedGroups(new Set());
-  }, [scopeAllGroups]);
+    if (!hasAdminToken || isAdmin) {
+      setSelectedGroups(new Set());
+    }
+  }, [hasAdminToken, isAdmin]);
+
+  useEffect(() => {
+    if (!canAccessGlobalSettings) {
+      setCreateDialogOpen(false);
+      setNewToken(null);
+      setCopiedNewToken(false);
+    }
+  }, [canAccessGlobalSettings]);
 
   const reachabilitySummary = useMemo(() => {
     if (!remoteState || provider === "off") {
@@ -165,15 +218,15 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   }, [provider, remoteState, t]);
 
   const accessSummary = useMemo(() => {
-    if (accessTokenCount <= 0) {
+    if (knownAccessTokenCount <= 0) {
       return { label: t("webAccess.summary.open"), detail: t("webAccess.summary.openHint"), tone: "neutral" as const };
     }
     return {
       label: t("webAccess.summary.protected"),
-      detail: t("webAccess.summary.protectedHint", { count: accessTokenCount }),
+      detail: t("webAccess.summary.protectedHint", { count: knownAccessTokenCount }),
       tone: "good" as const,
     };
-  }, [accessTokenCount, t]);
+  }, [knownAccessTokenCount, t]);
 
   const modeSummary = useMemo(() => {
     const exhibit = Boolean(webMode?.read_only) || String(webMode?.mode || "").toLowerCase() === "exhibit";
@@ -181,6 +234,70 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       ? { label: t("webAccess.summary.exhibit"), detail: t("webAccess.summary.exhibitHint"), tone: "warn" as const }
       : { label: t("webAccess.summary.normal"), detail: t("webAccess.summary.normalHint"), tone: "good" as const };
   }, [t, webMode]);
+
+  const currentBrowserSummary = useMemo(() => {
+    if (!loginActive) {
+      return {
+        label: t("webAccess.currentBrowserOpen"),
+        detail: t("webAccess.currentBrowserOpenHint"),
+        tone: "neutral" as const,
+      };
+    }
+    if (session == null) {
+      return {
+        label: t("webAccess.currentBrowserChecking"),
+        detail: t("webAccess.currentBrowserCheckingHint"),
+        tone: "warn" as const,
+      };
+    }
+    if (session.current_browser_signed_in) {
+      return {
+        label: t("webAccess.currentBrowserSignedIn"),
+        detail: t("webAccess.currentBrowserSignedInHint", {
+          userId: session.user_id || t("webAccess.unknownUser"),
+          role: session.is_admin ? t("webAccess.adminBadge") : t("webAccess.scopedBadge"),
+        }),
+        tone: "good" as const,
+      };
+    }
+    return {
+      label: t("webAccess.currentBrowserNotSignedIn"),
+      detail: t("webAccess.currentBrowserNotSignedInHint"),
+      tone: "warn" as const,
+    };
+  }, [loginActive, session, t]);
+
+  const handleSignOut = async () => {
+    setError("");
+    setSignOutBusy(true);
+    try {
+      const resp = await api.logoutWebAccess();
+      if (!resp.ok) {
+        setError(resp.error?.message || t("webAccess.loadFailed"));
+        return;
+      }
+    } catch {
+      setError(t("webAccess.loadFailed"));
+      return;
+    } finally {
+      api.setForceTokenLogin();
+      api.clearAuthToken();
+      document.cookie = "cccc_access_token=; path=/; max-age=0";
+    }
+    setSession((prev) => prev ? {
+      ...prev,
+      current_browser_signed_in: false,
+      principal_kind: "anonymous",
+      user_id: "",
+      is_admin: false,
+      allowed_groups: [],
+      can_access_global_settings: false,
+    } : prev);
+    pushHint(t("webAccess.signOutSuccess"));
+    window.setTimeout(() => {
+      window.location.replace(window.location.pathname + window.location.search + window.location.hash);
+    }, 60);
+  };
 
   const handleSaveReachability = async () => {
     setSaveBusy(true);
@@ -258,22 +375,35 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
     setCreateError("");
     try {
       const effectiveAdmin = !hasAdminToken || isAdmin;
-      const allowedGroups = scopeAllGroups ? [] : [...selectedGroups];
+      if (!effectiveAdmin && selectedGroups.size === 0) {
+        setCreateError(t("webAccess.groupSelectionRequired"));
+        return;
+      }
+      const allowedGroups = effectiveAdmin ? [] : [...selectedGroups];
+      const shouldAdoptCreatedToken = knownAccessTokenCount === 0 && !session?.current_browser_signed_in;
       const resp = await api.createAccessToken(trimmedUserId, effectiveAdmin, allowedGroups, customToken.trim() || undefined);
       if (!resp.ok || !resp.result?.access_token) {
         setCreateError(resp.error?.message || t("webAccess.createFailed"));
         return;
       }
       const created = resp.result.access_token;
+      setNewTokenAutoBound(shouldAdoptCreatedToken);
       if (created.token) {
         setNewToken(created.token);
-        api.setAuthToken(created.token);
       }
-      setUserId("");
-      setCustomToken("");
-      setIsAdmin(false);
-      setScopeAllGroups(true);
-      setSelectedGroups(new Set());
+      if (shouldAdoptCreatedToken && created.token) {
+        api.setAuthToken(created.token);
+        setSession({
+          login_active: true,
+          current_browser_signed_in: true,
+          principal_kind: "user",
+          user_id: trimmedUserId,
+          is_admin: effectiveAdmin,
+          allowed_groups: allowedGroups,
+          access_token_count: Math.max(knownAccessTokenCount + 1, 1),
+          can_access_global_settings: true,
+        });
+      }
       await load();
     } catch {
       setCreateError(t("webAccess.createFailed"));
@@ -283,14 +413,17 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
   };
 
   const handleDeleteAccessToken = async (tokenId: string) => {
-    if (!tokenId || !window.confirm(t("webAccess.deleteConfirm"))) return;
+    if (!tokenId) return;
+    setDeleteBusyTokenId(tokenId);
+    setError("");
     try {
       const resp = await api.deleteAccessToken(tokenId);
       if (!resp.ok) {
         setError(resp.error?.message || t("webAccess.deleteFailed"));
         return;
       }
-      if (!resp.result?.access_tokens_remain) {
+      setPendingDeleteTokenId(null);
+      if (resp.result?.deleted_current_session || !resp.result?.access_tokens_remain) {
         document.cookie = "cccc_access_token=; path=/; max-age=0";
         api.clearAuthToken();
         window.location.reload();
@@ -299,16 +432,24 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
       await load();
     } catch {
       setError(t("webAccess.deleteFailed"));
+    } finally {
+      setDeleteBusyTokenId(null);
     }
   };
 
   const startEdit = (entry: api.AccessTokenEntry) => {
+    if (entry.is_admin) return;
+    setPendingDeleteTokenId(null);
     setEditingTokenId(entry.token_id || null);
     setEditGroups(new Set(entry.allowed_groups || []));
   };
 
   const saveEdit = async () => {
     if (!editingTokenId) return;
+    if (editGroups.size === 0) {
+      setError(t("webAccess.groupSelectionRequired"));
+      return;
+    }
     setEditBusy(true);
     try {
       const resp = await api.updateAccessToken(editingTokenId, { allowed_groups: [...editGroups] });
@@ -364,7 +505,36 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
     <div className="space-y-5">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h3 className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("webAccess.title")}</h3>
+          <div className="flex items-center gap-2">
+            <h3 className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("webAccess.title")}</h3>
+            <InfoPopover
+              isDark={isDark}
+              title={t("webAccess.howItWorksTitle")}
+              content={
+                <ul className="space-y-1">
+                  <li>• {t("webAccess.howItWorksActivateLogin")}</li>
+                  <li>• {t("webAccess.howItWorksAutoLogin")}</li>
+                  <li>• {t("webAccess.howItWorksRemotePolicy")}</li>
+                </ul>
+              }
+              placement="bottom-start"
+              maxWidthClassName="max-w-[320px]"
+            >
+              {(getReferenceProps, setReference) => (
+                <button
+                  type="button"
+                  ref={setReference as never}
+                  {...getReferenceProps()}
+                  className={`inline-flex h-7 w-7 items-center justify-center rounded-full border transition-colors ${
+                    isDark ? "border-slate-700 bg-slate-900 text-slate-300 hover:bg-slate-800" : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50"
+                  }`}
+                  aria-label={t("webAccess.howItWorksTitle")}
+                >
+                  <InfoIcon size={14} />
+                </button>
+              )}
+            </InfoPopover>
+          </div>
           <p className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("webAccess.description")}</p>
         </div>
         <button
@@ -379,15 +549,6 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         </button>
       </div>
 
-      <div className={`rounded-lg border px-4 py-3 ${isDark ? "border-sky-500/20 bg-sky-500/10" : "border-sky-200 bg-sky-50"}`}>
-        <div className={`text-sm font-semibold ${isDark ? "text-sky-100" : "text-sky-900"}`}>{t("webAccess.howItWorksTitle")}</div>
-        <ul className={`mt-2 space-y-1.5 text-xs leading-6 ${isDark ? "text-sky-100/85" : "text-sky-800"}`}>
-          <li>• {t("webAccess.howItWorksActivateLogin")}</li>
-          <li>• {t("webAccess.howItWorksAutoLogin")}</li>
-          <li>• {t("webAccess.howItWorksRemotePolicy")}</li>
-        </ul>
-      </div>
-
       {(error || hint) && (
         <div className={`rounded-lg border px-3 py-2 text-xs ${error
           ? isDark ? "border-red-500/30 bg-red-500/10 text-red-200" : "border-red-200 bg-red-50 text-red-700"
@@ -397,230 +558,227 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         </div>
       )}
 
-      <div className={`rounded-lg border px-4 py-3 ${isDark ? "border-violet-500/20 bg-violet-500/10" : "border-violet-200 bg-violet-50"}`}>
-        <div className={`text-sm font-semibold ${isDark ? "text-violet-100" : "text-violet-900"}`}>{t("webAccess.currentBrowserTitle")}</div>
-        <div className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(
-          isDark,
-          !session?.login_active ? "neutral" : session?.current_browser_signed_in ? "good" : "warn",
-        )}`}>
-          {!session?.login_active
-            ? t("webAccess.currentBrowserOpen")
-            : session?.current_browser_signed_in
-              ? t("webAccess.currentBrowserSignedIn")
-              : t("webAccess.currentBrowserNotSignedIn")}
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <div className={cardClass(isDark)}>
+          <div className={`text-[11px] uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("webAccess.cards.reachability")}</div>
+          <div className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, reachabilitySummary.tone)}`}>{reachabilitySummary.label}</div>
+          <div className={`mt-3 text-sm leading-6 ${isDark ? "text-slate-300" : "text-gray-700"}`}>{reachabilitySummary.detail}</div>
         </div>
-        <div className={`mt-3 text-xs leading-6 ${isDark ? "text-violet-100/85" : "text-violet-800"}`}>
-          {!session?.login_active
-            ? t("webAccess.currentBrowserOpenHint")
-            : session?.current_browser_signed_in
-              ? t("webAccess.currentBrowserSignedInHint", {
-                  userId: session?.user_id || t("webAccess.unknownUser"),
-                  role: session?.is_admin ? t("webAccess.adminBadge") : t("webAccess.scopedBadge"),
-                })
-              : t("webAccess.currentBrowserNotSignedInHint")}
-        </div>
-      </div>
 
-      <div className="grid gap-3 lg:grid-cols-3">
-        {[
-          { title: t("webAccess.cards.reachability"), ...reachabilitySummary },
-          { title: t("webAccess.cards.accessControl"), ...accessSummary },
-          { title: t("webAccess.cards.interactionMode"), ...modeSummary },
-        ].map((item) => (
-          <div key={item.title} className={cardClass(isDark)}>
-            <div className={`text-[11px] uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{item.title}</div>
-            <div className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, item.tone)}`}>{item.label}</div>
-            <div className={`mt-3 text-sm leading-6 ${isDark ? "text-slate-300" : "text-gray-700"}`}>{item.detail}</div>
+        <div className={cardClass(isDark)}>
+          <div className={`text-[11px] uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("webAccess.cards.accessControl")}</div>
+          <div className={`mt-2 inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, accessSummary.tone)}`}>{accessSummary.label}</div>
+          <div className={`mt-3 text-sm leading-6 ${isDark ? "text-slate-300" : "text-gray-700"}`}>{accessSummary.detail}</div>
+
+          <div className={`mt-4 rounded-lg border px-3 py-3 ${isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className={`text-[11px] uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("webAccess.currentBrowserTitle")}</div>
+                <div className={`mt-1 text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{currentBrowserSummary.label}</div>
+                <div className={`mt-1 text-xs leading-5 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{currentBrowserSummary.detail}</div>
+              </div>
+              <InfoPopover
+                isDark={isDark}
+                title={t("webAccess.currentBrowserTitle")}
+                content={
+                  <div className="space-y-2">
+                    {loginActive ? <div>{t("webAccess.currentBrowserVerifyHint")}</div> : null}
+                    {session?.current_browser_signed_in ? <div>{t("webAccess.signOutHint")}</div> : null}
+                  </div>
+                }
+              >
+                {(getReferenceProps, setReference) => (
+                  <button
+                    type="button"
+                    ref={setReference as never}
+                    {...getReferenceProps()}
+                    className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors ${statusChipClass(isDark, currentBrowserSummary.tone)}`}
+                    aria-label={t("webAccess.currentBrowserTitle")}
+                  >
+                    <InfoIcon size={12} />
+                  </button>
+                )}
+              </InfoPopover>
+            </div>
+            {session?.current_browser_signed_in ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleSignOut()}
+                  disabled={signOutBusy}
+                  className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"} disabled:opacity-50`}
+                >
+                  {signOutBusy ? t("common:loading") : t("webAccess.signOut")}
+                </button>
+              </div>
+            ) : null}
           </div>
-        ))}
+        </div>
       </div>
 
       <section className={cardClass(isDark)}>
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <h4 className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("webAccess.accessControlTitle")}</h4>
             <p className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("webAccess.accessControlDescription")}</p>
           </div>
-          <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-            {t("webAccess.tokenCount", { count: accessTokenCount })}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className={`inline-flex rounded-full border px-2.5 py-1 text-xs ${statusChipClass(isDark, knownAccessTokenCount > 0 ? "good" : "neutral")}`}>
+              {t("webAccess.tokenCount", { count: knownAccessTokenCount })}
+            </div>
+            {canAccessGlobalSettings && knownAccessTokenCount > 0 ? (
+              <button
+                type="button"
+                onClick={() => openCreateDialog()}
+                className={primaryButtonClass(false)}
+              >
+                {t("webAccess.createAccessToken")}
+              </button>
+            ) : null}
           </div>
         </div>
 
-        <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,340px)_1fr]">
-          <div className="space-y-3">
-            <div>
-              <label className={labelClass(isDark)}>{t("webAccess.userIdLabel")}</label>
-              <input value={userId} onChange={(e) => setUserId(e.target.value)} className={inputClass(isDark)} placeholder={t("webAccess.userIdPlaceholder")} />
+        <div className="mt-4 space-y-3">
+          {!canAccessGlobalSettings ? (
+            <div className={`rounded-lg border p-6 text-sm ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+              <div className="font-medium">{t("webAccess.managementLockedTitle")}</div>
+              <div className="mt-2 text-xs leading-6">{t("webAccess.managementLockedHint")}</div>
             </div>
-
-
-            <label className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
-              <input
-                type="checkbox"
-                checked={!hasAdminToken || isAdmin}
-                onChange={(e) => setIsAdmin(e.target.checked)}
-                disabled={!hasAdminToken}
-                className="mt-1"
-              />
-              <div>
-                <div className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("webAccess.adminTokenLabel")}</div>
-                <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                  {!hasAdminToken ? t("webAccess.firstTokenAdminHint") : t("webAccess.adminTokenHint")}
-                </div>
-              </div>
-            </label>
-
-            <label className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
-              <input type="checkbox" checked={scopeAllGroups} onChange={(e) => setScopeAllGroups(e.target.checked)} className="mt-1" />
-              <div>
-                <div className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("webAccess.allGroupsLabel")}</div>
-                <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("webAccess.allGroupsHint")}</div>
-              </div>
-            </label>
-
-            {!scopeAllGroups && (
-              <div className={`rounded-lg border p-3 ${isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
-                <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("webAccess.groupScopeTitle")}</div>
-                <div className="mt-2 max-h-44 overflow-y-auto space-y-2 pr-1">
-                  {groups.length === 0 ? (
-                    <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("webAccess.noGroups")}</div>
-                  ) : groups.map((group) => {
-                    const groupId = group.group_id;
-                    return (
-                      <label key={groupId} className="flex items-center gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          checked={selectedGroups.has(groupId)}
-                          onChange={(e) => {
-                            setSelectedGroups((prev) => {
-                              const next = new Set(prev);
-                              if (e.target.checked) next.add(groupId); else next.delete(groupId);
-                              return next;
-                            });
-                          }}
-                        />
-                        <span className={isDark ? "text-slate-200" : "text-gray-800"}>{group.title || groupId}</span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div>
-              <label className={labelClass(isDark)}>{t("webAccess.customTokenLabel")}</label>
-              <input value={customToken} onChange={(e) => setCustomToken(e.target.value)} className={inputClass(isDark)} placeholder={t("webAccess.customTokenPlaceholder")} />
+          ) : accessTokens.length === 0 ? (
+            <div className={`rounded-xl border border-dashed p-6 ${isDark ? "border-slate-700 bg-slate-900/30 text-slate-300" : "border-gray-300 bg-gray-50 text-gray-700"}`}>
+              <div className="text-sm font-medium">{t("webAccess.noAccessTokens")}</div>
+              <div className={`mt-2 text-xs leading-6 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("webAccess.firstTokenAdminHint")}</div>
+              <button
+                type="button"
+                onClick={() => openCreateDialog()}
+                className={`mt-4 ${primaryButtonClass(false)}`}
+              >
+                {t("webAccess.createAccessToken")}
+              </button>
             </div>
-
-            {createError && <div className={`text-xs ${isDark ? "text-red-300" : "text-red-600"}`}>{createError}</div>}
-
-            <button type="button" onClick={() => void handleCreateAccessToken()} disabled={createBusy} className={primaryButtonClass(createBusy)}>
-              {createBusy ? t("webAccess.creating") : t("webAccess.createAccessToken")}
-            </button>
-
-            {newToken && (
-              <div className={`rounded-lg border p-3 ${isDark ? "border-emerald-500/30 bg-emerald-500/10" : "border-emerald-200 bg-emerald-50"}`}>
-                <div className={`text-sm font-semibold ${isDark ? "text-emerald-100" : "text-emerald-800"}`}>{t("webAccess.newTokenTitle")}</div>
-                <div className={`mt-1 text-xs break-all ${isDark ? "text-emerald-200" : "text-emerald-700"}`}>{newToken}</div>
-                <div className={`mt-2 space-y-1 text-xs ${isDark ? "text-emerald-200/80" : "text-emerald-700"}`}>
-                  <div>{t("webAccess.newTokenHint")}</div>
-                  <div>{t("webAccess.newTokenAutoLoginHint")}</div>
-                  <div>{t("webAccess.newTokenVerifyHint")}</div>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button type="button" onClick={() => void copyNewToken()} className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-emerald-500/20 text-emerald-100 hover:bg-emerald-500/30" : "bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50"}`}>
-                    {copiedNewToken ? t("webAccess.copied") : t("webAccess.copyToken")}
-                  </button>
-                  <button type="button" onClick={() => { setNewToken(null); setCopiedNewToken(false); }} className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"}`}>
-                    {t("webAccess.close")}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            {accessTokens.length === 0 ? (
-              <div className={`rounded-lg border border-dashed p-6 text-sm ${isDark ? "border-slate-700 text-slate-400" : "border-gray-300 text-gray-500"}`}>
-                {t("webAccess.noAccessTokens")}
-              </div>
-            ) : (
-              accessTokens.map((token) => {
-                const tokenId = token.token_id || "";
-                const isEditing = editingTokenId === tokenId;
-                return (
-                  <div key={tokenId || token.user_id} className={`rounded-lg border p-3 ${isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
-                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                      <div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{token.user_id}</div>
-                          <span className={`rounded-full border px-2 py-0.5 text-[11px] ${statusChipClass(isDark, token.is_admin ? "good" : "neutral")}`}>
-                            {token.is_admin ? t("webAccess.adminBadge") : t("webAccess.scopedBadge")}
-                          </span>
-                          <span className={`rounded-full border px-2 py-0.5 text-[11px] ${statusChipClass(isDark, "neutral")}`}>
-                            {token.token_preview || "****"}
-                          </span>
-                        </div>
-                        <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
-                          {(token.allowed_groups || []).length > 0
-                            ? t("webAccess.scopedGroupsHint", { count: token.allowed_groups.length })
-                            : t("webAccess.allGroupsAccess")}
-                        </div>
+          ) : (
+            accessTokens.map((token) => {
+              const tokenId = token.token_id || "";
+              const isEditing = editingTokenId === tokenId;
+              return (
+                <div key={tokenId || token.user_id} className={`rounded-lg border p-3 ${isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{token.user_id}</div>
+                        <span className={`rounded-full border px-2 py-0.5 text-[11px] ${statusChipClass(isDark, token.is_admin ? "good" : "neutral")}`}>
+                          {token.is_admin ? t("webAccess.adminBadge") : t("webAccess.scopedBadge")}
+                        </span>
+                        <span className={`rounded-full border px-2 py-0.5 text-[11px] ${statusChipClass(isDark, "neutral")}`}>
+                          {token.token_preview || "****"}
+                        </span>
                       </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => startEdit(token)} className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"}`}>
+                      <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                        {token.is_admin
+                          ? t("webAccess.allGroupsAccess")
+                          : (token.allowed_groups || []).length > 0
+                            ? t("webAccess.scopedGroupsHint", { count: token.allowed_groups.length })
+                            : t("webAccess.noGroupsAssigned")}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {!token.is_admin ? (
+                        <button
+                          type="button"
+                          onClick={() => { if (!tokenId) return; startEdit(token); }}
+                          disabled={!tokenId || deleteBusyTokenId === tokenId}
+                          className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"} disabled:opacity-50`}
+                        >
                           {t("webAccess.edit")}
                         </button>
-                        <button type="button" onClick={() => void revealAndCopy(tokenId)} className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"}`}>
-                          {copiedTokenId === tokenId ? t("webAccess.copied") : t("webAccess.copyToken")}
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => void revealAndCopy(tokenId)}
+                        disabled={!tokenId || deleteBusyTokenId === tokenId}
+                        className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"} disabled:opacity-50`}
+                      >
+                        {copiedTokenId === tokenId ? t("webAccess.copied") : t("webAccess.copyToken")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (!tokenId) return;
+                          setEditingTokenId(null);
+                          setPendingDeleteTokenId((prev) => (prev === tokenId ? null : tokenId));
+                        }}
+                        disabled={!tokenId || deleteBusyTokenId === tokenId}
+                        className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-red-500/15 text-red-200 hover:bg-red-500/25" : "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"} disabled:opacity-50`}
+                      >
+                        {t("webAccess.delete")}
+                      </button>
+                    </div>
+                  </div>
+
+                  {pendingDeleteTokenId === tokenId && (
+                    <div className={`mt-3 rounded-lg border p-3 ${isDark ? "border-red-500/30 bg-red-500/10" : "border-red-200 bg-red-50"}`}>
+                      <div className={`text-xs ${isDark ? "text-red-100" : "text-red-700"}`}>{t("webAccess.deleteConfirm")}</div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleDeleteAccessToken(tokenId)}
+                          disabled={deleteBusyTokenId === tokenId}
+                          className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-red-500/20 text-red-100 hover:bg-red-500/30" : "bg-red-600 text-white hover:bg-red-700"} disabled:opacity-50`}
+                        >
+                          {deleteBusyTokenId === tokenId ? t("common:loading") : t("webAccess.delete")}
                         </button>
-                        <button type="button" onClick={() => void handleDeleteAccessToken(tokenId)} className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-red-500/15 text-red-200 hover:bg-red-500/25" : "bg-red-50 text-red-700 border border-red-200 hover:bg-red-100"}`}>
-                          {t("webAccess.delete")}
+                        <button
+                          type="button"
+                          onClick={() => setPendingDeleteTokenId(null)}
+                          disabled={deleteBusyTokenId === tokenId}
+                          className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"} disabled:opacity-50`}
+                        >
+                          {t("webAccess.cancel")}
                         </button>
                       </div>
                     </div>
+                  )}
 
-                    {isEditing && (
-                      <div className={`mt-3 rounded-lg border p-3 ${isDark ? "border-slate-700 bg-slate-950/60" : "border-gray-200 bg-gray-50"}`}>
-                        <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("webAccess.editScopeTitle")}</div>
-                        <div className="mt-2 max-h-44 overflow-y-auto space-y-2 pr-1">
-                          {groups.length === 0 ? (
-                            <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("webAccess.noGroups")}</div>
-                          ) : groups.map((group) => {
-                            const groupId = group.group_id;
-                            return (
-                              <label key={groupId} className="flex items-center gap-2 text-sm">
-                                <input
-                                  type="checkbox"
-                                  checked={editGroups.has(groupId)}
-                                  onChange={(e) => {
-                                    setEditGroups((prev) => {
-                                      const next = new Set(prev);
-                                      if (e.target.checked) next.add(groupId); else next.delete(groupId);
-                                      return next;
-                                    });
-                                  }}
-                                />
-                                <span className={isDark ? "text-slate-200" : "text-gray-800"}>{group.title || groupId}</span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                        <div className="mt-3 flex gap-2">
-                          <button type="button" onClick={() => void saveEdit()} disabled={editBusy} className={primaryButtonClass(editBusy)}>
-                            {editBusy ? t("webAccess.saving") : t("webAccess.save")}
-                          </button>
-                          <button type="button" onClick={() => { setEditingTokenId(null); setEditGroups(new Set()); }} className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"}`}>
-                            {t("webAccess.cancel")}
-                          </button>
-                        </div>
+                  {isEditing && (
+                    <div className={`mt-3 rounded-lg border p-3 ${isDark ? "border-slate-700 bg-slate-950/60" : "border-gray-200 bg-gray-50"}`}>
+                      <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("webAccess.editScopeTitle")}</div>
+                      <div className="mt-2 max-h-44 overflow-y-auto space-y-2 pr-1">
+                        {groups.length === 0 ? (
+                          <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("webAccess.noGroups")}</div>
+                        ) : groups.map((group) => {
+                          const groupId = group.group_id;
+                          return (
+                            <label key={groupId} className="flex items-center gap-2 text-sm">
+                              <input
+                                type="checkbox"
+                                checked={editGroups.has(groupId)}
+                                onChange={(e) => {
+                                  setEditGroups((prev) => {
+                                    const next = new Set(prev);
+                                    if (e.target.checked) next.add(groupId); else next.delete(groupId);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              <span className={isDark ? "text-slate-200" : "text-gray-800"}>{group.title || groupId}</span>
+                            </label>
+                          );
+                        })}
                       </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
+                      <div className="mt-3 flex gap-2">
+                        <button type="button" onClick={() => void saveEdit()} disabled={editBusy} className={primaryButtonClass(editBusy)}>
+                          {editBusy ? t("webAccess.saving") : t("webAccess.save")}
+                        </button>
+                        <button type="button" onClick={() => { setEditingTokenId(null); setEditGroups(new Set()); }} className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"}`}>
+                          {t("webAccess.cancel")}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
         </div>
       </section>
 
@@ -728,6 +886,149 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
           </div>
         </div>
       </section>
+
+      {canAccessGlobalSettings && createDialogOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-6">
+          <button
+            type="button"
+            aria-label={t("webAccess.close")}
+            onClick={() => closeCreateDialog()}
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+          />
+          <div
+            ref={createDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={newToken ? t("webAccess.newTokenTitle") : t("webAccess.createAccessToken")}
+            className={`relative z-[71] w-full max-w-2xl rounded-2xl border shadow-2xl ${isDark ? "border-slate-700 bg-slate-900 text-slate-100" : "border-gray-200 bg-white text-gray-900"}`}
+          >
+            <div className={`flex items-start justify-between gap-4 border-b px-5 py-4 ${isDark ? "border-slate-800" : "border-gray-200"}`}>
+              <div>
+                <h5 className={`text-base font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{newToken ? t("webAccess.newTokenTitle") : t("webAccess.createAccessToken")}</h5>
+                <p className={`mt-1 text-xs leading-6 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                  {newToken ? t("webAccess.newTokenHint") : t("webAccess.accessControlDescription")}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => closeCreateDialog()}
+                className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}
+              >
+                {t("webAccess.close")}
+              </button>
+            </div>
+
+            {newToken ? (
+              <div className="px-5 py-5">
+                <div className={`rounded-xl border p-4 ${isDark ? "border-emerald-500/30 bg-emerald-500/10" : "border-emerald-200 bg-emerald-50"}`}>
+                  <div className={`break-all rounded-lg border px-3 py-3 text-xs font-mono ${isDark ? "border-emerald-500/20 bg-slate-950/40 text-emerald-100" : "border-emerald-200 bg-white text-emerald-900"}`}>{newToken}</div>
+                  <div className={`mt-3 space-y-1 text-xs leading-6 ${isDark ? "text-emerald-200/80" : "text-emerald-700"}`}>
+                    <div>{newTokenAutoBound ? t("webAccess.newTokenAutoLoginHint") : t("webAccess.newTokenNoAutoLoginHint")}</div>
+                    <div>{t("webAccess.newTokenVerifyHint")}</div>
+                  </div>
+                </div>
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void copyNewToken()} className={primaryButtonClass(false)}>
+                    {copiedNewToken ? t("webAccess.copied") : t("webAccess.copyToken")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => closeCreateDialog()}
+                    className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"}`}
+                  >
+                    {t("webAccess.close")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="px-5 py-5">
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="space-y-3">
+                    <div>
+                      <label className={labelClass(isDark)}>{t("webAccess.userIdLabel")}</label>
+                      <input value={userId} onChange={(e) => setUserId(e.target.value)} className={inputClass(isDark)} placeholder={t("webAccess.userIdPlaceholder")} />
+                    </div>
+
+                    <div>
+                      <label className={labelClass(isDark)}>{t("webAccess.customTokenLabel")}</label>
+                      <input value={customToken} onChange={(e) => setCustomToken(e.target.value)} className={inputClass(isDark)} placeholder={t("webAccess.customTokenPlaceholder")} />
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <label className={`flex items-start gap-3 rounded-lg border px-3 py-3 ${isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-white"}`}>
+                      <input
+                        type="checkbox"
+                        checked={!hasAdminToken || isAdmin}
+                        onChange={(e) => setIsAdmin(e.target.checked)}
+                        disabled={!hasAdminToken}
+                        className="mt-1"
+                      />
+                      <div>
+                        <div className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("webAccess.adminTokenLabel")}</div>
+                        <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+                          {!hasAdminToken ? t("webAccess.firstTokenAdminHint") : t("webAccess.adminTokenHint")}
+                        </div>
+                      </div>
+                    </label>
+
+                    {hasAdminToken && !isAdmin ? (
+                      <div className={`rounded-lg border px-3 py-3 ${isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-white"}`}>
+                        <div className={`text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("webAccess.scopedTokenGroupsTitle")}</div>
+                        <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("webAccess.scopedTokenGroupsHint")}</div>
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+
+                {hasAdminToken && !isAdmin ? (
+                  <div className={`mt-3 rounded-lg border p-3 ${isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-white"}`}>
+                    <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("webAccess.groupScopeTitle")}</div>
+                    <div className="mt-2 max-h-44 overflow-y-auto space-y-2 pr-1">
+                      {groups.length === 0 ? (
+                        <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("webAccess.noGroups")}</div>
+                      ) : groups.map((group) => {
+                        const groupId = group.group_id;
+                        return (
+                          <label key={groupId} className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={selectedGroups.has(groupId)}
+                              onChange={(e) => {
+                                setSelectedGroups((prev) => {
+                                  const next = new Set(prev);
+                                  if (e.target.checked) next.add(groupId); else next.delete(groupId);
+                                  return next;
+                                });
+                              }}
+                            />
+                            <span className={isDark ? "text-slate-200" : "text-gray-800"}>{group.title || groupId}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {createError && <div className={`mt-3 text-xs ${isDark ? "text-red-300" : "text-red-600"}`}>{createError}</div>}
+
+                <div className="mt-5 flex flex-wrap gap-2">
+                  <button type="button" onClick={() => void handleCreateAccessToken()} disabled={createBusy} className={primaryButtonClass(createBusy)}>
+                    {createBusy ? t("webAccess.creating") : t("webAccess.createAccessToken")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => closeCreateDialog()}
+                    className={`px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"}`}
+                  >
+                    {t("webAccess.cancel")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       <section className={cardClass(isDark)}>
         <h4 className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("webAccess.interactionModeTitle")}</h4>

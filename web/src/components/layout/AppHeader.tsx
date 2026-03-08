@@ -28,13 +28,8 @@ export interface AppHeaderProps {
   actors: Actor[];
   sseStatus: "connected" | "connecting" | "disconnected";
   busy: string;
-  errorMsg: string;
-  notice: { message: string; actionLabel?: string; actionId?: string } | null;
-  onDismissError: () => void;
-  onNoticeAction: (actionId: string) => void;
-  onDismissNotice: () => void;
   onOpenSidebar: () => void;
-  onOpenGroupEdit: () => void;
+  onOpenGroupEdit?: () => void;
   onOpenSearch: () => void;
   onOpenContext: () => void;
   onStartGroup: () => void;
@@ -54,11 +49,6 @@ export function AppHeader({
   selectedGroupRunning,
   actors,
   busy,
-  errorMsg,
-  notice,
-  onDismissError,
-  onNoticeAction,
-  onDismissNotice,
   onOpenSidebar,
   onOpenGroupEdit,
   onOpenSearch,
@@ -121,7 +111,7 @@ export function AppHeader({
           </div>
         </div>
 
-        {selectedGroupId && !webReadOnly && (
+        {selectedGroupId && !webReadOnly && onOpenGroupEdit && (
           <button
             className={classNames(
               "hidden md:inline-flex items-center justify-center gap-1 text-xs px-2.5 py-1.5 rounded-xl transition-all glass-btn",
@@ -262,68 +252,6 @@ export function AppHeader({
         )}
       </div>
 
-      {/* Error Toast - Floating below header now */}
-      {errorMsg && !webReadOnly && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-50 animate-slide-up">
-          <div
-            className={classNames(
-              "rounded-2xl px-4 py-2.5 text-sm flex items-center gap-3 glass-modal",
-              isDark
-                ? "border-rose-500/20 text-rose-300"
-                : "border-rose-200/50 text-rose-700"
-            )}
-            role="alert"
-          >
-            <span>{errorMsg}</span>
-            <button 
-              className={classNames(
-                "p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg transition-all glass-btn",
-                isDark ? "text-rose-400" : "text-rose-600"
-              )} 
-              onClick={onDismissError}
-              aria-label={t('dismissError')}
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
-
-      {notice && !webReadOnly && (
-        <div className="absolute top-16 left-1/2 -translate-x-1/2 z-40 animate-slide-up">
-          <div
-            className={classNames(
-              "rounded-2xl px-4 py-2.5 text-sm flex items-center gap-3 glass-modal",
-              isDark ? "border-white/10 text-slate-200" : "border-black/10 text-gray-800"
-            )}
-            role="status"
-          >
-            <span className="min-w-0 truncate">{notice.message}</span>
-            {notice.actionId && notice.actionLabel && (
-              <button
-                type="button"
-                className={classNames(
-                  "px-2 py-1 rounded-xl text-xs transition-all glass-btn",
-                  isDark ? "text-slate-100" : "text-gray-900"
-                )}
-                onClick={() => onNoticeAction(notice.actionId!)}
-              >
-                {notice.actionLabel}
-              </button>
-            )}
-            <button
-              className={classNames(
-                "p-2 min-w-[36px] min-h-[36px] flex items-center justify-center rounded-lg transition-all glass-btn",
-                isDark ? "text-slate-300" : "text-gray-600"
-              )}
-              onClick={onDismissNotice}
-              aria-label={t('common:dismiss')}
-            >
-              ×
-            </button>
-          </div>
-        </div>
-      )}
     </header>
   );
 }

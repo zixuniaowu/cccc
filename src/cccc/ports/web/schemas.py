@@ -430,7 +430,9 @@ def check_group(conn: Request | WebSocket, group_id: str) -> Any:
     allowed_groups = _principal_allowed_groups(principal)
     if _principal_kind(principal) != "user":
         raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "group access required", "details": {"group_id": gid}})
-    if _principal_is_admin(principal) or not allowed_groups or gid in allowed_groups:
+    if _principal_is_admin(principal):
+        return principal
+    if gid and gid in allowed_groups:
         return principal
     raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "group access denied", "details": {"group_id": gid}})
 
@@ -451,7 +453,7 @@ def filter_groups_for_principal(conn: Request | WebSocket, groups: list[dict[str
         return []
     allowed_groups = _principal_allowed_groups(principal)
     if not allowed_groups:
-        return groups
+        return []
     allowed = set(allowed_groups)
     return [item for item in groups if _extract_group_item_id(item) in allowed]
 

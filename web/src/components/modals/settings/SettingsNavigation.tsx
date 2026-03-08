@@ -14,6 +14,7 @@ interface SettingsNavigationProps {
   groupId?: string;
   scope: SettingsScope;
   scopeRootUrl: string;
+  globalEnabled: boolean;
   tabs: SettingsTabOption[];
   activeTab: string;
   onScopeChange: (scope: SettingsScope) => void;
@@ -25,12 +26,15 @@ export function SettingsNavigation({
   groupId,
   scope,
   scopeRootUrl,
+  globalEnabled,
   tabs,
   activeTab,
   onScopeChange,
   onTabChange,
 }: SettingsNavigationProps) {
   const { t } = useTranslation("settings");
+  const globalScopeTitle = globalEnabled ? t("navigation.globalScopeTitle") : t("navigation.globalLockedTitle");
+  const globalScopeContent = globalEnabled ? t("navigation.globalScopeContent") : t("navigation.globalLockedContent");
   return (
     <>
       <aside className={`hidden sm:flex sm:flex-col w-48 border-r flex-shrink-0 ${isDark ? "bg-slate-900/50 border-slate-800" : "bg-gray-50/50 border-gray-100"}`}>
@@ -80,6 +84,7 @@ export function SettingsNavigation({
             <button
               type="button"
               onClick={() => onScopeChange("global")}
+              disabled={!globalEnabled}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm text-left font-semibold transition-colors ${
                 scope === "global"
                   ? isDark
@@ -88,13 +93,13 @@ export function SettingsNavigation({
                   : isDark
                     ? "hover:bg-slate-800 text-slate-400"
                     : "hover:bg-gray-100 text-gray-600"
-              }`}
+              } disabled:opacity-40`}
             >
               <span>{t("navigation.global")}</span>
               <ScopeTooltip
                 isDark={isDark}
-                title={t("navigation.globalScopeTitle")}
-                content={<>{t("navigation.globalScopeContent")}</>}
+                title={globalScopeTitle}
+                content={<>{globalScopeContent}</>}
               >
                 {(getReferenceProps, setReference) => (
                   <div
@@ -181,6 +186,7 @@ export function SettingsNavigation({
             <button
               type="button"
               onClick={() => onScopeChange("global")}
+              disabled={!globalEnabled}
               className={`flex-1 relative flex items-center justify-center px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
                 scope === "global"
                   ? isDark
@@ -189,14 +195,14 @@ export function SettingsNavigation({
                   : isDark
                     ? "bg-slate-900 text-slate-300 border border-slate-800 hover:bg-slate-800"
                     : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"
-              }`}
+              } disabled:opacity-40`}
             >
               <span>{t("navigation.global")}</span>
               <div className="absolute right-1 top-1/2 -translate-y-1/2">
                 <ScopeTooltip
                   isDark={isDark}
-                  title={t("navigation.globalScopeTitle")}
-                  content={<>{t("navigation.globalScopeContent")}</>}
+                  title={globalScopeTitle}
+                  content={<>{globalScopeContent}</>}
                 >
                   {(getReferenceProps, setReference) => (
                     <div

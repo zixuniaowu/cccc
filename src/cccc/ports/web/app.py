@@ -26,6 +26,7 @@ from .schemas import RouteContext
 
 logger = logging.getLogger("cccc.web")
 _WEB_LOG_FH: Optional[Any] = None
+_SIGNED_OUT_COOKIE = "cccc_signed_out"
 
 
 @dataclass(frozen=True)
@@ -240,8 +241,14 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def _auth(request: Request, call_next):  # type: ignore[no-untyped-def]
         provided_token, token_source = _request_token_parts(request)
-        principal = _resolve_principal(request)
-        stale_cookie = False
+        logout_marker = str(request.cookies.get(_SIGNED_OUT_COOKIE) or "").strip() == "1"
+        if logout_marker and token_source == "cookie":
+            provided_token = ""
+            token_source = ""
+        principal = _resolve_principal(request if not logout_marker else request)
+        stale_cookie = logout_marker and bool(str(request.cookies.get("cccc_access_token") or "").strip())
+        if logout_marker and stale_cookie:
+            principal = Principal(kind="anonymous")
         tokens_active = bool(list_access_tokens())
         # header/query 是用户显式提供的认证材料，仍然严格按 401 收口；
         # cookie 在无 token 配置时允许匿名放行，并顺手清掉残留脏 cookie。
@@ -266,7 +273,10 @@ def create_app() -> FastAPI:
         resp = await call_next(request)
         if stale_cookie:
             resp.delete_cookie(key="cccc_access_token", path="/")
-        if principal.kind == "user" and provided_token and str(request.cookies.get("cccc_access_token") or "").strip() != provided_token:
+        skip_cookie_refresh = bool(getattr(getattr(request, "state", None), "skip_token_cookie_refresh", False))
+        if logout_marker and principal.kind == "user" and token_source in ("header", "query"):
+            resp.delete_cookie(key=_SIGNED_OUT_COOKIE, path="/")
+        if not skip_cookie_refresh and principal.kind == "user" and provided_token and str(request.cookies.get("cccc_access_token") or "").strip() != provided_token:
             # Detect real protocol: env override > proxy header > request scheme
             # Set CCCC_WEB_SECURE=1 when behind HTTPS proxy that doesn't send X-Forwarded-Proto
             force_secure = str(os.environ.get("CCCC_WEB_SECURE") or "").strip().lower() in ("1", "true", "yes")

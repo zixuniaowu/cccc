@@ -22,7 +22,9 @@
     "groupScopeTitle": "工作组范围",
     "groupScopeContent": "仅应用于 {{scopeRoot}}。适用于工作组特定的超时和集成设置。",
     "globalScopeTitle": "全局范围",
-    "globalScopeContent": "应用于整个 CCCC 实例（守护进程 + Web）。这些设置影响所有工作组，除非被覆盖。"
+    "globalScopeContent": "应用于整个 CCCC 实例（守护进程 + Web）。这些设置影响所有工作组，除非被覆盖。",
+    "globalLockedTitle": "需要管理员权限",
+    "globalLockedContent": "全局设置仅限管理员使用。若要调整工作组内设置，请从某个工作组打开设置；若要管理全局设置，请使用管理员访问令牌登录。"
   },
   "actorProfiles": {
     "searchPlaceholder": "按名称/ID/runtime 搜索",
@@ -572,7 +574,7 @@
   },
   "webAccess": {
     "title": "Web Access",
-    "description": "在一个页面里统一管理 Web 可达性、访问令牌和交互模式。",
+    "description": "在一个页面里统一管理 Web 可达性、登录状态和交互模式。",
     "refresh": "刷新",
     "loadFailed": "加载 Web Access 状态失败。",
     "invalidPort": "端口必须在 1 到 65535 之间。",
@@ -603,16 +605,17 @@
       "interactionMode": "交互模式"
     },
     "accessControlTitle": "访问令牌",
-    "accessControlDescription": "创建管理员或受限访问令牌。只要至少存在一个令牌，没有令牌的浏览器在访问 Web API 时就必须先登录，即使是在 localhost 上。",
+    "accessControlDescription": "创建管理员或受限访问令牌。受限令牌只能使用其被授权的工作组。只要至少存在一个令牌，没有令牌的浏览器在访问 Web API 时就必须先登录，即使是在 localhost 上。",
     "tokenCount": "已配置 {{count}} 个",
     "userIdLabel": "用户标识",
     "userIdPlaceholder": "例如：owner、ops、analyst",
     "userIdRequired": "必须填写用户标识。",
+    "groupSelectionRequired": "受限访问令牌至少要选择一个允许的工作组。",
     "adminTokenLabel": "管理员访问令牌",
     "firstTokenAdminHint": "第一个访问令牌必须是管理员，否则你会把自己锁在门外。",
     "adminTokenHint": "管理员访问令牌可以管理全局设置以及其它访问令牌。",
-    "allGroupsLabel": "适用于所有工作组",
-    "allGroupsHint": "除非你明确要限制范围，否则建议保持全组可用。",
+    "scopedTokenGroupsTitle": "受限令牌的工作组",
+    "scopedTokenGroupsHint": "受限访问令牌必须绑定到一个或多个工作组。全局设置始终仅限管理员。",
     "groupScopeTitle": "允许访问的工作组",
     "noGroups": "暂无工作组。",
     "customTokenLabel": "自定义令牌值（可选）",
@@ -630,6 +633,7 @@
     "scopedBadge": "受限",
     "scopedGroupsHint": "限制为 {{count}} 个工作组。",
     "allGroupsAccess": "适用于所有工作组。",
+    "noGroupsAssigned": "尚未分配任何工作组。",
     "edit": "编辑",
     "editScopeTitle": "编辑允许访问的工作组",
     "saving": "保存中…",
@@ -687,9 +691,10 @@
     },
     "howItWorksTitle": "工作方式",
     "howItWorksActivateLogin": "只要系统里存在任意一个访问令牌，Web 登录就会对所有浏览器会话生效，包括 localhost。",
-    "howItWorksAutoLogin": "当前浏览器在创建新访问令牌后，会自动使用这个令牌登录。",
+    "howItWorksAutoLogin": "只有在创建第一个访问令牌时，当前浏览器才会自动使用它登录。",
     "howItWorksRemotePolicy": "下方的远程暴露开关只控制“是否允许无令牌远程暴露”，不会关闭本地 Web 登录。",
     "newTokenAutoLoginHint": "当前浏览器已经自动使用这个新令牌登录。",
+    "newTokenNoAutoLoginHint": "当前浏览器的登录状态保持不变。如有需要，请在其他浏览器中使用这个令牌，或手动切换登录。",
     "newTokenVerifyHint": "如果你想验证登录门面，请用无痕窗口或另一个浏览器打开。",
     "currentBrowserTitle": "当前浏览器",
     "currentBrowserOpen": "开放访问",
@@ -698,6 +703,15 @@
     "currentBrowserOpenHint": "当前还没有访问令牌，所以这个浏览器暂时不需要登录。",
     "currentBrowserSignedInHint": "当前浏览器已登录为 {{userId}}（{{role}}）。",
     "currentBrowserNotSignedInHint": "当前已经启用登录，但这个浏览器还没有登录。",
-    "unknownUser": "未知用户"
+    "unknownUser": "未知用户",
+    "currentBrowserChecking": "正在检查会话",
+    "currentBrowserCheckingHint": "当前已经启用登录，这个页面正在刷新当前浏览器的会话状态。",
+    "currentBrowserVerifyHint": "如果你想验证登录门面，请用无痕窗口或另一个浏览器打开。",
+    "managementLockedTitle": "需要管理员登录",
+    "managementLockedHint": "当前浏览器没有管理员权限。包括访问令牌在内的全局设置都会被锁定，直到你使用管理员令牌登录。",
+    "signOut": "退出登录",
+    "signOutHint": "让当前浏览器退出当前令牌会话，并返回访问令牌登录页。",
+    "signOutSuccess": "正在让当前浏览器退出登录..."
+
   }
 }

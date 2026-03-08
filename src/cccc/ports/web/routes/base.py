@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ....kernel.access_tokens import list_access_tokens
 from ....kernel.scope import detect_scope
@@ -87,20 +87,38 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         principal = get_principal(request)
         allowed_groups = getattr(principal, "allowed_groups", ()) or ()
         groups = [str(item or "").strip() for item in allowed_groups if str(item or "").strip()]
-        login_active = bool(list_access_tokens())
+        access_tokens = list_access_tokens()
+        access_token_count = len(access_tokens)
+        login_active = access_token_count > 0
+        principal_kind = str(getattr(principal, "kind", "anonymous") or "anonymous")
+        is_admin = bool(getattr(principal, "is_admin", False))
+        can_access_global_settings = access_token_count == 0 or (principal_kind == "user" and is_admin)
         return {
             "ok": True,
             "result": {
                 "web_access_session": {
                     "login_active": login_active,
-                    "current_browser_signed_in": str(getattr(principal, "kind", "anonymous") or "anonymous") == "user",
-                    "principal_kind": str(getattr(principal, "kind", "anonymous") or "anonymous"),
+                    "current_browser_signed_in": principal_kind == "user",
+                    "principal_kind": principal_kind,
                     "user_id": str(getattr(principal, "user_id", "") or ""),
-                    "is_admin": bool(getattr(principal, "is_admin", False)),
+                    "is_admin": is_admin,
                     "allowed_groups": groups,
+                    "access_token_count": access_token_count,
+                    "can_access_global_settings": can_access_global_settings,
                 }
             },
         }
+
+    @global_router.post("/api/v1/web_access/logout")
+    async def web_access_logout(request: Request) -> JSONResponse:
+        request.state.skip_token_cookie_refresh = True
+        resp = JSONResponse({"ok": True, "result": {"signed_out": True}})
+        resp.delete_cookie(key="cccc_access_token", path="/")
+        host = str(getattr(getattr(request, "url", None), "hostname", "") or "").strip().lower()
+        if host:
+            resp.delete_cookie(key="cccc_access_token", path="/", domain=host)
+        resp.set_cookie(key="cccc_signed_out", value="1", httponly=True, samesite="lax", path="/", max_age=300)
+        return resp
 
     # debug/snapshot uses manual check_group (group_id from query param)
     @global_router.get("/api/v1/debug/snapshot")

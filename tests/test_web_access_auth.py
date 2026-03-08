@@ -50,6 +50,8 @@ class TestWebAccessAuth(unittest.TestCase):
             session = ((body.get("result") or {}).get("web_access_session") or {})
             self.assertEqual(bool(session.get("login_active")), False)
             self.assertEqual(bool(session.get("current_browser_signed_in")), False)
+            self.assertEqual(int(session.get("access_token_count") or 0), 0)
+            self.assertTrue(bool(session.get("can_access_global_settings")))
         finally:
             cleanup()
 
@@ -69,7 +71,30 @@ class TestWebAccessAuth(unittest.TestCase):
             self.assertEqual(bool(session.get("current_browser_signed_in")), True)
             self.assertEqual(str(session.get("user_id") or ""), "admin-user")
             self.assertEqual(bool(session.get("is_admin")), True)
-            self.assertEqual(session.get("allowed_groups"), ["g-1"])
+            self.assertEqual(session.get("allowed_groups"), [])
+            self.assertEqual(int(session.get("access_token_count") or 0), 1)
+            self.assertTrue(bool(session.get("can_access_global_settings")))
+        finally:
+            cleanup()
+
+    def test_web_access_session_reports_locked_management_for_non_admin_browser_when_tokens_exist(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            create_access_token("admin-user", is_admin=True)
+            member = create_access_token("member-user", is_admin=False)
+            member_token = str(member.get("token") or "")
+            client = self._create_probe_client()
+            resp = client.get("/api/v1/web_access/session", headers={"Authorization": f"Bearer {member_token}"})
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            session = ((body.get("result") or {}).get("web_access_session") or {})
+            self.assertEqual(bool(session.get("login_active")), True)
+            self.assertEqual(bool(session.get("current_browser_signed_in")), True)
+            self.assertEqual(bool(session.get("is_admin")), False)
+            self.assertEqual(int(session.get("access_token_count") or 0), 2)
+            self.assertFalse(bool(session.get("can_access_global_settings")))
         finally:
             cleanup()
 
@@ -82,6 +107,44 @@ class TestWebAccessAuth(unittest.TestCase):
             body = resp.json()
             self.assertTrue(body.get("present"))
             self.assertEqual(str(body.get("kind") or ""), "anonymous")
+        finally:
+            cleanup()
+
+    def test_web_access_logout_with_cookie_only_clears_session(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            created = create_access_token("member-user", is_admin=False)
+            token = str(created.get("token") or "")
+            client = self._create_probe_client()
+            client.cookies.set("cccc_access_token", token)
+            resp = client.post("/api/v1/web_access/logout")
+            self.assertEqual(resp.status_code, 200)
+            set_cookie = str(resp.headers.get("set-cookie") or "")
+            self.assertIn("cccc_access_token=""", set_cookie)
+            self.assertIn("Max-Age=0", set_cookie)
+            follow = client.get("/api/v1/web_access/session")
+            self.assertEqual(follow.status_code, 401)
+        finally:
+            cleanup()
+
+    def test_web_access_logout_clears_cookie_without_rebinding_token(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            created = create_access_token("admin-user", is_admin=True)
+            token = str(created.get("token") or "")
+            client = self._create_probe_client()
+            resp = client.post("/api/v1/web_access/logout", headers={"Authorization": f"Bearer {token}"})
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(bool((body.get("result") or {}).get("signed_out")))
+            set_cookie = str(resp.headers.get("set-cookie") or "")
+            self.assertIn("cccc_access_token=""", set_cookie)
+            self.assertIn("Max-Age=0", set_cookie)
+            self.assertNotIn(token, set_cookie)
         finally:
             cleanup()
 

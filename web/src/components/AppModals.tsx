@@ -41,6 +41,7 @@ interface AppModalsProps {
   onStopGroup: () => Promise<void>;
   onSetGroupState: (state: "active" | "idle" | "paused") => Promise<void>;
   fetchContext: (groupId: string) => Promise<void>;
+  canManageGroups: boolean;
 }
 
 function getErrorDetailGroupId(err: unknown): string {
@@ -60,6 +61,7 @@ export function AppModals({
   onStopGroup,
   onSetGroupState,
   fetchContext,
+  canManageGroups,
 }: AppModalsProps) {
   const { t } = useTranslation('actors');
   // Stores
@@ -936,13 +938,13 @@ export function AppModals({
           openModal("context");
         }}
         onOpenSettings={() => openModal("settings")}
-        onOpenGroupEdit={() => {
+        onOpenGroupEdit={canManageGroups ? () => {
           if (groupDoc) {
             setEditGroupTitle(groupDoc.title || "");
             setEditGroupTopic(groupDoc.topic || "");
             openModal("groupEdit");
           }
-        }}
+        } : undefined}
         onStartGroup={onStartGroup}
         onStopGroup={onStopGroup}
         onSetGroupState={onSetGroupState}

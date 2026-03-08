@@ -184,8 +184,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.daemon({"op": "group_update", "args": {"group_id": group_id, "by": req.by, "patch": patch}})
 
     @group_router.delete("")
-    async def group_delete(group_id: str, confirm: str = "", by: str = "user") -> Dict[str, Any]:
-        """Delete a group (requires confirm=group_id)."""
+    async def group_delete(request: Request, group_id: str, confirm: str = "", by: str = "user") -> Dict[str, Any]:
+        """Delete a group (admin-only, requires confirm=group_id)."""
+        require_admin(request)
         if confirm != group_id:
             raise HTTPException(
                 status_code=400,

@@ -30,7 +30,7 @@ export interface MobileMenuSheetProps {
   onOpenSearch: () => void;
   onOpenContext: () => void;
   onOpenSettings: () => void;
-  onOpenGroupEdit: () => void;
+  onOpenGroupEdit?: () => void;
   onStartGroup: () => void;
   onStopGroup: () => void;
   onSetGroupState: (state: "active" | "paused" | "idle") => void | Promise<void>;
@@ -182,20 +182,22 @@ export function MobileMenuSheet({
             </button>
           </div>
 
-          <button
-            className={classNames(
-              "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
-              isDark ? "text-slate-200" : "text-gray-800"
-            )}
-            onClick={() => {
-              onClose();
-              onOpenGroupEdit();
-            }}
-            disabled={!selectedGroupId}
-          >
-            <EditIcon size={18} />
-            <span>{t('editGroupDetails')}</span>
-          </button>
+          {onOpenGroupEdit ? (
+            <button
+              className={classNames(
+                "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
+                isDark ? "text-slate-200" : "text-gray-800"
+              )}
+              onClick={() => {
+                onClose();
+                onOpenGroupEdit();
+              }}
+              disabled={!selectedGroupId}
+            >
+              <EditIcon size={18} />
+              <span>{t('editGroupDetails')}</span>
+            </button>
+          ) : null}
 
           <div className={classNames("h-px my-3 mx-2", isDark ? "bg-white/10" : "bg-black/10")} />
 

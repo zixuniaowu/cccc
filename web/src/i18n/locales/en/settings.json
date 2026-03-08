@@ -22,7 +22,9 @@
     "groupScopeTitle": "Group Scope",
     "groupScopeContent": "Applies to {{scopeRoot}} only. Useful for group-specific timeouts and integrations.",
     "globalScopeTitle": "Global Scope",
-    "globalScopeContent": "Applies to your whole CCCC instance (daemon + Web). These settings affect all groups unless overridden."
+    "globalScopeContent": "Applies to your whole CCCC instance (daemon + Web). These settings affect all groups unless overridden.",
+    "globalLockedTitle": "Admin access required",
+    "globalLockedContent": "Global settings are admin-only. Open Settings from a group to manage group-scoped settings, or sign in with an admin Access Token."
   },
   "actorProfiles": {
     "searchPlaceholder": "Search profiles by name/id/runtime",
@@ -572,7 +574,7 @@
   },
   "webAccess": {
     "title": "Web Access",
-    "description": "Manage Web reachability, Access Tokens, and interaction mode in one place.",
+    "description": "Manage Web reachability, login, and interaction mode in one place.",
     "refresh": "Refresh",
     "loadFailed": "Failed to load Web Access state.",
     "invalidPort": "Port must be between 1 and 65535.",
@@ -603,16 +605,17 @@
       "interactionMode": "Interaction Mode"
     },
     "accessControlTitle": "Access Tokens",
-    "accessControlDescription": "Create admin or scoped Access Tokens. Once at least one token exists, browsers without a token must sign in to use Web APIs, even on localhost.",
+    "accessControlDescription": "Create admin or scoped Access Tokens. Scoped tokens can use only their assigned groups. Once at least one token exists, browsers without a token must sign in to use Web APIs, even on localhost.",
     "tokenCount": "{{count}} configured",
     "userIdLabel": "User label",
     "userIdPlaceholder": "for example: owner, ops, analyst",
     "userIdRequired": "User label is required.",
+    "groupSelectionRequired": "Select at least one allowed group for a scoped access token.",
     "adminTokenLabel": "Admin Access Token",
     "firstTokenAdminHint": "The first access token must be admin so you do not lock yourself out.",
     "adminTokenHint": "Admin access tokens can manage global settings and other access tokens.",
-    "allGroupsLabel": "All groups",
-    "allGroupsHint": "Leave scope open unless you specifically want to restrict this token.",
+    "scopedTokenGroupsTitle": "Scoped token groups",
+    "scopedTokenGroupsHint": "Scoped access tokens must be assigned to one or more groups. Global settings stay admin-only.",
     "groupScopeTitle": "Allowed groups",
     "noGroups": "No groups available.",
     "customTokenLabel": "Custom token value (optional)",
@@ -630,6 +633,7 @@
     "scopedBadge": "Scoped",
     "scopedGroupsHint": "Limited to {{count}} group(s).",
     "allGroupsAccess": "Applies to all groups.",
+    "noGroupsAssigned": "No groups assigned.",
     "edit": "Edit",
     "editScopeTitle": "Edit allowed groups",
     "saving": "Saving…",
@@ -687,9 +691,10 @@
     },
     "howItWorksTitle": "How it works",
     "howItWorksActivateLogin": "As soon as any Access Token exists, Web login becomes active for every browser session, including localhost.",
-    "howItWorksAutoLogin": "The browser that creates a new Access Token is signed in automatically with that token.",
+    "howItWorksAutoLogin": "When you create the very first Access Token, this browser is signed in automatically with it.",
     "howItWorksRemotePolicy": "The remote exposure toggle below only controls whether remote access may run without tokens. It does not disable local Web login.",
     "newTokenAutoLoginHint": "This browser is already signed in with the new token.",
+    "newTokenNoAutoLoginHint": "Your current browser sign-in was kept unchanged. Use this token in another browser or sign in manually if needed.",
     "newTokenVerifyHint": "Use an incognito window or another browser if you want to verify the login screen.",
     "currentBrowserTitle": "Current browser",
     "currentBrowserOpen": "Open access",
@@ -698,6 +703,15 @@
     "currentBrowserOpenHint": "No Access Tokens exist yet, so this browser does not need to sign in.",
     "currentBrowserSignedInHint": "This browser is signed in as {{userId}} ({{role}}).",
     "currentBrowserNotSignedInHint": "Login is active, but this browser is not signed in yet.",
-    "unknownUser": "unknown user"
+    "unknownUser": "unknown user",
+    "currentBrowserChecking": "Checking session",
+    "currentBrowserCheckingHint": "Login is active. This page is still refreshing the current browser session state.",
+    "currentBrowserVerifyHint": "Use an incognito window or another browser if you want to verify the login screen.",
+    "managementLockedTitle": "Admin sign-in required",
+    "managementLockedHint": "This browser does not currently have admin access. Global settings, including Access Tokens, are locked until you sign in with an admin token.",
+    "signOut": "Sign out",
+    "signOutHint": "Sign out this browser and return to the Access Token login screen.",
+    "signOutSuccess": "Signing out this browser..."
+
   }
 }

@@ -71,6 +71,50 @@ class TestAccessTokenRoutes(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_admin_access_token_ignores_allowed_groups_on_create(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            admin = create_access_token("admin-user", is_admin=True)
+            admin_token = str(admin.get("token") or "")
+            client = self._create_client()
+            resp = client.post(
+                "/api/v1/access-tokens",
+                json={"user_id": "scoped-admin", "allowed_groups": ["g1", "g2"], "is_admin": True},
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            created = resp.json()["result"]["access_token"]
+            self.assertEqual(created.get("allowed_groups"), [])
+            self.assertTrue(bool(created.get("is_admin")))
+        finally:
+            cleanup()
+
+    def test_admin_access_token_ignores_allowed_groups_on_update(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            admin = create_access_token("admin-user", is_admin=True)
+            admin_token = str(admin.get("token") or "")
+            target = create_access_token("other-admin", is_admin=True)
+            target_token = str(target.get("token") or "")
+            target_token_id = hashlib.sha256(target_token.encode("utf-8")).hexdigest()[:16]
+
+            client = self._create_client()
+            resp = client.patch(
+                f"/api/v1/access-tokens/{target_token_id}",
+                json={"allowed_groups": ["g1", "g2"]},
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            updated = resp.json()["result"]["access_token"]
+            self.assertEqual(updated.get("allowed_groups"), [])
+            self.assertTrue(bool(updated.get("is_admin")))
+        finally:
+            cleanup()
+
     def test_delete_access_token_by_token_id(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 
@@ -94,6 +138,28 @@ class TestAccessTokenRoutes(unittest.TestCase):
             items = resp.json()["result"]["access_tokens"]
             users = [str(item.get("user_id") or "") for item in items]
             self.assertNotIn("to-delete", users)
+        finally:
+            cleanup()
+
+    def test_delete_current_session_access_token_marks_session_deleted(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            admin = create_access_token("admin-user", is_admin=True)
+            admin_token = str(admin.get("token") or "")
+            create_access_token("other-admin", is_admin=True)
+
+            client = self._create_client()
+            resp = client.delete(
+                "/api/v1/access-tokens/" + hashlib.sha256(admin_token.encode("utf-8")).hexdigest()[:16],
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertTrue(data.get("ok"))
+            self.assertTrue(bool((data.get("result") or {}).get("deleted_current_session")))
+            self.assertTrue(bool((data.get("result") or {}).get("access_tokens_remain")))
         finally:
             cleanup()
 
@@ -128,6 +194,67 @@ class TestAccessTokenRoutes(unittest.TestCase):
                 headers={"Authorization": f"Bearer {admin_token}"},
             )
             self.assertEqual(resp.status_code, 400)
+        finally:
+            cleanup()
+
+
+    def test_scoped_access_token_requires_allowed_groups_on_create(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            admin = create_access_token("admin-user", is_admin=True)
+            admin_token = str(admin.get("token") or "")
+            client = self._create_client()
+            resp = client.post(
+                "/api/v1/access-tokens",
+                json={"user_id": "scoped-user", "is_admin": False, "allowed_groups": []},
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "invalid_request")
+        finally:
+            cleanup()
+
+    def test_scoped_access_token_requires_allowed_groups_on_update(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            admin = create_access_token("admin-user", is_admin=True)
+            admin_token = str(admin.get("token") or "")
+            target = create_access_token("member-user", is_admin=False, allowed_groups=["g1"])
+            target_token = str(target.get("token") or "")
+            target_token_id = hashlib.sha256(target_token.encode("utf-8")).hexdigest()[:16]
+            client = self._create_client()
+            resp = client.patch(
+                f"/api/v1/access-tokens/{target_token_id}",
+                json={"allowed_groups": []},
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "invalid_request")
+        finally:
+            cleanup()
+
+    def test_admin_token_cannot_be_downgraded_without_allowed_groups(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            admin = create_access_token("admin-user", is_admin=True)
+            admin_token = str(admin.get("token") or "")
+            target = create_access_token("other-admin", is_admin=True)
+            target_token = str(target.get("token") or "")
+            target_token_id = hashlib.sha256(target_token.encode("utf-8")).hexdigest()[:16]
+            client = self._create_client()
+            resp = client.patch(
+                f"/api/v1/access-tokens/{target_token_id}",
+                json={"is_admin": False},
+                headers={"Authorization": f"Bearer {admin_token}"},
+            )
+            self.assertEqual(resp.status_code, 400)
+            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "invalid_request")
         finally:
             cleanup()
 

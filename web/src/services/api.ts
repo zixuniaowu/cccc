@@ -42,6 +42,7 @@ import type {
 
 // Extract and cache token from URL for dev mode (Vite doesn't proxy /ui/ to backend)
 let cachedToken: string | null = null;
+const FORCE_LOGIN_KEY = "cccc_force_token_login";
 
 // Global callback for 401 unauthorized responses
 let _authRequiredHandler: (() => void) | null = null;
@@ -65,6 +66,30 @@ export function clearAuthToken(): void {
     sessionStorage.removeItem("cccc_dev_token");
   } catch {
     void 0;
+  }
+}
+
+export function setForceTokenLogin(): void {
+  try {
+    sessionStorage.setItem(FORCE_LOGIN_KEY, "1");
+  } catch {
+    void 0;
+  }
+}
+
+export function clearForceTokenLogin(): void {
+  try {
+    sessionStorage.removeItem(FORCE_LOGIN_KEY);
+  } catch {
+    void 0;
+  }
+}
+
+export function shouldForceTokenLogin(): boolean {
+  try {
+    return sessionStorage.getItem(FORCE_LOGIN_KEY) === "1";
+  } catch {
+    return false;
   }
 }
 
@@ -1390,6 +1415,12 @@ export async function fetchWebAccessSession() {
   return apiJson<{ web_access_session: WebAccessSession }>("/api/v1/web_access/session");
 }
 
+export async function logoutWebAccess() {
+  return apiJson<{ signed_out: boolean }>("/api/v1/web_access/logout", {
+    method: "POST",
+  });
+}
+
 export async function updateRemoteAccessConfig(args: {
   provider?: "off" | "manual" | "tailscale";
   mode?: string;
@@ -1465,7 +1496,7 @@ export async function revealAccessToken(tokenId: string) {
 }
 
 export async function deleteAccessToken(tokenId: string) {
-  return apiJson<{ deleted: boolean; access_tokens_remain?: boolean }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, {
+  return apiJson<{ deleted: boolean; access_tokens_remain?: boolean; deleted_current_session?: boolean }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, {
     method: "DELETE",
   });
 }

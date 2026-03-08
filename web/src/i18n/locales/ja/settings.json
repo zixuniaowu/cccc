@@ -22,7 +22,9 @@
     "groupScopeTitle": "作業グループ範囲",
     "groupScopeContent": "{{scopeRoot}} にのみ適用されます。グループ固有のタイムアウトと統合に役立ちます。",
     "globalScopeTitle": "グローバル範囲",
-    "globalScopeContent": "CCCC インスタンス全体 (daemon + Web) に適用されます。これらの設定は、オーバーライドしない限り、すべてのグループに影響します。"
+    "globalScopeContent": "CCCC インスタンス全体 (daemon + Web) に適用されます。これらの設定は、オーバーライドしない限り、すべてのグループに影響します。",
+    "globalLockedTitle": "管理者権限が必要です",
+    "globalLockedContent": "グローバル設定は管理者専用です。グループ設定を変更したい場合は対象グループから Settings を開き、グローバル設定を管理したい場合は管理者アクセストークンでサインインしてください。"
   },
   "actorProfiles": {
     "searchPlaceholder": "名前/ID/runtimeで検索",
@@ -572,7 +574,7 @@
   },
   "webAccess": {
     "title": "Web Access",
-    "description": "Web の到達性、アクセストークン、操作モードを 1 か所で管理します。",
+    "description": "Web の到達性、ログイン状態、操作モードを 1 か所で管理します。",
     "refresh": "更新",
     "loadFailed": "Web Access 状態の読み込みに失敗しました。",
     "invalidPort": "ポートは 1 から 65535 の範囲で指定してください。",
@@ -603,16 +605,17 @@
       "interactionMode": "操作モード"
     },
     "accessControlTitle": "アクセストークン",
-    "accessControlDescription": "管理者またはスコープ付きアクセストークンを作成します。トークンが 1 つでも存在すると、localhost であってもトークンを持たないブラウザは Web API 利用前にサインインが必要です。",
+    "accessControlDescription": "管理者またはスコープ付きアクセストークンを作成します。スコープ付きトークンは割り当てられたグループだけを利用できます。トークンが 1 つでも存在すると、localhost であってもトークンを持たないブラウザは Web API 利用前にサインインが必要です。",
     "tokenCount": "{{count}} 件設定済み",
     "userIdLabel": "ユーザーラベル",
     "userIdPlaceholder": "例: owner, ops, analyst",
     "userIdRequired": "ユーザーラベルは必須です。",
+    "groupSelectionRequired": "スコープ付きアクセストークンには少なくとも 1 つの許可グループを選択してください。",
     "adminTokenLabel": "管理者アクセストークン",
     "firstTokenAdminHint": "最初のアクセストークンは管理者である必要があります。そうしないと自分を締め出します。",
     "adminTokenHint": "管理者アクセストークンはグローバル設定と他のアクセストークンを管理できます。",
-    "allGroupsLabel": "すべてのグループ",
-    "allGroupsHint": "明確に制限したい場合を除き、全グループ可のままが推奨です。",
+    "scopedTokenGroupsTitle": "スコープ付きトークンの対象グループ",
+    "scopedTokenGroupsHint": "スコープ付きアクセストークンは 1 つ以上のグループに割り当てる必要があります。グローバル設定は常に管理者専用です。",
     "groupScopeTitle": "許可するグループ",
     "noGroups": "利用可能なグループがありません。",
     "customTokenLabel": "カスタムトークン値（任意）",
@@ -630,6 +633,7 @@
     "scopedBadge": "スコープ付き",
     "scopedGroupsHint": "{{count}} グループに制限されています。",
     "allGroupsAccess": "全グループに適用されます。",
+    "noGroupsAssigned": "許可グループが設定されていません。",
     "edit": "編集",
     "editScopeTitle": "許可グループを編集",
     "saving": "保存中…",
@@ -687,9 +691,10 @@
     },
     "howItWorksTitle": "仕組み",
     "howItWorksActivateLogin": "アクセストークンが 1 つでも存在すると、localhost を含むすべてのブラウザセッションで Web ログインが有効になります。",
-    "howItWorksAutoLogin": "新しいアクセストークンを作成したブラウザは、そのトークンで自動的にサインインされます。",
+    "howItWorksAutoLogin": "最初のアクセストークンを作成したときだけ、このブラウザは自動的にそのトークンでサインインされます。",
     "howItWorksRemotePolicy": "下のリモート公開トグルは「トークンなしのリモート公開を許すか」だけを制御します。ローカル Web ログインを無効にはしません。",
     "newTokenAutoLoginHint": "このブラウザは新しいトークンですでにサインイン済みです。",
+    "newTokenNoAutoLoginHint": "現在のブラウザのサインイン状態はそのまま維持されました。必要であれば別ブラウザでこのトークンを使うか、手動でサインインし直してください。",
     "newTokenVerifyHint": "ログイン画面を確認したい場合は、シークレットウィンドウまたは別ブラウザを使ってください。",
     "currentBrowserTitle": "現在のブラウザ",
     "currentBrowserOpen": "オープンアクセス",
@@ -698,6 +703,15 @@
     "currentBrowserOpenHint": "アクセストークンがまだ無いため、このブラウザはまだサインイン不要です。",
     "currentBrowserSignedInHint": "このブラウザは {{userId}}（{{role}}）としてサインイン済みです。",
     "currentBrowserNotSignedInHint": "ログインは有効ですが、このブラウザはまだサインインしていません。",
-    "unknownUser": "不明ユーザー"
+    "unknownUser": "不明ユーザー",
+    "currentBrowserChecking": "セッション確認中",
+    "currentBrowserCheckingHint": "ログインは有効です。このページは現在のブラウザセッション状態を更新中です。",
+    "currentBrowserVerifyHint": "ログイン画面を確認したい場合は、シークレットウィンドウまたは別ブラウザを使ってください。",
+    "managementLockedTitle": "管理者ログインが必要です",
+    "managementLockedHint": "このブラウザには現在管理者権限がありません。アクセストークンを含むグローバル設定は、管理者トークンでサインインするまでロックされます。",
+    "signOut": "サインアウト",
+    "signOutHint": "このブラウザを現在のトークンセッションからサインアウトし、アクセストークンのログイン画面に戻ります。",
+    "signOutSuccess": "このブラウザをサインアウトしています..."
+
   }
 }

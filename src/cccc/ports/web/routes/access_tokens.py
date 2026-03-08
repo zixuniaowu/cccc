@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ....kernel.access_tokens import (
@@ -26,6 +26,33 @@ class AccessTokenCreateRequest(BaseModel):
 class AccessTokenUpdateRequest(BaseModel):
     allowed_groups: Optional[List[str]] = None
     is_admin: Optional[bool] = None
+
+
+def _clean_allowed_groups(raw: Optional[List[str]]) -> List[str]:
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    cleaned: List[str] = []
+    for item in raw:
+        gid = str(item or "").strip()
+        if not gid or gid in seen:
+            continue
+        seen.add(gid)
+        cleaned.append(gid)
+    return cleaned
+
+
+def _ensure_scoped_groups_present(allowed_groups: List[str]) -> None:
+    if allowed_groups:
+        return
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "code": "invalid_request",
+            "message": "scoped access tokens must include at least one allowed group",
+            "details": {},
+        },
+    )
 
 
 def _token_id(token: str) -> str:
@@ -69,6 +96,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 status_code=400,
                 detail={"code": "invalid_request", "message": "user_id is required", "details": {}},
             )
+        cleaned_allowed_groups = _clean_allowed_groups(req.allowed_groups)
         if not req.is_admin:
             existing = list_access_tokens()
             has_admin = any(bool((item or {}).get("is_admin")) for item in existing if isinstance(item, dict))
@@ -81,10 +109,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         "details": {},
                     },
                 )
+            _ensure_scoped_groups_present(cleaned_allowed_groups)
         try:
             entry = create_access_token(
                 user_id,
-                allowed_groups=list(req.allowed_groups),
+                allowed_groups=cleaned_allowed_groups,
                 is_admin=bool(req.is_admin),
                 custom_token=str(req.custom_token or "").strip() or None,
             )
@@ -103,9 +132,19 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 status_code=400,
                 detail={"code": "invalid_request", "message": "token_id is required", "details": {}},
             )
+        current = lookup_access_token(raw_token)
+        if current is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "not_found", "message": "access token not found", "details": {}},
+            )
+        next_is_admin = bool(current.get("is_admin")) if req.is_admin is None else bool(req.is_admin)
+        cleaned_allowed_groups = _clean_allowed_groups(req.allowed_groups) if req.allowed_groups is not None else list(current.get("allowed_groups") or [])
+        if not next_is_admin:
+            _ensure_scoped_groups_present(cleaned_allowed_groups)
         entry = update_access_token(
             raw_token,
-            allowed_groups=req.allowed_groups,
+            allowed_groups=cleaned_allowed_groups if (req.allowed_groups is not None or not next_is_admin) else None,
             is_admin=req.is_admin,
         )
         if entry is None:
@@ -131,18 +170,31 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return {"ok": True, "result": {"token": raw_token}}
 
     @global_router.delete("/access-tokens/{token_id}", dependencies=[Depends(require_admin)])
-    async def access_tokens_delete(token_id: str) -> Dict[str, Any]:
+    async def access_tokens_delete(request: Request, token_id: str) -> Dict[str, Any]:
         raw_token = _resolve_raw_token(token_id)
         if not raw_token:
             raise HTTPException(
                 status_code=400,
                 detail={"code": "invalid_request", "message": "token_id is required", "details": {}},
             )
+        current_request_token = str(request.headers.get("authorization") or "").strip()
+        if current_request_token.lower().startswith("bearer "):
+            current_request_token = str(current_request_token[7:] or "").strip()
+        else:
+            current_request_token = str(request.cookies.get("cccc_access_token") or request.query_params.get("token") or "").strip()
+        deleted_current_session = bool(current_request_token) and current_request_token == raw_token
         if not delete_access_token(raw_token):
             raise HTTPException(
                 status_code=404,
                 detail={"code": "not_found", "message": "access token not found", "details": {}},
             )
-        return {"ok": True, "result": {"deleted": True, "access_tokens_remain": bool(list_access_tokens())}}
+        return {
+            "ok": True,
+            "result": {
+                "deleted": True,
+                "access_tokens_remain": bool(list_access_tokens()),
+                "deleted_current_session": deleted_current_session,
+            },
+        }
 
     return [global_router]

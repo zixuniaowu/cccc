@@ -27,6 +27,11 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (calledRef.current) return;
     calledRef.current = true;
+    if (api.shouldForceTokenLogin()) {
+      api.clearAuthToken();
+      setStatus("login");
+      return;
+    }
     api.fetchGroups().then((resp) => {
       if (resp.ok) {
         setStatus("authenticated");
@@ -58,6 +63,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     const resp = await api.fetchGroups();
     setSubmitting(false);
     if (resp.ok) {
+      api.clearForceTokenLogin();
       setStatus("authenticated");
     } else {
       api.clearAuthToken();

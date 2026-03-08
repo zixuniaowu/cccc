@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { TabBar } from "./components/TabBar";
 import { DropOverlay } from "./components/DropOverlay";
 import { AppModals } from "./components/AppModals";
@@ -16,6 +17,7 @@ import { useChatTab } from "./hooks/useChatTab";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useGlobalEvents } from "./hooks/useGlobalEvents";
 import { useViewportHeight } from "./hooks/useViewportHeight";
+import { classNames } from "./utils/classNames";
 import { ActorTab } from "./pages/ActorTab";
 import { ChatTab } from "./pages/chat";
 import { PanoramaTab } from "./pages/PanoramaTab";
@@ -33,6 +35,8 @@ import type { Actor } from "./types";
 // ============ Main App Component ============
 
 export default function App() {
+  const { t } = useTranslation(["layout", "common"]);
+
   // Theme
   const { theme, setTheme, isDark } = useTheme();
 
@@ -130,6 +134,7 @@ export default function App() {
   const [mentionSelectedIndex, setMentionSelectedIndex] = React.useState(0);
   const [mountedActorIds, setMountedActorIds] = React.useState<string[]>([]);
   const [ccccHome, setCcccHome] = React.useState("");
+  const [canAccessGlobalSettings, setCanAccessGlobalSettings] = React.useState<boolean | null>(null);
 
   // Custom hooks
   const { connectStream, fetchContext, contextRefreshTimerRef, cleanup: cleanupSSE } = useSSE({
@@ -188,7 +193,29 @@ export default function App() {
   // Global events subscription (SSE with polling fallback)
   useGlobalEvents({ refreshGroups });
 
+  const refreshWebAccessSession = React.useCallback(async () => {
+    try {
+      const resp = await api.fetchWebAccessSession();
+      const session = resp.ok ? resp.result?.web_access_session ?? null : null;
+      const allowed = Boolean(session?.can_access_global_settings ?? !(session?.login_active ?? false));
+      setCanAccessGlobalSettings(allowed);
+    } catch {
+      setCanAccessGlobalSettings(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshWebAccessSession();
+    const handleFocus = () => {
+      void refreshWebAccessSession();
+    };
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [refreshWebAccessSession]);
+
   // Tab list for swipe navigation
+  const canManageGroups = canAccessGlobalSettings === true;
+
   const allTabs = useMemo(() => {
     return ["chat", ...actors.map((a) => a.id)];
   }, [actors]);
@@ -461,12 +488,12 @@ export default function App() {
           readOnly={webReadOnly}
           onSelectGroup={(gid) => setSelectedGroupId(gid)}
           onCreateGroup={
-            webReadOnly
-              ? undefined
-              : () => {
+            !webReadOnly && canManageGroups
+              ? () => {
                 openModal("createGroup");
                 void fetchDirSuggestions();
               }
+              : undefined
           }
           onClose={() => setSidebarOpen(false)}
           onToggleCollapse={toggleSidebarCollapsed}
@@ -489,21 +516,14 @@ export default function App() {
             actors={actors}
             sseStatus={sseStatus}
             busy={busy}
-            errorMsg={errorMsg}
-            notice={notice}
-            onDismissError={dismissError}
-            onNoticeAction={() => {
-              dismissNotice();
-            }}
-            onDismissNotice={dismissNotice}
             onOpenSidebar={() => setSidebarOpen(true)}
-            onOpenGroupEdit={() => {
+            onOpenGroupEdit={canManageGroups ? () => {
               if (groupDoc) {
                 setEditGroupTitle(groupDoc.title || "");
                 setEditGroupTopic(groupDoc.topic || "");
                 openModal("groupEdit");
               }
-            }}
+            } : undefined}
             onOpenSearch={() => openModal("search")}
             onOpenContext={() => {
               if (selectedGroupId) void fetchContext(selectedGroupId);
@@ -636,6 +656,68 @@ export default function App() {
         </main>
       </div>
 
+      {!webReadOnly && (errorMsg || notice) ? (
+        <div className="pointer-events-none fixed inset-x-0 top-4 z-[1200] flex flex-col items-center gap-3 px-4">
+          {errorMsg ? (
+            <div
+              className={classNames(
+                "pointer-events-auto flex w-full max-w-xl items-start gap-3 rounded-2xl px-4 py-3 text-sm shadow-2xl glass-modal animate-slide-up",
+                isDark ? "border-rose-500/20 text-rose-300" : "border-rose-200/50 text-rose-700"
+              )}
+              role="alert"
+            >
+              <span className="min-w-0 flex-1 break-words">{errorMsg}</span>
+              <button
+                type="button"
+                className={classNames(
+                  "flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg p-2 transition-all glass-btn",
+                  isDark ? "text-rose-400" : "text-rose-600"
+                )}
+                onClick={dismissError}
+                aria-label={t("layout:dismissError")}
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
+
+          {notice ? (
+            <div
+              className={classNames(
+                "pointer-events-auto flex w-full max-w-xl items-start gap-3 rounded-2xl px-4 py-3 text-sm shadow-2xl glass-modal animate-slide-up",
+                isDark ? "border-white/10 text-slate-200" : "border-black/10 text-gray-800"
+              )}
+              role="status"
+            >
+              <span className="min-w-0 flex-1 break-words">{notice.message}</span>
+              {notice.actionId && notice.actionLabel ? (
+                <button
+                  type="button"
+                  className={classNames(
+                    "rounded-xl px-2 py-1 text-xs transition-all glass-btn",
+                    isDark ? "text-slate-100" : "text-gray-900"
+                  )}
+                  onClick={dismissNotice}
+                >
+                  {notice.actionLabel}
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className={classNames(
+                  "flex min-h-[36px] min-w-[36px] items-center justify-center rounded-lg p-2 transition-all glass-btn",
+                  isDark ? "text-slate-300" : "text-gray-600"
+                )}
+                onClick={dismissNotice}
+                aria-label={t("common:dismiss")}
+              >
+                ×
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {/* Modals */}
       <AppModals
         isDark={isDark}
@@ -647,6 +729,7 @@ export default function App() {
         onStopGroup={handleStopGroup}
         onSetGroupState={handleSetGroupState}
         fetchContext={fetchContext}
+        canManageGroups={canManageGroups}
       />
 
       <DropOverlay isOpen={dropOverlayOpen} isDark={isDark} maxFileMb={WEB_MAX_FILE_MB} />

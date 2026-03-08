@@ -440,6 +440,8 @@ export type WebAccessSession = {
   user_id?: string | null;
   is_admin?: boolean;
   allowed_groups?: string[];
+  access_token_count?: number;
+  can_access_global_settings?: boolean;
 };
 
 export type GroupSpaceProviderState = {

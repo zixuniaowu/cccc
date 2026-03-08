@@ -41,12 +41,13 @@ def _normalize_entry(token: str, raw: Any) -> Optional[Dict[str, Any]]:
         return None
     created_at = str(raw.get("created_at") or "").strip() or utc_now_iso()
     updated_at = str(raw.get("updated_at") or "").strip() or created_at
+    is_admin = bool(raw.get("is_admin", False))
     return {
         "token": tok,
         "kind": "access",
         "user_id": user_id,
-        "allowed_groups": _normalize_allowed_groups(raw.get("allowed_groups")),
-        "is_admin": bool(raw.get("is_admin", False)),
+        "allowed_groups": [] if is_admin else _normalize_allowed_groups(raw.get("allowed_groups")),
+        "is_admin": is_admin,
         "created_at": created_at,
         "updated_at": updated_at,
     }
@@ -127,12 +128,13 @@ def create_access_token(
             raise ValueError("access token already exists")
     else:
         token = _new_access_token_value(tokens)
+    effective_is_admin = bool(is_admin)
     entry = {
         "token": token,
         "kind": "access",
         "user_id": uid,
-        "allowed_groups": _normalize_allowed_groups(allowed_groups or []),
-        "is_admin": bool(is_admin),
+        "allowed_groups": [] if effective_is_admin else _normalize_allowed_groups(allowed_groups or []),
+        "is_admin": effective_is_admin,
         "created_at": now,
         "updated_at": now,
     }
@@ -155,7 +157,10 @@ def update_access_token(
     if tok not in tokens:
         return None
     entry = tokens[tok]
-    if allowed_groups is not None:
+    next_is_admin = entry.get("is_admin", False) if is_admin is None else bool(is_admin)
+    if next_is_admin:
+        entry["allowed_groups"] = []
+    elif allowed_groups is not None:
         entry["allowed_groups"] = _normalize_allowed_groups(allowed_groups)
     if is_admin is not None:
         entry["is_admin"] = bool(is_admin)
