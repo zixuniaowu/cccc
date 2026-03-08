@@ -5,7 +5,7 @@ Always-on rules live in system/preamble; this file expands details, examples, an
 
 Run `cccc_help` anytime to refresh the effective playbook for this group.
 
-Cold start default: `cccc_bootstrap` gives a lean `session + recovery + inbox_preview + memory_recall_gate` packet. Pull `cccc_help`, `cccc_project_info`, or `cccc_context_get` only when you need colder detail.
+Cold start default: `cccc_bootstrap` gives a lean `session + recovery + inbox_preview + memory_recall_gate` packet. Pull `cccc_help`, `cccc_project_info`, or `cccc_context_get` only when you need colder detail. For deep recall, use local memory first and `cccc_space(action="query", lane="memory")` only as a fallback when a memory notebook is bound.
 
 ## Quick Card
 
@@ -65,6 +65,13 @@ Cold start default: `cccc_bootstrap` gives a lean `session + recovery + inbox_pr
 - Long-term memory is file-based:
   - `state/memory/MEMORY.md`
   - `state/memory/daily/YYYY-MM-DD__<group_label>.md`
+- NotebookLM lanes are split:
+  - `lane="work"` = project/shared external knowledge
+  - `lane="memory"` = daemon-synced finalized daily memory recall
+- Memory-lane sync boundary:
+  - `state/memory/MEMORY.md` stays local-only
+  - today's open daily file is not synced until it becomes a prior-day finalized daily
+- If `cccc_space` is hidden in the current session, use `cccc_capability_use(tool_name="cccc_space", tool_arguments={"action":"status"})` first to auto-enable `pack:space`.
 - Cold-start loop:
   1. read `cccc_bootstrap().memory_recall_gate`
   2. if needed, run `cccc_memory(action="search", ...)`

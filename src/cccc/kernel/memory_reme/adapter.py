@@ -182,20 +182,88 @@ def summarize_daily_messages(
     max_lines: int = 16,
 ) -> str:
     normalized = _normalize_messages(messages)
-    lines: List[str] = []
+    sections: List[str] = []
+
+    conversation_lines: List[str] = []
     for msg in normalized:
         content = str(msg.get("content") or "").strip()
         if not content:
             continue
         role = str(msg.get("role") or "assistant")
-        lines.append(f"- [{role}] {content[:500]}")
-        if len(lines) >= max_lines:
+        conversation_lines.append(f"- [{role}] {content[:500]}")
+        if len(conversation_lines) >= max_lines:
             break
+    if conversation_lines:
+        sections.append("## Conversation Summary\n" + "\n".join(conversation_lines))
 
-    if signal_pack:
-        compact = str(signal_pack).strip()
-        if compact:
-            lines.append(f"- [signal_pack] {compact[:1000]}")
+    if isinstance(signal_pack, dict):
+        brief = signal_pack.get("coordination_brief") if isinstance(signal_pack.get("coordination_brief"), dict) else {}
+        brief_lines: List[str] = []
+        objective = str(brief.get("objective") or "").strip()
+        current_focus = str(brief.get("current_focus") or "").strip()
+        project_brief = str(brief.get("project_brief") or "").strip()
+        constraints = brief.get("constraints") if isinstance(brief.get("constraints"), list) else []
+        if objective:
+            brief_lines.append(f"- Objective: {objective[:240]}")
+        if current_focus:
+            brief_lines.append(f"- Current Focus: {current_focus[:240]}")
+        for item in constraints[:4]:
+            text_item = str(item or "").strip()
+            if text_item:
+                brief_lines.append(f"- Constraint: {text_item[:160]}")
+        if project_brief:
+            brief_lines.append(f"- Project Brief: {project_brief[:240]}")
+        if brief_lines:
+            sections.append("## Coordination Snapshot\n" + "\n".join(brief_lines))
 
-    return "\n".join(lines).strip()
+        tasks = signal_pack.get("tasks") if isinstance(signal_pack.get("tasks"), dict) else {}
+        task_lines: List[str] = []
+        label_map = [
+            ("active", "Active"),
+            ("done_recent", "Done Recently"),
+            ("blocked", "Blocked"),
+            ("waiting_user", "Waiting User"),
+            ("planned", "Planned"),
+        ]
+        for key, label in label_map:
+            values = tasks.get(key) if isinstance(tasks.get(key), list) else []
+            for value in values[:4]:
+                text_item = str(value or "").strip()
+                if text_item:
+                    task_lines.append(f"- {label}: {text_item[:200]}")
+        if task_lines:
+            sections.append("## Task Snapshot\n" + "\n".join(task_lines))
 
+        agent_states = signal_pack.get("agent_states") if isinstance(signal_pack.get("agent_states"), list) else []
+        agent_lines: List[str] = []
+        for raw_agent in agent_states[:4]:
+            if not isinstance(raw_agent, dict):
+                continue
+            actor_id = str(raw_agent.get("id") or "").strip()
+            hot = raw_agent.get("hot") if isinstance(raw_agent.get("hot"), dict) else {}
+            warm = raw_agent.get("warm") if isinstance(raw_agent.get("warm"), dict) else {}
+            parts: List[str] = []
+            if actor_id:
+                parts.append(actor_id)
+            focus = str(hot.get("focus") or "").strip()
+            next_action = str(hot.get("next_action") or "").strip()
+            blockers = hot.get("blockers") if isinstance(hot.get("blockers"), list) else []
+            what_changed = str(warm.get("what_changed") or "").strip()
+            resume_hint = str(warm.get("resume_hint") or "").strip()
+            if focus:
+                parts.append(f"focus={focus[:120]}")
+            if next_action:
+                parts.append(f"next={next_action[:120]}")
+            blocker_text = "; ".join(str(x or "").strip()[:80] for x in blockers[:2] if str(x or "").strip())
+            if blocker_text:
+                parts.append(f"blockers={blocker_text}")
+            if what_changed:
+                parts.append(f"changed={what_changed[:120]}")
+            if resume_hint:
+                parts.append(f"resume={resume_hint[:120]}")
+            if parts:
+                agent_lines.append("- " + " | ".join(parts))
+        if agent_lines:
+            sections.append("## Agent Resume Cues\n" + "\n".join(agent_lines))
+
+    return "\n\n".join(section for section in sections if section.strip()).strip()

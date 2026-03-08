@@ -506,17 +506,21 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
     if name == "cccc_space":
         gid = _resolve_group_id(arguments)
         provider = str(arguments.get("provider") or "notebooklm")
+        lane = str(arguments.get("lane") or "").strip()
         action = str(arguments.get("action") or "status").strip().lower()
         if action == "status":
             return space_status(group_id=gid, provider=provider)
         if action == "capabilities":
             return space_capabilities(group_id=gid, provider=provider)
+        if action in {"bind", "ingest", "query", "sources", "artifact", "jobs", "sync"} and not lane:
+            raise MCPError(code="invalid_request", message="cccc_space requires explicit lane for bind/ingest/query/sources/artifact/jobs/sync")
         if action == "bind":
             by = _resolve_caller_from_by(arguments)
             return space_bind(
                 group_id=gid,
                 by=by,
                 provider=provider,
+                lane=(lane or "work"),
                 action="bind",
                 remote_space_id=str(arguments.get("remote_space_id") or ""),
             )
@@ -527,6 +531,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 group_id=gid,
                 by=by,
                 provider=provider,
+                lane=(lane or "work"),
                 kind=parsed["kind"],
                 payload=parsed["payload"],
                 idempotency_key=str(arguments.get("idempotency_key") or ""),
@@ -539,6 +544,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
             return space_query(
                 group_id=gid,
                 provider=provider,
+                lane=(lane or "work"),
                 query=str(arguments.get("query") or ""),
                 options=options,
             )
@@ -548,6 +554,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 group_id=gid,
                 by=by,
                 provider=provider,
+                lane=(lane or "work"),
                 action=str(arguments.get("source_action") or arguments.get("sub_action") or "list"),
                 source_id=str(arguments.get("source_id") or ""),
                 new_title=str(arguments.get("new_title") or ""),
@@ -565,6 +572,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 group_id=gid,
                 by=by,
                 provider=provider,
+                lane=(lane or "work"),
                 action=parsed["action"],
                 kind=str(arguments.get("kind") or ""),
                 options=parsed["options"],
@@ -583,6 +591,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 group_id=gid,
                 by=by,
                 provider=provider,
+                lane=(lane or "work"),
                 action=str(arguments.get("job_action") or arguments.get("sub_action") or "list"),
                 job_id=str(arguments.get("job_id") or ""),
                 state=str(arguments.get("state") or ""),
@@ -594,6 +603,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 group_id=gid,
                 by=by,
                 provider=provider,
+                lane=(lane or "work"),
                 action=str(arguments.get("sync_action") or arguments.get("sub_action") or "run"),
                 force=bool(arguments.get("force") is True),
             )

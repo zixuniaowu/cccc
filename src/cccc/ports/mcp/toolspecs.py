@@ -401,7 +401,7 @@ MCP_TOOLS = [
     {
         "name": "cccc_space",
         "description": (
-            "Group Space hub tool. action: status|capabilities|bind|ingest|query|sources|artifact|jobs|sync|"
+            "Group Space hub tool. NotebookLM has two lanes: work and memory. action: status|capabilities|bind|ingest|query|sources|artifact|jobs|sync|"
             "provider_auth|provider_credential_status|provider_credential_update"
         ),
         "inputSchema": _obj(
@@ -409,6 +409,7 @@ MCP_TOOLS = [
                 **_COMMON_GROUP,
                 **_COMMON_BY,
                 "provider": {"type": "string", "default": "notebooklm"},
+                "lane": {"type": "string", "enum": ["work", "memory"]},
                 "action": {
                     "type": "string",
                     "enum": [

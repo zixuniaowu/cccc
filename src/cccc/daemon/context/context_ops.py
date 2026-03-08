@@ -11,6 +11,7 @@ v3 truths:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from enum import Enum
@@ -287,7 +288,7 @@ def _queue_group_space_context_sync(
     tasks_by_id: Dict[str, Task],
     changes: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    binding = get_space_binding(group_id, provider="notebooklm")
+    binding = get_space_binding(group_id, provider="notebooklm", lane="work")
     if not isinstance(binding, dict):
         return {"queued": False, "reason": "not_bound"}
     if str(binding.get("status") or "") != "bound":
@@ -332,6 +333,7 @@ def _queue_group_space_context_sync(
     job, deduped = enqueue_space_job(
         group_id=group_id,
         provider="notebooklm",
+        lane="work",
         remote_space_id=remote_space_id,
         kind="context_sync",
         payload=payload,
@@ -414,6 +416,32 @@ def _record_note(notes: List[CoordinationNote], *, by: str, summary: str, task_i
     note = CoordinationNote(by=by, summary=_normalize_text(summary, max_len=400), task_id=(str(task_id or "").strip() or None))
     notes.insert(0, note)
     del notes[5:]
+
+
+def _coordination_memory_note_text(*, kind: str, summary: str, by: str, task_id: Optional[str]) -> str:
+    label = "Decision" if str(kind or "").strip().lower() == "decision" else "Handoff"
+    text = f"{label}: {str(summary or '').strip()}"
+    meta: List[str] = []
+    if task_id:
+        meta.append(f"task={str(task_id).strip()}")
+    if by:
+        meta.append(f"by={str(by).strip()}")
+    if meta:
+        text += f" ({', '.join(meta)})"
+    return text.strip()
+
+
+def _coordination_memory_note_key(*, kind: str, summary: str, by: str, task_id: Optional[str]) -> str:
+    basis = "|".join(
+        [
+            str(kind or "").strip().lower(),
+            str(summary or "").strip(),
+            str(by or "").strip(),
+            str(task_id or "").strip(),
+        ]
+    )
+    digest = hashlib.sha1(basis.encode("utf-8")).hexdigest()[:16]
+    return f"coordination_note:{digest}"
 
 
 def _filter_agents_to_group(storage: ContextStorage, agents_state: AgentsData) -> AgentsData:
@@ -558,6 +586,38 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 task_id = str(raw.get("task_id") or "").strip() or None
                 target = context.coordination.recent_decisions if note_kind == "decision" else context.coordination.recent_handoffs
                 _record_note(target, by=by, summary=summary, task_id=task_id)
+                if not dry_run:
+                    try:
+                        from ..memory.memory_ops import handle_memory_reme_write
+
+                        source_refs = [f"coordination:{note_kind}"]
+                        if task_id:
+                            source_refs.append(f"task:{task_id}")
+                        handle_memory_reme_write(
+                            {
+                                "group_id": group_id,
+                                "target": "daily",
+                                "date": _utc_now_iso()[:10],
+                                "mode": "append",
+                                "content": _coordination_memory_note_text(
+                                    kind=note_kind,
+                                    summary=summary,
+                                    by=by,
+                                    task_id=task_id,
+                                ),
+                                "idempotency_key": _coordination_memory_note_key(
+                                    kind=note_kind,
+                                    summary=summary,
+                                    by=by,
+                                    task_id=task_id,
+                                ),
+                                "actor_id": by,
+                                "tags": ["coordination_note", note_kind],
+                                "source_refs": source_refs,
+                            }
+                        )
+                    except Exception:
+                        logger.exception("memory_coordination_note_hook_failed group_id=%s kind=%s", group_id, note_kind)
                 context_dirty = True
                 _mark_change(idx, op_name, f"Added {note_kind} note")
                 continue

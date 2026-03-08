@@ -21,6 +21,7 @@ class TestGroupSpaceContract(unittest.TestCase):
         self.assertEqual(job.kind, "context_sync")
         self.assertEqual(job.state, "pending")
         self.assertEqual(job.max_attempts, 3)
+        self.assertEqual(job.result, {})
 
     def test_space_job_state_validation(self) -> None:
         from cccc.contracts.v1.group_space import SpaceJob

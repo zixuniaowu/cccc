@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from ...contracts.v1 import (
     SpaceBinding,
     SpaceJob,
+    SpaceLane,
     SpaceProviderCredentialState,
     SpaceProviderState,
     SpaceQueueSummary,
@@ -21,6 +22,7 @@ from ...util.fs import atomic_write_json, read_json
 from ...util.time import parse_utc_iso, utc_now_iso
 
 _PROVIDER_IDS = {"notebooklm"}
+_SPACE_LANES = {"work", "memory"}
 _JOB_ID_PREFIX = "spj_"
 _PROVIDER_SECRET_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -87,6 +89,13 @@ def _provider_or_raise(raw: Any) -> str:
     if provider not in _PROVIDER_IDS:
         raise ValueError(f"unsupported provider: {provider}")
     return provider
+
+
+def _lane_or_raise(raw: Any) -> str:
+    lane = str(raw or "work").strip().lower() or "work"
+    if lane not in _SPACE_LANES:
+        raise ValueError(f"unsupported lane: {lane}")
+    return lane
 
 
 def _validate_provider_secret_key(key: Any) -> str:
@@ -174,11 +183,60 @@ def _load_providers_doc() -> Tuple[Path, Dict[str, Any]]:
 def _new_bindings_doc() -> Dict[str, Any]:
     now = utc_now_iso()
     return {
-        "v": 1,
+        "v": 2,
         "created_at": now,
         "updated_at": now,
         "bindings": {},
     }
+
+
+def _default_binding_doc(group_id: str, provider: str, lane: str) -> Dict[str, Any]:
+    return SpaceBinding(
+        group_id=group_id,
+        provider=provider,
+        lane=lane,
+        remote_space_id="",
+        bound_by="",
+        status="unbound",
+    ).model_dump(exclude_none=True)
+
+
+def _normalize_provider_binding_lanes(group_id: str, provider: str, raw_item: Any) -> Dict[str, Dict[str, Any]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    if not isinstance(raw_item, dict):
+        return out
+
+    if any(key in raw_item for key in ("remote_space_id", "status", "bound_at", "bound_by")):
+        candidate = dict(raw_item)
+        candidate["group_id"] = group_id
+        candidate["provider"] = provider
+        candidate["lane"] = "work"
+        try:
+            model = SpaceBinding.model_validate(candidate)
+            out["work"] = model.model_dump(exclude_none=True)
+        except Exception:
+            pass
+    else:
+        for lane_raw, lane_item in raw_item.items():
+            try:
+                lane = _lane_or_raise(lane_raw)
+            except Exception:
+                continue
+            if not isinstance(lane_item, dict):
+                continue
+            candidate = dict(lane_item)
+            candidate["group_id"] = group_id
+            candidate["provider"] = provider
+            candidate["lane"] = lane
+            try:
+                model = SpaceBinding.model_validate(candidate)
+                out[lane] = model.model_dump(exclude_none=True)
+            except Exception:
+                continue
+
+    for lane in sorted(_SPACE_LANES):
+        out.setdefault(lane, _default_binding_doc(group_id, provider, lane))
+    return out
 
 
 def _normalize_bindings_doc(raw: Any) -> Dict[str, Any]:
@@ -192,7 +250,7 @@ def _normalize_bindings_doc(raw: Any) -> Dict[str, Any]:
         doc["updated_at"] = now
     bindings_raw = doc.get("bindings")
     bindings = bindings_raw if isinstance(bindings_raw, dict) else {}
-    normalized: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    normalized: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {}
     for group_id_raw, per_group_raw in bindings.items():
         try:
             group_id = _safe_id(group_id_raw, field="group_id")
@@ -200,26 +258,19 @@ def _normalize_bindings_doc(raw: Any) -> Dict[str, Any]:
             continue
         if not isinstance(per_group_raw, dict):
             continue
-        per_group: Dict[str, Dict[str, Any]] = {}
+        per_group: Dict[str, Dict[str, Dict[str, Any]]] = {}
         for provider_raw, item_raw in per_group_raw.items():
             try:
                 provider = _provider_or_raise(provider_raw)
             except Exception:
                 continue
-            if not isinstance(item_raw, dict):
-                continue
-            candidate = dict(item_raw)
-            candidate["group_id"] = group_id
-            candidate["provider"] = provider
-            try:
-                model = SpaceBinding.model_validate(candidate)
-            except Exception:
-                continue
-            per_group[provider] = model.model_dump(exclude_none=True)
+            lanes = _normalize_provider_binding_lanes(group_id, provider, item_raw)
+            if lanes:
+                per_group[provider] = lanes
         if per_group:
             normalized[group_id] = per_group
     doc["bindings"] = normalized
-    doc["v"] = 1
+    doc["v"] = 2
     return doc
 
 
@@ -232,7 +283,7 @@ def _load_bindings_doc() -> Tuple[Path, Dict[str, Any]]:
 def _new_jobs_doc() -> Dict[str, Any]:
     now = utc_now_iso()
     return {
-        "v": 1,
+        "v": 2,
         "created_at": now,
         "updated_at": now,
         "jobs": {},
@@ -260,13 +311,14 @@ def _normalize_jobs_doc(raw: Any) -> Dict[str, Any]:
             continue
         candidate = dict(item_raw)
         candidate["job_id"] = job_id
+        candidate["lane"] = _lane_or_raise(candidate.get("lane") or "work")
         try:
             model = SpaceJob.model_validate(candidate)
         except Exception:
             continue
         normalized[job_id] = model.model_dump(exclude_none=True)
     doc["jobs"] = normalized
-    doc["v"] = 1
+    doc["v"] = 2
     return doc
 
 
@@ -416,24 +468,46 @@ def describe_space_provider_credential_state(
     return model.model_dump(exclude_none=True)
 
 
-def get_space_binding(group_id: str, provider: str = "notebooklm") -> Optional[Dict[str, Any]]:
+def get_space_bindings(group_id: str, provider: str = "notebooklm") -> Dict[str, Dict[str, Any]]:
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
     _, doc = _load_bindings_doc()
     bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
     per_group = bindings.get(gid) if isinstance(bindings.get(gid), dict) else {}
-    item = per_group.get(pid) if isinstance(per_group, dict) else None
+    per_provider = per_group.get(pid) if isinstance(per_group, dict) else {}
+    out: Dict[str, Dict[str, Any]] = {}
+    for lane in sorted(_SPACE_LANES):
+        item = per_provider.get(lane) if isinstance(per_provider, dict) else None
+        if isinstance(item, dict):
+            try:
+                out[lane] = SpaceBinding.model_validate(item).model_dump(exclude_none=True)
+                continue
+            except Exception:
+                pass
+        out[lane] = _default_binding_doc(gid, pid, lane)
+    return out
+
+
+def get_space_binding(group_id: str, provider: str = "notebooklm", lane: str = "work") -> Optional[Dict[str, Any]]:
+    gid = _safe_id(group_id, field="group_id")
+    pid = _provider_or_raise(provider)
+    lid = _lane_or_raise(lane)
+    _, doc = _load_bindings_doc()
+    bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
+    per_group = bindings.get(gid) if isinstance(bindings.get(gid), dict) else {}
+    per_provider = per_group.get(pid) if isinstance(per_group, dict) else {}
+    item = per_provider.get(lid) if isinstance(per_provider, dict) else None
     if not isinstance(item, dict):
         return None
     try:
-        model = SpaceBinding.model_validate(item)
+        return SpaceBinding.model_validate(item).model_dump(exclude_none=True)
     except Exception:
         return None
-    return model.model_dump(exclude_none=True)
 
 
-def list_space_bindings(provider: str = "notebooklm") -> List[Dict[str, Any]]:
+def list_space_bindings(provider: str = "notebooklm", *, lane: str = "") -> List[Dict[str, Any]]:
     pid = _provider_or_raise(provider)
+    lane_filter = _lane_or_raise(lane) if str(lane or "").strip() else ""
     _, doc = _load_bindings_doc()
     bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
     out: List[Dict[str, Any]] = []
@@ -441,14 +515,19 @@ def list_space_bindings(provider: str = "notebooklm") -> List[Dict[str, Any]]:
         per_group = bindings.get(group_id)
         if not isinstance(per_group, dict):
             continue
-        item = per_group.get(pid)
-        if not isinstance(item, dict):
+        per_provider = per_group.get(pid)
+        if not isinstance(per_provider, dict):
             continue
-        try:
-            model = SpaceBinding.model_validate(item)
-            out.append(model.model_dump(exclude_none=True))
-        except Exception:
-            continue
+        for lane_name, item in per_provider.items():
+            if lane_filter and lane_name != lane_filter:
+                continue
+            if not isinstance(item, dict):
+                continue
+            try:
+                model = SpaceBinding.model_validate(item)
+                out.append(model.model_dump(exclude_none=True))
+            except Exception:
+                continue
     return out
 
 
@@ -456,17 +535,20 @@ def upsert_space_binding(
     group_id: str,
     *,
     provider: str = "notebooklm",
+    lane: str = "work",
     remote_space_id: str,
     by: str,
     status: str = "bound",
 ) -> Dict[str, Any]:
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
+    lid = _lane_or_raise(lane)
     rid = str(remote_space_id or "").strip()
     who = str(by or "user").strip() or "user"
     payload = {
         "group_id": gid,
         "provider": pid,
+        "lane": lid,
         "remote_space_id": rid,
         "bound_by": who,
         "bound_at": utc_now_iso(),
@@ -478,7 +560,11 @@ def upsert_space_binding(
     path, doc = _load_bindings_doc()
     bindings = doc.get("bindings") if isinstance(doc.get("bindings"), dict) else {}
     per_group = bindings.get(gid) if isinstance(bindings.get(gid), dict) else {}
-    per_group[pid] = out
+    per_provider = per_group.get(pid) if isinstance(per_group.get(pid), dict) else {}
+    per_provider[lid] = out
+    for other in sorted(_SPACE_LANES):
+        per_provider.setdefault(other, _default_binding_doc(gid, pid, other))
+    per_group[pid] = per_provider
     bindings[gid] = per_group
     doc["bindings"] = bindings
     _save_doc(path, doc)
@@ -489,11 +575,13 @@ def set_space_binding_unbound(
     group_id: str,
     *,
     provider: str = "notebooklm",
+    lane: str = "work",
     by: str,
 ) -> Dict[str, Any]:
     return upsert_space_binding(
         group_id,
         provider=provider,
+        lane=lane,
         remote_space_id="",
         by=by,
         status="unbound",
@@ -512,11 +600,12 @@ def _payload_digest(payload: Dict[str, Any]) -> str:
 def _default_idempotency_key(
     *,
     provider: str,
+    lane: str = "work",
     remote_space_id: str,
     kind: str,
     payload_digest: str,
 ) -> str:
-    return f"{provider}:{remote_space_id}:{kind}:{payload_digest}"
+    return f"{provider}:{lane}:{remote_space_id}:{kind}:{payload_digest}"
 
 
 def _normalize_idempotency_key(value: Any) -> str:
@@ -528,6 +617,7 @@ def enqueue_space_job(
     *,
     group_id: str,
     provider: str,
+    lane: str = "work",
     remote_space_id: str,
     kind: str,
     payload: Dict[str, Any],
@@ -536,6 +626,7 @@ def enqueue_space_job(
 ) -> Tuple[Dict[str, Any], bool]:
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
+    lid = _lane_or_raise(lane)
     rid = str(remote_space_id or "").strip()
     if not rid:
         raise ValueError("missing remote_space_id")
@@ -544,6 +635,7 @@ def enqueue_space_job(
     digest = _payload_digest(payload)
     idem = _normalize_idempotency_key(idempotency_key) or _default_idempotency_key(
         provider=pid,
+        lane=lid,
         remote_space_id=rid,
         kind=str(kind or "context_sync"),
         payload_digest=digest,
@@ -562,6 +654,8 @@ def enqueue_space_job(
             continue
         if model.provider != pid:
             continue
+        if model.lane != lid:
+            continue
         if model.remote_space_id != rid:
             continue
         if str(model.idempotency_key or "") != idem:
@@ -574,6 +668,7 @@ def enqueue_space_job(
         job_id=_new_job_id(),
         group_id=gid,
         provider=pid,
+        lane=lid,
         remote_space_id=rid,
         kind=str(kind or "context_sync"),
         payload=dict(payload),
@@ -590,7 +685,7 @@ def enqueue_space_job(
     jobs[item["job_id"]] = item
     doc["jobs"] = jobs
     _save_doc(path, doc)
-    _append_history(item["job_id"], "created", {"kind": item.get("kind")})
+    _append_history(item["job_id"], "created", {"kind": item.get("kind"), "lane": item.get("lane")})
     return dict(item), False
 
 
@@ -664,7 +759,7 @@ def mark_space_job_retry_scheduled(
     return out
 
 
-def mark_space_job_succeeded(job_id: str) -> Dict[str, Any]:
+def mark_space_job_succeeded(job_id: str, *, result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     out = _update_space_job(
         job_id,
         lambda item: {
@@ -673,6 +768,7 @@ def mark_space_job_succeeded(job_id: str) -> Dict[str, Any]:
             "next_run_at": None,
             "updated_at": utc_now_iso(),
             "last_error": {"code": "", "message": ""},
+            "result": dict(result) if isinstance(result, dict) else dict(item.get("result") or {}),
         },
     )
     _append_history(str(out.get("job_id") or ""), "succeeded", {"attempt": int(out.get("attempt") or 0)})
@@ -734,11 +830,13 @@ def list_space_jobs(
     *,
     group_id: str,
     provider: str = "notebooklm",
+    lane: str = "",
     state: str = "",
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
+    lane_filter = _lane_or_raise(lane) if str(lane or "").strip() else ""
     wanted_state = str(state or "").strip()
     max_items = max(1, min(int(limit or 50), 500))
     _, doc = _load_jobs_doc()
@@ -754,6 +852,8 @@ def list_space_jobs(
         if model.group_id != gid:
             continue
         if model.provider != pid:
+            continue
+        if lane_filter and model.lane != lane_filter:
             continue
         if wanted_state and model.state != wanted_state:
             continue
@@ -793,9 +893,10 @@ def list_due_space_jobs(*, limit: int = 50) -> List[Dict[str, Any]]:
     return out[:max_items]
 
 
-def space_queue_summary(*, group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
+def space_queue_summary(*, group_id: str, provider: str = "notebooklm", lane: str = "") -> Dict[str, Any]:
     gid = _safe_id(group_id, field="group_id")
     pid = _provider_or_raise(provider)
+    lane_filter = _lane_or_raise(lane) if str(lane or "").strip() else ""
     _, doc = _load_jobs_doc()
     jobs = doc.get("jobs") if isinstance(doc.get("jobs"), dict) else {}
     pending = 0
@@ -810,6 +911,8 @@ def space_queue_summary(*, group_id: str, provider: str = "notebooklm") -> Dict[
             continue
         if model.group_id != gid or model.provider != pid:
             continue
+        if lane_filter and model.lane != lane_filter:
+            continue
         if model.state == "pending":
             pending += 1
         elif model.state == "running":
@@ -818,3 +921,9 @@ def space_queue_summary(*, group_id: str, provider: str = "notebooklm") -> Dict[
             failed += 1
     summary = SpaceQueueSummary(pending=pending, running=running, failed=failed)
     return summary.model_dump(exclude_none=True)
+
+
+def space_queue_summaries(*, group_id: str, provider: str = "notebooklm") -> Dict[str, Dict[str, Any]]:
+    gid = _safe_id(group_id, field="group_id")
+    pid = _provider_or_raise(provider)
+    return {lane: space_queue_summary(group_id=gid, provider=pid, lane=lane) for lane in sorted(_SPACE_LANES)}

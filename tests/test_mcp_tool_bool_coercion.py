@@ -273,6 +273,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                 {
                     "action": "artifact",
                     "sub_action": "generate",
+                    "lane": "work",
                     "kind": "slide_deck",
                 },
             )
@@ -291,6 +292,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                 "cccc_space",
                 {
                     "action": "artifact",
+                    "lane": "work",
                     "kind": "study_guide",
                     "save_to_space": "true",
                     "source": "/tmp/notes.md",
@@ -311,6 +313,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                 "cccc_space",
                 {
                     "action": "artifact",
+                    "lane": "work",
                     "kind": "report",
                     "language": "zh-CN",
                     "source": "/tmp/notes.md",
@@ -334,6 +337,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                     "cccc_space",
                     {
                         "action": "artifact",
+                        "lane": "work",
                         "kind": "report",
                         "source": src,
                     },
@@ -352,6 +356,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                 "cccc_space",
                 {
                     "action": "ingest",
+                    "lane": "work",
                     "source_type": "file",
                     "url": "/tmp/spec.md",
                     "title": "Spec",
@@ -374,6 +379,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                 "cccc_space",
                 {
                     "action": "query",
+                    "lane": "work",
                     "query": "summarize",
                     "options": {"source_ids": [" src_1 ", "src_2"]},
                 },
@@ -391,6 +397,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                     "cccc_space",
                     {
                         "action": "query",
+                        "lane": "work",
                         "query": "summarize",
                         "language": "zh-CN",
                     },
@@ -407,6 +414,7 @@ class TestMcpToolBoolCoercion(unittest.TestCase):
                     "cccc_space",
                     {
                         "action": "query",
+                        "lane": "work",
                         "query": "summarize",
                         "options": {"top_k": 5},
                     },

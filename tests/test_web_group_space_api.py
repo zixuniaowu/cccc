@@ -82,6 +82,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                     json={
                         "by": "user",
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "bind",
                         "remote_space_id": "nb_web_1",
                     },
@@ -89,18 +90,18 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 self.assertEqual(bind.status_code, 200)
                 bind_body = bind.json()
                 self.assertTrue(bind_body.get("ok"))
-                binding = ((bind_body.get("result") or {}).get("binding") or {})
+                binding = ((((bind_body.get("result") or {}).get("bindings") or {}).get("work")) or {})
                 self.assertEqual(str(binding.get("status") or ""), "bound")
 
                 query = client.post(
                     f"/api/v1/groups/{gid}/space/query",
-                    json={"provider": "notebooklm", "query": "status?", "options": {}},
+                    json={"provider": "notebooklm", "lane": "work", "query": "status?", "options": {}},
                 )
                 self.assertEqual(query.status_code, 200)
                 query_body = query.json()
                 self.assertTrue(query_body.get("ok"))
 
-                sources = client.get(f"/api/v1/groups/{gid}/space/sources?provider=notebooklm")
+                sources = client.get(f"/api/v1/groups/{gid}/space/sources?provider=notebooklm&lane=work")
                 self.assertEqual(sources.status_code, 200)
                 self.assertTrue(sources.json().get("ok"))
 
@@ -109,6 +110,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                     json={
                         "by": "user",
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "refresh",
                         "source_id": "src_web_1",
                     },
@@ -116,7 +118,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 self.assertEqual(source_refresh.status_code, 200)
                 self.assertTrue(source_refresh.json().get("ok"))
 
-                artifacts = client.get(f"/api/v1/groups/{gid}/space/artifacts?provider=notebooklm")
+                artifacts = client.get(f"/api/v1/groups/{gid}/space/artifacts?provider=notebooklm&lane=work")
                 self.assertEqual(artifacts.status_code, 200)
                 self.assertTrue(artifacts.json().get("ok"))
 
@@ -125,6 +127,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                     json={
                         "by": "user",
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "generate",
                         "kind": "report",
                         "options": {"language": "en"},
@@ -140,6 +143,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                     json={
                         "by": "user",
                         "provider": "notebooklm",
+                        "lane": "work",
                         "kind": "context_sync",
                         "payload": {"vision": "v0.5"},
                         "idempotency_key": "web-space-1",
@@ -149,7 +153,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 ingest_body = ingest.json()
                 self.assertTrue(ingest_body.get("ok"))
 
-                jobs = client.get(f"/api/v1/groups/{gid}/space/jobs?provider=notebooklm&limit=20")
+                jobs = client.get(f"/api/v1/groups/{gid}/space/jobs?provider=notebooklm&lane=work&limit=20")
                 self.assertEqual(jobs.status_code, 200)
                 jobs_body = jobs.json()
                 self.assertTrue(jobs_body.get("ok"))
@@ -161,6 +165,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                     json={
                         "by": "user",
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "status",
                         "force": False,
                     },
@@ -245,6 +250,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                     json={
                         "by": "user",
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "bind",
                         "remote_space_id": "nb_exhibit",
                     },
@@ -256,12 +262,12 @@ class TestWebGroupSpaceApi(unittest.TestCase):
 
                 sync_write_resp = client.post(
                     f"/api/v1/groups/{gid}/space/sync",
-                    json={"by": "user", "provider": "notebooklm", "action": "run", "force": True},
+                    json={"by": "user", "provider": "notebooklm", "lane": "work", "action": "run", "force": True},
                 )
                 self.assertEqual(sync_write_resp.status_code, 403)
                 self.assertEqual(str((sync_write_resp.json().get("error") or {}).get("code") or ""), "read_only")
 
-                sources_read_resp = client.get(f"/api/v1/groups/{gid}/space/sources?provider=notebooklm")
+                sources_read_resp = client.get(f"/api/v1/groups/{gid}/space/sources?provider=notebooklm&lane=work")
                 self.assertEqual(sources_read_resp.status_code, 200)
                 self.assertFalse(sources_read_resp.json().get("ok"))
                 self.assertEqual(
@@ -274,6 +280,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                     json={
                         "by": "user",
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "delete",
                         "source_id": "src_ro_1",
                     },
@@ -281,7 +288,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                 self.assertEqual(sources_write_resp.status_code, 403)
                 self.assertEqual(str((sources_write_resp.json().get("error") or {}).get("code") or ""), "read_only")
 
-                artifacts_read_resp = client.get(f"/api/v1/groups/{gid}/space/artifacts?provider=notebooklm")
+                artifacts_read_resp = client.get(f"/api/v1/groups/{gid}/space/artifacts?provider=notebooklm&lane=work")
                 self.assertEqual(artifacts_read_resp.status_code, 200)
                 self.assertFalse(artifacts_read_resp.json().get("ok"))
                 self.assertEqual(
@@ -294,6 +301,7 @@ class TestWebGroupSpaceApi(unittest.TestCase):
                     json={
                         "by": "user",
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "generate",
                         "kind": "report",
                         "options": {},

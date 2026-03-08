@@ -47,7 +47,7 @@ def _infer_artifact_language_from_source(source_hint: str) -> str:
 
 
 def _normalize_space_query_options_mcp(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    allowed_top_level = {"group_id", "provider", "query", "options", "by"}
+    allowed_top_level = {"group_id", "provider", "lane", "query", "options", "by"}
     top_keys = {str(k or "").strip() for k in arguments.keys()}
     top_keys.discard("")
     unknown_top = sorted(k for k in top_keys if k not in allowed_top_level)

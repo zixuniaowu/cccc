@@ -65,7 +65,7 @@ class TestMemoryRemeAutoTrigger(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "task.create", "name": "AutoTrigger", "goal": "trigger memory lane"}],
+                    "ops": [{"op": "task.create", "title": "AutoTrigger", "goal": "trigger memory lane"}],
                 },
             )
 

@@ -6,6 +6,12 @@ from contextlib import contextmanager
 from typing import Any, Dict
 
 from .group_space_projection import sync_group_space_projection
+from .group_space_memory_sync import (
+    execute_memory_daily_sync_job,
+    mark_memory_sync_job_failed,
+    mark_memory_sync_job_retry,
+    mark_memory_sync_job_running,
+)
 from .group_space_provider import SpaceProviderError, provider_ingest, provider_query
 from .group_space_store import (
     get_space_job,
@@ -20,6 +26,7 @@ from .group_space_store import (
 )
 
 _RETRY_BACKOFF_SECONDS = (2, 10)
+_MEMORY_RETRY_BACKOFF_SECONDS = (300, 1800, 10800)
 _WRITE_LOCKS: Dict[str, tuple[threading.Lock, int]] = {}
 _WRITE_LOCKS_GUARD = threading.Lock()
 _PROVIDER_WRITE_SEMAPHORE: threading.BoundedSemaphore | None = None
@@ -148,14 +155,20 @@ def execute_space_job(job_id: str) -> Dict[str, Any]:
     max_attempts = max(1, int(current.get("max_attempts") or 3))
 
     try:
-        # Serialize writes per provider/remote target to avoid upstream race conditions.
-        with acquire_space_provider_write(provider, remote_space_id):
-            _ = provider_ingest(
-                provider,
-                remote_space_id=remote_space_id,
-                kind=kind,
-                payload=dict(payload),
-            )
+        job_result: Dict[str, Any] = {}
+        if kind == "memory_daily_sync":
+            mark_memory_sync_job_running(current)
+            with acquire_space_provider_write(provider, remote_space_id):
+                job_result = execute_memory_daily_sync_job(current)
+        else:
+            # Serialize writes per provider/remote target to avoid upstream race conditions.
+            with acquire_space_provider_write(provider, remote_space_id):
+                job_result = provider_ingest(
+                    provider,
+                    remote_space_id=remote_space_id,
+                    kind=kind,
+                    payload=dict(payload),
+                )
         set_space_provider_state(
             provider,
             enabled=True,
@@ -163,7 +176,7 @@ def execute_space_job(job_id: str) -> Dict[str, Any]:
             last_error="",
             touch_health=True,
         )
-        out = mark_space_job_succeeded(job_id)
+        out = mark_space_job_succeeded(job_id, result=job_result)
         _sync_projection_after_job(out)
         return out
     except Exception as exc:
@@ -177,17 +190,23 @@ def execute_space_job(job_id: str) -> Dict[str, Any]:
                 touch_health=True,
             )
         if bool(err["transient"]) and attempt < max_attempts:
-            idx = min(max(0, attempt - 1), len(_RETRY_BACKOFF_SECONDS) - 1)
-            backoff = _RETRY_BACKOFF_SECONDS[idx]
+            schedule = _MEMORY_RETRY_BACKOFF_SECONDS if kind == "memory_daily_sync" else _RETRY_BACKOFF_SECONDS
+            idx = min(max(0, attempt - 1), len(schedule) - 1)
+            backoff = schedule[idx]
+            next_run_at = _utc_after_seconds(int(backoff))
             out = mark_space_job_retry_scheduled(
                 job_id,
                 code=str(err["code"]),
                 message=str(err["message"]),
-                next_run_at=_utc_after_seconds(int(backoff)),
+                next_run_at=next_run_at,
             )
+            if kind == "memory_daily_sync":
+                mark_memory_sync_job_retry(out, code=str(err["code"]), message=str(err["message"]), next_run_at=next_run_at)
             _sync_projection_after_job(out)
             return out
         out = mark_space_job_failed(job_id, code=str(err["code"]), message=str(err["message"]))
+        if kind == "memory_daily_sync":
+            mark_memory_sync_job_failed(out, code=str(err["code"]), message=str(err["message"]))
         _sync_projection_after_job(out)
         return out
 

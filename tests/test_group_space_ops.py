@@ -82,8 +82,8 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertTrue(status.ok, getattr(status, "error", None))
             result = status.result if isinstance(status.result, dict) else {}
             provider = result.get("provider") if isinstance(result.get("provider"), dict) else {}
-            binding = result.get("binding") if isinstance(result.get("binding"), dict) else {}
-            summary = result.get("queue_summary") if isinstance(result.get("queue_summary"), dict) else {}
+            binding = (((result.get("bindings") or {}).get("work")) if isinstance(result.get("bindings"), dict) else {})
+            summary = (((result.get("queue_summary") or {}).get("work")) if isinstance(result.get("queue_summary"), dict) else {})
             self.assertEqual(str(provider.get("provider") or ""), "notebooklm")
             self.assertEqual(str(provider.get("mode") or ""), "disabled")
             self.assertEqual(bool(provider.get("enabled")), False)
@@ -210,6 +210,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_123",
                     "by": "user",
@@ -222,6 +223,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "kind": "context_sync",
                     "payload": {"vision": "shipping v1"},
                     "idempotency_key": "sync-1",
@@ -233,6 +235,8 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(bool(r1.get("deduped")), False)
             job_1 = r1.get("job") if isinstance(r1.get("job"), dict) else {}
             self.assertEqual(str(job_1.get("state") or ""), "succeeded")
+            self.assertIsInstance(job_1.get("result"), dict)
+            self.assertEqual((r1.get("ingest_result") or {}), job_1.get("result"))
             job_id = str(r1.get("job_id") or "")
             self.assertTrue(job_id)
 
@@ -241,6 +245,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "kind": "context_sync",
                     "payload": {"vision": "shipping v1"},
                     "idempotency_key": "sync-1",
@@ -257,6 +262,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "query": "What is the current vision?",
                 },
             )
@@ -267,12 +273,247 @@ class TestGroupSpaceOps(unittest.TestCase):
 
             jobs, _ = self._call(
                 "group_space_jobs",
-                {"group_id": gid, "provider": "notebooklm", "action": "list"},
+                {"group_id": gid, "provider": "notebooklm", "lane": "work", "action": "list"},
             )
             self.assertTrue(jobs.ok, getattr(jobs, "error", None))
             jobs_list = (jobs.result or {}).get("jobs") if isinstance(jobs.result, dict) else []
             self.assertIsInstance(jobs_list, list)
             self.assertGreaterEqual(len(jobs_list), 1)
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_group_space_ingest_returns_source_id_when_provider_reports_it(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-ingest-source-id")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_ingest_src_1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            with patch(
+                "cccc.daemon.space.group_space_runtime.provider_ingest",
+                return_value={
+                    "provider": "notebooklm",
+                    "remote_space_id": "nb_ingest_src_1",
+                    "kind": "resource_ingest",
+                    "source_type": "pasted_text",
+                    "source_id": "src_intel_1",
+                    "title": "Intel evidence pack",
+                    "accepted": True,
+                },
+            ):
+                ingest, _ = self._call(
+                    "group_space_ingest",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "kind": "resource_ingest",
+                        "payload": {"source_type": "pasted_text", "title": "Intel evidence pack", "content": "Revenue up."},
+                        "idempotency_key": "ingest-src-1",
+                        "by": "user",
+                    },
+                )
+            self.assertTrue(ingest.ok, getattr(ingest, "error", None))
+            result = ingest.result if isinstance(ingest.result, dict) else {}
+            self.assertEqual(str(result.get("source_id") or ""), "src_intel_1")
+            self.assertEqual(result.get("source_ids"), ["src_intel_1"])
+            ingest_result = result.get("ingest_result") if isinstance(result.get("ingest_result"), dict) else {}
+            self.assertEqual(str(ingest_result.get("source_id") or ""), "src_intel_1")
+            job = result.get("job") if isinstance(result.get("job"), dict) else {}
+            job_result = job.get("result") if isinstance(job.get("result"), dict) else {}
+            self.assertEqual(str(job_result.get("source_id") or ""), "src_intel_1")
+
+            ingest_dedup, _ = self._call(
+                "group_space_ingest",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "kind": "resource_ingest",
+                    "payload": {"source_type": "pasted_text", "title": "Intel evidence pack", "content": "Revenue up."},
+                    "idempotency_key": "ingest-src-1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(ingest_dedup.ok, getattr(ingest_dedup, "error", None))
+            result_dedup = ingest_dedup.result if isinstance(ingest_dedup.result, dict) else {}
+            self.assertEqual(bool(result_dedup.get("deduped")), True)
+            self.assertEqual(str(result_dedup.get("source_id") or ""), "src_intel_1")
+            self.assertEqual(result_dedup.get("source_ids"), ["src_intel_1"])
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_group_space_query_prefers_explicit_source_diagnostics(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-query-explicit-source-diagnostics")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_query_src_1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            with patch(
+                "cccc.daemon.space.group_space_ops.read_group_space_sync_state",
+                return_value={"available": True, "remote_sources": 0, "materialized_sources": 0},
+            ), patch(
+                "cccc.daemon.space.group_space_ops.list_space_jobs",
+                return_value=[
+                    {
+                        "kind": "context_sync",
+                        "state": "succeeded",
+                        "updated_at": "2026-03-08T10:00:00Z",
+                    }
+                ],
+            ), patch(
+                "cccc.daemon.space.group_space_ops.run_space_query",
+                return_value={
+                    "answer": "Intel remains cautious.",
+                    "references": [{"source_id": "src_intel_1"}],
+                    "degraded": False,
+                    "error": None,
+                },
+            ):
+                query, _ = self._call(
+                    "group_space_query",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "query": "What does the Intel pack say?",
+                        "options": {"source_ids": ["src_intel_1"]},
+                    },
+                )
+            self.assertTrue(query.ok, getattr(query, "error", None))
+            result = query.result if isinstance(query.result, dict) else {}
+            self.assertEqual(str(result.get("source_basis_hint") or ""), "requested_sources_hit")
+            self.assertEqual(result.get("requested_source_ids"), ["src_intel_1"])
+            self.assertEqual(result.get("referenced_source_ids"), ["src_intel_1"])
+            self.assertEqual(bool(result.get("references_match_requested")), True)
+            self.assertEqual(str(result.get("latest_context_sync_at") or ""), "2026-03-08T10:00:00Z")
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_group_space_query_includes_work_diagnostics(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-query-work-diagnostics")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_diag_work_1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            with patch(
+                "cccc.daemon.space.group_space_ops.read_group_space_sync_state",
+                return_value={"available": True, "remote_sources": 0, "materialized_sources": 0},
+            ), patch(
+                "cccc.daemon.space.group_space_ops.list_space_jobs",
+                return_value=[
+                    {
+                        "kind": "context_sync",
+                        "state": "succeeded",
+                        "updated_at": "2026-03-08T10:00:00Z",
+                    }
+                ],
+            ):
+                query, _ = self._call(
+                    "group_space_query",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "query": "What is the current focus?",
+                    },
+                )
+            self.assertTrue(query.ok, getattr(query, "error", None))
+            result = query.result if isinstance(query.result, dict) else {}
+            self.assertEqual(int(result.get("reference_count", -1)), 0)
+            self.assertEqual(str(result.get("binding_status") or ""), "bound")
+            self.assertEqual(str(result.get("source_basis_hint") or ""), "context_sync_only")
+            self.assertEqual(str(result.get("latest_context_sync_at") or ""), "2026-03-08T10:00:00Z")
+            self.assertEqual(int(result.get("remote_sources", -1)), 0)
+            self.assertEqual(int(result.get("materialized_sources", -1)), 0)
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_group_space_query_includes_memory_diagnostics(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            gid = self._create_group("space-query-memory-diagnostics")
+            bind, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "memory",
+                    "action": "bind",
+                    "remote_space_id": "nb_diag_mem_1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind.ok, getattr(bind, "error", None))
+
+            with patch(
+                "cccc.daemon.space.group_space_ops.summarize_memory_notebooklm_sync",
+                return_value={
+                    "lane": "memory",
+                    "last_success_at": "2026-03-08T11:00:00Z",
+                    "pending_files": 1,
+                    "failed_files": 0,
+                    "running_files": 0,
+                    "blocked_files": 0,
+                },
+            ):
+                query, _ = self._call(
+                    "group_space_query",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "memory",
+                        "query": "What was decided yesterday?",
+                    },
+                )
+            self.assertTrue(query.ok, getattr(query, "error", None))
+            result = query.result if isinstance(query.result, dict) else {}
+            self.assertEqual(int(result.get("reference_count", -1)), 0)
+            self.assertEqual(str(result.get("binding_status") or ""), "bound")
+            self.assertEqual(str(result.get("source_basis_hint") or ""), "memory_manifest_only")
+            self.assertEqual(str(result.get("memory_last_success_at") or ""), "2026-03-08T11:00:00Z")
+            self.assertEqual(int(result.get("memory_pending_files") or -1), 1)
+            self.assertEqual(int(result.get("memory_failed_files", -1)), 0)
         finally:
             cleanup_stub()
             cleanup()
@@ -287,6 +528,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_query_1",
                     "by": "user",
@@ -299,6 +541,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "query": "Summarize this notebook",
                     "options": {"language": "zh-CN"},
                 },
@@ -320,6 +563,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_src_1",
                     "by": "user",
@@ -332,6 +576,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "list",
                 },
             )
@@ -345,6 +590,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "refresh",
                     "source_id": "src_abc",
                     "by": "user",
@@ -359,6 +605,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "delete",
                     "source_id": "src_abc",
                     "by": "user",
@@ -383,6 +630,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_art_1",
                     "by": "user",
@@ -395,6 +643,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "generate",
                     "kind": "report",
                     "wait": True,
@@ -427,6 +676,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_art_canonical",
                     "by": "user",
@@ -478,6 +728,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "generate",
                         "kind": "report",
                         "wait": True,
@@ -506,6 +757,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_art_2",
                     "by": "user",
@@ -518,6 +770,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "generate",
                     "kind": "comic",
                     "by": "user",
@@ -539,6 +792,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_art_3",
                     "by": "user",
@@ -551,6 +805,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "download",
                     "kind": "report",
                     "save_to_space": False,
@@ -575,6 +830,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_art_4",
                     "by": "user",
@@ -588,6 +844,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "download",
                     "kind": "ArtifactType.INFOGRAPHIC",
                     "save_to_space": False,
@@ -605,6 +862,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "generate",
                     "kind": "slide",
                     "wait": False,
@@ -630,6 +888,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_query_backpressure",
                     "by": "user",
@@ -657,6 +916,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                         {
                             "group_id": gid,
                             "provider": "notebooklm",
+                            "lane": "work",
                             "query": "first query",
                         },
                     )
@@ -671,6 +931,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "query": "second query",
                     },
                 )
@@ -701,6 +962,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_gen_queue",
                     "by": "user",
@@ -744,6 +1006,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "generate",
                         "kind": "slide_deck",
                         "wait": False,
@@ -761,6 +1024,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "generate",
                         "kind": "slide_deck",
                         "wait": False,
@@ -778,6 +1042,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "generate",
                         "kind": "slide_deck",
                         "wait": False,
@@ -807,6 +1072,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_gen_notify",
                     "by": "user",
@@ -826,6 +1092,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "generate",
                         "kind": "report",
                         "wait": False,
@@ -878,6 +1145,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_gen_fast",
                     "by": "user",
@@ -903,6 +1171,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "generate",
                         "kind": "audio",
                         "wait": False,
@@ -934,6 +1203,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_perm",
                     "by": "peer1",
@@ -954,6 +1224,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_degraded",
                     "by": "user",
@@ -966,6 +1237,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "kind": "context_sync",
                     "payload": {"foo": "bar"},
                     "by": "user",
@@ -981,6 +1253,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "query": "status?",
                 },
             )
@@ -1003,6 +1276,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_jobs",
                     "by": "user",
@@ -1015,6 +1289,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "kind": "context_sync",
                     "payload": {"a": 1},
                     "idempotency_key": "retry-1",
@@ -1030,6 +1305,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "retry",
                     "job_id": failed_job_id,
                     "by": "user",
@@ -1050,6 +1326,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "kind": "resource_ingest",
                         "payload": {"resource": "doc.md"},
                         "idempotency_key": "cancel-1",
@@ -1067,6 +1344,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "cancel",
                     "job_id": pending_job_id,
                     "by": "user",
@@ -1341,6 +1619,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_rb_1",
                     "by": "user",
@@ -1353,6 +1632,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "query": "status?",
                 },
             )
@@ -1367,6 +1647,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "kind": "context_sync",
                     "payload": {"k": "v"},
                     "idempotency_key": "rollback-1",
@@ -1399,6 +1680,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "action": "bind",
                         "remote_space_id": "",
                         "by": "user",
@@ -1407,7 +1689,7 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertTrue(bind.ok, getattr(bind, "error", None))
             create_mock.assert_called_once_with("notebooklm", title="CCCC · Space Auto Bind")
             result = bind.result if isinstance(bind.result, dict) else {}
-            binding = result.get("binding") if isinstance(result.get("binding"), dict) else {}
+            binding = (((result.get("bindings") or {}).get("work")) if isinstance(result.get("bindings"), dict) else {})
             self.assertEqual(str(binding.get("remote_space_id") or ""), "nb_auto_1")
             sync_result = result.get("sync_result") if isinstance(result.get("sync_result"), dict) else {}
             self.assertEqual(bool(sync_result.get("ok")), True)

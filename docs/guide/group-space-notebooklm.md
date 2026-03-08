@@ -1,10 +1,18 @@
-# Group Space + NotebookLM (Web)
+# Notebook Binding + NotebookLM (Web)
 
-This guide covers the fastest way to validate real Group Space behavior from the Web UI.
+This guide covers the user-facing Web flow for connecting NotebookLM and choosing which notebooks CCCC should use.
+
+The Web UI is intentionally minimal:
+
+1. connect Google
+2. choose the `Work Notebook`
+3. choose the `Memory Notebook`
+
+Actual NotebookLM operations such as query, ingest, source management, artifacts, and job handling are handled by agents through MCP / CLI surfaces, not by the normal user settings page.
 
 ## 1. Enable Real Provider Path
 
-Start CCCC with real NotebookLM adapter enabled:
+Start CCCC with the real NotebookLM adapter enabled:
 
 ```bash
 export CCCC_NOTEBOOKLM_REAL=1
@@ -17,143 +25,109 @@ If you expose Web outside localhost, also set a web token:
 export CCCC_WEB_TOKEN="change-me"
 ```
 
-## 2. Open Group Space Settings
+## 2. Open Notebook Settings
 
 1. Open a target group in Web.
 2. Open **Settings**.
-3. Open **Group Space** tab.
+3. Open the **Notebook** tab.
 
 ## 3. Connect Google
 
-In **Google Connection**:
+In **Google Account**:
 
 1. Click **Connect Google**.
 2. Complete sign-in in the opened browser window.
-3. CCCC stores credential automatically.
+3. Wait until the account status becomes connected.
 
 Notes:
 
-- If a valid credential is already stored, connect will reuse it and skip browser login.
-- Credential is stored masked/write-only in CCCC secrets (not plaintext in UI).
+- If a valid credential is already stored, reconnect may complete without a full browser login.
+- The default Web page does not expose manual credential editing anymore.
+
+## 4. Bind the Work Notebook
+
+In **Work Notebook**:
+
+1. Choose an existing notebook from the selector, or
+2. Click **Create and bind new**.
+
+Use `Work Notebook` for shared project knowledge and working materials.
 
 Expected result:
 
-- Health check returns success.
-- Credential view shows masked metadata only (never plaintext).
+- Work binding becomes `Bound`.
+- The current notebook title/id updates immediately.
 
-## 4. Bind Group to Notebook
+## 5. Bind the Memory Notebook
 
-In **Binding**:
+In **Memory Notebook**:
 
-1. Fill `remote_space_id` with your NotebookLM notebook id (optional).
-   - If empty, CCCC will auto-create a notebook and bind it.
-2. Click **Bind**.
+1. Choose an existing notebook from the selector, or
+2. Click **Create and bind new**.
+
+Use `Memory Notebook` for finalized memory recall.
 
 Expected result:
 
-- Binding status becomes `bound`.
-- Provider mode stays `active` when healthy.
+- Memory binding becomes `Bound`.
+- The current notebook title/id updates immediately.
 
-## 5. Verify Ingest + Query
+## 6. Connection Summary
 
-In **Ingest**:
+Use **Connection Summary** only as a lightweight status snapshot:
 
-1. Use `context_sync` or `resource_ingest`.
-2. Submit payload JSON.
+1. Google connected or not
+2. Work notebook bound or not
+3. Memory notebook bound or not
+4. a short warning message if something is degraded
 
-In **Query**:
+The summary is intentionally human-oriented and does not expose internal queue/job/runtime details.
 
-1. Ask a short query.
-2. Confirm answer/degraded status.
+## 7. What the Web Page No Longer Does
 
-## 6. Failure Behavior (Important)
+The normal user-facing Web settings page no longer exposes these agent/developer operations:
 
-Provider failures should degrade Group Space, not break core CCCC chat/actor workflows.
+1. Notebook query
+2. ingest submission
+3. source management
+4. artifact generation/download
+5. job queue operations
+6. manual credential write/clear
+7. provider health check
 
-Common error codes:
+That is by design.
 
-- `space_provider_not_configured`
-- `space_provider_auth_invalid`
-- `space_provider_compat_mismatch`
-- `space_provider_timeout`
+## 8. Agent-Side Usage Still Exists
 
-## 7. Quick Rollback
+NotebookLM usage still exists through agent-facing surfaces:
 
-If NotebookLM path is unstable in your environment:
+1. MCP tools
+2. CLI
+3. prompt/help-guided agent workflows
+
+The Web page is now only for account connection and notebook binding.
+
+## 9. Quick Rollback
+
+If NotebookLM is unstable in your environment:
 
 ```bash
 unset CCCC_NOTEBOOKLM_REAL
 cccc daemon restart
 ```
 
-You can also clear stored provider credential from Group Space settings.
+## 10. Repo Space Sync Notes
 
-## 8. Triage Checklist
-
-Use this order when Group Space behaves unexpectedly:
-
-1. `Health Check` in Web Group Space tab.
-2. Confirm provider mode (`active`/`degraded`/`disabled`).
-3. Confirm group binding is `bound` and `remote_space_id` is correct.
-4. Check jobs list (`failed` state and `last_error`).
-5. If upstream remains unstable, rollback to non-real mode and continue core workflows.
-
-## 9. Throughput Guard (Optional)
-
-Group Space provider writes are globally capped to protect upstream rate limits.
-
-Default cap: `2` in-flight writes.
-
-Tune only when necessary:
-
-```bash
-export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=1   # safer / slower
-export CCCC_SPACE_PROVIDER_MAX_INFLIGHT=4   # faster / higher upstream pressure
-```
-
-## 10. Repo Space Sync + File Formats
-
-When a group has a local scope attached, CCCC uses repo-local `space/` as the resource source of truth:
+When a group has a local scope attached, CCCC still uses repo-local `space/` as the work-lane resource source of truth:
 
 `<scope_root>/space/`
 
-Sync metadata files:
+Relevant metadata files remain:
 
-- `<scope_root>/space/.space-index.json` (path/hash -> remote source mapping)
-- `<scope_root>/space/.space-sync-state.json` (authoritative sync state: `state`, `unsynced_count`, `failed_items`, `run_id`)
-- `<scope_root>/space/.space-status.json` (compact projection snapshot for UI/debug)
-- `<scope_root>/space/.sync/remote-sources/*.json` (remote source snapshots)
-- `<scope_root>/space/artifacts/notebooklm/...` (downloaded provider artifacts)
+- `<scope_root>/space/.space-index.json`
+- `<scope_root>/space/.space-sync-state.json`
+- `<scope_root>/space/.space-status.json`
+- `<scope_root>/space/.sync/remote-sources/*.json`
+- `<scope_root>/space/artifacts/notebooklm/...`
 
-Materialization rules:
-
-- Local files under `space/` (except hidden files and `artifacts/`) are uploaded as NotebookLM sources.
-- URL/YouTube/Google Docs-family sources are created through `resource_ingest` (Web Add Source / MCP / CLI).
-- All NotebookLM remote sources are mirrored as metadata snapshots:
-  - `space/.sync/remote-sources/<source_id>.json`
-  - fields: `source_id`, `title`, `kind`, `status`, `url`, `synced_at`
-- Remote sources are materialized into canonical descriptor files:
-  - `space/sources/<stem>.source.json`
-  - descriptor fields include: `source_id`, `type/kind`, `title`, `url`, `status`, `read_only`
-- Descriptor filename is generated as a readable stem (`kind` + best-effort label + short source id), not a raw UUID-only name.
-- Extracted/indexed text is mirrored separately as readonly preview:
-  - `space/.sync/source-text/<stem>.txt|.md|.csv`
-- NotebookLM completed artifacts are downloaded to:
-  - `space/artifacts/notebooklm/<kind>/<artifact_id>.<ext>`
-  - extension mapping:
-    - `audio -> .mp3`
-    - `video -> .mp4`
-    - `report|study_guide -> .md`
-    - `quiz|flashcards -> .md` (default)
-    - `infographic -> .png`
-    - `slide_deck -> .pdf`
-    - `data_table -> .csv`
-    - `mind_map -> .json`
-- Artifact manifest is written to:
-  - `space/.sync/remote-artifacts.json`
-
-You can force a full reconcile from CLI:
-
-```bash
-cccc space sync --force
-```
+These implementation details matter for agent/developer workflows, but they are not part of the normal user-facing binding flow.

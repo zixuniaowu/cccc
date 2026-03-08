@@ -2053,7 +2053,7 @@ def sync_group_space_files(
 
 def process_due_space_syncs(*, provider: str = "notebooklm", limit: int = 20) -> Dict[str, Any]:
     max_items = max(1, min(int(limit or 20), 200))
-    bindings = list_space_bindings(provider)
+    bindings = list_space_bindings(provider, lane="work")
     seen = 0
     processed = 0
     skipped = 0

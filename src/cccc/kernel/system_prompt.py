@@ -36,16 +36,31 @@ def _group_space_policy_lines(group_id: str) -> List[str]:
             return []
         provider = str(state.get("provider") or "notebooklm")
         mode = str(state.get("mode") or "disabled")
-        return [
+        work_bound = bool(state.get("work_bound"))
+        memory_bound = bool(state.get("memory_bound"))
+        lines = [
             "Group Space:",
-            f"- Bound memory provider: {provider} ({mode})",
-            "- Use cccc_space(action=query) for long-horizon/shared knowledge lookup.",
-            "- Use cccc_space(action=ingest) only for stable findings/resources worth reusing.",
-            "- For resource_ingest payloads: use source_type + {url|content|file_id} depending on source kind.",
-            "- Use cccc_space(action=artifact) for NotebookLM outputs (save_to_space=true persists to repo/space/artifacts).",
-            "- If you see files matching '*.conflict.remote.*' under space/, report and ask user for resolution; do not auto-merge/delete.",
-            "- If provider is degraded/disabled, continue with Context + ledger and report fallback explicitly.",
+            f"- NotebookLM provider: {provider} ({mode}); work_bound={str(work_bound).lower()} memory_bound={str(memory_bound).lower()}.",
         ]
+        if work_bound or memory_bound:
+            lines.append(
+                '- If cccc_space is hidden in this session, use cccc_capability_use(tool_name="cccc_space", tool_arguments={"action":"status"}) first to auto-enable pack:space.'
+            )
+        if work_bound:
+            lines.extend([
+                '- Use cccc_space(action=query) on lane="work" for long-horizon/shared/project knowledge lookup.',
+                '- Use cccc_space(action=ingest) on lane="work" only for stable findings/resources worth reusing.',
+                '- For resource_ingest payloads, use source_type + {url|content|file_id} depending on source kind.',
+                '- Use cccc_space(action=artifact) on lane="work" for NotebookLM outputs (save_to_space=true persists to repo/space/artifacts).',
+                "- If you see files matching '*.conflict.remote.*' under space/, report and ask user for resolution; do not auto-merge/delete.",
+            ])
+        if memory_bound:
+            lines.extend([
+                '- Memory recall order: local memory first (`cccc_bootstrap.memory_recall_gate` -> `cccc_memory(search/get)`), then `cccc_space(action=query, lane="memory")` only when deeper recall is needed.',
+                '- Never ingest or generate artifacts on lane="memory"; it is daemon-synced from finalized daily memory files.',
+            ])
+        lines.append("- If provider is degraded/disabled, continue with Context + ledger + local memory and report fallback explicitly.")
+        return lines
     except Exception:
         return []
 

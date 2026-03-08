@@ -34,6 +34,7 @@ def space_bind(
     group_id: str,
     by: str,
     provider: str = "notebooklm",
+    lane: str = "work",
     action: str = "bind",
     remote_space_id: str = "",
 ) -> Dict[str, Any]:
@@ -44,6 +45,7 @@ def space_bind(
             "args": {
                 "group_id": group_id,
                 "provider": str(provider or "notebooklm"),
+                "lane": str(lane or "work"),
                 "action": str(action or "bind"),
                 "remote_space_id": str(remote_space_id or ""),
                 "by": str(by or "user"),
@@ -57,6 +59,7 @@ def space_ingest(
     group_id: str,
     by: str,
     provider: str = "notebooklm",
+    lane: str = "work",
     kind: str = "context_sync",
     payload: Optional[Dict[str, Any]] = None,
     idempotency_key: str = "",
@@ -68,6 +71,7 @@ def space_ingest(
             "args": {
                 "group_id": group_id,
                 "provider": str(provider or "notebooklm"),
+                "lane": str(lane or "work"),
                 "kind": str(kind or "context_sync"),
                 "payload": dict(payload or {}),
                 "idempotency_key": str(idempotency_key or ""),
@@ -81,6 +85,7 @@ def space_query(
     *,
     group_id: str,
     provider: str = "notebooklm",
+    lane: str = "work",
     query: str,
     options: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -91,6 +96,7 @@ def space_query(
             "args": {
                 "group_id": group_id,
                 "provider": str(provider or "notebooklm"),
+                "lane": str(lane or "work"),
                 "query": str(query or ""),
                 "options": dict(options or {}),
             },
@@ -103,6 +109,7 @@ def space_sources(
     group_id: str,
     by: str,
     provider: str = "notebooklm",
+    lane: str = "work",
     action: str = "list",
     source_id: str = "",
     new_title: str = "",
@@ -114,6 +121,7 @@ def space_sources(
             "args": {
                 "group_id": group_id,
                 "provider": str(provider or "notebooklm"),
+                "lane": str(lane or "work"),
                 "action": str(action or "list"),
                 "source_id": str(source_id or ""),
                 "new_title": str(new_title or ""),
@@ -128,6 +136,7 @@ def space_artifact(
     group_id: str,
     by: str,
     provider: str = "notebooklm",
+    lane: str = "work",
     action: str = "list",
     kind: str = "",
     options: Optional[Dict[str, Any]] = None,
@@ -152,6 +161,7 @@ def space_artifact(
         "args": {
             "group_id": group_id,
             "provider": str(provider or "notebooklm"),
+            "lane": str(lane or "work"),
             "action": action_v,
             "kind": kind_v,
             "options": dict(options or {}),
@@ -180,6 +190,7 @@ def space_jobs(
     group_id: str,
     by: str,
     provider: str = "notebooklm",
+    lane: str = "work",
     action: str = "list",
     job_id: str = "",
     state: str = "",
@@ -192,6 +203,7 @@ def space_jobs(
             "args": {
                 "group_id": group_id,
                 "provider": str(provider or "notebooklm"),
+                "lane": str(lane or "work"),
                 "action": str(action or "list"),
                 "job_id": str(job_id or ""),
                 "state": str(state or ""),
@@ -207,6 +219,7 @@ def space_sync(
     group_id: str,
     by: str,
     provider: str = "notebooklm",
+    lane: str = "work",
     action: str = "run",
     force: bool = False,
 ) -> Dict[str, Any]:
@@ -217,6 +230,7 @@ def space_sync(
             "args": {
                 "group_id": group_id,
                 "provider": str(provider or "notebooklm"),
+                "lane": str(lane or "work"),
                 "action": str(action or "run"),
                 "force": bool(force),
                 "by": str(by or "user"),

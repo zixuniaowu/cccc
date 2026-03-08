@@ -94,6 +94,7 @@ class TestSystemPromptGroupSpace(unittest.TestCase):
             self.assertIsNotNone(actor)
             prompt = render_system_prompt(group=group, actor=actor or {})
             self.assertIn("Group Space:", prompt)
+            self.assertIn('cccc_capability_use(tool_name="cccc_space", tool_arguments={"action":"status"})', prompt)
             self.assertIn("cccc_space(action=query)", prompt)
             self.assertIn("cccc_space(action=ingest)", prompt)
             self.assertIn("cccc_space(action=artifact)", prompt)

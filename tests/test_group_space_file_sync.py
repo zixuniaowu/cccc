@@ -62,6 +62,7 @@ class TestGroupSpaceFileSync(unittest.TestCase):
             {
                 "group_id": group_id,
                 "provider": "notebooklm",
+                    "lane": "work",
                 "action": "bind",
                 "remote_space_id": remote_space_id,
                 "by": "user",

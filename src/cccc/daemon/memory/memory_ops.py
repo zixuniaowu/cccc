@@ -933,6 +933,13 @@ def handle_memory_reme_daily_flush(args: Dict[str, Any]) -> DaemonResponse:
     )
 
 
+def _stable_memory_shadow_key(*, idempotency_key: str, entry_id: str) -> str:
+    explicit = str(idempotency_key or "").strip()
+    if explicit:
+        return f"memory_shadow:{explicit}"
+    return f"memory_shadow:{str(entry_id or '').strip() or 'unknown'}"
+
+
 def handle_memory_reme_write(args: Dict[str, Any]) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     if not group_id:
@@ -968,6 +975,7 @@ def handle_memory_reme_write(args: Dict[str, Any]) -> DaemonResponse:
         "final_reason": "accepted",
         "decision": "new",
     }
+    shadow_daily_result: Optional[Dict[str, Any]] = None
     try:
         with write_lock:
             precheck = _dedup_precheck(group_id=group_id, query=(dedup_query or content))
@@ -1021,6 +1029,15 @@ def handle_memory_reme_write(args: Dict[str, Any]) -> DaemonResponse:
                 )
                 if target == "memory":
                     write_result = append_memory_entry(group_id, entry=entry, idempotency_key=idempotency_key)
+                    shadow_daily_result = append_daily_entry(
+                        group_id,
+                        entry=entry,
+                        date=str(entry.get("date") or utc_now_iso()[:10]),
+                        idempotency_key=_stable_memory_shadow_key(
+                            idempotency_key=idempotency_key,
+                            entry_id=str(entry.get("entry_id") or ""),
+                        ),
+                    )
                 else:
                     write_result = append_daily_entry(group_id, entry=entry, date=date, idempotency_key=idempotency_key)
             else:
@@ -1048,16 +1065,24 @@ def handle_memory_reme_write(args: Dict[str, Any]) -> DaemonResponse:
         status=status,
         final_reason=persistence_reason,
     )
+    result_payload = {
+        "file_path": str(write_result.get("file_path") or ""),
+        "line_count": int(write_result.get("line_count") or 0),
+        "content_hash": str(write_result.get("content_hash") or ""),
+        "status": status,
+        "reason": str(final_dedup.get("final_reason") or "") if status == "silent" else "",
+        "dedup": final_dedup,
+    }
+    if isinstance(shadow_daily_result, dict):
+        result_payload["shadow_daily"] = {
+            "file_path": str(shadow_daily_result.get("file_path") or ""),
+            "status": str(shadow_daily_result.get("status") or ""),
+            "reason": str(shadow_daily_result.get("reason") or ""),
+            "content_hash": str(shadow_daily_result.get("content_hash") or ""),
+        }
     return DaemonResponse(
         ok=True,
-        result={
-            "file_path": str(write_result.get("file_path") or ""),
-            "line_count": int(write_result.get("line_count") or 0),
-            "content_hash": str(write_result.get("content_hash") or ""),
-            "status": status,
-            "reason": str(final_dedup.get("final_reason") or "") if status == "silent" else "",
-            "dedup": final_dedup,
-        },
+        result=result_payload,
     )
 
 

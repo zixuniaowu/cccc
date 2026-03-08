@@ -2608,14 +2608,26 @@ Result:
 { remote_access: Record<string, unknown> }
 ```
 
-### 8.17 Group Space (Provider-Backed Shared Memory, M1-lite)
+### 8.17 Group Space (Provider-Backed Shared Memory, dual-lane NotebookLM)
 
 These operations provide a thin control-plane for optional external memory providers.
 Provider failures MUST NOT block core collaboration flows (chat/context/actors).
 
+NotebookLM is modeled as two fixed daemon-owned lanes:
+- `lane="work"`: project/shared external knowledge, repo `space/` sync, artifacts, general ingest/query.
+- `lane="memory"`: finalized daily memory recall only; daemon syncs `state/memory/daily/*.md` asynchronously.
+
+Normative lane rules:
+- Agent-facing surfaces SHOULD pass `lane` explicitly for mutating or lane-targeted actions.
+- `group_space_status` MAY omit `lane`; it returns both lanes.
+- `group_space_bind|query|sources|jobs|sync` are lane-targeted.
+- `group_space_ingest|artifact` are supported only on `lane="work"`.
+- `MEMORY.md` MUST remain local-only and MUST NOT be uploaded to NotebookLM.
+
 #### `group_space_status`
 
-Read provider mode, group binding, queue summary, and repo `space/` sync state.
+Read provider mode, both lane bindings, queue summaries, work-lane repo `space/` sync state,
+and memory-lane daily sync summary.
 
 Args:
 ```ts
@@ -2638,15 +2650,30 @@ Result:
     last_health_at?: string | null
     last_error?: string | null
   }
-  binding: {
-    group_id: string
-    provider: "notebooklm"
-    remote_space_id: string
-    bound_by: string
-    bound_at: string
-    status: "bound" | "unbound" | "error"
+  bindings: {
+    work: {
+      group_id: string
+      provider: "notebooklm"
+      lane: "work"
+      remote_space_id: string
+      bound_by: string
+      bound_at: string
+      status: "bound" | "unbound" | "error"
+    }
+    memory: {
+      group_id: string
+      provider: "notebooklm"
+      lane: "memory"
+      remote_space_id: string
+      bound_by: string
+      bound_at: string
+      status: "bound" | "unbound" | "error"
+    }
   }
-  queue_summary: { pending: number; running: number; failed: number }
+  queue_summary: {
+    work: { pending: number; running: number; failed: number }
+    memory: { pending: number; running: number; failed: number }
+  }
   sync?: {
     available?: boolean
     reason?: string
@@ -2656,6 +2683,21 @@ Result:
     converged?: boolean
     unsynced_count?: number
     last_error?: string
+  }
+  memory_sync?: {
+    lane: "memory"
+    manifest_path: string
+    last_scan_at?: string | null
+    last_success_at?: string | null
+    pending_files: number
+    running_files: number
+    failed_files: number
+    blocked_files: number
+    eligible_daily_files: number
+    synced_daily_files: number
+    empty_daily_skipped: number
+    last_eligible_daily_date?: string | null
+    last_synced_daily_date?: string | null
   }
 }
 ```
@@ -2675,7 +2717,7 @@ Result:
   group_id: string
   provider: "notebooklm"
   provider_state: Record<string, unknown>
-  binding: Record<string, unknown>
+  bindings: Record<"work" | "memory", Record<string, unknown>>
   spaces: Array<{
     remote_space_id: string
     title?: string
@@ -2711,7 +2753,7 @@ Result:
     oversize_error_code: string
   }
   ingest: {
-    kinds: Array<"context_sync" | "resource_ingest">
+    kinds: Array<"context_sync" | "resource_ingest" | "memory_daily_sync">
     resource_ingest: {
       source_types: string[]
       required_fields: Record<string, string[]>
@@ -2740,15 +2782,16 @@ Result:
 
 #### `group_space_bind`
 
-Bind/unbind a group to provider remote space.
+Bind/unbind a group lane to a provider remote notebook.
 When `action=bind` and `remote_space_id` is empty, daemon may auto-create
-a provider notebook and bind it.
+an appropriate notebook and bind it.
 
 Args:
 ```ts
 {
   group_id: string
   provider?: "notebooklm"
+  lane: "work" | "memory"
   action?: "bind" | "unbind"
   remote_space_id?: string
   by?: string
@@ -2759,23 +2802,30 @@ Result:
 ```ts
 {
   group_id: string
+  lane: "work" | "memory"
   provider: Record<string, unknown>
-  binding: Record<string, unknown>
-  queue_summary: { pending: number; running: number; failed: number }
-  sync?: Record<string, unknown>
+  bindings: Record<"work" | "memory", Record<string, unknown>>
+  queue_summary: {
+    work: { pending: number; running: number; failed: number }
+    memory: { pending: number; running: number; failed: number }
+  }
+  sync?: Record<string, unknown>         // work-lane repo sync view
+  memory_sync?: Record<string, unknown>  // memory-lane manifest summary
   sync_result?: Record<string, unknown>
 }
 ```
 
 #### `group_space_ingest`
 
-Create (or dedupe) an ingest job and execute it with bounded retry policy.
+Create (or dedupe) a work-lane ingest job and execute it with bounded retry policy.
+`lane="memory"` MUST be rejected.
 
 Args:
 ```ts
 {
   group_id: string
   provider?: "notebooklm"
+  lane: "work" | "memory"
   kind?: "context_sync" | "resource_ingest"
   payload?: Record<string, unknown>
   idempotency_key?: string
@@ -2787,10 +2837,14 @@ Result:
 ```ts
 {
   group_id: string
+  lane: "work"
   job_id: string
   accepted: true
   deduped: boolean
   job: Record<string, unknown>
+  ingest_result?: Record<string, unknown>
+  source_id?: string
+  source_ids?: string[]
   queue_summary: { pending: number; running: number; failed: number }
   provider_mode: "disabled" | "active" | "degraded"
 }
@@ -2798,7 +2852,7 @@ Result:
 
 #### `group_space_query`
 
-Query provider-backed memory for a group. If provider is degraded, result MAY return
+Query provider-backed knowledge for one lane. If provider is degraded, result MAY return
 `ok=true` with `degraded=true` and an empty answer.
 
 Args:
@@ -2806,6 +2860,7 @@ Args:
 {
   group_id: string
   provider?: "notebooklm"
+  lane: "work" | "memory"
   query: string
   options?: {
     source_ids?: string[] // optional remote source_id filter
@@ -2816,29 +2871,50 @@ Args:
 Validation notes:
 - `options` only supports `source_ids`.
 - `options.language` / `options.lang` are invalid for `group_space_query` because NotebookLM query API does not provide a language parameter.
+- Recommended recall order is local memory first, then `lane="memory"` for deep recall.
 
 Result:
 ```ts
 {
   group_id: string
   provider: "notebooklm"
+  lane: "work" | "memory"
   provider_mode: "disabled" | "active" | "degraded"
   degraded: boolean
   answer: string
   references: unknown[]
+  reference_count: number
+  binding_status: "bound" | "unbound" | "error"
+  source_basis_hint: "requested_sources_hit" | "requested_sources_mixed" | "requested_sources_only" | "referenced_sources_present" | "context_sync_only" | "materialized_sources_present" | "mixed" | "memory_manifest_only" | "unknown"
+  requested_source_ids?: string[]
+  referenced_source_ids?: string[]
+  references_match_requested?: boolean
+  latest_context_sync_at?: string
+  remote_sources?: number
+  materialized_sources?: number
+  memory_last_success_at?: string
+  memory_pending_files?: number
+  memory_failed_files?: number
   error?: { code: string; message: string } | null
 }
 ```
 
+Notes:
+- The extra query fields above are lightweight diagnostics/provenance hints, not retrieval guarantees.
+- When `options.source_ids` is provided, `source_basis_hint` SHOULD prefer explicit source scope / actual cited sources over inferred local sync state.
+- Work-lane answers may come from synced coordination/context even when repo materialized sources are sparse.
+- Memory-lane diagnostics describe sync-manifest health only; they do not promise a semantic hit for every query.
+
 #### `group_space_sources`
 
-List/refresh/rename/delete provider sources in the currently bound notebook.
+List/refresh/rename/delete provider sources in the currently bound lane notebook.
 
 Args:
 ```ts
 {
   group_id: string
   provider?: "notebooklm"
+  lane: "work" | "memory"
   action?: "list" | "refresh" | "rename" | "delete"
   source_id?: string // required for refresh/rename/delete
   new_title?: string // required for rename
@@ -2851,6 +2927,7 @@ Result (`action=list`):
 {
   group_id: string
   provider: "notebooklm"
+  lane: "work" | "memory"
   provider_mode: "disabled" | "active" | "degraded"
   binding: Record<string, unknown>
   action: "list"
@@ -2864,6 +2941,7 @@ Result (`action=refresh` | `rename` | `delete`):
 {
   group_id: string
   provider: "notebooklm"
+  lane: "work" | "memory"
   provider_mode: "disabled" | "active" | "degraded"
   binding: Record<string, unknown>
   action: "refresh" | "rename" | "delete"
@@ -2876,7 +2954,8 @@ Result (`action=refresh` | `rename` | `delete`):
 
 #### `group_space_artifact`
 
-List/generate/download provider artifacts (NotebookLM studio outputs).
+List/generate/download provider artifacts (NotebookLM studio outputs) on `lane="work"`.
+`lane="memory"` MUST be rejected.
 For `action=generate`, daemon can optionally wait for completion and auto-save
 the artifact into local `repo/space/artifacts/...`.
 
@@ -2885,6 +2964,7 @@ Args:
 {
   group_id: string
   provider?: "notebooklm"
+  lane: "work" | "memory"
   action?: "list" | "generate" | "download"
   kind?: "audio" | "video" | "report" | "study_guide" | "quiz" | "flashcards" | "infographic" | "slide_deck" | "data_table" | "mind_map"
   options?: Record<string, unknown> // for action=generate
@@ -2900,64 +2980,18 @@ Args:
 }
 ```
 
-Result (`action=list`):
-```ts
-{
-  group_id: string
-  provider: "notebooklm"
-  provider_mode: "disabled" | "active" | "degraded"
-  binding: Record<string, unknown>
-  action: "list"
-  kind?: string
-  artifacts: Record<string, unknown>[]
-  list_result: Record<string, unknown>
-}
-```
-
-Result (`action=generate`):
-```ts
-{
-  group_id: string
-  provider: "notebooklm"
-  provider_mode: "disabled" | "active" | "degraded"
-  binding: Record<string, unknown>
-  action: "generate"
-  kind: string
-  task_id?: string
-  status?: string
-  wait: boolean
-  saved_to_space: boolean
-  output_path?: string
-  generate_result: Record<string, unknown>
-  wait_result?: Record<string, unknown>
-  download_result?: Record<string, unknown>
-}
-```
-
-Result (`action=download`):
-```ts
-{
-  group_id: string
-  provider: "notebooklm"
-  provider_mode: "disabled" | "active" | "degraded"
-  binding: Record<string, unknown>
-  action: "download"
-  kind: string
-  saved_to_space: boolean
-  output_path: string
-  download_result: Record<string, unknown>
-}
-```
+Result (`action=list|generate|download`) mirrors the lane-targeted binding and includes `lane: "work"`.
 
 #### `group_space_jobs`
 
-List/retry/cancel Group Space jobs.
+List/retry/cancel Group Space jobs for one lane.
 
 Args:
 ```ts
 {
   group_id: string
   provider?: "notebooklm"
+  lane: "work" | "memory"
   action?: "list" | "retry" | "cancel"
   job_id?: string
   state?: "pending" | "running" | "succeeded" | "failed" | "canceled"
@@ -2968,57 +3002,23 @@ Args:
 
 #### `group_space_sync`
 
-Run/read `repo/space/` reconciliation status for the bound provider notebook.
+Run/read synchronization state for one lane.
+- `lane="work"`: repo `space/` reconciliation.
+- `lane="memory"`: async daily memory notebook sync manifest / enqueue scan.
 
 Args:
 ```ts
 {
   group_id: string
   provider?: "notebooklm"
+  lane: "work" | "memory"
   action?: "status" | "run"
   force?: boolean
   by?: string
 }
 ```
 
-Result (`action=status`):
-```ts
-{
-  group_id: string
-  provider: "notebooklm"
-  sync: Record<string, unknown>
-}
-```
-
-Result (`action=run`):
-```ts
-{
-  group_id: string
-  provider: "notebooklm"
-  sync: Record<string, unknown>
-  sync_result: Record<string, unknown>
-}
-```
-
-Result (`action=list`):
-```ts
-{
-  group_id: string
-  provider: "notebooklm"
-  jobs: Record<string, unknown>[]
-  queue_summary: { pending: number; running: number; failed: number }
-}
-```
-
-Result (`action=retry|cancel`):
-```ts
-{
-  group_id: string
-  provider: "notebooklm"
-  job: Record<string, unknown>
-  queue_summary: { pending: number; running: number; failed: number }
-}
-```
+Result (`action=status|run`) returns the targeted lane state in `sync`, and `sync_result` for `action=run`.
 
 #### `group_space_provider_credential_status`
 

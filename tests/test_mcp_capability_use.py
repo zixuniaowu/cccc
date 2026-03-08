@@ -59,6 +59,35 @@ class TestMcpCapabilityUse(unittest.TestCase):
         self.assertEqual(str(tool_args.get("by") or ""), "peer-1")
         self.assertEqual(str(tool_args.get("actor_id") or ""), "peer-1")
 
+    def test_capability_use_does_not_inject_actor_id_into_space_query(self) -> None:
+        from cccc.ports.mcp.server import capability_use
+
+        with patch(
+            "cccc.ports.mcp.handlers.cccc_capability.capability_enable",
+            return_value={"state": "runnable", "refresh_required": False, "enabled": True},
+        ) as enable_mock, patch(
+            "cccc.ports.mcp.server.handle_tool_call",
+            return_value={"ok": True},
+        ) as call_mock:
+            result = capability_use(
+                group_id="g1",
+                by="peer-1",
+                actor_id="peer-1",
+                capability_id="",
+                tool_name="cccc_space",
+                tool_arguments={"action": "query", "lane": "work", "query": "status?"},
+            )
+
+        self.assertTrue(bool(result.get("enabled")))
+        self.assertTrue(bool(result.get("tool_called")))
+        self.assertEqual(str(result.get("capability_id") or ""), "pack:space")
+        enable_mock.assert_called_once()
+        call_mock.assert_called_once()
+        tool_args = call_mock.call_args.args[1] if len(call_mock.call_args.args) > 1 else {}
+        self.assertEqual(str(tool_args.get("group_id") or ""), "g1")
+        self.assertEqual(str(tool_args.get("by") or ""), "peer-1")
+        self.assertNotIn("actor_id", tool_args)
+
     def test_capability_use_returns_not_ready_when_enable_not_ready(self) -> None:
         from cccc.ports.mcp.server import capability_use
 

@@ -190,7 +190,11 @@ class TestMemoryRemeOps(unittest.TestCase):
             target = Path(str(first.get("target_file") or ""))
             self.assertTrue(target.exists(), f"missing daily target file: {target}")
             text = target.read_text(encoding="utf-8", errors="replace")
-            self.assertIn("signal_pack", text)
+            self.assertIn("## Conversation Summary", text)
+            self.assertIn("## Coordination Snapshot", text)
+            self.assertIn("## Task Snapshot", text)
+            self.assertIn("## Agent Resume Cues", text)
+            self.assertNotIn("[signal_pack]", text)
 
             second = run_auto_conversation_memory_cycle(
                 group_id=gid,
@@ -312,6 +316,45 @@ class TestMemoryRemeOps(unittest.TestCase):
             self.assertEqual(str(dedup.get("final_decision") or ""), "silent")
             self.assertEqual(str(dedup.get("final_reason") or ""), "persistence_idempotency_key")
             self.assertEqual(str(dedup.get("decision") or ""), "silent")
+        finally:
+            cleanup()
+
+    def test_memory_write_to_memory_shadows_same_content_into_daily(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group("reme-memory-shadow")
+            from cccc.kernel.group import load_group
+
+            payload = {
+                "group_id": gid,
+                "target": "memory",
+                "content": "Keep the memory-lane coverage bridge deterministic.",
+                "idempotency_key": "memory_shadow_case",
+                "dedup_intent": "new",
+            }
+            first_resp, _ = self._call("memory_reme_write", payload)
+            self.assertTrue(first_resp.ok, getattr(first_resp, "error", None))
+            first = first_resp.result if isinstance(first_resp.result, dict) else {}
+            self.assertEqual(str(first.get("status") or ""), "written")
+            shadow = first.get("shadow_daily") if isinstance(first.get("shadow_daily"), dict) else {}
+            self.assertIn(str(shadow.get("status") or ""), {"written", "silent"})
+
+            group = load_group(gid)
+            self.assertIsNotNone(group)
+            assert group is not None
+            memory_root = Path(group.path) / "state" / "memory"
+            memory_text = (memory_root / "MEMORY.md").read_text(encoding="utf-8")
+            daily_text = "\n".join(p.read_text(encoding="utf-8") for p in sorted((memory_root / "daily").glob("*.md")))
+            needle = "Keep the memory-lane coverage bridge deterministic."
+            self.assertEqual(memory_text.count(needle), 1)
+            self.assertEqual(daily_text.count(needle), 1)
+
+            second_resp, _ = self._call("memory_reme_write", payload)
+            self.assertTrue(second_resp.ok, getattr(second_resp, "error", None))
+            second = second_resp.result if isinstance(second_resp.result, dict) else {}
+            self.assertEqual(str(second.get("status") or ""), "silent")
+            daily_text_2 = "\n".join(p.read_text(encoding="utf-8") for p in sorted((memory_root / "daily").glob("*.md")))
+            self.assertEqual(daily_text_2.count(needle), 1)
         finally:
             cleanup()
 

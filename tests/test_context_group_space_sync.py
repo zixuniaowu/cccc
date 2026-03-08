@@ -38,6 +38,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
             {
                 "group_id": group_id,
                 "provider": "notebooklm",
+                "lane": "work",
                 "action": "bind",
                 "remote_space_id": remote_space_id,
                 "by": "user",
@@ -68,7 +69,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
 
             jobs_resp, _ = self._call(
                 "group_space_jobs",
-                {"group_id": gid, "provider": "notebooklm", "action": "list"},
+                {"group_id": gid, "provider": "notebooklm", "lane": "work", "action": "list"},
             )
             self.assertTrue(jobs_resp.ok, getattr(jobs_resp, "error", None))
             jobs = (jobs_resp.result or {}).get("jobs") if isinstance(jobs_resp.result, dict) else []
@@ -104,7 +105,7 @@ class TestContextGroupSpaceSync(unittest.TestCase):
 
             jobs_resp, _ = self._call(
                 "group_space_jobs",
-                {"group_id": gid, "provider": "notebooklm", "action": "list"},
+                {"group_id": gid, "provider": "notebooklm", "lane": "work", "action": "list"},
             )
             self.assertTrue(jobs_resp.ok, getattr(jobs_resp, "error", None))
             jobs = (jobs_resp.result or {}).get("jobs") if isinstance(jobs_resp.result, dict) else []

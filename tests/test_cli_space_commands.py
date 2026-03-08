@@ -13,15 +13,15 @@ class TestCliSpaceCommands(unittest.TestCase):
         self.assertEqual(args.cmd, "space")
         self.assertEqual(args.action, "status")
 
-        args = parser.parse_args(["space", "bind", "nb_123"])
+        args = parser.parse_args(["space", "bind", "--lane", "work", "nb_123"])
         self.assertEqual(args.action, "bind")
         self.assertEqual(args.remote_space_id, "nb_123")
 
-        args = parser.parse_args(["space", "bind"])
+        args = parser.parse_args(["space", "bind", "--lane", "memory"])
         self.assertEqual(args.action, "bind")
         self.assertEqual(args.remote_space_id, "")
 
-        args = parser.parse_args(["space", "jobs", "retry", "spj_1"])
+        args = parser.parse_args(["space", "jobs", "retry", "--lane", "work", "spj_1"])
         self.assertEqual(args.action, "jobs")
         self.assertEqual(args.jobs_action, "retry")
         self.assertEqual(args.job_id, "spj_1")
@@ -42,7 +42,7 @@ class TestCliSpaceCommands(unittest.TestCase):
         self.assertEqual(args.auth_action, "start")
         self.assertEqual(args.timeout_seconds, 120)
 
-        args = parser.parse_args(["space", "sync"])
+        args = parser.parse_args(["space", "sync", "--lane", "work"])
         self.assertEqual(args.action, "sync")
 
     def test_space_bind_routes_to_group_space_bind(self) -> None:
@@ -54,7 +54,7 @@ class TestCliSpaceCommands(unittest.TestCase):
             calls.append(req)
             return {"ok": True, "result": {"binding": {"status": "bound"}}}
 
-        args = Namespace(group="g_test", provider="notebooklm", by="user", remote_space_id="nb_123")
+        args = Namespace(group="g_test", provider="notebooklm", lane="work", by="user", remote_space_id="nb_123")
         with patch.object(cli, "_ensure_daemon_running", return_value=True), \
              patch.object(cli, "call_daemon", side_effect=_fake_call_daemon), \
              patch.object(cli, "_print_json"):
@@ -66,6 +66,7 @@ class TestCliSpaceCommands(unittest.TestCase):
         self.assertEqual(req.get("op"), "group_space_bind")
         self.assertEqual(req.get("args", {}).get("group_id"), "g_test")
         self.assertEqual(req.get("args", {}).get("action"), "bind")
+        self.assertEqual(req.get("args", {}).get("lane"), "work")
         self.assertEqual(req.get("args", {}).get("remote_space_id"), "nb_123")
 
     def test_space_ingest_invalid_payload_rejected_before_daemon_call(self) -> None:
@@ -74,6 +75,7 @@ class TestCliSpaceCommands(unittest.TestCase):
         args = Namespace(
             group="g_test",
             provider="notebooklm",
+            lane="work",
             by="user",
             kind="context_sync",
             payload="{bad json",
@@ -97,7 +99,7 @@ class TestCliSpaceCommands(unittest.TestCase):
             calls.append(req)
             return {"ok": True, "result": {"job": {"state": "canceled"}}}
 
-        args = Namespace(group="g_test", provider="notebooklm", by="user", job_id="spj_1")
+        args = Namespace(group="g_test", provider="notebooklm", lane="work", by="user", job_id="spj_1")
         with patch.object(cli, "_ensure_daemon_running", return_value=True), \
              patch.object(cli, "call_daemon", side_effect=_fake_call_daemon), \
              patch.object(cli, "_print_json"):
@@ -109,6 +111,7 @@ class TestCliSpaceCommands(unittest.TestCase):
         self.assertEqual(req.get("op"), "group_space_jobs")
         self.assertEqual(req.get("args", {}).get("group_id"), "g_test")
         self.assertEqual(req.get("args", {}).get("action"), "cancel")
+        self.assertEqual(req.get("args", {}).get("lane"), "work")
         self.assertEqual(req.get("args", {}).get("job_id"), "spj_1")
 
     def test_space_sync_routes_to_group_space_sync(self) -> None:
@@ -120,7 +123,7 @@ class TestCliSpaceCommands(unittest.TestCase):
             calls.append(req)
             return {"ok": True, "result": {"sync_result": {"converged": True}}}
 
-        args = Namespace(group="g_test", provider="notebooklm", by="user", force=True)
+        args = Namespace(group="g_test", provider="notebooklm", lane="memory", by="user", force=True)
         with patch.object(cli, "_ensure_daemon_running", return_value=True), \
              patch.object(cli, "call_daemon", side_effect=_fake_call_daemon), \
              patch.object(cli, "_print_json"):
@@ -131,6 +134,7 @@ class TestCliSpaceCommands(unittest.TestCase):
         req = calls[0]
         self.assertEqual(req.get("op"), "group_space_sync")
         self.assertEqual(req.get("args", {}).get("group_id"), "g_test")
+        self.assertEqual(req.get("args", {}).get("lane"), "memory")
         self.assertEqual(req.get("args", {}).get("action"), "run")
         self.assertEqual(req.get("args", {}).get("force"), True)
 

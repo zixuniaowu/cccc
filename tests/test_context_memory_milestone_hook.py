@@ -88,7 +88,67 @@ class TestRootTaskCompleteMemoryHook(unittest.TestCase):
             self.assertGreaterEqual(len(daily_files), 1)
             daily_text = "\n".join(p.read_text(encoding="utf-8") for p in daily_files)
             self.assertIn("Task status update", daily_text)
+            self.assertIn("Root task completed", daily_text)
             self.assertIn(task_id, daily_text)
+        finally:
+            cleanup()
+
+    def test_coordination_notes_write_daily_memory(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "ops": [
+                        {"op": "coordination.note.add", "kind": "decision", "summary": "Freeze the memory-lane split."},
+                        {"op": "coordination.note.add", "kind": "handoff", "summary": "Ask peer2 to verify the sync diagnostics."},
+                    ],
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            memory_root = Path(group.path) / "state" / "memory"
+            daily_files = sorted((memory_root / "daily").glob("*.md"))
+            self.assertGreaterEqual(len(daily_files), 1)
+            daily_text = "\n".join(p.read_text(encoding="utf-8") for p in daily_files)
+            self.assertIn("Decision: Freeze the memory-lane split.", daily_text)
+            self.assertIn("Handoff: Ask peer2 to verify the sync diagnostics.", daily_text)
+        finally:
+            cleanup()
+
+    def test_coordination_notes_dry_run_have_no_memory_side_effect(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            resp, _ = self._call(
+                "context_sync",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "dry_run": True,
+                    "ops": [
+                        {"op": "coordination.note.add", "kind": "decision", "summary": "Dry run decision."},
+                        {"op": "coordination.note.add", "kind": "handoff", "summary": "Dry run handoff."},
+                    ],
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+
+            from cccc.kernel.group import load_group
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            memory_root = Path(group.path) / "state" / "memory"
+            self.assertFalse(memory_root.exists(), f"unexpected memory side effect in dry-run: {memory_root}")
         finally:
             cleanup()
 

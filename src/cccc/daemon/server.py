@@ -101,6 +101,7 @@ from .serve_ops import (
     start_bootstrap_thread,
     cleanup_after_stop,
 )
+from .space.group_space_memory_sync import process_due_memory_space_syncs
 from .space.group_space_runtime import process_due_space_jobs
 from .space.group_space_sync import process_due_space_syncs
 from .space.group_space_store import get_space_provider_state
@@ -852,8 +853,11 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
     def _tick_space_sync() -> None:
         result = process_due_space_syncs(provider="notebooklm", limit=20)
+        memory_result = process_due_memory_space_syncs(provider="notebooklm", limit=20)
         if int(result.get("processed") or 0) > 0:
             logger.debug("group_space_sync_processed=%s", int(result.get("processed") or 0))
+        if int(memory_result.get("queued") or 0) > 0:
+            logger.debug("group_space_memory_sync_queued=%s", int(memory_result.get("queued") or 0))
 
     start_space_sync_thread(
         stop_event=stop_event,

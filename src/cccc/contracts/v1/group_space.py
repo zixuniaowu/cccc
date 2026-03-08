@@ -8,9 +8,10 @@ from ...util.time import utc_now_iso
 
 SpaceProviderId = Literal["notebooklm"]
 SpaceProviderMode = Literal["disabled", "active", "degraded"]
+SpaceLane = Literal["work", "memory"]
 SpaceBindingStatus = Literal["bound", "unbound", "error"]
 SpaceJobState = Literal["pending", "running", "succeeded", "failed", "canceled"]
-SpaceJobKind = Literal["context_sync", "resource_ingest"]
+SpaceJobKind = Literal["context_sync", "resource_ingest", "memory_daily_sync"]
 SpaceJobAction = Literal["list", "retry", "cancel"]
 SpaceCredentialSource = Literal["none", "store", "env"]
 
@@ -42,6 +43,7 @@ class SpaceProviderCredentialState(BaseModel):
 class SpaceBinding(BaseModel):
     group_id: str
     provider: SpaceProviderId = "notebooklm"
+    lane: SpaceLane = "work"
     remote_space_id: str = ""
     bound_by: str = ""
     bound_at: str = Field(default_factory=utc_now_iso)
@@ -61,9 +63,11 @@ class SpaceJob(BaseModel):
     job_id: str
     group_id: str
     provider: SpaceProviderId = "notebooklm"
+    lane: SpaceLane = "work"
     remote_space_id: str = ""
     kind: SpaceJobKind = "context_sync"
     payload: Dict[str, Any] = Field(default_factory=dict)
+    result: Dict[str, Any] = Field(default_factory=dict)
     payload_digest: str = ""
     idempotency_key: str = ""
     state: SpaceJobState = "pending"
@@ -81,5 +85,23 @@ class SpaceQueueSummary(BaseModel):
     pending: int = 0
     running: int = 0
     failed: int = 0
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SpaceMemorySyncSummary(BaseModel):
+    lane: SpaceLane = "memory"
+    manifest_path: str = ""
+    last_scan_at: Optional[str] = None
+    last_success_at: Optional[str] = None
+    pending_files: int = 0
+    running_files: int = 0
+    failed_files: int = 0
+    blocked_files: int = 0
+    eligible_daily_files: int = 0
+    synced_daily_files: int = 0
+    empty_daily_skipped: int = 0
+    last_eligible_daily_date: Optional[str] = None
+    last_synced_daily_date: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")

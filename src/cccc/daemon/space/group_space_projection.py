@@ -4,16 +4,17 @@ from typing import Any, Dict
 
 from ...util.fs import atomic_write_json, read_json
 from ...util.time import utc_now_iso
+from .group_space_memory_sync import summarize_memory_notebooklm_sync
 from .group_space_paths import (
     resolve_space_root,
     space_state_path,
     space_status_path,
 )
 from .group_space_store import (
-    get_space_binding,
+    get_space_bindings,
     get_space_provider_state,
     list_space_jobs,
-    space_queue_summary,
+    space_queue_summaries,
 )
 
 
@@ -26,10 +27,11 @@ def sync_group_space_projection(group_id: str, *, provider: str = "notebooklm") 
         return {"written": False, "reason": "no_local_scope"}
 
     provider_id = str(provider or "notebooklm").strip() or "notebooklm"
-    binding = get_space_binding(gid, provider=provider_id) or {}
+    bindings = get_space_bindings(gid, provider=provider_id)
     provider_state = get_space_provider_state(provider_id)
-    queue = space_queue_summary(group_id=gid, provider=provider_id)
-    jobs = list_space_jobs(group_id=gid, provider=provider_id, state="", limit=20)
+    queue = space_queue_summaries(group_id=gid, provider=provider_id)
+    work_queue = queue.get("work") if isinstance(queue.get("work"), dict) else {}
+    jobs = list_space_jobs(group_id=gid, provider=provider_id, lane="work", state="", limit=20)
     latest_context_sync: Dict[str, Any] = {}
     for item in jobs:
         if not isinstance(item, dict):
@@ -61,7 +63,7 @@ def sync_group_space_projection(group_id: str, *, provider: str = "notebooklm") 
             )
             if len(failed_items) >= 20:
                 break
-    sync_view = {
+    work_sync = {
         "state": str(sync_state.get("state") or ("error" if int(sync_state.get("unsynced_count") or 0) > 0 else "ok")),
         "run_id": str(sync_state.get("run_id") or ""),
         "last_run_at": str(sync_state.get("last_run_at") or ""),
@@ -71,19 +73,24 @@ def sync_group_space_projection(group_id: str, *, provider: str = "notebooklm") 
         "failed_items": failed_items,
         "last_error": str(sync_state.get("last_error") or ""),
     }
+    memory_binding = bindings.get("memory") if isinstance(bindings.get("memory"), dict) else {}
+    memory_sync = summarize_memory_notebooklm_sync(
+        gid,
+        remote_space_id=str(memory_binding.get("remote_space_id") or ""),
+    )
 
     doc = {
-        "v": 1,
+        "v": 3,
         "generated_at": utc_now_iso(),
         "group_id": gid,
         "provider": provider_id,
         "space_root": str(space_root),
         "provider_state": provider_state,
-        "binding": binding,
+        "bindings": bindings,
         "queue_summary": queue,
         "latest_context_sync": latest_context_sync,
-        "sync": sync_view,
-        "sync_state": sync_view,
+        "sync": work_sync,
+        "memory_sync": memory_sync,
     }
     out_path = space_status_path(space_root)
     atomic_write_json(out_path, doc, indent=2)

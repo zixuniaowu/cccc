@@ -245,6 +245,7 @@ class RemoteAccessConfigureRequest(BaseModel):
 class GroupSpaceBindRequest(BaseModel):
     by: str = Field(default="user")
     provider: Optional[str] = Field(default="notebooklm")
+    lane: Literal["work", "memory"]
     action: Literal["bind", "unbind"] = "bind"
     remote_space_id: str = Field(default="")
 
@@ -252,6 +253,7 @@ class GroupSpaceBindRequest(BaseModel):
 class GroupSpaceIngestRequest(BaseModel):
     by: str = Field(default="user")
     provider: Optional[str] = Field(default="notebooklm")
+    lane: Literal["work", "memory"]
     kind: Literal["context_sync", "resource_ingest"] = "context_sync"
     payload: Dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str = Field(default="")
@@ -260,6 +262,7 @@ class GroupSpaceIngestRequest(BaseModel):
 class GroupSpaceQueryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     provider: Optional[str] = Field(default="notebooklm")
+    lane: Literal["work", "memory"]
     query: str = Field(default="")
     options: Dict[str, Any] = Field(default_factory=dict)
 
@@ -267,6 +270,7 @@ class GroupSpaceQueryRequest(BaseModel):
 class GroupSpaceSourceActionRequest(BaseModel):
     by: str = Field(default="user")
     provider: Optional[str] = Field(default="notebooklm")
+    lane: Literal["work", "memory"]
     action: Literal["delete", "rename", "refresh"]
     source_id: str = Field(default="")
     new_title: str = Field(default="")
@@ -275,6 +279,7 @@ class GroupSpaceSourceActionRequest(BaseModel):
 class GroupSpaceArtifactActionRequest(BaseModel):
     by: str = Field(default="user")
     provider: Optional[str] = Field(default="notebooklm")
+    lane: Literal["work", "memory"]
     action: Literal["generate", "download"] = "generate"
     kind: str = Field(default="")
     options: Dict[str, Any] = Field(default_factory=dict)
@@ -291,6 +296,7 @@ class GroupSpaceArtifactActionRequest(BaseModel):
 class GroupSpaceJobActionRequest(BaseModel):
     by: str = Field(default="user")
     provider: Optional[str] = Field(default="notebooklm")
+    lane: Literal["work", "memory"]
     action: Literal["retry", "cancel"]
     job_id: str = Field(default="")
 
@@ -298,6 +304,7 @@ class GroupSpaceJobActionRequest(BaseModel):
 class GroupSpaceSyncRequest(BaseModel):
     by: str = Field(default="user")
     provider: Optional[str] = Field(default="notebooklm")
+    lane: Literal["work", "memory"]
     action: Literal["status", "run"] = "run"
     force: bool = False
 

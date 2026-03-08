@@ -522,8 +522,8 @@ def capability_use(
     if "by" not in tool_args:
         tool_args["by"] = by
 
-    # Read-only memory actions should not have actor_id auto-injected,
-    # otherwise search/get-like operations are unintentionally narrowed to caller scope.
+    # Read-only / lane-scoped delegated calls should not have top-level actor_id auto-injected,
+    # otherwise tool arguments drift away from the real MCP schema.
     skip_actor_injection = False
     if call_tool == "cccc_memory":
         mem_action = str(tool_args.get("action") or "search").strip().lower()
@@ -533,6 +533,11 @@ def capability_use(
         mem_admin_action = str(tool_args.get("action") or "index_sync").strip().lower()
         if mem_admin_action in {"index_sync", "context_check", "compact", "daily_flush"}:
             skip_actor_injection = True
+    elif call_tool == "cccc_space":
+        space_action = str(tool_args.get("action") or "status").strip().lower()
+        if space_action == "query":
+            skip_actor_injection = True
+            tool_args.pop("actor_id", None)
 
     if "actor_id" not in tool_args and not skip_actor_injection:
         tool_args["actor_id"] = target_actor

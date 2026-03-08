@@ -56,6 +56,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_projection_1",
                     "by": "user",
@@ -73,7 +74,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
             self.assertTrue(manifest.exists())
             doc = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(str(doc.get("group_id") or ""), gid)
-            binding = doc.get("binding") if isinstance(doc.get("binding"), dict) else {}
+            binding = (((doc.get("bindings") or {}).get("work")) if isinstance(doc.get("bindings"), dict) else {})
             self.assertEqual(str(binding.get("status") or ""), "bound")
             self.assertEqual(str(binding.get("remote_space_id") or ""), "nb_projection_1")
         finally:
@@ -97,6 +98,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_projection_2",
                     "by": "user",
@@ -109,7 +111,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "task.create", "name": "projection note", "goal": "test"}],
+                    "ops": [{"op": "task.create", "title": "projection note", "goal": "test"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))
@@ -126,7 +128,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
             latest = doc.get("latest_context_sync") if isinstance(doc.get("latest_context_sync"), dict) else {}
             self.assertTrue(str(latest.get("job_id") or "").strip())
             self.assertEqual(str(latest.get("state") or ""), "pending")
-            queue = doc.get("queue_summary") if isinstance(doc.get("queue_summary"), dict) else {}
+            queue = (((doc.get("queue_summary") or {}).get("work")) if isinstance(doc.get("queue_summary"), dict) else {})
             self.assertGreaterEqual(int(queue.get("pending") or 0), 1)
         finally:
             project_ctx.__exit__(None, None, None)
@@ -149,6 +151,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
                 {
                     "group_id": gid,
                     "provider": "notebooklm",
+                    "lane": "work",
                     "action": "bind",
                     "remote_space_id": "nb_projection_3",
                     "by": "user",
@@ -161,7 +164,7 @@ class TestGroupSpaceProjection(unittest.TestCase):
                 {
                     "group_id": gid,
                     "by": "user",
-                    "ops": [{"op": "task.create", "name": "worker refresh", "goal": "test"}],
+                    "ops": [{"op": "task.create", "title": "worker refresh", "goal": "test"}],
                 },
             )
             self.assertTrue(sync_resp.ok, getattr(sync_resp, "error", None))

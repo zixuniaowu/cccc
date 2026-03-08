@@ -43,6 +43,7 @@ class TestGroupSpaceRuntime(unittest.TestCase):
             {
                 "group_id": group_id,
                 "provider": "notebooklm",
+                "lane": "work",
                 "action": "bind",
                 "remote_space_id": remote_space_id,
                 "by": "user",
@@ -74,6 +75,7 @@ class TestGroupSpaceRuntime(unittest.TestCase):
                     {
                         "group_id": gid,
                         "provider": "notebooklm",
+                        "lane": "work",
                         "kind": "context_sync",
                         "payload": {"k": "v"},
                         "idempotency_key": "rt-schedule-1",
@@ -120,6 +122,7 @@ class TestGroupSpaceRuntime(unittest.TestCase):
                         {
                             "group_id": gid,
                             "provider": "notebooklm",
+                            "lane": "work",
                             "kind": "resource_ingest",
                             "payload": {"doc": "a.md"},
                             "idempotency_key": "rt-worker-1",

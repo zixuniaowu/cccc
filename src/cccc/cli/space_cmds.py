@@ -214,6 +214,7 @@ def cmd_space_bind(args: argparse.Namespace) -> int:
     """Bind group to a Group Space provider remote space."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    lane = str(getattr(args, "lane", "") or "").strip()
     by = str(getattr(args, "by", "") or "user").strip() or "user"
     remote_space_id = str(getattr(args, "remote_space_id", "") or "").strip()
     if not group_id:
@@ -228,6 +229,7 @@ def cmd_space_bind(args: argparse.Namespace) -> int:
             "args": {
                 "group_id": group_id,
                 "provider": provider,
+                "lane": lane,
                 "action": "bind",
                 "remote_space_id": remote_space_id,
                 "by": by,
@@ -237,10 +239,12 @@ def cmd_space_bind(args: argparse.Namespace) -> int:
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 
+
 def cmd_space_sync(args: argparse.Namespace) -> int:
     """Run Group Space file synchronization (repo/space -> provider)."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    lane = str(getattr(args, "lane", "") or "").strip()
     by = str(getattr(args, "by", "") or "user").strip() or "user"
     force = bool(getattr(args, "force", False))
     if not group_id:
@@ -255,6 +259,7 @@ def cmd_space_sync(args: argparse.Namespace) -> int:
             "args": {
                 "group_id": group_id,
                 "provider": provider,
+                "lane": lane,
                 "action": "run",
                 "force": force,
                 "by": by,
@@ -264,10 +269,12 @@ def cmd_space_sync(args: argparse.Namespace) -> int:
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 
+
 def cmd_space_unbind(args: argparse.Namespace) -> int:
     """Unbind group from a Group Space provider remote space."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    lane = str(getattr(args, "lane", "") or "").strip()
     by = str(getattr(args, "by", "") or "user").strip() or "user"
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
@@ -281,6 +288,7 @@ def cmd_space_unbind(args: argparse.Namespace) -> int:
             "args": {
                 "group_id": group_id,
                 "provider": provider,
+                "lane": lane,
                 "action": "unbind",
                 "remote_space_id": "",
                 "by": by,
@@ -290,10 +298,12 @@ def cmd_space_unbind(args: argparse.Namespace) -> int:
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 
+
 def cmd_space_ingest(args: argparse.Namespace) -> int:
     """Submit and execute a Group Space ingest job."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    lane = str(getattr(args, "lane", "") or "").strip()
     by = str(getattr(args, "by", "") or "user").strip() or "user"
     kind = str(getattr(args, "kind", "") or "context_sync").strip() or "context_sync"
     idempotency_key = str(getattr(args, "idempotency_key", "") or "").strip()
@@ -314,6 +324,7 @@ def cmd_space_ingest(args: argparse.Namespace) -> int:
             "args": {
                 "group_id": group_id,
                 "provider": provider,
+                "lane": lane,
                 "kind": kind,
                 "payload": payload,
                 "idempotency_key": idempotency_key,
@@ -324,10 +335,12 @@ def cmd_space_ingest(args: argparse.Namespace) -> int:
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 
+
 def cmd_space_query(args: argparse.Namespace) -> int:
     """Query Group Space provider-backed memory."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    lane = str(getattr(args, "lane", "") or "").strip()
     query = str(getattr(args, "query", "") or "").strip()
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
@@ -350,6 +363,7 @@ def cmd_space_query(args: argparse.Namespace) -> int:
             "args": {
                 "group_id": group_id,
                 "provider": provider,
+                "lane": lane,
                 "query": query,
                 "options": options,
             },
@@ -358,10 +372,12 @@ def cmd_space_query(args: argparse.Namespace) -> int:
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 
+
 def cmd_space_jobs_list(args: argparse.Namespace) -> int:
     """List Group Space jobs."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    lane = str(getattr(args, "lane", "") or "").strip()
     state = str(getattr(args, "state", "") or "").strip()
     try:
         limit = int(getattr(args, "limit", 50) or 50)
@@ -376,6 +392,7 @@ def cmd_space_jobs_list(args: argparse.Namespace) -> int:
     req_args: dict[str, Any] = {
         "group_id": group_id,
         "provider": provider,
+        "lane": lane,
         "action": "list",
         "limit": max(1, min(limit, 500)),
     }
@@ -385,10 +402,12 @@ def cmd_space_jobs_list(args: argparse.Namespace) -> int:
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 
+
 def cmd_space_jobs_retry(args: argparse.Namespace) -> int:
     """Retry a failed/canceled Group Space job."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    lane = str(getattr(args, "lane", "") or "").strip()
     by = str(getattr(args, "by", "") or "user").strip() or "user"
     job_id = str(getattr(args, "job_id", "") or "").strip()
     if not group_id:
@@ -406,6 +425,7 @@ def cmd_space_jobs_retry(args: argparse.Namespace) -> int:
             "args": {
                 "group_id": group_id,
                 "provider": provider,
+                "lane": lane,
                 "action": "retry",
                 "job_id": job_id,
                 "by": by,
@@ -415,10 +435,12 @@ def cmd_space_jobs_retry(args: argparse.Namespace) -> int:
     _print_json(resp)
     return 0 if resp.get("ok") else 2
 
+
 def cmd_space_jobs_cancel(args: argparse.Namespace) -> int:
     """Cancel a pending/running Group Space job."""
     group_id = _resolve_group_id(getattr(args, "group", ""))
     provider = str(getattr(args, "provider", "") or "notebooklm").strip() or "notebooklm"
+    lane = str(getattr(args, "lane", "") or "").strip()
     by = str(getattr(args, "by", "") or "user").strip() or "user"
     job_id = str(getattr(args, "job_id", "") or "").strip()
     if not group_id:
@@ -436,6 +458,7 @@ def cmd_space_jobs_cancel(args: argparse.Namespace) -> int:
             "args": {
                 "group_id": group_id,
                 "provider": provider,
+                "lane": lane,
                 "action": "cancel",
                 "job_id": job_id,
                 "by": by,

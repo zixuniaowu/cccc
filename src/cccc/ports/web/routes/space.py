@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..schemas import (
     GroupSpaceArtifactActionRequest,
@@ -64,6 +64,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "group_id": group_id,
                     "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "lane": str(req.lane).strip(),
                     "action": str(req.action or "bind").strip() or "bind",
                     "remote_space_id": str(req.remote_space_id or "").strip(),
                     "by": str(req.by or "user").strip() or "user",
@@ -87,6 +88,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "group_id": group_id,
                     "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "lane": str(req.lane).strip(),
                     "kind": str(req.kind or "context_sync").strip() or "context_sync",
                     "payload": dict(req.payload or {}),
                     "idempotency_key": str(req.idempotency_key or "").strip(),
@@ -103,6 +105,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "group_id": group_id,
                     "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "lane": str(req.lane).strip(),
                     "query": str(req.query or "").strip(),
                     "options": dict(req.options or {}),
                 },
@@ -110,13 +113,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.get("/space/sources")
-    async def group_space_sources_list(group_id: str, provider: str = "notebooklm") -> Dict[str, Any]:
+    async def group_space_sources_list(group_id: str, provider: str = "notebooklm", lane: str = Query(...)) -> Dict[str, Any]:
         return await ctx.daemon(
             {
                 "op": "group_space_sources",
                 "args": {
                     "group_id": group_id,
                     "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                    "lane": str(lane).strip(),
                     "action": "list",
                 },
             }
@@ -138,6 +142,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "group_id": group_id,
                     "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "lane": str(req.lane).strip(),
                     "action": str(req.action or "refresh").strip() or "refresh",
                     "source_id": str(req.source_id or "").strip(),
                     "new_title": str(req.new_title or "").strip(),
@@ -150,6 +155,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def group_space_artifacts_list(
         group_id: str,
         provider: str = "notebooklm",
+        lane: str = Query(...),
         kind: str = "",
     ) -> Dict[str, Any]:
         return await ctx.daemon(
@@ -158,6 +164,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "group_id": group_id,
                     "provider": str(provider or "notebooklm").strip() or "notebooklm",
+                    "lane": str(lane).strip(),
                     "action": "list",
                     "kind": str(kind or "").strip().lower(),
                 },
@@ -180,6 +187,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "group_id": group_id,
                     "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "lane": str(req.lane).strip(),
                     "action": str(req.action or "generate").strip() or "generate",
                     "kind": str(req.kind or "").strip().lower(),
                     "options": dict(req.options or {}),
@@ -200,12 +208,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def group_space_jobs_list(
         group_id: str,
         provider: str = "notebooklm",
+        lane: str = Query(...),
         state: str = "",
         limit: int = 50,
     ) -> Dict[str, Any]:
         args: Dict[str, Any] = {
             "group_id": group_id,
             "provider": str(provider or "notebooklm").strip() or "notebooklm",
+            "lane": str(lane).strip(),
             "action": "list",
             "limit": int(limit or 50),
         }
@@ -230,6 +240,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "group_id": group_id,
                     "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "lane": str(req.lane).strip(),
                     "action": str(req.action or "retry").strip() or "retry",
                     "job_id": str(req.job_id or "").strip(),
                     "by": str(req.by or "user").strip() or "user",
@@ -253,6 +264,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "group_id": group_id,
                     "provider": str(req.provider or "notebooklm").strip() or "notebooklm",
+                    "lane": str(req.lane).strip(),
                     "action": str(req.action or "run").strip() or "run",
                     "force": bool(req.force),
                     "by": str(req.by or "user").strip() or "user",

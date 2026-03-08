@@ -1475,7 +1475,7 @@ export async function fetchGroupSpaceStatus(groupId: string, provider: string = 
   );
 }
 
-export async function bindGroupSpace(groupId: string, remoteSpaceId: string = "", provider: string = "notebooklm") {
+export async function bindGroupSpace(groupId: string, remoteSpaceId: string = "", provider: string = "notebooklm", lane: "work" | "memory") {
   return apiJson<GroupSpaceStatus>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/space/bind`,
     {
@@ -1483,6 +1483,7 @@ export async function bindGroupSpace(groupId: string, remoteSpaceId: string = ""
       body: JSON.stringify({
         by: "user",
         provider,
+        lane,
         action: "bind",
         remote_space_id: String(remoteSpaceId || ""),
       }),
@@ -1495,14 +1496,14 @@ export async function fetchGroupSpaceSpaces(groupId: string, provider: string = 
     group_id: string;
     provider: string;
     provider_state?: Record<string, unknown>;
-    binding?: Record<string, unknown>;
+    bindings?: Record<string, Record<string, unknown>>;
     spaces: GroupSpaceRemoteSpace[];
   }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/space/spaces?provider=${encodeURIComponent(provider)}`
   );
 }
 
-export async function unbindGroupSpace(groupId: string, provider: string = "notebooklm") {
+export async function unbindGroupSpace(groupId: string, provider: string = "notebooklm", lane: "work" | "memory") {
   return apiJson<GroupSpaceStatus>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/space/bind`,
     {
@@ -1510,6 +1511,7 @@ export async function unbindGroupSpace(groupId: string, provider: string = "note
       body: JSON.stringify({
         by: "user",
         provider,
+        lane,
         action: "unbind",
         remote_space_id: "",
       }),
@@ -1520,6 +1522,7 @@ export async function unbindGroupSpace(groupId: string, provider: string = "note
 export async function ingestGroupSpace(args: {
   groupId: string;
   provider?: string;
+  lane: "work" | "memory";
   kind: "context_sync" | "resource_ingest";
   payload: Record<string, unknown>;
   idempotencyKey?: string;
@@ -1537,6 +1540,7 @@ export async function ingestGroupSpace(args: {
     body: JSON.stringify({
       by: "user",
       provider: args.provider || "notebooklm",
+      lane: args.lane,
       kind: args.kind,
       payload: args.payload || {},
       idempotency_key: String(args.idempotencyKey || ""),
@@ -1547,6 +1551,7 @@ export async function ingestGroupSpace(args: {
 export async function queryGroupSpace(args: {
   groupId: string;
   provider?: string;
+  lane: "work" | "memory";
   query: string;
   options?: Record<string, unknown>;
 }) {
@@ -1562,13 +1567,14 @@ export async function queryGroupSpace(args: {
     method: "POST",
     body: JSON.stringify({
       provider: args.provider || "notebooklm",
+      lane: args.lane,
       query: args.query,
       options: args.options || {},
     }),
   });
 }
 
-export async function fetchGroupSpaceSources(groupId: string, provider: string = "notebooklm") {
+export async function fetchGroupSpaceSources(groupId: string, provider: string = "notebooklm", lane: "work" | "memory") {
   return apiJson<{
     group_id: string;
     provider: string;
@@ -1578,13 +1584,14 @@ export async function fetchGroupSpaceSources(groupId: string, provider: string =
     sources: GroupSpaceSource[];
     list_result?: Record<string, unknown>;
   }>(
-    `/api/v1/groups/${encodeURIComponent(groupId)}/space/sources?provider=${encodeURIComponent(provider)}`
+    `/api/v1/groups/${encodeURIComponent(groupId)}/space/sources?provider=${encodeURIComponent(provider)}&lane=${encodeURIComponent(lane)}`
   );
 }
 
 export async function actionGroupSpaceSource(args: {
   groupId: string;
   provider?: string;
+  lane: "work" | "memory";
   action: "delete" | "rename" | "refresh";
   sourceId: string;
   newTitle?: string;
@@ -1604,6 +1611,7 @@ export async function actionGroupSpaceSource(args: {
     body: JSON.stringify({
       by: "user",
       provider: args.provider || "notebooklm",
+      lane: args.lane,
       action: args.action,
       source_id: args.sourceId,
       new_title: String(args.newTitle || ""),
@@ -1614,10 +1622,12 @@ export async function actionGroupSpaceSource(args: {
 export async function fetchGroupSpaceArtifacts(
   groupId: string,
   provider: string = "notebooklm",
+  lane: "work" | "memory",
   kind: string = ""
 ) {
   const params = new URLSearchParams({
     provider: String(provider || "notebooklm"),
+    lane: String(lane),
   });
   if (String(kind || "").trim()) {
     params.set("kind", String(kind || "").trim().toLowerCase());
@@ -1637,6 +1647,7 @@ export async function fetchGroupSpaceArtifacts(
 export async function actionGroupSpaceArtifact(args: {
   groupId: string;
   provider?: string;
+  lane: "work" | "memory";
   action: "generate" | "download";
   kind: string;
   options?: Record<string, unknown>;
@@ -1669,6 +1680,7 @@ export async function actionGroupSpaceArtifact(args: {
     body: JSON.stringify({
       by: "user",
       provider: args.provider || "notebooklm",
+      lane: args.lane,
       action: args.action,
       kind: String(args.kind || "").trim().toLowerCase(),
       options: args.options || {},
@@ -1687,11 +1699,13 @@ export async function actionGroupSpaceArtifact(args: {
 export async function listGroupSpaceJobs(args: {
   groupId: string;
   provider?: string;
+  lane: "work" | "memory";
   state?: string;
   limit?: number;
 }) {
   const params = new URLSearchParams({
     provider: String(args.provider || "notebooklm"),
+    lane: String(args.lane),
     limit: String(Math.max(1, Math.min(500, Number(args.limit || 50)))),
   });
   if (String(args.state || "").trim()) {
@@ -1708,6 +1722,7 @@ export async function listGroupSpaceJobs(args: {
 export async function actionGroupSpaceJob(args: {
   groupId: string;
   provider?: string;
+  lane: "work" | "memory";
   action: "retry" | "cancel";
   jobId: string;
 }) {
@@ -1721,6 +1736,7 @@ export async function actionGroupSpaceJob(args: {
     body: JSON.stringify({
       by: "user",
       provider: args.provider || "notebooklm",
+      lane: args.lane,
       action: args.action,
       job_id: args.jobId,
     }),
@@ -1730,6 +1746,7 @@ export async function actionGroupSpaceJob(args: {
 export async function syncGroupSpace(args: {
   groupId: string;
   provider?: string;
+  lane: "work" | "memory";
   action?: "status" | "run";
   force?: boolean;
 }) {
@@ -1743,6 +1760,7 @@ export async function syncGroupSpace(args: {
     body: JSON.stringify({
       by: "user",
       provider: args.provider || "notebooklm",
+      lane: args.lane,
       action: args.action || "run",
       force: Boolean(args.force),
     }),

@@ -36,6 +36,7 @@ Gap routing:
 Memory boundary:
 - `cccc_agent_state` is short-term working memory; long-term memory lives in `state/memory/MEMORY.md` + `state/memory/daily/*.md`.
 - On cold start, use `cccc_bootstrap`'s `memory_recall_gate` before planning or implementation.
+- Deep recall order: local memory first (`cccc_memory`), then `cccc_space(action=query, lane="memory")` only if the memory notebook is bound and local recall is insufficient.
 """
 
 

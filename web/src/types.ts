@@ -476,9 +476,12 @@ export type GroupSpaceProviderAuthStatus = {
   error?: { code?: string; message?: string } | null;
 };
 
+export type GroupSpaceLane = "work" | "memory" | string;
+
 export type GroupSpaceBinding = {
   group_id: string;
   provider: "notebooklm" | string;
+  lane?: GroupSpaceLane;
   remote_space_id?: string;
   bound_by?: string;
   bound_at?: string;
@@ -515,6 +518,17 @@ export type GroupSpaceQueueSummary = {
   failed: number;
 };
 
+export type GroupSpaceMemorySyncSummary = {
+  lane: "memory" | string;
+  manifest_path: string;
+  last_scan_at?: string | null;
+  last_success_at?: string | null;
+  pending_files: number;
+  running_files: number;
+  failed_files: number;
+  blocked_files: number;
+};
+
 export type GroupSpaceJobError = {
   code?: string;
   message?: string;
@@ -524,6 +538,7 @@ export type GroupSpaceJob = {
   job_id: string;
   group_id: string;
   provider: "notebooklm" | string;
+  lane?: GroupSpaceLane;
   remote_space_id: string;
   kind: "context_sync" | "resource_ingest" | string;
   payload: Record<string, unknown>;
@@ -541,10 +556,11 @@ export type GroupSpaceJob = {
 export type GroupSpaceStatus = {
   group_id: string;
   provider: GroupSpaceProviderState;
-  binding: GroupSpaceBinding;
-  queue_summary: GroupSpaceQueueSummary;
+  bindings: Record<string, GroupSpaceBinding>;
+  queue_summary: Record<string, GroupSpaceQueueSummary>;
   sync?: GroupSpaceSyncState;
-  sync_result?: GroupSpaceSyncResult;
+  memory_sync?: GroupSpaceMemorySyncSummary;
+  sync_result?: GroupSpaceSyncResult | Record<string, unknown>;
 };
 
 export type GroupSpaceSyncState = {
