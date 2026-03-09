@@ -368,10 +368,10 @@ export function ChatTab({
             >
               <div
                 className={classNames(
-                  "inline-flex items-center gap-1 rounded-full border p-1 shadow-lg pointer-events-auto backdrop-blur-md transition-all",
+                  "inline-flex items-center gap-1 xl:gap-2 rounded-full border p-1 sm:p-1.5 shadow-xl pointer-events-auto backdrop-blur-xl transition-all duration-300",
                   isDark
-                    ? "border-slate-700/60 bg-slate-900/60 shadow-black/20"
-                    : "border-gray-200/80 bg-white/70 shadow-gray-200/50"
+                    ? "border-white/10 bg-slate-900/60 shadow-black/40 ring-1 ring-white/5"
+                    : "border-black/5 bg-white/70 shadow-gray-200/50 ring-1 ring-black/5"
                 )}
                 role="tablist"
                 aria-label={t('chatFilters')}

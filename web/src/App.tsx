@@ -438,7 +438,7 @@ export default function App() {
   return (
     <div
       className={`w-full relative overflow-hidden ${isDark
-          ? "bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
+          ? "bg-black text-slate-100"
           : "bg-gradient-to-br from-slate-50 via-white to-slate-100"
         }`}
       style={{ height: "calc(100% - var(--vk-offset, 0px))" }}
@@ -504,7 +504,7 @@ export default function App() {
 
         {/* Main content */}
         <main
-          className={`absolute inset-0 md:relative md:inset-auto h-full flex flex-col overflow-hidden backdrop-blur-sm ${isDark ? "bg-slate-950/40" : "bg-white/60"
+          className={`absolute inset-0 md:relative md:inset-auto h-full flex flex-col overflow-hidden backdrop-blur-sm ${isDark ? "bg-black/60" : "bg-white/60"
             }`}
         >
           <AppHeader

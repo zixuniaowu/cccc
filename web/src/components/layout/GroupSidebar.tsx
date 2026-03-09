@@ -124,7 +124,7 @@ export function GroupSidebar({
                   <button
                     className={classNames(
                       "text-xs px-4 py-2 rounded-xl font-medium transition-all min-h-[36px] glass-btn-accent",
-                      "text-cyan-700 dark:text-cyan-300"
+                        isDark ? "text-gray-300" : "text-gray-800"
                     )}
                     onClick={onCreateGroup}
                     title={t('createNewGroup')}
@@ -137,7 +137,8 @@ export function GroupSidebar({
                 <button
                   className={classNames(
                     "hidden md:flex p-2 min-w-[36px] min-h-[36px] items-center justify-center rounded-xl transition-all glass-btn",
-                    "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+                    "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]",
+                                isDark ? "hover:bg-white/5" : "hover:bg-black/5"
                   )}
                   onClick={onToggleCollapse}
                   aria-label={t('collapseSidebar')}

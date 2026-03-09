@@ -579,17 +579,17 @@ export function ChatComposer({
         {/* Attachment Button */}
         <button
           className={classNames(
-            "w-11 h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 border group",
+            "w-11 h-11 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all duration-300 ease-out flex-shrink-0 border group",
             isDark
-              ? "bg-slate-900 border-white/5 text-slate-400 hover:text-white hover:bg-slate-800"
-              : "bg-white border-black/5 text-gray-500 hover:text-gray-900 hover:bg-gray-50"
+              ? "bg-slate-900 border-white/5 text-slate-400 hover:text-white hover:bg-slate-800 active:scale-95"
+              : "bg-white border-black/5 text-gray-500 hover:text-gray-900 hover:bg-gray-50 active:scale-95"
           )}
           onClick={() => fileInputRef.current?.click()}
           disabled={!selectedGroupId || busy === "send" || isCrossGroup}
           aria-label={t('attachFile')}
           title={fileDisabledReason}
         >
-          <AttachmentIcon size={18} className="sm:w-5 sm:h-5 group-active:scale-90 transition-transform" />
+          <AttachmentIcon size={18} className="sm:w-5 sm:h-5 transition-transform" />
         </button>
 
         {/* Text Area Wrapper */}
@@ -597,11 +597,11 @@ export function ChatComposer({
           <textarea
             ref={composerRef}
             className={classNames(
-              "w-full rounded-xl sm:rounded-2xl border px-3 sm:px-4 pr-11 sm:pr-12 py-2 sm:py-2.5 text-base sm:text-sm resize-none min-h-[40px] sm:min-h-[44px] max-h-[160px] transition",
-              "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center",
+              "w-full rounded-xl sm:rounded-2xl border px-4 sm:px-5 pr-11 sm:pr-14 py-3 sm:py-3.5 text-base sm:text-sm resize-none min-h-[44px] sm:min-h-[48px] max-h-[160px] transition-all duration-300 ease-out",
+              "focus:outline-none focus:ring-2 focus:ring-offset-0 flex items-center shadow-sm",
               isDark
-                ? "bg-white/5 border-white/5 text-slate-200 placeholder-slate-500 focus:ring-blue-500/40 focus:border-blue-500/50"
-                : "bg-black/5 border-transparent text-gray-900 placeholder-gray-400 focus:ring-blue-400/40 focus:border-blue-400/50"
+                ? "bg-white/5 border-white/5 text-slate-200 placeholder-slate-500 focus:ring-blue-500/30 focus:border-blue-500/40"
+                : "bg-black/5 border-transparent text-gray-900 placeholder-gray-400 focus:ring-blue-400/30 focus:border-blue-400/40"
             )}
             placeholder={isSmallScreen ? t('messagePlaceholder') : t('messagePlaceholderDesktop')}
             rows={1}
@@ -759,10 +759,10 @@ export function ChatComposer({
         {/* Send button - Using icon for modern feel */}
         <button
           className={classNames(
-            "w-11 h-11 sm:min-w-[6.25rem] sm:px-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-50",
+            "w-11 h-11 sm:min-w-[6.25rem] sm:px-3 rounded-xl sm:rounded-2xl flex items-center justify-center transition-all duration-300 ease-out flex-shrink-0 disabled:opacity-50",
             busy === "send" || !canSend
-              ? isDark ? "bg-slate-800 text-slate-500" : "bg-gray-100 text-gray-400"
-              : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/30 group active:scale-95"
+              ? isDark ? "bg-slate-800 text-slate-500 shadow-none" : "bg-gray-100 text-gray-400 shadow-none"
+              : "bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-500/30 active:scale-95 active:shadow-sm group"
           )}
           onClick={onSendMessage}
           disabled={busy === "send" || !canSend}
