@@ -69,7 +69,7 @@ function bindingStateText(binding: GroupSpaceBinding | null | undefined, t: (key
   return status === "bound" && remoteId ? t("groupSpace.bound") : t("groupSpace.notBound");
 }
 
-export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTabProps) {
+export function GroupSpaceTab({ isDark: _isDark, groupId, isActive = true }: GroupSpaceTabProps) {
   const { t } = useTranslation("settings");
   const [provider] = useState("notebooklm");
   const [status, setStatus] = useState<GroupSpaceStatus | null>(null);
@@ -112,11 +112,11 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
   }, [connectionConnected, connectionRunning, connectionState, t]);
 
   const connectionStatusTone = useMemo(() => {
-    if (connectionRunning) return isDark ? "text-sky-300" : "text-sky-700";
-    if (connectionConnected) return isDark ? "text-emerald-300" : "text-emerald-700";
-    if (connectionState === "failed") return isDark ? "text-amber-300" : "text-amber-700";
-    return isDark ? "text-slate-300" : "text-gray-700";
-  }, [connectionConnected, connectionRunning, connectionState, isDark]);
+    if (connectionRunning) return "text-sky-600 dark:text-sky-400";
+    if (connectionConnected) return "text-emerald-600 dark:text-emerald-400";
+    if (connectionState === "failed") return "text-amber-600 dark:text-amber-400";
+    return "text-[var(--color-text-secondary)]";
+  }, [connectionConnected, connectionRunning, connectionState]);
 
   const setHintWithTimeout = (text: string) => {
     setHint(text);
@@ -341,34 +341,34 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
     const canManage = connectionConnected && !actionBusy;
 
     return (
-      <div key={lane} className={cardClass(isDark)}>
+      <div key={lane} className={cardClass()}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t(titleKey)}</div>
-            <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t(hintKey)}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t(titleKey)}</div>
+            <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">{t(hintKey)}</div>
           </div>
-          <div className={`text-xs font-medium ${isDark ? "text-slate-400" : "text-gray-600"}`}>{notebookStateText}</div>
+          <div className="text-xs font-medium text-[var(--color-text-tertiary)]">{notebookStateText}</div>
         </div>
 
-        <div className={`mt-3 rounded-lg border px-3 py-2 ${isDark ? "border-slate-700 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
-          <div className={`text-[11px] uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("groupSpace.currentNotebook")}</div>
-          <div className={`mt-1 text-sm font-medium break-all ${isDark ? "text-slate-200" : "text-gray-900"}`}>
+        <div className="mt-3 rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+          <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">{t("groupSpace.currentNotebook")}</div>
+          <div className="mt-1 text-sm font-medium break-all text-[var(--color-text-primary)]">
             {boundRemoteId
               ? (String(boundNotebook?.title || "").trim() || boundRemoteId)
               : t("groupSpace.notBound")}
           </div>
           {boundRemoteId ? (
-            <div className={`mt-1 text-[11px] font-mono break-all ${isDark ? "text-slate-500" : "text-gray-500"}`}>{boundRemoteId}</div>
+            <div className="mt-1 text-[11px] font-mono break-all text-[var(--color-text-muted)]">{boundRemoteId}</div>
           ) : null}
         </div>
 
         <div className="mt-3">
-          <label className={`block text-[11px] mb-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("groupSpace.chooseNotebook")}</label>
+          <label className="block text-[11px] mb-1 text-[var(--color-text-tertiary)]">{t("groupSpace.chooseNotebook")}</label>
           <select
             value={selectedRemoteId}
             onChange={(e) => setSelectedRemoteId(String(e.target.value || ""))}
             disabled={!connectionConnected || actionBusy || spacesBusy || !notebookOptions.length}
-            className={inputClass(isDark)}
+            className={inputClass()}
           >
             {!notebookOptions.length ? (
               <option value="">{t("groupSpace.noNotebookOptions")}</option>
@@ -384,9 +384,9 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
             })}
           </select>
           {!connectionConnected ? (
-            <div className={`mt-1 text-[11px] ${isDark ? "text-amber-300" : "text-amber-700"}`}>{t("groupSpace.connectGoogleFirst")}</div>
+            <div className="mt-1 text-[11px] text-amber-600 dark:text-amber-400">{t("groupSpace.connectGoogleFirst")}</div>
           ) : connectionConnected && !notebookOptions.length ? (
-            <div className={`mt-1 text-[11px] ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("groupSpace.noNotebookOptionsHint")}</div>
+            <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">{t("groupSpace.noNotebookOptionsHint")}</div>
           ) : null}
         </div>
 
@@ -394,27 +394,21 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           <button
             onClick={() => void handleBind(lane, selectedRemoteId)}
             disabled={!canManage || !String(selectedRemoteId || "").trim()}
-            className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-              isDark ? "bg-emerald-900/40 hover:bg-emerald-800/40 text-emerald-300 border border-emerald-700/60" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200"
-            } disabled:opacity-50`}
+            className="px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 disabled:opacity-50"
           >
             {t("groupSpace.bindSelected")}
           </button>
           <button
             onClick={() => void handleCreateAndBind(lane)}
             disabled={!canManage}
-            className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-              isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-            } disabled:opacity-50`}
+            className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
           >
             {t("groupSpace.createAndBind")}
           </button>
           <button
             onClick={() => void handleUnbind(lane)}
             disabled={!canManage || !boundRemoteId}
-            className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-              isDark ? "bg-rose-900/40 hover:bg-rose-800/40 text-rose-300 border border-rose-700/60" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
-            } disabled:opacity-50`}
+            className="px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-400 border border-rose-500/30 disabled:opacity-50"
           >
             {t("groupSpace.unbind")}
           </button>
@@ -424,32 +418,30 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
   };
 
   if (!groupId) {
-    return <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("groupSpace.openFromGroup")}</div>;
+    return <div className="text-sm text-[var(--color-text-tertiary)]">{t("groupSpace.openFromGroup")}</div>;
   }
 
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("groupSpace.title")}</h3>
-          <p className={`text-xs mt-1 max-w-3xl ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("groupSpace.description")}</p>
+          <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("groupSpace.title")}</h3>
+          <p className="text-xs mt-1 max-w-3xl text-[var(--color-text-muted)]">{t("groupSpace.description")}</p>
         </div>
         <button
           onClick={() => void loadAll()}
           disabled={actionBusy || loading}
-          className={`px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors ${
-            isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-          } disabled:opacity-50`}
+          className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
         >
           {loading ? t("common:loading") : t("groupSpace.refresh")}
         </button>
       </div>
 
-      <div className={cardClass(isDark)}>
+      <div className={cardClass()}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("groupSpace.accountTitle")}</div>
-            <div className={`mt-1 text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("groupSpace.accountHint")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("groupSpace.accountTitle")}</div>
+            <div className="mt-1 text-xs text-[var(--color-text-tertiary)]">{t("groupSpace.accountHint")}</div>
           </div>
           <div className={`text-xs font-medium ${connectionStatusTone}`}>{connectionStatusText}</div>
         </div>
@@ -458,9 +450,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
           <button
             onClick={() => void handleConnectGoogle()}
             disabled={actionBusy || connectionRunning}
-            className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-              isDark ? "bg-emerald-900/40 hover:bg-emerald-800/40 text-emerald-300 border border-emerald-700/60" : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200"
-            } disabled:opacity-50`}
+            className="px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 disabled:opacity-50"
           >
             {connectionConnected ? t("groupSpace.reconnectGoogle") : t("groupSpace.connectGoogle")}
           </button>
@@ -468,9 +458,7 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
             <button
               onClick={() => void handleCancelConnect()}
               disabled={actionBusy}
-              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                isDark ? "bg-rose-900/40 hover:bg-rose-800/40 text-rose-300 border border-rose-700/60" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
-              } disabled:opacity-50`}
+              className="px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-400 border border-rose-500/30 disabled:opacity-50"
             >
               {t("groupSpace.cancelConnect")}
             </button>
@@ -478,10 +466,10 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
         </div>
 
         {authFlow?.message ? (
-          <div className={`mt-3 text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>{String(authFlow.message)}</div>
+          <div className="mt-3 text-xs text-[var(--color-text-tertiary)]">{String(authFlow.message)}</div>
         ) : null}
         {authFlow?.error?.message ? (
-          <div className={`mt-2 text-xs ${isDark ? "text-amber-300" : "text-amber-700"}`}>{String(authFlow.error.message)}</div>
+          <div className="mt-2 text-xs text-amber-600 dark:text-amber-400">{String(authFlow.error.message)}</div>
         ) : null}
       </div>
 
@@ -489,31 +477,31 @@ export function GroupSpaceTab({ isDark, groupId, isActive = true }: GroupSpaceTa
         {NOTEBOOK_LANES.map((lane) => renderNotebookCard(lane))}
       </div>
 
-      <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("groupSpace.summaryTitle")}</div>
+      <div className={cardClass()}>
+        <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("groupSpace.summaryTitle")}</div>
         <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className={`rounded-lg border px-3 py-2 ${isDark ? "border-slate-700 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
-            <div className={`text-[11px] uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("groupSpace.summaryGoogle")}</div>
+          <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">{t("groupSpace.summaryGoogle")}</div>
             <div className={`mt-1 text-sm font-medium ${connectionStatusTone}`}>{connectionStatusText}</div>
           </div>
-          <div className={`rounded-lg border px-3 py-2 ${isDark ? "border-slate-700 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
-            <div className={`text-[11px] uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("groupSpace.summaryWork")}</div>
-            <div className={`mt-1 text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-900"}`}>{bindingStateText(workBinding, t)}</div>
+          <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">{t("groupSpace.summaryWork")}</div>
+            <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">{bindingStateText(workBinding, t)}</div>
           </div>
-          <div className={`rounded-lg border px-3 py-2 ${isDark ? "border-slate-700 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
-            <div className={`text-[11px] uppercase tracking-wide ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("groupSpace.summaryMemory")}</div>
-            <div className={`mt-1 text-sm font-medium ${isDark ? "text-slate-200" : "text-gray-900"}`}>{bindingStateText(memoryBinding, t)}</div>
+          <div className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
+            <div className="text-[11px] uppercase tracking-wide text-[var(--color-text-muted)]">{t("groupSpace.summaryMemory")}</div>
+            <div className="mt-1 text-sm font-medium text-[var(--color-text-primary)]">{bindingStateText(memoryBinding, t)}</div>
           </div>
         </div>
         {connectionWarning ? (
-          <div className={`mt-3 text-xs ${isDark ? "text-amber-300" : "text-amber-700"}`}>
+          <div className="mt-3 text-xs text-amber-600 dark:text-amber-400">
             {t("groupSpace.summaryWarning")}: {connectionWarning}
           </div>
         ) : null}
       </div>
 
-      {err ? <div className={`text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{err}</div> : null}
-      {hint ? <div className={`text-xs ${isDark ? "text-emerald-300" : "text-emerald-600"}`}>{hint}</div> : null}
+      {err ? <div className="text-xs text-rose-600 dark:text-rose-400">{err}</div> : null}
+      {hint ? <div className="text-xs text-emerald-600 dark:text-emerald-400">{hint}</div> : null}
     </div>
   );
 }

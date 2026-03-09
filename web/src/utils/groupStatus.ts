@@ -1,63 +1,63 @@
-export type GroupStatus = { label: string; pillClass: string; dotClass: string };
+export type GroupStatusKey = "run" | "paused" | "idle" | "stop";
+
+export type GroupStatus = {
+  key: GroupStatusKey;
+  label: string;
+  pillClass: string;
+  dotClass: string;
+};
+
+function buildStatus(key: GroupStatusKey, label: string, dotClass: string): GroupStatus {
+  return {
+    key,
+    label,
+    pillClass: `glass-status-pill glass-status-pill-${key}`,
+    dotClass,
+  };
+}
 
 export function getGroupStatus(running: boolean, state?: string): GroupStatus {
   if (!running) {
-    return {
-      label: "○ STOP",
-      pillClass: "bg-slate-700/50 text-slate-500",
-      dotClass: "bg-slate-500",
-    };
+    return buildStatus("stop", "STOP", "bg-slate-400 ring-slate-400/20");
   }
   switch (state) {
     case "paused":
-      return {
-        label: "⏸ PAUSED",
-        pillClass: "bg-amber-500/20 text-amber-500",
-        dotClass: "bg-amber-400",
-      };
+      return buildStatus("paused", "PAUSED", "bg-amber-400 ring-amber-400/25");
     case "idle":
-      return {
-        label: "✓ IDLE",
-        pillClass: "bg-blue-500/20 text-blue-400",
-        dotClass: "bg-blue-400",
-      };
+      return buildStatus("idle", "IDLE", "bg-sky-400 ring-sky-400/25");
     default:
       break;
   }
-  return {
-    label: "● RUN",
-    pillClass: "bg-emerald-500/20 text-emerald-500",
-    dotClass: "bg-emerald-400",
-  };
+  return buildStatus("run", "RUN", "bg-emerald-400 ring-emerald-400/30 shadow-[0_0_12px_rgba(52,211,153,0.35)]");
 }
 
 export function getGroupStatusLight(running: boolean, state?: string): GroupStatus {
   if (!running) {
-    return {
-      label: "○ STOP",
-      pillClass: "bg-gray-200 text-gray-500",
-      dotClass: "bg-gray-400",
-    };
+    return buildStatus("stop", "STOP", "bg-slate-400 ring-slate-300/70");
   }
   switch (state) {
     case "paused":
-      return {
-        label: "⏸ PAUSED",
-        pillClass: "bg-amber-100 text-amber-600",
-        dotClass: "bg-amber-500",
-      };
+      return buildStatus("paused", "PAUSED", "bg-amber-500 ring-amber-200/90");
     case "idle":
-      return {
-        label: "✓ IDLE",
-        pillClass: "bg-blue-100 text-blue-600",
-        dotClass: "bg-blue-500",
-      };
+      return buildStatus("idle", "IDLE", "bg-sky-500 ring-sky-200/90");
     default:
       break;
   }
-  return {
-    label: "● RUN",
-    pillClass: "bg-emerald-100 text-emerald-600",
-    dotClass: "bg-emerald-500",
-  };
+  return buildStatus("run", "RUN", "bg-emerald-500 ring-emerald-200/90 shadow-[0_0_10px_rgba(16,185,129,0.2)]");
+}
+
+/** Unified group status using dark: prefix - no isDark dependency needed */
+export function getGroupStatusUnified(running: boolean, state?: string): GroupStatus {
+  if (!running) {
+    return buildStatus("stop", "STOP", "bg-slate-400 ring-slate-300/70 dark:ring-slate-400/20");
+  }
+  switch (state) {
+    case "paused":
+      return buildStatus("paused", "PAUSED", "bg-amber-500 ring-amber-200/90 dark:bg-amber-400 dark:ring-amber-400/25");
+    case "idle":
+      return buildStatus("idle", "IDLE", "bg-sky-500 ring-sky-200/90 dark:bg-sky-400 dark:ring-sky-400/25");
+    default:
+      break;
+  }
+  return buildStatus("run", "RUN", "bg-emerald-500 ring-emerald-200/90 shadow-[0_0_10px_rgba(16,185,129,0.2)] dark:bg-emerald-400 dark:ring-emerald-400/30 dark:shadow-[0_0_12px_rgba(52,211,153,0.35)]");
 }

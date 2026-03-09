@@ -1,7 +1,6 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { GroupMeta } from "../../types";
-import { getGroupStatus, getGroupStatusLight } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
 import { GripIcon } from "../Icons";
 
@@ -14,10 +13,26 @@ interface SortableGroupItemProps {
   onSelect: () => void;
 }
 
+type StatusKey = "run" | "paused" | "idle" | "stop";
+
+function getStatusInfo(running: boolean, state?: string): { label: string; key: StatusKey; dotClass: string } {
+  if (!running) {
+    return { label: "STOP", key: "stop", dotClass: "bg-gray-400 dark:bg-slate-500" };
+  }
+  switch (state) {
+    case "paused":
+      return { label: "PAUSED", key: "paused", dotClass: "bg-amber-500 dark:bg-amber-400" };
+    case "idle":
+      return { label: "IDLE", key: "idle", dotClass: "bg-blue-500 dark:bg-blue-400" };
+    default:
+      return { label: "RUN", key: "run", dotClass: "bg-emerald-500 dark:bg-emerald-400 run-indicator-glow" };
+  }
+}
+
 export function SortableGroupItem({
   group,
   isActive,
-  isDark,
+  isDark: _isDark,
   isCollapsed,
   dragDisabled = false,
   onSelect,
@@ -38,22 +53,19 @@ export function SortableGroupItem({
     transition,
   };
 
-  const status = isDark
-    ? getGroupStatus(group.running ?? false, group.state)
-    : getGroupStatusLight(group.running ?? false, group.state);
+  const status = getStatusInfo(group.running ?? false, group.state);
 
   if (isCollapsed) {
-    // Collapsed mode: show only initial or icon
     const initial = (group.title || gid).charAt(0).toUpperCase();
     return (
       <div ref={setNodeRef} style={style} {...attributes}>
         <button
           className={classNames(
-            "w-11 h-11 rounded-xl flex items-center justify-center transition-all",
+            "w-11 h-11 rounded-xl flex items-center justify-center transition-all relative",
             isDragging && "opacity-50 shadow-lg",
             isActive
-              ? "glass-btn-accent glow-pulse"
-              : "glass-btn hover:scale-105"
+              ? "glass-group-item-active glow-pulse"
+              : "glass-group-item hover:scale-105"
           )}
           onClick={onSelect}
           title={group.title || gid}
@@ -62,12 +74,17 @@ export function SortableGroupItem({
             className={classNames(
               "text-sm font-semibold",
               isActive
-                ? isDark ? "text-cyan-300" : "text-cyan-700"
-                : isDark ? "text-slate-300" : "text-gray-600"
+                ? "text-cyan-700 dark:text-cyan-300"
+                : "text-[var(--color-text-secondary)]"
             )}
           >
             {initial}
           </span>
+          {/* Status dot */}
+          <span className={classNames(
+            "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ring-[var(--color-bg-primary)]",
+            status.dotClass
+          )} />
         </button>
       </div>
     );
@@ -85,15 +102,15 @@ export function SortableGroupItem({
     >
       <button
         className={classNames(
-          "w-full text-left px-3 py-2.5 rounded-xl transition-all min-h-[44px] flex items-center gap-2",
+          "w-full text-left px-3 py-3 rounded-xl transition-all min-h-[48px] flex items-center gap-2 relative",
           isDragging && "opacity-70 shadow-lg ring-2 ring-cyan-500/30",
           isActive
-            ? "glass-btn-accent glow-pulse"
-            : "glass-btn hover:translate-x-1"
+            ? "glass-group-item-active glow-pulse"
+            : "glass-group-item"
         )}
         onClick={onSelect}
       >
-        {/* Drag handle - hidden on mobile, visible on hover for desktop */}
+        {/* Drag handle */}
         {!dragDisabled && (
           <div
             {...listeners}
@@ -101,7 +118,7 @@ export function SortableGroupItem({
               "flex-shrink-0 cursor-grab active:cursor-grabbing p-1 -ml-1 rounded transition-opacity touch-none",
               "hidden md:block md:opacity-0 md:group-hover/item:opacity-100",
               isDragging && "!block !opacity-100",
-              isDark ? "text-slate-500 hover:text-slate-300" : "text-gray-400 hover:text-gray-600"
+              "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
             )}
             onClick={(e) => e.stopPropagation()}
           >
@@ -109,25 +126,32 @@ export function SortableGroupItem({
           </div>
         )}
 
-        <div className="flex-1 min-w-0 flex items-center justify-between">
-          <div
-            className={classNames(
-              "text-sm font-medium truncate",
-              isActive
-                ? isDark ? "text-cyan-300" : "text-cyan-700"
-                : isDark ? "text-slate-300 group-hover/item:text-white" : "text-gray-700 group-hover/item:text-gray-900"
-            )}
-          >
-            {group.title || gid}
+        <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            {/* Status dot */}
+            <span className={classNames(
+              "w-2 h-2 rounded-full flex-shrink-0",
+              status.dotClass
+            )} />
+            <span
+              className={classNames(
+                "text-sm font-medium truncate",
+                isActive
+                  ? "text-cyan-700 dark:text-cyan-300"
+                  : "text-[var(--color-text-primary)] group-hover/item:text-[var(--color-text-primary)]"
+              )}
+            >
+              {group.title || gid}
+            </span>
           </div>
-          <div
+          <span
             className={classNames(
-              "text-[9px] px-2 py-0.5 rounded-full font-medium backdrop-blur-sm flex-shrink-0 ml-2",
-              status.pillClass
+              "glass-status-pill text-[9px] px-2.5 py-1 rounded-full font-semibold flex-shrink-0 uppercase",
+              `glass-status-pill-${status.key}`
             )}
           >
             {status.label}
-          </div>
+          </span>
         </div>
       </button>
     </div>

@@ -393,8 +393,8 @@ export function AutomationTab(props: AutomationTabProps) {
 
   if (!props.groupId) {
     return (
-      <div className={cardClass(isDark)}>
-        <div className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("automation.openFromGroup")}</div>
+      <div className={cardClass()}>
+        <div className="text-sm text-[var(--color-text-secondary)]">{t("automation.openFromGroup")}</div>
       </div>
     );
   }
@@ -405,8 +405,8 @@ export function AutomationTab(props: AutomationTabProps) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("automation.title")}</h3>
-        <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("automation.title")}</h3>
+        <p className="text-xs mt-1 text-[var(--color-text-muted)]">
           {t("automation.description")}{" "}
           <span className="font-mono break-all">{configPath || t("automation.configPathFallback")}</span>.
         </p>
@@ -418,16 +418,14 @@ export function AutomationTab(props: AutomationTabProps) {
         title={t("automation.rulesTitle")}
         description={t("automation.rulesDescription")}
       >
-        {rulesErr ? <div className={`text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{rulesErr}</div> : null}
+        {rulesErr ? <div className="text-xs text-rose-600 dark:text-rose-300">{rulesErr}</div> : null}
 
         <div className="space-y-2">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
             <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
               <button
                 type="button"
-                className={`w-full sm:w-auto whitespace-nowrap px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-                } disabled:opacity-50`}
+                className="glass-btn w-full sm:w-auto whitespace-nowrap px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
                 onClick={() => {
                   const rid = addRule();
                   setEditingRuleId(rid);
@@ -440,9 +438,7 @@ export function AutomationTab(props: AutomationTabProps) {
               </button>
               <button
                 type="button"
-                className={`w-full sm:w-auto whitespace-nowrap px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-                } disabled:opacity-50`}
+                className="glass-btn w-full sm:w-auto whitespace-nowrap px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
                 onClick={openSnippetManager}
                 disabled={rulesBusy}
                 title={t("automation.manageSnippetsTitle")}
@@ -454,9 +450,7 @@ export function AutomationTab(props: AutomationTabProps) {
             <div className="grid grid-cols-2 gap-2 sm:flex sm:items-center">
               <button
                 type="button"
-                className={`w-full sm:w-auto whitespace-nowrap px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                  isDark ? "bg-rose-900/40 hover:bg-rose-900/60 text-rose-200 border border-rose-800" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"
-                } disabled:opacity-50`}
+                className="w-full sm:w-auto whitespace-nowrap px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 border border-rose-500/30 disabled:opacity-50"
                 onClick={resetToBaseline}
                 disabled={rulesBusy}
                 title={t("automation.resetTitle")}
@@ -493,7 +487,7 @@ export function AutomationTab(props: AutomationTabProps) {
           onDeleteRule={removeRule}
         />
 
-        <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
           {t("automation.editHint")}
         </div>
       </Section>

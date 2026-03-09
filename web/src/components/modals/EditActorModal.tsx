@@ -82,14 +82,12 @@ function commandPreview(command: string[] | undefined): string {
   return cmd.join(" ");
 }
 
-function modeButtonClass(isDark: boolean, selected: boolean): string {
+function modeButtonClass(selected: boolean): string {
   return [
     "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-colors",
     selected
       ? "bg-blue-600 text-white border-blue-600"
-      : isDark
-        ? "bg-slate-900/60 border-slate-700 text-slate-300"
-        : "bg-white border-gray-200 text-gray-700",
+      : "glass-panel text-[var(--color-text-secondary)]",
   ].join(" ");
 }
 
@@ -430,7 +428,7 @@ export function EditActorModal({
 
   return (
     <div
-      className={`fixed inset-0 flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/60" : "bg-black/40"}`}
+      className="fixed inset-0 flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in glass-overlay"
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}
@@ -440,39 +438,35 @@ export function EditActorModal({
     >
       <div
         ref={modalRef}
-        className={`w-full h-full sm:h-auto sm:max-w-md sm:mt-16 border shadow-2xl animate-scale-in flex flex-col sm:max-h-[calc(100vh-8rem)] rounded-none sm:rounded-2xl ${
-          isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
-        }`}
+        className="w-full h-full sm:h-auto sm:max-w-md sm:mt-16 border shadow-2xl animate-scale-in flex flex-col sm:max-h-[calc(100vh-8rem)] rounded-none sm:rounded-2xl glass-modal"
       >
-        <div className={`px-6 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
-          <div id="edit-actor-title" className={`text-lg font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
+        <div className="px-6 py-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)]">
+          <div id="edit-actor-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
             {t("editAgent", { actorId })}
           </div>
-          <div className={`text-sm mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("changeSettings")}</div>
+          <div className="text-sm mt-1 text-[var(--color-text-muted)]">{t("changeSettings")}</div>
         </div>
         <div className="p-6 space-y-5 overflow-y-auto flex-1 min-h-0">
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("displayName")}</label>
+            <label className={`block text-xs font-medium mb-2 text-[var(--color-text-muted)]`}>{t("displayName")}</label>
             <input
-              className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
-                isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-              }`}
+              className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]`}
               value={title}
               onChange={(e) => onChangeTitle(e.target.value)}
               placeholder={actorId}
             />
-            <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("leaveEmptyForId")}</div>
+            <div className={`text-[10px] mt-1.5 text-[var(--color-text-muted)]`}>{t("leaveEmptyForId")}</div>
           </div>
 
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("creationMode")}</label>
+            <label className={`block text-xs font-medium mb-2 text-[var(--color-text-muted)]`}>{t("creationMode")}</label>
             <div className="grid grid-cols-2 gap-2">
-              <button type="button" className={modeButtonClass(isDark, editMode === "custom")} onClick={() => setEditMode("custom")}>
+              <button type="button" className={modeButtonClass(editMode === "custom")} onClick={() => setEditMode("custom")}>
                 {t("customAgent")}
               </button>
               <button
                 type="button"
-                className={modeButtonClass(isDark, editMode === "profile")}
+                className={modeButtonClass(editMode === "profile")}
                 onClick={() => {
                   setEditMode("profile");
                   setPendingConvertToCustom(false);
@@ -487,11 +481,9 @@ export function EditActorModal({
           {editMode === "profile" ? (
             <>
               <div>
-                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("actorProfile")}</label>
+                <label className={`block text-xs font-medium mb-2 text-[var(--color-text-muted)]`}>{t("actorProfile")}</label>
                 <select
-                  className={`w-full rounded-xl border px-3 py-2 text-sm min-h-[40px] ${
-                    isDark ? "bg-slate-900/80 border-slate-600/50 text-white" : "bg-white border-gray-300 text-gray-900"
-                  }`}
+                  className={`w-full rounded-xl border px-3 py-2 text-sm min-h-[40px] glass-input text-[var(--color-text-primary)]`}
                   value={attachProfileId}
                   onChange={(e) => setAttachProfileId(e.target.value)}
                   disabled={actorProfilesBusy || busy === "actor-update"}
@@ -506,7 +498,7 @@ export function EditActorModal({
               </div>
 
               {selectedProfile ? (
-                <div className={`rounded-xl border px-3 py-2 text-xs ${isDark ? "border-slate-700 bg-slate-900/60 text-slate-300" : "border-gray-200 bg-gray-50 text-gray-700"}`}>
+                <div className={`rounded-xl border px-3 py-2 text-xs glass-card text-[var(--color-text-secondary)]`}>
                   <div className="font-medium">{selectedProfile.name || selectedProfile.id}</div>
                   <div className="mt-1">
                     {RUNTIME_INFO[String(selectedProfile.runtime) as SupportedRuntime]?.label || selectedProfile.runtime}
@@ -516,16 +508,14 @@ export function EditActorModal({
               ) : null}
             </>
           ) : effectiveLinked ? (
-            <div className={`rounded-xl border px-3 py-2 ${isDark ? "border-sky-500/30 bg-sky-500/10 text-sky-100" : "border-sky-200 bg-sky-50 text-sky-800"}`}>
+            <div className="rounded-xl border px-3 py-2 border-sky-500/30 bg-sky-500/15 text-sky-600 dark:text-sky-400">
               <div className="text-sm font-medium">
                 {selectedProfileName ? t("managedByProfileName", { name: selectedProfileName }) : t("managedByProfile")}
               </div>
-              <div className={`text-xs mt-1 ${isDark ? "text-sky-200/80" : "text-sky-700"}`}>{t("managedByProfileCustomHint")}</div>
+              <div className="text-xs mt-1 opacity-80">{t("managedByProfileCustomHint")}</div>
               <button
                 type="button"
-                className={`mt-2 px-3 py-2 rounded-lg text-sm font-medium ${
-                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white border border-gray-200 hover:bg-gray-50 text-gray-700"
-                }`}
+                className="mt-2 px-3 py-2 rounded-lg text-sm font-medium glass-btn text-[var(--color-text-secondary)]"
                 onClick={convertToCustomDraft}
                 disabled={busy === "actor-update"}
               >
@@ -535,11 +525,9 @@ export function EditActorModal({
           ) : (
             <>
               <div>
-                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("runtime")}</label>
+                <label className={`block text-xs font-medium mb-2 text-[var(--color-text-muted)]`}>{t("runtime")}</label>
                 <select
-                  className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
-                    isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
+                  className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]`}
                   value={runtime}
                   onChange={(e) => {
                     const next = e.target.value as SupportedRuntime;
@@ -566,85 +554,83 @@ export function EditActorModal({
                 {(runtime === "cursor" || runtime === "kilocode" || runtime === "opencode" || runtime === "copilot" || runtime === "custom") && (
                   <div
                     className={`mt-2 rounded-xl border px-3 py-2 text-[11px] ${
-                      isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
+                      "border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400"
                     }`}
                   >
                     <div className="font-medium">{t("manualMcpRequired")}</div>
                     {runtime === "custom" ? (
                       <>
                         <div className="mt-1">
-                          {t("configureMcpStdio")} <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>cccc</code> {t("thatRuns")} <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>cccc mcp</code>.
+                          {t("configureMcpStdio")} <code className={`px-1 rounded ${"bg-amber-500/15"}`}>cccc</code> {t("thatRuns")} <code className={`px-1 rounded ${"bg-amber-500/15"}`}>cccc mcp</code>.
                         </div>
                       </>
                     ) : runtime === "cursor" ? (
                       <>
                         <div className="mt-1">
-                          {t("createEditFile")} <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.cursor/mcp.json</code> (or <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.cursor/mcp.json</code> {t("orInProject")})
+                          {t("createEditFile")} <code className={`px-1 rounded ${"bg-amber-500/15"}`}>~/.cursor/mcp.json</code> (or <code className={`px-1 rounded ${"bg-amber-500/15"}`}>.cursor/mcp.json</code> {t("orInProject")})
                         </div>
                         <div className="mt-1">{t("addMcpConfig")}</div>
                       </>
                     ) : runtime === "kilocode" ? (
                       <>
                         <div className="mt-1">
-                          {t("createEditFile")} <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>.kilocode/mcp.json</code> {t("inProjectRoot")}
+                          {t("createEditFile")} <code className={`px-1 rounded ${"bg-amber-500/15"}`}>.kilocode/mcp.json</code> {t("inProjectRoot")}
                         </div>
                         <div className="mt-1">{t("addMcpConfig")}</div>
                       </>
                     ) : runtime === "opencode" ? (
                       <>
                         <div className="mt-1">
-                          {t("createEditFile")} <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.config/opencode/opencode.json</code>
+                          {t("createEditFile")} <code className={`px-1 rounded ${"bg-amber-500/15"}`}>~/.config/opencode/opencode.json</code>
                         </div>
                         <div className="mt-1">{t("addMcpConfig")}</div>
                       </>
                     ) : (
                       <>
                         <div className="mt-1">
-                          {t("createEditFile")} <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>~/.copilot/mcp-config.json</code>
+                          {t("createEditFile")} <code className={`px-1 rounded ${"bg-amber-500/15"}`}>~/.copilot/mcp-config.json</code>
                         </div>
                         <div className="mt-1">
-                          {t("addMcpConfigOrFlag")} <code className={`px-1 rounded ${isDark ? "bg-amber-900/30" : "bg-amber-100"}`}>--additional-mcp-config</code>):
+                          {t("addMcpConfigOrFlag")} <code className={`px-1 rounded ${"bg-amber-500/15"}`}>--additional-mcp-config</code>):
                         </div>
                       </>
                     )}
                     {runtime !== "custom" ? (
                       <pre
                         className={`mt-1.5 p-2 rounded overflow-x-auto whitespace-pre ${
-                          isDark ? "bg-amber-900/20 text-amber-100" : "bg-amber-50 text-amber-900"
+                          "bg-amber-500/10 text-amber-600 dark:text-amber-300"
                         }`}
                       >
                         <code>{runtime === "opencode" ? OPENCODE_MCP_CONFIG_SNIPPET : runtime === "copilot" ? COPILOT_MCP_CONFIG_SNIPPET : BASIC_MCP_CONFIG_SNIPPET}</code>
                       </pre>
                     ) : null}
-                    <div className={`mt-1 text-[10px] ${isDark ? "text-amber-200/80" : "text-amber-800/80"}`}>{t("restartAfterConfig")}</div>
+                    <div className={`mt-1 text-[10px] ${"text-amber-600/80 dark:text-amber-400/80"}`}>{t("restartAfterConfig")}</div>
                   </div>
                 )}
               </div>
 
               <div>
-                <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("command")}</label>
+                <label className={`block text-xs font-medium mb-2 text-[var(--color-text-muted)]`}>{t("command")}</label>
                 <input
-                  className={`w-full rounded-xl border px-4 py-2.5 text-sm font-mono min-h-[44px] transition-colors ${
-                    isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
+                  className={`w-full rounded-xl border px-4 py-2.5 text-sm font-mono min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]`}
                   value={command}
                   onChange={(e) => onChangeCommand(e.target.value)}
                   placeholder={defaultCommand || t("enterCommand")}
                 />
-                {isRunning ? <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("runtimeChangesNote")}</div> : null}
+                {isRunning ? <div className={`text-[10px] mt-1.5 text-[var(--color-text-muted)]`}>{t("runtimeChangesNote")}</div> : null}
                 {defaultCommand.trim() ? (
-                  <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
-                    {t("default")} <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{defaultCommand}</code>
+                  <div className={`text-[10px] mt-1.5 text-[var(--color-text-muted)]`}>
+                    {t("default")} <code className="px-1 rounded bg-[var(--glass-tab-bg)]">{defaultCommand}</code>
                   </div>
                 ) : null}
               </div>
 
               <div>
                 <div className="flex items-center justify-between gap-3">
-                  <label className={`block text-xs font-medium ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("secretsWriteOnly")}</label>
+                  <label className={`block text-xs font-medium text-[var(--color-text-muted)]`}>{t("secretsWriteOnly")}</label>
                   <button
                     className={`text-xs px-2 py-1 rounded-lg border transition-colors ${
-                      isDark ? "border-slate-600/50 text-slate-300 hover:bg-slate-800" : "border-gray-200 text-gray-700 hover:bg-gray-50"
+                      "glass-btn text-[var(--color-text-secondary)]"
                     }`}
                     onClick={() => void refreshSecretKeys()}
                     disabled={secretsBusy}
@@ -653,7 +639,7 @@ export function EditActorModal({
                     {t("refresh")}
                   </button>
                 </div>
-                <div className={`text-[10px] mt-1.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                <div className={`text-[10px] mt-1.5 text-[var(--color-text-muted)]`}>
                   {t("secretsStoredLocallyEdit").replace(/<1>|<\/1>/g, "")} {secretKeys.length ? (
                     <>
                       {t("configuredKeys")}
@@ -663,7 +649,7 @@ export function EditActorModal({
                           return (
                             <span
                               key={key}
-                              className={`inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-[10px] ${isDark ? "border-slate-600/50 text-slate-200 bg-slate-900/70" : "border-gray-300 text-gray-700 bg-gray-50"}`}
+                              className="inline-flex items-center rounded-md border px-2 py-0.5 font-mono text-[10px] glass-panel text-[var(--color-text-secondary)]"
                               title={`${t("maskedPreview")}: ${masked}`}
                             >
                               {key}
@@ -680,29 +666,25 @@ export function EditActorModal({
                     <>{t("noKeysConfigured")}</>
                   )}
                 </div>
-                <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("secretsAppliedNote").replace(/<1>|<\/1>/g, "")}</div>
+                <div className={`text-[10px] mt-1 text-[var(--color-text-muted)]`}>{t("secretsAppliedNote").replace(/<1>|<\/1>/g, "")}</div>
 
-                <label className={`block text-[11px] font-medium mt-3 mb-1.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>{t("setUpdate")}</label>
+                <label className={`block text-[11px] font-medium mt-3 mb-1.5 text-[var(--color-text-muted)]`}>{t("setUpdate")}</label>
                 <textarea
-                  className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[96px] transition-colors ${
-                    isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
+                  className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[96px] transition-colors glass-input text-[var(--color-text-primary)]`}
                   value={secretsSetText}
                   onChange={(e) => setSecretsSetText(e.target.value)}
                   placeholder={secretsPlaceholder.set}
                 />
 
-                <label className={`block text-[11px] font-medium mt-3 mb-1.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>{t("unset")}</label>
+                <label className={`block text-[11px] font-medium mt-3 mb-1.5 text-[var(--color-text-muted)]`}>{t("unset")}</label>
                 <textarea
-                  className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[72px] transition-colors ${
-                    isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-                  }`}
+                  className={`w-full rounded-xl border px-3 py-2 text-sm font-mono min-h-[72px] transition-colors glass-input text-[var(--color-text-primary)]`}
                   value={secretsUnsetText}
                   onChange={(e) => setSecretsUnsetText(e.target.value)}
                   placeholder={secretsPlaceholder.unset}
                 />
 
-                <label className={`flex items-center gap-2 text-[11px] font-medium mt-3 ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                <label className="flex items-center gap-2 text-[11px] font-medium mt-3 text-[var(--color-text-tertiary)]">
                   <input
                     type="checkbox"
                     checked={secretsClearAll}
@@ -716,9 +698,7 @@ export function EditActorModal({
               <div className="flex flex-wrap gap-3 pt-2">
                 <button
                   type="button"
-                  className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${
-                    isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-                  }`}
+                  className="px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] glass-btn text-[var(--color-text-secondary)]"
                   onClick={() => void saveAsProfile()}
                   disabled={busy === "actor-profile-save" || busy === "actor-update"}
                 >
@@ -740,7 +720,7 @@ export function EditActorModal({
           {secretsError ? (
             <div
               className={`mt-2 rounded-xl border px-3 py-2 text-xs ${
-                isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700"
+                "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
               }`}
               role="alert"
             >
@@ -751,7 +731,7 @@ export function EditActorModal({
           {String(localNotice || inlineNotice || "").trim() ? (
             <div
               className={`mt-2 rounded-xl border px-3 py-2 text-xs ${
-                isDark ? "border-sky-500/30 bg-sky-500/10 text-sky-200" : "border-sky-200 bg-sky-50 text-sky-800"
+                "border-sky-500/30 bg-sky-500/15 text-sky-600 dark:text-sky-400"
               }`}
               role="status"
             >
@@ -788,7 +768,7 @@ export function EditActorModal({
             </button>
             <button
               className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${
-                isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                "glass-btn text-[var(--color-text-secondary)]"
               }`}
               onClick={onCancel}
             >

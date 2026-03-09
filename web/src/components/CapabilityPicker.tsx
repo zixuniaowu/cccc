@@ -13,12 +13,10 @@ interface CapabilityPickerProps {
   hint?: string;
 }
 
-function badgeClass(isDark: boolean): string {
-  return isDark ? "bg-slate-800 text-slate-300 border border-slate-700" : "bg-gray-100 text-gray-700 border border-gray-200";
-}
+const BADGE_CLASS = "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
 
 export function CapabilityPicker({
-  isDark,
+  isDark: _isDark,
   value,
   onChange,
   disabled = false,
@@ -106,11 +104,11 @@ export function CapabilityPicker({
 
   return (
     <div>
-      {label ? <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{label}</label> : null}
+      {label ? <label className="block text-xs font-medium mb-2 text-[var(--color-text-tertiary)]">{label}</label> : null}
 
       <div className="flex flex-wrap gap-1.5 mb-2">
         {selected.length === 0 ? (
-          <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("capabilities.noneSelected")}</span>
+          <span className="text-xs text-[var(--color-text-muted)]">{t("capabilities.noneSelected")}</span>
         ) : (
           selected.map((capId) => (
             <button
@@ -118,7 +116,7 @@ export function CapabilityPicker({
               type="button"
               onClick={() => toggle(capId)}
               disabled={disabled}
-              className={`px-2 py-1 rounded text-[11px] ${badgeClass(isDark)} ${disabled ? "opacity-60 cursor-not-allowed" : "hover:opacity-85"}`}
+              className={`px-2 py-1 rounded text-[11px] ${BADGE_CLASS} ${disabled ? "opacity-60 cursor-not-allowed" : "hover:opacity-85"}`}
               title={t("capabilities.removeFromAutoload")}
             >
               {capId}
@@ -133,20 +131,18 @@ export function CapabilityPicker({
         onChange={(e) => setQuery(e.target.value)}
         disabled={disabled}
         placeholder={t("capabilities.searchPlaceholder")}
-        className={`w-full rounded-lg border px-3 py-2 text-sm min-h-[40px] ${
-          isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"
-        }`}
+        className="w-full rounded-lg border px-3 py-2 text-sm min-h-[40px] glass-input text-[var(--color-text-primary)]"
       />
 
       <div
-        className={`mt-2 rounded-lg border max-h-56 overflow-auto ${isDark ? "border-slate-700 bg-slate-950/50" : "border-gray-200 bg-gray-50"}`}
+        className="mt-2 rounded-lg border max-h-56 overflow-auto border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]"
       >
         {loading ? (
-          <div className={`px-3 py-3 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("capabilities.loading")}</div>
+          <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">{t("capabilities.loading")}</div>
         ) : error ? (
-          <div className={`px-3 py-3 text-xs ${isDark ? "text-rose-300" : "text-rose-700"}`}>{error}</div>
+          <div className="px-3 py-3 text-xs text-rose-700 dark:text-rose-300">{error}</div>
         ) : candidateRows.length === 0 ? (
-          <div className={`px-3 py-3 text-xs ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("capabilities.noCandidates")}</div>
+          <div className="px-3 py-3 text-xs text-[var(--color-text-tertiary)]">{t("capabilities.noCandidates")}</div>
         ) : (
           candidateRows.map((row) => {
             const capId = String(row.capability_id || "").trim();
@@ -156,9 +152,7 @@ export function CapabilityPicker({
             return (
               <label
                 key={capId}
-                className={`flex items-start gap-2 px-3 py-2 border-b last:border-b-0 ${
-                  isDark ? "border-slate-800 text-slate-200" : "border-gray-200 text-gray-800"
-                } ${disabledItem ? "opacity-60" : "cursor-pointer"}`}
+                className={`flex items-start gap-2 px-3 py-2 border-b last:border-b-0 border-[var(--glass-border-subtle)] text-[var(--color-text-primary)] ${disabledItem ? "opacity-60" : "cursor-pointer"}`}
               >
                 <input
                   type="checkbox"
@@ -169,20 +163,20 @@ export function CapabilityPicker({
                 />
                 <div className="min-w-0">
                   <div className="text-xs font-medium truncate">{String(row.name || capId)}</div>
-                  <div className={`text-[11px] truncate ${isDark ? "text-slate-400" : "text-gray-600"}`}>{capId}</div>
+                  <div className="text-[11px] truncate text-[var(--color-text-tertiary)]">{capId}</div>
                   {String(row.description_short || "").trim() ? (
-                    <div className={`text-[11px] mt-0.5 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{String(row.description_short || "")}</div>
+                    <div className="text-[11px] mt-0.5 text-[var(--color-text-tertiary)]">{String(row.description_short || "")}</div>
                   ) : null}
                   <div className="flex flex-wrap gap-1 mt-1">
-                    {row.kind ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${badgeClass(isDark)}`}>{row.kind}</span> : null}
-                    {row.source_id ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${badgeClass(isDark)}`}>{row.source_id}</span> : null}
+                    {row.kind ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${BADGE_CLASS}`}>{row.kind}</span> : null}
+                    {row.source_id ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${BADGE_CLASS}`}>{row.source_id}</span> : null}
                     {row.recent_success?.success_count ? (
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${badgeClass(isDark)}`}>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${BADGE_CLASS}`}>
                         {t("capabilities.recentCount", { count: Number(row.recent_success?.success_count || 0) })}
                       </span>
                     ) : null}
                     {blocked ? (
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-rose-900/30 text-rose-300 border border-rose-800" : "bg-rose-50 text-rose-700 border border-rose-200"}`}>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-900/30 dark:text-rose-300 dark:border-rose-800">
                         {t("capabilities.blocked")}
                       </span>
                     ) : null}
@@ -194,8 +188,7 @@ export function CapabilityPicker({
         )}
       </div>
 
-      {hint ? <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{hint}</div> : null}
+      {hint ? <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">{hint}</div> : null}
     </div>
   );
 }
-

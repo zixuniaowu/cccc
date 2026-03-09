@@ -67,7 +67,7 @@ export const Section = ({
   description,
   children,
 }: {
-  isDark: boolean;
+  isDark?: boolean;
   icon: React.ElementType;
   title: string;
   description: string;
@@ -75,12 +75,12 @@ export const Section = ({
 }) => (
   <div className={cardClass(isDark)}>
     <div className="flex items-center gap-2 mb-1">
-      <div className={`p-1.5 rounded-md ${isDark ? "bg-slate-800 text-indigo-400" : "bg-indigo-50 text-indigo-600"}`}>
+      <div className="p-1.5 rounded-md bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
         <Icon className="w-4 h-4" />
       </div>
-      <h3 className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{title}</h3>
+      <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
     </div>
-    <p className={`text-xs ml-9 mb-4 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{description}</p>
+    <p className="text-xs ml-9 mb-4 text-[var(--color-text-muted)]">{description}</p>
     <div className="space-y-4 ml-1">{children}</div>
   </div>
 );
@@ -98,7 +98,7 @@ export const NumberInputRow = ({
   label: string;
   value: number;
   onChange: (val: number) => void;
-  isDark: boolean;
+  isDark?: boolean;
   min?: number;
   helperText?: React.ReactNode;
   formatValue?: boolean;
@@ -117,18 +117,14 @@ export const NumberInputRow = ({
       />
       {formatValue ? (
         <div
-          className={`
-            absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono
-            pointer-events-none transition-opacity duration-200
-            ${isDark ? "text-slate-600" : "text-gray-400"}
-          `}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono pointer-events-none transition-opacity duration-200 text-[var(--color-text-muted)]"
         >
           {formatDuration(value)}
         </div>
       ) : null}
     </div>
     {helperText && (
-      <div className={`mt-1.5 text-[11px] leading-snug ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+      <div className="mt-1.5 text-[11px] leading-snug text-[var(--color-text-muted)]">
         {helperText}
       </div>
     )}
@@ -142,21 +138,17 @@ export const Chip = ({
 }: {
   label: string;
   onRemove?: () => void;
-  isDark: boolean;
+  isDark?: boolean;
 }) => (
   <span
-    className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border ${
-      isDark ? "border-slate-700 bg-slate-900 text-slate-200" : "border-gray-200 bg-white text-gray-700"
-    }`}
+    className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[11px] border border-[var(--glass-border-subtle)] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"
   >
     <span className="font-mono">{label}</span>
     {onRemove ? (
       <button
         type="button"
         onClick={onRemove}
-        className={`ml-0.5 rounded-full w-4 h-4 flex items-center justify-center ${
-          isDark ? "hover:bg-slate-800 text-slate-300" : "hover:bg-gray-100 text-gray-500"
-        }`}
+        className="ml-0.5 rounded-full w-4 h-4 flex items-center justify-center hover:bg-[var(--glass-tab-bg-hover)] text-[var(--color-text-tertiary)]"
         aria-label={`Remove ${label}`}
       >
         ×

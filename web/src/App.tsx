@@ -446,24 +446,24 @@ export default function App() {
       <div className="pointer-events-none absolute inset-0 overflow-hidden hidden md:block">
         <div
           className={`absolute -top-32 -left-32 w-96 h-96 rounded-full liquid-blob ${isDark
-              ? "bg-gradient-to-br from-cyan-500/20 via-cyan-600/10 to-transparent"
-              : "bg-gradient-to-br from-cyan-400/25 via-cyan-500/15 to-transparent"
+              ? "bg-gradient-to-br from-cyan-500/10 via-cyan-600/5 to-transparent"
+              : "bg-gradient-to-br from-cyan-400/15 via-cyan-500/5 to-transparent"
             }`}
-          style={{ filter: "blur(60px)", willChange: "transform" }}
+          style={{ filter: "blur(80px)", willChange: "transform" }}
         />
         <div
           className={`absolute top-1/4 -right-24 w-80 h-80 rounded-full liquid-blob ${isDark
-              ? "bg-gradient-to-bl from-purple-500/15 via-indigo-600/10 to-transparent"
-              : "bg-gradient-to-bl from-purple-400/20 via-indigo-500/10 to-transparent"
+              ? "bg-gradient-to-bl from-purple-500/10 via-indigo-600/5 to-transparent"
+              : "bg-gradient-to-bl from-purple-400/10 via-indigo-500/5 to-transparent"
             }`}
-          style={{ filter: "blur(50px)", animationDelay: "-3s", willChange: "transform" }}
+          style={{ filter: "blur(70px)", animationDelay: "-3s", willChange: "transform" }}
         />
         <div
           className={`absolute -bottom-20 left-1/3 w-72 h-72 rounded-full liquid-blob ${isDark
-              ? "bg-gradient-to-tr from-blue-500/12 via-sky-600/8 to-transparent"
-              : "bg-gradient-to-tr from-blue-400/15 via-sky-500/10 to-transparent"
+              ? "bg-gradient-to-tr from-blue-500/10 via-sky-600/5 to-transparent"
+              : "bg-gradient-to-tr from-blue-400/10 via-sky-500/5 to-transparent"
             }`}
-          style={{ filter: "blur(45px)", animationDelay: "-5s", willChange: "transform" }}
+          style={{ filter: "blur(60px)", animationDelay: "-5s", willChange: "transform" }}
         />
       </div>
 
@@ -598,25 +598,24 @@ export default function App() {
               />
               </ErrorBoundary>
             </div>
-            {/* Panorama Tab */}
-            <div
-              className={`absolute inset-0 flex min-h-0 flex-col ${showPanorama && activeTab === "panorama" ? "" : "invisible pointer-events-none"}`}
-              aria-hidden={!showPanorama || activeTab !== "panorama"}
-            >
-              <ErrorBoundary>
-                <PanoramaTab
-                  agents={(groupContext?.agent_states || []).filter(
-                    (a) => actors.some((act) => act.id === a.id)
-                  )}
-                  actors={actors}
-                  tasks={groupContext?.coordination?.tasks || []}
-                  tasksSummary={groupContext?.tasks_summary}
-                  projectStatus={groupContext?.meta?.project_status}
-                  isDark={isDark}
-                  groupId={selectedGroupId}
-                />
-              </ErrorBoundary>
-            </div>
+            {/* Panorama Tab — conditionally mounted to avoid 3D overhead on group switch */}
+            {showPanorama && activeTab === "panorama" && (
+              <div className="absolute inset-0 flex min-h-0 flex-col">
+                <ErrorBoundary>
+                  <PanoramaTab
+                    agents={(groupContext?.agent_states || []).filter(
+                      (a) => actors.some((act) => act.id === a.id)
+                    )}
+                    actors={actors}
+                    tasks={groupContext?.coordination?.tasks || []}
+                    tasksSummary={groupContext?.tasks_summary}
+                    projectStatus={groupContext?.meta?.project_status}
+                    isDark={isDark}
+                    groupId={selectedGroupId}
+                  />
+                </ErrorBoundary>
+              </div>
+            )}
             <div
               className={`absolute inset-0 flex min-h-0 flex-col ${activeTab === "chat" || activeTab === "panorama" ? "invisible pointer-events-none" : ""}`}
               aria-hidden={activeTab === "chat" || activeTab === "panorama"}

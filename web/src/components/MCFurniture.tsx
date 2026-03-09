@@ -16,9 +16,9 @@ export function MCGround() {
 const BED_FRAME_GEO = new THREE.BoxGeometry(0.5, 0.12, 1.0);
 const BED_BLANKET_GEO = new THREE.BoxGeometry(0.46, 0.05, 0.7);
 const BED_PILLOW_GEO = new THREE.BoxGeometry(0.32, 0.07, 0.22);
-const BED_WOOD = new THREE.MeshStandardMaterial({ color: "#8B6B3E", flatShading: true });
-const BED_RED = new THREE.MeshStandardMaterial({ color: "#B02020", flatShading: true });
-const BED_WHITE = new THREE.MeshStandardMaterial({ color: "#E8E0D0", flatShading: true });
+const BED_WOOD = new THREE.MeshStandardMaterial({ color: "#9CA3AF", flatShading: true }); // Slate gray wood
+const BED_RED = new THREE.MeshStandardMaterial({ color: "#38BDF8", flatShading: true }); // Cyan sky blanket
+const BED_WHITE = new THREE.MeshStandardMaterial({ color: "#F8FAFC", flatShading: true }); // Pure white pillow
 
 interface MCBedProps {
   position: [number, number, number];

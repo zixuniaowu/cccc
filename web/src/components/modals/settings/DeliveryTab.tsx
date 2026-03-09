@@ -106,11 +106,9 @@ const ToggleRow = ({
           focus:outline-none focus:ring-2 focus:ring-offset-2
           ${checked
             ? "bg-emerald-500 focus:ring-emerald-500"
-            : isDark
-              ? "bg-slate-600 focus:ring-slate-500"
-              : "bg-gray-300 focus:ring-gray-400"
+            : "bg-gray-300 dark:bg-slate-600 focus:ring-gray-400 dark:focus:ring-slate-500"
           }
-          ${isDark ? "focus:ring-offset-slate-900" : "focus:ring-offset-white"}
+          focus:ring-offset-white dark:focus:ring-offset-slate-900
         `}
       >
         <span
@@ -122,7 +120,7 @@ const ToggleRow = ({
       </button>
     </label>
     {helperText && (
-      <div className={`mt-1.5 text-[11px] leading-snug ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+      <div className="mt-1.5 text-[11px] leading-snug text-[var(--color-text-muted)]">
         {helperText}
       </div>
     )}
@@ -158,17 +156,13 @@ const NumberInputRow = ({
         className={inputClass(isDark)}
       />
       <div
-        className={`
-          absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono
-          pointer-events-none transition-opacity duration-200
-          ${isDark ? "text-slate-600" : "text-gray-400"}
-        `}
+        className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-mono pointer-events-none transition-opacity duration-200 text-[var(--color-text-muted)]"
       >
         {formatDuration(value)}
       </div>
     </div>
     {helperText && (
-      <div className={`mt-1.5 text-[11px] leading-snug ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+      <div className="mt-1.5 text-[11px] leading-snug text-[var(--color-text-muted)]">
         {helperText}
       </div>
     )}
@@ -186,14 +180,14 @@ const DeliverySection = ({
   description: string;
   children: React.ReactNode;
 }) => (
-  <div className={cardClass(isDark)}>
+  <div className={cardClass()}>
     <div className="flex items-center gap-2 mb-1">
-      <div className={`p-1.5 rounded-md ${isDark ? "bg-slate-800 text-indigo-400" : "bg-indigo-50 text-indigo-600"}`}>
+      <div className="p-1.5 rounded-md bg-indigo-500/15 text-indigo-600 dark:text-indigo-400">
         <TruckIcon className="w-4 h-4" />
       </div>
-      <h3 className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{title}</h3>
+      <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</h3>
     </div>
-    <p className={`text-xs ml-9 mb-4 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{description}</p>
+    <p className="text-xs ml-9 mb-4 text-[var(--color-text-muted)]">{description}</p>
     <div className="space-y-4 ml-1">{children}</div>
   </div>
 );
@@ -210,8 +204,8 @@ export function DeliveryTab(props: DeliveryTabProps) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("delivery.title")}</h3>
-        <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("delivery.title")}</h3>
+        <p className="text-xs mt-1 text-[var(--color-text-muted)]">
           {t("delivery.description")}
         </p>
       </div>

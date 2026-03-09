@@ -301,11 +301,11 @@ function buildBoard(tasks: Task[], board: GroupContext["board"] | null | undefin
   };
 }
 
-function statusTone(status: string, isDark: boolean): string {
-  if (status === "active") return isDark ? "bg-emerald-500/15 text-emerald-200 border-emerald-500/30" : "bg-emerald-50 text-emerald-700 border-emerald-200";
-  if (status === "done") return isDark ? "bg-blue-500/15 text-blue-200 border-blue-500/30" : "bg-blue-50 text-blue-700 border-blue-200";
-  if (status === "archived") return isDark ? "bg-slate-700/60 text-slate-200 border-slate-600" : "bg-slate-100 text-slate-700 border-slate-200";
-  return isDark ? "bg-amber-500/15 text-amber-200 border-amber-500/30" : "bg-amber-50 text-amber-700 border-amber-200";
+function statusTone(status: string): string {
+  if (status === "active") return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30";
+  if (status === "done") return "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30";
+  if (status === "archived") return "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border-[var(--glass-border-subtle)]";
+  return "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30";
 }
 
 function waitingLabel(value: string): string {
@@ -614,25 +614,23 @@ export function ContextModal({
 
   const surfaceClass = classNames(
     "rounded-2xl border shadow-sm",
-    isDark ? "border-slate-800 bg-slate-900/80" : "border-gray-200 bg-white"
+    "glass-card"
   );
-  const mutedTextClass = isDark ? "text-slate-400" : "text-gray-500";
-  const subtleTextClass = isDark ? "text-slate-300" : "text-gray-700";
+  const mutedTextClass = "text-[var(--color-text-muted)]";
+  const subtleTextClass = "text-[var(--color-text-secondary)]";
   const inputClass = classNames(
     "w-full rounded-lg border px-3 py-2 text-sm outline-none transition-colors",
-    isDark
-      ? "border-slate-700 bg-slate-950 text-slate-100 placeholder:text-slate-500 focus:border-blue-500"
-      : "border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 focus:border-blue-500"
+    "glass-input text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]"
   );
   const textareaClass = classNames(inputClass, "min-h-[96px] resize-y");
   const buttonSecondaryClass = classNames(
     "rounded-lg px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
-    isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+    "glass-btn text-[var(--color-text-secondary)]"
   );
   const buttonPrimaryClass = "rounded-lg bg-blue-600 px-3 py-2 text-sm text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50";
   const chipBaseClass = classNames(
     "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-    isDark ? "border-slate-700 bg-slate-900 text-slate-200 hover:border-slate-600" : "border-gray-200 bg-white text-gray-700 hover:border-gray-300"
+    "glass-card border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
   );
 
   const sensors = useSensors(
@@ -693,19 +691,19 @@ export function ContextModal({
     return (
       <div className={classNames(
         "w-[320px] rounded-2xl border p-3 shadow-2xl",
-        isDark ? "border-slate-700 bg-slate-900/95" : "border-gray-200 bg-white"
+        "glass-panel"
       )}>
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className={classNames("truncate text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{taskTitle(task)}</div>
+            <div className={classNames("truncate text-sm font-semibold", "text-[var(--color-text-primary)]")}>{taskTitle(task)}</div>
             <div className={classNames("mt-1 text-xs", mutedTextClass)}>{task.id}</div>
           </div>
-          <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status, isDark))}>{status}</span>
+          <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status))}>{status}</span>
         </div>
         {taskOutcome(task) ? <div className={classNames("mt-2 line-clamp-3 text-xs", subtleTextClass)}>{taskOutcome(task)}</div> : null}
         <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
-          {task.assignee ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{task.assignee}</span> : null}
-          {blocked ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blocked", "Blocked")}</span> : null}
+          {task.assignee ? <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.assignee}</span> : null}
+          {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
         </div>
       </div>
     );
@@ -735,29 +733,25 @@ export function ContextModal({
           className={classNames(
             "w-full cursor-pointer rounded-2xl border p-3 text-left transition-all",
             blocked
-              ? isDark ? "border-rose-500/30 bg-rose-500/5" : "border-rose-200 bg-rose-50/40"
+              ? "border-rose-500/30 bg-rose-500/5"
               : selectedTaskId === task.id
-                ? isDark
-                  ? "border-blue-500 bg-blue-500/10 shadow-[0_0_0_1px_rgba(59,130,246,0.4)]"
-                  : "border-blue-400 bg-blue-50 shadow-[0_0_0_1px_rgba(96,165,250,0.35)]"
-                : isDark
-                  ? "border-slate-800 bg-slate-950/50 hover:border-slate-700 hover:bg-slate-900"
-                  : "border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50"
+                ? "border-blue-500 bg-blue-500/10 shadow-[0_0_0_1px_rgba(59,130,246,0.3)]"
+                : "glass-panel hover:border-[var(--glass-border-subtle)]"
           )}
         >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0 flex-1 text-left">
-              <div className={classNames("truncate text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{taskTitle(task)}</div>
+              <div className={classNames("truncate text-sm font-semibold", "text-[var(--color-text-primary)]")}>{taskTitle(task)}</div>
               <div className={classNames("mt-1 text-xs", mutedTextClass)}>{task.id}</div>
             </div>
             <div className="flex items-center gap-2">
-              <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status, isDark))}>{status}</span>
+              <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(status))}>{status}</span>
               <button
                 type="button"
                 {...listeners}
                 className={classNames(
                   "rounded-lg px-2 py-1 text-[11px] md:opacity-0 md:group-hover/task:opacity-100",
-                  isDark ? "bg-slate-800 text-slate-300 hover:bg-slate-700" : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                  "glass-btn text-[var(--color-text-secondary)]"
                 )}
                 onClick={(event) => event.stopPropagation()}
                 aria-label={tr("context.dragTask", "Drag task")}
@@ -774,14 +768,14 @@ export function ContextModal({
 
           <div className="mt-3 flex flex-wrap gap-1.5 text-[11px]">
             {task.assignee ? (
-              <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{task.assignee}</span>
+              <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.assignee}</span>
             ) : (
-              <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-slate-800 text-slate-400" : "bg-gray-100 text-gray-500")}>{tr("context.unassigned", "Unassigned")}</span>
+              <span className={classNames("rounded-full px-2 py-0.5", "bg-[var(--glass-tab-bg)] text-[var(--color-text-muted)]")}>{tr("context.unassigned", "Unassigned")}</span>
             )}
-            {task.priority ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{task.priority}</span> : null}
-            {blocked ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blocked", "Blocked")}</span> : null}
-            {waiting && waiting !== "none" ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-violet-500/15 text-violet-200" : "bg-violet-50 text-violet-700")}>{waitingLabel(waiting)}</span> : null}
-            {handoff ? <span className={classNames("rounded-full px-2 py-0.5", isDark ? "bg-cyan-500/15 text-cyan-200" : "bg-cyan-50 text-cyan-700")}>{tr("context.handoffTo", "Handoff →")} {handoff}</span> : null}
+            {task.priority ? <span className={classNames("rounded-full px-2 py-0.5", "glass-panel text-[var(--color-text-secondary)]")}>{task.priority}</span> : null}
+            {blocked ? <span className={classNames("rounded-full px-2 py-0.5", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")}</span> : null}
+            {waiting && waiting !== "none" ? <span className={classNames("rounded-full px-2 py-0.5", "bg-violet-500/15 text-violet-600 dark:text-violet-400")}>{waitingLabel(waiting)}</span> : null}
+            {handoff ? <span className={classNames("rounded-full px-2 py-0.5", "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400")}>{tr("context.handoffTo", "Handoff →")} {handoff}</span> : null}
           </div>
 
           <div className="mt-3 flex items-center gap-2 border-t pt-3" onClick={(event) => event.stopPropagation()}>
@@ -799,20 +793,20 @@ export function ContextModal({
       <section ref={setNodeRef} className={classNames(
         "rounded-2xl border p-3 transition-all",
         isOver
-          ? isDark ? "border-blue-500 bg-blue-500/5 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]" : "border-blue-300 bg-blue-50/70 shadow-[0_0_0_1px_rgba(96,165,250,0.2)]"
-          : isDark ? "border-slate-800 bg-slate-950/30" : "border-gray-200 bg-gray-50/70"
+          ? "border-blue-500 bg-blue-500/5 shadow-[0_0_0_1px_rgba(59,130,246,0.25)]"
+          : "glass-panel"
       )}>
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
-            <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{label}</div>
+            <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{label}</div>
             <div className={classNames("mt-1 text-xs", mutedTextClass)}>{items.length} {tr("context.items", "items")}</div>
           </div>
-          <span className={classNames("rounded-full px-2 py-0.5 text-[11px]", isDark ? "bg-slate-800 text-slate-300" : "bg-white text-gray-600")}>{items.length}</span>
+          <span className={classNames("rounded-full px-2 py-0.5 text-[11px]", "glass-panel text-[var(--color-text-tertiary)]")}>{items.length}</span>
         </div>
         <div className="mt-3">
           <div className="space-y-2">
             {items.length > 0 ? items.map((task) => <TaskCard key={task.id} task={task} />) : (
-              <div className={classNames("rounded-lg border border-dashed px-3 py-5 text-xs", isDark ? "border-slate-800 text-slate-500" : "border-gray-200 text-gray-400")}>
+              <div className={classNames("rounded-lg border border-dashed px-3 py-5 text-xs", "border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]")}>
                 {tr(`context.empty.${columnKey}`, "No tasks here")}
               </div>
             )}
@@ -1072,7 +1066,7 @@ export function ContextModal({
     if (!taskEditorVisible || !taskDraft) {
       return (
         <section className={classNames(surfaceClass, "hidden xl:flex xl:min-h-[520px] xl:flex-col xl:justify-center xl:p-6") }>
-          <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.taskEditorEmptyTitle", "Select a task")}</div>
+          <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.taskEditorEmptyTitle", "Select a task")}</div>
           <div className={classNames("mt-2 text-sm", subtleTextClass)}>{tr("context.taskEditorEmptyHint", "Pick a card to edit, or create a new task from the button above.")}</div>
         </section>
       );
@@ -1083,11 +1077,11 @@ export function ContextModal({
       <section className={classNames(surfaceClass, "p-4 xl:sticky xl:top-0 xl:max-h-[calc(94vh-8rem)] xl:overflow-y-auto")}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{isCreate ? tr("context.newTask", "New task") : tr("context.taskDetails", "Task editor")}</div>
+            <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{isCreate ? tr("context.newTask", "New task") : tr("context.taskDetails", "Task editor")}</div>
             <div className={classNames("mt-1 text-xs", mutedTextClass)}>{isCreate ? tr("context.newTaskHint", "Create a new shared task. Keep it lean; fill advanced fields only when they help coordination.") : (selectedTask?.id || "")}</div>
           </div>
           <div className="flex items-center gap-2">
-            {hasTaskUnsaved ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", isDark ? "bg-amber-500/15 text-amber-200" : "bg-amber-50 text-amber-700")}>{tr("context.unsaved", "Unsaved")}</span> : null}
+            {hasTaskUnsaved ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.unsaved", "Unsaved")}</span> : null}
             <button type="button" onClick={handleResetTask} disabled={syncBusy} className={buttonSecondaryClass}>{isCreate ? tr("context.clear", "Clear") : tr("context.reset", "Reset")}</button>
             <button type="button" onClick={closeTaskEditor} className={buttonSecondaryClass}>{tr("context.close", "Close")}</button>
           </div>
@@ -1098,7 +1092,7 @@ export function ContextModal({
             <div className={classNames("text-xs", mutedTextClass)}>
               {isCreate ? tr("context.editorInlineHint", "Editing stays inside the Tasks workspace so you can keep the board in view.") : (selectedTask?.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(selectedTask.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet"))}
             </div>
-            <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(taskDraft.status, isDark))}>{taskDraft.status}</span>
+            <span className={classNames("rounded-full border px-2 py-0.5 text-[11px] font-medium", statusTone(taskDraft.status))}>{taskDraft.status}</span>
           </div>
 
           <label className="block text-sm">
@@ -1132,8 +1126,8 @@ export function ContextModal({
             <input value={taskDraft.priority} onChange={(event) => setTaskDraft((prev) => prev ? { ...prev, priority: event.target.value } : prev)} className={inputClass} />
           </label>
 
-          <details className={classNames("rounded-xl border px-3 py-3", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50") }>
-            <summary className={classNames("cursor-pointer text-sm font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.advancedTaskFields", "Advanced details")}</summary>
+          <details className={classNames("rounded-xl border px-3 py-3", "glass-card") }>
+            <summary className={classNames("cursor-pointer text-sm font-medium", "text-[var(--color-text-primary)]")}>{tr("context.advancedTaskFields", "Advanced details")}</summary>
             <div className="mt-3 space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block text-sm">
@@ -1172,11 +1166,11 @@ export function ContextModal({
           </details>
 
           {isCreate ? (
-            <div className={classNames("rounded-xl border px-3 py-3 text-xs", isDark ? "border-slate-800 bg-slate-950/40 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-500")}>
+            <div className={classNames("rounded-xl border px-3 py-3 text-xs", "glass-card text-[var(--color-text-muted)]")}>
               {tr("context.newTaskHint", "Create a new shared task. Keep it lean; fill advanced fields only when they help coordination.")}
             </div>
           ) : selectedTask ? (
-            <div className={classNames("grid gap-2 rounded-xl border px-3 py-3 text-xs sm:grid-cols-2", isDark ? "border-slate-800 bg-slate-950/40 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-500")}>
+            <div className={classNames("grid gap-2 rounded-xl border px-3 py-3 text-xs sm:grid-cols-2", "glass-card text-[var(--color-text-muted)]")}>
               <div>{tr("context.createdAt", "Created")}: {selectedTask.created_at ? formatFullTime(selectedTask.created_at) : "-"}</div>
               <div>{tr("context.updatedAt", "Updated")}: {selectedTask.updated_at ? formatFullTime(selectedTask.updated_at) : "-"}</div>
               <div>{tr("context.archivedFrom", "Archived from")}: {selectedTask.archived_from || "-"}</div>
@@ -1196,60 +1190,56 @@ export function ContextModal({
     const tabButtonClass = (active: boolean) => classNames(
       "rounded-lg px-3 py-2 text-sm font-medium transition-colors",
       active
-        ? isDark
-          ? "bg-blue-500/15 text-blue-200"
-          : "bg-white text-blue-700 shadow-sm"
-        : isDark
-          ? "text-slate-300 hover:bg-slate-800"
-          : "text-gray-600 hover:bg-white/80"
+        ? "bg-[var(--glass-accent-bg)] text-[var(--color-accent-primary)]"
+        : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
     );
-    const notesCardClass = classNames("rounded-xl border p-3 text-sm", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-50");
+    const notesCardClass = classNames("rounded-xl border p-3 text-sm", "glass-card");
 
     return (
       <section className={classNames(surfaceClass, "p-4")}>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
             <div className="min-w-0 flex-1">
-              <div className={classNames("text-lg font-semibold", isDark ? "text-slate-50" : "text-gray-900")}>{brief?.objective || tr("context.noObjective", "No objective set")}</div>
+              <div className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}>{brief?.objective || tr("context.noObjective", "No objective set")}</div>
               <div className={classNames("mt-1 text-sm", subtleTextClass)}>{brief?.current_focus || tr("context.noCurrentFocus", "No current focus set")}</div>
               {(brief?.project_brief_stale || (Array.isArray(brief?.constraints) && brief.constraints.length > 0)) ? (
                 <div className="mt-3 flex flex-wrap gap-1.5">
-                  {brief?.project_brief_stale ? <button type="button" onClick={() => { openSteeringTab("summary"); setEditingBrief(true); }} className={classNames("rounded-full px-2 py-1 text-[11px] transition-colors", isDark ? "bg-amber-500/15 text-amber-200 hover:bg-amber-500/25" : "bg-amber-50 text-amber-700 hover:bg-amber-100")}>{tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}</button> : null}
-                  {(brief?.constraints || []).slice(0, 6).map((constraint, index) => <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700")}>{constraint}</span>)}
+                  {brief?.project_brief_stale ? <button type="button" onClick={() => { openSteeringTab("summary"); setEditingBrief(true); }} className={classNames("rounded-full px-2 py-1 text-[11px] transition-colors", "bg-amber-500/15 text-amber-600 dark:text-amber-400 hover:bg-amber-500/25")}>{tr("context.projectBriefNeedsRefresh", "Summary needs refresh")}</button> : null}
+                  {(brief?.constraints || []).slice(0, 6).map((constraint, index) => <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", "glass-panel text-[var(--color-text-secondary)]")}>{constraint}</span>)}
                 </div>
               ) : null}
             </div>
             <div className="flex flex-wrap items-center gap-2 xl:max-w-[18rem] xl:justify-end">
-              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-blue-500/15 text-blue-200" : "bg-blue-50 text-blue-700")}>{tr("context.active", "Active")} · {Number(tasksSummary.active || 0)}</span>
-              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blocked", "Blocked")} · {attentionCounts.blocked}</span>
-              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-violet-500/15 text-violet-200" : "bg-violet-50 text-violet-700")}>{tr("context.waitingUser", "Waiting user")} · {attentionCounts.waitingUser}</span>
-              <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700")}>{tr("context.unassigned", "Unassigned")} · {unassignedCount}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", "bg-blue-500/15 text-blue-600 dark:text-blue-400")}>{tr("context.active", "Active")} · {Number(tasksSummary.active || 0)}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blocked", "Blocked")} · {attentionCounts.blocked}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", "bg-violet-500/15 text-violet-600 dark:text-violet-400")}>{tr("context.waitingUser", "Waiting user")} · {attentionCounts.waitingUser}</span>
+              <span className={classNames("rounded-full px-2.5 py-1 text-xs", "glass-panel text-[var(--color-text-secondary)]")}>{tr("context.unassigned", "Unassigned")} · {unassignedCount}</span>
             </div>
           </div>
 
-          <div className={classNames("flex flex-col gap-3 border-t pt-4", isDark ? "border-slate-800" : "border-gray-200")}>
+          <div className={classNames("flex flex-col gap-3 border-t pt-4", "border-[var(--glass-border-subtle)]")}>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
-                <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.steering", "Project steering")}</div>
+                <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.steering", "Project steering")}</div>
                 <div className={classNames("mt-1 text-xs", mutedTextClass)}>{tr("context.projectSteeringHint", "Steer the project here. Keep PROJECT.md as the full repository reference, and keep the working summary hot and short.")}</div>
               </div>
             </div>
 
-            <div className={classNames("inline-flex w-fit rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
+            <div className={classNames("inline-flex w-fit rounded-2xl border p-1", "glass-panel border-[var(--glass-border-subtle)]")}>
               <button type="button" onClick={() => openSteeringTab("summary")} className={tabButtonClass(steeringTab === "summary")}>{tr("context.brief", "Summary")}</button>
               <button type="button" onClick={() => openSteeringTab("project")} className={tabButtonClass(steeringTab === "project")}>{t("context.projectMd", { defaultValue: "PROJECT.md" })}</button>
               <button type="button" onClick={() => openSteeringTab("log")} className={tabButtonClass(steeringTab === "log")}>{tr("context.activityLog", "Activity")}</button>
             </div>
 
             {steeringTab === "summary" ? (
-              <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+              <section className={classNames("rounded-xl border p-4", "glass-card")}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.brief", "Summary")}</div>
+                    <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.brief", "Summary")}</div>
                     <div className={classNames("mt-1 text-xs", mutedTextClass)}>{brief?.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(brief.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet")}</div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {editingBrief ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", isDark ? "bg-amber-500/15 text-amber-200" : "bg-amber-50 text-amber-700")}>{tr("context.unsaved", "Unsaved")}</span> : null}
+                    {editingBrief ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px] font-medium", "bg-amber-500/15 text-amber-600 dark:text-amber-400")}>{tr("context.unsaved", "Unsaved")}</span> : null}
                     {editingBrief ? (
                       <>
                         <button type="button" onClick={() => { setEditingBrief(false); setBriefDraft(briefToDraft(brief)); }} disabled={syncBusy} className={buttonSecondaryClass}>{tr("context.cancel", "Cancel")}</button>
@@ -1279,7 +1269,7 @@ export function ContextModal({
                       <span className={classNames("mb-1 block text-xs font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.projectBrief", "Working summary")}</span>
                       <textarea value={briefDraft.projectBrief} onChange={(event) => setBriefDraft((prev) => ({ ...prev, projectBrief: event.target.value }))} className={classNames(textareaClass, "min-h-[180px]")} />
                     </label>
-                    <label className={classNames("flex items-center gap-2 rounded-lg border px-3 py-2 text-sm lg:col-span-2", isDark ? "border-slate-800 bg-slate-900 text-slate-200" : "border-gray-200 bg-white text-gray-800")}>
+                    <label className={classNames("flex items-center gap-2 rounded-lg border px-3 py-2 text-sm lg:col-span-2", "glass-card text-[var(--color-text-primary)]")}>
                       <input type="checkbox" checked={briefDraft.projectBriefStale} onChange={(event) => setBriefDraft((prev) => ({ ...prev, projectBriefStale: event.target.checked }))} />
                       {tr("context.projectBriefStale", "Mark working summary as stale")}
                     </label>
@@ -1294,7 +1284,7 @@ export function ContextModal({
                       <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.constraints", "Constraints")}</div>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {Array.isArray(brief?.constraints) && brief.constraints.length > 0 ? brief.constraints.map((constraint, index) => (
-                          <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", isDark ? "bg-slate-800 text-slate-200" : "bg-white text-gray-700")}>{constraint}</span>
+                          <span key={`${constraint}-${index}`} className={classNames("rounded-full px-2 py-1 text-[11px]", "glass-panel text-[var(--color-text-secondary)]")}>{constraint}</span>
                         )) : <span className={mutedTextClass}>{tr("context.noConstraints", "No constraints set")}</span>}
                       </div>
                     </div>
@@ -1304,10 +1294,10 @@ export function ContextModal({
             ) : null}
 
             {steeringTab === "project" ? (
-              <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+              <section className={classNames("rounded-xl border p-4", "glass-card")}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{t("context.projectMd", { defaultValue: "PROJECT.md" })}</div>
+                    <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{t("context.projectMd", { defaultValue: "PROJECT.md" })}</div>
                     <div className={classNames("mt-1 text-xs", mutedTextClass)}>{projectBusy ? t("common:loading", { defaultValue: "Loading…" }) : projectPathLabel}</div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -1315,14 +1305,14 @@ export function ContextModal({
                     <button type="button" onClick={() => void handleEditProject()} className={buttonPrimaryClass}>{editingProject ? tr("context.editing", "Editing") : (projectMd?.found ? t("context.editButton", { defaultValue: "Edit" }) : t("context.createButton", { defaultValue: "Create" }))}</button>
                   </div>
                 </div>
-                {projectError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{projectError}</div> : null}
-                {notifyError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{notifyError}</div> : null}
-                {projectNotice ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", isDark ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-200" : "border-emerald-200 bg-emerald-50 text-emerald-700")}>{projectNotice}</div> : null}
+                {projectError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{projectError}</div> : null}
+                {notifyError ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{notifyError}</div> : null}
+                {projectNotice ? <div className={classNames("mt-3 rounded-lg border px-3 py-2 text-sm", "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400")}>{projectNotice}</div> : null}
                 <div className="mt-4">
                   {editingProject ? (
                     <>
                       <textarea value={projectText} onChange={(event) => setProjectText(event.target.value)} className={classNames(textareaClass, "min-h-[320px]")} />
-                      <label className={classNames("mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm", isDark ? "border-slate-800 bg-slate-900 text-slate-200" : "border-gray-200 bg-white text-gray-800")}>
+                      <label className={classNames("mt-3 flex items-center gap-2 rounded-lg border px-3 py-2 text-sm", "glass-card text-[var(--color-text-primary)]")}>
                         <input type="checkbox" checked={notifyAgents} onChange={(event) => setNotifyAgents(event.target.checked)} />
                         {tr("context.notifyAgents", "Notify the team in chat (@all) after save")}
                       </label>
@@ -1331,11 +1321,11 @@ export function ContextModal({
                       </div>
                     </>
                   ) : projectMd?.found && projectMd.content ? (
-                    <div className={classNames("max-h-[36rem] overflow-y-auto rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-900/70" : "border-gray-200 bg-white")}>
+                    <div className={classNames("max-h-[36rem] overflow-y-auto rounded-xl border p-3", "glass-card")}>
                       <MarkdownRenderer content={String(projectMd.content)} isDark={isDark} className={classNames("text-sm", subtleTextClass)} />
                     </div>
                   ) : (
-                    <div className={classNames("rounded-xl border border-dashed px-3 py-4 text-sm", isDark ? "border-slate-800 text-slate-500" : "border-gray-200 text-gray-400")}>{t("context.noProjectMd", { defaultValue: "No PROJECT.md found" })}</div>
+                    <div className={classNames("rounded-xl border border-dashed px-3 py-4 text-sm", "border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]")}>{t("context.noProjectMd", { defaultValue: "No PROJECT.md found" })}</div>
                   )}
                 </div>
               </section>
@@ -1343,16 +1333,16 @@ export function ContextModal({
 
             {steeringTab === "log" ? (
               <div className="space-y-3">
-                {activityError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{activityError}</div> : null}
+                {activityError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{activityError}</div> : null}
                 <div className="grid gap-3 xl:grid-cols-2">
-                  <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+                  <section className={classNames("rounded-xl border p-4", "glass-card")}>
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.recentDecisions", "Recent decisions")}</div>
+                        <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.recentDecisions", "Recent decisions")}</div>
                         <div className={classNames("mt-1 text-xs", mutedTextClass)}>{tr("context.activityWriteHint", "Capture durable decisions and handoffs here when chat alone is too transient.")}</div>
                       </div>
                     </div>
-                    <div className={classNames("mt-3 rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-950/60" : "border-gray-200 bg-white")}>
+                    <div className={classNames("mt-3 rounded-xl border p-3", "glass-card")}>
                       <textarea value={decisionDraft.summary} onChange={(event) => setDecisionDraft((prev) => ({ ...prev, summary: event.target.value }))} className={classNames(textareaClass, "min-h-[96px]")} placeholder={tr("context.decisionPlaceholder", "Record a durable project decision...")} />
                       <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                         <select value={decisionDraft.taskId} onChange={(event) => setDecisionDraft((prev) => ({ ...prev, taskId: event.target.value }))} className={inputClass}>
@@ -1365,15 +1355,15 @@ export function ContextModal({
                     <div className="mt-3 space-y-2">
                       {recentDecisions.length > 0 ? recentDecisions.map((note, index) => (
                         <div key={`${note.summary}-${index}`} className={notesCardClass}>
-                          <div className={classNames("font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{note.summary}</div>
+                          <div className={classNames("font-medium", "text-[var(--color-text-primary)]")}>{note.summary}</div>
                           <div className={classNames("mt-1 text-xs", mutedTextClass)}>{[note.by || "", note.task_id || "", noteTimestamp(note)].filter(Boolean).join(" · ") || tr("context.noMetadata", "No metadata")}</div>
                         </div>
                       )) : <div className={classNames("text-sm", mutedTextClass)}>{tr("context.noRecentDecisions", "No recent decisions")}</div>}
                     </div>
                   </section>
-                  <section className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
-                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.recentHandoffs", "Recent handoffs")}</div>
-                    <div className={classNames("mt-3 rounded-xl border p-3", isDark ? "border-slate-800 bg-slate-950/60" : "border-gray-200 bg-white")}>
+                  <section className={classNames("rounded-xl border p-4", "glass-card")}>
+                    <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.recentHandoffs", "Recent handoffs")}</div>
+                    <div className={classNames("mt-3 rounded-xl border p-3", "glass-card")}>
                       <textarea value={handoffDraft.summary} onChange={(event) => setHandoffDraft((prev) => ({ ...prev, summary: event.target.value }))} className={classNames(textareaClass, "min-h-[96px]")} placeholder={tr("context.handoffPlaceholder", "Record a durable handoff or next-owner note...")} />
                       <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
                         <select value={handoffDraft.taskId} onChange={(event) => setHandoffDraft((prev) => ({ ...prev, taskId: event.target.value }))} className={inputClass}>
@@ -1386,7 +1376,7 @@ export function ContextModal({
                     <div className="mt-3 space-y-2">
                       {recentHandoffs.length > 0 ? recentHandoffs.map((note, index) => (
                         <div key={`${note.summary}-${index}`} className={notesCardClass}>
-                          <div className={classNames("font-medium", isDark ? "text-slate-100" : "text-gray-900")}>{note.summary}</div>
+                          <div className={classNames("font-medium", "text-[var(--color-text-primary)]")}>{note.summary}</div>
                           <div className={classNames("mt-1 text-xs", mutedTextClass)}>{[note.by || "", note.task_id || "", noteTimestamp(note)].filter(Boolean).join(" · ") || tr("context.noMetadata", "No metadata")}</div>
                         </div>
                       )) : <div className={classNames("text-sm", mutedTextClass)}>{tr("context.noRecentHandoffs", "No recent handoffs")}</div>}
@@ -1408,13 +1398,13 @@ export function ContextModal({
       <section className={classNames(surfaceClass, "p-4")}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <div className={classNames("text-lg font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.agents", "Agents")}</div>
+            <div className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.agents", "Agents")}</div>
             <div className={classNames("mt-1 text-sm", subtleTextClass)}>{tr("context.agentsHint", "Use this view to recover each agent’s current execution state, not to steer the whole project.")}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700")}>{tr("context.totalAgents", "{{count}} agents", { count: agents.length })}</span>
-            <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-blue-500/15 text-blue-200" : "bg-blue-50 text-blue-700")}>{tr("context.activeTasksCount", "{{count}} with active task", { count: agentsWithActiveTask })}</span>
-            {agentsWithBlockers > 0 ? <span className={classNames("rounded-full px-2.5 py-1 text-xs", isDark ? "bg-rose-500/15 text-rose-200" : "bg-rose-50 text-rose-700")}>{tr("context.blockersCount", "{{count}} blockers", { count: agentsWithBlockers })}</span> : null}
+            <span className={classNames("rounded-full px-2.5 py-1 text-xs", "glass-panel text-[var(--color-text-secondary)]")}>{tr("context.totalAgents", "{{count}} agents", { count: agents.length })}</span>
+            <span className={classNames("rounded-full px-2.5 py-1 text-xs", "bg-blue-500/15 text-blue-600 dark:text-blue-400")}>{tr("context.activeTasksCount", "{{count}} with active task", { count: agentsWithActiveTask })}</span>
+            {agentsWithBlockers > 0 ? <span className={classNames("rounded-full px-2.5 py-1 text-xs", "bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{tr("context.blockersCount", "{{count}} blockers", { count: agentsWithBlockers })}</span> : null}
           </div>
         </div>
         <div className="mt-4 grid gap-3 xl:grid-cols-2">
@@ -1422,38 +1412,38 @@ export function ContextModal({
             const hot = agentHot(agent);
             const warm = agentWarm(agent);
             return (
-              <div key={agent.id} className={classNames("rounded-xl border p-4", isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50")}>
+              <div key={agent.id} className={classNames("rounded-xl border p-4", "glass-card")}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className={classNames("text-sm font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{agent.id}</div>
+                    <div className={classNames("text-sm font-semibold", "text-[var(--color-text-primary)]")}>{agent.id}</div>
                     <div className={classNames("mt-1 text-xs", mutedTextClass)}>{agent.updated_at ? `${tr("context.updated", "Updated {{time}}", { time: formatTime(agent.updated_at) })}` : tr("context.notUpdatedYet", "Not updated yet")}</div>
                   </div>
-                  {hot.activeTaskId ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px]", isDark ? "bg-blue-500/15 text-blue-200" : "bg-blue-50 text-blue-700")}>{hot.activeTaskId}</span> : null}
+                  {hot.activeTaskId ? <span className={classNames("rounded-full px-2 py-0.5 text-[11px]", "bg-blue-500/15 text-blue-600 dark:text-blue-400")}>{hot.activeTaskId}</span> : null}
                 </div>
 
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div className={classNames("rounded-lg border p-3", isDark ? "border-slate-800 bg-slate-900/60" : "border-gray-200 bg-white")}>
+                  <div className={classNames("rounded-lg border p-3", "glass-card")}>
                     <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.focus", "Focus")}</div>
                     <div className={classNames("mt-1 text-sm line-clamp-3", subtleTextClass)}>{hot.focus || tr("context.none", "None")}</div>
                   </div>
-                  <div className={classNames("rounded-lg border p-3", isDark ? "border-slate-800 bg-slate-900/60" : "border-gray-200 bg-white")}>
+                  <div className={classNames("rounded-lg border p-3", "glass-card")}>
                     <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.nextAction", "Next action")}</div>
                     <div className={classNames("mt-1 text-sm line-clamp-3", subtleTextClass)}>{hot.nextAction || tr("context.none", "None")}</div>
                   </div>
-                  <div className={classNames("rounded-lg border p-3 sm:col-span-2", isDark ? "border-slate-800 bg-slate-900/60" : "border-gray-200 bg-white")}>
+                  <div className={classNames("rounded-lg border p-3 sm:col-span-2", "glass-card")}>
                     <div className={classNames("text-[11px] font-medium uppercase tracking-wide", mutedTextClass)}>{tr("context.activeTask", "Active task")}</div>
                     <div className={classNames("mt-1 text-sm", subtleTextClass)}>{hot.activeTaskId || tr("context.none", "None")}</div>
                   </div>
                   {hot.blockers.length > 0 ? (
-                    <div className={classNames("rounded-lg border px-3 py-3 text-sm sm:col-span-2", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>
+                    <div className={classNames("rounded-lg border px-3 py-3 text-sm sm:col-span-2", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>
                       <span className="font-medium">{tr("context.blockers", "Blockers")}: </span>{hot.blockers.join(" · ")}
                     </div>
                   ) : null}
                 </div>
 
                 {hasWarmState(agent) ? (
-                  <details className={classNames("mt-3 rounded-lg border px-3 py-2", isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white")} open={false}>
-                    <summary className={classNames("cursor-pointer text-xs font-medium", isDark ? "text-slate-200" : "text-gray-700")}>{tr("context.warmState", "Warm state")}</summary>
+                  <details className={classNames("mt-3 rounded-lg border px-3 py-2", "glass-card")} open={false}>
+                    <summary className={classNames("cursor-pointer text-xs font-medium", "text-[var(--color-text-secondary)]")}>{tr("context.warmState", "Warm state")}</summary>
                     <div className="mt-2 space-y-2 text-xs">
                       {warm.whatChanged ? <div className={subtleTextClass}><span className={mutedTextClass}>{tr("context.whatChanged", "What changed")}: </span>{warm.whatChanged}</div> : null}
                       {warm.openLoops.length > 0 ? <div className={subtleTextClass}><span className={mutedTextClass}>{tr("context.openLoops", "Open loops")}: </span>{warm.openLoops.join(" · ")}</div> : null}
@@ -1467,7 +1457,7 @@ export function ContextModal({
                 ) : null}
               </div>
             );
-          }) : <div className={classNames("rounded-xl border border-dashed px-3 py-4 text-sm", isDark ? "border-slate-800 text-slate-500" : "border-gray-200 text-gray-400")}>{tr("context.noAgents", "No agent state")}</div>}
+          }) : <div className={classNames("rounded-xl border border-dashed px-3 py-4 text-sm", "border-[var(--glass-border-subtle)] text-[var(--color-text-muted)]")}>{tr("context.noAgents", "No agent state")}</div>}
         </div>
       </section>
     );
@@ -1478,12 +1468,8 @@ export function ContextModal({
   const viewButtonClass = (active: boolean) => classNames(
     "rounded-xl px-3 py-2 text-sm font-medium transition-colors",
     active
-      ? isDark
-        ? "bg-blue-500/15 text-blue-200"
-        : "bg-white text-blue-700 shadow-sm"
-      : isDark
-        ? "text-slate-300 hover:bg-slate-800"
-        : "text-gray-600 hover:bg-white/80"
+      ? "bg-[var(--glass-accent-bg)] text-[var(--color-accent-primary)]"
+      : "text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
   );
 
   const renderCoordinationView = () => {
@@ -1495,7 +1481,7 @@ export function ContextModal({
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
               <div>
-                <div className={classNames("text-lg font-semibold", isDark ? "text-slate-100" : "text-gray-900")}>{tr("context.tasks", "Tasks")}</div>
+                <div className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}>{tr("context.tasks", "Tasks")}</div>
                 <div className={classNames("mt-1 text-sm", subtleTextClass)}>{tr("context.taskBoardHint", "Plan shared work here. Open a card only when you need blockers, handoffs, notes, or checklist detail.")}</div>
               </div>
               <div className="flex items-center gap-2">
@@ -1503,7 +1489,7 @@ export function ContextModal({
               </div>
             </div>
 
-            <div className={classNames("flex flex-col gap-3 border-t pt-4", isDark ? "border-slate-800" : "border-gray-200")}>
+            <div className={classNames("flex flex-col gap-3 border-t pt-4", "border-[var(--glass-border-subtle)]")}>
               <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                 <div className="grid flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
                   <input
@@ -1533,7 +1519,7 @@ export function ContextModal({
                     key={String(value)}
                     type="button"
                     onClick={() => setTaskFilter(value as "all" | "blocked" | "waiting_user" | "handoff" | "unassigned")}
-                    className={classNames(chipBaseClass, taskFilter === value ? (isDark ? "border-blue-500 text-blue-200" : "border-blue-300 text-blue-700") : "")}
+                    className={classNames(chipBaseClass, taskFilter === value ? "border-[var(--glass-accent-border)] text-[var(--color-accent-primary)]" : "")}
                   >
                     {label} · {count}
                   </button>
@@ -1544,7 +1530,7 @@ export function ContextModal({
             </div>
 
             {filteredTaskTotal === 0 ? (
-              <div className={classNames("rounded-xl border border-dashed px-4 py-6 text-sm", isDark ? "border-slate-800 bg-slate-950/40 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-500")}>
+              <div className={classNames("rounded-xl border border-dashed px-4 py-6 text-sm", "glass-card text-[var(--color-text-muted)]")}>
                 {tr("context.noMatchingTasks", "No tasks match the current filters")}
               </div>
             ) : null}
@@ -1583,10 +1569,10 @@ export function ContextModal({
     >
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
-          {syncError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-200" : "border-rose-200 bg-rose-50 text-rose-700")}>{syncError}</div> : null}
+          {syncError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{syncError}</div> : null}
 
           <div className="flex items-center justify-end">
-            <div className={classNames("inline-flex rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
+            <div className={classNames("inline-flex rounded-2xl border p-1", "glass-panel border-[var(--glass-border-subtle)]")}>
               <button type="button" onClick={() => handleSwitchActiveView("coordination")} className={viewButtonClass(activeView === "coordination")}>{tr("context.coordination", "Coordination")}</button>
               <button type="button" onClick={() => handleSwitchActiveView("agents")} className={viewButtonClass(activeView === "agents")}>{tr("context.agents", "Agents")}</button>
             </div>

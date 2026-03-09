@@ -47,7 +47,7 @@ interface DeveloperTabProps {
 }
 
 export function DeveloperTab({
-  isDark,
+  isDark: _isDark,
   groupId,
   developerMode,
   setDeveloperMode,
@@ -87,13 +87,11 @@ export function DeveloperTab({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("developer.title")}</h3>
-        <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("developer.title")}</h3>
+        <p className="text-xs mt-1 text-[var(--color-text-muted)]">
           {t("developer.description")}
         </p>
-        <div className={`mt-2 rounded-lg border px-3 py-2 text-[11px] ${
-          isDark ? "border-amber-500/30 bg-amber-500/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"
-        }`}>
+        <div className="mt-2 rounded-lg border px-3 py-2 text-[11px] border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400">
           <div className="font-medium">{t("developer.warningTitle")}</div>
           <div className="mt-1">
             {t("developer.warningText")}
@@ -102,11 +100,11 @@ export function DeveloperTab({
       </div>
 
       {/* Toggle */}
-      <div className={cardClass(isDark)}>
+      <div className={cardClass()}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("developer.enableDeveloperMode")}</div>
-            <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.enableDeveloperMode")}</div>
+            <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
               {t("developer.enableHint")}
             </div>
           </div>
@@ -119,8 +117,8 @@ export function DeveloperTab({
             />
             <div className={`w-11 h-6 rounded-full transition-colors ${
               developerMode
-                ? (isDark ? "bg-emerald-600" : "bg-emerald-500")
-                : (isDark ? "bg-slate-700" : "bg-gray-300")
+                ? "bg-emerald-500"
+                : "bg-gray-300 dark:bg-slate-700"
             }`}>
               <div className={`w-5 h-5 bg-white rounded-full shadow transform transition-transform mt-0.5 ${
                 developerMode ? "translate-x-5" : "translate-x-0.5"
@@ -130,51 +128,51 @@ export function DeveloperTab({
         </div>
 
         <div className="mt-3">
-          <label className={labelClass(isDark)}>{t("developer.logLevel")}</label>
+          <label className={labelClass()}>{t("developer.logLevel")}</label>
           <select
             value={logLevel}
             onChange={(e) => setLogLevel((e.target.value === "DEBUG" ? "DEBUG" : "INFO"))}
-            className={inputClass(isDark)}
+            className={inputClass()}
           >
             <option value="INFO">INFO</option>
             <option value="DEBUG">DEBUG</option>
           </select>
         </div>
 
-        <div className={`mt-4 pt-3 border-t ${isDark ? "border-slate-800" : "border-gray-200"}`}>
-          <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+        <div className="mt-4 pt-3 border-t border-[var(--glass-border-subtle)]">
+          <div className="text-sm font-semibold text-[var(--color-text-primary)]">
             {t("developer.terminalBuffers")}
           </div>
-          <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+          <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
             {t("developer.terminalBuffersHint")}
           </div>
 
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <label className={labelClass(isDark)}>{t("developer.ptyBacklog")}</label>
+              <label className={labelClass()}>{t("developer.ptyBacklog")}</label>
               <input
                 type="number"
                 value={terminalBacklogMiB}
                 min={1}
                 max={50}
                 onChange={(e) => setTerminalBacklogMiB(Number(e.target.value || 10))}
-                className={inputClass(isDark)}
+                className={inputClass()}
               />
-              <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                 {t("developer.ptyBacklogHint")}
               </div>
             </div>
             <div>
-              <label className={labelClass(isDark)}>{t("developer.webScrollback")}</label>
+              <label className={labelClass()}>{t("developer.webScrollback")}</label>
               <input
                 type="number"
                 value={terminalScrollbackLines}
                 min={1000}
                 max={200000}
                 onChange={(e) => setTerminalScrollbackLines(Number(e.target.value || 8000))}
-                className={inputClass(isDark)}
+                className={inputClass()}
               />
-              <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                 {t("developer.webScrollbackHint")}
               </div>
             </div>
@@ -193,11 +191,11 @@ export function DeveloperTab({
       </div>
 
       {/* Registry maintenance */}
-      <div className={cardClass(isDark)}>
+      <div className={cardClass()}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("developer.registryTitle")}</div>
-            <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.registryTitle")}</div>
+            <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
               {t("developer.registryDescription")}
             </div>
           </div>
@@ -205,9 +203,7 @@ export function DeveloperTab({
             <button
               onClick={onPreviewRegistry}
               disabled={registryBusy}
-              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-              } disabled:opacity-50`}
+              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
             >
               {registryBusy ? t("developer.scanning") : t("developer.scan")}
             </button>
@@ -222,32 +218,30 @@ export function DeveloperTab({
         </div>
 
         {registryErr ? (
-          <div className={`mt-2 text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{registryErr}</div>
+          <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{registryErr}</div>
         ) : null}
 
         {registryResult ? (
-          <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
-            isDark ? "border-slate-800 bg-slate-900/40 text-slate-300" : "border-gray-200 bg-white text-gray-700"
-          }`}>
+          <div className="mt-3 rounded-lg border px-3 py-2 text-xs border-[var(--glass-border-subtle)] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]">
             <div>
               {t("developer.scanned")}={registryResult.scanned_groups} · {t("developer.missing")}={missing.length} · {t("developer.corrupt")}={corrupt.length}
               {removed.length > 0 ? ` · ${t("developer.removed")}=${removed.length}` : ""}
             </div>
             {missing.length > 0 ? (
               <div className="mt-2 break-all">
-                <span className={isDark ? "text-amber-300" : "text-amber-700"}>{t("developer.missing")}:</span>{" "}
+                <span className="text-amber-600 dark:text-amber-400">{t("developer.missing")}:</span>{" "}
                 {missing.join(", ")}
               </div>
             ) : null}
             {corrupt.length > 0 ? (
               <div className="mt-2 break-all">
-                <span className={isDark ? "text-rose-300" : "text-rose-700"}>{t("developer.corrupt")}:</span>{" "}
+                <span className="text-rose-600 dark:text-rose-400">{t("developer.corrupt")}:</span>{" "}
                 {corrupt.join(", ")}
               </div>
             ) : null}
             {removed.length > 0 ? (
               <div className="mt-2 break-all">
-                <span className={isDark ? "text-emerald-300" : "text-emerald-700"}>{t("developer.removed")}:</span>{" "}
+                <span className="text-emerald-600 dark:text-emerald-400">{t("developer.removed")}:</span>{" "}
                 {removed.join(", ")}
               </div>
             ) : null}
@@ -256,11 +250,11 @@ export function DeveloperTab({
       </div>
 
       {/* Debug Snapshot */}
-      <div className={cardClass(isDark)}>
+      <div className={cardClass()}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("developer.debugSnapshot")}</div>
-            <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.debugSnapshot")}</div>
+            <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
               {t("developer.debugSnapshotHint")}
             </div>
           </div>
@@ -268,18 +262,14 @@ export function DeveloperTab({
             <button
               onClick={onLoadDebugSnapshot}
               disabled={!developerMode || !groupId || debugSnapshotBusy}
-              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-              } disabled:opacity-50`}
+              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
             >
               {debugSnapshotBusy ? t("common:loading") : t("developer.refresh")}
             </button>
             <button
               onClick={onClearDebugSnapshot}
               disabled={debugSnapshotBusy}
-              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-              } disabled:opacity-50`}
+              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-secondary)] disabled:opacity-50"
             >
               {t("developer.clear")}
             </button>
@@ -287,26 +277,26 @@ export function DeveloperTab({
         </div>
 
         {!groupId && (
-          <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+          <div className="mt-2 text-xs text-[var(--color-text-muted)]">
             {t("developer.openFromGroup")}
           </div>
         )}
 
         {debugSnapshotErr && (
-          <div className={`mt-2 text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{debugSnapshotErr}</div>
+          <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{debugSnapshotErr}</div>
         )}
 
-        <pre className={preClass(isDark)}>
+        <pre className={preClass()}>
           <code>{debugSnapshot || "—"}</code>
         </pre>
       </div>
 
       {/* Log Tail */}
-      <div className={cardClass(isDark)}>
+      <div className={cardClass()}>
         <div className="flex items-center justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("developer.logTail")}</div>
-            <div className={`text-xs mt-0.5 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("developer.logTail")}</div>
+            <div className="text-xs mt-0.5 text-[var(--color-text-muted)]">
               {t("developer.logTailHint")}
             </div>
           </div>
@@ -314,18 +304,14 @@ export function DeveloperTab({
             <button
               onClick={onLoadLogTail}
               disabled={!developerMode || logBusy}
-              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-              } disabled:opacity-50`}
+              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)] disabled:opacity-50"
             >
               {logBusy ? t("common:loading") : t("developer.refresh")}
             </button>
             <button
               onClick={onClearLogs}
               disabled={!developerMode || logBusy}
-              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-              } disabled:opacity-50`}
+              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-secondary)] disabled:opacity-50"
             >
               {t("developer.clearTruncate")}
             </button>
@@ -334,11 +320,11 @@ export function DeveloperTab({
 
         <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
           <div>
-            <label className={labelClass(isDark)}>{t("developer.component")}</label>
+            <label className={labelClass()}>{t("developer.component")}</label>
             <select
               value={logComponent}
               onChange={(e) => setLogComponent((e.target.value === "im" ? "im" : e.target.value === "web" ? "web" : "daemon"))}
-              className={inputClass(isDark)}
+              className={inputClass()}
             >
               <option value="daemon">daemon</option>
               <option value="web">web</option>
@@ -346,29 +332,29 @@ export function DeveloperTab({
             </select>
           </div>
           <div>
-            <label className={labelClass(isDark)}>{t("developer.lines")}</label>
+            <label className={labelClass()}>{t("developer.lines")}</label>
             <input
               type="number"
               value={logLines}
               min={50}
               max={2000}
               onChange={(e) => setLogLines(Number(e.target.value || 200))}
-              className={inputClass(isDark)}
+              className={inputClass()}
             />
           </div>
         </div>
 
         {logComponent === "im" && !groupId && (
-          <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+          <div className="mt-2 text-xs text-[var(--color-text-muted)]">
             {t("developer.imLogsRequireGroup")}
           </div>
         )}
 
         {logErr && (
-          <div className={`mt-2 text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{logErr}</div>
+          <div className="mt-2 text-xs text-rose-600 dark:text-rose-400">{logErr}</div>
         )}
 
-        <pre className={`${preClass(isDark)} max-h-[260px] overflow-y-auto`}>
+        <pre className={`${preClass()} max-h-[260px] overflow-y-auto`}>
           <code>{logText || "—"}</code>
         </pre>
       </div>

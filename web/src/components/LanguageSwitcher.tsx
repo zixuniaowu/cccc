@@ -104,20 +104,13 @@ export function LanguageSwitcher({ isDark, showLabel = false, className }: Langu
                 className={classNames(
                   "w-full flex items-center gap-3 px-3 py-2 text-[13px] transition-colors relative",
                   isActive
-                    ? isDark
-                      ? "text-white"
-                      : "text-gray-900"
-                    : isDark
-                      ? "text-slate-400 hover:text-white hover:bg-white/5"
-                      : "text-gray-500 hover:text-gray-900 hover:bg-black/[.03]"
+                    ? "text-[var(--color-text-primary)]"
+                    : "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-black/[.03] dark:hover:bg-white/5"
                 )}
               >
                 {isActive && (
                   <span
-                    className={classNames(
-                      "absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full",
-                      isDark ? "bg-white" : "bg-gray-900"
-                    )}
+                    className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 rounded-r-full bg-gray-900 dark:bg-white"
                   />
                 )}
                 <span className={classNames(
@@ -150,7 +143,7 @@ export function LanguageSwitcher({ isDark, showLabel = false, className }: Langu
           showLabel
             ? "w-full flex items-center justify-center gap-2 px-3 py-3 text-sm rounded-2xl min-h-[52px] glass-btn"
             : "flex items-center justify-center w-9 h-9 rounded-xl text-xs glass-btn",
-          isDark ? "text-slate-300 hover:text-white" : "text-gray-500 hover:text-gray-900",
+          "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]",
           className
         )}
         aria-expanded={isOpen}

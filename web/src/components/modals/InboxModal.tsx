@@ -30,7 +30,6 @@ function formatEventLine(
 
 export interface InboxModalProps {
   isOpen: boolean;
-  isDark: boolean;
   actorId: string;
   actors: Actor[];
   messages: LedgerEvent[];
@@ -39,7 +38,7 @@ export interface InboxModalProps {
   onMarkAllRead: () => void;
 }
 
-export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, onClose, onMarkAllRead }: InboxModalProps) {
+export function InboxModal({ isOpen, actorId, actors, messages, busy, onClose, onMarkAllRead }: InboxModalProps) {
   const { t } = useTranslation("modals");
   const { modalRef } = useModalA11y(isOpen, onClose);
   // Helper to get display name for actor
@@ -59,7 +58,7 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
 
   return (
     <div
-      className={`fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
+      className="fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in glass-overlay"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -69,28 +68,25 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
     >
       <div
         ref={modalRef}
-        className={`w-full h-full sm:h-auto sm:max-h-[calc(100dvh-8rem)] sm:max-w-2xl sm:mt-16 border shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl ${isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
-          }`}
+        className="w-full h-full sm:h-auto sm:max-h-[calc(100dvh-8rem)] sm:max-w-2xl sm:mt-16 shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl glass-modal"
       >
-        <div className={`px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
+        <div className="px-4 sm:px-6 py-4 border-b flex items-center justify-between gap-3 safe-area-inset-top border-[var(--glass-border-subtle)]">
           <div className="min-w-0">
-            <div id="inbox-title" className={`text-lg font-semibold truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+            <div id="inbox-title" className="text-lg font-semibold truncate text-[var(--color-text-primary)]">
               {t("inbox.title", { actorId })}
             </div>
-            <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("inbox.unreadMessages", { count: messages.length })}</div>
+            <div className="text-sm text-[var(--color-text-muted)]">{t("inbox.unreadMessages", { count: messages.length })}</div>
           </div>
           <div className="flex gap-2">
             <button
-              className={`rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] ${isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-                }`}
+              className="rounded-xl px-4 py-2 text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] glass-btn text-[var(--color-text-secondary)]"
               onClick={onMarkAllRead}
               disabled={!messages.length || busy.startsWith("inbox")}
             >
               {t("inbox.markAllRead")}
             </button>
             <button
-              className={`rounded-xl px-4 py-2 text-sm font-medium transition-colors min-h-[44px] ${isDark ? "bg-slate-600 hover:bg-slate-500 text-white" : "bg-gray-200 hover:bg-gray-300 text-gray-800"
-                }`}
+              className="rounded-xl px-4 py-2 text-sm font-medium transition-colors min-h-[44px] glass-btn text-[var(--color-text-primary)]"
               onClick={onClose}
             >
               {t("common:close")}
@@ -102,19 +98,18 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
           {messages.map((ev, idx) => (
             <div
               key={String(ev.id || idx)}
-              className={`rounded-xl border px-4 py-3 ${isDark ? "border-slate-700/50 bg-slate-800/50" : "border-gray-200 bg-gray-50"}`}
+              className="rounded-xl px-4 py-3 glass-panel"
             >
               <div className="flex items-center justify-between gap-3">
-                <div className={`text-xs truncate ${isDark ? "text-slate-400" : "text-gray-500"}`} title={formatFullTime(ev.ts)}>
+                <div className="text-xs truncate text-[var(--color-text-muted)]" title={formatFullTime(ev.ts)}>
                   {formatTime(ev.ts)}
                 </div>
-                <div className={`text-xs font-medium truncate ${isDark ? "text-slate-300" : "text-gray-700"}`}>{getDisplayName(ev.by || "") || "—"}</div>
+                <div className="text-xs font-medium truncate text-[var(--color-text-secondary)]">{getDisplayName(ev.by || "") || "—"}</div>
               </div>
               <div className="mt-2 text-sm break-words">
                 <MarkdownRenderer
                   content={formatEventLine(ev, getDisplayName)}
-                  isDark={isDark}
-                  className={isDark ? "text-slate-200" : "text-gray-800"}
+                  className="text-[var(--color-text-primary)]"
                 />
               </div>
             </div>
@@ -122,7 +117,7 @@ export function InboxModal({ isOpen, isDark, actorId, actors, messages, busy, on
           {!messages.length && (
             <div className="text-center py-8">
               <div className="text-3xl mb-2">📭</div>
-              <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("inbox.noUnread")}</div>
+              <div className="text-sm text-[var(--color-text-muted)]">{t("inbox.noUnread")}</div>
             </div>
           )}
         </div>

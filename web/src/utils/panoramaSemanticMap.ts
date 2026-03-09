@@ -178,12 +178,12 @@ export function buildSemanticMapState(
   }
 
   const compressedTasks = compressTaskGroups(taskGroups, taskMap);
-  const taskZoneWidth = compressedTasks.length <= 1 ? 10.2 : compressedTasks.length === 2 ? 6.8 : 4.5;
+  const taskZoneWidth = compressedTasks.length <= 1 ? 7.8 : compressedTasks.length === 2 ? 5.6 : 3.8;
   const taskCenters = compressedTasks.length <= 1
     ? [0]
     : compressedTasks.length === 2
-      ? [-3.8, 3.8]
-      : [-4.8, 0, 4.8];
+      ? [-3.1, 3.1]
+      : [-3.9, 0, 3.9];
 
   const zones: SemanticZone[] = [
     {
@@ -192,8 +192,8 @@ export function buildSemanticMapState(
       label: "受阻区",
       subtitle: `${blockedIds.length} 人`,
       color: "#b91c1c",
-      center: [-4.8, 0, 4.9],
-      size: [4.6, 2.9],
+      center: [-3.8, 0, 3.9],
+      size: [3.8, 2.5],
       agentIds: blockedIds,
     },
     {
@@ -202,8 +202,8 @@ export function buildSemanticMapState(
       label: "指挥区",
       subtitle: `${foremanIds.length} 人`,
       color: "#c2410c",
-      center: [4.8, 0, 4.9],
-      size: [4.6, 2.9],
+      center: [3.8, 0, 3.9],
+      size: [3.8, 2.5],
       agentIds: foremanIds,
     },
     ...compressedTasks.map((taskGroup, index) => ({
@@ -213,7 +213,7 @@ export function buildSemanticMapState(
       subtitle: `${taskGroup.agentIds.length} 人`,
       color: TASK_ZONE_COLORS[index % TASK_ZONE_COLORS.length],
       center: [taskCenters[index] ?? 0, 0, 0] as [number, number, number],
-      size: [taskZoneWidth, 4.6] as [number, number],
+      size: [taskZoneWidth, 3.8] as [number, number],
       agentIds: taskGroup.agentIds,
       taskId: taskGroup.taskId,
     })),
@@ -223,8 +223,8 @@ export function buildSemanticMapState(
       label: "休闲区",
       subtitle: `${idleIds.length} 人`,
       color: "#0f766e",
-      center: [-4.8, 0, -4.4],
-      size: [4.4, 2.9],
+      center: [-3.8, 0, -3.2],
+      size: [3.6, 2.4],
       agentIds: idleIds,
     },
     {
@@ -233,8 +233,8 @@ export function buildSemanticMapState(
       label: "离线区",
       subtitle: `${offlineIds.length} 人`,
       color: "#475569",
-      center: [4.8, 0, -4.4],
-      size: [4.4, 2.9],
+      center: [3.8, 0, -3.2],
+      size: [3.6, 2.4],
       agentIds: offlineIds,
     },
   ];

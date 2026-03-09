@@ -46,7 +46,7 @@ function normalizeReadinessPreview(value: unknown): CapabilityReadinessPreview |
   return value && typeof value === "object" ? (value as CapabilityReadinessPreview) : null;
 }
 
-export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
+export function CapabilitiesTab({ isDark: _isDark, isActive }: CapabilitiesTabProps) {
   const { t } = useTranslation("settings");
   const [loading, setLoading] = useState(false);
   const [busyKey, setBusyKey] = useState("");
@@ -217,12 +217,12 @@ export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
 
   const readinessBadgeClass = (status: string) => {
     if (status === "blocked") {
-      return isDark ? "bg-rose-900/40 text-rose-300" : "bg-rose-50 text-rose-700";
+      return "bg-rose-500/15 text-rose-600 dark:text-rose-400";
     }
     if (status === "enableable") {
-      return isDark ? "bg-emerald-900/40 text-emerald-300" : "bg-emerald-50 text-emerald-700";
+      return "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400";
     }
-    return isDark ? "bg-amber-900/40 text-amber-300" : "bg-amber-50 text-amber-700";
+    return "bg-amber-500/15 text-amber-600 dark:text-amber-400";
   };
 
   const renderReadinessPreview = (preview: CapabilityReadinessPreview | null) => {
@@ -249,20 +249,20 @@ export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
         : "";
 
     return (
-      <div className={`mt-2 rounded-md border px-2 py-1.5 ${isDark ? "border-slate-800 bg-slate-950/60" : "border-gray-200 bg-gray-50"}`}>
+      <div className="mt-2 rounded-md border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-2 py-1.5">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className={`px-1.5 py-0.5 rounded text-[10px] ${readinessBadgeClass(status)}`}>{statusLabel}</span>
           {reasonLabel ? (
-            <span className={`text-[11px] ${isDark ? "text-slate-300" : "text-gray-700"}`}>{reasonLabel}</span>
+            <span className="text-[11px] text-[var(--color-text-secondary)]">{reasonLabel}</span>
           ) : null}
         </div>
         {nextLabel ? (
-          <div className={`text-[11px] mt-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+          <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">
             {t("capabilities.readiness.nextLabel")}: {nextLabel}
           </div>
         ) : null}
         {missingEnv.length ? (
-          <div className={`text-[11px] mt-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+          <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">
             {t("capabilities.readiness.missingEnv", { names: missingEnv.join(", ") })}
           </div>
         ) : null}
@@ -445,34 +445,34 @@ export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
 
   return (
     <div className="space-y-4">
-      <div className={cardClass(isDark)}>
+      <div className={cardClass()}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("capabilities.title")}</div>
-            <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("capabilities.subtitle")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.title")}</div>
+            <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.subtitle")}</div>
           </div>
           <button
             type="button"
-            className={`px-3 py-2 rounded-lg text-sm min-h-[40px] ${isDark ? "bg-slate-800 text-slate-200 hover:bg-slate-700" : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-50"}`}
+            className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[40px] text-[var(--color-text-secondary)]"
             onClick={() => void load()}
             disabled={loading}
           >
             {loading ? t("common:loading") : t("capabilities.refresh")}
           </button>
         </div>
-        <div className={`text-xs mt-3 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("capabilities.pageGuide")}</div>
+        <div className="text-xs mt-3 text-[var(--color-text-tertiary)]">{t("capabilities.pageGuide")}</div>
         {err ? (
-          <div className={`mt-3 text-xs ${isDark ? "text-rose-300" : "text-rose-700"}`} role="alert">{err}</div>
+          <div className="mt-3 text-xs text-rose-600 dark:text-rose-400" role="alert">{err}</div>
         ) : null}
       </div>
 
-      <div className={cardClass(isDark)}>
+      <div className={cardClass()}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("capabilities.safetyModeTitle")}</div>
-            <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("capabilities.safetyModeHint")}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.safetyModeTitle")}</div>
+            <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.safetyModeHint")}</div>
           </div>
-          <div className={`text-[11px] ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+          <div className="text-[11px] text-[var(--color-text-tertiary)]">
             {t("capabilities.safetyModeCurrent", { mode: t(`capabilities.safetyMode.${externalSafetyMode}.label`) })}
           </div>
         </div>
@@ -484,33 +484,29 @@ export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
                 key={mode}
                 type="button"
                 className={`rounded-lg border px-3 py-3 text-left ${selected
-                  ? isDark
-                    ? "border-emerald-700 bg-emerald-950/30"
-                    : "border-emerald-300 bg-emerald-50"
-                  : isDark
-                    ? "border-slate-800 bg-slate-900/40"
-                    : "border-gray-200 bg-white"} ${busyKey === "policy" ? "opacity-60 cursor-not-allowed" : ""}`}
+                  ? "border-emerald-500/30 bg-emerald-500/15"
+                  : "border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]"} ${busyKey === "policy" ? "opacity-60 cursor-not-allowed" : ""}`}
                 disabled={busyKey === "policy" || selected}
                 onClick={() => void updateExternalCapabilitySafetyMode(mode)}
               >
-                <div className={`text-sm font-medium ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t(`capabilities.safetyMode.${mode}.label`)}</div>
-                <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t(`capabilities.safetyMode.${mode}.hint`)}</div>
+                <div className="text-sm font-medium text-[var(--color-text-primary)]">{t(`capabilities.safetyMode.${mode}.label`)}</div>
+                <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">{t(`capabilities.safetyMode.${mode}.hint`)}</div>
               </button>
             );
           })}
         </div>
-        <div className={`text-[11px] mt-2 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <div className="text-[11px] mt-2 text-[var(--color-text-muted)]">
           {t("capabilities.safetyModeCurrentRule", { mode: t(`capabilities.safetyMode.${externalSafetyMode}.label`) })}
         </div>
       </div>
 
-      <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("capabilities.sourcesTitle")}</div>
-        <div className={`text-xs mt-1 mb-2 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("capabilities.sourcesHint")}</div>
-        <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+      <div className={cardClass()}>
+        <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.sourcesTitle")}</div>
+        <div className="text-xs mt-1 mb-2 text-[var(--color-text-muted)]">{t("capabilities.sourcesHint")}</div>
+        <div className="text-[11px] text-[var(--color-text-muted)]">
           {t("capabilities.sourcesSummary", sourceSummary)}
         </div>
-        <div className={`text-[11px] mt-0.5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <div className="text-[11px] mt-0.5 text-[var(--color-text-muted)]">
           {t("capabilities.levelDistribution", levelDistribution)}
         </div>
         <div className="mt-2 grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-2 items-center">
@@ -518,14 +514,12 @@ export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
             value={sourceQuery}
             onChange={(e) => setSourceQuery(e.target.value)}
             placeholder={t("capabilities.sourceSearchPlaceholder")}
-            className={`w-full rounded-lg border px-3 py-2 text-sm min-h-[40px] ${
-              isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"
-            }`}
+            className="glass-input w-full rounded-lg px-3 py-2 text-sm min-h-[40px] text-[var(--color-text-primary)]"
           />
-          <div className="inline-flex rounded-lg border overflow-hidden">
-            <button type="button" onClick={() => setSourceVisibility("all")} className={`px-2.5 py-2 text-xs min-h-[40px] ${sourceVisibility === "all" ? (isDark ? "bg-slate-700 text-slate-100" : "bg-gray-100 text-gray-900") : (isDark ? "bg-slate-900 text-slate-300" : "bg-white text-gray-700")}`}>{t("capabilities.sourcesVisibilityAll")}</button>
-            <button type="button" onClick={() => setSourceVisibility("enabled")} className={`px-2.5 py-2 text-xs min-h-[40px] border-l ${isDark ? "border-slate-700" : "border-gray-200"} ${sourceVisibility === "enabled" ? (isDark ? "bg-slate-700 text-slate-100" : "bg-gray-100 text-gray-900") : (isDark ? "bg-slate-900 text-slate-300" : "bg-white text-gray-700")}`}>{t("capabilities.sourcesVisibilityEnabled")}</button>
-            <button type="button" onClick={() => setSourceVisibility("disabled")} className={`px-2.5 py-2 text-xs min-h-[40px] border-l ${isDark ? "border-slate-700" : "border-gray-200"} ${sourceVisibility === "disabled" ? (isDark ? "bg-slate-700 text-slate-100" : "bg-gray-100 text-gray-900") : (isDark ? "bg-slate-900 text-slate-300" : "bg-white text-gray-700")}`}>{t("capabilities.sourcesVisibilityDisabled")}</button>
+          <div className="inline-flex rounded-lg border border-[var(--glass-border-subtle)] overflow-hidden">
+            <button type="button" onClick={() => setSourceVisibility("all")} className={`px-2.5 py-2 text-xs min-h-[40px] ${sourceVisibility === "all" ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]" : "bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"}`}>{t("capabilities.sourcesVisibilityAll")}</button>
+            <button type="button" onClick={() => setSourceVisibility("enabled")} className={`px-2.5 py-2 text-xs min-h-[40px] border-l border-[var(--glass-border-subtle)] ${sourceVisibility === "enabled" ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]" : "bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"}`}>{t("capabilities.sourcesVisibilityEnabled")}</button>
+            <button type="button" onClick={() => setSourceVisibility("disabled")} className={`px-2.5 py-2 text-xs min-h-[40px] border-l border-[var(--glass-border-subtle)] ${sourceVisibility === "disabled" ? "bg-[var(--glass-tab-bg)] text-[var(--color-text-primary)]" : "bg-[var(--glass-panel-bg)] text-[var(--color-text-secondary)]"}`}>{t("capabilities.sourcesVisibilityDisabled")}</button>
           </div>
         </div>
         <div className="mt-3 space-y-2">
@@ -536,19 +530,19 @@ export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
             const syncState = String(row.sync_state || "never");
             const count = Number(row.record_count || 0);
             return (
-              <div key={sid} className={`rounded-lg border px-3 py-2 ${isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
+              <div key={sid} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className={`text-sm font-medium truncate ${isDark ? "text-slate-100" : "text-gray-900"}`}>{sid}</div>
+                    <div className="text-sm font-medium truncate text-[var(--color-text-primary)]">{sid}</div>
                     <div className="mt-1 flex flex-wrap gap-1">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${enabled ? (isDark ? "bg-emerald-900/40 text-emerald-300" : "bg-emerald-50 text-emerald-700") : (isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700")}`}>{enabled ? t("capabilities.sourceEnabled") : t("capabilities.sourceDisabled")}</span>
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700"}`}>{t("capabilities.sourceMeta", { level: String(row.source_level || "indexed"), sync: syncState, count })}</span>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${enabled ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]"}`}>{enabled ? t("capabilities.sourceEnabled") : t("capabilities.sourceDisabled")}</span>
+                      <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">{t("capabilities.sourceMeta", { level: String(row.source_level || "indexed"), sync: syncState, count })}</span>
                     </div>
-                    {rationale ? <div className={`text-[11px] mt-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("capabilities.sourceRationale", { text: rationale })}</div> : null}
+                    {rationale ? <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">{t("capabilities.sourceRationale", { text: rationale })}</div> : null}
                   </div>
                   <button
                     type="button"
-                    className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${enabled ? (isDark ? "bg-rose-900/40 text-rose-300" : "bg-rose-50 text-rose-700 border border-rose-200") : (isDark ? "bg-emerald-900/40 text-emerald-300" : "bg-emerald-50 text-emerald-700 border border-emerald-200")} ${busyKey === `source:${sid}` ? "opacity-60 cursor-not-allowed" : ""}`}
+                    className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${enabled ? "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30" : "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"} ${busyKey === `source:${sid}` ? "opacity-60 cursor-not-allowed" : ""}`}
                     disabled={busyKey === `source:${sid}`}
                     onClick={() => void toggleSource(sid, !enabled)}
                   >
@@ -559,49 +553,47 @@ export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
             );
           })}
           {filteredSources.length > SOURCE_PREVIEW_LIMIT ? (
-            <button type="button" className={`text-xs ${isDark ? "text-emerald-300" : "text-emerald-700"}`} onClick={() => setShowAllSources((v) => !v)}>
+            <button type="button" className="text-xs text-emerald-600 dark:text-emerald-400" onClick={() => setShowAllSources((v) => !v)}>
               {showAllSources ? t("capabilities.showLessSources") : t("capabilities.showMoreSources", { count: filteredSources.length - SOURCE_PREVIEW_LIMIT })}
             </button>
           ) : null}
         </div>
       </div>
 
-      <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("capabilities.libraryTitle")}</div>
-        <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("capabilities.libraryHint")}</div>
+      <div className={cardClass()}>
+        <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.libraryTitle")}</div>
+        <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.libraryHint")}</div>
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t("capabilities.searchPlaceholder")}
-          className={`w-full mt-2 rounded-lg border px-3 py-2 text-sm min-h-[40px] ${
-            isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"
-          }`}
+          className="glass-input w-full mt-2 rounded-lg px-3 py-2 text-sm min-h-[40px] text-[var(--color-text-primary)]"
         />
         <div className="mt-2 grid grid-cols-1 md:grid-cols-4 gap-2">
-          <select value={registryKind} onChange={(e) => setRegistryKind(e.target.value as RegistryKindFilter)} className={`rounded-lg border px-2 py-2 text-xs min-h-[40px] ${isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"}`}>
+          <select value={registryKind} onChange={(e) => setRegistryKind(e.target.value as RegistryKindFilter)} className="glass-input rounded-lg px-2 py-2 text-xs min-h-[40px] text-[var(--color-text-primary)]">
             <option value="all">{t("capabilities.filterKindAll")}</option>
             <option value="pack">{t("capabilities.filterKindPack")}</option>
             <option value="mcp">{t("capabilities.filterKindMcp")}</option>
             <option value="skill">{t("capabilities.filterKindSkill")}</option>
           </select>
-          <select value={registryPolicy} onChange={(e) => setRegistryPolicy(e.target.value as RegistryPolicyFilter)} className={`rounded-lg border px-2 py-2 text-xs min-h-[40px] ${isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"}`}>
+          <select value={registryPolicy} onChange={(e) => setRegistryPolicy(e.target.value as RegistryPolicyFilter)} className="glass-input rounded-lg px-2 py-2 text-xs min-h-[40px] text-[var(--color-text-primary)]">
             <option value="all">{t("capabilities.filterPolicyAll")}</option>
             <option value="actionable">{t("capabilities.filterPolicyActionable")}</option>
             <option value="blocked">{t("capabilities.filterPolicyBlocked")}</option>
             <option value="indexed">{t("capabilities.filterPolicyIndexed")}</option>
           </select>
-          <select value={registrySource} onChange={(e) => setRegistrySource(e.target.value)} className={`rounded-lg border px-2 py-2 text-xs min-h-[40px] ${isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"}`}>
+          <select value={registrySource} onChange={(e) => setRegistrySource(e.target.value)} className="glass-input rounded-lg px-2 py-2 text-xs min-h-[40px] text-[var(--color-text-primary)]">
             <option value="all">{t("capabilities.filterSourceAll")}</option>
             {registrySourceOptions.map((sid) => (<option key={sid} value={sid}>{sid}</option>))}
           </select>
           <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2 items-center">
-            <label className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("capabilities.pageSize")}</label>
-            <select value={registryPageSize} onChange={(e) => setRegistryPageSize(Number(e.target.value) || 40)} className={`rounded-lg border px-2 py-2 text-xs min-h-[40px] ${isDark ? "bg-slate-900 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"}`}>
+            <label className="text-xs text-[var(--color-text-tertiary)]">{t("capabilities.pageSize")}</label>
+            <select value={registryPageSize} onChange={(e) => setRegistryPageSize(Number(e.target.value) || 40)} className="glass-input rounded-lg px-2 py-2 text-xs min-h-[40px] text-[var(--color-text-primary)]">
               {REGISTRY_PAGE_SIZE_OPTIONS.map((size) => (<option key={size} value={size}>{size}</option>))}
             </select>
           </div>
         </div>
-        <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
           {t("capabilities.resultsSummary", { count: filteredRegistry.length })} · {t("capabilities.showingRange", { from: registryRange.from, to: registryRange.to })}
         </div>
         <div className="mt-2 max-h-[420px] overflow-auto space-y-2">
@@ -610,27 +602,27 @@ export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
             const blockedNow = Boolean(row.blocked_global);
             const readinessPreview = normalizeReadinessPreview(row.readiness_preview);
             return (
-              <div key={capId} className={`rounded-lg border px-3 py-2 ${isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
+              <div key={capId} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className={`text-sm font-medium truncate ${isDark ? "text-slate-100" : "text-gray-900"}`}>{String(row.name || capId)}</div>
-                    <div className={`text-[11px] truncate ${isDark ? "text-slate-400" : "text-gray-600"}`}>{capId}</div>
+                    <div className="text-sm font-medium truncate text-[var(--color-text-primary)]">{String(row.name || capId)}</div>
+                    <div className="text-[11px] truncate text-[var(--color-text-tertiary)]">{capId}</div>
                     {String(row.description_short || "").trim() ? (
-                      <div className={`text-[11px] mt-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{String(row.description_short || "")}</div>
+                      <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">{String(row.description_short || "")}</div>
                     ) : null}
                     <div className="flex flex-wrap gap-1 mt-1">
-                      {row.kind ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700"}`}>{row.kind}</span> : null}
-                      {row.source_id ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700"}`}>{row.source_id}</span> : null}
-                      {row.policy_level ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-slate-800 text-slate-300" : "bg-gray-100 text-gray-700"}`}>{row.policy_level}</span> : null}
-                      {row.recent_success?.success_count ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-emerald-900/40 text-emerald-300" : "bg-emerald-50 text-emerald-700"}`}>{t("capabilities.recentCount", { count: Number(row.recent_success?.success_count || 0) })}</span> : null}
-                      {blockedNow ? <span className={`px-1.5 py-0.5 rounded text-[10px] ${isDark ? "bg-rose-900/40 text-rose-300" : "bg-rose-50 text-rose-700"}`}>{t("capabilities.blocked")}</span> : null}
+                      {row.kind ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">{row.kind}</span> : null}
+                      {row.source_id ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">{row.source_id}</span> : null}
+                      {row.policy_level ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]">{row.policy_level}</span> : null}
+                      {row.recent_success?.success_count ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400">{t("capabilities.recentCount", { count: Number(row.recent_success?.success_count || 0) })}</span> : null}
+                      {blockedNow ? <span className="px-1.5 py-0.5 rounded text-[10px] bg-rose-500/15 text-rose-600 dark:text-rose-400">{t("capabilities.blocked")}</span> : null}
                     </div>
                     {renderReadinessPreview(readinessPreview)}
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
-                      className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${blockedNow ? (isDark ? "bg-emerald-900/40 text-emerald-300" : "bg-emerald-50 text-emerald-700 border border-emerald-200") : (isDark ? "bg-rose-900/40 text-rose-300" : "bg-rose-50 text-rose-700 border border-rose-200")} ${busyKey === `block:${capId}` ? "opacity-60 cursor-not-allowed" : ""}`}
+                      className={`px-2.5 py-1.5 rounded text-xs min-h-[32px] ${blockedNow ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30" : "bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30"} ${busyKey === `block:${capId}` ? "opacity-60 cursor-not-allowed" : ""}`}
                       disabled={busyKey === `block:${capId}`}
                       onClick={() => void toggleBlock(row, !blockedNow)}
                     >
@@ -641,38 +633,38 @@ export function CapabilitiesTab({ isDark, isActive }: CapabilitiesTabProps) {
               </div>
             );
           })}
-          {pagedRegistry.length === 0 ? <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("capabilities.noLibraryMatches")}</div> : null}
+          {pagedRegistry.length === 0 ? <div className="text-xs text-[var(--color-text-muted)]">{t("capabilities.noLibraryMatches")}</div> : null}
         </div>
         <div className="mt-2 flex items-center justify-between gap-2">
-          <button type="button" className={`px-3 py-1.5 rounded text-xs min-h-[34px] ${isDark ? "bg-slate-800 text-slate-200 disabled:opacity-50" : "bg-gray-100 text-gray-700 disabled:opacity-50"}`} disabled={registryPage <= 1} onClick={() => setRegistryPage((p) => Math.max(1, p - 1))}>{t("capabilities.pagePrev")}</button>
-          <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("capabilities.pageLabel", { page: registryPage, total: registryTotalPages })}</div>
-          <button type="button" className={`px-3 py-1.5 rounded text-xs min-h-[34px] ${isDark ? "bg-slate-800 text-slate-200 disabled:opacity-50" : "bg-gray-100 text-gray-700 disabled:opacity-50"}`} disabled={registryPage >= registryTotalPages} onClick={() => setRegistryPage((p) => Math.min(registryTotalPages, p + 1))}>{t("capabilities.pageNext")}</button>
+          <button type="button" className="glass-btn px-3 py-1.5 rounded text-xs min-h-[34px] text-[var(--color-text-secondary)] disabled:opacity-50" disabled={registryPage <= 1} onClick={() => setRegistryPage((p) => Math.max(1, p - 1))}>{t("capabilities.pagePrev")}</button>
+          <div className="text-xs text-[var(--color-text-tertiary)]">{t("capabilities.pageLabel", { page: registryPage, total: registryTotalPages })}</div>
+          <button type="button" className="glass-btn px-3 py-1.5 rounded text-xs min-h-[34px] text-[var(--color-text-secondary)] disabled:opacity-50" disabled={registryPage >= registryTotalPages} onClick={() => setRegistryPage((p) => Math.min(registryTotalPages, p + 1))}>{t("capabilities.pageNext")}</button>
         </div>
       </div>
 
-      <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("capabilities.blockedListTitle")}</div>
-        <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("capabilities.blockedListHint")}</div>
+      <div className={cardClass()}>
+        <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("capabilities.blockedListTitle")}</div>
+        <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("capabilities.blockedListHint")}</div>
         <div className="mt-2 space-y-2">
           {blocked.length === 0 ? (
-            <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("capabilities.noBlocked")}</div>
+            <div className="text-xs text-[var(--color-text-muted)]">{t("capabilities.noBlocked")}</div>
           ) : (
             blocked.map((row) => {
               const capId = String(row.capability_id || "");
               return (
-                <div key={capId} className={`rounded-lg border px-3 py-2 ${isDark ? "border-slate-800 bg-slate-900/40" : "border-gray-200 bg-white"}`}>
+                <div key={capId} className="rounded-lg border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] px-3 py-2">
                   <div className="flex items-center justify-between gap-2">
                     <code className="text-xs">{capId}</code>
                     <button
                       type="button"
-                      className={`px-2.5 py-1 rounded text-xs min-h-[30px] ${isDark ? "bg-emerald-900/40 text-emerald-300" : "bg-emerald-50 text-emerald-700 border border-emerald-200"}`}
+                      className="px-2.5 py-1 rounded text-xs min-h-[30px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
                       disabled={busyKey === `block:${capId}`}
                       onClick={() => void toggleBlock(row, false)}
                     >
                       {t("capabilities.unblock")}
                     </button>
                   </div>
-                  {String(row.reason || "").trim() ? <div className={`text-[11px] mt-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>{String(row.reason || "")}</div> : null}
+                  {String(row.reason || "").trim() ? <div className="text-[11px] mt-1 text-[var(--color-text-tertiary)]">{String(row.reason || "")}</div> : null}
                 </div>
               );
             })

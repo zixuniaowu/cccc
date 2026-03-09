@@ -40,7 +40,7 @@ interface IMBridgeTabProps {
 }
 
 export function IMBridgeTab({
-  isDark,
+  isDark: _isDark,
   groupId,
   imStatus,
   imPlatform,
@@ -273,28 +273,28 @@ export function IMBridgeTab({
   return (
     <div className="space-y-4">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("imBridge.title")}</h3>
-        <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("imBridge.title")}</h3>
+        <p className="text-xs mt-1 text-[var(--color-text-muted)]">
           {t("imBridge.description")}
         </p>
       </div>
 
       {/* Status */}
       {imStatus && (
-        <div className={cardClass(isDark)}>
+        <div className={cardClass()}>
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${imStatus.running ? "bg-emerald-500" : "bg-gray-400"}`} />
-            <span className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+            <span className="text-sm text-[var(--color-text-secondary)]">
               {imStatus.running ? t("imBridge.running") : t("imBridge.stopped")}
             </span>
             {imStatus.running && imStatus.pid && (
-              <span className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              <span className="text-xs text-[var(--color-text-muted)]">
                 (PID: {imStatus.pid})
               </span>
             )}
           </div>
           {imStatus.configured && (
-            <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+            <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">
               {t("imBridge.platform")}: {imStatus.platform} • {t("imBridge.subscribers")}: {imStatus.subscribers}
             </div>
           )}
@@ -304,11 +304,11 @@ export function IMBridgeTab({
       {/* Configuration */}
       <div className="space-y-3">
         <div>
-          <label className={labelClass(isDark)}>{t("imBridge.platform")}</label>
+          <label className={labelClass()}>{t("imBridge.platform")}</label>
           <select
             value={imPlatform}
             onChange={(e) => onPlatformChange(e.target.value as IMPlatform)}
-            className={inputClass(isDark)}
+            className={inputClass()}
           >
             <option value="telegram">Telegram</option>
             <option value="slack">Slack</option>
@@ -321,15 +321,15 @@ export function IMBridgeTab({
         {/* Bot Token (Telegram/Slack/Discord) */}
         {needsBotToken && (
           <div>
-            <label className={labelClass(isDark)}>{getBotTokenLabel()}</label>
+            <label className={labelClass()}>{getBotTokenLabel()}</label>
             <input
               type="text"
               value={imBotTokenEnv}
               onChange={(e) => setImBotTokenEnv(e.target.value)}
               placeholder={getBotTokenPlaceholder()}
-              className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+              className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
             />
-            <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+            <p className="text-xs mt-1 text-[var(--color-text-muted)]">
               {imPlatform === "slack"
                 ? t("imBridge.botTokenHintSlack")
                 : t("imBridge.botTokenHint")}
@@ -340,15 +340,15 @@ export function IMBridgeTab({
         {/* App Token (Slack only) */}
         {imPlatform === "slack" && (
           <div>
-            <label className={labelClass(isDark)}>{t("imBridge.appToken")}</label>
+            <label className={labelClass()}>{t("imBridge.appToken")}</label>
             <input
               type="text"
               value={imAppTokenEnv}
               onChange={(e) => setImAppTokenEnv(e.target.value)}
               placeholder="SLACK_APP_TOKEN (or xapp-...)"
-              className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+              className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
             />
-            <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+            <p className="text-xs mt-1 text-[var(--color-text-muted)]">
               {t("imBridge.appTokenHint")}
             </p>
           </div>
@@ -358,45 +358,45 @@ export function IMBridgeTab({
         {imPlatform === "feishu" && (
           <>
             <div>
-              <label className={labelClass(isDark)}>{t("imBridge.apiRegion")}</label>
+              <label className={labelClass()}>{t("imBridge.apiRegion")}</label>
               <select
                 value={imFeishuDomain}
                 onChange={(e) => setImFeishuDomain(e.target.value)}
-                className={inputClass(isDark)}
+                className={inputClass()}
               >
                 <option value="https://open.feishu.cn">{t("imBridge.feishuCn")}</option>
                 <option value="https://open.larkoffice.com">{t("imBridge.larkGlobal")}</option>
               </select>
-              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                 {t("imBridge.feishuRegionHint")}
               </p>
-              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                 <Trans i18nKey="imBridge.feishuPackageHint" ns="settings" components={[<code />]} />
               </p>
             </div>
             <div>
-              <label className={labelClass(isDark)}>{t("imBridge.appId")}</label>
+              <label className={labelClass()}>{t("imBridge.appId")}</label>
               <input
                 type="text"
                 value={imFeishuAppId}
                 onChange={(e) => setImFeishuAppId(e.target.value)}
                 placeholder="FEISHU_APP_ID (or cli_xxx...)"
-                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+                className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
               />
-              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                 {t("imBridge.appIdHint")}
               </p>
             </div>
             <div>
-              <label className={labelClass(isDark)}>{t("imBridge.appSecret")}</label>
+              <label className={labelClass()}>{t("imBridge.appSecret")}</label>
               <input
                 type="password"
                 value={imFeishuAppSecret}
                 onChange={(e) => setImFeishuAppSecret(e.target.value)}
                 placeholder="FEISHU_APP_SECRET (or secret)"
-                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+                className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
               />
-              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                 {t("imBridge.appSecretHint")}
               </p>
             </div>
@@ -407,44 +407,44 @@ export function IMBridgeTab({
         {imPlatform === "dingtalk" && (
           <>
             <div>
-              <label className={labelClass(isDark)}>{t("imBridge.appKey")}</label>
+              <label className={labelClass()}>{t("imBridge.appKey")}</label>
               <input
                 type="text"
                 value={imDingtalkAppKey}
                 onChange={(e) => setImDingtalkAppKey(e.target.value)}
                 placeholder="DINGTALK_APP_KEY (or key)"
-                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+                className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
               />
-              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                 {t("imBridge.appKeyHint")}
               </p>
             </div>
             <div>
-              <label className={labelClass(isDark)}>{t("imBridge.appSecret")}</label>
+              <label className={labelClass()}>{t("imBridge.appSecret")}</label>
               <input
                 type="password"
                 value={imDingtalkAppSecret}
                 onChange={(e) => setImDingtalkAppSecret(e.target.value)}
                 placeholder="DINGTALK_APP_SECRET (or secret)"
-                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+                className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
               />
-              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                 {t("imBridge.appSecretHint")}
               </p>
             </div>
             <div>
-              <label className={labelClass(isDark)}>{t("imBridge.robotCode")}</label>
+              <label className={labelClass()}>{t("imBridge.robotCode")}</label>
               <input
                 type="text"
                 value={imDingtalkRobotCode}
                 onChange={(e) => setImDingtalkRobotCode(e.target.value)}
                 placeholder="DINGTALK_ROBOT_CODE (or robotCode)"
-                className={`${inputClass(isDark)} placeholder:${isDark ? "text-slate-600" : "text-gray-400"}`}
+                className={`${inputClass()} placeholder-[var(--color-text-muted)]`}
               />
-              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                 {t("imBridge.robotCodeHint")}
               </p>
-              <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-400"}`}>
+              <p className="text-xs mt-1 text-[var(--color-text-muted)]">
                 <Trans i18nKey="imBridge.dingtalkPackageHint" ns="settings" components={[<code />]} />
               </p>
             </div>
@@ -468,11 +468,7 @@ export function IMBridgeTab({
               <button
                 onClick={onStopBridge}
                 disabled={imBusy}
-                className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium ${
-                  isDark
-                    ? "bg-red-900/50 hover:bg-red-800/50 text-red-300"
-                    : "bg-red-100 hover:bg-red-200 text-red-700"
-                } disabled:opacity-50`}
+                className="px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium bg-red-500/15 hover:bg-red-500/25 text-red-600 dark:text-red-400 disabled:opacity-50"
               >
                 {t("imBridge.stopBridge")}
               </button>
@@ -480,11 +476,7 @@ export function IMBridgeTab({
               <button
                 onClick={onStartBridge}
                 disabled={imBusy}
-                className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium ${
-                  isDark
-                    ? "bg-blue-900/50 hover:bg-blue-800/50 text-blue-300"
-                    : "bg-blue-100 hover:bg-blue-200 text-blue-700"
-                } disabled:opacity-50`}
+                className="px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium bg-blue-500/15 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400 disabled:opacity-50"
               >
                 {t("imBridge.startBridge")}
               </button>
@@ -493,11 +485,7 @@ export function IMBridgeTab({
             <button
               onClick={onRemoveConfig}
               disabled={imBusy}
-              className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium ${
-                isDark
-                  ? "bg-slate-800 hover:bg-slate-700 text-slate-300"
-                  : "bg-gray-200 hover:bg-gray-300 text-gray-700"
-              } disabled:opacity-50`}
+              className="glass-btn px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium text-[var(--color-text-secondary)] disabled:opacity-50"
             >
               {t("imBridge.removeConfig")}
             </button>
@@ -509,18 +497,14 @@ export function IMBridgeTab({
       {imStatus?.configured && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+            <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">
               {t("imBridge.pendingRequests", "Pending Requests")}
             </h3>
             <div className="flex items-center gap-1">
               <button
                 onClick={loadIMAuthState}
                 disabled={pendingLoading || authLoading}
-                className={`text-xs px-2 py-1 rounded transition-colors ${
-                  isDark
-                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
-                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                } disabled:opacity-50`}
+                className="glass-btn text-xs px-2 py-1 rounded transition-colors text-[var(--color-text-tertiary)] disabled:opacity-50"
               >
                 {pendingLoading || authLoading ? "..." : "↻"}
               </button>
@@ -532,13 +516,13 @@ export function IMBridgeTab({
           )}
 
           {!pendingLoading && pendingRequests.length === 0 && !pendingError && (
-            <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+            <p className="text-xs text-[var(--color-text-muted)]">
               {t("imBridge.noPendingRequests", "No pending requests.")}
             </p>
           )}
 
           {pendingRequests.length > 0 && (
-            <div className={`${cardClass(isDark)} space-y-0 divide-y ${isDark ? "divide-slate-700" : "divide-gray-200"}`}>
+            <div className={`${cardClass()} space-y-0 divide-y divide-[var(--glass-border-subtle)]`}>
               {pendingRequests.map((request) => {
                 const approveKey = `approve:${request.key}`;
                 const rejectKey = `reject:${request.key}`;
@@ -546,11 +530,11 @@ export function IMBridgeTab({
                 return (
                   <div key={request.key} className="flex items-center justify-between py-2 first:pt-0 last:pb-0 gap-2">
                     <div className="min-w-0 flex-1">
-                      <div className={`text-sm truncate ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                      <div className="text-sm truncate text-[var(--color-text-secondary)]">
                         {request.chat_id}
                         {request.thread_id ? ` (thread: ${request.thread_id})` : ""}
                       </div>
-                      <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                      <div className="text-xs text-[var(--color-text-muted)]">
                         {request.platform}
                         {` • `}
                         {t("imBridge.pendingKey", "key")}: {maskKey(request.key)}
@@ -562,22 +546,14 @@ export function IMBridgeTab({
                       <button
                         onClick={() => handleApprovePending(request)}
                         disabled={actionBusy}
-                        className={`px-3 py-1 text-xs rounded-lg transition-colors font-medium ${
-                          isDark
-                            ? "bg-emerald-900/40 hover:bg-emerald-800/50 text-emerald-300"
-                            : "bg-emerald-50 hover:bg-emerald-100 text-emerald-700"
-                        } disabled:opacity-50`}
+                        className="px-3 py-1 text-xs rounded-lg transition-colors font-medium bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-600 dark:text-emerald-400 disabled:opacity-50"
                       >
                         {pendingActionKey === approveKey ? "..." : t("imBridge.approve", "Approve")}
                       </button>
                       <button
                         onClick={() => handleRejectPending(request)}
                         disabled={actionBusy}
-                        className={`px-3 py-1 text-xs rounded-lg transition-colors font-medium ${
-                          isDark
-                            ? "bg-red-900/40 hover:bg-red-800/50 text-red-400"
-                            : "bg-red-50 hover:bg-red-100 text-red-600"
-                        } disabled:opacity-50`}
+                        className="px-3 py-1 text-xs rounded-lg transition-colors font-medium bg-red-500/15 hover:bg-red-500/25 text-red-600 dark:text-red-400 disabled:opacity-50"
                       >
                         {pendingActionKey === rejectKey ? "..." : t("imBridge.rejectPending", "Reject")}
                       </button>
@@ -594,7 +570,7 @@ export function IMBridgeTab({
       {imStatus?.configured && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+            <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">
               {t("imBridge.authorizedChats", "Authorized Chats")}
             </h3>
             <div className="flex items-center gap-1">
@@ -613,32 +589,20 @@ export function IMBridgeTab({
                     setAuthInfo(t("imBridge.requestHint", "Step 1: In your IM chat, send /subscribe to request a temporary key. Step 2: the request will appear below in Pending Requests; click Approve (or paste the key in Bind). If foreman is online, you can forward the key and ask foreman to bind it for you."));
                   }
                 }}
-                className={`text-xs px-2 py-1 rounded transition-colors ${
-                  isDark
-                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
-                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                }`}
+                className="glass-btn text-xs px-2 py-1 rounded transition-colors text-[var(--color-text-tertiary)]"
               >
                 {t("imBridge.requestKey", "Request Key")}
               </button>
               <button
                 onClick={() => { setShowBindInput(v => !v); setBindKey(""); setAuthError(""); setAuthInfo(""); }}
-                className={`text-xs px-2 py-1 rounded transition-colors ${
-                  isDark
-                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
-                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                }`}
+                className="glass-btn text-xs px-2 py-1 rounded transition-colors text-[var(--color-text-tertiary)]"
               >
                 + {t("imBridge.bind", "Bind")}
               </button>
               <button
                 onClick={loadIMAuthState}
                 disabled={authLoading}
-                className={`text-xs px-2 py-1 rounded transition-colors ${
-                  isDark
-                    ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800"
-                    : "text-gray-500 hover:text-gray-700 hover:bg-gray-100"
-                } disabled:opacity-50`}
+                className="glass-btn text-xs px-2 py-1 rounded transition-colors text-[var(--color-text-tertiary)] disabled:opacity-50"
               >
                 {authLoading ? "..." : "↻"}
               </button>
@@ -647,7 +611,7 @@ export function IMBridgeTab({
 
           {showBindInput && (
             <div className="flex items-center gap-2">
-              <span className={`text-xs shrink-0 ${isDark ? "text-slate-400" : "text-gray-500"}`}>
+              <span className="text-xs shrink-0 text-[var(--color-text-tertiary)]">
                 {t("imBridge.bindKey", "Key")}:
               </span>
               <input
@@ -655,7 +619,7 @@ export function IMBridgeTab({
                 value={bindKey}
                 onChange={(e) => setBindKey(e.target.value)}
                 placeholder={t("imBridge.bindPlaceholder", "Paste bind key")}
-                className={`${inputClass(isDark)} flex-1 text-xs`}
+                className={`${inputClass()} flex-1 text-xs`}
                 disabled={binding}
               />
               <button
@@ -686,21 +650,13 @@ export function IMBridgeTab({
                   }
                 }}
                 disabled={binding || !bindKey.trim()}
-                className={`px-3 py-1 text-xs rounded-lg transition-colors font-medium shrink-0 ${
-                  isDark
-                    ? "bg-blue-900/40 hover:bg-blue-800/50 text-blue-400"
-                    : "bg-blue-50 hover:bg-blue-100 text-blue-600"
-                } disabled:opacity-50`}
+                className="px-3 py-1 text-xs rounded-lg transition-colors font-medium shrink-0 bg-blue-500/15 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400 disabled:opacity-50"
               >
                 {binding ? "..." : t("imBridge.bind", "Bind")}
               </button>
               <button
                 onClick={() => { setShowBindInput(false); setBindKey(""); setAuthError(""); setAuthInfo(""); }}
-                className={`text-xs px-1 py-1 rounded transition-colors ${
-                  isDark
-                    ? "text-slate-400 hover:text-slate-200"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
+                className="glass-btn text-xs px-1 py-1 rounded transition-colors text-[var(--color-text-tertiary)]"
               >
                 ✕
               </button>
@@ -711,28 +667,28 @@ export function IMBridgeTab({
             <p className="text-xs text-red-500">{authError}</p>
           )}
           {!authError && authInfo && (
-            <p className={`text-xs ${isDark ? "text-emerald-400" : "text-emerald-600"}`}>{authInfo}</p>
+            <p className="text-xs text-emerald-600 dark:text-emerald-400">{authInfo}</p>
           )}
 
           {!authLoading && authChats.length === 0 && !authError && (
-            <p className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+            <p className="text-xs text-[var(--color-text-muted)]">
               {t("imBridge.noAuthorizedChats", "No authorized chats yet.")}
             </p>
           )}
 
           {authChats.length > 0 && (
-            <div className={`${cardClass(isDark)} space-y-0 divide-y ${isDark ? "divide-slate-700" : "divide-gray-200"}`}>
+            <div className={`${cardClass()} space-y-0 divide-y divide-[var(--glass-border-subtle)]`}>
               {authChats.map((chat) => {
                 const key = `${chat.chat_id}:${chat.thread_id}`;
                 const isRevoking = revoking === key;
                 return (
                   <div key={key} className="flex items-center justify-between py-2 first:pt-0 last:pb-0">
                     <div className="min-w-0 flex-1">
-                      <div className={`text-sm truncate ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                      <div className="text-sm truncate text-[var(--color-text-secondary)]">
                         {chat.chat_id}
                         {chat.thread_id ? ` (thread: ${chat.thread_id})` : ""}
                       </div>
-                      <div className={`text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                      <div className="text-xs text-[var(--color-text-muted)]">
                         {chat.platform}
                         {chat.authorized_at && ` • ${new Date(chat.authorized_at * 1000).toLocaleDateString()}`}
                       </div>
@@ -745,12 +701,8 @@ export function IMBridgeTab({
                           : t("imBridge.verboseOffHint", "Receiving user-only messages. Click to receive all messages.")}
                         className={`px-2.5 py-1 text-xs rounded-lg transition-colors font-medium ${
                           chat.verbose
-                            ? isDark
-                              ? "bg-blue-900/40 hover:bg-blue-800/50 text-blue-400"
-                              : "bg-blue-50 hover:bg-blue-100 text-blue-600"
-                            : isDark
-                              ? "bg-slate-700/50 hover:bg-slate-600/50 text-slate-400"
-                              : "bg-gray-100 hover:bg-gray-200 text-gray-500"
+                            ? "bg-blue-500/15 hover:bg-blue-500/25 text-blue-600 dark:text-blue-400"
+                            : "bg-[var(--glass-tab-bg)] hover:bg-[var(--glass-tab-bg-hover)] text-[var(--color-text-tertiary)]"
                         }`}
                       >
                         {chat.verbose
@@ -760,11 +712,7 @@ export function IMBridgeTab({
                       <button
                         onClick={() => handleRevoke(chat.chat_id, chat.thread_id)}
                         disabled={isRevoking}
-                        className={`px-3 py-1 text-xs rounded-lg transition-colors font-medium ${
-                          isDark
-                            ? "bg-red-900/40 hover:bg-red-800/50 text-red-400"
-                            : "bg-red-50 hover:bg-red-100 text-red-600"
-                        } disabled:opacity-50`}
+                        className="px-3 py-1 text-xs rounded-lg transition-colors font-medium bg-red-500/15 hover:bg-red-500/25 text-red-600 dark:text-red-400 disabled:opacity-50"
                       >
                         {isRevoking ? "..." : t("imBridge.revoke", "Revoke")}
                       </button>
@@ -778,7 +726,7 @@ export function IMBridgeTab({
       )}
 
       {/* Help */}
-      <div className={`text-xs space-y-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+      <div className="text-xs space-y-1 text-[var(--color-text-muted)]">
         <p>{t("imBridge.setupGuide")}</p>
         <ol className="list-decimal list-inside space-y-0.5 ml-2">
           <li>{t("imBridge.setupStep1")}</li>

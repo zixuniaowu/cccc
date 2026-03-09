@@ -37,6 +37,7 @@
   "busy": "ビジー。",
   "crossGroupAttachment": "添付ファイルはまだグループ間で送信できません。",
   "attachFile": "ファイルを添付",
+  "removeAttachment": "添付ファイルを削除 {{name}}",
   "untitledGroup": "無題のグループ",
   "teamReady": "チームの準備ができました。エージェントに声をかけてみましょう。",
   "attachProjectFolder": "プロジェクトフォルダを添付",

@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 import { Actor, GroupDoc } from "../../types";
-import { getGroupStatus, getGroupStatusLight } from "../../utils/groupStatus";
+import { getGroupStatusUnified } from "../../utils/groupStatus";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { LanguageSwitcher } from "../LanguageSwitcher";
@@ -76,24 +76,24 @@ export function MobileMenuSheet({
         aria-label={t('menu')}
       >
         <div className="flex justify-center pt-3 pb-1" onClick={onClose}>
-          <div className={`w-12 h-1.5 rounded-full ${isDark ? "bg-white/20" : "bg-black/15"}`} />
+          <div className="w-12 h-1.5 rounded-full bg-black/15 dark:bg-white/20" />
         </div>
 
         <div className="px-6 pb-4 flex items-center justify-between gap-3">
           <div className="min-w-0">
-            <div className={classNames("text-lg font-bold truncate", isDark ? "text-slate-100" : "text-gray-900")}>
+            <div className={classNames("text-lg font-bold truncate", "text-[var(--color-text-primary)]")}>
               {groupDoc?.title || (selectedGroupId ? selectedGroupId : t('menu'))}
             </div>
             {selectedGroupId && groupDoc && (
               <div className="flex items-center gap-2 mt-1">
-                <span
-                  className={classNames(
-                    "text-xs px-2 py-0.5 rounded-full font-medium",
-                    isDark ? getGroupStatus(selectedGroupRunning, groupDoc.state).pillClass : getGroupStatusLight(selectedGroupRunning, groupDoc.state).pillClass
-                  )}
-                >
-                  {(isDark ? getGroupStatus(selectedGroupRunning, groupDoc.state) : getGroupStatusLight(selectedGroupRunning, groupDoc.state)).label}
-                </span>
+                {(() => {
+                  const status = getGroupStatusUnified(selectedGroupRunning, groupDoc.state);
+                  return (
+                    <span className={classNames("text-xs px-2 py-0.5 rounded-full font-medium", status.pillClass)}>
+                      {status.label}
+                    </span>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -101,7 +101,7 @@ export function MobileMenuSheet({
             onClick={onClose}
             className={classNames(
               "p-2 rounded-full transition-colors glass-btn",
-              isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-400 hover:text-gray-600"
+              "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
             )}
             aria-label={t('closeMenu')}
           >
@@ -111,7 +111,7 @@ export function MobileMenuSheet({
 
         <div className="p-4 space-y-2 safe-area-inset-bottom">
           {!selectedGroupId && (
-            <div className={classNames("text-sm px-1 pb-2", isDark ? "text-slate-400" : "text-gray-500")}>
+            <div className={classNames("text-sm px-1 pb-2", "text-[var(--color-text-tertiary)]")}>
               {t('selectGroupToEnable')}
             </div>
           )}
@@ -119,7 +119,7 @@ export function MobileMenuSheet({
           <button
             className={classNames(
               "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
-              isDark ? "text-slate-200" : "text-gray-800"
+              "text-[var(--color-text-primary)]"
             )}
             onClick={() => {
               onClose();
@@ -135,7 +135,7 @@ export function MobileMenuSheet({
             <button
               className={classNames(
                 "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
+                "text-[var(--color-text-primary)]"
               )}
               onClick={() => {
                 onClose();
@@ -150,7 +150,7 @@ export function MobileMenuSheet({
             <button
               className={classNames(
                 "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
+                "text-[var(--color-text-primary)]"
               )}
               onClick={() => {
                 onClose();
@@ -167,13 +167,13 @@ export function MobileMenuSheet({
             <LanguageSwitcher
               isDark={isDark}
               showLabel
-              className={isDark ? "text-slate-200" : "text-gray-800"}
+              className="text-[var(--color-text-primary)]"
             />
 
             <button
               className={classNames(
                 "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
+                "text-[var(--color-text-primary)]"
               )}
               onClick={onToggleTheme}
             >
@@ -186,7 +186,7 @@ export function MobileMenuSheet({
             <button
               className={classNames(
                 "w-full flex items-center justify-center gap-3 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
-                isDark ? "text-slate-200" : "text-gray-800"
+                "text-[var(--color-text-primary)]"
               )}
               onClick={() => {
                 onClose();
@@ -199,20 +199,15 @@ export function MobileMenuSheet({
             </button>
           ) : null}
 
-          <div className={classNames("h-px my-3 mx-2", isDark ? "bg-white/10" : "bg-black/10")} />
+          <div className="h-px my-3 mx-2 bg-[var(--glass-border-subtle)]" />
 
           <div className="grid grid-cols-2 gap-2">
             <button
-              className={classNames(
-                "w-full flex flex-col items-center justify-center gap-2 px-2 py-3 rounded-2xl text-sm font-medium transition-all min-h-[64px] disabled:opacity-50",
-                isDark
-                  ? "glass-btn-accent text-emerald-300"
-                  : "glass-btn-accent text-emerald-700"
-              )}
+              className="w-full flex flex-col items-center justify-center gap-2 px-2 py-3 rounded-2xl text-sm font-medium transition-all min-h-[64px] disabled:opacity-50 glass-btn-accent text-emerald-700 dark:text-emerald-300"
               style={{
-                '--glass-accent-bg': isDark ? 'rgba(16, 185, 129, 0.15)' : 'rgba(16, 185, 129, 0.1)',
-                '--glass-accent-border': isDark ? 'rgba(16, 185, 129, 0.25)' : 'rgba(16, 185, 129, 0.2)',
-                '--glass-accent-glow': isDark ? '0 0 20px rgba(16, 185, 129, 0.15)' : '0 0 16px rgba(16, 185, 129, 0.1)',
+                '--glass-accent-bg': 'var(--glass-accent-emerald-bg, rgba(16, 185, 129, 0.1))',
+                '--glass-accent-border': 'var(--glass-accent-emerald-border, rgba(16, 185, 129, 0.2))',
+                '--glass-accent-glow': 'var(--glass-accent-emerald-glow, 0 0 16px rgba(16, 185, 129, 0.1))',
               } as React.CSSProperties}
               onClick={() => {
                 onClose();
@@ -227,7 +222,7 @@ export function MobileMenuSheet({
             <button
               className={classNames(
                 "w-full flex flex-col items-center justify-center gap-2 px-2 py-3 rounded-2xl text-sm font-medium transition-all min-h-[64px] disabled:opacity-50 glass-btn",
-                isDark ? "text-slate-300" : "text-gray-600"
+                "text-[var(--color-text-secondary)]"
               )}
               onClick={() => {
                 onClose();
@@ -242,16 +237,11 @@ export function MobileMenuSheet({
 
           {groupDoc?.state === "paused" ? (
             <button
-              className={classNames(
-                "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50",
-                isDark
-                  ? "glass-btn-accent text-amber-300"
-                  : "glass-btn-accent text-amber-700"
-              )}
+              className="w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn-accent text-amber-700 dark:text-amber-300"
               style={{
-                '--glass-accent-bg': isDark ? 'rgba(245, 158, 11, 0.15)' : 'rgba(245, 158, 11, 0.1)',
-                '--glass-accent-border': isDark ? 'rgba(245, 158, 11, 0.25)' : 'rgba(245, 158, 11, 0.2)',
-                '--glass-accent-glow': isDark ? '0 0 20px rgba(245, 158, 11, 0.15)' : '0 0 16px rgba(245, 158, 11, 0.1)',
+                '--glass-accent-bg': 'var(--glass-accent-amber-bg, rgba(245, 158, 11, 0.1))',
+                '--glass-accent-border': 'var(--glass-accent-amber-border, rgba(245, 158, 11, 0.2))',
+                '--glass-accent-glow': 'var(--glass-accent-amber-glow, 0 0 16px rgba(245, 158, 11, 0.1))',
               } as React.CSSProperties}
               onClick={() => {
                 onClose();
@@ -266,7 +256,7 @@ export function MobileMenuSheet({
             <button
               className={classNames(
                 "w-full flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl text-sm font-medium transition-all min-h-[52px] disabled:opacity-50 glass-btn",
-                isDark ? "text-slate-300" : "text-gray-600"
+                "text-[var(--color-text-secondary)]"
               )}
               onClick={() => {
                 onClose();

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation, Trans } from "react-i18next";
 import { apiJson } from "../../../services/api";
 import type { GroupSettings } from "../../../types";
@@ -15,21 +15,43 @@ type PromptInfo = {
 };
 
 type PromptsResponse = {
-  preamble: PromptInfo;
-  help: PromptInfo;
+  preamble?: PromptInfo | null;
+  help?: PromptInfo | null;
 };
 
-export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
+function isPromptInfo(value: unknown): value is PromptInfo {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.kind === "string"
+    && typeof record.source === "string"
+    && typeof record.filename === "string"
+    && typeof record.content === "string";
+}
+
+function fallbackPrompt(kind: PromptKind): PromptInfo {
+  return {
+    kind,
+    source: "builtin",
+    filename: kind === "preamble" ? "CCCC_PREAMBLE.md" : "CCCC_HELP.md",
+    path: null,
+    content: "",
+  };
+}
+
+export function GuidanceTab({ isDark: _isDark, groupId, settings, onUpdateSettings, scopeRootUrl, scopeResolved }: {
   isDark: boolean;
   groupId?: string;
   settings?: GroupSettings | null;
   onUpdateSettings?: (s: Partial<GroupSettings>) => Promise<void>;
+  scopeRootUrl?: string;
+  scopeResolved?: boolean;
 }) {
   const { t } = useTranslation("settings");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [prompts, setPrompts] = useState<Record<PromptKind, PromptInfo> | null>(null);
   const [expandedKind, setExpandedKind] = useState<PromptKind | null>(null);
+  const loadTokenRef = useRef(0);
 
   // Features
   const [panoramaEnabled, setPanoramaEnabled] = useState(false);
@@ -44,28 +66,27 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
 
   const load = async () => {
     if (!groupId) return;
+    const token = loadTokenRef.current + 1;
+    loadTokenRef.current = token;
     setBusy(true);
     setErr("");
     try {
       const resp = await apiJson<PromptsResponse>(`/api/v1/groups/${encodeURIComponent(groupId)}/prompts`);
+      if (loadTokenRef.current !== token) return;
       if (!resp.ok) {
         setErr(resp.error?.message || t("guidance.failedToLoad"));
         setPrompts(null);
         return;
       }
-      const p = resp.result?.preamble;
-      const h = resp.result?.help;
-      if (!p || !h) {
-        setErr(t("guidance.invalidResponse"));
-        setPrompts(null);
-        return;
-      }
+      const p = isPromptInfo(resp.result?.preamble) ? resp.result.preamble : prompts?.preamble || fallbackPrompt("preamble");
+      const h = isPromptInfo(resp.result?.help) ? resp.result.help : prompts?.help || fallbackPrompt("help");
       setPrompts({ preamble: p, help: h });
     } catch {
+      if (loadTokenRef.current !== token) return;
       setErr(t("guidance.failedToLoad"));
       setPrompts(null);
     } finally {
-      setBusy(false);
+      if (loadTokenRef.current === token) setBusy(false);
     }
   };
 
@@ -128,8 +149,8 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
 
   if (!groupId) {
     return (
-      <div className={cardClass(isDark)}>
-        <div className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("guidance.openFromGroup")}</div>
+      <div className={cardClass()}>
+        <div className="text-sm text-[var(--color-text-secondary)]">{t("guidance.openFromGroup")}</div>
       </div>
     );
   }
@@ -139,26 +160,20 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
     const source = p?.source || "builtin";
     const badge =
       source === "home"
-        ? isDark
-          ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-          : "bg-emerald-50 text-emerald-700 border border-emerald-200"
-        : isDark
-          ? "bg-slate-800 text-slate-300 border border-slate-700"
-          : "bg-gray-100 text-gray-700 border border-gray-200";
+        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30"
+        : "bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]";
 
     return (
-      <div className={cardClass(isDark)}>
+      <div className={cardClass()}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{title}</div>
-            <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>{hint}</div>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{title}</div>
+            <div className="text-[11px] text-[var(--color-text-muted)]">{hint}</div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
               type="button"
-              className={`px-2 py-1 rounded-md text-[11px] transition-colors ${
-                isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-              }`}
+              className="glass-btn text-[var(--color-text-secondary)] px-2 py-1 rounded-md text-[11px] transition-colors"
               onClick={() => setExpandedKind(kind)}
               disabled={busy}
               title={t("guidance.expandTitle")}
@@ -170,15 +185,15 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
         </div>
 
         {p?.path && (
-          <div className={preClass(isDark)}>
+          <div className={preClass()}>
             <span className="font-mono">{p.path}</span>
           </div>
         )}
 
         <div className="mt-3">
-          <label className={labelClass(isDark)}>{t("guidance.markdown")}</label>
+          <label className={labelClass()}>{t("guidance.markdown")}</label>
           <textarea
-            className={`${inputClass(isDark)} font-mono text-[12px]`}
+            className={`${inputClass()} font-mono text-[12px]`}
             style={{ minHeight: 220 }}
             value={p?.content || ""}
             onChange={(e) => setContent(kind, e.target.value)}
@@ -191,9 +206,7 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
             {t("common:save")}
           </button>
           <button
-            className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium disabled:opacity-50 ${
-              isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
-            }`}
+            className="glass-btn text-[var(--color-text-secondary)] px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium disabled:opacity-50"
             onClick={() => reset(kind)}
             disabled={busy || source !== "home"}
             title={source === "home" ? t("guidance.resetHint") : t("guidance.noOverride")}
@@ -201,9 +214,7 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
             {t("common:reset")}
           </button>
           <button
-            className={`ml-auto px-3 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50 ${
-              isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-            }`}
+            className="glass-btn text-[var(--color-text-secondary)] ml-auto px-3 py-2 text-sm rounded-lg min-h-[44px] transition-colors disabled:opacity-50"
             onClick={load}
             disabled={busy}
             title={t("guidance.discardChanges")}
@@ -219,11 +230,11 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
 
   return (
     <div className="space-y-4">
-      {err && <div className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>{err}</div>}
+      {err && <div className="text-sm text-rose-600 dark:text-rose-400">{err}</div>}
 
       {/* Features */}
-      <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold mb-3 ${isDark ? "text-slate-100" : "text-gray-900"}`}>
+      <div className={cardClass()}>
+        <div className="text-sm font-semibold mb-3 text-[var(--color-text-primary)]">
           {t("guidance.featuresTitle", "Features")}
         </div>
         <label className="flex items-center gap-3 cursor-pointer">
@@ -234,19 +245,24 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
             className="w-4 h-4 rounded accent-blue-500"
           />
           <div>
-            <div className={`text-sm ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+            <div className="text-sm text-[var(--color-text-primary)]">
               Panorama 3D
             </div>
-            <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+            <div className="text-[11px] text-[var(--color-text-muted)]">
               {t("guidance.panoramaHint", "Enable to show the 3D panorama tab")}
             </div>
           </div>
         </label>
       </div>
 
-      <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+      <div className="text-[11px] text-[var(--color-text-muted)]">
         <Trans i18nKey="guidance.overridesHint" ns="settings" components={[<span className="font-mono" />]} />
       </div>
+      {scopeResolved && !scopeRootUrl ? (
+        <div className="text-[11px] text-amber-700 dark:text-amber-300 rounded-lg border border-amber-200 dark:border-amber-500/20 bg-amber-50/80 dark:bg-amber-500/10 px-3 py-2">
+          {t("guidance.noScopeWarning", "No scope attached to this group yet. Guidance overrides still work because they are stored under CCCC_HOME, but repo-linked features may stay unavailable until a scope is attached.")}
+        </div>
+      ) : null}
       {one("preamble", t("guidance.preambleTitle"), t("guidance.preambleHint"))}
       {one("help", t("guidance.helpTitle"), t("guidance.helpHint"))}
 
@@ -261,17 +277,15 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
         >
           <div className="absolute inset-0 bg-black/50" />
           <div
-            className={`absolute inset-0 sm:inset-6 md:inset-10 rounded-none sm:rounded-2xl border ${
-              isDark ? "border-slate-800 bg-slate-950" : "border-gray-200 bg-white"
-            } shadow-2xl flex flex-col overflow-hidden`}
+            className="absolute inset-0 sm:inset-6 md:inset-10 rounded-none sm:rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)] shadow-2xl flex flex-col overflow-hidden"
           >
-            <div className={`px-4 py-3 border-b ${isDark ? "border-slate-800" : "border-gray-200"} flex items-start gap-3`}>
+            <div className="px-4 py-3 border-b border-[var(--glass-border-subtle)] flex items-start gap-3">
               <div className="min-w-0">
-                <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
                   {t("guidance.editKind", { kind: expandedKind })}
                 </div>
                 {expanded.path ? (
-                  <div className={`mt-1 text-[11px] ${isDark ? "text-slate-400" : "text-gray-600"} break-all font-mono`}>
+                  <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)] break-all font-mono">
                     {expanded.path}
                   </div>
                 ) : null}
@@ -288,9 +302,7 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
                 </button>
                 <button
                   type="button"
-                  className={`px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium disabled:opacity-50 ${
-                    isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-800"
-                  }`}
+                  className="glass-btn text-[var(--color-text-secondary)] px-4 py-2 text-sm rounded-lg min-h-[44px] transition-colors font-medium disabled:opacity-50"
                   onClick={() => reset(expandedKind)}
                   disabled={busy || expanded.source !== "home"}
                   title={expanded.source === "home" ? t("guidance.resetHint") : t("guidance.noOverride")}
@@ -299,9 +311,7 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
                 </button>
                 <button
                   type="button"
-                  className={`px-3 py-2 text-sm rounded-lg min-h-[44px] transition-colors ${
-                    isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-                  }`}
+                  className="glass-btn text-[var(--color-text-secondary)] px-3 py-2 text-sm rounded-lg min-h-[44px] transition-colors"
                   onClick={() => setExpandedKind(null)}
                 >
                   {t("common:close")}
@@ -311,7 +321,7 @@ export function GuidanceTab({ isDark, groupId, settings, onUpdateSettings }: {
 
             <div className="p-4 flex-1 overflow-hidden">
               <textarea
-                className={`${inputClass(isDark)} font-mono text-[12px] w-full h-full resize-none`}
+                className={`${inputClass()} font-mono text-[12px] w-full h-full resize-none`}
                 value={expanded.content || ""}
                 onChange={(e) => setContent(expandedKind, e.target.value)}
                 spellCheck={false}

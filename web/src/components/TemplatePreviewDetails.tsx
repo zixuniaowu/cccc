@@ -65,7 +65,7 @@ type TemplateDiff = {
 };
 
 export interface TemplatePreviewDetailsProps {
-  isDark: boolean;
+  isDark?: boolean;
   template: TemplatePayload;
   diff?: TemplateDiff | null;
   wrap?: boolean;
@@ -142,14 +142,14 @@ export function TemplatePreviewDetails({
     if (diff?.settings_changed && diff.settings_changed[key]) {
       const row = diff.settings_changed[key];
       return (
-        <div key={key} className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+        <div key={key} className="text-xs text-[var(--color-text-tertiary)]">
           <span className="font-mono">{key}</span>: <span className="font-mono">{String(row.from)}</span> →{" "}
           <span className="font-mono">{String(row.to)}</span>
         </div>
       );
     }
     return (
-      <div key={key} className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+      <div key={key} className="text-xs text-[var(--color-text-tertiary)]">
         <span className="font-mono">{key}</span>: <span className="font-mono">{String(settings[key])}</span>
       </div>
     );
@@ -179,13 +179,13 @@ export function TemplatePreviewDetails({
 
   const body = (
     <>
-      <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>Blueprint preview</div>
-      <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+      <div className="text-sm font-semibold text-[var(--color-text-primary)]">Blueprint preview</div>
+      <div className="text-xs mt-1 text-[var(--color-text-muted)]">
         Blueprint title/topic are informational only (not applied automatically).
       </div>
 
       <div className="mt-3 space-y-1">
-        <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+        <div className="text-xs text-[var(--color-text-tertiary)]">
           Blueprint:{" "}
           <span className="font-mono">
             v{String(template.v || "")} {String(template.cccc_version || "")}
@@ -198,7 +198,7 @@ export function TemplatePreviewDetails({
       </div>
 
         {diff ? (
-          <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+          <div className="text-xs text-[var(--color-text-tertiary)]">
             Actors: +{addIds.length} / ~{updateIds.length} / -{removeIds.length} • Settings changes:{" "}
             {settingsChangedKeys.length} • Guidance changes:{" "}
             {diff.guidance_changed || diff.prompts_changed
@@ -214,7 +214,7 @@ export function TemplatePreviewDetails({
             ) : null}
           </div>
         ) : (
-          <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+          <div className="text-xs text-[var(--color-text-tertiary)]">
             Actors: {actors.length} • Settings: {stableSettingsKeys.length} keys • Guidance:{" "}
             {promptOverrideCount > 0 ? `${promptOverrideCount} override(s)` : "builtin"}
             {hasAutomation ? ` • Automation: ${automationRules} rule(s) / ${automationSnippets} snippet(s)` : ""}
@@ -223,13 +223,11 @@ export function TemplatePreviewDetails({
       </div>
 
       <details
-        className={`mt-3 rounded-lg border px-3 py-2 ${
-          isDark ? "border-slate-800 bg-slate-950/30" : "border-gray-200 bg-gray-50"
-        }`}
+        className="mt-3 rounded-lg border px-3 py-2 border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)]"
         open={detailsOpen}
         onToggle={(e) => setDetailsOpen(e.currentTarget.open)}
       >
-        <summary className={`cursor-pointer text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+        <summary className="cursor-pointer text-xs font-medium text-[var(--color-text-secondary)]">
           Preview details
         </summary>
 
@@ -237,19 +235,19 @@ export function TemplatePreviewDetails({
           {(addIds.length || updateIds.length || removeIds.length) && diff ? (
             <div className="space-y-1">
               {addIds.length ? (
-                <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                <div className="text-xs text-[var(--color-text-tertiary)]">
                   Add: <span className="font-mono">{addIds.slice(0, 12).join(", ")}</span>
                   {addIds.length > 12 ? ` (+${addIds.length - 12} more)` : ""}
                 </div>
               ) : null}
               {updateIds.length ? (
-                <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                <div className="text-xs text-[var(--color-text-tertiary)]">
                   Update: <span className="font-mono">{updateIds.slice(0, 12).join(", ")}</span>
                   {updateIds.length > 12 ? ` (+${updateIds.length - 12} more)` : ""}
                 </div>
               ) : null}
               {removeIds.length ? (
-                <div className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                <div className="text-xs text-[var(--color-text-tertiary)]">
                   Remove: <span className="font-mono">{removeIds.slice(0, 12).join(", ")}</span>
                   {removeIds.length > 12 ? ` (+${removeIds.length - 12} more)` : ""}
                 </div>
@@ -259,7 +257,7 @@ export function TemplatePreviewDetails({
 
           {actors.length > 0 ? (
             <div>
-              <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Actors</div>
+              <div className="text-xs font-medium text-[var(--color-text-secondary)]">Actors</div>
               <div className="mt-1 space-y-1">
                 {actors.slice(0, 20).map((a) => {
                   const id = String(a.id || "").trim();
@@ -270,7 +268,7 @@ export function TemplatePreviewDetails({
                   const enabled = a.enabled === false ? "disabled" : "enabled";
                   const cmd = formatCommand(a.command);
                   return (
-                    <div key={id} className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                    <div key={id} className="text-xs text-[var(--color-text-tertiary)]">
                       <span className="font-mono">{id}</span>
                       {title ? <span className="ml-2">• {title}</span> : null}
                       {rt ? <span className="ml-2 font-mono">• {rt}</span> : null}
@@ -281,7 +279,7 @@ export function TemplatePreviewDetails({
                   );
                 })}
                 {actors.length > 20 ? (
-                  <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">
                     …and {actors.length - 20} more
                   </div>
                 ) : null}
@@ -291,11 +289,11 @@ export function TemplatePreviewDetails({
 
           {stableSettingsKeys.length > 0 ? (
             <div>
-              <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Settings</div>
+              <div className="text-xs font-medium text-[var(--color-text-secondary)]">Settings</div>
               <div className="mt-1 space-y-1">
                 {stableSettingsKeys.slice(0, 12).map((k) => formatSettingLine(k))}
                 {stableSettingsKeys.length > 12 ? (
-                  <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  <div className="text-[11px] text-[var(--color-text-muted)]">
                     …and {stableSettingsKeys.length - 12} more
                   </div>
                 ) : null}
@@ -304,7 +302,7 @@ export function TemplatePreviewDetails({
           ) : null}
 
           <div>
-            <div className={`text-xs font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>Guidance</div>
+            <div className="text-xs font-medium text-[var(--color-text-secondary)]">Guidance</div>
             {(["preamble", "help"] as const).map((kind) => {
               const meta = promptMeta(kind);
               const label = formatPromptLabel(kind);
@@ -330,7 +328,7 @@ export function TemplatePreviewDetails({
               const summaryMeta = [srcLabel, charLabel].filter(Boolean).join(" • ");
               return (
                 <details key={kind} className="mt-2">
-                  <summary className={`cursor-pointer text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                  <summary className="cursor-pointer text-xs text-[var(--color-text-tertiary)]">
                     {label} {changedLabel}{" "}
                     <span className="ml-2 text-[11px] opacity-80">
                       {summaryMeta}
@@ -338,14 +336,12 @@ export function TemplatePreviewDetails({
                   </summary>
                   {meta.p.preview ? (
                     <pre
-                      className={`mt-2 p-2 rounded overflow-x-auto whitespace-pre text-[11px] ${
-                        isDark ? "bg-slate-900 text-slate-200" : "bg-white text-gray-800 border border-gray-200"
-                      }`}
+                      className="mt-2 p-2 rounded overflow-x-auto whitespace-pre text-[11px] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] border border-[var(--glass-border-subtle)]"
                     >
                       {String(meta.p.preview)}
                     </pre>
                   ) : meta.p.source === "builtin" ? (
-                    <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                    <div className="mt-2 text-[11px] text-[var(--color-text-muted)]">
                       Uses built-in defaults (no override file).
                     </div>
                   ) : null}

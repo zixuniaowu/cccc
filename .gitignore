@@ -33,6 +33,7 @@ uv.lock
 .idea/
 .vscode/
 .env
+.tmp
 
 # Local dev environments
 /venv-publish/

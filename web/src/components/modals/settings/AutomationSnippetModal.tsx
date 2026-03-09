@@ -50,22 +50,18 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
     >
       <div className="absolute inset-0 bg-black/50" />
       <div
-        className={`absolute inset-2 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:w-[min(820px,calc(100vw-20px))] sm:h-[min(74vh,700px)] sm:-translate-x-1/2 sm:-translate-y-1/2 rounded-xl sm:rounded-2xl border ${
-          isDark ? "border-slate-800 bg-slate-950" : "border-gray-200 bg-white"
-        } shadow-2xl flex flex-col overflow-hidden`}
+        className="glass-modal absolute inset-2 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:w-[min(820px,calc(100vw-20px))] sm:h-[min(74vh,700px)] sm:-translate-x-1/2 sm:-translate-y-1/2 rounded-xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden"
       >
-        <div className={`px-4 py-3 border-b ${isDark ? "border-slate-800" : "border-gray-200"} flex items-start gap-3`}>
+        <div className="px-4 py-3 border-b border-[var(--glass-border-subtle)] flex items-start gap-3">
           <div className="min-w-0">
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("snippetModal.title")}</div>
-            <div className={`mt-1 text-[11px] ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("snippetModal.title")}</div>
+            <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
               {t("snippetModal.description")}
             </div>
           </div>
           <button
             type="button"
-            className={`ml-auto px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors ${
-              isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-            }`}
+            className="glass-btn ml-auto px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors text-[var(--color-text-secondary)]"
             onClick={onClose}
           >
             {t("common:close")}
@@ -73,7 +69,7 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
         </div>
 
         <div className="p-3 sm:p-4 flex-1 overflow-auto space-y-3">
-          {templateErr ? <div className={`text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{templateErr}</div> : null}
+          {templateErr ? <div className="text-xs text-rose-600 dark:text-rose-300">{templateErr}</div> : null}
           <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
             <input
               value={newSnippetId}
@@ -84,9 +80,7 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
             />
             <button
               type="button"
-              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-              }`}
+              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors text-[var(--color-text-primary)]"
               onClick={onAddSnippet}
             >
               {t("snippetModal.addSnippet")}
@@ -94,8 +88,8 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
           </div>
 
           {supportedVars.length > 0 ? (
-            <div className={`rounded-lg border p-2.5 text-[11px] ${isDark ? "border-slate-800 bg-slate-900/60 text-slate-400" : "border-gray-200 bg-gray-50 text-gray-600"}`}>
-              <div className={`font-semibold mb-1 ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("snippetModal.availablePlaceholders")}</div>
+            <div className="rounded-lg border border-[var(--glass-border-subtle)] p-2.5 text-[11px] bg-[var(--glass-panel-bg)] text-[var(--color-text-tertiary)]">
+              <div className="font-semibold mb-1 text-[var(--color-text-secondary)]">{t("snippetModal.availablePlaceholders")}</div>
               <div className="space-y-1">
                 {supportedVars.map((v) => {
                   const help = AUTOMATION_VAR_HELP[v];
@@ -103,7 +97,7 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
                     <div key={v}>
                       <span className="font-mono">{`{{${v}}}`}</span>
                       <span>{` - ${help?.description || "Built-in placeholder."}`}</span>
-                      <span className={isDark ? "text-slate-500" : "text-gray-500"}>{` (example: ${help?.example || "-"})`}</span>
+                      <span className="text-[var(--color-text-muted)]">{` (example: ${help?.example || "-"})`}</span>
                     </div>
                   );
                 })}
@@ -111,18 +105,16 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
             </div>
           ) : null}
 
-          {snippetIds.length === 0 ? <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("snippetModal.noSnippets")}</div> : null}
+          {snippetIds.length === 0 ? <div className="text-sm text-[var(--color-text-tertiary)]">{t("snippetModal.noSnippets")}</div> : null}
 
           <div className="space-y-3">
             {snippetIds.map((snippetId) => (
               <div key={snippetId} className={cardClass(isDark)}>
                 <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className={`text-xs font-semibold font-mono ${isDark ? "text-slate-200" : "text-gray-800"}`}>{snippetId}</div>
+                  <div className="text-xs font-semibold font-mono text-[var(--color-text-primary)]">{snippetId}</div>
                   <button
                     type="button"
-                    className={`px-2 py-1.5 rounded-lg text-xs min-h-[36px] transition-colors ${
-                      isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-                    }`}
+                    className="glass-btn px-2 py-1.5 rounded-lg text-xs min-h-[36px] transition-colors text-[var(--color-text-secondary)]"
                     onClick={() => onDeleteSnippet(snippetId)}
                     title={t("snippetModal.deleteSnippet")}
                   >

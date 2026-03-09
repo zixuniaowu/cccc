@@ -107,12 +107,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
       ref={addButtonRef}
       onClick={onAddAgent}
       disabled={!canAddAgent}
-      className={classNames(
-        "flex-shrink-0 flex items-center justify-center w-9 h-9 rounded-lg text-sm font-medium transition-all disabled:opacity-30 focus:outline-none border",
-        isDark
-          ? "border-white/10 text-slate-300 hover:bg-white/5 hover:text-white"
-          : "border-black/10 text-gray-600 hover:bg-black/5 hover:text-gray-900"
-      )}
+      className="glass-btn flex-shrink-0 flex items-center justify-center w-11 h-11 rounded-lg text-sm font-medium transition-all disabled:opacity-30 focus:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/50 border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
       title={actors.length === 0 ? t("addFirstAgent") : t("addAgent")}
       aria-label={t("addAgent")}
     >
@@ -123,10 +118,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
   return (
     <div
       ref={rootRef}
-      className={classNames(
-        "flex items-center border-b sticky top-0 z-10 backdrop-blur-md",
-        isDark ? "border-white/5 bg-slate-900/70" : "border-black/5 bg-white/70"
-      )}
+      className="glass-header flex items-center sticky top-0 z-10"
       role="tablist"
       aria-label={t("navigationTabs")}
     >
@@ -152,20 +144,17 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
             ref={activeTab === "chat" ? activeTabRef : null}
             onClick={() => onTabChange("chat")}
             className={classNames(
-              "relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap transition-all rounded-lg flex-shrink-0 focus:outline-none",
+              "glass-tab relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0 focus:outline-none",
               activeTab === "chat"
-                ? isDark ? "bg-white/10 text-white" : "bg-black/5 text-gray-900"
-                : isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
+                ? "glass-tab-active text-[var(--color-text-primary)]"
+                : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
             )}
             role="tab"
             aria-selected={activeTab === "chat"}
           >
             <span>{t("chat")}</span>
             {unreadChatCount > 0 && (
-              <span className={classNames(
-                "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
-                isDark ? "bg-cyan-500/20 text-cyan-300" : "bg-cyan-100 text-cyan-700"
-              )}>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-[var(--glass-accent-bg)] text-[var(--color-accent-primary)] border border-[var(--glass-accent-border)]">
                 {unreadChatCount}
               </span>
             )}
@@ -177,10 +166,10 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
               ref={activeTab === "panorama" ? activeTabRef : null}
               onClick={() => onTabChange("panorama")}
               className={classNames(
-                "relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap transition-all rounded-lg flex-shrink-0 focus:outline-none",
+                "glass-tab relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0 focus:outline-none",
                 activeTab === "panorama"
-                  ? isDark ? "bg-white/10 text-white" : "bg-black/5 text-gray-900"
-                  : isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
+                  ? "glass-tab-active text-[var(--color-text-primary)]"
+                  : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
               )}
               role="tab"
               aria-selected={activeTab === "panorama"}
@@ -191,7 +180,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
 
           {/* Separator */}
           {actors.length > 0 && (
-            <div className={`w-px h-4 flex-shrink-0 ${isDark ? "bg-white/10" : "bg-black/8"}`} />
+            <div className="w-px h-4 flex-shrink-0 bg-[var(--glass-border-subtle)]" />
           )}
 
           {/* Agent Tabs */}
@@ -205,10 +194,10 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
                 ref={isActive ? activeTabRef : null}
                 onClick={() => onTabChange(actor.id)}
                 className={classNames(
-                  "relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap transition-all rounded-lg flex-shrink-0 focus:outline-none",
+                  "glass-tab relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap flex-shrink-0 focus:outline-none",
                   isActive
-                    ? isDark ? "bg-white/10 text-white" : "bg-black/5 text-gray-900"
-                    : isDark ? "text-slate-400 hover:text-slate-200 hover:bg-white/5" : "text-gray-500 hover:text-gray-700 hover:bg-black/5"
+                    ? "glass-tab-active text-[var(--color-text-primary)]"
+                    : "text-[var(--color-text-tertiary)] hover:text-[var(--color-text-secondary)]"
                 )}
                 role="tab"
                 aria-selected={isActive}
@@ -216,31 +205,27 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
                 {/* Run Indicator */}
                 <span
                   className={classNames(
-                    "w-2 h-2 rounded-full transition-all flex-shrink-0",
+                    "relative inline-flex w-2.5 h-2.5 rounded-full flex-shrink-0 transition-all ring-2",
                     isRunning
-                      ? "bg-emerald-500"
-                      : isDark ? "bg-slate-600" : "bg-gray-300"
+                      ? "bg-emerald-500 ring-emerald-500/20 shadow-[0_0_10px_rgba(16,185,129,0.28)]"
+                      : "bg-slate-400/70 ring-slate-400/15 opacity-70"
                   )}
-                />
+                >
+                  {isRunning && (
+                    <span className="absolute inset-0 rounded-full animate-ping bg-emerald-400/35 motion-reduce:animate-none" />
+                  )}
+                </span>
 
                 <span>{actor.title || actor.id}</span>
 
                 {actor.role === "foreman" && (
-                  <span className={classNames(
-                    "text-[9px] px-1.5 py-0.5 rounded",
-                    isDark ? "bg-amber-500/20 text-amber-400" : "bg-amber-100 text-amber-600"
-                  )}>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 dark:text-amber-400">
                     F
                   </span>
                 )}
 
                 {(actor.unread_count ?? 0) > 0 && (
-                  <span
-                    className={classNames(
-                      "text-[10px] px-1.5 py-0.5 rounded-full font-bold",
-                      isDark ? "bg-indigo-500/20 text-indigo-300" : "bg-indigo-100 text-indigo-700"
-                    )}
-                  >
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-indigo-500/15 text-indigo-500 dark:text-indigo-300">
                     {actor.unread_count}
                   </span>
                 )}
@@ -255,10 +240,7 @@ export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark
 
       {/* Fixed Add Button when overflowing */}
       {isOverflowing && onAddAgent && (
-        <div className={classNames(
-          "flex-shrink-0 px-2 py-1.5 border-l",
-          isDark ? "border-white/5" : "border-black/5"
-        )}>
+        <div className="flex-shrink-0 px-2 py-1.5 border-l border-[var(--glass-border-subtle)]">
           {addButton}
         </div>
       )}

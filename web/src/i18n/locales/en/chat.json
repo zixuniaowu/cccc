@@ -37,6 +37,7 @@
   "busy": "Busy.",
   "crossGroupAttachment": "Attachments cannot be sent cross-group yet.",
   "attachFile": "Attach file",
+  "removeAttachment": "Remove attachment {{name}}",
   "untitledGroup": "Untitled group",
   "teamReady": "Team is ready. Say hi to your agents.",
   "attachProjectFolder": "Attach a project folder",

@@ -7,7 +7,6 @@ import { useModalA11y } from "../../hooks/useModalA11y";
 
 export interface RelayMessageModalProps {
   isOpen: boolean;
-  isDark: boolean;
   busy: boolean;
   srcGroupId: string;
   srcEvent: LedgerEvent | null;
@@ -18,7 +17,6 @@ export interface RelayMessageModalProps {
 
 export function RelayMessageModal({
   isOpen,
-  isDark,
   busy,
   srcGroupId,
   srcEvent,
@@ -100,9 +98,7 @@ export function RelayMessageModal({
 
   return (
     <div
-      className={`fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${
-        isDark ? "bg-black/50" : "bg-black/30"
-      }`}
+      className="fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in glass-overlay"
       onPointerDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}
@@ -112,37 +108,34 @@ export function RelayMessageModal({
     >
       <div
         ref={modalRef}
-        className={classNames(
-          "w-full h-full sm:h-auto sm:max-w-2xl sm:mt-14 border shadow-2xl animate-scale-in overflow-hidden flex flex-col rounded-none sm:rounded-2xl",
-          isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
-        )}
+        className="w-full h-full sm:h-auto sm:max-w-2xl sm:mt-14 shadow-2xl animate-scale-in overflow-hidden flex flex-col rounded-none sm:rounded-2xl glass-modal"
       >
-        <div className={classNames("px-6 py-4 border-b safe-area-inset-top", isDark ? "border-slate-700/50" : "border-gray-200")}>
-          <div id="relay-modal-title" className={classNames("text-lg font-semibold", isDark ? "text-white" : "text-gray-900")}>
+        <div className="px-6 py-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)]">
+          <div id="relay-modal-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
             {t("relay.title")}
           </div>
-          <div className={classNames("text-xs mt-1", isDark ? "text-slate-400" : "text-gray-500")}>
+          <div className="text-xs mt-1 text-[var(--color-text-muted)]">
             {t("relay.subtitle")}
           </div>
         </div>
 
         <div className="p-6 space-y-5 flex-1 overflow-y-auto min-h-0">
           {/* Source preview */}
-          <div className={classNames("rounded-xl border p-4", isDark ? "border-white/10 bg-slate-900/40" : "border-black/10 bg-gray-50")}>
-            <div className={classNames("text-xs font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
+          <div className="rounded-xl p-4 glass-panel">
+            <div className="text-xs font-semibold text-[var(--color-text-primary)]">
               {t("relay.source")}
             </div>
-            <div className={classNames("text-[11px] mt-1", isDark ? "text-slate-400" : "text-gray-600")}>
+            <div className="text-[11px] mt-1 text-[var(--color-text-muted)]">
               {srcGroupId} · {srcEventId ? srcEventId : "—"} · {srcBy || "—"}
             </div>
-            <div className={classNames("mt-2 text-sm whitespace-pre-wrap break-words", isDark ? "text-slate-100" : "text-gray-800")}>
+            <div className="mt-2 text-sm whitespace-pre-wrap break-words text-[var(--color-text-primary)]">
               {srcText || t("relay.emptyMessage")}
             </div>
           </div>
 
           {/* Destination group */}
           <div>
-            <label className={classNames("block text-xs font-medium mb-2", isDark ? "text-slate-300" : "text-gray-700")}>
+            <label className="block text-xs font-medium mb-2 text-[var(--color-text-secondary)]">
               {t("relay.destinationGroup")}
             </label>
             <select
@@ -153,10 +146,7 @@ export function RelayMessageModal({
                 setDstActors([]);
                 setDstActorsBusy(true);
               }}
-              className={classNames(
-                "w-full rounded-xl border px-3 py-2.5 text-sm min-h-[44px] transition-colors",
-                isDark ? "bg-slate-900/80 border-slate-600/50 text-white" : "bg-white border-gray-300 text-gray-900"
-              )}
+              className="w-full rounded-xl px-3 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
               disabled={busy || dstGroups.length === 0}
             >
               {dstGroups.length === 0 ? (
@@ -173,12 +163,12 @@ export function RelayMessageModal({
           {/* Recipients */}
           <div>
             <div className="flex items-center justify-between gap-3">
-              <label className={classNames("block text-xs font-medium", isDark ? "text-slate-300" : "text-gray-700")}>
+              <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
                 {t("relay.recipients")}
               </label>
               <button
                 type="button"
-                className={classNames("text-xs underline", isDark ? "text-slate-400 hover:text-slate-200" : "text-gray-500 hover:text-gray-800")}
+                className="text-xs underline text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
                 onClick={() => setToTokens([])}
                 disabled={busy}
               >
@@ -196,12 +186,8 @@ export function RelayMessageModal({
                     className={classNames(
                       "text-xs px-2.5 py-1.5 rounded-full border transition-colors",
                       active
-                        ? isDark
-                          ? "bg-blue-600/40 border-blue-500/40 text-blue-100"
-                          : "bg-blue-50 border-blue-200 text-blue-700"
-                        : isDark
-                          ? "bg-slate-900/30 border-white/10 text-slate-300 hover:bg-slate-900/50"
-                          : "bg-white border-gray-200 text-gray-700 hover:bg-gray-50"
+                        ? "bg-[var(--glass-accent-bg)] border-[var(--glass-accent-border)] text-[var(--color-accent-primary)]"
+                        : "bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
                     )}
                     onClick={() => toggleToken(tok)}
                     disabled={busy}
@@ -212,24 +198,21 @@ export function RelayMessageModal({
                 );
               })}
             </div>
-            <div className={classNames("mt-2 text-xs", isDark ? "text-slate-500" : "text-gray-500")}>
+            <div className="mt-2 text-xs text-[var(--color-text-muted)]">
               {toTokens.length ? t("relay.selectedTokens", { tokens: toTokens.join(", ") }) : t("relay.selectedBroadcast")}
             </div>
           </div>
 
           {/* Optional note */}
           <div>
-            <label className={classNames("block text-xs font-medium mb-2", isDark ? "text-slate-300" : "text-gray-700")}>
+            <label className="block text-xs font-medium mb-2 text-[var(--color-text-secondary)]">
               {t("relay.noteLabel")}
             </label>
             <textarea
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={3}
-              className={classNames(
-                "w-full rounded-xl border px-3 py-2.5 text-sm transition-colors",
-                isDark ? "bg-slate-900/80 border-slate-600/50 text-white" : "bg-white border-gray-300 text-gray-900"
-              )}
+              className="w-full rounded-xl px-3 py-2.5 text-sm transition-colors glass-input text-[var(--color-text-primary)]"
               placeholder={t("relay.notePlaceholder")}
               disabled={busy}
             />
@@ -237,10 +220,7 @@ export function RelayMessageModal({
 
           <div className="flex gap-3 pt-1 flex-wrap justify-end">
             <button
-              className={classNames(
-                "px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px]",
-                isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-              )}
+              className="px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] glass-btn text-[var(--color-text-secondary)]"
               onClick={onCancel}
               disabled={busy}
             >

@@ -285,6 +285,7 @@ export function useChatTab({
     const composerFilesSnapshot = composerFiles.slice();
     const prioritySnapshot = priority;
     const replyRequiredSnapshot = replyRequired;
+    const toTextSnapshot = toText;
 
     const restoreComposerState = () => {
       setComposerText(txt);
@@ -292,6 +293,7 @@ export function useChatTab({
       setReplyTarget(replyTargetSnapshot);
       setPriority(prioritySnapshot);
       setReplyRequired(replyRequiredSnapshot);
+      setToText(toTextSnapshot);
     };
 
     const applyImmediateComposerFeedback = () => {
@@ -301,6 +303,7 @@ export function useChatTab({
       setReplyTarget(null);
       setPriority("normal");
       setReplyRequired(false);
+      setToText("");
       if (chatAtBottomRef) chatAtBottomRef.current = true;
       setShowScrollButton(false);
       const scrollEl = scrollRef?.current;

@@ -72,9 +72,9 @@ export function InfoPopover({
             ref={setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            className={`z-max ${maxWidthClassName} rounded-xl border shadow-2xl px-3 py-3 text-[11px] leading-6 transition-opacity duration-150 ${
+            className={`z-max ${maxWidthClassName} rounded-xl shadow-2xl px-3 py-3 text-[11px] leading-6 transition-opacity duration-150 glass-panel ${
               isPositioned ? "opacity-100" : "opacity-0"
-            } ${isDark ? "bg-slate-900 border-slate-700 text-slate-300" : "bg-white border-gray-200 text-gray-600"}`}
+            } text-[var(--color-text-secondary)]`}
           >
             <div className="font-semibold mb-1 text-emerald-500">{title}</div>
             {content}

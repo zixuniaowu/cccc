@@ -63,9 +63,9 @@ export function ScopeTooltip({ isDark, title, content, children }: ScopeTooltipP
             ref={setFloating}
             style={floatingStyles}
             {...getFloatingProps()}
-            className={`z-max w-max max-w-[220px] rounded-lg border shadow-xl px-3 py-2 text-[11px] transition-opacity duration-150 ${
+            className={`z-max w-max max-w-[220px] rounded-lg shadow-xl px-3 py-2 text-[11px] transition-opacity duration-150 glass-panel ${
               isPositioned ? "opacity-100" : "opacity-0"
-            } ${isDark ? "bg-slate-900 border-slate-700 text-slate-300" : "bg-white border-gray-200 text-gray-600"}`}
+            } text-[var(--color-text-secondary)]`}
           >
             <div className="font-semibold mb-1 text-emerald-500">{title}</div>
             {content}

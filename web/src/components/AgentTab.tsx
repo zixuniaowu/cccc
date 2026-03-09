@@ -658,10 +658,17 @@ export function AgentTab({
       )}>
         <span
           className={classNames(
-            "w-3 h-3 rounded-full flex-shrink-0",
-            isRunning ? "bg-emerald-500" : isDark ? "bg-slate-600" : "bg-gray-400"
+            "relative inline-flex w-3.5 h-3.5 rounded-full flex-shrink-0 ring-2 transition-all",
+            isRunning
+              ? "bg-emerald-500 ring-emerald-500/20 shadow-[0_0_14px_rgba(16,185,129,0.3)]"
+              : "bg-slate-400/70 ring-slate-400/15 opacity-70"
           )}
-        />
+        >
+          {isRunning && (
+            <span className="absolute inset-0 rounded-full animate-ping bg-emerald-400/35 motion-reduce:animate-none" />
+          )}
+        </span>
+
         <div className="flex items-start gap-3 min-w-0">
           <div className="min-w-0">
             <div className="flex items-center gap-2 min-w-0">
@@ -672,7 +679,7 @@ export function AgentTab({
                 </span>
               )}
             </div>
-            <div className={classNames("mt-0.5 text-xs truncate", isDark ? "text-slate-400" : "text-gray-500")}>
+            <div className={classNames("mt-0.5 text-xs truncate", "text-[var(--color-text-tertiary)]")}>
               {rtInfo?.label || t('custom')} • {isRunning ? t('running') : t('stopped')}
               {isHeadless && ` • ${t('headless')}`}
             </div>
@@ -681,8 +688,8 @@ export function AgentTab({
               className={classNames(
                 "sm:hidden mt-1 text-[11px] truncate leading-tight",
                 stateHeadline !== t('noAgentStateYet')
-                  ? isDark ? "text-slate-300" : "text-gray-600"
-                  : isDark ? "text-slate-500 italic" : "text-gray-400 italic"
+                  ? "text-[var(--color-text-secondary)]"
+                  : "text-[var(--color-text-muted)] italic"
               )}
               title={stateHeadline}
             >
@@ -693,7 +700,7 @@ export function AgentTab({
           <div
             className={classNames(
               "hidden sm:flex flex-col gap-1 flex-shrink-0 px-3 py-2 rounded-xl border shadow-sm backdrop-blur-sm max-w-[min(460px,40vw)]",
-              isDark ? "bg-slate-950/30 border-white/10" : "bg-white/70 border-black/10"
+              "glass-panel rounded-lg"
             )}
             aria-label={t('agentState')}
           >
@@ -701,7 +708,7 @@ export function AgentTab({
               className={classNames(
                 "text-xs font-medium leading-snug min-w-0",
                 stateHeadline !== t('noAgentStateYet')
-                  ? isDark ? "text-slate-200" : "text-gray-800"
+                  ? "text-[var(--color-text-primary)]"
                   : isDark
                     ? "text-slate-500 italic"
                     : "text-gray-500 italic"
@@ -715,7 +722,7 @@ export function AgentTab({
             >
               <span>{stateHeadline}</span>
               {agentState?.updated_at ? (
-                <span className={classNames("ml-2 text-[11px] tabular-nums font-normal", isDark ? "text-slate-400" : "text-gray-600")}>
+                <span className={classNames("ml-2 text-[11px] tabular-nums font-normal", "text-[var(--color-text-tertiary)]")}>
                   · {formatTime(agentState.updated_at)}
                 </span>
               ) : null}
@@ -723,18 +730,18 @@ export function AgentTab({
             {(stateTask || blockerCount > 0 || stateNext) ? (
               <div className="flex flex-wrap items-center gap-1.5">
                 {stateTask ? (
-                  <span className={classNames("text-[11px] px-2 py-0.5 rounded", isDark ? "bg-slate-700 text-slate-200" : "bg-gray-100 text-gray-700")}>
+                  <span className={classNames("text-[11px] px-2 py-0.5 rounded", "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)]")}>
                     {t("taskShort", { id: stateTask })}
                   </span>
                 ) : null}
                 {blockerCount > 0 ? (
-                  <span className={classNames("text-[11px] px-2 py-0.5 rounded", isDark ? "bg-rose-900/40 text-rose-300" : "bg-rose-100 text-rose-700")}>
+                  <span className={classNames("text-[11px] px-2 py-0.5 rounded", "bg-rose-500/15 text-rose-600 dark:text-rose-300")}>
                     {t("blockersShort", { count: blockerCount })}
                   </span>
                 ) : null}
                 {stateNext ? (
                   <span
-                    className={classNames("text-[11px] truncate", isDark ? "text-slate-400" : "text-gray-600")}
+                    className={classNames("text-[11px] truncate", "text-[var(--color-text-tertiary)]")}
                     title={stateNext}
                   >
                     {t("nextShort", { value: stateNext })}
@@ -748,17 +755,17 @@ export function AgentTab({
 
       {/* Terminal or Status Area */}
       {/* contain: layout prevents terminal content changes from triggering parent layout recalculation */}
-      <div className={classNames("flex-1 min-h-0 relative", isDark ? "bg-slate-950" : "bg-gray-50")} style={{ contain: 'layout', overflow: 'hidden' }}>
+      <div className={classNames("flex-1 min-h-0 relative", "bg-[var(--color-bg-secondary)]")} style={{ contain: 'layout', overflow: 'hidden' }}>
         {isHeadless ? (
           // Headless agent - show status
-          <div className={classNames("flex flex-col items-center justify-center h-full p-8", isDark ? "text-slate-400" : "text-slate-500")}>
+          <div className={classNames("flex flex-col items-center justify-center h-full p-8", "text-[var(--color-text-tertiary)]")}>
             <div className="mb-4"><RocketIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">{t('headlessAgent')}</div>
             <div className="text-sm text-center max-w-md">
               {t('headlessDescription')}
             </div>
             {isRunning && (
-              <div className={classNames("mt-4 px-3 py-1.5 rounded text-sm", isDark ? "bg-emerald-900/30 text-emerald-300" : "bg-emerald-50 text-emerald-600")}>
+              <div className={classNames("mt-4 px-3 py-1.5 rounded text-sm", "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300")}>
                 {t('statusRunning')}
               </div>
             )}
@@ -781,7 +788,7 @@ export function AgentTab({
             {connectionStatus === 'disconnected' && !terminalReady && (
               <div className={classNames(
                 "absolute inset-0 flex flex-col items-center justify-center p-8",
-                isDark ? "text-slate-400 bg-slate-950/80" : "text-slate-500 bg-white/80"
+                "text-[var(--color-text-tertiary)] bg-[var(--glass-panel-bg)]"
               )}>
                 <div className="mb-4"><TerminalIcon size={48} /></div>
                 <div className="text-lg font-medium mb-2">{t('connectionLost')}</div>
@@ -806,7 +813,7 @@ export function AgentTab({
           </>
         ) : (
           // Stopped agent
-          <div className={classNames("flex flex-col items-center justify-center h-full p-8", isDark ? "text-slate-400" : "text-slate-500")}>
+          <div className={classNames("flex flex-col items-center justify-center h-full p-8", "text-[var(--color-text-tertiary)]")}>
             <div className="mb-4"><TerminalIcon size={48} /></div>
             <div className="text-lg font-medium mb-2">{t('agentNotRunning')}</div>
             <div className="text-sm text-center max-w-md mb-4">
@@ -832,7 +839,7 @@ export function AgentTab({
         <ScrollFade
           className={classNames(
             "border-t select-none",
-            isDark ? "bg-slate-900/50 border-slate-800" : "bg-gray-100 border-gray-200"
+            "glass-header"
           )}
           innerClassName="flex items-center gap-2 px-4 py-3"
           fadeWidth={20}
@@ -844,7 +851,7 @@ export function AgentTab({
                 disabled={isBusy}
                 className={classNames(
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
                 )}
                 aria-label={t('quitAgent')}
               >
@@ -856,7 +863,7 @@ export function AgentTab({
                 disabled={connectionStatus !== 'connected'}
                 className={classNames(
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
                 )}
                 title={t('sendInterruptTitle')}
                 aria-label={t('sendInterruptLabel')}
@@ -868,7 +875,7 @@ export function AgentTab({
                 disabled={isBusy}
                 className={classNames(
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
                 )}
                 aria-label={t('relaunchAgent')}
               >
@@ -880,7 +887,7 @@ export function AgentTab({
                 disabled={isBusy}
                 className={classNames(
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
                 )}
                 aria-label={t('editAgentConfig')}
               >
@@ -904,7 +911,7 @@ export function AgentTab({
                 disabled={isBusy}
                 className={classNames(
                   "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors",
-                  isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-300"
+                  "glass-btn border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
                 )}
                 aria-label={t('editAgentConfig')}
               >
@@ -932,7 +939,7 @@ export function AgentTab({
               <span
                 className={classNames(
                   "text-white text-[10px] px-1.5 py-0.5 rounded-full font-semibold tracking-tight shadow-sm",
-                  isDark ? "bg-indigo-500" : "bg-indigo-600"
+                  "bg-indigo-500"
                 )}
                 aria-hidden="true"
               >
@@ -940,13 +947,12 @@ export function AgentTab({
               </span>
             )}
           </button>
-          <div className="flex-1" />
           <button
             onClick={onRemove}
             disabled={isBusy || isRunning}
             className={classNames(
               "flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm disabled:opacity-50 min-h-[44px] transition-colors flex-shrink-0 whitespace-nowrap",
-              isDark ? "hover:bg-rose-900/30 text-rose-400" : "hover:bg-rose-50 text-rose-600"
+              "hover:bg-rose-500/10 text-rose-600 dark:text-rose-400"
             )}
             title={isRunning ? t('stopBeforeRemoving') : t('removeAgent')}
             aria-label={t('removeAgent')}

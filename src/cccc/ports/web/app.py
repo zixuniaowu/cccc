@@ -12,7 +12,7 @@ from typing import Any, Dict, Literal, Optional
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.concurrency import run_in_threadpool
@@ -225,6 +225,17 @@ def create_app() -> FastAPI:
             except Exception:
                 dist_dir = None
     if dist_dir is not None:
+        manifest_path = dist_dir / "manifest.webmanifest"
+
+        if manifest_path.exists():
+            @app.get("/ui/manifest.webmanifest", include_in_schema=False)
+            async def ui_manifest() -> FileResponse:
+                return FileResponse(
+                    path=manifest_path,
+                    media_type="application/manifest+json",
+                    filename="manifest.webmanifest",
+                )
+
         app.mount("/ui", StaticFiles(directory=str(dist_dir), html=True), name="ui")
 
     cors = str(os.environ.get("CCCC_WEB_CORS_ORIGINS") or "").strip()

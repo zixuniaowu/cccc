@@ -113,27 +113,25 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
     >
       <div className="absolute inset-0 bg-black/50" />
       <div
-        className={`absolute inset-2 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:w-[min(840px,calc(100vw-20px))] sm:h-[min(78vh,760px)] sm:-translate-x-1/2 sm:-translate-y-1/2 rounded-xl sm:rounded-2xl border ${
-          isDark ? "border-slate-800 bg-slate-950" : "border-gray-200 bg-white"
-        } shadow-2xl flex flex-col overflow-hidden`}
+        className="glass-modal absolute inset-2 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:w-[min(840px,calc(100vw-20px))] sm:h-[min(78vh,760px)] sm:-translate-x-1/2 sm:-translate-y-1/2 rounded-xl sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden"
       >
-        <div className={`px-4 py-3 border-b ${isDark ? "border-slate-800" : "border-gray-200"} flex items-start gap-3`}>
+        <div className="px-4 py-3 border-b border-[var(--glass-border-subtle)] flex items-start gap-3">
           <div className="min-w-0">
-            <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
+            <div className="text-sm font-semibold text-[var(--color-text-primary)]">
               {t("ruleEditor.editRule")} <span className="font-mono">{ruleId || t("ruleEditor.unnamed")}</span>
             </div>
-            <div className={`mt-1 text-[11px] ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+            <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
               {t("ruleEditor.last")} {ruleStatus.last_fired_at || "—"} • {t("ruleEditor.next")} {ruleStatus.next_fire_at || "—"}{" "}
               {ruleStatus.completed ? `• ${t("ruleEditor.completed")} ${ruleStatus.completed_at || ruleStatus.last_fired_at || "—"}` : ""}{" "}
               {ruleStatus.last_error ? `• ${t("ruleEditor.error")} ${ruleStatus.last_error_at || "—"}` : ""}
             </div>
-            <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+            <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
               {t("automation.draftHint")}
             </div>
           </div>
 
           <div className="ml-auto flex items-center gap-2 flex-wrap justify-end">
-            <label className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"} flex items-center gap-2`}>
+            <label className="text-xs text-[var(--color-text-tertiary)] flex items-center gap-2">
               <input
                 type="checkbox"
                 checked={enabled}
@@ -143,9 +141,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             </label>
             <button
               type="button"
-              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors ${
-                isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-              }`}
+              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors text-[var(--color-text-secondary)]"
               onClick={() => {
                 onRuleRemove(ruleId);
                 onSetEditingRuleId(null);
@@ -155,9 +151,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
             </button>
             <button
               type="button"
-              className={`px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors ${
-                isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-              }`}
+              className="glass-btn px-3 py-2 rounded-lg text-sm min-h-[44px] transition-colors text-[var(--color-text-secondary)]"
               onClick={() => onSetEditingRuleId(null)}
             >
               {t("common:close")}
@@ -165,8 +159,8 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
           </div>
         </div>
 
-        {rulesErr ? <div className={`px-4 pt-3 text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{rulesErr}</div> : null}
-        {ruleStatus.last_error ? <div className={`px-4 pt-1 text-xs ${isDark ? "text-rose-300" : "text-rose-600"}`}>{ruleStatus.last_error}</div> : null}
+        {rulesErr ? <div className="px-4 pt-3 text-xs text-rose-600 dark:text-rose-300">{rulesErr}</div> : null}
+        {ruleStatus.last_error ? <div className="px-4 pt-1 text-xs text-rose-600 dark:text-rose-300">{ruleStatus.last_error}</div> : null}
 
         <div className="p-3 sm:p-4 flex-1 overflow-auto space-y-3">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -183,7 +177,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 placeholder="daily_checkin"
                 spellCheck={false}
               />
-              <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                 {t("ruleEditor.ruleNameHint")}
               </div>
             </div>
@@ -225,7 +219,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 {kind === "notify" ? <option value="cron">{t("ruleEditor.recurringSchedule")}</option> : null}
                 <option value="at">{t("ruleEditor.oneTimeSchedule")}</option>
               </select>
-              <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                 {scheduleLockedToOneTime
                   ? t("ruleEditor.oneTimeOnly")
                   : activeTriggerKind === "interval"
@@ -238,7 +232,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
           </div>
 
           {scope === "personal" ? (
-            <div className={`text-[11px] ${isDark ? "text-amber-300" : "text-amber-700"}`}>
+            <div className="text-[11px] text-amber-700 dark:text-amber-300">
               {t("ruleEditor.personalRule", { owner: ownerActorId || "unknown" })}
             </div>
           ) : null}
@@ -262,7 +256,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                   className={inputClass(isDark)}
                 />
               </div>
-              <div className={`self-end text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              <div className="self-end text-[11px] text-[var(--color-text-muted)]">
                 {t("ruleEditor.currentCadence", { duration: formatDuration(everySeconds) })}
               </div>
             </div>
@@ -384,9 +378,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       <button
                         key={mins}
                         type="button"
-                        className={`px-2.5 py-1.5 rounded-lg text-xs transition-colors ${
-                          isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-                        }`}
+                        className="glass-btn px-2.5 py-1.5 rounded-lg text-xs transition-colors text-[var(--color-text-secondary)]"
                         onClick={() => onSetOneShotAfterMinutes(ruleId, mins)}
                       >
                         {mins >= 60 ? `${Math.round(mins / 60)}h` : `${mins}m`}
@@ -420,7 +412,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 </div>
               )}
 
-              <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              <div className="text-[11px] text-[var(--color-text-muted)]">
                 {t("automation.savedSendTime")} <span className="font-mono break-all">{atRaw || "—"}</span>
               </div>
             </div>
@@ -462,7 +454,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               </option>
             </select>
             {!operationalActionsEnabled ? (
-              <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                 {t("automation.operationalActionsOnly")}
               </div>
             ) : null}
@@ -488,9 +480,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                       if (!value) return;
                       if (!recipients.includes(value)) onRulePatch(ruleId, { to: [...recipients, value] });
                     }}
-                    className={`px-3 py-2 rounded-lg text-sm min-h-[44px] ${
-                      isDark ? "bg-slate-900 text-slate-200 border border-slate-800" : "bg-white text-gray-800 border border-gray-200"
-                    }`}
+                    className="glass-input px-3 py-2 rounded-lg text-sm min-h-[44px] text-[var(--color-text-primary)]"
                   >
                     <option value="">{t("automation.addRecipient")}</option>
                     {actorTargetOptions.map((option) => (
@@ -548,7 +538,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                     ))}
                   </select>
                   {snippetIds.length === 0 ? (
-                    <div className={`mt-1 text-[11px] ${isDark ? "text-amber-300" : "text-amber-700"}`}>
+                    <div className={`mt-1 text-[11px] text-amber-700 dark:text-amber-300`}>
                       {t("automation.noSnippetsYet")}
                     </div>
                   ) : null}
@@ -586,7 +576,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                 <option value="paused">{GROUP_STATE_COPY.paused.label}</option>
                 <option value="stopped">{GROUP_STATE_COPY.stopped.label}</option>
               </select>
-              <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                 {GROUP_STATE_COPY[(groupStateValue as "active" | "idle" | "paused" | "stopped") || "paused"].hint}
               </div>
             </div>
@@ -613,7 +603,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                   <option value="stop">{ACTOR_OPERATION_COPY.stop.label}</option>
                   <option value="restart">{ACTOR_OPERATION_COPY.restart.label}</option>
                 </select>
-                <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
                   {ACTOR_OPERATION_COPY[(actorOperation as "start" | "stop" | "restart") || "restart"].hint}
                 </div>
               </div>
@@ -650,9 +640,7 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
                         },
                       });
                     }}
-                    className={`px-3 py-2 rounded-lg text-sm min-h-[44px] ${
-                      isDark ? "bg-slate-900 text-slate-200 border border-slate-800" : "bg-white text-gray-800 border border-gray-200"
-                    }`}
+                    className="glass-input px-3 py-2 rounded-lg text-sm min-h-[44px] text-[var(--color-text-primary)]"
                   >
                     <option value="">{t("automation.addTarget")}</option>
                     {actorTargetOptions.map((option) => (

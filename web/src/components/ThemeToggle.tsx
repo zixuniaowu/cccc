@@ -26,12 +26,8 @@ export function ThemeToggle({ theme, onThemeChange, isDark }: ThemeToggleProps) 
           className={classNames(
             "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all min-h-[36px]",
             theme === th.value
-              ? isDark
-                ? "bg-white/10 text-white shadow-sm"
-                : "bg-black/5 text-gray-900 shadow-sm"
-              : isDark
-                ? "text-slate-400 hover:text-slate-200"
-                : "text-gray-500 hover:text-gray-700"
+              ? "bg-black/5 text-gray-900 shadow-sm dark:bg-white/10 dark:text-white"
+              : "text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200"
           )}
           aria-label={t('switchToTheme', { theme: th.label })}
           aria-pressed={theme === th.value}
@@ -61,7 +57,7 @@ export function ThemeToggleCompact({ theme, onThemeChange, isDark }: ThemeToggle
       onClick={() => onThemeChange(nextTheme())}
       className={classNames(
         "flex items-center justify-center w-9 h-9 rounded-xl transition-all min-h-[44px] min-w-[44px] glass-btn",
-        isDark ? "text-slate-300" : "text-gray-600"
+        "text-[var(--color-text-secondary)]"
       )}
       title={t('themeClickToChange', { theme: label })}
       aria-label={t('currentTheme', { theme: label })}

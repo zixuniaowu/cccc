@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,6 +39,7 @@ class SendRequest(BaseModel):
     reply_required: bool = False
     src_group_id: str = Field(default="")
     src_event_id: str = Field(default="")
+    client_id: str = Field(default="")
 
 
 class SendCrossGroupRequest(BaseModel):
@@ -56,6 +58,7 @@ class ReplyRequest(BaseModel):
     reply_to: str
     priority: Literal["normal", "attention"] = "normal"
     reply_required: bool = False
+    client_id: str = Field(default="")
 
 
 class DebugClearLogsRequest(BaseModel):

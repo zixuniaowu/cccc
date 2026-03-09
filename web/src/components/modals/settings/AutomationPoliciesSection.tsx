@@ -142,7 +142,7 @@ export function AutomationPoliciesSection(props: AutomationPoliciesSectionProps)
         />
       </div>
 
-      <div className={`pt-2 text-xs font-semibold ${props.isDark ? "text-slate-300" : "text-gray-700"}`}>{t("policies.foremanAlerts")}</div>
+      <div className="pt-2 text-xs font-semibold text-[var(--color-text-secondary)]">{t("policies.foremanAlerts")}</div>
       <NumberInputRow
         isDark={props.isDark}
         label={t("policies.actorIdleAlert")}

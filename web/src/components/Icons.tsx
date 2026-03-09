@@ -38,9 +38,12 @@ export function RocketIcon({ className, size = 18 }: IconProps) {
       className={className}
     >
       <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z" />
+      <path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" fill="currentColor" opacity="0.12" />
       <path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z" />
       <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
       <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+      <circle cx="15.5" cy="8.5" r="1.5" fill="currentColor" opacity="0.22" />
+      <circle cx="15.5" cy="8.5" r="1.5" />
     </svg>
   );
 }
@@ -216,6 +219,26 @@ export function SearchIcon({ className, size = 18 }: IconProps) {
     >
       <circle cx="11" cy="11" r="8" />
       <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+export function CompassIcon({ className, size = 18 }: IconProps) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      <circle cx="12" cy="12" r="9" />
+      <path d="M14.8 9.2 13.1 13l-3.9 1.8L11 11z" fill="currentColor" opacity="0.18" />
+      <path d="m14.8 9.2-1.7 3.8-3.9 1.8L11 11l3.8-1.8Z" />
     </svg>
   );
 }

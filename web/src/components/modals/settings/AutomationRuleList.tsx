@@ -46,9 +46,7 @@ export function AutomationRuleList({
     <div className="space-y-2">
       <div className="flex items-center justify-end gap-2 flex-wrap">
         <label
-          className={`inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] min-h-[32px] border ${
-            isDark ? "border-slate-700 text-slate-300 bg-slate-900" : "border-gray-200 text-gray-700 bg-white"
-          }`}
+          className="inline-flex items-center gap-1.5 px-2 py-1.5 rounded-md text-[11px] min-h-[32px] border border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] bg-[var(--glass-tab-bg)]"
         >
           <input
             type="checkbox"
@@ -60,9 +58,7 @@ export function AutomationRuleList({
         </label>
         <button
           type="button"
-          className={`px-2 py-1.5 rounded-md text-[11px] min-h-[32px] font-medium transition-colors ${
-            isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-          } disabled:opacity-50`}
+          className="glass-btn px-2 py-1.5 rounded-md text-[11px] min-h-[32px] font-medium transition-colors text-[var(--color-text-secondary)] disabled:opacity-50"
           onClick={onClearCompleted}
           disabled={rulesBusy || completedOneTimeRuleIds.length === 0}
           title={t("ruleList.clearCompletedTitle")}
@@ -72,7 +68,7 @@ export function AutomationRuleList({
       </div>
 
       {visibleRules.length === 0 ? (
-        <div className={`text-sm ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("ruleList.noRules")}</div>
+        <div className="text-sm text-[var(--color-text-tertiary)]">{t("ruleList.noRules")}</div>
       ) : null}
 
       {visibleRules.map((rule) => {
@@ -139,14 +135,14 @@ export function AutomationRuleList({
           <div key={ruleId} className={cardClass(isDark)}>
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
-                <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{ruleId || t("ruleList.rule")}</div>
-                <div className={`mt-0.5 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{ruleId || t("ruleList.rule")}</div>
+                <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
                   {scheduleLabel} • {enabled ? t("ruleList.on") : t("ruleList.off")} {completed ? `• ${t("ruleList.completedLabel")}` : ""}
                 </div>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
-                <label className={`text-xs ${isDark ? "text-slate-400" : "text-gray-600"} flex items-center gap-2`}>
+                <label className="text-xs text-[var(--color-text-tertiary)] flex items-center gap-2">
                   <input
                     type="checkbox"
                     checked={enabled}
@@ -156,18 +152,14 @@ export function AutomationRuleList({
                 </label>
                 <button
                   type="button"
-                  className={`px-3 py-2 rounded-lg text-xs min-h-[36px] transition-colors ${
-                    isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-                  }`}
+                  className="glass-btn px-3 py-2 rounded-lg text-xs min-h-[36px] transition-colors text-[var(--color-text-secondary)]"
                   onClick={() => onEditRule(ruleId)}
                 >
                   {t("common:edit")}
                 </button>
                 <button
                   type="button"
-                  className={`px-3 py-2 rounded-lg text-xs min-h-[36px] transition-colors ${
-                    isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-                  }`}
+                  className="glass-btn px-3 py-2 rounded-lg text-xs min-h-[36px] transition-colors text-[var(--color-text-secondary)]"
                   onClick={() => onDeleteRule(ruleId)}
                   title={t("automation.deleteRuleTitle")}
                 >
@@ -176,19 +168,19 @@ export function AutomationRuleList({
               </div>
             </div>
 
-            <div className={`mt-2 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"} break-words`}>
+            <div className="mt-2 text-[11px] text-[var(--color-text-muted)] break-words">
               <span className="font-mono">{actionLabel}</span>
             </div>
-            <div className={`mt-1 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+            <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
               Last: {lastFireAt || "—"} • Next: {nextFireAt || "—"}
             </div>
             {completed ? (
-              <div className={`mt-1 text-[11px] ${isDark ? "text-emerald-300" : "text-emerald-700"}`}>
+              <div className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
                 {t("ruleList.completedAt")} {completedAt || lastFireAt || "—"}
               </div>
             ) : null}
             {hasError ? (
-              <div className={`mt-1 text-[11px] break-words ${isDark ? "text-rose-300" : "text-rose-600"}`}>{ruleStatus.last_error}</div>
+              <div className="mt-1 text-[11px] break-words text-rose-600 dark:text-rose-300">{ruleStatus.last_error}</div>
             ) : null}
           </div>
         );

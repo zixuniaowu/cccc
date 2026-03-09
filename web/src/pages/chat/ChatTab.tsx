@@ -2,6 +2,7 @@
 // Refactored to use useChatTab hook for business logic, reducing prop drilling.
 
 import type { MutableRefObject, RefObject } from "react";
+import { CompassIcon } from "../../components/Icons";
 import { Actor, GroupMeta } from "../../types";
 import { VirtualMessageList } from "../../components/VirtualMessageList";
 import { classNames } from "../../utils/classNames";
@@ -167,7 +168,9 @@ export function ChatTab({
         >
           <div className="flex flex-col items-center justify-center h-full text-center pb-20">
             <div className={classNames("w-full max-w-md", isDark ? "text-slate-200" : "text-gray-800")}>
-              <div className="text-4xl mb-4">&#x1F9ED;</div>
+              <div className="mb-4 flex justify-center" aria-hidden="true">
+                <CompassIcon size={32} className={isDark ? "text-cyan-300" : "text-cyan-600"} />
+              </div>
               <div className={classNames("text-sm font-semibold", isDark ? "text-slate-200" : "text-gray-800")}>
                 {t('nextSteps')}
               </div>
@@ -346,7 +349,7 @@ export function ChatTab({
                         active
                           ? "bg-blue-600 text-white shadow-sm"
                           : isDark
-                            ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                            ? "text-slate-500 hover:text-slate-200 hover:bg-slate-800/60"
                             : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
                       )}
                       onClick={() => setChatFilter(k)}
@@ -390,7 +393,7 @@ export function ChatTab({
                         active
                           ? "bg-blue-600 text-white shadow-sm"
                           : isDark
-                            ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                            ? "text-slate-500 hover:text-slate-200 hover:bg-slate-800/60"
                             : "text-gray-500 hover:text-gray-900 hover:bg-gray-100"
                       )}
                       onClick={() => setChatFilter(k)}

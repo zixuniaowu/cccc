@@ -430,15 +430,13 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t("actorProfiles.searchPlaceholder")}
-          className={`${inputClass(isDark)} max-w-sm`}
+          className={`${inputClass()} max-w-sm`}
         />
         <button className={primaryButtonClass(false)} onClick={openNew}>
           {t("actorProfiles.newProfile")}
         </button>
         <button
-          className={`px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors ${
-            isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-800 border border-gray-200"
-          }`}
+          className="glass-btn text-[var(--color-text-secondary)] px-3 py-2 rounded-lg text-sm min-h-[44px] font-medium transition-colors"
           onClick={() => void loadProfiles()}
           disabled={busy}
         >
@@ -447,49 +445,49 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
       </div>
 
       {err ? (
-        <div className={`rounded-lg border px-3 py-2 text-sm ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+        <div className="rounded-lg border px-3 py-2 text-sm border-rose-500/30 bg-rose-500/10 text-rose-400">
           {err}
         </div>
       ) : null}
 
       <div className="space-y-2">
         {filtered.map((profile) => (
-          <div key={profile.id} className={cardClass(isDark)}>
+          <div key={profile.id} className={cardClass()}>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
-                <div className={`text-sm font-semibold truncate ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+                <div className="text-sm font-semibold truncate text-[var(--color-text-primary)]">
                   {profile.name || profile.id}
                 </div>
-                <div className={`mt-0.5 text-xs ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">
                   <code>{profile.id}</code> · {RUNTIME_INFO[String(profile.runtime)]?.label || profile.runtime}
                 </div>
-                <div className={`mt-0.5 text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                <div className="mt-0.5 text-[11px] text-[var(--color-text-muted)]">
                   {t("actorProfiles.usageCount", { count: Number(profile.usage_count || 0) })} · {t("actorProfiles.revision", { revision: Number(profile.revision || 0) })}
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 <button
                   onClick={() => void openEdit(profile)}
-                  className={`px-3 py-2 rounded-lg text-sm min-h-[40px] ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"}`}
+                  className="glass-btn text-[var(--color-text-secondary)] px-3 py-2 rounded-lg text-sm min-h-[40px]"
                 >
                   {t("common:edit")}
                 </button>
                 <button
                   onClick={() => void openDuplicate(profile)}
-                  className={`px-3 py-2 rounded-lg text-sm min-h-[40px] ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"}`}
+                  className="glass-btn text-[var(--color-text-secondary)] px-3 py-2 rounded-lg text-sm min-h-[40px]"
                 >
                   {t("actorProfiles.duplicate")}
                 </button>
                 <button
                   onClick={() => void handleShowUsage(profile)}
                   disabled={usageBusyProfileId === String(profile.id || "")}
-                  className={`px-3 py-2 rounded-lg text-sm min-h-[40px] ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"} disabled:opacity-60`}
+                  className="glass-btn text-[var(--color-text-secondary)] px-3 py-2 rounded-lg text-sm min-h-[40px] disabled:opacity-60"
                 >
                   {usageBusyProfileId === String(profile.id || "") ? t("common:loading") : t("actorProfiles.viewUsage")}
                 </button>
                 <button
                   onClick={() => void handleDelete(profile)}
-                  className={`px-3 py-2 rounded-lg text-sm min-h-[40px] ${isDark ? "bg-rose-900/40 hover:bg-rose-900/60 text-rose-200" : "bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200"}`}
+                  className="px-3 py-2 rounded-lg text-sm min-h-[40px] bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 hover:bg-rose-500/25 transition-colors"
                 >
                   {t("common:delete")}
                 </button>
@@ -498,37 +496,37 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
           </div>
         ))}
         {!busy && filtered.length === 0 ? (
-          <div className={`text-sm ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("actorProfiles.empty")}</div>
+          <div className="text-sm text-[var(--color-text-muted)]">{t("actorProfiles.empty")}</div>
         ) : null}
       </div>
 
       {editorOpen ? (
-        <div className={`fixed inset-0 z-[70] flex items-center justify-center p-3 ${isDark ? "bg-black/60" : "bg-black/40"}`}>
-          <div className={`w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border shadow-2xl ${isDark ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
-            <div className={`sticky top-0 px-5 py-4 border-b ${isDark ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
-              <div className={`text-base font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-3 bg-black/50">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border shadow-2xl border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)]">
+            <div className="sticky top-0 px-5 py-4 border-b border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)]">
+              <div className="text-base font-semibold text-[var(--color-text-primary)]">
                 {editor.id ? t("actorProfiles.editTitle") : t("actorProfiles.newTitle")}
               </div>
             </div>
             <div className="p-5 space-y-4">
               {editorErr ? (
-                <div className={`rounded-lg border px-3 py-2 text-sm ${isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-200 bg-rose-50 text-rose-700"}`}>
+                <div className="rounded-lg border px-3 py-2 text-sm border-rose-500/30 bg-rose-500/10 text-rose-400">
                   {editorErr}
                 </div>
               ) : null}
 
               <div>
-                <label className={labelClass(isDark)}>{t("actorProfiles.name")}</label>
+                <label className={labelClass()}>{t("actorProfiles.name")}</label>
                 <input
                   value={editor.name}
                   onChange={(e) => setEditor((prev) => ({ ...prev, name: e.target.value }))}
-                  className={inputClass(isDark)}
+                  className={inputClass()}
                 />
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className={labelClass(isDark)}>{t("actorProfiles.runtime")}</label>
+                  <label className={labelClass()}>{t("actorProfiles.runtime")}</label>
                   <select
                     value={editor.runtime}
                     onChange={(e) => {
@@ -543,7 +541,7 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                         };
                       });
                     }}
-                    className={inputClass(isDark)}
+                    className={inputClass()}
                   >
                     {SUPPORTED_RUNTIMES.map((rt) => (
                       <option key={rt} value={rt}>{RUNTIME_INFO[rt]?.label || rt}</option>
@@ -553,9 +551,9 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
               </div>
 
               <div>
-                <label className={labelClass(isDark)}>{t("actorProfiles.commandOverrideOptional")}</label>
+                <label className={labelClass()}>{t("actorProfiles.commandOverrideOptional")}</label>
                 {editorSupportsDefaultCommand ? (
-                  <label className={`inline-flex items-center gap-2 text-xs mb-2 ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                  <label className="inline-flex items-center gap-2 text-xs mb-2 text-[var(--color-text-secondary)]">
                     <input
                       type="checkbox"
                       checked={editor.useDefaultCommand}
@@ -575,24 +573,24 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                   <input
                     value={editor.command}
                     onChange={(e) => setEditor((prev) => ({ ...prev, command: e.target.value }))}
-                    className={`${inputClass(isDark)} font-mono`}
+                    className={`${inputClass()} font-mono`}
                     placeholder={editorDefaultCommand || "codex"}
                   />
                 ) : null}
                 {editorSupportsDefaultCommand && editorDefaultCommand ? (
-                  <div className={`text-[10px] mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                  <div className="text-[10px] mt-1 text-[var(--color-text-muted)]">
                     {editor.useDefaultCommand ? t("actorProfiles.usingRuntimeDefaultCommand") : t("actorProfiles.default")}{" "}
-                    <code className={`px-1 rounded ${isDark ? "bg-slate-800" : "bg-gray-100"}`}>{editorDefaultCommand}</code>
+                    <code className="px-1 rounded bg-[var(--color-bg-secondary)]">{editorDefaultCommand}</code>
                   </div>
                 ) : null}
               </div>
 
               <div>
-                <label className={labelClass(isDark)}>{t("actorProfiles.submit")}</label>
+                <label className={labelClass()}>{t("actorProfiles.submit")}</label>
                 <select
                   value={editor.submit}
                   onChange={(e) => setEditor((prev) => ({ ...prev, submit: (e.target.value as "enter" | "newline" | "none") }))}
-                  className={inputClass(isDark)}
+                  className={inputClass()}
                 >
                   <option value="enter">Enter</option>
                   <option value="newline">Newline</option>
@@ -600,11 +598,11 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                 </select>
               </div>
 
-              <div className={cardClass(isDark)}>
-                <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>
+              <div className={cardClass()}>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">
                   {t("actorProfiles.capabilityDefaults")}
                 </div>
-                <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+                <div className="text-xs mt-1 text-[var(--color-text-muted)]">
                   {t("actorProfiles.capabilityDefaultsHint")}
                 </div>
                 <div className="mt-3">
@@ -623,7 +621,7 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                 </div>
                 <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className={labelClass(isDark)}>{t("actorProfiles.autoloadScope")}</label>
+                    <label className={labelClass()}>{t("actorProfiles.autoloadScope")}</label>
                     <select
                       value={editor.capabilityDefaultScope}
                       onChange={(e) =>
@@ -632,14 +630,14 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                           capabilityDefaultScope: e.target.value === "session" ? "session" : "actor",
                         }))
                       }
-                      className={inputClass(isDark)}
+                      className={inputClass()}
                     >
                       <option value="actor">{t("actorProfiles.autoloadScopeActor")}</option>
                       <option value="session">{t("actorProfiles.autoloadScopeSession")}</option>
                     </select>
                   </div>
                   <div>
-                    <label className={labelClass(isDark)}>{t("actorProfiles.sessionTtlSeconds")}</label>
+                    <label className={labelClass()}>{t("actorProfiles.sessionTtlSeconds")}</label>
                     <input
                       type="number"
                       min={60}
@@ -651,18 +649,18 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                           capabilitySessionTtlSeconds: Math.max(60, Number(e.target.value || 3600)),
                         }))
                       }
-                      className={inputClass(isDark)}
+                      className={inputClass()}
                       disabled={editor.capabilityDefaultScope !== "session"}
                     />
                   </div>
                 </div>
               </div>
 
-              <div className={cardClass(isDark)}>
-                <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("actorProfiles.env")}</div>
-                <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("actorProfiles.envHint")}</div>
+              <div className={cardClass()}>
+                <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("actorProfiles.env")}</div>
+                <div className="text-xs mt-1 text-[var(--color-text-muted)]">{t("actorProfiles.envHint")}</div>
                 {duplicateSourceProfileId ? (
-                  <div className={`text-xs mt-1 ${isDark ? "text-slate-400" : "text-gray-600"}`}>
+                  <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">
                     {t("actorProfiles.duplicateSecretsHint", { source: duplicateSourceLabel })}
                   </div>
                 ) : null}
@@ -672,47 +670,47 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
                       <span
                         key={key}
                         title={secretMasks[key] ? `${key}=${secretMasks[key]}` : key}
-                        className={`px-2 py-0.5 rounded text-[11px] ${isDark ? "bg-slate-800 text-slate-200" : "bg-gray-100 text-gray-700"}`}
+                        className="px-2 py-0.5 rounded text-[11px] bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]"
                       >
                         {key}
                       </span>
                     ))}
                   </div>
                 ) : (
-                  <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("actorProfiles.noSecrets")}</div>
+                  <div className="mt-2 text-xs text-[var(--color-text-muted)]">{t("actorProfiles.noSecrets")}</div>
                 )}
 
                 <div className="mt-3">
-                  <label className={labelClass(isDark)}>{t("actorProfiles.setSecrets")}</label>
+                  <label className={labelClass()}>{t("actorProfiles.setSecrets")}</label>
                   <textarea
                     value={secretSetText}
                     onChange={(e) => setSecretSetText(e.target.value)}
-                    className={`${inputClass(isDark)} min-h-[90px] font-mono`}
+                    className={`${inputClass()} min-h-[90px] font-mono`}
                     placeholder={t("actorProfiles.setSecretsPlaceholder")}
                   />
                 </div>
                 <div className="mt-3">
-                  <label className={labelClass(isDark)}>{t("actorProfiles.unsetSecrets")}</label>
+                  <label className={labelClass()}>{t("actorProfiles.unsetSecrets")}</label>
                   <textarea
                     value={secretUnsetText}
                     onChange={(e) => setSecretUnsetText(e.target.value)}
-                    className={`${inputClass(isDark)} min-h-[70px] font-mono`}
+                    className={`${inputClass()} min-h-[70px] font-mono`}
                     placeholder={t("actorProfiles.unsetSecretsPlaceholder")}
                   />
                 </div>
-                <label className={`mt-3 inline-flex items-center gap-2 text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+                <label className="mt-3 inline-flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
                   <input type="checkbox" checked={secretClear} onChange={(e) => setSecretClear(e.target.checked)} />
                   {t("actorProfiles.clearSecrets")}
                 </label>
               </div>
             </div>
-            <div className={`sticky bottom-0 px-5 py-4 border-t flex justify-end gap-2 ${isDark ? "border-slate-700 bg-slate-900" : "border-gray-200 bg-white"}`}>
+            <div className="sticky bottom-0 px-5 py-4 border-t flex justify-end gap-2 border-[var(--glass-border-subtle)] bg-[var(--color-bg-primary)]">
               <button
                 onClick={() => {
                   setDuplicateSourceProfileId("");
                   setEditorOpen(false);
                 }}
-                className={`px-3 py-2 rounded-lg text-sm min-h-[44px] ${isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"}`}
+                className="glass-btn text-[var(--color-text-secondary)] px-3 py-2 rounded-lg text-sm min-h-[44px]"
               >
                 {t("common:cancel")}
               </button>

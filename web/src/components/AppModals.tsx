@@ -954,7 +954,6 @@ export function AppModals({
         <RelayMessageModal
           key={`${selectedGroupId}:${relayEventId}`}
           isOpen={true}
-          isDark={isDark}
           busy={busy === "relay"}
           srcGroupId={relaySourceGroupId}
           srcEvent={relaySourceEvent}
@@ -1016,7 +1015,6 @@ export function AppModals({
 
       <RecipientsModal
         isOpen={!!messageMeta}
-        isDark={isDark}
         isSmallScreen={isSmallScreen}
         toLabel={messageMeta?.toLabel || ""}
         statusKind={messageMeta?.statusKind || "read"}
@@ -1026,7 +1024,6 @@ export function AppModals({
 
       <InboxModal
         isOpen={modals.inbox}
-        isDark={isDark}
         actorId={inboxActorId}
         actors={actors}
         messages={inboxMessages}
@@ -1037,7 +1034,6 @@ export function AppModals({
 
       <GroupEditModal
         isOpen={modals.groupEdit}
-        isDark={isDark}
         busy={busy}
         groupId={selectedGroupId || groupDoc?.group_id || ""}
         ccccHome={ccccHome}
@@ -1086,7 +1082,6 @@ export function AppModals({
 
       <CreateGroupModal
         isOpen={modals.createGroup}
-        isDark={isDark}
         busy={busy}
         dirSuggestions={dirSuggestions}
         dirItems={dirItems}

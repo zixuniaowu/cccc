@@ -4,7 +4,7 @@ import { classNames } from '../utils/classNames';
 
 interface MarkdownRendererProps {
     content: string;
-    isDark: boolean;
+    isDark?: boolean;
     className?: string;
     /** Force light text (for colored backgrounds like user messages) */
     invertText?: boolean;

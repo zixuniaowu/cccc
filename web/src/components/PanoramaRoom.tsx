@@ -1,15 +1,22 @@
 import { useMemo } from "react";
-import { useGLTF } from "@react-three/drei";
 import * as THREE from "three";
 import type { SemanticZone } from "../utils/panoramaSemanticMap";
 
-const BASE = `${import.meta.env.BASE_URL}assets/kenney/mini-market/Models/GLB format/`;
 const TILE_SIZE = 2;
-const WALL_SCALE = 2;
-const ROOM_PADDING_X = 1.4;
-const ROOM_PADDING_BACK = 1.6;
-const ROOM_PADDING_FRONT = 1.4;
+const ROOM_PADDING_X = 0.8;
+const ROOM_PADDING_BACK = 1.0;
+const ROOM_PADDING_FRONT = 0.9;
 const ROOM_TOP_Y = 4.2;
+
+type Rotation = [number, number, number];
+type PropKind = "counter" | "shelf" | "freezer" | "basket" | "crate";
+type PropPlacement = {
+  key: string;
+  kind: PropKind;
+  position: [number, number, number];
+  rotation?: Rotation;
+  scale?: number;
+};
 
 function snapDown(value: number, step: number): number {
   return Math.floor(value / step) * step;
@@ -25,32 +32,227 @@ function buildTileRange(from: number, to: number): number[] {
   return out;
 }
 
-function modelUrl(name: string): string {
-  return encodeURI(`${BASE}${name}.glb`);
+function zoneFrontZ(zone: SemanticZone, inset = 0.68): number {
+  return zone.center[2] + zone.size[1] / 2 - inset;
 }
 
-interface ModelInstanceProps {
-  name: string;
+function zoneBackZ(zone: SemanticZone, inset = 0.78): number {
+  return zone.center[2] - zone.size[1] / 2 + inset;
+}
+
+function spanX(zone: SemanticZone, count: number, inset = 0.9): number[] {
+  if (count <= 1) return [zone.center[0]];
+  const usable = Math.max(0.8, zone.size[0] - inset * 2);
+  const step = usable / (count - 1);
+  const start = zone.center[0] - usable / 2;
+  return Array.from({ length: count }, (_, index) => start + step * index);
+}
+
+function CounterDesk({ scale = 1 }: { scale?: number }) {
+  return (
+    <group scale={scale}>
+      <mesh position={[0, 0.28, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.9, 0.56, 0.6]} />
+        <meshStandardMaterial color="#64748b" />
+      </mesh>
+      <mesh position={[0, 0.6, -0.08]} castShadow>
+        <boxGeometry args={[0.68, 0.08, 0.18]} />
+        <meshStandardMaterial color="#111827" emissive="#0f172a" emissiveIntensity={0.16} />
+      </mesh>
+      <mesh position={[0, 0.66, 0.12]}>
+        <boxGeometry args={[0.28, 0.08, 0.2]} />
+        <meshStandardMaterial color="#38bdf8" />
+      </mesh>
+    </group>
+  );
+}
+
+function ShelfUnit({ scale = 1 }: { scale?: number }) {
+  return (
+    <group scale={scale}>
+      <mesh position={[0, 0.42, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.82, 0.84, 0.3]} />
+        <meshStandardMaterial color="#94a3b8" />
+      </mesh>
+      <mesh position={[0, 0.84, -0.02]}>
+        <boxGeometry args={[0.78, 0.18, 0.08]} />
+        <meshStandardMaterial color="#38bdf8" />
+      </mesh>
+      {[-0.22, 0, 0.22].map((x, index) => (
+        <mesh key={`top-${index}`} position={[x, 0.58, 0.1]}>
+          <boxGeometry args={[0.12, 0.18, 0.12]} />
+          <meshStandardMaterial color="#7dd3fc" />
+        </mesh>
+      ))}
+      {[-0.22, 0, 0.22].map((x, index) => (
+        <mesh key={`bottom-${index}`} position={[x, 0.22, 0.08]}>
+          <boxGeometry args={[0.16, 0.16, 0.14]} />
+          <meshStandardMaterial color="#cbd5e1" />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function FreezerUnit({ scale = 1 }: { scale?: number }) {
+  return (
+    <group scale={scale}>
+      <mesh position={[0, 0.4, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.86, 0.8, 0.54]} />
+        <meshStandardMaterial color="#cbd5e1" />
+      </mesh>
+      <mesh position={[0, 0.62, 0.2]}>
+        <boxGeometry args={[0.74, 0.3, 0.08]} />
+        <meshStandardMaterial color="#0ea5e9" emissive="#38bdf8" emissiveIntensity={0.1} />
+      </mesh>
+    </group>
+  );
+}
+
+function BasketProp({ scale = 1 }: { scale?: number }) {
+  return (
+    <group scale={scale}>
+      <mesh position={[0, 0.08, 0]} castShadow receiveShadow>
+        <boxGeometry args={[0.28, 0.16, 0.2]} />
+        <meshStandardMaterial color="#16a34a" />
+      </mesh>
+      <mesh position={[0, 0.22, 0]}>
+        <torusGeometry args={[0.07, 0.012, 8, 16]} />
+        <meshStandardMaterial color="#9ca3af" />
+      </mesh>
+    </group>
+  );
+}
+
+function FruitCrate({ scale = 1 }: { scale?: number }) {
+  return (
+    <group scale={scale}>
+      <mesh position={[0, 0.1, 0]} castShadow receiveShadow>
+        <cylinderGeometry args={[0.26, 0.3, 0.18, 6]} />
+        <meshStandardMaterial color="#94a3b8" />
+      </mesh>
+      {[
+        [-0.08, 0.22, -0.04],
+        [0.06, 0.23, -0.02],
+        [0, 0.26, 0.06],
+        [-0.02, 0.2, 0.02],
+      ].map((pos, index) => (
+        <mesh key={index} position={pos as [number, number, number]}>
+          <sphereGeometry args={[0.07, 10, 10]} />
+          <meshStandardMaterial color="#38bdf8" />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function PropInstance({ kind, position, rotation = [0, 0, 0], scale = 1 }: PropPlacement) {
+  const content =
+    kind === "counter" ? <CounterDesk scale={scale} /> :
+    kind === "shelf" ? <ShelfUnit scale={scale} /> :
+    kind === "freezer" ? <FreezerUnit scale={scale} /> :
+    kind === "basket" ? <BasketProp scale={scale} /> :
+    <FruitCrate scale={scale} />;
+
+  return <group position={position} rotation={rotation}>{content}</group>;
+}
+
+function zonePlacements(zone: SemanticZone, index: number): PropPlacement[] {
+  const front = zoneFrontZ(zone);
+  const back = zoneBackZ(zone);
+  const left = zone.center[0] - zone.size[0] / 2 + 0.7;
+  const right = zone.center[0] + zone.size[0] / 2 - 0.7;
+
+  if (zone.kind === "foreman") {
+    return [
+      { key: `${zone.id}-desk`, kind: "counter", position: [zone.center[0], 0.02, front - 0.08], scale: 1.05 },
+      { key: `${zone.id}-console`, kind: "shelf", position: [zone.center[0], 0.02, back + 0.08], rotation: [0, Math.PI, 0], scale: 0.72 },
+    ];
+  }
+
+  if (zone.kind === "offline") {
+    return [
+      { key: `${zone.id}-freezer`, kind: "freezer", position: [zone.center[0], 0.02, back + 0.04], scale: 0.92 },
+      { key: `${zone.id}-buffer`, kind: "shelf", position: [zone.center[0], 0.02, front - 0.06], rotation: [0, Math.PI, 0], scale: 0.68 },
+    ];
+  }
+
+  if (zone.kind === "idle") {
+    return [
+      { key: `${zone.id}-shelf`, kind: "shelf", position: [zone.center[0], 0.02, back + 0.02], rotation: [0, Math.PI / 2, 0], scale: 0.74 },
+      { key: `${zone.id}-crate`, kind: "crate", position: [zone.center[0], 0.02, front - 0.12], scale: 0.9 },
+    ];
+  }
+
+  if (zone.kind === "blocked") {
+    return [
+      { key: `${zone.id}-left-wall`, kind: "shelf", position: [left + 0.1, 0.02, zone.center[2]], rotation: [0, Math.PI / 2, 0], scale: 0.72 },
+      { key: `${zone.id}-right-wall`, kind: "shelf", position: [right - 0.1, 0.02, zone.center[2]], rotation: [0, -Math.PI / 2, 0], scale: 0.72 },
+      { key: `${zone.id}-jam-center`, kind: "basket", position: [zone.center[0], 0.02, zone.center[2]], rotation: [0, Math.PI / 6, 0], scale: 0.9 },
+    ];
+  }
+
+  const shelfCount = zone.size[0] >= 5.2 ? 2 : 1;
+  const shelfXs = spanX(zone, shelfCount, 1.2);
+  const placements: PropPlacement[] = shelfXs.map((x, shelfIndex) => ({
+    key: `${zone.id}-shelf-${shelfIndex}`,
+    kind: "shelf",
+    position: [x, 0.02, front],
+    rotation: [0, index % 2 === 0 ? 0 : Math.PI, 0],
+    scale: zone.size[0] >= 5.2 ? 0.72 : 0.68,
+  }));
+
+  placements.push(
+    { key: `${zone.id}-fruit-left`, kind: "crate", position: [left, 0.02, back + 0.06], rotation: [0, Math.PI / 8, 0], scale: 0.82 },
+    { key: `${zone.id}-fruit-right`, kind: "crate", position: [right, 0.02, back + 0.06], rotation: [0, -Math.PI / 8, 0], scale: 0.82 },
+  );
+
+  return placements;
+}
+
+function FloorTile({ position }: { position: [number, number, number] }) {
+  const parity = (Math.round(position[0] / TILE_SIZE) + Math.round(position[2] / TILE_SIZE)) % 2 === 0;
+  return (
+    <mesh position={position} receiveShadow>
+      <boxGeometry args={[TILE_SIZE, 0.08, TILE_SIZE]} />
+      <meshStandardMaterial color={parity ? "#e5e7eb" : "#cbd5e1"} />
+    </mesh>
+  );
+}
+
+function WallSegment({ position, rotation = [0, 0, 0], width = TILE_SIZE, color = "#475569" }: {
   position: [number, number, number];
-  rotation?: [number, number, number];
-  scale?: number;
+  rotation?: Rotation;
+  width?: number;
+  color?: string;
+}) {
+  return (
+    <group position={position} rotation={rotation}>
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[width, 2.4, 0.18]} />
+        <meshStandardMaterial color={color} />
+      </mesh>
+      <mesh position={[0, 0, 0.1]}>
+        <boxGeometry args={[width * 0.92, 0.8, 0.04]} />
+        <meshStandardMaterial color="#059669" emissive="#059669" emissiveIntensity={0.12} />
+      </mesh>
+    </group>
+  );
 }
 
-function ModelInstance({ name, position, rotation = [0, 0, 0], scale = 1 }: ModelInstanceProps) {
-  const gltf = useGLTF(modelUrl(name));
-  const object = useMemo(() => {
-    const cloned = gltf.scene.clone(true);
-    cloned.traverse((node) => {
-      if ((node as THREE.Mesh).isMesh) {
-        const mesh = node as THREE.Mesh;
-        mesh.castShadow = true;
-        mesh.receiveShadow = true;
-      }
-    });
-    return cloned;
-  }, [gltf.scene]);
-
-  return <primitive object={object} position={position} rotation={rotation} scale={scale} />;
+function ColumnPost({ position }: { position: [number, number, number] }) {
+  return (
+    <group position={position}>
+      <mesh castShadow receiveShadow>
+        <boxGeometry args={[0.22, 2.45, 0.22]} />
+        <meshStandardMaterial color="#64748b" />
+      </mesh>
+      <mesh position={[0, 1.1, 0]}>
+        <boxGeometry args={[0.12, 0.24, 0.12]} />
+        <meshStandardMaterial color="#94a3b8" />
+      </mesh>
+    </group>
+  );
 }
 
 function RoomShell({ zones }: { zones: SemanticZone[] }) {
@@ -87,37 +289,34 @@ function RoomShell({ zones }: { zones: SemanticZone[] }) {
   const floorTiles: Array<[number, number, number]> = [];
   for (const x of shell.floorXs) {
     for (const z of shell.floorZs) {
-      floorTiles.push([x, 0.001, z]);
+      floorTiles.push([x, 0, z]);
     }
   }
 
   return (
     <group>
       {floorTiles.map((pos, index) => (
-        <ModelInstance key={`floor-${index}`} name="floor" position={pos} scale={WALL_SCALE} />
+        <FloorTile key={`floor-${index}`} position={pos} />
       ))}
 
       {shell.wallXs.map((x, index) => (
-        <ModelInstance key={`back-wall-${index}`} name="wall" position={[x, 0, shell.backZ]} scale={WALL_SCALE} />
+        <WallSegment key={`back-wall-${index}`} position={[x, 1.2, shell.backZ]} width={TILE_SIZE} />
       ))}
 
       {shell.sideWallZs.map((z, index) => (
         <group key={`side-wall-${index}`}>
-          <ModelInstance name="wall" position={[shell.leftX, 0, z]} rotation={[0, Math.PI / 2, 0]} scale={WALL_SCALE} />
-          <ModelInstance name="wall" position={[shell.rightX, 0, z]} rotation={[0, -Math.PI / 2, 0]} scale={WALL_SCALE} />
+          <WallSegment position={[shell.leftX, 1.2, z]} rotation={[0, Math.PI / 2, 0]} width={TILE_SIZE} />
+          <WallSegment position={[shell.rightX, 1.2, z]} rotation={[0, -Math.PI / 2, 0]} width={TILE_SIZE} />
         </group>
       ))}
 
-      <ModelInstance name="wall-corner" position={[shell.leftX, 0, shell.backZ]} scale={WALL_SCALE} />
-      <ModelInstance name="wall-corner" position={[shell.rightX, 0, shell.backZ]} rotation={[0, Math.PI / 2, 0]} scale={WALL_SCALE} />
-
       {[
-        [shell.leftX, 0, shell.backZ],
-        [shell.rightX, 0, shell.backZ],
-        [shell.leftX, 0, shell.sideWallEndZ],
-        [shell.rightX, 0, shell.sideWallEndZ],
+        [shell.leftX, 1.2, shell.backZ],
+        [shell.rightX, 1.2, shell.backZ],
+        [shell.leftX, 1.2, shell.sideWallEndZ],
+        [shell.rightX, 1.2, shell.sideWallEndZ],
       ].map((pos, index) => (
-        <ModelInstance key={`column-${index}`} name="column" position={pos as [number, number, number]} scale={1.6} />
+        <ColumnPost key={`column-${index}`} position={pos as [number, number, number]} />
       ))}
 
       <mesh position={[shell.centerX, ROOM_TOP_Y, shell.centerZ]}>
@@ -133,29 +332,13 @@ function RoomShell({ zones }: { zones: SemanticZone[] }) {
 }
 
 function ZoneProps({ zones }: { zones: SemanticZone[] }) {
-  const byKind = new Map(zones.map((zone) => [zone.kind, zone]));
-  const idle = byKind.get("idle");
-  const offline = byKind.get("offline");
-  const foreman = byKind.get("foreman");
-  const taskZones = zones.filter((zone) => zone.kind === "task");
-
+  const placements = zones.flatMap((zone, index) => zonePlacements(zone, index));
   return (
     <group>
-      {idle ? (
-        <ModelInstance name="shelf-end" position={[idle.center[0], 0.02, idle.center[2] + 0.55]} rotation={[0, Math.PI / 2, 0]} scale={1.02} />
-      ) : null}
-
-      {taskZones.map((zone) => (
-        <ModelInstance key={zone.id} name="shelf-end" position={[zone.center[0], 0.02, zone.center[2] + 0.82]} scale={0.92} />
-      ))}
-
-      {offline ? (
-        <ModelInstance name="freezer" position={[offline.center[0], 0.02, offline.center[2] + 0.66]} scale={1.08} />
-      ) : null}
-
-      {foreman ? (
-        <ModelInstance name="cash-register" position={[foreman.center[0], 0.02, foreman.center[2] + 0.62]} scale={1.18} />
-      ) : null}
+      {placements.map((item) => {
+        const { key, ...rest } = item;
+        return <PropInstance key={key} {...rest} />;
+      })}
     </group>
   );
 }
@@ -168,11 +351,3 @@ export function PanoramaRoom({ zones }: { zones: SemanticZone[] }) {
     </group>
   );
 }
-
-useGLTF.preload(modelUrl("floor"));
-useGLTF.preload(modelUrl("wall"));
-useGLTF.preload(modelUrl("wall-corner"));
-useGLTF.preload(modelUrl("column"));
-useGLTF.preload(modelUrl("shelf-end"));
-useGLTF.preload(modelUrl("cash-register"));
-useGLTF.preload(modelUrl("freezer"));

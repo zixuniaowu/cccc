@@ -105,7 +105,7 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
 
   if (!canUse) {
     return (
-      <div className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}>
+      <div className="text-sm text-[var(--color-text-secondary)]">
         {t("blueprint.openFromGroup")}
       </div>
     );
@@ -116,24 +116,24 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
 
   return (
     <div className="space-y-4">
-      {err && <div className={`text-sm ${isDark ? "text-rose-300" : "text-red-600"}`}>{err}</div>}
+      {err && <div className="text-sm text-red-600 dark:text-rose-300">{err}</div>}
 
       <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("blueprint.exportTitle")}</div>
-        <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+        <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("blueprint.exportTitle")}</div>
+        <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">
           {t("blueprint.exportDescription")}
         </div>
         <div className="mt-3 flex items-center gap-2">
           <button className={primaryButtonClass(busy)} onClick={handleExport} disabled={busy}>
             {t("blueprint.exportBlueprint")}
           </button>
-          {exportInfo && <div className={`text-xs ${isDark ? "text-emerald-300" : "text-emerald-700"}`}>{exportInfo}</div>}
+          {exportInfo && <div className="text-xs text-emerald-700 dark:text-emerald-300">{exportInfo}</div>}
         </div>
       </div>
 
       <div className={cardClass(isDark)}>
-        <div className={`text-sm font-semibold ${isDark ? "text-slate-200" : "text-gray-800"}`}>{t("blueprint.importTitle")}</div>
-        <div className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-600"}`}>
+        <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("blueprint.importTitle")}</div>
+        <div className="text-xs mt-1 text-[var(--color-text-tertiary)]">
           {t("blueprint.importDescription")}
         </div>
 
@@ -143,7 +143,7 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
             key={file ? file.name : "none"}
             type="file"
             accept=".yaml,.yml,.json"
-            className={`text-sm ${isDark ? "text-slate-300" : "text-gray-700"}`}
+            className="text-sm text-[var(--color-text-secondary)]"
             disabled={busy}
             onChange={(e) => {
               const f = e.target.files && e.target.files.length > 0 ? e.target.files[0] : null;
@@ -155,7 +155,7 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
           />
         </div>
 
-        {busy && <div className={`mt-2 text-xs ${isDark ? "text-slate-500" : "text-gray-500"}`}>{t("blueprint.working")}</div>}
+        {busy && <div className="mt-2 text-xs text-[var(--color-text-muted)]">{t("blueprint.working")}</div>}
 
         {tpl && diff && (
           <div className="mt-3">
@@ -174,9 +174,7 @@ export function BlueprintTab({ isDark, groupId, groupTitle }: BlueprintTabProps)
           </button>
           <button
             type="button"
-            className={`px-4 py-2 rounded-lg text-sm min-h-[44px] transition-colors disabled:opacity-50 ${
-              isDark ? "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800" : "bg-white hover:bg-gray-50 text-gray-700 border border-gray-200"
-            }`}
+            className="glass-btn px-4 py-2 rounded-lg text-sm min-h-[44px] transition-colors disabled:opacity-50 text-[var(--color-text-secondary)]"
             disabled={busy}
             onClick={() => {
               setFile(null);

@@ -4,7 +4,6 @@ import { useIMEComposition } from "../../hooks/useIMEComposition";
 
 export interface GroupEditModalProps {
   isOpen: boolean;
-  isDark: boolean;
   busy: string;
   groupId: string;
   ccccHome: string;
@@ -20,7 +19,6 @@ export interface GroupEditModalProps {
 
 export function GroupEditModal({
   isOpen,
-  isDark,
   busy,
   groupId,
   ccccHome,
@@ -66,7 +64,7 @@ export function GroupEditModal({
 
   return (
     <div
-      className={`fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in ${isDark ? "bg-black/50" : "bg-black/30"}`}
+      className="fixed inset-0 backdrop-blur-sm flex items-stretch sm:items-start justify-center p-0 sm:p-6 z-50 animate-fade-in glass-overlay"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onCancel();
       }}
@@ -76,22 +74,18 @@ export function GroupEditModal({
     >
       <div
         ref={modalRef}
-        className={`w-full h-full sm:h-auto sm:max-w-md sm:mt-16 border shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl ${
-          isDark ? "border-slate-700/50 bg-gradient-to-b from-slate-800 to-slate-900" : "border-gray-200 bg-white"
-        }`}
+        className="w-full h-full sm:h-auto sm:max-w-md sm:mt-16 shadow-2xl animate-scale-in flex flex-col rounded-none sm:rounded-2xl glass-modal"
       >
-        <div className={`px-6 py-4 border-b safe-area-inset-top ${isDark ? "border-slate-700/50" : "border-gray-200"}`}>
-          <div id="group-edit-title" className={`text-lg font-semibold ${isDark ? "text-white" : "text-gray-900"}`}>
+        <div className="px-6 py-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)]">
+          <div id="group-edit-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
             {t("groupEdit.title")}
           </div>
         </div>
         <div className="p-6 space-y-4 flex-1 overflow-y-auto">
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("groupEdit.nameLabel")}</label>
+            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("groupEdit.nameLabel")}</label>
             <input
-              className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
-                isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-              }`}
+              className="w-full rounded-xl px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
               value={imeTitle.value}
               onChange={imeTitle.onChange}
               onCompositionStart={imeTitle.onCompositionStart}
@@ -100,11 +94,9 @@ export function GroupEditModal({
             />
           </div>
           <div>
-            <label className={`block text-xs font-medium mb-2 ${isDark ? "text-slate-400" : "text-gray-500"}`}>{t("groupEdit.descriptionLabel")}</label>
+            <label className="block text-xs font-medium mb-2 text-[var(--color-text-muted)]">{t("groupEdit.descriptionLabel")}</label>
             <input
-              className={`w-full rounded-xl border px-4 py-2.5 text-sm min-h-[44px] transition-colors ${
-                isDark ? "bg-slate-900/80 border-slate-600/50 text-white focus:border-blue-500" : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-              }`}
+              className="w-full rounded-xl px-4 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
               value={imeTopic.value}
               onChange={imeTopic.onChange}
               onCompositionStart={imeTopic.onCompositionStart}
@@ -112,15 +104,15 @@ export function GroupEditModal({
               placeholder={t("groupEdit.descriptionPlaceholder")}
             />
           </div>
-          <div className={`rounded-xl border p-4 ${isDark ? "border-slate-700/50 bg-slate-900/30" : "border-gray-200 bg-gray-50"}`}>
+          <div className="rounded-xl p-4 glass-panel">
             <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("groupEdit.groupId")}</div>
-                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.groupId")}</div>
+                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
                   {groupId || "—"}
                 </div>
                 <button
-                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
                   onClick={async () => {
                     const ok = await copyToClipboard(groupId);
                     if (!ok) return;
@@ -133,12 +125,12 @@ export function GroupEditModal({
                 </button>
               </div>
               <div className="flex items-center gap-2">
-                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("groupEdit.projectRoot")}</div>
-                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.projectRoot")}</div>
+                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
                   {projectRoot || t("groupEdit.noScopeAttached")}
                 </div>
                 <button
-                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
                   onClick={async () => {
                     const ok = await copyToClipboard(projectRoot);
                     if (!ok) return;
@@ -151,12 +143,12 @@ export function GroupEditModal({
                 </button>
               </div>
               <div className="flex items-center gap-2">
-                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("groupEdit.groupDataDirectory")}</div>
-                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.groupDataDirectory")}</div>
+                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
                   {groupDataDir || "—"}
                 </div>
                 <button
-                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
                   onClick={async () => {
                     const ok = await copyToClipboard(groupDataDir);
                     if (!ok) return;
@@ -169,12 +161,12 @@ export function GroupEditModal({
                 </button>
               </div>
               <div className="flex items-center gap-2">
-                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("groupEdit.groupConfigFile")}</div>
-                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.groupConfigFile")}</div>
+                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
                   {groupConfigFile || "—"}
                 </div>
                 <button
-                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
                   onClick={async () => {
                     const ok = await copyToClipboard(groupConfigFile);
                     if (!ok) return;
@@ -187,12 +179,12 @@ export function GroupEditModal({
                 </button>
               </div>
               <div className="flex items-center gap-2">
-                <div className={`text-xs ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("groupEdit.groupLedgerFile")}</div>
-                <div className={`flex-1 min-w-0 font-mono text-xs truncate ${isDark ? "text-white" : "text-gray-900"}`}>
+                <div className="text-xs text-[var(--color-text-secondary)]">{t("groupEdit.groupLedgerFile")}</div>
+                <div className="flex-1 min-w-0 font-mono text-xs truncate text-[var(--color-text-primary)]">
                   {groupLedgerFile || "—"}
                 </div>
                 <button
-                  className={`px-2 py-1 rounded-lg text-xs border transition-colors ${isDark ? "border-slate-600/50 bg-slate-800/50 text-slate-200 hover:bg-slate-700/60" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-100"}`}
+                  className="px-2 py-1 rounded-lg text-xs transition-colors glass-btn text-[var(--color-text-secondary)]"
                   onClick={async () => {
                     const ok = await copyToClipboard(groupLedgerFile);
                     if (!ok) return;
@@ -215,17 +207,13 @@ export function GroupEditModal({
               {t("common:save")}
             </button>
             <button
-              className={`px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] ${
-                isDark ? "bg-slate-700 hover:bg-slate-600 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
-              }`}
+              className="px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] glass-btn text-[var(--color-text-secondary)]"
               onClick={onCancel}
             >
               {t("common:cancel")}
             </button>
             <button
-              className={`px-4 py-2.5 rounded-xl border text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] ${
-                isDark ? "bg-rose-500/20 border-rose-500/30 text-rose-400 hover:bg-rose-500/30" : "bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-100"
-              }`}
+              className="px-4 py-2.5 rounded-xl border text-sm font-medium disabled:opacity-50 transition-colors min-h-[44px] bg-rose-500/15 border-rose-500/30 text-rose-600 dark:text-rose-400 hover:bg-rose-500/25"
               onClick={() => {
                 onCancel();
                 onDelete();

@@ -35,7 +35,7 @@ function formatEventText(ev: LedgerEvent): string {
   return String(ev.kind || "event");
 }
 
-function highlightText(text: string, query: string, isDark: boolean): ReactNode {
+function highlightText(text: string, query: string, _isDark?: boolean): ReactNode {
   const q = (query || "").trim();
   if (!q) return text;
 
@@ -54,10 +54,7 @@ function highlightText(text: string, query: string, isDark: boolean): ReactNode 
     out.push(
       <mark
         key={`m${k++}-${idx}`}
-        className={classNames(
-          "px-0.5 rounded",
-          isDark ? "bg-amber-500/20 text-amber-200" : "bg-amber-200 text-amber-900"
-        )}
+        className="px-0.5 rounded bg-amber-200 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200"
       >
         {matched}
       </mark>
@@ -177,7 +174,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
     <div className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center p-0 sm:p-4 animate-fade-in">
       {/* Backdrop */}
       <div
-        className={isDark ? "absolute inset-0 bg-black/60" : "absolute inset-0 bg-black/40"}
+        className="absolute inset-0 glass-overlay"
         onPointerDown={(e) => {
           if (e.target === e.currentTarget) onClose();
         }}
@@ -189,7 +186,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
         className={classNames(
           "relative w-full h-full sm:h-auto sm:max-h-[80vh] sm:max-w-3xl flex flex-col border shadow-2xl animate-scale-in",
           "rounded-none sm:rounded-xl",
-          isDark ? "bg-slate-900 border-slate-700" : "bg-white border-gray-200"
+          "glass-modal"
         )}
         ref={modalRef}
         role="dialog"
@@ -197,12 +194,12 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
         aria-labelledby="search-modal-title"
       >
         {/* Header */}
-        <div className={classNames("flex items-center justify-between px-4 pt-4 pb-3 border-b safe-area-inset-top", isDark ? "border-slate-800" : "border-gray-200")}>
+        <div className={classNames("flex items-center justify-between px-4 pt-4 pb-3 border-b safe-area-inset-top", "border-[var(--glass-border-subtle)]")}>
           <div className="min-w-0">
-            <h2 id="search-modal-title" className={classNames("text-lg font-semibold truncate", isDark ? "text-slate-100" : "text-gray-900")}>
+            <h2 id="search-modal-title" className={classNames("text-lg font-semibold truncate", "text-[var(--color-text-primary)]")}>
               {"🔍 "}{t('searchMessages')}
             </h2>
-            <div className={classNames("text-xs mt-0.5 truncate", isDark ? "text-slate-400" : "text-gray-500")}>
+            <div className={classNames("text-xs mt-0.5 truncate", "text-[var(--color-text-muted)]")}>
               {groupId}
             </div>
           </div>
@@ -210,7 +207,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
             onClick={onClose}
             className={classNames(
               "text-xl leading-none min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg transition-colors",
-              isDark ? "text-slate-400 hover:text-slate-200 hover:bg-slate-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+              "glass-btn text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
             )}
             aria-label={t('closeSearchModal')}
           >
@@ -221,7 +218,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
         {/* Controls */}
         <div className="px-4 py-3 border-b space-y-3 sm:space-y-0 sm:flex sm:items-end sm:gap-3">
           <div className="flex-1 min-w-0">
-            <label className={classNames("block text-xs font-medium mb-1", isDark ? "text-slate-300" : "text-gray-700")}>
+            <label className={classNames("block text-xs font-medium mb-1", "text-[var(--color-text-secondary)]")}>
               {t('query')}
             </label>
             <div className="flex gap-2">
@@ -234,7 +231,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                 }}
                 className={classNames(
                   "flex-1 px-3 py-2 border rounded-lg text-sm min-h-[44px]",
-                  isDark ? "bg-slate-800 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"
+                  "glass-input text-[var(--color-text-primary)]"
                 )}
                 placeholder={t('searchPlaceholder')}
               />
@@ -243,7 +240,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                 disabled={busy}
                 className={classNames(
                   "px-4 py-2 rounded-lg text-sm font-medium min-h-[44px] disabled:opacity-50",
-                  isDark ? "bg-emerald-600 hover:bg-emerald-500 text-white" : "bg-emerald-600 hover:bg-emerald-500 text-white"
+                  "bg-emerald-600 hover:bg-emerald-500 text-white"
                 )}
               >
                 {busy ? "…" : t('common:search')}
@@ -253,10 +250,10 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
 
           <div className="flex flex-wrap gap-3 items-end">
             <div className="min-w-0">
-              <label className={classNames("block text-xs font-medium mb-1", isDark ? "text-slate-300" : "text-gray-700")}>
+              <label className={classNames("block text-xs font-medium mb-1", "text-[var(--color-text-secondary)]")}>
                 {t('kind')}
               </label>
-              <div className={classNames("flex items-center gap-1 p-1 rounded-lg", isDark ? "bg-slate-800/60" : "bg-gray-100")}>
+              <div className={classNames("flex items-center gap-1 p-1 rounded-lg", "glass-panel")}>
                 {([
                   ["all", t('kindAll')],
                   ["chat", t('kindChat')],
@@ -268,12 +265,8 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                     className={classNames(
                       "px-2.5 py-1.5 rounded-md text-xs font-medium min-h-[36px] transition-colors",
                       kind === id
-                        ? isDark
-                          ? "bg-slate-700 text-white"
-                          : "bg-white text-gray-900 shadow-sm"
-                        : isDark
-                          ? "text-slate-300 hover:text-white"
-                          : "text-gray-600 hover:text-gray-900"
+                        ? "glass-card text-[var(--color-text-primary)]"
+                        : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                     )}
                     aria-pressed={kind === id}
                   >
@@ -284,7 +277,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
             </div>
 
             <div className="min-w-0 flex-1 sm:flex-none">
-              <label className={classNames("block text-xs font-medium mb-1", isDark ? "text-slate-300" : "text-gray-700")}>
+              <label className={classNames("block text-xs font-medium mb-1", "text-[var(--color-text-secondary)]")}>
                 {t('by')}
               </label>
               <select
@@ -292,7 +285,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                 onChange={(e) => setBy(e.target.value)}
                 className={classNames(
                   "w-full sm:w-auto px-3 py-2 border rounded-lg text-sm min-h-[44px] sm:min-w-[140px]",
-                  isDark ? "bg-slate-800 border-slate-700 text-slate-100" : "bg-white border-gray-300 text-gray-900"
+                  "glass-input text-[var(--color-text-primary)]"
                 )}
               >
                 <option value="">{t('any')}</option>
@@ -310,7 +303,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
 
         {/* Error */}
         {error && (
-          <div className={classNames("px-4 py-2 text-sm border-b", isDark ? "border-rose-500/30 bg-rose-500/10 text-rose-300" : "border-rose-300 bg-rose-50 text-rose-700")} role="alert">
+          <div className={classNames("px-4 py-2 text-sm border-b", "border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300")} role="alert">
             {error}
           </div>
         )}
@@ -321,7 +314,7 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
             <button
               className={classNames(
                 "w-full px-4 py-2 rounded-lg text-sm font-medium min-h-[44px] transition-colors",
-                isDark ? "bg-slate-800 hover:bg-slate-700 text-slate-200" : "bg-gray-100 hover:bg-gray-200 text-gray-700"
+                "glass-btn text-[var(--color-text-secondary)]"
               )}
               onClick={() => void loadOlder()}
               disabled={busy}
@@ -339,39 +332,35 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                 key={evId || `r${idx}`}
                 className={classNames(
                   "rounded-lg border px-4 py-3",
-                  isDark ? "border-slate-700/50 bg-slate-800/40" : "border-gray-200 bg-gray-50"
+                  "glass-card"
                 )}
               >
                 <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className={classNames("text-xs", isDark ? "text-slate-400" : "text-gray-500")} title={formatFullTime(ev.ts)}>
+                      <span className={classNames("text-xs", "text-[var(--color-text-muted)]")} title={formatFullTime(ev.ts)}>
                         {formatTime(ev.ts)}
                       </span>
-                      <span className={classNames("text-xs font-medium", isDark ? "text-slate-200" : "text-gray-800")}>
+                      <span className={classNames("text-xs font-medium", "text-[var(--color-text-primary)]")}>
                         {getDisplayName(ev.by || "") || "—"}
                       </span>
                       <span
                         className={classNames(
                           "text-[10px] px-2 py-0.5 rounded-full font-medium",
                           ev.kind === "system.notify"
-                            ? isDark
-                              ? "bg-blue-500/20 text-blue-300"
-                              : "bg-blue-100 text-blue-700"
-                            : isDark
-                              ? "bg-slate-700/60 text-slate-300"
-                              : "bg-white text-gray-600 border border-gray-200"
+                            ? "bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-300"
+                            : "bg-[var(--glass-tab-bg)] text-[var(--color-text-secondary)] border border-[var(--glass-border-subtle)]"
                         )}
                       >
                         {ev.kind || "event"}
                       </span>
                       {evId && (
-                        <span className={classNames("text-[10px] truncate", isDark ? "text-slate-500" : "text-gray-400")} title={evId}>
+                        <span className={classNames("text-[10px] truncate", "text-[var(--color-text-muted)]")} title={evId}>
                           {evId}
                         </span>
                       )}
                     </div>
-                    <div className={classNames("mt-2 text-sm whitespace-pre-wrap break-words", isDark ? "text-slate-100" : "text-gray-800")}>
+                    <div className={classNames("mt-2 text-sm whitespace-pre-wrap break-words", "text-[var(--color-text-primary)]")}>
                       {highlightText(text, query, isDark)}
                     </div>
                   </div>
@@ -380,10 +369,8 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                     {isChat && (
                       <button
                         className={classNames(
-                          "text-[10px] px-2 py-1 rounded border min-h-[36px] transition-colors",
-                          isDark
-                            ? "bg-slate-900 border-slate-800 hover:bg-slate-800/60 text-slate-300 hover:text-slate-100"
-                            : "bg-white border-gray-200 hover:bg-gray-100 text-gray-600 hover:text-gray-900"
+                          "text-[10px] px-2 py-1 rounded border border-[var(--glass-border-subtle)] min-h-[36px] transition-colors",
+                          "glass-btn text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                         )}
                         onClick={() => onReply(ev)}
                         aria-label={`Reply to ${getDisplayName(ev.by || "") || "message"}`}
@@ -395,10 +382,8 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                     {isChat && evId && onJumpToMessage ? (
                       <button
                         className={classNames(
-                          "text-[10px] px-2 py-1 rounded border min-h-[36px] transition-colors",
-                          isDark
-                            ? "bg-slate-900 border-slate-800 hover:bg-slate-800/60 text-slate-300 hover:text-slate-100"
-                            : "bg-white border-gray-200 hover:bg-gray-100 text-gray-600 hover:text-gray-900"
+                          "text-[10px] px-2 py-1 rounded border border-[var(--glass-border-subtle)] min-h-[36px] transition-colors",
+                          "glass-btn text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                         )}
                         onClick={() => onJumpToMessage(evId)}
                         aria-label={t('openMessageContext')}
@@ -410,10 +395,8 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
                     {evId && (
                       <button
                         className={classNames(
-                          "text-[10px] px-2 py-1 rounded border min-h-[36px] transition-colors",
-                          isDark
-                            ? "bg-slate-900 border-slate-800 hover:bg-slate-800/60 text-slate-300 hover:text-slate-100"
-                            : "bg-white border-gray-200 hover:bg-gray-100 text-gray-600 hover:text-gray-900"
+                          "text-[10px] px-2 py-1 rounded border border-[var(--glass-border-subtle)] min-h-[36px] transition-colors",
+                          "glass-btn text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
                         )}
                         onClick={() => void copyToClipboard(evId)}
                         aria-label={t('copyEventId')}
@@ -431,8 +414,8 @@ export function SearchModal({ isOpen, onClose, groupId, actors, isDark, onReply,
           {!busy && results.length === 0 && (
             <div className="text-center py-10">
               <div className="text-3xl mb-2">🔎</div>
-              <div className={classNames("text-sm", isDark ? "text-slate-300" : "text-gray-700")}>{t('noResults')}</div>
-              <div className={classNames("text-xs mt-1", isDark ? "text-slate-500" : "text-gray-500")}>
+              <div className={classNames("text-sm", "text-[var(--color-text-secondary)]")}>{t('noResults')}</div>
+              <div className={classNames("text-xs mt-1", "text-[var(--color-text-muted)]")}>
                 {t('noResultsHint')}
               </div>
             </div>

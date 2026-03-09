@@ -504,6 +504,7 @@ export function ChatComposer({
                 )}
                 onClick={onClearRecipients}
                 disabled={busy === "send"}
+                aria-label={t('clearRecipients')}
                 title={t('clearRecipients')}
               >
                 <CloseIcon size={14} />
@@ -532,6 +533,8 @@ export function ChatComposer({
                   isDark ? "hover:bg-white/10 text-slate-400 hover:text-white" : "hover:bg-black/10 text-gray-400 hover:text-gray-700"
                 )}
                 onClick={() => onRemoveComposerFile(idx)}
+                aria-label={t('removeAttachment', { name: f.name })}
+                title={t('removeAttachment', { name: f.name })}
               >
                 <CloseIcon size={14} />
               </button>
@@ -583,6 +586,7 @@ export function ChatComposer({
           )}
           onClick={() => fileInputRef.current?.click()}
           disabled={!selectedGroupId || busy === "send" || isCrossGroup}
+          aria-label={t('attachFile')}
           title={fileDisabledReason}
         >
           <AttachmentIcon size={18} className="sm:w-5 sm:h-5 group-active:scale-90 transition-transform" />
@@ -614,7 +618,7 @@ export function ChatComposer({
             <button
               type="button"
               className={classNames(
-                "w-7 h-7 sm:w-8 sm:h-8 rounded-full transition-colors flex items-center justify-center",
+                "w-11 h-11 rounded-full transition-colors flex items-center justify-center",
                 busy === "send" || !selectedGroupId
                   ? isDark
                     ? "text-slate-500"

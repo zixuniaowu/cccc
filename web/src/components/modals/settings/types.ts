@@ -12,24 +12,18 @@ export type GroupTabId =
   | "blueprint";
 export type GlobalTabId = "capabilities" | "actorProfiles" | "webAccess" | "developer";
 
-// Shared style class helpers
-export const inputClass = (isDark: boolean) =>
-  `w-full px-3 py-2.5 rounded-lg border text-sm min-h-[44px] transition-colors ${
-    isDark
-      ? "bg-slate-800 border-slate-700 text-slate-200 focus:border-slate-500"
-      : "bg-white border-gray-300 text-gray-900 focus:border-blue-500"
-  }`;
+// Shared style class helpers — glass design system
+export const inputClass = (_isDark?: boolean) =>
+  `glass-input w-full text-[var(--color-text-primary)] text-sm min-h-[44px]`;
 
-export const labelClass = (isDark: boolean) =>
-  `block text-xs mb-1 ${isDark ? "text-slate-400" : "text-gray-500"}`;
+export const labelClass = (_isDark?: boolean) =>
+  `block text-xs mb-1 text-[var(--color-text-secondary)]`;
 
 export const primaryButtonClass = (_busy?: boolean) =>
   `px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm rounded-lg disabled:opacity-50 min-h-[44px] transition-colors font-medium`;
 
-export const cardClass = (isDark: boolean) =>
-  `rounded-lg border p-3 ${isDark ? "border-slate-800 bg-slate-950/30" : "border-gray-200 bg-gray-50"}`;
+export const cardClass = (_isDark?: boolean) =>
+  `glass-panel rounded-lg p-3`;
 
-export const preClass = (isDark: boolean) =>
-  `mt-2 p-2 rounded overflow-x-auto whitespace-pre text-[11px] ${
-    isDark ? "bg-slate-900 text-slate-200" : "bg-white text-gray-800 border border-gray-200"
-  }`;
+export const preClass = (_isDark?: boolean) =>
+  `mt-2 p-2 rounded overflow-x-auto whitespace-pre text-[11px] bg-[var(--color-bg-secondary)] text-[var(--color-text-primary)] border border-[var(--glass-border-subtle)]`;

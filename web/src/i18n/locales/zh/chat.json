@@ -37,6 +37,7 @@
   "busy": "处理中。",
   "crossGroupAttachment": "跨组附件功能暂不支持。",
   "attachFile": "添加附件",
+  "removeAttachment": "移除附件 {{name}}",
   "untitledGroup": "未命名工作组",
   "teamReady": "团队已就绪，和你的智能体打个招呼吧。",
   "attachProjectFolder": "关联项目文件夹",

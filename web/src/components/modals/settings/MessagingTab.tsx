@@ -35,20 +35,20 @@ export function MessagingTab(props: MessagingTabProps) {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div>
-        <h3 className={`text-sm font-medium ${isDark ? "text-slate-300" : "text-gray-700"}`}>{t("messaging.title")}</h3>
-        <p className={`text-xs mt-1 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)]">{t("messaging.title")}</h3>
+        <p className="text-xs mt-1 text-[var(--color-text-muted)]">
           {t("messaging.description")}
         </p>
       </div>
 
-      <div className={cardClass(isDark)}>
+      <div className={cardClass()}>
         <div className="flex items-center gap-2 mb-1">
-          <div className={`p-1.5 rounded-md ${isDark ? "bg-slate-800 text-emerald-400" : "bg-emerald-50 text-emerald-700"}`}>
+          <div className="p-1.5 rounded-md bg-emerald-500/15 text-emerald-700 dark:text-emerald-400">
             <MessageSquareIcon className="w-4 h-4" />
           </div>
-          <h3 className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("messaging.defaultRecipient")}</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-text-primary)]">{t("messaging.defaultRecipient")}</h3>
         </div>
-        <p className={`text-xs ml-9 mb-4 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+        <p className="text-xs ml-9 mb-4 text-[var(--color-text-muted)]">
           <Trans i18nKey="messaging.defaultRecipientDescription" ns="settings" components={[<span className="font-mono" />]} />
         </p>
 
@@ -62,7 +62,7 @@ export function MessagingTab(props: MessagingTabProps) {
             <option value="foreman">{t("messaging.foremanOnly")}</option>
             <option value="broadcast">{t("messaging.broadcastAll")}</option>
           </select>
-          <div className={`mt-2 text-[11px] leading-snug ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+          <div className="mt-2 text-[11px] leading-snug text-[var(--color-text-muted)]">
             {t("messaging.tip")}
           </div>
         </div>

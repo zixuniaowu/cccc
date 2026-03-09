@@ -19,7 +19,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
-  const calledRef = useRef(false);
   const { t } = useTranslation('layout');
   const hostname = typeof window !== "undefined" ? String(window.location.hostname || "").trim().toLowerCase() : "";
   const isLocalAccess = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname === "[::1]";
@@ -27,8 +26,6 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   // 启动时探测受保护接口：若返回 401/403，说明 token 认证已启用且当前尚未登录。
   useEffect(() => {
-    if (calledRef.current) return;
-    calledRef.current = true;
     if (forceLoginRef.current) {
       api.clearAuthToken();
       return;
@@ -83,10 +80,8 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (status === "checking") {
     return (
-      <div className={`fixed inset-0 flex items-center justify-center ${
-        isDark ? "bg-slate-950" : "bg-slate-50"
-      }`}>
-        <div className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+      <div className="fixed inset-0 flex items-center justify-center bg-[var(--color-bg-primary)]">
+        <div className="text-sm text-[var(--color-text-tertiary)]">
           {t('connecting')}
         </div>
       </div>
@@ -99,25 +94,19 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
 
   // Login form
   return (
-    <div className={`fixed inset-0 flex items-center justify-center ${
-      isDark
-        ? "bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950"
-        : "bg-gradient-to-br from-slate-50 via-white to-slate-100"
-    }`}>
+    <div className="fixed inset-0 flex items-center justify-center bg-[var(--color-bg-primary)]">
       <form
         onSubmit={handleSubmit}
-        className={`w-full max-w-sm mx-4 p-6 rounded-2xl shadow-xl border ${
-          isDark ? "bg-slate-800/80 border-slate-700" : "bg-white border-slate-200"
-        }`}
+        className="glass-modal w-full max-w-sm mx-4 p-6"
       >
         <div className="flex flex-col items-center gap-1 mb-6">
-          <h1 className={`text-lg font-semibold ${isDark ? "text-slate-100" : "text-slate-800"}`}>
+          <h1 className="text-lg font-semibold gradient-text">
             CCCC
           </h1>
-          <p className={`text-sm ${isDark ? "text-slate-400" : "text-slate-500"}`}>
+          <p className="text-sm text-[var(--color-text-tertiary)]">
             {t('enterToken')}
           </p>
-          <p className={`text-xs text-center ${isDark ? "text-slate-500" : "text-slate-500"}`}>
+          <p className="text-xs text-center text-[var(--color-text-muted)]">
             {t('tokenLoginHint')}
           </p>
         </div>
@@ -128,18 +117,12 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             onChange={(e) => setToken(e.target.value)}
             placeholder={t('accessToken')}
             autoFocus
-            className={`w-full px-4 py-2.5 pr-20 rounded-lg border text-sm outline-none transition-colors ${
-              isDark
-                ? "bg-slate-700 border-slate-600 text-slate-100 placeholder-slate-400 focus:border-cyan-500"
-                : "bg-slate-50 border-slate-300 text-slate-800 placeholder-slate-400 focus:border-cyan-500"
-            }`}
+            className="glass-input w-full px-4 py-2.5 pr-20 text-sm text-[var(--color-text-primary)] placeholder-[var(--color-text-muted)]"
           />
           <button
             type="button"
             onClick={() => setShowToken((prev) => !prev)}
-            className={`absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded text-xs transition-colors ${
-              isDark ? "text-slate-300 hover:bg-slate-600" : "text-slate-600 hover:bg-slate-200"
-            }`}
+            className="glass-btn absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded text-xs text-[var(--color-text-secondary)]"
           >
             {showToken ? t('hideToken') : t('showToken')}
           </button>
@@ -148,45 +131,37 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         <button
           type="submit"
           disabled={submitting || !token.trim()}
-          className={`w-full mt-4 px-4 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+          className={`glass-btn-accent w-full mt-4 px-4 py-2.5 rounded-lg text-sm font-medium text-[var(--color-accent-primary)] ${
             submitting || !token.trim() ? "opacity-50 cursor-not-allowed" : ""
-          } ${
-            isDark
-              ? "bg-cyan-600 hover:bg-cyan-500 text-white"
-              : "bg-cyan-500 hover:bg-cyan-600 text-white"
           }`}
         >
           {submitting ? t('verifying') : t('signIn')}
         </button>
 
-        <div className={`mt-4 border-t pt-4 ${isDark ? "border-slate-700" : "border-slate-200"}`}>
+        <div className="mt-4 border-t pt-4 border-[var(--glass-border-subtle)]">
           <button
             type="button"
             onClick={() => setShowRecovery((prev) => !prev)}
-            className={`text-xs underline underline-offset-4 transition-colors ${
-              isDark ? "text-slate-300 hover:text-slate-100" : "text-slate-600 hover:text-slate-900"
-            }`}
+            className="text-xs underline underline-offset-4 transition-colors text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
           >
             {showRecovery ? t('hideRecovery') : t('forgotTokenCta')}
           </button>
 
           {showRecovery ? (
-            <div className={`mt-3 rounded-xl border p-4 text-left ${
-              isDark ? "border-slate-700 bg-slate-900/70" : "border-slate-200 bg-slate-50"
-            }`}>
-              <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-slate-900"}`}>{t('recoveryTitle')}</div>
-              <p className={`mt-2 text-xs leading-6 ${isDark ? "text-slate-300" : "text-slate-700"}`}>{t('recoveryIntro')}</p>
+            <div className="glass-panel mt-3 rounded-xl p-4 text-left">
+              <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t('recoveryTitle')}</div>
+              <p className="mt-2 text-xs leading-6 text-[var(--color-text-secondary)]">{t('recoveryIntro')}</p>
 
               <div className="mt-3 space-y-3">
                 <div>
-                  <div className={`text-xs font-semibold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{t('recoveryBrowserTitle')}</div>
-                  <p className={`mt-1 text-xs leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>{t('recoveryBrowserBody')}</p>
+                  <div className="text-xs font-semibold text-[var(--color-text-primary)]">{t('recoveryBrowserTitle')}</div>
+                  <p className="mt-1 text-xs leading-6 text-[var(--color-text-tertiary)]">{t('recoveryBrowserBody')}</p>
                 </div>
 
                 {isLocalAccess ? (
                   <div>
-                    <div className={`text-xs font-semibold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{t('recoveryLocalTitle')}</div>
-                    <ol className={`mt-1 list-decimal space-y-1 pl-4 text-xs leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                    <div className="text-xs font-semibold text-[var(--color-text-primary)]">{t('recoveryLocalTitle')}</div>
+                    <ol className="mt-1 list-decimal space-y-1 pl-4 text-xs leading-6 text-[var(--color-text-tertiary)]">
                       <li>{t('recoveryLocalStep1')}</li>
                       <li>{t('recoveryLocalStep2', { path: localRecoveryPath })}</li>
                       <li>{t('recoveryLocalStep3')}</li>
@@ -195,13 +170,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                   </div>
                 ) : (
                   <div>
-                    <div className={`text-xs font-semibold ${isDark ? "text-slate-200" : "text-slate-800"}`}>{t('recoveryRemoteTitle')}</div>
-                    <p className={`mt-1 text-xs leading-6 ${isDark ? "text-slate-400" : "text-slate-600"}`}>{t('recoveryRemoteBody', { path: localRecoveryPath })}</p>
+                    <div className="text-xs font-semibold text-[var(--color-text-primary)]">{t('recoveryRemoteTitle')}</div>
+                    <p className="mt-1 text-xs leading-6 text-[var(--color-text-tertiary)]">{t('recoveryRemoteBody', { path: localRecoveryPath })}</p>
                   </div>
                 )}
               </div>
 
-              <p className={`mt-3 text-[11px] leading-5 ${isDark ? "text-slate-500" : "text-slate-500"}`}>{t('recoverySecurityNote')}</p>
+              <p className="mt-3 text-[11px] leading-5 text-[var(--color-text-muted)]">{t('recoverySecurityNote')}</p>
             </div>
           ) : null}
         </div>
