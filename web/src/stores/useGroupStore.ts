@@ -62,12 +62,14 @@ interface GroupState {
   refreshGroups: () => Promise<void>;
   refreshActors: (groupId?: string) => Promise<void>;
   loadGroup: (groupId: string) => Promise<void>;
+  warmGroup: (groupId: string) => Promise<void>;
   loadMoreHistory: () => Promise<void>;
   openChatWindow: (groupId: string, centerEventId: string) => Promise<void>;
   closeChatWindow: () => void;
 }
 
 const MAX_UI_EVENTS = 800;
+const GROUP_VIEW_CACHE_TTL_MS = 60_000;
 
 // localStorage key for group order
 const GROUP_ORDER_KEY = "cccc-group-order";
@@ -111,6 +113,143 @@ let refreshGroupsInFlight = false;
 let refreshGroupsQueued = false;
 const refreshActorsInFlight = new Set<string>();
 const refreshActorsQueued = new Set<string>();
+const warmGroupInFlight = new Set<string>();
+let loadGroupToken = 0;
+
+type GroupViewSnapshot = {
+  groupDoc: GroupDoc | null;
+  events: LedgerEvent[];
+  actors: Actor[];
+  groupContext: GroupContext | null;
+  groupSettings: GroupSettings | null;
+  hasMoreHistory: boolean;
+  cachedAt: number;
+};
+
+const groupViewCache = new Map<string, GroupViewSnapshot>();
+
+function cloneGroupDoc(doc: GroupDoc | null | undefined): GroupDoc | null {
+  return doc ? { ...doc } : null;
+}
+
+function cloneEvents(events: LedgerEvent[] | undefined): LedgerEvent[] {
+  return Array.isArray(events) ? [...events] : [];
+}
+
+function cloneActors(actors: Actor[] | undefined): Actor[] {
+  return Array.isArray(actors) ? [...actors] : [];
+}
+
+function cloneGroupContext(ctx: GroupContext | null | undefined): GroupContext | null {
+  return ctx ? { ...ctx } : null;
+}
+
+function cloneGroupSettings(settings: GroupSettings | null | undefined): GroupSettings | null {
+  return settings ? { ...settings } : null;
+}
+
+function getCachedGroupView(groupId: string): GroupViewSnapshot | null {
+  const gid = String(groupId || "").trim();
+  if (!gid) return null;
+  const cached = groupViewCache.get(gid);
+  if (!cached) return null;
+  if (Date.now() - cached.cachedAt > GROUP_VIEW_CACHE_TTL_MS) return null;
+  return {
+    groupDoc: cloneGroupDoc(cached.groupDoc),
+    events: cloneEvents(cached.events),
+    actors: cloneActors(cached.actors),
+    groupContext: cloneGroupContext(cached.groupContext),
+    groupSettings: cloneGroupSettings(cached.groupSettings),
+    hasMoreHistory: !!cached.hasMoreHistory,
+    cachedAt: cached.cachedAt,
+  };
+}
+
+function saveGroupView(groupId: string, patch: Partial<Omit<GroupViewSnapshot, "cachedAt">>): void {
+  const gid = String(groupId || "").trim();
+  if (!gid) return;
+
+  const prev = groupViewCache.get(gid);
+  groupViewCache.set(gid, {
+    groupDoc: patch.groupDoc !== undefined ? cloneGroupDoc(patch.groupDoc) : cloneGroupDoc(prev?.groupDoc),
+    events: patch.events !== undefined ? cloneEvents(patch.events) : cloneEvents(prev?.events),
+    actors: patch.actors !== undefined ? cloneActors(patch.actors) : cloneActors(prev?.actors),
+    groupContext: patch.groupContext !== undefined ? cloneGroupContext(patch.groupContext) : cloneGroupContext(prev?.groupContext),
+    groupSettings: patch.groupSettings !== undefined ? cloneGroupSettings(patch.groupSettings) : cloneGroupSettings(prev?.groupSettings),
+    hasMoreHistory: patch.hasMoreHistory !== undefined ? !!patch.hasMoreHistory : !!prev?.hasMoreHistory,
+    cachedAt: Date.now(),
+  });
+}
+
+function saveCurrentViewSnapshot(groupId: string, state: {
+  groups: GroupMeta[];
+  groupDoc: GroupDoc | null;
+  events: LedgerEvent[];
+  actors: Actor[];
+  groupContext: GroupContext | null;
+  groupSettings: GroupSettings | null;
+  hasMoreHistory: boolean;
+}): void {
+  const gid = String(groupId || "").trim();
+  if (!gid) return;
+
+  const shellDoc = buildShellGroupDoc(gid, state.groups, null);
+  saveGroupView(gid, {
+    groupDoc: state.groupDoc && String(state.groupDoc.group_id || "") === gid ? state.groupDoc : shellDoc,
+    events: state.events,
+    actors: state.actors,
+    groupContext: state.groupContext,
+    groupSettings: state.groupSettings,
+    hasMoreHistory: state.hasMoreHistory,
+  });
+}
+
+function buildShellGroupDoc(groupId: string, groups: GroupMeta[], cached: GroupViewSnapshot | null): GroupDoc | null {
+  const gid = String(groupId || "").trim();
+  if (!gid) return null;
+  if (cached?.groupDoc && String(cached.groupDoc.group_id || "") === gid) {
+    return cloneGroupDoc(cached.groupDoc);
+  }
+
+  const meta = groups.find((group) => String(group.group_id || "") === gid) || null;
+  if (!meta) return null;
+  return {
+    group_id: gid,
+    title: meta.title,
+    topic: meta.topic,
+    state: meta.state,
+  };
+}
+
+function buildPrimedGroupState(groupId: string, groups: GroupMeta[]) {
+  const gid = String(groupId || "").trim();
+  if (!gid) {
+    return {
+      groupDoc: null,
+      events: [],
+      actors: [],
+      groupContext: null,
+      groupSettings: null,
+      hasMoreHistory: false,
+      chatWindow: null,
+    };
+  }
+
+  const cached = getCachedGroupView(gid);
+  return {
+    groupDoc: buildShellGroupDoc(gid, groups, cached),
+    events: cached?.events || [],
+    actors: cached?.actors || [],
+    groupContext: cached?.groupContext || null,
+    groupSettings: cached?.groupSettings || null,
+    hasMoreHistory: cached?.hasMoreHistory ?? true,
+    chatWindow: null,
+  };
+}
+
+function filterUiEvents(events: LedgerEvent[] | undefined): LedgerEvent[] {
+  return Array.isArray(events) ? events.filter((ev) => ev && ev.kind !== "context.sync") : [];
+}
 
 export const useGroupStore = create<GroupState>((set, get) => ({
   // Initial state
@@ -161,7 +300,21 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }
     return ordered;
   },
-  setSelectedGroupId: (id) => set({ selectedGroupId: id }),
+  setSelectedGroupId: (id) =>
+    set((state) => {
+      const gid = String(id || "").trim();
+      const prevGid = String(state.selectedGroupId || "").trim();
+
+      // 切组前先把当前视图快照落到缓存，回切时才能做到秒开。
+      if (prevGid && prevGid !== gid) {
+        saveCurrentViewSnapshot(prevGid, state);
+      }
+
+      return {
+        selectedGroupId: gid,
+        ...buildPrimedGroupState(gid, state.groups),
+      };
+    }),
   setGroupDoc: (doc) => set({ groupDoc: doc }),
   setEvents: (events) => set({ events }),
   setChatWindow: (w) => set({ chatWindow: w }),
@@ -446,18 +599,14 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           if (next.length > 0) {
             // Selected group disappeared (or none selected): switch to first group
             // and clear stale per-group caches so UI does not render old data while switching.
+            const nextGroupId = String(next[0].group_id || "");
             set({
-              selectedGroupId: String(next[0].group_id || ""),
-              groupDoc: null,
-              events: [],
-              actors: [],
-              groupContext: null,
-              groupSettings: null,
-              chatWindow: null,
-              hasMoreHistory: true,
+              selectedGroupId: nextGroupId,
+              ...buildPrimedGroupState(nextGroupId, next),
             });
           } else {
             // No groups remain: clear selection + per-group caches.
+            groupViewCache.clear();
             set({
               selectedGroupId: "",
               groupDoc: null,
@@ -485,7 +634,9 @@ export const useGroupStore = create<GroupState>((set, get) => ({
             if (typeof meta.title === "string" && meta.title !== doc.title) patch.title = meta.title;
             if (typeof meta.topic === "string" && meta.topic !== doc.topic) patch.topic = meta.topic;
             if (Object.keys(patch).length > 0) {
-              set({ groupDoc: { ...doc, ...patch } });
+              const nextDoc = { ...doc, ...patch };
+              set({ groupDoc: nextDoc });
+              saveGroupView(selectedId, { groupDoc: nextDoc });
             }
           }
         }
@@ -511,8 +662,12 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     refreshActorsInFlight.add(gid);
     try {
       const resp = await api.fetchActors(gid);
-      if (resp.ok && get().selectedGroupId === gid) {
-        set({ actors: resp.result.actors || [] });
+      if (resp.ok) {
+        const nextActors = resp.result.actors || [];
+        saveGroupView(gid, { actors: nextActors });
+        if (get().selectedGroupId === gid) {
+          set({ actors: nextActors });
+        }
       }
     } catch (e) {
       console.error(`Failed to refresh actors for group=${gid}:`, e);
@@ -529,50 +684,123 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     const gid = String(groupId || "").trim();
     if (!gid) return;
 
-    // First check if the group exists (goes through daemon, won't 404)
-    const show = await api.fetchGroup(gid);
-
-    // Guard against out-of-order resolves when the user switches groups quickly.
-    if (get().selectedGroupId !== gid) return;
-
-    // If group truly does not exist, clear state. For transient failures
-    // (network/500), keep current UI state to avoid false "data vanished" flashes.
-    if (!show.ok) {
-      const code = String(show.error?.code || "").trim();
-      if (code === "group_not_found") {
-        set({
-          groupDoc: null,
-          events: [],
-          actors: [],
-          groupContext: null,
-          groupSettings: null,
-          hasMoreHistory: false,
-        });
+    const token = ++loadGroupToken;
+    const isLatestSelection = () => get().selectedGroupId === gid && loadGroupToken === token;
+    const commitPatch = (patch: Partial<Pick<GroupState, "groupDoc" | "events" | "actors" | "groupContext" | "groupSettings" | "hasMoreHistory">>) => {
+      saveGroupView(gid, patch);
+      if (isLatestSelection()) {
+        set(patch);
       }
-      return;
+    };
+
+    const state = get();
+    const currentDocGroupId = String(state.groupDoc?.group_id || "").trim();
+    if (currentDocGroupId !== gid) {
+      const primedState = buildPrimedGroupState(gid, state.groups);
+      saveGroupView(gid, primedState);
+      if (isLatestSelection()) {
+        set(primedState);
+      }
     }
 
-    // 单次拉齐 actors（含 unread），避免切组后的二次补刷请求。
-    const [tail, a, ctx, settings] = await Promise.all([
-      api.fetchLedgerTail(gid),
-      api.fetchActors(gid),
-      api.fetchContext(gid),
-      api.fetchSettings(gid),
-    ]);
+    const showPromise = api.fetchGroup(gid);
+    const tailPromise = api.fetchLedgerTail(gid);
+    const actorsPromise = api.fetchActors(gid);
 
-    // Guard against out-of-order resolves when the user switches groups quickly.
-    if (get().selectedGroupId !== gid) return;
+    void showPromise.then((show) => {
+      if (show.ok) {
+        commitPatch({ groupDoc: show.result.group });
+        return;
+      }
 
-    set({
-      groupDoc: show.result.group,
-      events: tail.ok
-        ? (tail.result.events || []).filter((ev) => ev && ev.kind !== "context.sync")
-        : [],
-      actors: a.ok ? a.result.actors || [] : [],
-      groupContext: ctx.ok ? (ctx.result as GroupContext) : null,
-      groupSettings: settings.ok && settings.result.settings ? settings.result.settings : null,
-      hasMoreHistory: tail.ok ? !!tail.result.has_more : true,
+      const code = String(show.error?.code || "").trim();
+      if (code === "group_not_found") {
+        groupViewCache.delete(gid);
+        if (isLatestSelection()) {
+          set({
+            groupDoc: null,
+            events: [],
+            actors: [],
+            groupContext: null,
+            groupSettings: null,
+            hasMoreHistory: false,
+          });
+        }
+      }
+    }).catch((error) => {
+      console.error(`Failed to load group metadata for group=${gid}:`, error);
     });
+
+    void tailPromise.then((tail) => {
+      if (!tail.ok) return;
+      commitPatch({
+        events: filterUiEvents(tail.result.events || []),
+        hasMoreHistory: !!tail.result.has_more,
+      });
+    }).catch((error) => {
+      console.error(`Failed to load ledger tail for group=${gid}:`, error);
+    });
+
+    void actorsPromise.then((actorsResp) => {
+      if (!actorsResp.ok) return;
+      commitPatch({ actors: actorsResp.result.actors || [] });
+    }).catch((error) => {
+      console.error(`Failed to load actors for group=${gid}:`, error);
+    });
+
+    // 首屏稳定后再补 context/settings，避免它们拖住切组体感。
+    void Promise.allSettled([showPromise, tailPromise, actorsPromise]).then(() => {
+      void api.fetchContext(gid).then((ctx) => {
+        if (!ctx.ok) return;
+        commitPatch({ groupContext: ctx.result as GroupContext });
+      }).catch((error) => {
+        console.error(`Failed to load context for group=${gid}:`, error);
+      });
+
+      void api.fetchSettings(gid).then((settings) => {
+        if (!settings.ok || !settings.result.settings) return;
+        commitPatch({ groupSettings: settings.result.settings });
+      }).catch((error) => {
+        console.error(`Failed to load settings for group=${gid}:`, error);
+      });
+    });
+  },
+
+  warmGroup: async (groupId: string) => {
+    const gid = String(groupId || "").trim();
+    if (!gid) return;
+    if (gid === String(get().selectedGroupId || "").trim()) return;
+    if (warmGroupInFlight.has(gid)) return;
+    if (getCachedGroupView(gid)) return;
+
+    warmGroupInFlight.add(gid);
+    try {
+      const [show, tail, actorsResp] = await Promise.all([
+        api.fetchGroup(gid),
+        api.fetchLedgerTail(gid, 40),
+        api.fetchActors(gid),
+      ]);
+
+      const patch: Partial<Omit<GroupViewSnapshot, "cachedAt">> = {};
+      if (show.ok) {
+        patch.groupDoc = show.result.group;
+      } else {
+        patch.groupDoc = buildShellGroupDoc(gid, get().groups, null);
+      }
+      if (tail.ok) {
+        patch.events = filterUiEvents(tail.result.events || []);
+        patch.hasMoreHistory = !!tail.result.has_more;
+      }
+      if (actorsResp.ok) {
+        patch.actors = actorsResp.result.actors || [];
+      }
+
+      saveGroupView(gid, patch);
+    } catch (error) {
+      console.error(`Failed to warm group=${gid}:`, error);
+    } finally {
+      warmGroupInFlight.delete(gid);
+    }
   },
 
   loadMoreHistory: async () => {

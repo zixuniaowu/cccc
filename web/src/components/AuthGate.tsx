@@ -122,7 +122,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             onClick={() => setShowToken((prev) => !prev)}
-            className="glass-btn absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded text-xs text-[var(--color-text-secondary)]"
+            className="absolute right-2 top-1/2 -translate-y-1/2 px-2 py-1 rounded text-xs text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] transition-colors cursor-pointer"
           >
             {showToken ? t('hideToken') : t('showToken')}
           </button>

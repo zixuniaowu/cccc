@@ -11,6 +11,7 @@ interface SortableGroupItemProps {
   isCollapsed: boolean;
   dragDisabled?: boolean;
   onSelect: () => void;
+  onWarm?: () => void;
 }
 
 type StatusKey = "run" | "paused" | "idle" | "stop";
@@ -36,6 +37,7 @@ export function SortableGroupItem({
   isCollapsed,
   dragDisabled = false,
   onSelect,
+  onWarm,
 }: SortableGroupItemProps) {
   const gid = String(group.group_id || "");
 
@@ -68,6 +70,8 @@ export function SortableGroupItem({
               : "glass-group-item hover:scale-105"
           )}
           onClick={onSelect}
+          onMouseEnter={onWarm}
+          onFocus={onWarm}
           title={group.title || gid}
         >
           <span
@@ -109,6 +113,8 @@ export function SortableGroupItem({
             : "glass-group-item"
         )}
         onClick={onSelect}
+        onMouseEnter={onWarm}
+        onFocus={onWarm}
       >
         {/* Drag handle */}
         {!dragDisabled && (

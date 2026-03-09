@@ -29,6 +29,7 @@ export interface GroupSidebarProps {
   isDark: boolean;
   readOnly?: boolean;
   onSelectGroup: (groupId: string) => void;
+  onWarmGroup?: (groupId: string) => void;
   onCreateGroup?: () => void;
   onClose: () => void;
   onToggleCollapse: () => void;
@@ -44,6 +45,7 @@ export function GroupSidebar({
   isDark,
   readOnly,
   onSelectGroup,
+  onWarmGroup,
   onCreateGroup,
   onClose,
   onToggleCollapse,
@@ -227,6 +229,7 @@ export function GroupSidebar({
                         onSelectGroup(gid);
                         if (window.matchMedia("(max-width: 767px)").matches) onClose();
                       }}
+                      onWarm={active ? undefined : () => onWarmGroup?.(gid)}
                     />
                   );
                 })}

@@ -56,6 +56,7 @@ export default function App() {
     refreshGroups,
     refreshActors,
     loadGroup,
+    warmGroup,
     openChatWindow,
     closeChatWindow,
     reorderGroups,
@@ -487,6 +488,7 @@ export default function App() {
           isDark={isDark}
           readOnly={webReadOnly}
           onSelectGroup={(gid) => setSelectedGroupId(gid)}
+          onWarmGroup={(gid) => void warmGroup(gid)}
           onCreateGroup={
             !webReadOnly && canManageGroups
               ? () => {

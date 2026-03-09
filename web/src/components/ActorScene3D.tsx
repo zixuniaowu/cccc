@@ -123,7 +123,11 @@ function Scene({ agents, actors, tasks, tasksSummary: _tasksSummary, projectStat
 
       <PanoramaRoom zones={semanticMap.zones} />
 
-      <SemanticMap zones={semanticMap.zones} isDark={isDark} projectStatus={projectStatus} />
+      <SemanticMap
+        zones={semanticMap.zones}
+        isDark={isDark}
+        projectStatus={projectStatus}
+      />
 
       <InstancedBeds beds={bedInstances} />
 
@@ -196,6 +200,49 @@ interface WebGPUModuleLike {
 
 type CanvasGlFactory = (canvas: WebGPUCanvas) => THREE.WebGLRenderer;
 
+function buildHudSummary(agents: AgentState[], actors?: Actor[]) {
+  const actorMap = new Map((actors || []).map((actor) => [actor.id, actor]));
+  let activeAgents = 0;
+  let blockedAgents = 0;
+  let waitingAgents = 0;
+  const items: Array<{
+    id: string;
+    title: string;
+    status: string;
+    focus: string;
+    next: string;
+    blocked: boolean;
+    active: boolean;
+  }> = [];
+
+  for (const agent of agents) {
+    const actor = actorMap.get(agent.id);
+    const hasTask = !!String(agent.hot?.active_task_id || "").trim();
+    const blockers = Array.isArray(agent.hot?.blockers) ? agent.hot.blockers : [];
+    const focus = String(agent.hot?.focus || "").trim();
+    const next = String(agent.hot?.next_action || "").trim();
+    const status = blockers.length > 0 ? "受阻" : hasTask ? "执行中" : focus || next ? "思考中" : "待命";
+
+    if (hasTask) activeAgents += 1;
+    if (blockers.length > 0) blockedAgents += 1;
+    if (!hasTask && !focus && !next) waitingAgents += 1;
+
+    items.push({
+      id: agent.id,
+      title: actor?.title || agent.id,
+      status,
+      focus: focus.slice(0, 28),
+      next: next.slice(0, 28),
+      blocked: blockers.length > 0,
+      active: hasTask,
+    });
+  }
+
+  items.sort((a, b) => Number(b.blocked) - Number(a.blocked) || Number(b.active) - Number(a.active) || a.title.localeCompare(b.title));
+  return { activeAgents, blockedAgents, waitingAgents, items: items.slice(0, 6) };
+}
+
+
 export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
   const [followTarget, setFollowTarget] = useState<string | null>(null);
 
@@ -206,6 +253,8 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
   const camZ = useMemo(() => {
     return Math.max(5, SEMANTIC_MAP_SCENE_EXTENT * 2 + 1);
   }, []);
+
+  const hudSummary = useMemo(() => buildHudSummary(agents, actors), [agents, actors]);
 
   // Phase 1: detect WebGPU + dynamically load three/webgpu module
   const [renderMode, setRenderMode] = useState<RenderMode>("loading");
@@ -323,7 +372,60 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
     : { antialias: true, alpha: false };
 
   return (
-    <div className={className} style={{ minHeight: 280 }}>
+    <div className={className} style={{ minHeight: 280, position: "relative" }}>
+      <div
+        style={{
+          position: "absolute",
+          left: 16,
+          right: 16,
+          bottom: 16,
+          zIndex: 2,
+          pointerEvents: "none",
+          display: "flex",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            minWidth: 420,
+            maxWidth: 760,
+            borderRadius: 16,
+            border: isDark ? "1px solid rgba(148,163,184,0.28)" : "1px solid rgba(148,163,184,0.4)",
+            background: isDark ? "rgba(15,23,42,0.84)" : "rgba(255,255,255,0.9)",
+            boxShadow: isDark ? "0 14px 30px rgba(0,0,0,0.32)" : "0 14px 30px rgba(15,23,42,0.12)",
+            backdropFilter: "blur(14px)",
+            padding: "12px 16px",
+            color: isDark ? "#e2e8f0" : "#0f172a",
+          }}
+        >
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>Agent State</div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {[
+                ["执行中", hudSummary.activeAgents, "#2563eb"],
+                ["受阻", hudSummary.blockedAgents, "#dc2626"],
+                ["待命", hudSummary.waitingAgents, "#0f766e"],
+              ].map(([label, value, color]) => (
+                <span key={String(label)} style={{ borderRadius: 999, padding: "4px 10px", background: `${String(color)}22`, color: String(color), fontSize: 12, fontWeight: 700 }}>
+                  {label} {value}
+                </span>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
+            {hudSummary.items.map((item) => (
+              <div key={item.id} style={{ borderRadius: 12, padding: "10px 12px", background: isDark ? "rgba(255,255,255,0.03)" : "rgba(15,23,42,0.04)" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
+                  <span style={{ borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, background: item.blocked ? "rgba(220,38,38,0.12)" : item.active ? "rgba(37,99,235,0.12)" : "rgba(15,118,110,0.12)", color: item.blocked ? "#dc2626" : item.active ? "#2563eb" : "#0f766e" }}>{item.status}</span>
+                </div>
+                <div style={{ fontSize: 12, marginTop: 8, opacity: 0.8 }}>{item.focus || "暂无 focus"}</div>
+                <div style={{ fontSize: 11, marginTop: 6, opacity: 0.65 }}>{item.next || "暂无 next action"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
       <Canvas
         key={renderMode}
         frameloop="always"

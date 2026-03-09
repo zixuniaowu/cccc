@@ -27,6 +27,10 @@ export interface SemanticMapState {
 export const SEMANTIC_MAP_SCENE_EXTENT = 9;
 
 const TASK_ZONE_COLORS = ["#2563eb", "#0f766e", "#7c3aed"];
+const VIRTUAL_TASK_LABELS: Record<string, string> = {
+  __working__: "执行中",
+  __thinking__: "思考区",
+};
 
 function agentActiveTaskId(agent: AgentState): string {
   return String(agent.hot?.active_task_id || "").trim();
@@ -34,6 +38,12 @@ function agentActiveTaskId(agent: AgentState): string {
 
 function taskLabel(task: Task): string {
   return String(task.title || task.id || "未命名任务").trim();
+}
+
+function semanticTaskLabel(taskId: string, taskMap: Map<string, Task>): string {
+  const virtual = VIRTUAL_TASK_LABELS[taskId];
+  if (virtual) return virtual;
+  return taskLabel(taskMap.get(taskId) || { id: taskId });
 }
 
 function isRunningActor(actor?: Actor): boolean {
@@ -96,7 +106,7 @@ function compressTaskGroups(taskGroups: Map<string, string[]>, taskMap: Map<stri
   const entries = [...taskGroups.entries()]
     .map(([taskId, agentIds]) => ({
       taskId,
-      label: taskLabel(taskMap.get(taskId) || { id: taskId }),
+      label: semanticTaskLabel(taskId, taskMap),
       agentIds: [...agentIds],
     }))
     .sort((left, right) => right.agentIds.length - left.agentIds.length || left.label.localeCompare(right.label));
@@ -157,12 +167,7 @@ export function buildSemanticMapState(
       continue;
     }
 
-    if (isForeman && derived === "working") {
-      foremanIds.push(agent.id);
-      continue;
-    }
-
-    if (isForeman && hasLiveTask && (derived === "working" || derived === "thinking")) {
+    if (isForeman && (derived === "working" || derived === "thinking")) {
       foremanIds.push(agent.id);
       continue;
     }
@@ -171,6 +176,15 @@ export function buildSemanticMapState(
       const bucket = taskGroups.get(activeTaskId) || [];
       bucket.push(agent.id);
       taskGroups.set(activeTaskId, bucket);
+      continue;
+    }
+
+    if (!isForeman && (derived === "working" || derived === "thinking")) {
+      // 状态优先：没有 live task，也不要直接掉回休闲区。
+      const virtualTaskId = derived === "working" ? "__working__" : "__thinking__";
+      const bucket = taskGroups.get(virtualTaskId) || [];
+      bucket.push(agent.id);
+      taskGroups.set(virtualTaskId, bucket);
       continue;
     }
 
