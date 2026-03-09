@@ -35,11 +35,11 @@ from ...util.conv import coerce_bool
 from .common import (
     MCPError,
     _call_daemon_or_raise,
-    _env_str,
     _resolve_caller_actor_id,
     _resolve_caller_from_by,
     _resolve_group_id,
     _resolve_self_actor_id,
+    _runtime_context,
 )
 from .toolspecs import MCP_TOOLS
 
@@ -159,8 +159,9 @@ from .utils.space_args import _normalize_space_query_options_mcp
 def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     # --- Help ---
     if name == "cccc_help":
-        gid = _env_str("CCCC_GROUP_ID")
-        aid = _env_str("CCCC_ACTOR_ID")
+        runtime_ctx = _runtime_context()
+        gid = runtime_ctx.group_id
+        aid = runtime_ctx.actor_id
         role: Optional[str] = None
         help_result: Dict[str, Any]
         if gid:
@@ -787,8 +788,9 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         if out is not None:
             return out
     # Dynamic capability tools are resolved by daemon capability runtime.
-    gid = _env_str("CCCC_GROUP_ID")
-    aid = _env_str("CCCC_ACTOR_ID")
+    runtime_ctx = _runtime_context()
+    gid = runtime_ctx.group_id
+    aid = runtime_ctx.actor_id
     if gid and aid:
         try:
             return _call_daemon_or_raise(
@@ -818,8 +820,9 @@ def list_tools_for_caller() -> List[Dict[str, Any]]:
     2) default: core + enabled capability packs from daemon capability_state
     3) daemon failure fallback: core-only
     """
-    gid = _env_str("CCCC_GROUP_ID")
-    aid = _env_str("CCCC_ACTOR_ID")
+    runtime_ctx = _runtime_context()
+    gid = runtime_ctx.group_id
+    aid = runtime_ctx.actor_id
     profile = str(os.environ.get("CCCC_MCP_TOOL_PROFILE") or "").strip().lower()
     state: Dict[str, Any] = {}
     if gid and aid:

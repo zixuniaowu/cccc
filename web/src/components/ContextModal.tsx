@@ -8,6 +8,7 @@ import type {
   CoordinationBrief,
   CoordinationNote,
   GroupContext,
+  GroupSettings,
   ProjectMdInfo,
   Task,
   TaskBoardEntry,
@@ -27,6 +28,8 @@ interface ContextModalProps {
   context: GroupContext | null;
   onRefreshContext: () => Promise<void>;
   isDark: boolean;
+  settings?: GroupSettings | null;
+  onUpdateSettings?: (settings: Partial<GroupSettings>) => Promise<void>;
 }
 
 interface BriefDraft {
@@ -363,6 +366,8 @@ export function ContextModal({
   context,
   onRefreshContext,
   isDark,
+  settings,
+  onUpdateSettings,
 }: ContextModalProps) {
   const { t } = useTranslation("modals");
   const tr = useCallback((key: string, fallback: string, vars?: Record<string, unknown>) =>
@@ -381,6 +386,8 @@ export function ContextModal({
   const [taskDraft, setTaskDraft] = useState<TaskDraft | null>(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncError, setSyncError] = useState("");
+  const [viewBusy, setViewBusy] = useState(false);
+  const [mobileViewMenuOpen, setMobileViewMenuOpen] = useState(false);
 
   const [projectMd, setProjectMd] = useState<ProjectMdInfo | null>(null);
   const [projectBusy, setProjectBusy] = useState(false);
@@ -396,6 +403,7 @@ export function ContextModal({
   const [activityError, setActivityError] = useState("");
 
   const brief = context?.coordination?.brief || null;
+  const panoramaEnabled = Boolean(settings?.panorama_enabled);
   const tasks = useMemo(() => (Array.isArray(context?.coordination?.tasks) ? context.coordination.tasks : []), [context]);
   const agents = useMemo(() => (Array.isArray(context?.agent_states) ? context.agent_states : []), [context]);
   const board = useMemo(() => buildBoard(tasks, context?.board), [context?.board, tasks]);
@@ -533,6 +541,7 @@ export function ContextModal({
     setHandoffDraft(emptyNoteDraft());
     setActivityBusyKind(null);
     setActivityError("");
+    setMobileViewMenuOpen(false);
   }, [groupId, isOpen]);
 
   useEffect(() => {
@@ -628,6 +637,16 @@ export function ContextModal({
     "glass-btn text-[var(--color-text-secondary)]"
   );
   const buttonPrimaryClass = "rounded-lg bg-blue-600 px-3 py-2 text-sm text-white transition-colors hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50";
+  const switchTrackClass = (active: boolean) => classNames(
+    "relative inline-flex h-6 w-11 shrink-0 rounded-full border transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+    active
+      ? (isDark ? "border-blue-400 bg-blue-500/80" : "border-blue-500 bg-blue-500")
+      : (isDark ? "border-slate-700 bg-slate-900" : "border-gray-300 bg-gray-200")
+  );
+  const switchThumbClass = (active: boolean) => classNames(
+    "pointer-events-none inline-block h-5 w-5 rounded-full bg-white shadow-sm transition-transform",
+    active ? "translate-x-5" : "translate-x-0"
+  );
   const chipBaseClass = classNames(
     "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
     "glass-card border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)]"
@@ -883,6 +902,17 @@ export function ContextModal({
   }, [hasSteeringUnsaved, hasTaskUnsaved, onClose, tr]);
 
   const { modalRef } = useModalA11y(isOpen, handleModalClose);
+
+  const handleTogglePanorama = useCallback(async (enabled: boolean) => {
+    if (!onUpdateSettings) return;
+    setViewBusy(true);
+    try {
+      await onUpdateSettings({ panorama_enabled: enabled });
+      setMobileViewMenuOpen(false);
+    } finally {
+      setViewBusy(false);
+    }
+  }, [onUpdateSettings]);
 
   const handleSaveBrief = async () => {
     if (!groupId) return;
@@ -1571,11 +1601,60 @@ export function ContextModal({
         <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
           {syncError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{syncError}</div> : null}
 
-          <div className="flex items-center justify-end">
-            <div className={classNames("inline-flex rounded-2xl border p-1", "glass-panel border-[var(--glass-border-subtle)]")}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className={classNames("inline-flex w-fit rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
               <button type="button" onClick={() => handleSwitchActiveView("coordination")} className={viewButtonClass(activeView === "coordination")}>{tr("context.coordination", "Coordination")}</button>
               <button type="button" onClick={() => handleSwitchActiveView("agents")} className={viewButtonClass(activeView === "agents")}>{tr("context.agents", "Agents")}</button>
             </div>
+
+            {onUpdateSettings ? (
+              <>
+                <div className="hidden sm:flex items-center gap-3">
+                  <div className="min-w-0 text-right">
+                    <div className={classNames("text-sm font-medium", isDark ? "text-slate-200" : "text-gray-800")}>{tr("context.panoramaToggle", "Panorama 3D")}</div>
+                    <div className={classNames("mt-1 text-xs", mutedTextClass)}>{tr("context.panoramaHint", "Show the Panorama tab for this group.")}</div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={panoramaEnabled}
+                    aria-label={tr("context.panoramaToggle", "Panorama 3D")}
+                    onClick={() => void handleTogglePanorama(!panoramaEnabled)}
+                    disabled={viewBusy}
+                    className={switchTrackClass(panoramaEnabled)}
+                  >
+                    <span className={switchThumbClass(panoramaEnabled)} />
+                  </button>
+                </div>
+
+                <div className="sm:hidden self-end relative">
+                  <button type="button" onClick={() => setMobileViewMenuOpen((open) => !open)} className={buttonSecondaryClass}>
+                    {tr("context.viewOptions", "View")}
+                  </button>
+                  {mobileViewMenuOpen ? (
+                    <div className={classNames("absolute right-0 z-20 mt-2 w-64 rounded-2xl border p-3 shadow-lg", isDark ? "border-slate-800 bg-slate-950 text-slate-200" : "border-gray-200 bg-white text-gray-900")}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-medium">{tr("context.panoramaToggle", "Panorama 3D")}</div>
+                          <div className={classNames("mt-1 text-xs", mutedTextClass)}>{tr("context.panoramaHint", "Show the Panorama tab for this group.")}</div>
+                        </div>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={panoramaEnabled}
+                          aria-label={tr("context.panoramaToggle", "Panorama 3D")}
+                          onClick={() => void handleTogglePanorama(!panoramaEnabled)}
+                          disabled={viewBusy}
+                          className={switchTrackClass(panoramaEnabled)}
+                        >
+                          <span className={switchThumbClass(panoramaEnabled)} />
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
+              </>
+            ) : null}
           </div>
 
           {activeView === "coordination" ? renderCoordinationView() : renderAgentsView()}

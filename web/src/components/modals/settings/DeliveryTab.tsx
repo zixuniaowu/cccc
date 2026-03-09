@@ -170,7 +170,7 @@ const NumberInputRow = ({
 );
 
 const DeliverySection = ({
-  isDark,
+  isDark: _isDark,
   title,
   description,
   children,
@@ -247,4 +247,3 @@ export function DeliveryTab(props: DeliveryTabProps) {
     </div>
   );
 }
-

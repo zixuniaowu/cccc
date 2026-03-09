@@ -515,7 +515,31 @@
     "failedToSave": "{{kind}} を保存できませんでした",
     "failedToReset": "{{kind}} をリセットできませんでした",
     "expandTitle": "全画面エディタを開く",
-    "saveOverrideTitle": "CCCC_HOME の下にオーバーライドを保存"
+    "saveOverrideTitle": "CCCC_HOME の下にオーバーライドを保存",
+    "helpEditorTitle": "ヘルプエディタ",
+    "helpEditorHint": "構造化モードでは common / role / actor ノートを編集し、Raw モードでは全文 Markdown を直接編集できます。",
+    "structuredView": "構造化",
+    "rawView": "Raw Markdown",
+    "commonNotesTitle": "共通ノート",
+    "commonNotesHint": "タグのない help 内容で、すべての actor に共有されます。",
+    "commonNotesPlaceholder": "共有ガイダンス、作業手順、付録をここで管理します……",
+    "foremanNotesTitle": "Foreman ノート",
+    "foremanNotesHint": "この scoped block は foreman actor のみに届きます。",
+    "foremanNotesPlaceholder": "成果物品質を担保し、peer 出力をレビューし、共有方向を揃えます……",
+    "peerNotesTitle": "Peer ノート",
+    "peerNotesHint": "この scoped block は peer actor のみに届きます。",
+    "peerNotesPlaceholder": "リスクを早めに報告し、検証可能な出力を返し、方向が違う時は明確に指摘します……",
+    "actorNotesTitle": "Actor ノート",
+    "actorNotesHint": "特定 actor 向けのローカルノートです。actor 編集モーダルのショートカットと同じデータ源を使います。",
+    "actorNotePlaceholder": "この actor だけの責務・境界・望ましい振る舞いを記述します……",
+    "noActorsForStructuredHelp": "このグループにはまだ編集対象の actor がありません。",
+    "orphanActorNotesTitle": "その他の actor ノート",
+    "orphanActorRole": "グループ外",
+    "orphanActorNotePlaceholder": "既に存在しない actor に対する残存ノートです。保持するか整理できます……",
+    "scopedNoteConfigured": "設定済み",
+    "unknownRole": "不明な役割",
+    "legacyRoleNotesHint": "旧形式の Role Notes を検出し、構造化フィールドへマッピングしました。ここで保存すると最新の scoped help 形式へ正規化されます。",
+    "noScopeWarning": "このグループにはまだ scope が紐づいていません。guidance override 自体は CCCC_HOME 配下に保存されるため機能しますが、repo 連携が必要な機能は scope を紐づけるまで利用できない場合があります。"
   },
   "blueprint": {
     "openFromGroup": "グループからこのタブを開きます。",
@@ -711,6 +735,5 @@
     "signOut": "サインアウト",
     "signOutHint": "このブラウザを現在のトークンセッションからサインアウトし、アクセストークンのログイン画面に戻ります。",
     "signOutSuccess": "このブラウザをサインアウトしています..."
-
   }
 }

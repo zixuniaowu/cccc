@@ -26,7 +26,7 @@ interface InfoPopoverProps {
 }
 
 export function InfoPopover({
-  isDark,
+  isDark: _isDark,
   title,
   content,
   placement = "bottom-end",

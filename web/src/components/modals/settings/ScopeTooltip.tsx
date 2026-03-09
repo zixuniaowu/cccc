@@ -23,7 +23,7 @@ interface ScopeTooltipProps {
   ) => ReactNode;
 }
 
-export function ScopeTooltip({ isDark, title, content, children }: ScopeTooltipProps) {
+export function ScopeTooltip({ isDark: _isDark, title, content, children }: ScopeTooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
   const { refs, floatingStyles, context } = useFloating({
     open: isOpen,

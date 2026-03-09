@@ -1,6 +1,7 @@
 import { Suspense, useMemo, useRef, useState, useEffect, useCallback, type ComponentProps } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
+import { useTranslation } from "react-i18next";
 import { ActorCharacter } from "./ActorCharacter";
 import { SemanticMap } from "./SemanticMap";
 import { PanoramaRoom } from "./PanoramaRoom";
@@ -199,6 +200,7 @@ interface WebGPUModuleLike {
 }
 
 type CanvasGlFactory = (canvas: WebGPUCanvas) => THREE.WebGLRenderer;
+type HudStatusKey = "blocked" | "active" | "thinking" | "waiting";
 
 function buildHudSummary(agents: AgentState[], actors?: Actor[]) {
   const actorMap = new Map((actors || []).map((actor) => [actor.id, actor]));
@@ -208,7 +210,7 @@ function buildHudSummary(agents: AgentState[], actors?: Actor[]) {
   const items: Array<{
     id: string;
     title: string;
-    status: string;
+    statusKey: HudStatusKey;
     focus: string;
     next: string;
     blocked: boolean;
@@ -221,16 +223,17 @@ function buildHudSummary(agents: AgentState[], actors?: Actor[]) {
     const blockers = Array.isArray(agent.hot?.blockers) ? agent.hot.blockers : [];
     const focus = String(agent.hot?.focus || "").trim();
     const next = String(agent.hot?.next_action || "").trim();
-    const status = blockers.length > 0 ? "受阻" : hasTask ? "执行中" : focus || next ? "思考中" : "待命";
+    const statusKey: HudStatusKey =
+      blockers.length > 0 ? "blocked" : hasTask ? "active" : focus || next ? "thinking" : "waiting";
 
     if (hasTask) activeAgents += 1;
     if (blockers.length > 0) blockedAgents += 1;
-    if (!hasTask && !focus && !next) waitingAgents += 1;
+    if (!hasTask && blockers.length === 0 && !focus && !next) waitingAgents += 1;
 
     items.push({
       id: agent.id,
       title: actor?.title || agent.id,
-      status,
+      statusKey,
       focus: focus.slice(0, 28),
       next: next.slice(0, 28),
       blocked: blockers.length > 0,
@@ -244,6 +247,7 @@ function buildHudSummary(agents: AgentState[], actors?: Actor[]) {
 
 
 export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
+  const { t } = useTranslation("layout");
   const [followTarget, setFollowTarget] = useState<string | null>(null);
 
   const handleCharacterClick = useCallback((agentId: string) => {
@@ -255,6 +259,14 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
   }, []);
 
   const hudSummary = useMemo(() => buildHudSummary(agents, actors), [agents, actors]);
+  const hudBadges = useMemo(
+    () => [
+      { key: "active", label: t("panoramaHudActive", "Active"), value: hudSummary.activeAgents, tint: "text-sky-600 bg-sky-500/10 border-sky-500/20 dark:text-sky-300" },
+      { key: "blocked", label: t("panoramaHudBlocked", "Blocked"), value: hudSummary.blockedAgents, tint: "text-rose-600 bg-rose-500/10 border-rose-500/20 dark:text-rose-300" },
+      { key: "waiting", label: t("panoramaHudWaiting", "Waiting"), value: hudSummary.waitingAgents, tint: "text-emerald-700 bg-emerald-500/10 border-emerald-500/20 dark:text-emerald-300" },
+    ],
+    [hudSummary.activeAgents, hudSummary.blockedAgents, hudSummary.waitingAgents, t]
+  );
 
   // Phase 1: detect WebGPU + dynamically load three/webgpu module
   const [renderMode, setRenderMode] = useState<RenderMode>("loading");
@@ -373,58 +385,87 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
 
   return (
     <div className={className} style={{ minHeight: 280, position: "relative" }}>
-      <div
-        style={{
-          position: "absolute",
-          left: 16,
-          right: 16,
-          bottom: 16,
-          zIndex: 2,
-          pointerEvents: "none",
-          display: "flex",
-          justifyContent: "center",
-        }}
-      >
-        <div
-          style={{
-            minWidth: 420,
-            maxWidth: 760,
-            borderRadius: 16,
-            border: isDark ? "1px solid rgba(148,163,184,0.28)" : "1px solid rgba(148,163,184,0.4)",
-            background: isDark ? "rgba(15,23,42,0.84)" : "rgba(255,255,255,0.9)",
-            boxShadow: isDark ? "0 14px 30px rgba(0,0,0,0.32)" : "0 14px 30px rgba(15,23,42,0.12)",
-            backdropFilter: "blur(14px)",
-            padding: "12px 16px",
-            color: isDark ? "#e2e8f0" : "#0f172a",
-          }}
+      <div className="pointer-events-none absolute inset-x-3 bottom-3 z-[2] flex justify-center sm:inset-x-4 sm:bottom-4">
+        <section
+          aria-label={t("panoramaHudTitle", "Agent State")}
+          className={`w-full max-w-4xl rounded-2xl border px-3 py-3 shadow-xl backdrop-blur-md sm:px-4 ${
+            isDark
+              ? "border-slate-700/60 bg-slate-950/82 text-slate-100 shadow-black/40"
+              : "border-slate-300/70 bg-white/90 text-slate-900 shadow-slate-300/40"
+          }`}
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>Agent State</div>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              {[
-                ["执行中", hudSummary.activeAgents, "#2563eb"],
-                ["受阻", hudSummary.blockedAgents, "#dc2626"],
-                ["待命", hudSummary.waitingAgents, "#0f766e"],
-              ].map(([label, value, color]) => (
-                <span key={String(label)} style={{ borderRadius: 999, padding: "4px 10px", background: `${String(color)}22`, color: String(color), fontSize: 12, fontWeight: 700 }}>
-                  {label} {value}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="text-sm font-semibold sm:text-base">
+                {t("panoramaHudTitle", "Agent State")}
+              </div>
+              <div className={`mt-1 text-[11px] sm:text-xs ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+                {t("panoramaHudHint", "Quick snapshot of who is active, blocked, or waiting in the panorama scene.")}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {hudBadges.map((badge) => (
+                <span
+                  key={badge.key}
+                  className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold sm:text-xs ${badge.tint}`}
+                >
+                  <span>{badge.label}</span>
+                  <span>{badge.value}</span>
                 </span>
               ))}
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10, marginTop: 12 }}>
-            {hudSummary.items.map((item) => (
-              <div key={item.id} style={{ borderRadius: 12, padding: "10px 12px", background: isDark ? "rgba(255,255,255,0.03)" : "rgba(15,23,42,0.04)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.title}</div>
-                  <span style={{ borderRadius: 999, padding: "2px 8px", fontSize: 11, fontWeight: 700, background: item.blocked ? "rgba(220,38,38,0.12)" : item.active ? "rgba(37,99,235,0.12)" : "rgba(15,118,110,0.12)", color: item.blocked ? "#dc2626" : item.active ? "#2563eb" : "#0f766e" }}>{item.status}</span>
-                </div>
-                <div style={{ fontSize: 12, marginTop: 8, opacity: 0.8 }}>{item.focus || "暂无 focus"}</div>
-                <div style={{ fontSize: 11, marginTop: 6, opacity: 0.65 }}>{item.next || "暂无 next action"}</div>
-              </div>
-            ))}
+
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {hudSummary.items.map((item) => {
+              const statusTone =
+                item.statusKey === "blocked"
+                  ? "text-rose-600 bg-rose-500/10 border-rose-500/20 dark:text-rose-300"
+                  : item.statusKey === "active"
+                    ? "text-sky-600 bg-sky-500/10 border-sky-500/20 dark:text-sky-300"
+                    : item.statusKey === "thinking"
+                      ? "text-violet-600 bg-violet-500/10 border-violet-500/20 dark:text-violet-300"
+                      : "text-emerald-700 bg-emerald-500/10 border-emerald-500/20 dark:text-emerald-300";
+              const statusLabel =
+                item.statusKey === "blocked"
+                  ? t("panoramaHudBlocked", "Blocked")
+                  : item.statusKey === "active"
+                    ? t("panoramaHudActive", "Active")
+                    : item.statusKey === "thinking"
+                      ? t("panoramaHudThinking", "Thinking")
+                      : t("panoramaHudWaiting", "Waiting");
+
+              return (
+                <article
+                  key={item.id}
+                  className={`rounded-xl border px-3 py-2.5 ${
+                    isDark ? "border-slate-800/80 bg-white/[0.03]" : "border-slate-200 bg-slate-50/80"
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-semibold">{item.title}</div>
+                      <div className={`mt-1 text-[11px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>ID: {item.id}</div>
+                    </div>
+                    <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold sm:text-[11px] ${statusTone}`}>
+                      {statusLabel}
+                    </span>
+                  </div>
+                  <div className={`mt-3 space-y-1.5 text-[11px] sm:text-xs ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                    <div className="truncate">
+                      <span className={isDark ? "text-slate-500" : "text-slate-500"}>{t("panoramaHudFocus", "Focus")}:</span>{" "}
+                      {item.focus || t("panoramaHudNoFocus", "None yet")}
+                    </div>
+                    <div className="truncate">
+                      <span className={isDark ? "text-slate-500" : "text-slate-500"}>{t("panoramaHudNext", "Next")}:</span>{" "}
+                      {item.next || t("panoramaHudNoNextAction", "None yet")}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
           </div>
-        </div>
+        </section>
       </div>
       <Canvas
         key={renderMode}

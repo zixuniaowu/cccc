@@ -10,7 +10,7 @@ function needsTokenLogin(resp: api.ApiResponse<unknown>): boolean {
 }
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
-  const { isDark } = useTheme();
+  useTheme();
   const initialForceLogin = api.shouldForceTokenLogin();
   const forceLoginRef = useRef(initialForceLogin);
   const [status, setStatus] = useState<AuthStatus>(initialForceLogin ? "login" : "checking");

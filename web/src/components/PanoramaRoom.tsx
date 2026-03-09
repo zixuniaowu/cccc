@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import * as THREE from "three";
 import type { SemanticZone } from "../utils/panoramaSemanticMap";
 
 const TILE_SIZE = 2;

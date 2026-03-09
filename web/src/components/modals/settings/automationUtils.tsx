@@ -134,7 +134,7 @@ export const NumberInputRow = ({
 export const Chip = ({
   label,
   onRemove,
-  isDark,
+  isDark: _isDark,
 }: {
   label: string;
   onRemove?: () => void;

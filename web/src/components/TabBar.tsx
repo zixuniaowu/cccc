@@ -14,7 +14,7 @@ interface TabBarProps {
   showPanorama?: boolean;
 }
 
-export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark, onAddAgent, canAddAgent = true, showPanorama = true }: TabBarProps) {
+export function TabBar({ actors, activeTab, onTabChange, unreadChatCount, isDark: _isDark, onAddAgent, canAddAgent = true, showPanorama = true }: TabBarProps) {
   const { t } = useTranslation("layout");
   const rootRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);

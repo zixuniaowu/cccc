@@ -13,17 +13,17 @@
 :root {
   /* Light theme (default for prefers-color-scheme: light) */
   --color-bg-primary: #ffffff;
-  --color-bg-secondary: #f8fafc;
-  --color-bg-tertiary: #f1f5f9;
+  --color-bg-secondary: #fbfcfe;
+  --color-bg-tertiary: #f6f8fb;
   --color-bg-elevated: #ffffff;
   --color-bg-overlay: rgba(0, 0, 0, 0.5);
 
   /* Enhanced Liquid Glass Light Theme — Premium (Optimized) */
-  --glass-bg: rgba(255, 255, 255, 0.75);
-  --glass-bg-hover: rgba(255, 255, 255, 0.90);
-  --glass-bg-active: rgba(255, 255, 255, 0.95);
-  --glass-border: rgba(226, 232, 240, 0.6);
-  --glass-border-subtle: rgba(226, 232, 240, 0.4);
+  --glass-bg: rgba(255, 255, 255, 0.82);
+  --glass-bg-hover: rgba(255, 255, 255, 0.92);
+  --glass-bg-active: rgba(255, 255, 255, 0.97);
+  --glass-border: rgba(226, 232, 240, 0.68);
+  --glass-border-subtle: rgba(226, 232, 240, 0.48);
   --glass-border-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.4));
   --glass-shadow:
     0 2px 8px rgba(0, 0, 0, 0.02),
@@ -37,20 +37,20 @@
   --glass-blur-lg: 32px;
 
   /* Tab glass tokens */
-  --glass-tab-bg: rgba(241, 245, 249, 0.5);
-  --glass-tab-bg-hover: rgba(226, 232, 240, 0.6);
-  --glass-tab-bg-active: #ffffff;
-  --glass-tab-border-active: rgba(226, 232, 240, 0.8);
+  --glass-tab-bg: rgba(248, 250, 252, 0.76);
+  --glass-tab-bg-hover: rgba(255, 255, 255, 0.9);
+  --glass-tab-bg-active: rgba(255, 255, 255, 0.98);
+  --glass-tab-border-active: rgba(226, 232, 240, 0.88);
   --glass-tab-shadow-active: 0 1px 2px rgba(0, 0, 0, 0.03), inset 0 1px 0 rgba(255, 255, 255, 1);
 
   /* Bubble glass tokens */
-  --glass-bubble-bg: rgba(255, 255, 255, 0.8);
-  --glass-bubble-border: rgba(226, 232, 240, 0.5);
+  --glass-bubble-bg: rgba(255, 255, 255, 0.86);
+  --glass-bubble-border: rgba(226, 232, 240, 0.58);
   --glass-bubble-shadow: 0 1px 2px rgba(0, 0, 0, 0.03), 0 4px 12px rgba(0, 0, 0, 0.02);
 
   /* Panel glass tokens (non-interactive) */
-  --glass-panel-bg: rgba(255, 255, 255, 0.65);
-  --glass-panel-border: rgba(226, 232, 240, 0.5);
+  --glass-panel-bg: rgba(255, 255, 255, 0.78);
+  --glass-panel-border: rgba(226, 232, 240, 0.58);
 
   /* Enhanced Accent System (Less Intense Cyber Cyan) */
   --glass-accent-bg: rgba(14, 165, 233, 0.06);
@@ -108,17 +108,17 @@
 /* Dark theme */
 .dark, :root.dark {
   --color-bg-primary: #000000; /* Pure black */
-  --color-bg-secondary: #0a0a0a; /* Neutral dark */
-  --color-bg-tertiary: #111111; /* Slightly lighter */
-  --color-bg-elevated: #111111;
+  --color-bg-secondary: #0f1115; /* Neutral dark with more air */
+  --color-bg-tertiary: #151821; /* Slightly lighter */
+  --color-bg-elevated: #151821;
   --color-bg-overlay: rgba(0, 0, 0, 0.8);
 
   /* Enhanced Liquid Glass Dark Theme — Pure Black (Neutral) */
-  --glass-bg: rgba(10, 10, 10, 0.6);
-  --glass-bg-hover: rgba(20, 20, 20, 0.75);
-  --glass-bg-active: rgba(20, 20, 20, 0.85);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --glass-border-subtle: rgba(255, 255, 255, 0.05);
+  --glass-bg: rgba(20, 24, 32, 0.68);
+  --glass-bg-hover: rgba(28, 33, 42, 0.82);
+  --glass-bg-active: rgba(32, 37, 47, 0.9);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-border-subtle: rgba(255, 255, 255, 0.08);
   --glass-border-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.02));
   --glass-shadow:
     0 4px 12px rgba(0, 0, 0, 0.8),
@@ -132,20 +132,20 @@
   --glass-blur-lg: 40px;
 
   /* Tab glass tokens */
-  --glass-tab-bg: rgba(20, 20, 20, 0.4);
-  --glass-tab-bg-hover: rgba(30, 30, 30, 0.5);
-  --glass-tab-bg-active: rgba(10, 10, 10, 0.8);
-  --glass-tab-border-active: rgba(255, 255, 255, 0.2);
+  --glass-tab-bg: rgba(27, 31, 40, 0.58);
+  --glass-tab-bg-hover: rgba(35, 40, 50, 0.72);
+  --glass-tab-bg-active: rgba(18, 22, 30, 0.88);
+  --glass-tab-border-active: rgba(255, 255, 255, 0.18);
   --glass-tab-shadow-active: 0 2px 6px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 
   /* Bubble glass tokens */
-  --glass-bubble-bg: rgba(20, 20, 20, 0.7);
-  --glass-bubble-border: rgba(255, 255, 255, 0.08);
+  --glass-bubble-bg: rgba(24, 28, 36, 0.76);
+  --glass-bubble-border: rgba(255, 255, 255, 0.1);
   --glass-bubble-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
 
   /* Panel glass tokens (non-interactive) */
-  --glass-panel-bg: rgba(5, 5, 5, 0.5);
-  --glass-panel-border: rgba(255, 255, 255, 0.06);
+  --glass-panel-bg: rgba(22, 26, 34, 0.64);
+  --glass-panel-border: rgba(255, 255, 255, 0.08);
 
   /* Enhanced Accent System */
   --glass-accent-bg: rgba(56, 189, 248, 0.08);

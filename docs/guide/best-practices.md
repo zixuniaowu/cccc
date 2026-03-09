@@ -73,7 +73,9 @@ You can show different content to different roles using conditional markers:
 - `## @role: foreman` - Only foreman sees this section
 - `## @role: peer` - Only peers see this section
 - `## @actor: <actor_id>` - Only the specific actor sees this section
-- Sections without markers are visible to all roles
+- Sections without markers are the shared/common content visible to everyone
+
+In the Web structured Help editor, these untagged sections are surfaced as `Common Notes`, while the tagged blocks are surfaced as role/actor notes.
 
 #### How Agents Consume Help
 

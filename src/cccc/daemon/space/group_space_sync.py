@@ -8,10 +8,12 @@ import uuid
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from ...contracts.v1 import SystemNotifyData
 from ...kernel.actors import find_actor, find_foreman
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...util.fs import atomic_write_json, read_json
+from ..messaging.delivery import emit_system_notify
 from .group_space_paths import (
     resolve_space_root_from_group,
     resolve_space_root,
@@ -816,22 +818,16 @@ def _emit_sync_notification(
     }
     for actor_id in targets:
         try:
-            append_event(
-                group.ledger_path,
-                kind="system.notify",
-                group_id=str(group.group_id),
-                scope_key="",
-                by=notify_by,
-                data={
-                    "kind": kind,
-                    "priority": priority,
-                    "title": title,
-                    "message": message,
-                    "target_actor_id": actor_id,
-                    "requires_ack": False,
-                    "context": context,
-                },
+            notify = SystemNotifyData(
+                kind=kind,
+                priority=priority,
+                title=title,
+                message=message,
+                target_actor_id=actor_id,
+                requires_ack=False,
+                context=context,
             )
+            emit_system_notify(group, by=notify_by, notify=notify)
         except Exception:
             continue
 

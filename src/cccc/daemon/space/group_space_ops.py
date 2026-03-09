@@ -12,7 +12,7 @@ import re
 import threading
 from typing import Any, Deque, Dict, Optional, Tuple
 
-from ...contracts.v1 import DaemonError, DaemonResponse, SpaceBinding, SpaceLane
+from ...contracts.v1 import DaemonError, DaemonResponse, SpaceBinding, SpaceLane, SystemNotifyData
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
@@ -32,6 +32,7 @@ from .group_space_provider import (
 )
 from ...providers.notebooklm.errors import NotebookLMProviderError
 from ...providers.notebooklm.health import notebooklm_health_check, parse_notebooklm_auth_json
+from ..messaging.delivery import emit_system_notify
 from .notebooklm_auth_flow import (
     cancel_notebooklm_auth_flow,
     get_notebooklm_auth_flow_status,
@@ -764,22 +765,16 @@ def _emit_artifact_async_notify(
             "output_path": str(output_path or ""),
             "error": {"code": str(error_code or ""), "message": str(error_message or "")},
         }
-        _ = append_event(
-            group.ledger_path,
-            kind="system.notify",
-            group_id=group.group_id,
-            scope_key="",
-            by="system",
-            data={
-                "kind": ("info" if ok else "error"),
-                "priority": ("normal" if ok else "high"),
-                "title": title,
-                "message": message,
-                "target_actor_id": _notify_target_from_by(by),
-                "requires_ack": False,
-                "context": context,
-            },
+        notify = SystemNotifyData(
+            kind=("info" if ok else "error"),
+            priority=("normal" if ok else "high"),
+            title=title,
+            message=message,
+            target_actor_id=_notify_target_from_by(by),
+            requires_ack=False,
+            context=context,
         )
+        emit_system_notify(group, by="system", notify=notify)
     except Exception as e:
         _LOG.warning("group-space async artifact notify failed group=%s: %s", group_id, e)
 

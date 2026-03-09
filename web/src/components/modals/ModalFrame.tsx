@@ -12,7 +12,7 @@ interface ModalFrameProps {
 }
 
 export function ModalFrame({
-  isDark,
+  isDark: _isDark,
   onClose,
   titleId,
   title,

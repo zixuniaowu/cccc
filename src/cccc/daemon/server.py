@@ -79,7 +79,6 @@ from .messaging.delivery import (
     pty_submit_text,
     render_delivery_text,
     deliver_message_with_preamble,
-    queue_system_notify,
     flush_pending_messages,
     tick_delivery,
     clear_preamble_sent,
@@ -292,6 +291,7 @@ def _inject_actor_context_env(env: Dict[str, Any], *, group_id: str, actor_id: s
     This is runtime-only (not persisted to group docs).
     """
     out: Dict[str, Any] = dict(env or {})
+    out["CCCC_HOME"] = str(ensure_home())
     out["CCCC_GROUP_ID"] = str(group_id or "").strip()
     out["CCCC_ACTOR_ID"] = str(actor_id or "").strip()
     return out
@@ -730,7 +730,6 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
             group_id,
             notify_kinds=notify_kinds,
         ),
-        queue_system_notify=queue_system_notify,
         error_factory=_error,
     )
     return _REQUEST_DISPATCH_DEPS

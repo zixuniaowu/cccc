@@ -11,6 +11,7 @@ interface FormState {
   editActorRuntime: SupportedRuntime;
   editActorCommand: string;
   editActorTitle: string;
+  editActorRoleNotes: string;
   editActorCapabilityAutoloadText: string;
 
   // Add Actor
@@ -44,6 +45,7 @@ interface FormState {
   setEditActorRuntime: (v: SupportedRuntime) => void;
   setEditActorCommand: (v: string) => void;
   setEditActorTitle: (v: string) => void;
+  setEditActorRoleNotes: (v: string) => void;
   setEditActorCapabilityAutoloadText: (v: string) => void;
 
   // Actions - Add Actor
@@ -81,6 +83,7 @@ export const useFormStore = create<FormState>((set) => ({
   editActorRuntime: "codex",
   editActorCommand: "",
   editActorTitle: "",
+  editActorRoleNotes: "",
   editActorCapabilityAutoloadText: "",
 
   // Initial state - Add Actor
@@ -114,6 +117,7 @@ export const useFormStore = create<FormState>((set) => ({
   setEditActorRuntime: (v) => set({ editActorRuntime: v }),
   setEditActorCommand: (v) => set({ editActorCommand: v }),
   setEditActorTitle: (v) => set({ editActorTitle: v }),
+  setEditActorRoleNotes: (v) => set({ editActorRoleNotes: v }),
   setEditActorCapabilityAutoloadText: (v) => set({ editActorCapabilityAutoloadText: v }),
 
   // Actions - Add Actor

@@ -516,6 +516,29 @@
     "failedToReset": "Failed to reset {{kind}}",
     "expandTitle": "Open full-screen editor",
     "saveOverrideTitle": "Save override under CCCC_HOME",
+    "helpEditorTitle": "Help editor",
+    "helpEditorHint": "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.",
+    "structuredView": "Structured",
+    "rawView": "Raw Markdown",
+    "commonNotesTitle": "Common Notes",
+    "commonNotesHint": "Untagged help content shared by all actors.",
+    "commonNotesPlaceholder": "Keep shared guidance, workflow details, and appendices here…",
+    "foremanNotesTitle": "Foreman Notes",
+    "foremanNotesHint": "Only foreman actors receive this scoped block.",
+    "foremanNotesPlaceholder": "Own outcome quality, review peer outputs, and keep shared direction coherent…",
+    "peerNotesTitle": "Peer Notes",
+    "peerNotesHint": "Only peer actors receive this scoped block.",
+    "peerNotesPlaceholder": "Report risks early, deliver verifiable outputs, and say when the direction is wrong…",
+    "actorNotesTitle": "Actor Notes",
+    "actorNotesHint": "Local notes for specific actors. This is the same source edited from the actor modal shortcut.",
+    "actorNotePlaceholder": "Describe only this actor's local responsibilities, boundaries, and preferred behavior…",
+    "noActorsForStructuredHelp": "No actors available in this group yet.",
+    "orphanActorNotesTitle": "Other actor notes",
+    "orphanActorRole": "No longer in group",
+    "orphanActorNotePlaceholder": "Keep or clean this leftover note for an actor that no longer exists…",
+    "scopedNoteConfigured": "Configured",
+    "unknownRole": "Unknown",
+    "legacyRoleNotesHint": "Legacy role notes were detected and mapped into the structured fields. Saving here will normalize them into scoped help blocks.",
     "noScopeWarning": "No scope attached to this group yet. Guidance overrides still work because they are stored under CCCC_HOME, but repo-linked features may stay unavailable until a scope is attached."
   },
   "blueprint": {
@@ -712,6 +735,5 @@
     "signOut": "Sign out",
     "signOutHint": "Sign out this browser and return to the Access Token login screen.",
     "signOutSuccess": "Signing out this browser..."
-
   }
 }

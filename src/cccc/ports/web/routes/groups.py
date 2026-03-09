@@ -362,6 +362,126 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return str(load_builtin_help_markdown() or "").strip()
         return ""
 
+    def _normalize_help_changed_blocks(raw: Any) -> list[str]:
+        if not isinstance(raw, list):
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            value = str(item or "").strip()
+            if not value or value in seen:
+                continue
+            if value == "common":
+                seen.add(value)
+                out.append(value)
+                continue
+            if value in ("role:foreman", "role:peer"):
+                seen.add(value)
+                out.append(value)
+                continue
+            if value.startswith("actor:"):
+                actor_id = str(value[len("actor:"):]).strip()
+                if actor_id:
+                    normalized = f"actor:{actor_id}"
+                    if normalized not in seen:
+                        seen.add(normalized)
+                        out.append(normalized)
+        return out
+
+    async def _list_running_actor_views(group_id: str) -> list[dict[str, Any]]:
+        try:
+            resp = await ctx.daemon({"op": "actor_list", "args": {"group_id": group_id, "include_unread": False}})
+        except Exception:
+            return []
+        result = resp.get("result") if isinstance(resp, dict) else None
+        actors = result.get("actors") if isinstance(result, dict) else None
+        if not isinstance(actors, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for item in actors:
+            if not isinstance(item, dict):
+                continue
+            aid = str(item.get("id") or "").strip()
+            if not aid:
+                continue
+            if not coerce_bool(item.get("running"), default=False):
+                continue
+            out.append(item)
+        return out
+
+    async def _notify_help_update(
+        group_id: str,
+        *,
+        by: str,
+        editor_mode: str,
+        changed_blocks: list[str],
+        content_changed: bool,
+    ) -> list[str]:
+        if not content_changed:
+            return []
+        running = await _list_running_actor_views(group_id)
+        if not running:
+            return []
+
+        targets: set[str] = set()
+        mode = str(editor_mode or "").strip().lower()
+        blocks = list(changed_blocks or [])
+        if mode == "structured" and blocks:
+            for block in blocks:
+                if block == "common":
+                    for actor in running:
+                        aid = str(actor.get("id") or "").strip()
+                        if aid:
+                            targets.add(aid)
+                    continue
+                if block == "role:foreman":
+                    for actor in running:
+                        if str(actor.get("role") or "").strip().lower() != "foreman":
+                            continue
+                        aid = str(actor.get("id") or "").strip()
+                        if aid:
+                            targets.add(aid)
+                    continue
+                if block == "role:peer":
+                    for actor in running:
+                        if str(actor.get("role") or "").strip().lower() != "peer":
+                            continue
+                        aid = str(actor.get("id") or "").strip()
+                        if aid:
+                            targets.add(aid)
+                    continue
+                if block.startswith("actor:"):
+                    aid = str(block[len("actor:"):]).strip()
+                    if aid and any(str(actor.get("id") or "").strip() == aid for actor in running):
+                        targets.add(aid)
+        else:
+            for actor in running:
+                aid = str(actor.get("id") or "").strip()
+                if aid:
+                    targets.add(aid)
+
+        notified: list[str] = []
+        for aid in sorted(targets):
+            try:
+                resp = await ctx.daemon({
+                    "op": "system_notify",
+                    "args": {
+                        "group_id": group_id,
+                        "by": "system",
+                        "kind": "info",
+                        "priority": "normal",
+                        "title": "Help updated",
+                        "message": "Group help changed. Run `cccc_help` now to refresh your playbook, then update your agent state if your plan changes.",
+                        "target_actor_id": aid,
+                        "requires_ack": False,
+                    },
+                })
+                if isinstance(resp, dict) and resp.get("ok"):
+                    notified.append(aid)
+            except Exception:
+                continue
+        return notified
+
     @group_router.get("/prompts")
     async def prompts_get(group_id: str) -> Dict[str, Any]:
         """Get effective group guidance markdown (preamble/help) and override status."""
@@ -399,12 +519,35 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         filename = _prompt_kind_to_filename(kind)
         try:
+            current_pf = read_group_prompt_file(group, filename)
+            current_content = str(current_pf.content or "") if current_pf.found and isinstance(current_pf.content, str) else _builtin_prompt_markdown(kind)
             raw = str(req.content or "")
+            editor_mode = str(req.editor_mode or "").strip().lower()
+            changed_blocks = _normalize_help_changed_blocks(req.changed_blocks)
+            content_changed = str(current_content) != str(raw if raw.strip() else _builtin_prompt_markdown(kind))
             if not raw.strip():
                 pf = delete_group_prompt_file(group, filename)
-                return {"ok": True, "result": {"kind": kind, "source": "builtin", "filename": filename, "path": pf.path, "content": _builtin_prompt_markdown(kind)}}
+                notified = []
+                if str(kind).strip().lower() == "help":
+                    notified = await _notify_help_update(
+                        group_id,
+                        by=str(req.by or "user").strip() or "user",
+                        editor_mode="raw",
+                        changed_blocks=[],
+                        content_changed=content_changed,
+                    )
+                return {"ok": True, "result": {"kind": kind, "source": "builtin", "filename": filename, "path": pf.path, "content": _builtin_prompt_markdown(kind), "notified_actor_ids": notified}}
             pf = write_group_prompt_file(group, filename, raw)
-            return {"ok": True, "result": {"kind": kind, "source": "home", "filename": filename, "path": pf.path, "content": pf.content or ""}}
+            notified = []
+            if str(kind).strip().lower() == "help":
+                notified = await _notify_help_update(
+                    group_id,
+                    by=str(req.by or "user").strip() or "user",
+                    editor_mode=editor_mode,
+                    changed_blocks=changed_blocks,
+                    content_changed=content_changed,
+                )
+            return {"ok": True, "result": {"kind": kind, "source": "home", "filename": filename, "path": pf.path, "content": pf.content or "", "notified_actor_ids": notified}}
         except Exception as e:
             return {"ok": False, "error": {"code": "WRITE_FAILED", "message": f"Failed to write {filename}: {e}"}}
 
@@ -420,8 +563,21 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         filename = _prompt_kind_to_filename(kind)
         try:
+            current_pf = read_group_prompt_file(group, filename)
+            current_content = str(current_pf.content or "") if current_pf.found and isinstance(current_pf.content, str) else _builtin_prompt_markdown(kind)
+            next_content = _builtin_prompt_markdown(kind)
+            content_changed = str(current_content) != str(next_content)
             pf = delete_group_prompt_file(group, filename)
-            return {"ok": True, "result": {"kind": kind, "source": "builtin", "filename": filename, "path": pf.path, "content": _builtin_prompt_markdown(kind)}}
+            notified = []
+            if str(kind).strip().lower() == "help":
+                notified = await _notify_help_update(
+                    group_id,
+                    by="user",
+                    editor_mode="raw",
+                    changed_blocks=[],
+                    content_changed=content_changed,
+                )
+            return {"ok": True, "result": {"kind": kind, "source": "builtin", "filename": filename, "path": pf.path, "content": _builtin_prompt_markdown(kind), "notified_actor_ids": notified}}
         except Exception as e:
             return {"ok": False, "error": {"code": "DELETE_FAILED", "message": f"Failed to delete {filename}: {e}"}}
 

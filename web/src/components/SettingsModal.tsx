@@ -773,14 +773,14 @@ export function SettingsModal({
         <div className="flex-1 overflow-y-auto flex flex-col">
           <div className="p-5 sm:p-8 space-y-6">
             {scope === "global" && canAccessGlobalSettings === false ? (
-              <div className="rounded-xl border p-6 border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-700/40 dark:bg-amber-900/10 dark:text-amber-200">
+              <div className={`rounded-xl border p-6 ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
                 <div className="text-sm font-semibold">{t("navigation.globalLockedTitle")}</div>
                 <div className="mt-2 text-sm leading-6">{t("navigation.globalLockedContent")}</div>
                 {groupId ? (
                   <button
                     type="button"
                     onClick={() => setScope("group")}
-                    className="mt-4 px-3 py-2 rounded-lg text-xs glass-btn text-[var(--color-text-secondary)]"
+                    className={`mt-4 px-3 py-2 rounded-lg text-xs ${isDark ? "bg-slate-800 text-slate-100 hover:bg-slate-700" : "bg-white text-gray-700 border border-gray-200 hover:bg-gray-50"}`}
                   >
                     {t("navigation.thisGroup")}
                   </button>
@@ -910,7 +910,7 @@ export function SettingsModal({
                 />
               )}
 
-              {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} settings={settings} onUpdateSettings={onUpdateSettings} scopeRootUrl={scopeRootUrl} scopeResolved={!!groupDoc && String(groupDoc.group_id || "") === String(groupId || "")} />}
+              {activeTab === "guidance" && <GuidanceTab isDark={isDark} groupId={groupId} />}
 
               {activeTab === "space" && (
                 <GroupSpaceTab

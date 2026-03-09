@@ -628,6 +628,53 @@ export async function searchChatMessages(
 
 // ============ Actors ============
 
+export type GroupPromptKind = "preamble" | "help";
+
+export type GroupPromptInfo = {
+  kind: GroupPromptKind;
+  source: "home" | "builtin";
+  filename: string;
+  path?: string | null;
+  content: string;
+};
+
+export type GroupPromptsResponse = {
+  preamble: GroupPromptInfo;
+  help: GroupPromptInfo;
+};
+
+export type PromptUpdateOptions = {
+  editorMode?: "structured" | "raw";
+  changedBlocks?: string[];
+};
+
+export async function fetchGroupPrompts(groupId: string) {
+  return apiJson<GroupPromptsResponse>(`/api/v1/groups/${encodeURIComponent(groupId)}/prompts`);
+}
+
+export async function updateGroupPrompt(
+  groupId: string,
+  kind: GroupPromptKind,
+  content: string,
+  opts?: PromptUpdateOptions
+) {
+  const body: Record<string, unknown> = { content, by: "user" };
+  if (opts?.editorMode) body.editor_mode = opts.editorMode;
+  if (Array.isArray(opts?.changedBlocks)) body.changed_blocks = opts.changedBlocks;
+  return apiJson<GroupPromptInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/prompts/${kind}`, {
+    method: "PUT",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function resetGroupPrompt(groupId: string, kind: GroupPromptKind) {
+  return apiJson<GroupPromptInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/prompts/${kind}?confirm=${encodeURIComponent(kind)}`, {
+    method: "DELETE",
+  });
+}
+
+// ============ Actors ============
+
 export async function fetchActors(groupId: string, includeUnread = true) {
   const url = includeUnread
     ? `/api/v1/groups/${encodeURIComponent(groupId)}/actors?include_unread=true`

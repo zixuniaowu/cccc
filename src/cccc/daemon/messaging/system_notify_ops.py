@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, Optional
 
-from ...contracts.v1 import DaemonError, DaemonResponse
-from ...kernel.actors import list_actors
+from ...contracts.v1 import DaemonError, DaemonResponse, SystemNotifyData
 from ...kernel.group import load_group
 from ...kernel.inbox import find_event
 from ...kernel.ledger import append_event
+from .delivery import emit_system_notify
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -19,7 +19,6 @@ def handle_system_notify(
     args: Dict[str, Any],
     *,
     coerce_bool: Callable[[Any], bool],
-    queue_system_notify: Callable[..., None],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     by = str(args.get("by") or "system").strip()
@@ -44,47 +43,16 @@ def handle_system_notify(
     if priority not in valid_priorities:
         priority = "normal"
 
-    event = append_event(
-        group.ledger_path,
-        kind="system.notify",
-        group_id=group.group_id,
-        scope_key="",
-        by=by,
-        data={
-            "kind": kind,
-            "priority": priority,
-            "title": title,
-            "message": message,
-            "target_actor_id": target_actor_id,
-            "requires_ack": requires_ack,
-            "context": context,
-        },
+    notify = SystemNotifyData(
+        kind=kind,
+        priority=priority,
+        title=title,
+        message=message,
+        target_actor_id=target_actor_id,
+        requires_ack=requires_ack,
+        context=context,
     )
-
-    if priority in ("high", "urgent"):
-        event_id = str(event.get("id") or "").strip()
-        event_ts = str(event.get("ts") or "").strip()
-        for actor in list_actors(group):
-            if not isinstance(actor, dict):
-                continue
-            aid = str(actor.get("id") or "").strip()
-            if not aid or aid == "user":
-                continue
-            if target_actor_id and aid != target_actor_id:
-                continue
-            runner_kind = str(actor.get("runner") or "pty").strip()
-            if runner_kind != "pty":
-                continue
-            queue_system_notify(
-                group,
-                actor_id=aid,
-                event_id=event_id,
-                notify_kind=kind,
-                title=title,
-                message=message,
-                ts=event_ts,
-            )
-
+    event = emit_system_notify(group, by=by, notify=notify)
     return DaemonResponse(ok=True, result={"event": event})
 
 
@@ -131,10 +99,9 @@ def try_handle_system_notify_op(
     args: Dict[str, Any],
     *,
     coerce_bool: Callable[[Any], bool],
-    queue_system_notify: Callable[..., None],
 ) -> Optional[DaemonResponse]:
     if op == "system_notify":
-        return handle_system_notify(args, coerce_bool=coerce_bool, queue_system_notify=queue_system_notify)
+        return handle_system_notify(args, coerce_bool=coerce_bool)
     if op == "notify_ack":
         return handle_notify_ack(args)
     return None

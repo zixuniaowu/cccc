@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class TestSystemNotifyOps(unittest.TestCase):
@@ -82,6 +83,58 @@ class TestSystemNotifyOps(unittest.TestCase):
             self.assertIsInstance(ack_event, dict)
             assert isinstance(ack_event, dict)
             self.assertEqual(str(ack_event.get("kind") or ""), "system.notify_ack")
+        finally:
+            cleanup()
+
+    def test_normal_priority_notify_queues_and_flushes_for_running_pty_actor(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "sys-notify-delivery", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "pty",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            with patch("cccc.daemon.messaging.delivery.pty_runner.SUPERVISOR.actor_running", return_value=True), patch(
+                "cccc.daemon.messaging.delivery.queue_system_notify"
+            ) as queue_mock, patch(
+                "cccc.daemon.messaging.delivery.flush_pending_messages", return_value=True
+            ) as flush_mock:
+                notify, _ = self._call(
+                    "system_notify",
+                    {
+                        "group_id": group_id,
+                        "by": "system",
+                        "kind": "info",
+                        "priority": "normal",
+                        "title": "notify",
+                        "message": "hello",
+                        "target_actor_id": "peer1",
+                        "requires_ack": False,
+                    },
+                )
+
+            self.assertTrue(notify.ok, getattr(notify, "error", None))
+            queue_mock.assert_called_once()
+            queue_kwargs = queue_mock.call_args.kwargs
+            self.assertEqual(queue_kwargs.get("actor_id"), "peer1")
+            self.assertEqual(queue_kwargs.get("notify_kind"), "info")
+            self.assertEqual(queue_kwargs.get("title"), "notify")
+            self.assertEqual(queue_kwargs.get("message"), "hello")
+            flush_mock.assert_called_once()
+            self.assertEqual(flush_mock.call_args.kwargs.get("actor_id"), "peer1")
         finally:
             cleanup()
 

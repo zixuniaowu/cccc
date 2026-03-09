@@ -1,5 +1,4 @@
 import { useTranslation } from 'react-i18next';
-import { classNames } from "../utils/classNames";
 
 export interface DropOverlayProps {
   isOpen: boolean;
@@ -7,7 +6,7 @@ export interface DropOverlayProps {
   maxFileMb: number;
 }
 
-export function DropOverlay({ isOpen, isDark, maxFileMb }: DropOverlayProps) {
+export function DropOverlay({ isOpen, isDark: _isDark, maxFileMb }: DropOverlayProps) {
   const { t } = useTranslation('layout');
 
   if (!isOpen) return null;

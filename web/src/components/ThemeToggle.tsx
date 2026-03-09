@@ -9,7 +9,7 @@ interface ThemeToggleProps {
   isDark: boolean;
 }
 
-export function ThemeToggle({ theme, onThemeChange, isDark }: ThemeToggleProps) {
+export function ThemeToggle({ theme, onThemeChange, isDark: _isDark }: ThemeToggleProps) {
   const { t } = useTranslation('layout');
   const themes: { value: Theme; label: string; Icon: React.FC<{ size?: number }> }[] = [
     { value: "light", label: t('themeLight'), Icon: SunIcon },
@@ -41,7 +41,7 @@ export function ThemeToggle({ theme, onThemeChange, isDark }: ThemeToggleProps) 
 }
 
 // Compact version for header
-export function ThemeToggleCompact({ theme, onThemeChange, isDark }: ThemeToggleProps) {
+export function ThemeToggleCompact({ theme, onThemeChange, isDark: _isDark }: ThemeToggleProps) {
   const { t } = useTranslation('layout');
   const nextTheme = (): Theme => {
     if (theme === "light") return "dark";

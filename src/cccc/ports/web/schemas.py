@@ -134,6 +134,8 @@ class ProjectMdUpdateRequest(BaseModel):
 class RepoPromptUpdateRequest(BaseModel):
     content: str = Field(default="")
     by: str = Field(default="user")
+    editor_mode: Optional[Literal["structured", "raw"]] = None
+    changed_blocks: list[str] = Field(default_factory=list)
 
 
 class GroupUpdateRequest(BaseModel):

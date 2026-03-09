@@ -30,9 +30,11 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger("cccc.delivery")
 
+from ...contracts.v1 import SystemNotifyData
 from ...kernel.actors import find_actor, list_actors
 from ...kernel.group import Group, get_group_state, set_group_state
 from ...kernel.inbox import is_message_for_actor, set_cursor
+from ...kernel.ledger import append_event
 from ...kernel.system_prompt import render_system_prompt
 from ...paths import ensure_home
 from ...runners import pty as pty_runner
@@ -746,6 +748,65 @@ def queue_system_notify(
         notify_title=title,
         notify_message=message,
     )
+
+
+def emit_system_notify(
+    group: Group,
+    *,
+    by: str,
+    notify: SystemNotifyData,
+) -> Dict[str, Any]:
+    """Append a system.notify event and dispatch it to running PTY targets."""
+    event = append_event(
+        group.ledger_path,
+        kind="system.notify",
+        group_id=group.group_id,
+        scope_key="",
+        by=str(by or "system").strip() or "system",
+        data=notify.model_dump(),
+    )
+
+    target_actor_id = str(notify.target_actor_id or "").strip()
+    if target_actor_id:
+        target_actor_ids = [target_actor_id]
+    else:
+        target_actor_ids: List[str] = []
+        seen: set[str] = set()
+        for actor in list_actors(group):
+            if not isinstance(actor, dict):
+                continue
+            aid = str(actor.get("id") or "").strip()
+            if not aid or aid == "user" or aid in seen:
+                continue
+            seen.add(aid)
+            target_actor_ids.append(aid)
+
+    event_id = str(event.get("id") or "").strip()
+    event_ts = str(event.get("ts") or "").strip()
+    if not event_id:
+        return event
+
+    for aid in target_actor_ids:
+        actor = find_actor(group, aid)
+        if not isinstance(actor, dict):
+            continue
+        runner_kind = str(actor.get("runner") or "pty").strip()
+        if runner_kind != "pty":
+            continue
+        if not pty_runner.SUPERVISOR.actor_running(group.group_id, aid):
+            continue
+        queue_system_notify(
+            group,
+            actor_id=aid,
+            event_id=event_id,
+            notify_kind=str(notify.kind),
+            title=str(notify.title),
+            message=str(notify.message),
+            ts=event_ts,
+        )
+        flush_pending_messages(group, actor_id=aid)
+
+    return event
 
 
 def flush_pending_messages(group: Group, *, actor_id: str) -> bool:

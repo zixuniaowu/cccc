@@ -22,7 +22,7 @@ const LANGUAGE_NATIVE_NAME: Record<LanguageCode, string> = {
   ja: "日本語",
 };
 
-export function LanguageSwitcher({ isDark, showLabel = false, className }: LanguageSwitcherProps) {
+export function LanguageSwitcher({ isDark: _isDark, showLabel = false, className }: LanguageSwitcherProps) {
   const { i18n, t } = useTranslation(["layout", "common"]);
   const [isOpen, setIsOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);

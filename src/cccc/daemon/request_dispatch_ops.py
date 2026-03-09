@@ -91,7 +91,6 @@ class RequestDispatchDeps:
     auto_wake_recipients: Callable[..., None]
     automation_on_new_message: Callable[[Any], None]
     clear_pending_system_notifies_chat: Callable[[str, set[str]], None]
-    queue_system_notify: Callable[..., None]
     error_factory: Callable[[str, str], DaemonResponse]
 
 
@@ -365,7 +364,6 @@ def dispatch_request(
         op,
         args,
         coerce_bool=deps.coerce_bool_default_false,
-        queue_system_notify=deps.queue_system_notify,
     )
     if system_notify_resp is not None:
         return system_notify_resp, False

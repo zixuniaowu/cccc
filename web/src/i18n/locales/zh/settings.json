@@ -515,7 +515,31 @@
     "failedToSave": "保存 {{kind}} 失败",
     "failedToReset": "重置 {{kind}} 失败",
     "expandTitle": "打开全屏编辑器",
-    "saveOverrideTitle": "保存覆盖到 CCCC_HOME"
+    "saveOverrideTitle": "保存覆盖到 CCCC_HOME",
+    "helpEditorTitle": "帮助编辑器",
+    "helpEditorHint": "结构化模式编辑通用/角色/actor 提示词，Raw 模式保留整份 Markdown 的完全控制。",
+    "structuredView": "结构化",
+    "rawView": "Raw Markdown",
+    "commonNotesTitle": "通用提示词",
+    "commonNotesHint": "未标记的 help 内容，会被所有 actor 看到。",
+    "commonNotesPlaceholder": "在这里维护共享规程、工作细节和附录……",
+    "foremanNotesTitle": "Foreman 提示词",
+    "foremanNotesHint": "只有 foreman actor 会收到这一段。",
+    "foremanNotesPlaceholder": "负责结果质量、审阅 peer 输出，并保持共享方向一致……",
+    "peerNotesTitle": "Peer 提示词",
+    "peerNotesHint": "只有 peer actor 会收到这一段。",
+    "peerNotesPlaceholder": "尽早报告风险，交付可验证输出，方向不对时要明确指出……",
+    "actorNotesTitle": "Actor 提示词",
+    "actorNotesHint": "针对具体 actor 的局部提示词。与 actor 编辑面板里的快捷入口使用同一份数据源。",
+    "actorNotePlaceholder": "只描述这个 actor 的局部职责、边界和偏好行为……",
+    "noActorsForStructuredHelp": "当前工作组里还没有可编辑的 actor。",
+    "orphanActorNotesTitle": "其它 actor 提示词",
+    "orphanActorRole": "已不在工作组中",
+    "orphanActorNotePlaceholder": "这里是遗留给已不存在 actor 的提示词，你可以保留或清理……",
+    "scopedNoteConfigured": "已配置",
+    "unknownRole": "未知角色",
+    "legacyRoleNotesHint": "检测到了旧版 Role Notes 结构，已映射到结构化字段。保存后会自动规范成最新的 scoped help 结构。",
+    "noScopeWarning": "这个工作组目前还没有绑定 scope。由于 guidance override 是存放在 CCCC_HOME 下的，所以仍然可以工作；但依赖仓库作用域的功能在绑定 scope 之前可能不可用。"
   },
   "blueprint": {
     "openFromGroup": "请从工作组中打开此标签页。",
@@ -711,6 +735,5 @@
     "signOut": "退出登录",
     "signOutHint": "让当前浏览器退出当前令牌会话，并返回访问令牌登录页。",
     "signOutSuccess": "正在让当前浏览器退出登录..."
-
   }
 }
