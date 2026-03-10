@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 
 from ...contracts.v1 import AutomationRule, AutomationRuleSet, SystemNotifyData
 from ...kernel.actors import list_actors, find_foreman
-from ...kernel.group import Group, load_group, get_group_state
+from ...kernel.group import Group, load_group, get_group_state, set_group_state
 from ...kernel.inbox import iter_events, is_message_for_actor, get_cursor, get_obligation_status_batch
 from ...kernel.ledger import append_event
 from ...kernel.terminal_transcript import get_terminal_transcript_settings
@@ -610,6 +610,7 @@ class AutomationManager:
             state = _load_state(group)
             state["resume_at"] = now
             state["last_silence_notify_at"] = now
+            state["consecutive_silence_count"] = 0
             try:
                 state["help_ledger_pos"] = int(group.ledger_path.stat().st_size)
             except Exception:
@@ -1155,7 +1156,13 @@ class AutomationManager:
             _queue_notify_to_pty(group, actor_id=aid, runner_kind=runner_kind, ev=ev, notify=notify_data)
 
     def _check_silence(self, group: Group, cfg: AutomationConfig, now: datetime) -> None:
-        """Check if group has been silent and notify foreman."""
+        """Check if group has been silent and notify foreman.
+
+        Also tracks consecutive silence periods.  When the group has been
+        silent for two consecutive check periods (~2× silence_timeout), it
+        is automatically transitioned to *idle* so that internal automation
+        (Level 1-3) is muted and actors stop receiving nudges.
+        """
         if cfg.silence_timeout_seconds <= 0:
             return
 
@@ -1170,6 +1177,12 @@ class AutomationManager:
 
         silence_seconds = (now - last_activity).total_seconds()
         if silence_seconds < float(cfg.silence_timeout_seconds):
+            # Group is active — reset consecutive silence counter.
+            with self._lock:
+                state = _load_state(group)
+                if state.get("consecutive_silence_count", 0) != 0:
+                    state["consecutive_silence_count"] = 0
+                    _save_state(group, state)
             return
 
         with self._lock:
@@ -1181,9 +1194,38 @@ class AutomationManager:
                     # Don't notify again within the timeout period
                     if (now - last_notify_dt).total_seconds() < float(cfg.silence_timeout_seconds):
                         return
-            
+
+            # Increment consecutive silence counter
+            count = int(state.get("consecutive_silence_count") or 0) + 1
+            state["consecutive_silence_count"] = count
             state["last_silence_notify_at"] = utc_now_iso()
             _save_state(group, state)
+
+        # Auto-idle: two consecutive silence periods without activity → idle
+        if count >= 2:
+            try:
+                set_group_state(group, state="idle")
+            except Exception:
+                pass
+            notify_data = SystemNotifyData(
+                kind="auto_idle",
+                priority="normal",
+                title="Group set to idle",
+                message=f"No activity for {int(silence_seconds)}s (2 consecutive silence checks). Group automatically set to idle. Send a message to wake it up.",
+                target_actor_id=foreman_id,
+                requires_ack=False,
+            )
+            ev = append_event(
+                group.ledger_path,
+                kind="system.notify",
+                group_id=group.group_id,
+                scope_key="",
+                by="system",
+                data=notify_data.model_dump(),
+            )
+            foreman_runner_kind = str(foreman.get("runner") or "pty").strip()
+            _queue_notify_to_pty(group, actor_id=foreman_id, runner_kind=foreman_runner_kind, ev=ev, notify=notify_data)
+            return
 
         msg = f"No activity for {int(silence_seconds)}s. Check if work is complete or if anyone needs help."
 

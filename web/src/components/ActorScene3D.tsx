@@ -443,25 +443,25 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
                 <article
                   key={item.id}
                   className={`rounded-xl border px-3 py-2.5 ${
-                    isDark ? "border-slate-800/80 bg-white/[0.03]" : "border-slate-200 bg-slate-50/80"
+                    isDark ? "border-slate-800/80 bg-white/[0.06]" : "border-slate-200 bg-slate-50/80"
                   }`}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-semibold">{item.title}</div>
-                      <div className={`mt-1 text-[11px] ${isDark ? "text-slate-400" : "text-slate-500"}`}>ID: {item.id}</div>
+                      <div className={`mt-1 text-[11px] ${isDark ? "text-slate-200" : "text-slate-600"}`}>ID: {item.id}</div>
                     </div>
                     <span className={`inline-flex shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold sm:text-[11px] ${statusTone}`}>
                       {statusLabel}
                     </span>
                   </div>
-                  <div className={`mt-3 space-y-1.5 text-[11px] sm:text-xs ${isDark ? "text-slate-300" : "text-slate-700"}`}>
+                  <div className={`mt-3 space-y-1.5 text-[11px] sm:text-xs ${isDark ? "text-slate-100" : "text-slate-800"}`}>
                     <div className="truncate">
-                      <span className={isDark ? "text-slate-500" : "text-slate-500"}>{t("panoramaHudFocus", "Focus")}:</span>{" "}
+                      <span className={isDark ? "text-slate-300" : "text-slate-600"}>{t("panoramaHudFocus", "Focus")}:</span>{" "}
                       {item.focus || t("panoramaHudNoFocus", "None yet")}
                     </div>
                     <div className="truncate">
-                      <span className={isDark ? "text-slate-500" : "text-slate-500"}>{t("panoramaHudNext", "Next")}:</span>{" "}
+                      <span className={isDark ? "text-slate-300" : "text-slate-600"}>{t("panoramaHudNext", "Next")}:</span>{" "}
                       {item.next || t("panoramaHudNoNextAction", "None yet")}
                     </div>
                   </div>

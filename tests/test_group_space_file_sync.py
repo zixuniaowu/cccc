@@ -921,7 +921,7 @@ class TestGroupSpaceFileSync(unittest.TestCase):
                  patch("cccc.daemon.space.group_space_sync.provider_rename_source", side_effect=_rename), \
                  patch("cccc.daemon.space.group_space_sync.provider_delete_source", side_effect=_delete), \
                  patch("cccc.daemon.space.group_space_sync.provider_list_artifacts", return_value={"artifacts": []}), \
-                 patch("cccc.daemon.space.group_space_sync.append_event") as append_event_mock:
+                 patch("cccc.daemon.space.group_space_sync.emit_system_notify") as emit_notify_mock:
                 failed = sync_group_space_files(gid, provider="notebooklm", force=True, by="peer1")
 
             self.assertTrue(bool(failed.get("ok")))
@@ -931,14 +931,14 @@ class TestGroupSpaceFileSync(unittest.TestCase):
             self.assertTrue(any(str(item.get("rel_path") or "") == "a.txt" for item in failed_items if isinstance(item, dict)))
 
             targets = {
-                str((call.kwargs.get("data") or {}).get("target_actor_id") or "")
-                for call in append_event_mock.call_args_list
+                str(getattr(call.kwargs.get("notify"), "target_actor_id", "") or "")
+                for call in emit_notify_mock.call_args_list
             }
             self.assertEqual(targets, {"lead", "peer1"})
             self.assertTrue(
                 all(
-                    str((call.kwargs.get("data") or {}).get("kind") or "") == "error"
-                    for call in append_event_mock.call_args_list
+                    str(getattr(call.kwargs.get("notify"), "kind", "") or "") == "error"
+                    for call in emit_notify_mock.call_args_list
                 )
             )
 
@@ -953,21 +953,21 @@ class TestGroupSpaceFileSync(unittest.TestCase):
                  patch("cccc.daemon.space.group_space_sync.provider_rename_source", side_effect=_rename), \
                  patch("cccc.daemon.space.group_space_sync.provider_delete_source", side_effect=_delete), \
                  patch("cccc.daemon.space.group_space_sync.provider_list_artifacts", return_value={"artifacts": []}), \
-                 patch("cccc.daemon.space.group_space_sync.append_event") as append_event_mock:
+                 patch("cccc.daemon.space.group_space_sync.emit_system_notify") as emit_notify_mock:
                 recovered = sync_group_space_files(gid, provider="notebooklm", force=True, by="peer1")
 
             self.assertTrue(bool(recovered.get("ok")))
             self.assertEqual(bool(recovered.get("converged")), True)
             self.assertEqual(int(recovered.get("failed_count") or 0), 0)
             targets = {
-                str((call.kwargs.get("data") or {}).get("target_actor_id") or "")
-                for call in append_event_mock.call_args_list
+                str(getattr(call.kwargs.get("notify"), "target_actor_id", "") or "")
+                for call in emit_notify_mock.call_args_list
             }
             self.assertEqual(targets, {"lead", "peer1"})
             self.assertTrue(
                 all(
-                    str((call.kwargs.get("data") or {}).get("kind") or "") == "status_change"
-                    for call in append_event_mock.call_args_list
+                    str(getattr(call.kwargs.get("notify"), "kind", "") or "") == "status_change"
+                    for call in emit_notify_mock.call_args_list
                 )
             )
         finally:
