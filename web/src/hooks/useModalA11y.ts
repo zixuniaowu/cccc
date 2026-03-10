@@ -88,6 +88,8 @@ export function useModalA11y(isOpen: boolean, onClose: () => void) {
   const instanceId = useId();
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const handleEscape = useCallback(
     (e: KeyboardEvent) => {
@@ -95,9 +97,9 @@ export function useModalA11y(isOpen: boolean, onClose: () => void) {
       if (!isTopModal(instanceId)) return;
       e.preventDefault();
       e.stopPropagation();
-      onClose();
+      onCloseRef.current();
     },
-    [instanceId, onClose]
+    [instanceId]
   );
 
   const handleTab = useCallback((e: KeyboardEvent) => {

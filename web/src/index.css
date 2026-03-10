@@ -114,38 +114,38 @@
   --color-bg-overlay: rgba(0, 0, 0, 0.8);
 
   /* Enhanced Liquid Glass Dark Theme — Pure Black (Neutral) */
-  --glass-bg: rgba(20, 24, 32, 0.68);
-  --glass-bg-hover: rgba(28, 33, 42, 0.82);
-  --glass-bg-active: rgba(32, 37, 47, 0.9);
-  --glass-border: rgba(255, 255, 255, 0.12);
-  --glass-border-subtle: rgba(255, 255, 255, 0.08);
-  --glass-border-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.02));
+  --glass-bg: rgba(18, 18, 22, 0.72);
+  --glass-bg-hover: rgba(26, 26, 32, 0.84);
+  --glass-bg-active: rgba(30, 30, 36, 0.9);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-border-subtle: rgba(255, 255, 255, 0.05);
+  --glass-border-gradient: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.02));
   --glass-shadow:
     0 4px 12px rgba(0, 0, 0, 0.8),
     0 8px 24px rgba(0, 0, 0, 0.6);
   --glass-shadow-lg:
     0 8px 24px rgba(0, 0, 0, 0.9),
     0 16px 48px rgba(0, 0, 0, 0.7);
-  --glass-inner-glow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
-  --glass-glow: 0 0 0 1px rgba(255, 255, 255, 0.04) inset;
+  --glass-inner-glow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --glass-glow: 0 0 0 1px rgba(255, 255, 255, 0.03) inset;
   --glass-blur: 20px;
   --glass-blur-lg: 40px;
 
   /* Tab glass tokens */
-  --glass-tab-bg: rgba(27, 31, 40, 0.58);
-  --glass-tab-bg-hover: rgba(35, 40, 50, 0.72);
-  --glass-tab-bg-active: rgba(18, 22, 30, 0.88);
-  --glass-tab-border-active: rgba(255, 255, 255, 0.18);
-  --glass-tab-shadow-active: 0 2px 6px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --glass-tab-bg: rgba(22, 22, 28, 0.58);
+  --glass-tab-bg-hover: rgba(30, 30, 38, 0.72);
+  --glass-tab-bg-active: rgba(16, 16, 22, 0.88);
+  --glass-tab-border-active: rgba(255, 255, 255, 0.14);
+  --glass-tab-shadow-active: 0 2px 6px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 
   /* Bubble glass tokens */
-  --glass-bubble-bg: rgba(24, 28, 36, 0.76);
-  --glass-bubble-border: rgba(255, 255, 255, 0.1);
+  --glass-bubble-bg: rgba(20, 20, 26, 0.76);
+  --glass-bubble-border: rgba(255, 255, 255, 0.07);
   --glass-bubble-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
 
   /* Panel glass tokens (non-interactive) */
-  --glass-panel-bg: rgba(22, 26, 34, 0.64);
-  --glass-panel-border: rgba(255, 255, 255, 0.08);
+  --glass-panel-bg: rgba(18, 18, 24, 0.64);
+  --glass-panel-border: rgba(255, 255, 255, 0.05);
 
   /* Enhanced Accent System */
   --glass-accent-bg: rgba(56, 189, 248, 0.08);
@@ -158,7 +158,7 @@
   --gradient-primary: linear-gradient(135deg, #22d3ee 0%, #06b6d4 100%);
   --gradient-accent: linear-gradient(135deg, #67e8f9 0%, #22d3ee 50%, #06b6d4 100%);
   --gradient-subtle: linear-gradient(180deg, rgba(34, 211, 238, 0.06) 0%, transparent 100%);
-  --gradient-shine: linear-gradient(135deg, rgba(255, 255, 255, 0.08) 0%, transparent 50%);
+  --gradient-shine: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, transparent 50%);
 
   --color-border-primary: #1f1f1f;
   --color-border-secondary: #2a2a2a;
@@ -200,9 +200,9 @@
   color-scheme: dark;
 }
 
-/* System preference detection */
+/* System preference fallback — only when no explicit theme class is set */
 @media (prefers-color-scheme: dark) {
-  :root:not(.light) {
+  :root:not(.light):not(.dark) {
     --color-bg-primary: #0f172a;
     --color-bg-secondary: #1e293b;
     --color-bg-tertiary: #334155;

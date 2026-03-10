@@ -403,7 +403,7 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
               <div className="text-sm font-semibold sm:text-base">
                 {t("panoramaHudTitle", "Agent State")}
               </div>
-              <div className={`mt-1 text-[11px] sm:text-xs ${isDark ? "text-slate-400" : "text-slate-600"}`}>
+              <div className={`mt-1 text-[11px] sm:text-xs ${isDark ? "text-slate-100" : "text-slate-700"}`}>
                 {t("panoramaHudHint", "Quick snapshot of who is active, blocked, or waiting in the panorama scene.")}
               </div>
             </div>

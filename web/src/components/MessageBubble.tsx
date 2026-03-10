@@ -384,6 +384,18 @@ export const MessageBubble = memo(function MessageBubble({
         return displayNameMap.get(by) || by;
     }, [ev.by, displayNameMap]);
 
+    // Sender runtime logo path (for actor avatars)
+    const senderLogoSrc = useMemo(() => {
+        if (isUserMessage) return null;
+        const by = String(ev.by || "");
+        const actor = actors.find((a) => String(a.id || "") === by);
+        const runtime = String(actor?.runtime || "").toLowerCase();
+        if (!runtime) return null;
+        // Only return a path for runtimes that have a logo file
+        const LOGO_RUNTIMES = ["claude", "codex", "gemini"];
+        return LOGO_RUNTIMES.includes(runtime) ? `/ui/logos/${runtime}.png` : null;
+    }, [ev.by, actors, isUserMessage]);
+
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);
 
@@ -399,7 +411,7 @@ export const MessageBubble = memo(function MessageBubble({
             {/* Desktop Avatar (Hidden on mobile) */}
             <div
                 className={classNames(
-                    "hidden sm:flex flex-shrink-0 w-8 h-8 rounded-full items-center justify-center text-xs font-bold shadow-sm mt-1",
+                    "hidden sm:flex flex-shrink-0 w-8 h-8 rounded-full items-center justify-center text-xs font-bold shadow-sm mt-1 overflow-hidden",
                     isUserMessage
                         ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
                         : isDark
@@ -410,7 +422,9 @@ export const MessageBubble = memo(function MessageBubble({
                 ref={setAgentStateReference}
                 {...getReferenceProps()}
             >
-                {isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
+                {senderLogoSrc
+                    ? <img src={senderLogoSrc} alt="" className="w-full h-full object-cover" />
+                    : isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
             </div>
 
             {/* Message Content */}
@@ -429,7 +443,7 @@ export const MessageBubble = memo(function MessageBubble({
                 >
                     <div
                         className={classNames(
-                            "flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm",
+                            "flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shadow-sm overflow-hidden",
                             isUserMessage
                                 ? "bg-gradient-to-br from-blue-500 to-blue-600 text-white"
                                 : isDark
@@ -438,7 +452,9 @@ export const MessageBubble = memo(function MessageBubble({
                             !isUserMessage && senderAccent ? `ring-1 ring-inset ${senderAccent.ring}` : ""
                         )}
                     >
-                        {isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
+                        {senderLogoSrc
+                            ? <img src={senderLogoSrc} alt="" className="w-full h-full object-cover" />
+                            : isUserMessage ? "U" : (senderDisplayName || "?")[0].toUpperCase()}
                     </div>
                     <span
                         className={classNames(
