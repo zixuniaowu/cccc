@@ -1,6 +1,7 @@
 // SSE connection management for the ledger stream.
 import { useEffect, useRef } from "react";
 import { useGroupStore, useUIStore } from "../stores";
+import { useChatOutboxStore } from "../stores/chatOutboxStore";
 import * as api from "../services/api";
 import type { Actor, GroupContext } from "../types";
 import {
@@ -170,6 +171,20 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
         initializeObligationStatus(ev, actorsRef.current);
 
         appendEvent(ev, groupId);
+
+        // Reconcile outbox: when a user's chat.message arrives via SSE,
+        // remove matching outbox entries to prevent optimistic/canonical double-display.
+        if (isChatMessageEvent(ev) && String(ev.by || "") === "user") {
+          const outboxState = useChatOutboxStore.getState();
+          const pending = outboxState.entriesByGroup[groupId];
+          if (pending && pending.length > 0) {
+            // Remove the oldest pending entry (FIFO: the SSE event corresponds to the first pending send)
+            const oldest = pending.find((e) => e.status === "pending");
+            if (oldest) {
+              outboxState.remove(groupId, oldest.localId);
+            }
+          }
+        }
 
         // Reply to an earlier message updates its obligation status in-place.
         if (isChatMessageEvent(ev)) {
