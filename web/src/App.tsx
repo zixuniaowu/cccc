@@ -13,7 +13,6 @@ import { useDragDrop } from "./hooks/useDragDrop";
 import { useGroupActions } from "./hooks/useGroupActions";
 import { useSwipeNavigation } from "./hooks/useSwipeNavigation";
 import { useCrossGroupRecipients } from "./hooks/useCrossGroupRecipients";
-import { useChatTab } from "./hooks/useChatTab";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useGlobalEvents } from "./hooks/useGlobalEvents";
 import { useViewportHeight } from "./hooks/useViewportHeight";
@@ -31,7 +30,7 @@ import {
   useObservabilityStore,
 } from "./stores";
 import * as api from "./services/api";
-import type { Actor } from "./types";
+import type { Actor, ChatMessageData, LedgerEvent } from "./types";
 
 // ============ Main App Component ============
 
@@ -92,6 +91,8 @@ export default function App() {
     composerFiles,
     replyTarget,
     setDestGroupId,
+    setReplyTarget,
+    setToText,
     switchGroup,
   } = useComposerStore();
 
@@ -167,19 +168,40 @@ export default function App() {
     composerGroupId: activeGroupId,
     sendGroupId: computedSendGroupId,
   });
+  const sendGroupId = computedSendGroupId;
 
-  // Chat tab hook (provides message actions and chat state)
-  const {
-    startReply,
-    destGroupId: sendGroupId,
-  } = useChatTab({
-    selectedGroupId,
-    actors,
-    recipientActors,
-    composerRef,
-    fileInputRef,
-    chatAtBottomRef,
-  });
+  const startReply = React.useCallback((ev: LedgerEvent) => {
+    if (!ev.id || ev.kind !== "chat.message") return;
+    const data = ev.data as ChatMessageData | undefined;
+    const text = data?.text ? String(data.text) : "";
+
+    if (selectedGroupId) {
+      setDestGroupId(selectedGroupId);
+    }
+
+    const by = String(ev.by || "").trim();
+    const authorIsActor = by && by !== "user" && actors.some((a) => String(a.id || "") === by);
+    const originalTo = Array.isArray(data?.to)
+      ? data.to.map((token) => String(token || "").trim()).filter((token) => token)
+      : [];
+    const policy = groupSettings?.default_send_to || "foreman";
+    const defaultTo =
+      authorIsActor
+        ? [by]
+        : originalTo.length > 0
+          ? originalTo
+          : policy === "foreman"
+            ? ["@foreman"]
+            : [];
+    setToText(defaultTo.join(", "));
+
+    setReplyTarget({
+      eventId: String(ev.id),
+      by: String(ev.by || "unknown"),
+      text: text.slice(0, 100) + (text.length > 100 ? "..." : ""),
+    });
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, [selectedGroupId, actors, groupSettings, setDestGroupId, setReplyTarget, setToText]);
 
   // Deep link hook
   const { parseUrlDeepLink } = useDeepLink({
@@ -443,21 +465,21 @@ export default function App() {
               ? "bg-gradient-to-br from-cyan-500/10 via-cyan-600/5 to-transparent"
               : "bg-gradient-to-br from-cyan-400/15 via-cyan-500/5 to-transparent"
             }`}
-          style={{ filter: "blur(80px)", willChange: "transform" }}
+          style={{ opacity: 0.75 }}
         />
         <div
           className={`absolute top-1/4 -right-24 w-80 h-80 rounded-full liquid-blob ${isDark
               ? "bg-gradient-to-bl from-purple-500/10 via-indigo-600/5 to-transparent"
               : "bg-gradient-to-bl from-purple-400/10 via-indigo-500/5 to-transparent"
             }`}
-          style={{ filter: "blur(70px)", animationDelay: "-3s", willChange: "transform" }}
+          style={{ animationDelay: "-3s", opacity: 0.65 }}
         />
         <div
           className={`absolute -bottom-20 left-1/3 w-72 h-72 rounded-full liquid-blob ${isDark
               ? "bg-gradient-to-tr from-blue-500/10 via-sky-600/5 to-transparent"
               : "bg-gradient-to-tr from-blue-400/10 via-sky-500/5 to-transparent"
             }`}
-          style={{ filter: "blur(60px)", animationDelay: "-5s", willChange: "transform" }}
+          style={{ animationDelay: "-5s", opacity: 0.6 }}
         />
       </div>
 
@@ -497,7 +519,7 @@ export default function App() {
 
         {/* Main content */}
         <main
-          className={`absolute inset-0 md:relative md:inset-auto h-full flex flex-col overflow-hidden backdrop-blur-sm ${isDark ? "bg-black/60" : "bg-white/60"
+          className={`absolute inset-0 md:relative md:inset-auto h-full flex flex-col overflow-hidden ${isDark ? "bg-black/75" : "bg-white/80"
             }`}
         >
           <AppHeader

@@ -165,22 +165,15 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     getScrollElement: () => parentRef.current,
     getItemKey: (index) => messages[index]?.id ?? index,
     estimateSize: getEstimatedSize,
-    overscan: 5,
+    overscan: 10,
     paddingStart: 72,
   });
 
 
-  const measureElement = useCallback(
-    (node: HTMLDivElement | null) => {
-      if (!node) return;
-      if (typeof queueMicrotask === "function") {
-        queueMicrotask(() => virtualizer.measureElement(node));
-      } else {
-        Promise.resolve().then(() => virtualizer.measureElement(node));
-      }
-    },
-    [virtualizer]
-  );
+  // Direct ref — synchronous measurement eliminates the jitter caused by
+  // the old queueMicrotask wrapper (which deferred measurement by one frame,
+  // making the first paint use the stale estimate height).
+  const measureElement = virtualizer.measureElement;
 
   const checkIsAtBottom = useCallback(() => {
     const el = parentRef.current;
@@ -469,7 +462,16 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     };
   }, [onScrollSnapshot, resetKey, scrollRef]);
 
-  // Restore scroll position after loading older messages
+  // Restore scroll position after loading older messages (prepend).
+  //
+  // The old implementation used a scrollEventSeq check to detect "user scrolled
+  // away during loading, so skip restore". But layout-triggered scroll events
+  // from the virtualizer (Loading indicator appearing, row re-measurement, etc.)
+  // also increment the seq, causing the restore to be falsely skipped — leaving
+  // scrollTop near 0 and immediately re-triggering onLoadMore in a loop.
+  //
+  // The arm/disarm gate (topLoadArmedRef) already prevents duplicate loads, so
+  // the seq check is unnecessary. Removed.
   const restorePendingAnchor = useCallback(() => {
     if (isLoadingHistory) return;
     if (!pendingRestoreRef.current) return;
@@ -478,23 +480,13 @@ const VirtualMessageListInner = function VirtualMessageListInner({
 
     const idleMs = performance.now() - lastScrollEventAtRef.current;
     if (idleMs < 120) {
-      // Defer restore until scroll settles instead of discarding it.
-      // Without this, inertia scrolling during loadMoreHistory causes the
-      // anchor to be permanently lost and the scroll position jumps.
       const remaining = Math.max(20, 120 - idleMs);
       window.setTimeout(() => restorePendingAnchor(), remaining);
       return;
     }
 
     pendingRestoreRef.current = false;
-
-    const restoreSeq = pendingRestoreSeqRef.current;
     pendingRestoreSeqRef.current = null;
-    if (restoreSeq !== null && scrollEventSeqRef.current !== restoreSeq) {
-      anchorMessageIdRef.current = "";
-      anchorOffsetRef.current = 0;
-      return;
-    }
 
     const anchorId = anchorMessageIdRef.current;
     const offsetInRow = anchorOffsetRef.current;
@@ -504,6 +496,10 @@ const VirtualMessageListInner = function VirtualMessageListInner({
     if (anchorId) {
       const idx = messages.findIndex((m) => String(m.id || "") === anchorId);
       if (idx >= 0) {
+        // Keep topLoad disarmed so the restored position (which may still be
+        // near the top) doesn't immediately re-trigger another load.
+        topLoadArmedRef.current = false;
+
         const offsetInfo = virtualizer.getOffsetForIndex(idx, "start");
         if (offsetInfo) {
           virtualizer.scrollToOffset(offsetInfo[0] + offsetInRow, { align: "start", behavior: "auto" });
@@ -580,7 +576,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
               height: `${virtualizer.getTotalSize()}px`,
               width: "100%",
               position: "relative",
-              contain: "strict",
+              contain: "layout paint",
             }}
           >
             {virtualizer.getVirtualItems().map((virtualRow) => {

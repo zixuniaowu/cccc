@@ -74,6 +74,7 @@
   "showRecipientStatus": "Show recipient status",
   "read": "read",
   "pending": "pending",
+  "sending": "Sending…",
   "searchMessages": "Search Messages",
   "query": "Query",
   "searchPlaceholder": "Search text (case-insensitive)…",

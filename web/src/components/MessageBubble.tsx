@@ -19,6 +19,32 @@ import { MarkdownRenderer } from "./MarkdownRenderer";
 import { getRecipientDisplayName } from "../hooks/useActorDisplayName";
 import { ImageIcon, FileIcon, CloseIcon } from "./Icons";
 
+const RUNTIME_LOGO_BASE = import.meta.env.BASE_URL;
+const RUNTIME_LOGO: Record<string, string> = {
+    claude: `${RUNTIME_LOGO_BASE}logos/claude.png`,
+    codex: `${RUNTIME_LOGO_BASE}logos/codex.png`,
+    gemini: `${RUNTIME_LOGO_BASE}logos/gemini.png`,
+};
+
+function resolveSenderActor(actors: Actor[], senderId: string): Actor | null {
+    const key = String(senderId || "").trim();
+    if (!key) return null;
+
+    const exactId = actors.find((actor) => String(actor.id || "").trim() === key);
+    if (exactId) return exactId;
+
+    // 兼容历史消息：旧 `by` 可能已经不是现行 actor id，但仍等于当前 title。
+    const exactTitle = actors.find((actor) => String(actor.title || "").trim() === key);
+    if (exactTitle) return exactTitle;
+
+    const lower = key.toLowerCase();
+    return actors.find((actor) => {
+        const actorId = String(actor.id || "").trim().toLowerCase();
+        const actorTitle = String(actor.title || "").trim().toLowerCase();
+        return actorId === lower || actorTitle === lower;
+    }) || null;
+}
+
 
 function formatEventLine(ev: LedgerEvent): string {
     if (ev.kind === "chat.message" && ev.data && typeof ev.data === "object") {
@@ -378,23 +404,24 @@ export const MessageBubble = memo(function MessageBubble({
     }, [displayNameMap, dstGroupId, dstTo, groupLabelById, hasDestination, recipients]);
 
     // Sender display name (use title if available)
+    const senderActor = useMemo(() => {
+        if (isUserMessage) return null;
+        return resolveSenderActor(actors, String(ev.by || ""));
+    }, [actors, ev.by, isUserMessage]);
+
     const senderDisplayName = useMemo(() => {
         const by = String(ev.by || "");
         if (!by || by === "user") return by;
-        return displayNameMap.get(by) || by;
-    }, [ev.by, displayNameMap]);
+        return String(senderActor?.title || "").trim() || displayNameMap.get(by) || by;
+    }, [displayNameMap, ev.by, senderActor]);
 
     // Sender runtime logo path (for actor avatars)
     const senderLogoSrc = useMemo(() => {
         if (isUserMessage) return null;
-        const by = String(ev.by || "");
-        const actor = actors.find((a) => String(a.id || "") === by);
-        const runtime = String(actor?.runtime || "").toLowerCase();
+        const runtime = String(senderActor?.runtime || "").toLowerCase();
         if (!runtime) return null;
-        // Only return a path for runtimes that have a logo file
-        const LOGO_RUNTIMES = ["claude", "codex", "gemini"];
-        return LOGO_RUNTIMES.includes(runtime) ? `/ui/logos/${runtime}.png` : null;
-    }, [ev.by, actors, isUserMessage]);
+        return RUNTIME_LOGO[runtime] || null;
+    }, [isUserMessage, senderActor]);
 
     const readPreviewEntries = visibleReadStatusEntries.slice(0, 3);
     const readPreviewOverflow = Math.max(0, visibleReadStatusEntries.length - readPreviewEntries.length);

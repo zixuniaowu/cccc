@@ -74,6 +74,7 @@
   "showRecipientStatus": "受信者の状況を表示",
   "read": "既読",
   "pending": "未読",
+  "sending": "送信中…",
   "searchMessages": "メッセージの検索",
   "query": "クエリ",
   "searchPlaceholder": "検索テキスト (大文字と小文字は区別されません)…",

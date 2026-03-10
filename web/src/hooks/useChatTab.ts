@@ -43,6 +43,7 @@ export function useChatTab({
   const { events, chatWindow, hasMoreHistory, isLoadingHistory, isChatWindowLoading } = useGroupStore(
     useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId])
   );
+  const appendEvent = useGroupStore((state) => state.appendEvent);
   const groupDoc = useGroupStore((state) => state.groupDoc);
   const groupContext = useGroupStore((state) => state.groupContext);
   const groupSettings = useGroupStore((state) => state.groupSettings);
@@ -342,7 +343,6 @@ export function useChatTab({
           setDestGroupId(selectedGroupId);
           return;
         }
-
         applyImmediateComposerFeedback();
 
         resp = await api.replyMessage(
@@ -363,9 +363,8 @@ export function useChatTab({
 
           applyImmediateComposerFeedback();
 
-          resp = await api.sendCrossGroupMessage(selectedGroupId, dstGroup, txt, to, prio, replyRequired);
+          resp = await api.sendCrossGroupMessage(selectedGroupId, dstGroup, txt, to, prio, replyRequiredSnapshot);
         } else {
-
           applyImmediateComposerFeedback();
 
           resp = await api.sendMessage(
@@ -383,6 +382,9 @@ export function useChatTab({
         showError(`${resp.error.code}: ${resp.error.message}`);
         return;
       }
+      if (!isCrossGroup && resp.result && typeof resp.result === "object" && "event" in resp.result && resp.result.event) {
+        appendEvent(resp.result.event as LedgerEvent, selectedGroupId);
+      }
       setDestGroupId(selectedGroupId);
       clearDraft(selectedGroupId);
       if (fileInputRef?.current) fileInputRef.current.value = "";
@@ -399,8 +401,8 @@ export function useChatTab({
       }
       onMessageSent?.();
     } catch (error) {
-      restoreComposerState();
       const message = error instanceof Error ? error.message : "send failed";
+      restoreComposerState();
       showError(message);
     } finally {
       setBusy("");
@@ -416,6 +418,7 @@ export function useChatTab({
     toTokens,
     replyTarget,
     inChatWindow,
+    appendEvent,
     setBusy,
     showError,
     setComposerText,

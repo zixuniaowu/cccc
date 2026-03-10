@@ -138,8 +138,8 @@
   --glass-tab-border-active: rgba(255, 255, 255, 0.14);
   --glass-tab-shadow-active: 0 2px 6px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
 
-  /* Bubble glass tokens */
-  --glass-bubble-bg: rgba(20, 20, 26, 0.76);
+  /* Bubble glass tokens — fully opaque for reliable GPU rasterization */
+  --glass-bubble-bg: #14141a;
   --glass-bubble-border: rgba(255, 255, 255, 0.07);
   --glass-bubble-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
 
@@ -858,7 +858,7 @@ select {
 }
 
 .liquid-blob {
-  animation: liquid-morph 8s ease-in-out infinite;
+  animation: liquid-morph 12s ease-in-out infinite;
 }
 
 /* Glass group item — sidebar list item */
@@ -884,9 +884,7 @@ select {
 .glass-group-item-active {
   background: var(--glass-accent-bg);
   border-color: var(--glass-accent-border);
-  box-shadow: var(--glass-accent-glow), var(--glass-inner-glow);
-  backdrop-filter: blur(12px) saturate(180%);
-  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  box-shadow: var(--glass-inner-glow), 0 2px 10px rgba(14, 165, 233, 0.12);
 }
 
 .glass-group-item-active::before {
@@ -906,13 +904,12 @@ select {
 }
 
 .dark .glass-group-item-active {
-  box-shadow: var(--glass-accent-glow), 0 4px 16px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 /* Glass status pill — premium badge */
 .glass-status-pill {
-  backdrop-filter: blur(8px) saturate(160%);
-  -webkit-backdrop-filter: blur(8px) saturate(160%);
+  background-clip: padding-box;
   border: 1px solid transparent;
   letter-spacing: 0.05em;
 }
@@ -977,11 +974,11 @@ select {
 }
 
 .glow-pulse {
-  animation: glow-breathe 3s ease-in-out infinite;
+  animation: none;
 }
 
 .dark .glow-pulse {
-  animation: glow-breathe-dark 3s ease-in-out infinite;
+  animation: none;
 }
 
 /* Run indicator glow */
@@ -1036,11 +1033,9 @@ select {
   box-shadow: var(--glass-tab-shadow-active);
 }
 
-/* Glass message bubble */
+/* Glass message bubble — no backdrop-filter for GPU performance */
 .glass-bubble {
   background: var(--glass-bubble-bg);
-  backdrop-filter: blur(16px) saturate(180%);
-  -webkit-backdrop-filter: blur(16px) saturate(180%);
   border: 1px solid var(--glass-bubble-border);
   box-shadow: var(--glass-bubble-shadow);
 }
@@ -1048,8 +1043,6 @@ select {
 /* Glass overlay for modals */
 .glass-overlay {
   background: rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(12px) saturate(120%);
-  -webkit-backdrop-filter: blur(12px) saturate(120%);
 }
 
 .dark .glass-overlay {

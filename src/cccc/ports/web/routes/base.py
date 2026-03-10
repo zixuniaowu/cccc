@@ -18,6 +18,7 @@ from ..schemas import (
     get_principal,
     require_admin,
     require_group,
+    require_user,
 )
 
 
@@ -195,7 +196,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             )
         return await ctx.daemon({"op": "capability_allowlist_reset", "args": {"by": str(by or "user")}})
 
-    @global_router.get("/api/v1/capabilities/overview", dependencies=[Depends(require_admin)])
+    @global_router.get("/api/v1/capabilities/overview", dependencies=[Depends(require_user)])
     async def capability_overview(
         query: str = "",
         limit: int = 400,
@@ -352,7 +353,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             }
         )
 
-    @global_router.get("/api/v1/runtimes", dependencies=[Depends(require_admin)])
+    @global_router.get("/api/v1/runtimes", dependencies=[Depends(require_user)])
     async def runtimes() -> Dict[str, Any]:
         """List available agent runtimes on the system."""
         if ctx.read_only:

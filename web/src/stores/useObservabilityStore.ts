@@ -52,10 +52,12 @@ export const useObservabilityStore = create<ObservabilityState>((set) => ({
         set(_fromObs(resp.result.observability));
         return;
       }
-      console.error(
-        "Failed to load observability settings:",
-        resp.error?.message || resp.error?.code || "unknown error"
-      );
+      if (resp.error?.code !== "permission_denied") {
+        console.error(
+          "Failed to load observability settings:",
+          resp.error?.message || resp.error?.code || "unknown error"
+        );
+      }
     } catch (e) {
       console.error("Failed to load observability settings:", e);
     }

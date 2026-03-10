@@ -74,6 +74,7 @@
   "showRecipientStatus": "查看收件人状态",
   "read": "已读",
   "pending": "待读",
+  "sending": "发送中…",
   "searchMessages": "搜索消息",
   "query": "搜索关键词",
   "searchPlaceholder": "搜索文本 (不区分大小写)…",

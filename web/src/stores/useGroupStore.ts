@@ -885,7 +885,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     try {
       const [show, tail, actorsResp] = await Promise.all([
         api.fetchGroup(gid),
-        api.fetchLedgerTail(gid, 40),
+        api.fetchLedgerTail(gid),
         api.fetchActors(gid),
       ]);
 
