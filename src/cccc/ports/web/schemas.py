@@ -446,6 +446,16 @@ def require_admin(request: Request) -> Any:
     return check_admin(request)
 
 
+def require_user(request: Request) -> Any:
+    """Allow any authenticated user (admin or non-admin). Reject non-user principals."""
+    principal = get_principal(request)
+    if not _tokens_enabled():
+        return principal
+    if _principal_kind(principal) == "user":
+        return principal
+    raise HTTPException(status_code=403, detail={"code": "permission_denied", "message": "authentication required", "details": {}})
+
+
 def require_group(request: Request, group_id: str = FastApiPath(...)) -> Any:
     return check_group(request, group_id)
 

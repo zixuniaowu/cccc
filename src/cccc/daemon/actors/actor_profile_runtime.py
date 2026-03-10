@@ -136,6 +136,7 @@ def resolve_linked_actor_before_start(
         )
 
     # Apply capability autoload at startup:
+    # 0) role-based defaults (foreman gets management packs automatically)
     # 1) profile capability defaults (if linked)
     # 2) actor-specific autoload list
     try:
@@ -143,6 +144,25 @@ def resolve_linked_actor_before_start(
             apply_actor_capability_autoload,
             apply_actor_profile_capability_defaults,
         )
+        from ...kernel.actors import get_effective_role
+
+        # Role-based default capabilities — foreman always gets management packs
+        _ROLE_CAPABILITY_DEFAULTS: Dict[str, list] = {
+            "foreman": [
+                "pack:group-runtime",   # actor/group/runtime lifecycle
+                "pack:diagnostics",     # terminal transcript + debug
+            ],
+        }
+        role = get_effective_role(group, actor_id)
+        role_defaults = _ROLE_CAPABILITY_DEFAULTS.get(role, [])
+        if role_defaults:
+            apply_actor_capability_autoload(
+                group_id=group.group_id,
+                actor_id=actor_id,
+                autoload_capabilities=role_defaults,
+                scope="actor",
+                reason=f"role_default:{role}",
+            )
 
         if isinstance(profile, dict):
             defaults_raw = profile.get("capability_defaults")

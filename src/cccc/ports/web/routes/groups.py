@@ -40,6 +40,7 @@ from ..schemas import (
     filter_groups_for_principal,
     require_admin,
     require_group,
+    require_user,
 )
 
 
@@ -151,7 +152,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             },
         }
 
-    @global_router.get("/events/stream", dependencies=[Depends(require_admin)])
+    @global_router.get("/events/stream", dependencies=[Depends(require_user)])
     async def global_events_stream() -> StreamingResponse:
         """SSE stream for global events (group created/deleted, etc.)."""
         from ..streams import sse_global_events_tail, create_sse_response

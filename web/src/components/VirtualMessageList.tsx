@@ -47,7 +47,7 @@ const VirtualMessageListInner = function VirtualMessageListInner({
   readOnly,
   groupId,
   groupLabelById,
-  viewKey,
+  viewKey: _viewKey,
   initialScrollTargetId,
   initialScrollAnchorId,
   initialScrollAnchorOffsetPx,

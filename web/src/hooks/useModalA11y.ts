@@ -89,7 +89,10 @@ export function useModalA11y(isOpen: boolean, onClose: () => void) {
   const modalRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
   const handleEscape = useCallback(
     (e: KeyboardEvent) => {

@@ -159,14 +159,6 @@ function cloneActors(actors: Actor[] | undefined): Actor[] {
   return Array.isArray(actors) ? [...actors] : [];
 }
 
-function cloneChatWindow(chatWindow: ChatWindowState | null | undefined): ChatWindowState | null {
-  if (!chatWindow) return null;
-  return {
-    ...chatWindow,
-    events: cloneEvents(chatWindow.events),
-  };
-}
-
 function cloneGroupContext(ctx: GroupContext | null | undefined): GroupContext | null {
   return ctx ? { ...ctx } : null;
 }
@@ -224,16 +216,6 @@ function saveCurrentViewSnapshot(groupId: string, state: GroupState): void {
   });
 }
 
-function createEmptyChatBucket(seed?: Partial<GroupChatBucket>): GroupChatBucket {
-  return {
-    events: cloneEvents(seed?.events),
-    chatWindow: cloneChatWindow(seed?.chatWindow),
-    hasMoreHistory: seed?.hasMoreHistory ?? true,
-    isLoadingHistory: !!seed?.isLoadingHistory,
-    isChatWindowLoading: !!seed?.isChatWindowLoading,
-  };
-}
-
 function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>, groupId: string): GroupChatBucket {
   const gid = String(groupId || "").trim();
   if (!gid) return EMPTY_CHAT_BUCKET;
@@ -262,15 +244,6 @@ export function selectChatBucketState(state: GroupState, groupId: string): Group
   const gid = String(groupId || "").trim();
   if (!gid) return EMPTY_CHAT_BUCKET;
   return state.chatByGroup[gid] || EMPTY_CHAT_BUCKET;
-}
-function buildChatProjection(bucket: GroupChatBucket) {
-  return {
-    events: cloneEvents(bucket.events),
-    chatWindow: cloneChatWindow(bucket.chatWindow),
-    hasMoreHistory: !!bucket.hasMoreHistory,
-    isLoadingHistory: !!bucket.isLoadingHistory,
-    isChatWindowLoading: !!bucket.isChatWindowLoading,
-  };
 }
 
 function buildChatBucketPatch(
@@ -511,6 +484,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const gid = resolveChatGroupId(state, groupId);
       if (!gid) return state;
       const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      if (event.id && bucket.events.some((e) => e.id === event.id)) return state;
       const nextEvents = bucket.events.concat([event]);
       return buildChatBucketPatch(state, gid, {
         events: nextEvents.length > MAX_UI_EVENTS ? nextEvents.slice(nextEvents.length - MAX_UI_EVENTS) : nextEvents,

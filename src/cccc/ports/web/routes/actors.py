@@ -18,6 +18,7 @@ from ..schemas import (
     check_group,
     require_admin,
     require_group,
+    require_user,
     resolve_websocket_principal,
     websocket_tokens_active,
 )
@@ -269,7 +270,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             }
         )
 
-    @global_router.get("/actor_profiles", dependencies=[Depends(require_admin)])
+    @global_router.get("/actor_profiles", dependencies=[Depends(require_user)])
     async def actor_profiles_list(by: str = "user") -> Dict[str, Any]:
         resp = await ctx.daemon({"op": "actor_profile_list", "args": {"by": by}})
         if await _developer_mode_enabled():
@@ -282,7 +283,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             ]
         return resp
 
-    @global_router.get("/actor_profiles/{profile_id}", dependencies=[Depends(require_admin)])
+    @global_router.get("/actor_profiles/{profile_id}", dependencies=[Depends(require_user)])
     async def actor_profiles_get(profile_id: str, by: str = "user") -> Dict[str, Any]:
         resp = await ctx.daemon({"op": "actor_profile_get", "args": {"profile_id": profile_id, "by": by}})
         if not await _developer_mode_enabled():

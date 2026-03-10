@@ -432,7 +432,6 @@ export function useChatTab({
     scrollRef,
     setShowScrollButton,
     setChatUnreadCount,
-    selectedGroupId,
     onMessageSent,
   ]);
 

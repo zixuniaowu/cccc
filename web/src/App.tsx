@@ -120,6 +120,7 @@ export default function App() {
     [selectedGroupId, chatSessions]
   );
   const chatUnreadCount = chatSession.chatUnreadCount;
+  const chatSessionAtBottom = chatSession.scrollSnapshot?.atBottom;
 
   // Hide Panorama tab when browser lacks GPU/3D support or feature is disabled
   const canRender3D = useMemo(() => {
@@ -171,7 +172,6 @@ export default function App() {
   const {
     startReply,
     destGroupId: sendGroupId,
-    inChatWindow,
   } = useChatTab({
     selectedGroupId,
     actors,
@@ -246,7 +246,7 @@ export default function App() {
 
     // If user was at bottom before switching away, scroll to bottom on return
     // (new messages may have arrived while on another tab)
-    if (chatSession.scrollSnapshot?.atBottom ?? chatAtBottomRef.current) {
+    if (chatSessionAtBottom ?? chatAtBottomRef.current) {
       chatAtBottomRef.current = true;
       requestAnimationFrame(() => {
         el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
@@ -261,7 +261,7 @@ export default function App() {
     chatAtBottomRef.current = atBottom;
     setShowScrollButton(selectedGroupId, !atBottom);
     if (atBottom) setChatUnreadCount(selectedGroupId, 0);
-  }, [activeTab, selectedGroupId, setChatUnreadCount, setShowScrollButton]);
+  }, [activeTab, selectedGroupId, chatSessionAtBottom, setChatUnreadCount, setShowScrollButton]);
 
   // Auto-fallback: switch away from panorama tab when feature is disabled
   useEffect(() => {

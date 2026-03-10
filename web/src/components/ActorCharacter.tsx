@@ -231,14 +231,8 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     const isOffline = isRunning === false;
 
     // 角色的位姿在挂载后交给 useCharacterAnimation 接管，避免每次 render 把新目标位硬灌进去造成闪现。
-    const initialPosition = useMemo(
-      () => position,
-      [agent.id],
-    );
-    const initialRotationTuple = useMemo(
-      () => [0, rotationY, 0] as [number, number, number],
-      [agent.id],
-    );
+    const initialPositionRef = useRef(position);
+    const initialRotationTupleRef = useRef([0, rotationY, 0] as [number, number, number]);
 
     // Shared cached material (body color; gray + semi-transparent when offline)
     const mat = getBodyMaterial(color, isOffline);
@@ -481,8 +475,8 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     return (
       <group
         ref={ref}
-        position={initialPosition}
-        rotation={initialRotationTuple}
+        position={initialPositionRef.current}
+        rotation={initialRotationTupleRef.current}
         onClick={(e) => { e.stopPropagation(); onCharacterClick?.(); }}
         onPointerOver={() => { document.body.style.cursor = "pointer"; }}
         onPointerOut={() => { document.body.style.cursor = "auto"; }}
