@@ -17,6 +17,7 @@ import { useChatTab } from "./hooks/useChatTab";
 import { useDeepLink } from "./hooks/useDeepLink";
 import { useGlobalEvents } from "./hooks/useGlobalEvents";
 import { useViewportHeight } from "./hooks/useViewportHeight";
+import { getChatSession } from "./stores/useUIStore";
 import { classNames } from "./utils/classNames";
 import { ActorTab } from "./pages/ActorTab";
 import { ChatTab } from "./pages/chat";
@@ -44,48 +45,44 @@ export default function App() {
   useViewportHeight();
 
   // Zustand stores
-  const {
-    groups,
-    groupOrder,
-    selectedGroupId,
-    groupDoc,
-    actors,
-    groupContext,
-    groupSettings,
-    setSelectedGroupId,
-    refreshGroups,
-    refreshActors,
-    loadGroup,
-    warmGroup,
-    openChatWindow,
-    closeChatWindow,
-    reorderGroups,
-    getOrderedGroups,
-  } = useGroupStore();
+  const groups = useGroupStore((state) => state.groups);
+  const groupOrder = useGroupStore((state) => state.groupOrder);
+  const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
+  const groupDoc = useGroupStore((state) => state.groupDoc);
+  const actors = useGroupStore((state) => state.actors);
+  const groupContext = useGroupStore((state) => state.groupContext);
+  const groupSettings = useGroupStore((state) => state.groupSettings);
+  const setSelectedGroupId = useGroupStore((state) => state.setSelectedGroupId);
+  const refreshGroups = useGroupStore((state) => state.refreshGroups);
+  const refreshActors = useGroupStore((state) => state.refreshActors);
+  const loadGroup = useGroupStore((state) => state.loadGroup);
+  const warmGroup = useGroupStore((state) => state.warmGroup);
+  const openChatWindow = useGroupStore((state) => state.openChatWindow);
+  const closeChatWindow = useGroupStore((state) => state.closeChatWindow);
+  const reorderGroups = useGroupStore((state) => state.reorderGroups);
+  const getOrderedGroups = useGroupStore((state) => state.getOrderedGroups);
 
-  const {
-    busy,
-    errorMsg,
-    notice,
-    isTransitioning,
-    sidebarOpen,
-    sidebarCollapsed,
-    activeTab,
-    chatUnreadCount,
-    isSmallScreen,
-    webReadOnly,
-    showError,
-    dismissError,
-    dismissNotice,
-    setSidebarOpen,
-    toggleSidebarCollapsed,
-    setActiveTab,
-    setShowScrollButton,
-    setChatUnreadCount,
-    setSmallScreen,
-    setWebReadOnly,
-    sseStatus,
-  } = useUIStore();
+  const busy = useUIStore((s) => s.busy);
+  const errorMsg = useUIStore((s) => s.errorMsg);
+  const notice = useUIStore((s) => s.notice);
+  const isTransitioning = useUIStore((s) => s.isTransitioning);
+  const sidebarOpen = useUIStore((s) => s.sidebarOpen);
+  const sidebarCollapsed = useUIStore((s) => s.sidebarCollapsed);
+  const activeTab = useUIStore((s) => s.activeTab);
+  const chatSessions = useUIStore((s) => s.chatSessions);
+  const isSmallScreen = useUIStore((s) => s.isSmallScreen);
+  const webReadOnly = useUIStore((s) => s.webReadOnly);
+  const showError = useUIStore((s) => s.showError);
+  const dismissError = useUIStore((s) => s.dismissError);
+  const dismissNotice = useUIStore((s) => s.dismissNotice);
+  const setSidebarOpen = useUIStore((s) => s.setSidebarOpen);
+  const toggleSidebarCollapsed = useUIStore((s) => s.toggleSidebarCollapsed);
+  const setActiveTab = useUIStore((s) => s.setActiveTab);
+  const setShowScrollButton = useUIStore((s) => s.setShowScrollButton);
+  const setChatUnreadCount = useUIStore((s) => s.setChatUnreadCount);
+  const setSmallScreen = useUIStore((s) => s.setSmallScreen);
+  const setWebReadOnly = useUIStore((s) => s.setWebReadOnly);
+  const sseStatus = useUIStore((s) => s.sseStatus);
 
   const { openModal } = useModalStore();
 
@@ -117,8 +114,12 @@ export default function App() {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const activeTabRef = useRef<string>("chat");
   const chatAtBottomRef = useRef<boolean>(true);
-  const chatScrollMemoryRef = useRef<Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>>({});
   const actorsRef = useRef<Actor[]>([]);
+  const chatSession = useMemo(
+    () => getChatSession(selectedGroupId, chatSessions),
+    [selectedGroupId, chatSessions]
+  );
+  const chatUnreadCount = chatSession.chatUnreadCount;
 
   // Hide Panorama tab when browser lacks GPU/3D support or feature is disabled
   const canRender3D = useMemo(() => {
@@ -178,7 +179,6 @@ export default function App() {
     composerRef,
     fileInputRef,
     chatAtBottomRef,
-    chatScrollMemoryRef,
   });
 
   // Deep link hook
@@ -240,26 +240,28 @@ export default function App() {
   useEffect(() => {
     activeTabRef.current = activeTab;
     if (activeTab !== "chat") return;
+    if (!selectedGroupId) return;
     const el = eventContainerRef.current;
     if (!el) return;
 
     // If user was at bottom before switching away, scroll to bottom on return
     // (new messages may have arrived while on another tab)
-    if (chatAtBottomRef.current) {
+    if (chatSession.scrollSnapshot?.atBottom ?? chatAtBottomRef.current) {
+      chatAtBottomRef.current = true;
       requestAnimationFrame(() => {
         el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
       });
-      setShowScrollButton(false);
-      setChatUnreadCount(0);
+      setShowScrollButton(selectedGroupId, false);
+      setChatUnreadCount(selectedGroupId, 0);
       return;
     }
 
     const threshold = 100;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
     chatAtBottomRef.current = atBottom;
-    setShowScrollButton(!atBottom);
-    if (atBottom) setChatUnreadCount(0);
-  }, [activeTab, setChatUnreadCount, setShowScrollButton]);
+    setShowScrollButton(selectedGroupId, !atBottom);
+    if (atBottom) setChatUnreadCount(selectedGroupId, 0);
+  }, [activeTab, selectedGroupId, setChatUnreadCount, setShowScrollButton]);
 
   // Auto-fallback: switch away from panorama tab when feature is disabled
   useEffect(() => {
@@ -424,15 +426,6 @@ export default function App() {
 
   // ============ Computed for ChatTab ============
 
-  const restoreChatAnchor = useMemo(() => {
-    if (!selectedGroupId) return null;
-    if (inChatWindow) return null;
-    const snap = chatScrollMemoryRef.current[String(selectedGroupId || "").trim()];
-    if (!snap || snap.atBottom) return null;
-    if (!snap.anchorId) return null;
-    return snap;
-  }, [inChatWindow, selectedGroupId]);
-
   // ============ Render ============
 
   return (
@@ -587,9 +580,6 @@ export default function App() {
                 composerRef={composerRef}
                 fileInputRef={fileInputRef}
                 chatAtBottomRef={chatAtBottomRef}
-                chatScrollMemoryRef={chatScrollMemoryRef}
-                chatInitialScrollAnchorId={!inChatWindow ? restoreChatAnchor?.anchorId : undefined}
-                chatInitialScrollAnchorOffsetPx={!inChatWindow ? restoreChatAnchor?.offsetPx : undefined}
                 appendComposerFiles={handleAppendComposerFiles}
                 onStartGroup={handleStartGroup}
                 showMentionMenu={showMentionMenu}
@@ -613,6 +603,7 @@ export default function App() {
                     tasksSummary={groupContext?.tasks_summary}
                     projectStatus={groupContext?.meta?.project_status}
                     isDark={isDark}
+                    isSmallScreen={isSmallScreen}
                     groupId={selectedGroupId}
                   />
                 </ErrorBoundary>

@@ -171,8 +171,9 @@ function zonePlacements(zone: SemanticZone, index: number): PropPlacement[] {
 
   if (zone.kind === "offline") {
     return [
-      { key: `${zone.id}-freezer`, kind: "freezer", position: [zone.center[0], 0.02, back + 0.04], scale: 0.92 },
-      { key: `${zone.id}-buffer`, kind: "shelf", position: [zone.center[0], 0.02, front - 0.06], rotation: [0, Math.PI, 0], scale: 0.68 },
+      // 离线区后排完整留给床位；建筑统一前移，避免继续压到床尾。
+      { key: `${zone.id}-freezer`, kind: "freezer", position: [zone.center[0] - 0.42, 0.02, front - 0.04], rotation: [0, Math.PI, 0], scale: 0.88 },
+      { key: `${zone.id}-buffer`, kind: "shelf", position: [zone.center[0] + 0.46, 0.02, front - 0.08], rotation: [0, Math.PI, 0], scale: 0.64 },
     ];
   }
 

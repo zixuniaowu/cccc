@@ -12,10 +12,11 @@ interface PanoramaTabProps {
   tasksSummary?: GroupContext["tasks_summary"];
   projectStatus?: string | null;
   isDark: boolean;
+  isSmallScreen?: boolean;
   groupId?: string;
 }
 
-export function PanoramaTab({ agents, actors, tasks, tasksSummary, projectStatus, isDark, groupId }: PanoramaTabProps) {
+export function PanoramaTab({ agents, actors, tasks, tasksSummary, projectStatus, isDark, isSmallScreen, groupId }: PanoramaTabProps) {
   if (agents.length === 0) {
     return (
       <div className="flex-1 flex items-center justify-center">
@@ -36,7 +37,7 @@ export function PanoramaTab({ agents, actors, tasks, tasksSummary, projectStatus
         </div>
       }
     >
-      <ActorScene3D agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} projectStatus={projectStatus} isDark={isDark} groupId={groupId} className="flex-1" />
+      <ActorScene3D agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} projectStatus={projectStatus} isDark={isDark} isSmallScreen={isSmallScreen} groupId={groupId} className="flex-1" />
     </Suspense>
   );
 }

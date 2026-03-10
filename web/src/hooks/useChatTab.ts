@@ -8,7 +8,9 @@ import {
   useComposerStore,
   useModalStore,
   useFormStore,
+  selectChatBucketState,
 } from "../stores";
+import { getChatSession } from "../stores/useUIStore";
 import type { Actor, LedgerEvent, ChatMessageData } from "../types";
 import * as api from "../services/api";
 
@@ -23,10 +25,6 @@ interface UseChatTabOptions {
   fileInputRef?: React.RefObject<HTMLInputElement>;
   /** Chat at bottom ref for scroll state */
   chatAtBottomRef?: React.MutableRefObject<boolean>;
-  /** Scroll memory ref for restoring positions */
-  chatScrollMemoryRef?: React.MutableRefObject<
-    Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>
-  >;
   /** Scroll container ref for programmatic scrolling (e.g. after send) */
   scrollRef?: React.MutableRefObject<HTMLDivElement | null>;
 }
@@ -39,36 +37,34 @@ export function useChatTab({
   composerRef,
   fileInputRef,
   chatAtBottomRef,
-  chatScrollMemoryRef,
   scrollRef,
 }: UseChatTabOptions) {
   // ============ Stores ============
-  const {
-    events,
-    chatWindow,
-    groupDoc,
-    groupContext,
-    groupSettings,
-    hasMoreHistory,
-    isLoadingHistory,
-    isChatWindowLoading,
-    closeChatWindow,
-    openChatWindow,
-    loadMoreHistory,
-  } = useGroupStore();
+  const { events, chatWindow, hasMoreHistory, isLoadingHistory, isChatWindowLoading } = useGroupStore(
+    useCallback((state) => selectChatBucketState(state, selectedGroupId), [selectedGroupId])
+  );
+  const groupDoc = useGroupStore((state) => state.groupDoc);
+  const groupContext = useGroupStore((state) => state.groupContext);
+  const groupSettings = useGroupStore((state) => state.groupSettings);
+  const closeChatWindow = useGroupStore((state) => state.closeChatWindow);
+  const openChatWindow = useGroupStore((state) => state.openChatWindow);
+  const loadMoreHistory = useGroupStore((state) => state.loadMoreHistory);
 
-  const {
-    busy,
-    chatFilter,
-    showScrollButton,
-    chatUnreadCount,
-    setBusy,
-    setChatFilter,
-    setShowScrollButton,
-    setChatUnreadCount,
-    showError,
-    showNotice,
-  } = useUIStore();
+  const busy = useUIStore((s) => s.busy);
+  const chatSessions = useUIStore((s) => s.chatSessions);
+  const setBusy = useUIStore((s) => s.setBusy);
+  const setChatFilter = useUIStore((s) => s.setChatFilter);
+  const setShowScrollButton = useUIStore((s) => s.setShowScrollButton);
+  const setChatUnreadCount = useUIStore((s) => s.setChatUnreadCount);
+  const setChatScrollSnapshot = useUIStore((s) => s.setChatScrollSnapshot);
+  const showError = useUIStore((s) => s.showError);
+  const showNotice = useUIStore((s) => s.showNotice);
+
+  const chatSession = useMemo(
+    () => getChatSession(selectedGroupId, chatSessions),
+    [selectedGroupId, chatSessions]
+  );
+  const { chatFilter, showScrollButton, chatUnreadCount, scrollSnapshot } = chatSession;
 
   const {
     composerText,
@@ -210,6 +206,18 @@ export function useChatTab({
     return `${selectedGroupId}:live`;
   }, [inChatWindow, chatWindow, selectedGroupId]);
 
+  const chatInitialScrollAnchorId = useMemo(() => {
+    if (inChatWindow) return undefined;
+    if (!scrollSnapshot || scrollSnapshot.atBottom || !scrollSnapshot.anchorId) return undefined;
+    return scrollSnapshot.anchorId;
+  }, [inChatWindow, scrollSnapshot]);
+
+  const chatInitialScrollAnchorOffsetPx = useMemo(() => {
+    if (inChatWindow) return undefined;
+    if (!scrollSnapshot || scrollSnapshot.atBottom || !scrollSnapshot.anchorId) return undefined;
+    return Number(scrollSnapshot.offsetPx || 0);
+  }, [inChatWindow, scrollSnapshot]);
+
   // Chat window props (for jump-to mode)
   const chatWindowProps = useMemo(() => {
     if (!inChatWindow || !chatWindow) return null;
@@ -231,6 +239,14 @@ export function useChatTab({
     if (inChatWindow && chatWindow) return chatWindow.centerEventId;
     return undefined;
   }, [inChatWindow, chatWindow]);
+
+  const updateChatFilter = useCallback(
+    (nextFilter: ReturnType<typeof getChatSession>["chatFilter"]) => {
+      if (!selectedGroupId) return;
+      setChatFilter(selectedGroupId, nextFilter);
+    },
+    [selectedGroupId, setChatFilter]
+  );
 
   // Agent state snapshot
   const agentStates = useMemo(
@@ -305,7 +321,9 @@ export function useChatTab({
       setReplyRequired(false);
       setToText("");
       if (chatAtBottomRef) chatAtBottomRef.current = true;
-      setShowScrollButton(false);
+      if (selectedGroupId) {
+        setShowScrollButton(selectedGroupId, false);
+      }
       const scrollEl = scrollRef?.current;
       if (scrollEl) {
         requestAnimationFrame(() => {
@@ -376,7 +394,9 @@ export function useChatTab({
         window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
       }
       // After sending, scroll to bottom so the user sees their new message
-      setChatUnreadCount(0);
+      if (selectedGroupId) {
+        setChatUnreadCount(selectedGroupId, 0);
+      }
       onMessageSent?.();
     } catch (error) {
       restoreComposerState();
@@ -412,6 +432,7 @@ export function useChatTab({
     scrollRef,
     setShowScrollButton,
     setChatUnreadCount,
+    selectedGroupId,
     onMessageSent,
   ]);
 
@@ -529,45 +550,51 @@ export function useChatTab({
   );
 
   const exitChatWindow = useCallback(() => {
-    closeChatWindow();
+    closeChatWindow(selectedGroupId);
     const url = new URL(window.location.href);
     url.searchParams.delete("event");
     url.searchParams.delete("tab");
     window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
-  }, [closeChatWindow]);
+  }, [closeChatWindow, selectedGroupId]);
 
   const handleScrollButtonClick = useCallback(() => {
     if (chatAtBottomRef) chatAtBottomRef.current = true;
-    setShowScrollButton(false);
-    setChatUnreadCount(0);
-    if (selectedGroupId && chatScrollMemoryRef) {
-      chatScrollMemoryRef.current[selectedGroupId] = { atBottom: true, anchorId: "", offsetPx: 0 };
+    if (selectedGroupId) {
+      setShowScrollButton(selectedGroupId, false);
+      setChatUnreadCount(selectedGroupId, 0);
+      setChatScrollSnapshot(selectedGroupId, { atBottom: true, anchorId: "", offsetPx: 0 });
     }
-  }, [selectedGroupId, chatAtBottomRef, chatScrollMemoryRef, setShowScrollButton, setChatUnreadCount]);
+  }, [selectedGroupId, chatAtBottomRef, setShowScrollButton, setChatUnreadCount, setChatScrollSnapshot]);
 
   const handleScrollChange = useCallback(
     (isAtBottom: boolean) => {
       if (chatAtBottomRef) chatAtBottomRef.current = isAtBottom;
-      setShowScrollButton(!isAtBottom);
-      if (isAtBottom) setChatUnreadCount(0);
+      if (!selectedGroupId) return;
+      setShowScrollButton(selectedGroupId, !isAtBottom);
+      if (isAtBottom) setChatUnreadCount(selectedGroupId, 0);
     },
-    [chatAtBottomRef, setShowScrollButton, setChatUnreadCount]
+    [chatAtBottomRef, selectedGroupId, setShowScrollButton, setChatUnreadCount]
   );
 
   const handleScrollSnapshot = useCallback(
     (snap: { atBottom: boolean; anchorId: string; offsetPx: number }, overrideGroupId?: string) => {
       if (inChatWindow && !overrideGroupId) return;
       const gid = String(overrideGroupId || selectedGroupId || "").trim();
-      if (!gid || !chatScrollMemoryRef) return;
-      chatScrollMemoryRef.current[gid] = snap;
+      if (!gid) return;
+      setChatScrollSnapshot(gid, snap);
     },
-    [inChatWindow, selectedGroupId, chatScrollMemoryRef]
+    [inChatWindow, selectedGroupId, setChatScrollSnapshot]
   );
 
   const addAgent = useCallback(() => {
     setNewActorRole(hasForeman ? "peer" : "foreman");
     openModal("addActor");
   }, [hasForeman, openModal, setNewActorRole]);
+
+  const loadCurrentGroupHistory = useCallback(() => {
+    if (!selectedGroupId) return Promise.resolve();
+    return loadMoreHistory(selectedGroupId);
+  }, [selectedGroupId, loadMoreHistory]);
 
   // ============ Return ============
 
@@ -576,15 +603,17 @@ export function useChatTab({
     chatMessages,
     hasAnyChatMessages,
     chatFilter,
-    setChatFilter,
+    setChatFilter: updateChatFilter,
     chatViewKey,
     chatWindowProps,
     chatInitialScrollTargetId,
+    chatInitialScrollAnchorId,
+    chatInitialScrollAnchorOffsetPx,
     chatHighlightEventId,
     inChatWindow,
     isLoadingHistory: inChatWindow ? isChatWindowLoading : isLoadingHistory,
     hasMoreHistory: inChatWindow ? false : hasMoreHistory,
-    loadMoreHistory: inChatWindow ? undefined : loadMoreHistory,
+    loadMoreHistory: inChatWindow ? undefined : loadCurrentGroupHistory,
 
     // UI state
     busy,

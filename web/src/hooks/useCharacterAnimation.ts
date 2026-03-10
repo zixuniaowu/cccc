@@ -133,9 +133,9 @@ export function useCharacterAnimation({
       const dist = Math.sqrt(dx * dx + dz * dz);
 
       const wp = getWalkProfile(derived, item.isForeman);
-      const shouldMove = rule.locomotion && (
-        dist > LOCOMOTION.MOVE_START_DIST || (loco.moving && dist > LOCOMOTION.MOVE_STOP_DIST)
-      );
+      // 即使当前状态本身偏静态，只要目标工位/站位发生了明显变化，也改为走过去而不是直接闪现到位。
+      const shouldRelocate = dist > LOCOMOTION.MOVE_START_DIST || (loco.moving && dist > LOCOMOTION.MOVE_STOP_DIST);
+      const shouldMove = shouldRelocate && (rule.locomotion || derived !== "offline" || !atBed);
       loco.moving = shouldMove;
 
       let posLerp = lf;

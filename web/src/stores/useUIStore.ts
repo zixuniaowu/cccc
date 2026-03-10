@@ -7,6 +7,34 @@ interface UINotice {
   actionId?: string;
 }
 
+export type ChatFilter = "all" | "to_user" | "attention" | "task";
+
+export interface ChatScrollSnapshot {
+  atBottom: boolean;
+  anchorId: string;
+  offsetPx: number;
+}
+
+export interface ChatSessionState {
+  showScrollButton: boolean;
+  chatUnreadCount: number;
+  chatFilter: ChatFilter;
+  scrollSnapshot: ChatScrollSnapshot | null;
+}
+
+const DEFAULT_CHAT_SESSION: ChatSessionState = {
+  showScrollButton: false,
+  chatUnreadCount: 0,
+  chatFilter: "all",
+  scrollSnapshot: null,
+};
+
+export function getChatSession(groupId: string | null | undefined, sessions: Record<string, ChatSessionState>): ChatSessionState {
+  const gid = String(groupId || "").trim();
+  if (!gid) return DEFAULT_CHAT_SESSION;
+  return sessions[gid] || DEFAULT_CHAT_SESSION;
+}
+
 interface UIState {
   // State
   activeTab: string;
@@ -16,10 +44,8 @@ interface UIState {
   isTransitioning: boolean;
   sidebarOpen: boolean;
   sidebarCollapsed: boolean; // Desktop sidebar collapsed state
-  showScrollButton: boolean;
-  chatUnreadCount: number;
   isSmallScreen: boolean;
-  chatFilter: "all" | "to_user" | "attention" | "task";
+  chatSessions: Record<string, ChatSessionState>;
   webReadOnly: boolean;
   sseStatus: "connected" | "connecting" | "disconnected";
 
@@ -35,11 +61,12 @@ interface UIState {
   setSidebarOpen: (v: boolean) => void;
   setSidebarCollapsed: (v: boolean) => void;
   toggleSidebarCollapsed: () => void;
-  setShowScrollButton: (v: boolean) => void;
-  setChatUnreadCount: (v: number) => void;
-  incrementChatUnread: () => void;
+  setShowScrollButton: (groupId: string, v: boolean) => void;
+  setChatUnreadCount: (groupId: string, v: number) => void;
+  incrementChatUnread: (groupId: string) => void;
   setSmallScreen: (v: boolean) => void;
-  setChatFilter: (v: "all" | "to_user" | "attention" | "task") => void;
+  setChatFilter: (groupId: string, v: ChatFilter) => void;
+  setChatScrollSnapshot: (groupId: string, snap: ChatScrollSnapshot | null) => void;
   setWebReadOnly: (v: boolean) => void;
   setSSEStatus: (v: "connected" | "connecting" | "disconnected") => void;
 }
@@ -67,6 +94,22 @@ function saveSidebarCollapsed(collapsed: boolean): void {
   }
 }
 
+function updateChatSession(
+  sessions: Record<string, ChatSessionState>,
+  groupId: string,
+  patch: Partial<ChatSessionState>
+): Record<string, ChatSessionState> {
+  const gid = String(groupId || "").trim();
+  if (!gid) return sessions;
+  return {
+    ...sessions,
+    [gid]: {
+      ...(sessions[gid] || DEFAULT_CHAT_SESSION),
+      ...patch,
+    },
+  };
+}
+
 export const useUIStore = create<UIState>((set) => ({
   // Initial state
   activeTab: "chat",
@@ -76,10 +119,8 @@ export const useUIStore = create<UIState>((set) => ({
   isTransitioning: false,
   sidebarOpen: true,
   sidebarCollapsed: loadSidebarCollapsed(),
-  showScrollButton: false,
-  chatUnreadCount: 0,
   isSmallScreen: false,
-  chatFilter: "all",
+  chatSessions: {},
   webReadOnly: false,
   sseStatus: "disconnected" as const,
 
@@ -140,11 +181,26 @@ export const useUIStore = create<UIState>((set) => ({
       saveSidebarCollapsed(next);
       return { sidebarCollapsed: next };
     }),
-  setShowScrollButton: (v) => set({ showScrollButton: v }),
-  setChatUnreadCount: (v) => set({ chatUnreadCount: v }),
-  incrementChatUnread: () => set((state) => ({ chatUnreadCount: state.chatUnreadCount + 1 })),
+  setShowScrollButton: (groupId, v) =>
+    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { showScrollButton: v }) })),
+  setChatUnreadCount: (groupId, v) =>
+    set((state) => ({
+      chatSessions: updateChatSession(state.chatSessions, groupId, { chatUnreadCount: Math.max(0, Number(v || 0)) }),
+    })),
+  incrementChatUnread: (groupId) =>
+    set((state) => {
+      const current = getChatSession(groupId, state.chatSessions);
+      return {
+        chatSessions: updateChatSession(state.chatSessions, groupId, {
+          chatUnreadCount: current.chatUnreadCount + 1,
+        }),
+      };
+    }),
   setSmallScreen: (v) => set({ isSmallScreen: v }),
-  setChatFilter: (v) => set({ chatFilter: v }),
+  setChatFilter: (groupId, v) =>
+    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { chatFilter: v }) })),
+  setChatScrollSnapshot: (groupId, snap) =>
+    set((state) => ({ chatSessions: updateChatSession(state.chatSessions, groupId, { scrollSnapshot: snap }) })),
   setWebReadOnly: (v) => set({ webReadOnly: v }),
   setSSEStatus: (v) => set({ sseStatus: v }),
 }));

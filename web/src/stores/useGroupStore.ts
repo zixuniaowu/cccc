@@ -11,21 +11,40 @@ import type {
 } from "../types";
 import * as api from "../services/api";
 
+type ChatWindowState = {
+  groupId: string;
+  centerEventId: string;
+  centerIndex: number;
+  events: LedgerEvent[];
+  hasMoreBefore: boolean;
+  hasMoreAfter: boolean;
+};
+
+type GroupChatBucket = {
+  events: LedgerEvent[];
+  chatWindow: ChatWindowState | null;
+  hasMoreHistory: boolean;
+  isLoadingHistory: boolean;
+  isChatWindowLoading: boolean;
+};
+
+const EMPTY_CHAT_BUCKET: GroupChatBucket = {
+  events: [],
+  chatWindow: null,
+  hasMoreHistory: false,
+  isLoadingHistory: false,
+  isChatWindowLoading: false,
+};
+
 interface GroupState {
   // Data
   groups: GroupMeta[];
   groupOrder: string[]; // Group IDs in user-defined order
   selectedGroupId: string;
+  chatByGroup: Record<string, GroupChatBucket>;
   groupDoc: GroupDoc | null;
   events: LedgerEvent[];
-  chatWindow: {
-    groupId: string;
-    centerEventId: string;
-    centerIndex: number;
-    events: LedgerEvent[];
-    hasMoreBefore: boolean;
-    hasMoreAfter: boolean;
-  } | null;
+  chatWindow: ChatWindowState | null;
   actors: Actor[];
   groupContext: GroupContext | null;
   groupSettings: GroupSettings | null;
@@ -41,35 +60,35 @@ interface GroupState {
   getOrderedGroups: () => GroupMeta[];
   setSelectedGroupId: (id: string) => void;
   setGroupDoc: (doc: GroupDoc | null) => void;
-  setEvents: (events: LedgerEvent[]) => void;
-  appendEvent: (event: LedgerEvent) => void;
-  prependEvents: (events: LedgerEvent[]) => void;
-  setChatWindow: (w: GroupState["chatWindow"]) => void;
+  setEvents: (events: LedgerEvent[], groupId?: string) => void;
+  appendEvent: (event: LedgerEvent, groupId?: string) => void;
+  prependEvents: (events: LedgerEvent[], groupId?: string) => void;
+  setChatWindow: (w: GroupState["chatWindow"], groupId?: string) => void;
   setActors: (actors: Actor[]) => void;
   incrementActorUnread: (actorIds: string[]) => void;
   updateActorActivity: (updates: Array<{ id: string; idle_seconds: number; running: boolean }>) => void;
   setGroupContext: (ctx: GroupContext | null) => void;
   setGroupSettings: (settings: GroupSettings | null) => void;
   setRuntimes: (runtimes: RuntimeInfo[]) => void;
-  updateReadStatus: (eventId: string, actorId: string) => void;
-  updateAckStatus: (eventId: string, actorId: string) => void;
-  updateReplyStatus: (eventId: string, actorId: string) => void;
-  setHasMoreHistory: (v: boolean) => void;
-  setIsLoadingHistory: (v: boolean) => void;
-  setIsChatWindowLoading: (v: boolean) => void;
+  updateReadStatus: (eventId: string, actorId: string, groupId?: string) => void;
+  updateAckStatus: (eventId: string, actorId: string, groupId?: string) => void;
+  updateReplyStatus: (eventId: string, actorId: string, groupId?: string) => void;
+  setHasMoreHistory: (v: boolean, groupId?: string) => void;
+  setIsLoadingHistory: (v: boolean, groupId?: string) => void;
+  setIsChatWindowLoading: (v: boolean, groupId?: string) => void;
 
   // Async actions
   refreshGroups: () => Promise<void>;
   refreshActors: (groupId?: string) => Promise<void>;
   loadGroup: (groupId: string) => Promise<void>;
   warmGroup: (groupId: string) => Promise<void>;
-  loadMoreHistory: () => Promise<void>;
+  loadMoreHistory: (groupId?: string) => Promise<void>;
   openChatWindow: (groupId: string, centerEventId: string) => Promise<void>;
-  closeChatWindow: () => void;
+  closeChatWindow: (groupId?: string) => void;
 }
 
 const MAX_UI_EVENTS = 800;
-const GROUP_VIEW_CACHE_TTL_MS = 60_000;
+const GROUP_VIEW_CACHE_TTL_MS = 300_000;
 
 // localStorage key for group order
 const GROUP_ORDER_KEY = "cccc-group-order";
@@ -140,6 +159,14 @@ function cloneActors(actors: Actor[] | undefined): Actor[] {
   return Array.isArray(actors) ? [...actors] : [];
 }
 
+function cloneChatWindow(chatWindow: ChatWindowState | null | undefined): ChatWindowState | null {
+  if (!chatWindow) return null;
+  return {
+    ...chatWindow,
+    events: cloneEvents(chatWindow.events),
+  };
+}
+
 function cloneGroupContext(ctx: GroupContext | null | undefined): GroupContext | null {
   return ctx ? { ...ctx } : null;
 }
@@ -181,27 +208,189 @@ function saveGroupView(groupId: string, patch: Partial<Omit<GroupViewSnapshot, "
   });
 }
 
-function saveCurrentViewSnapshot(groupId: string, state: {
-  groups: GroupMeta[];
-  groupDoc: GroupDoc | null;
-  events: LedgerEvent[];
-  actors: Actor[];
-  groupContext: GroupContext | null;
-  groupSettings: GroupSettings | null;
-  hasMoreHistory: boolean;
-}): void {
+function saveCurrentViewSnapshot(groupId: string, state: GroupState): void {
   const gid = String(groupId || "").trim();
   if (!gid) return;
 
+  const bucket = state.chatByGroup[gid] || EMPTY_CHAT_BUCKET;
   const shellDoc = buildShellGroupDoc(gid, state.groups, null);
   saveGroupView(gid, {
     groupDoc: state.groupDoc && String(state.groupDoc.group_id || "") === gid ? state.groupDoc : shellDoc,
-    events: state.events,
+    events: bucket.events,
     actors: state.actors,
     groupContext: state.groupContext,
     groupSettings: state.groupSettings,
-    hasMoreHistory: state.hasMoreHistory,
+    hasMoreHistory: bucket.hasMoreHistory,
   });
+}
+
+function createEmptyChatBucket(seed?: Partial<GroupChatBucket>): GroupChatBucket {
+  return {
+    events: cloneEvents(seed?.events),
+    chatWindow: cloneChatWindow(seed?.chatWindow),
+    hasMoreHistory: seed?.hasMoreHistory ?? true,
+    isLoadingHistory: !!seed?.isLoadingHistory,
+    isChatWindowLoading: !!seed?.isChatWindowLoading,
+  };
+}
+
+function getGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>, groupId: string): GroupChatBucket {
+  const gid = String(groupId || "").trim();
+  if (!gid) return EMPTY_CHAT_BUCKET;
+  const stored = chatByGroup[gid];
+  if (stored) return stored;
+  const cached = getCachedGroupView(gid);
+  return {
+    events: cached?.events ? [...cached.events] : [],
+    chatWindow: null,
+    hasMoreHistory: cached?.hasMoreHistory ?? true,
+    isLoadingHistory: false,
+    isChatWindowLoading: false,
+  };
+}
+
+function ensureGroupChatBucket(chatByGroup: Record<string, GroupChatBucket>, groupId: string): Record<string, GroupChatBucket> {
+  const gid = String(groupId || "").trim();
+  if (!gid || chatByGroup[gid]) return chatByGroup;
+  return {
+    ...chatByGroup,
+    [gid]: getGroupChatBucket(chatByGroup, gid),
+  };
+}
+
+export function selectChatBucketState(state: GroupState, groupId: string): GroupChatBucket {
+  const gid = String(groupId || "").trim();
+  if (!gid) return EMPTY_CHAT_BUCKET;
+  return state.chatByGroup[gid] || EMPTY_CHAT_BUCKET;
+}
+function buildChatProjection(bucket: GroupChatBucket) {
+  return {
+    events: cloneEvents(bucket.events),
+    chatWindow: cloneChatWindow(bucket.chatWindow),
+    hasMoreHistory: !!bucket.hasMoreHistory,
+    isLoadingHistory: !!bucket.isLoadingHistory,
+    isChatWindowLoading: !!bucket.isChatWindowLoading,
+  };
+}
+
+function buildChatBucketPatch(
+  state: GroupState,
+  groupId: string,
+  patch: Partial<GroupChatBucket>
+): Partial<GroupState> | null {
+  const gid = String(groupId || "").trim();
+  if (!gid) return null;
+
+  const prev = state.chatByGroup[gid] || EMPTY_CHAT_BUCKET;
+  return {
+    chatByGroup: {
+      ...state.chatByGroup,
+      [gid]: {
+        events: patch.events !== undefined ? patch.events : prev.events,
+        chatWindow: patch.chatWindow !== undefined ? patch.chatWindow : prev.chatWindow,
+        hasMoreHistory: patch.hasMoreHistory !== undefined ? patch.hasMoreHistory : prev.hasMoreHistory,
+        isLoadingHistory: patch.isLoadingHistory !== undefined ? patch.isLoadingHistory : prev.isLoadingHistory,
+        isChatWindowLoading: patch.isChatWindowLoading !== undefined ? patch.isChatWindowLoading : prev.isChatWindowLoading,
+      },
+    },
+  };
+}
+
+function resolveChatGroupId(state: GroupState, groupId?: string): string {
+  return String(groupId || state.selectedGroupId || "").trim();
+}
+
+function updateReadThroughIndex(messages: LedgerEvent[], endIndex: number, actorId: string) {
+  const next = messages.slice();
+  let changed = false;
+  for (let i = 0; i <= endIndex; i++) {
+    const message = next[i];
+    if (!message || message.kind !== "chat.message") continue;
+    const readStatus: Record<string, boolean> | null =
+      message._read_status && typeof message._read_status === "object" ? { ...message._read_status } : null;
+    const obligationStatus =
+      message._obligation_status && typeof message._obligation_status === "object"
+        ? { ...message._obligation_status }
+        : null;
+    if (!readStatus || !Object.prototype.hasOwnProperty.call(readStatus, actorId)) continue;
+    if (readStatus[actorId] === true) continue;
+    readStatus[actorId] = true;
+    if (
+      obligationStatus &&
+      Object.prototype.hasOwnProperty.call(obligationStatus, actorId) &&
+      typeof obligationStatus[actorId] === "object"
+    ) {
+      obligationStatus[actorId] = { ...obligationStatus[actorId], read: true };
+      next[i] = { ...message, _read_status: readStatus, _obligation_status: obligationStatus };
+    } else {
+      next[i] = { ...message, _read_status: readStatus };
+    }
+    changed = true;
+  }
+  return { next, changed };
+}
+
+function updateAckAtIndex(messages: LedgerEvent[], index: number, actorId: string) {
+  const next = messages.slice();
+  const message = next[index];
+  if (!message || message.kind !== "chat.message") return { next, changed: false };
+
+  const ackStatus: Record<string, boolean> | null =
+    message._ack_status && typeof message._ack_status === "object" ? { ...message._ack_status } : null;
+  const obligationStatus =
+    message._obligation_status && typeof message._obligation_status === "object"
+      ? { ...message._obligation_status }
+      : null;
+  if (!ackStatus || !Object.prototype.hasOwnProperty.call(ackStatus, actorId) || ackStatus[actorId] === true) {
+    return { next, changed: false };
+  }
+
+  ackStatus[actorId] = true;
+  if (
+    obligationStatus &&
+    Object.prototype.hasOwnProperty.call(obligationStatus, actorId) &&
+    typeof obligationStatus[actorId] === "object"
+  ) {
+    obligationStatus[actorId] = { ...obligationStatus[actorId], acked: true };
+    next[index] = { ...message, _ack_status: ackStatus, _obligation_status: obligationStatus };
+  } else {
+    next[index] = { ...message, _ack_status: ackStatus };
+  }
+  return { next, changed: true };
+}
+
+function updateReplyAtIndex(messages: LedgerEvent[], index: number, actorId: string) {
+  const next = messages.slice();
+  const message = next[index];
+  if (!message || message.kind !== "chat.message") return { next, changed: false };
+
+  const ackStatus: Record<string, boolean> | null =
+    message._ack_status && typeof message._ack_status === "object" ? { ...message._ack_status } : null;
+  const obligationStatus =
+    message._obligation_status && typeof message._obligation_status === "object"
+      ? { ...message._obligation_status }
+      : null;
+  if (
+    !obligationStatus ||
+    !Object.prototype.hasOwnProperty.call(obligationStatus, actorId) ||
+    typeof obligationStatus[actorId] !== "object"
+  ) {
+    return { next, changed: false };
+  }
+
+  const previous = obligationStatus[actorId];
+  if (previous.replied && previous.acked) {
+    return { next, changed: false };
+  }
+
+  obligationStatus[actorId] = { ...previous, replied: true, acked: true };
+  if (ackStatus && Object.prototype.hasOwnProperty.call(ackStatus, actorId)) {
+    ackStatus[actorId] = true;
+    next[index] = { ...message, _ack_status: ackStatus, _obligation_status: obligationStatus };
+  } else {
+    next[index] = { ...message, _obligation_status: obligationStatus };
+  }
+  return { next, changed: true };
 }
 
 function buildShellGroupDoc(groupId: string, groups: GroupMeta[], cached: GroupViewSnapshot | null): GroupDoc | null {
@@ -226,24 +415,18 @@ function buildPrimedGroupState(groupId: string, groups: GroupMeta[]) {
   if (!gid) {
     return {
       groupDoc: null,
-      events: [],
       actors: [],
       groupContext: null,
       groupSettings: null,
-      hasMoreHistory: false,
-      chatWindow: null,
     };
   }
 
   const cached = getCachedGroupView(gid);
   return {
     groupDoc: buildShellGroupDoc(gid, groups, cached),
-    events: cached?.events || [],
     actors: cached?.actors || [],
     groupContext: cached?.groupContext || null,
     groupSettings: cached?.groupSettings || null,
-    hasMoreHistory: cached?.hasMoreHistory ?? true,
-    chatWindow: null,
   };
 }
 
@@ -256,6 +439,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   groups: [],
   groupOrder: loadGroupOrder(),
   selectedGroupId: "",
+  chatByGroup: {},
   groupDoc: null,
   events: [],
   chatWindow: null,
@@ -310,31 +494,39 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         saveCurrentViewSnapshot(prevGid, state);
       }
 
+      const nextChatByGroup = ensureGroupChatBucket(state.chatByGroup, gid);
       return {
         selectedGroupId: gid,
+        chatByGroup: nextChatByGroup,
         ...buildPrimedGroupState(gid, state.groups),
       };
     }),
   setGroupDoc: (doc) => set({ groupDoc: doc }),
-  setEvents: (events) => set({ events }),
-  setChatWindow: (w) => set({ chatWindow: w }),
-  appendEvent: (event) =>
+  setEvents: (events, groupId) =>
+    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { events }) ?? state),
+  setChatWindow: (chatWindow, groupId) =>
+    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { chatWindow }) ?? state),
+  appendEvent: (event, groupId) =>
     set((state) => {
-      const next = state.events.concat([event]);
-      return {
-        events: next.length > MAX_UI_EVENTS ? next.slice(next.length - MAX_UI_EVENTS) : next,
-      };
+      const gid = resolveChatGroupId(state, groupId);
+      if (!gid) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const nextEvents = bucket.events.concat([event]);
+      return buildChatBucketPatch(state, gid, {
+        events: nextEvents.length > MAX_UI_EVENTS ? nextEvents.slice(nextEvents.length - MAX_UI_EVENTS) : nextEvents,
+      }) ?? state;
     }),
-  prependEvents: (newEvents) =>
+  prependEvents: (newEvents, groupId) =>
     set((state) => {
-      // Deduplicate by id: filter out events that already exist
-      const existingIds = new Set(state.events.map((e) => e.id).filter(Boolean));
-      const uniqueNew = newEvents.filter((e) => e.id && !existingIds.has(e.id));
-      const merged = [...uniqueNew, ...state.events];
-      return {
-        // Keep oldest when over limit (trim from end, preserving history)
+      const gid = resolveChatGroupId(state, groupId);
+      if (!gid) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const existingIds = new Set(bucket.events.map((event) => event.id).filter(Boolean));
+      const uniqueNew = newEvents.filter((event) => event.id && !existingIds.has(event.id));
+      const merged = [...uniqueNew, ...bucket.events];
+      return buildChatBucketPatch(state, gid, {
         events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
-      };
+      }) ?? state;
     }),
   setActors: (actors) => set({ actors }),
   incrementActorUnread: (actorIds) =>
@@ -375,209 +567,119 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   setGroupSettings: (settings) => set({ groupSettings: settings }),
   setRuntimes: (runtimes) => set({ runtimes }),
 
-  updateReadStatus: (eventId, actorId) =>
+  updateReadStatus: (eventId, actorId, groupId) =>
     set((state) => {
-      const idx = state.events.findIndex(
-        (x) => x.kind === "chat.message" && String(x.id || "") === eventId
+      const gid = resolveChatGroupId(state, groupId);
+      if (!gid) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const eventIndex = bucket.events.findIndex(
+        (event) => event.kind === "chat.message" && String(event.id || "") === eventId
       );
-      if (idx < 0 && !state.chatWindow) return state;
+      if (eventIndex < 0 && !bucket.chatWindow) return state;
 
-      const next = state.events.slice();
-      let didChange = false;
+      const liveResult = eventIndex >= 0
+        ? updateReadThroughIndex(bucket.events, eventIndex, actorId)
+        : { next: bucket.events, changed: false };
+      let nextWindow = bucket.chatWindow;
+      let didChange = liveResult.changed;
 
-      if (idx >= 0) {
-        for (let i = 0; i <= idx; i++) {
-          const m = next[i];
-          if (!m || m.kind !== "chat.message") continue;
-          const rs: Record<string, boolean> | null =
-            m._read_status && typeof m._read_status === "object" ? { ...m._read_status } : null;
-          const os =
-            m._obligation_status && typeof m._obligation_status === "object"
-              ? { ...m._obligation_status }
-              : null;
-          // Only mark for actual recipients; never add keys for non-recipients.
-          if (!rs || !Object.prototype.hasOwnProperty.call(rs, actorId)) continue;
-          if (rs[actorId] === true) continue;
-          rs[actorId] = true;
-          if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
-            os[actorId] = { ...os[actorId], read: true };
-            next[i] = { ...m, _read_status: rs, _obligation_status: os };
-          } else {
-            next[i] = { ...m, _read_status: rs };
-          }
-          didChange = true;
-        }
-      }
-
-      let nextWindow = state.chatWindow;
-      if (state.chatWindow && String(state.chatWindow.groupId || "") === String(state.selectedGroupId || "")) {
-        const wNext = state.chatWindow.events.slice();
-        const wIdx = wNext.findIndex((x) => x.kind === "chat.message" && String(x.id || "") === eventId);
-        if (wIdx >= 0) {
-          for (let i = 0; i <= wIdx; i++) {
-            const m = wNext[i];
-            if (!m || m.kind !== "chat.message") continue;
-            const rs: Record<string, boolean> | null =
-              m._read_status && typeof m._read_status === "object" ? { ...m._read_status } : null;
-            const os =
-              m._obligation_status && typeof m._obligation_status === "object"
-                ? { ...m._obligation_status }
-                : null;
-            if (!rs || !Object.prototype.hasOwnProperty.call(rs, actorId)) continue;
-            if (rs[actorId] === true) continue;
-            rs[actorId] = true;
-            if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
-              os[actorId] = { ...os[actorId], read: true };
-              wNext[i] = { ...m, _read_status: rs, _obligation_status: os };
-            } else {
-              wNext[i] = { ...m, _read_status: rs };
-            }
-            didChange = true;
-          }
-          nextWindow = { ...state.chatWindow, events: wNext };
-        }
-      }
-
-      if (!didChange) return state;
-      return { events: next, chatWindow: nextWindow };
-    }),
-
-  updateAckStatus: (eventId, actorId) =>
-    set((state) => {
-      const idx = state.events.findIndex(
-        (x) => x.kind === "chat.message" && String(x.id || "") === eventId
-      );
-      if (idx < 0 && !state.chatWindow) return state;
-
-      const next = state.events.slice();
-      const msg = idx >= 0 ? next[idx] : null;
-
-      let didChange = false;
-
-      if (msg && msg.kind === "chat.message") {
-        const as: Record<string, boolean> | null =
-          msg._ack_status && typeof msg._ack_status === "object" ? { ...msg._ack_status } : null;
-        const os =
-          msg._obligation_status && typeof msg._obligation_status === "object"
-            ? { ...msg._obligation_status }
-            : null;
-        if (as && Object.prototype.hasOwnProperty.call(as, actorId) && as[actorId] !== true) {
-          as[actorId] = true;
-          if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
-            os[actorId] = { ...os[actorId], acked: true };
-            next[idx] = { ...msg, _ack_status: as, _obligation_status: os };
-          } else {
-            next[idx] = { ...msg, _ack_status: as };
-          }
-          didChange = true;
-        }
-      }
-
-      let nextWindow = state.chatWindow;
-      if (state.chatWindow && String(state.chatWindow.groupId || "") === String(state.selectedGroupId || "")) {
-        const wNext = state.chatWindow.events.slice();
-        const wIdx = wNext.findIndex((x) => x.kind === "chat.message" && String(x.id || "") === eventId);
-        if (wIdx >= 0) {
-          const wMsg = wNext[wIdx];
-          const as: Record<string, boolean> | null =
-            wMsg && wMsg.kind === "chat.message" && wMsg._ack_status && typeof wMsg._ack_status === "object"
-              ? { ...wMsg._ack_status }
-              : null;
-          const os =
-            wMsg && wMsg.kind === "chat.message" && wMsg._obligation_status && typeof wMsg._obligation_status === "object"
-              ? { ...wMsg._obligation_status }
-              : null;
-          if (as && Object.prototype.hasOwnProperty.call(as, actorId) && as[actorId] !== true) {
-            as[actorId] = true;
-            if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
-              os[actorId] = { ...os[actorId], acked: true };
-              wNext[wIdx] = { ...wMsg, _ack_status: as, _obligation_status: os };
-            } else {
-              wNext[wIdx] = { ...wMsg, _ack_status: as };
-            }
-            nextWindow = { ...state.chatWindow, events: wNext };
+      if (bucket.chatWindow) {
+        const windowIndex = bucket.chatWindow.events.findIndex(
+          (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+        );
+        if (windowIndex >= 0) {
+          const windowResult = updateReadThroughIndex(bucket.chatWindow.events, windowIndex, actorId);
+          if (windowResult.changed) {
+            nextWindow = { ...bucket.chatWindow, events: windowResult.next };
             didChange = true;
           }
         }
       }
 
       if (!didChange) return state;
-      return { events: next, chatWindow: nextWindow };
+      return buildChatBucketPatch(state, gid, {
+        events: liveResult.next,
+        chatWindow: nextWindow,
+      }) ?? state;
     }),
 
-  updateReplyStatus: (eventId, actorId) =>
+  updateAckStatus: (eventId, actorId, groupId) =>
     set((state) => {
-      const idx = state.events.findIndex(
-        (x) => x.kind === "chat.message" && String(x.id || "") === eventId
+      const gid = resolveChatGroupId(state, groupId);
+      if (!gid) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const eventIndex = bucket.events.findIndex(
+        (event) => event.kind === "chat.message" && String(event.id || "") === eventId
       );
-      if (idx < 0 && !state.chatWindow) return state;
+      if (eventIndex < 0 && !bucket.chatWindow) return state;
 
-      const next = state.events.slice();
-      const msg = idx >= 0 ? next[idx] : null;
+      const liveResult = eventIndex >= 0
+        ? updateAckAtIndex(bucket.events, eventIndex, actorId)
+        : { next: bucket.events, changed: false };
+      let nextWindow = bucket.chatWindow;
+      let didChange = liveResult.changed;
 
-      let didChange = false;
-
-      if (msg && msg.kind === "chat.message") {
-        const as: Record<string, boolean> | null =
-          msg._ack_status && typeof msg._ack_status === "object" ? { ...msg._ack_status } : null;
-        const os =
-          msg._obligation_status && typeof msg._obligation_status === "object"
-            ? { ...msg._obligation_status }
-            : null;
-        if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
-          const prev = os[actorId];
-          const changed = !prev.replied || !prev.acked;
-          if (changed) {
-            os[actorId] = { ...prev, replied: true, acked: true };
-            if (as && Object.prototype.hasOwnProperty.call(as, actorId)) {
-              as[actorId] = true;
-              next[idx] = { ...msg, _ack_status: as, _obligation_status: os };
-            } else {
-              next[idx] = { ...msg, _obligation_status: os };
-            }
+      if (bucket.chatWindow) {
+        const windowIndex = bucket.chatWindow.events.findIndex(
+          (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+        );
+        if (windowIndex >= 0) {
+          const windowResult = updateAckAtIndex(bucket.chatWindow.events, windowIndex, actorId);
+          if (windowResult.changed) {
+            nextWindow = { ...bucket.chatWindow, events: windowResult.next };
             didChange = true;
           }
         }
       }
 
-      let nextWindow = state.chatWindow;
-      if (state.chatWindow && String(state.chatWindow.groupId || "") === String(state.selectedGroupId || "")) {
-        const wNext = state.chatWindow.events.slice();
-        const wIdx = wNext.findIndex((x) => x.kind === "chat.message" && String(x.id || "") === eventId);
-        if (wIdx >= 0) {
-          const wMsg = wNext[wIdx];
-          const as: Record<string, boolean> | null =
-            wMsg && wMsg.kind === "chat.message" && wMsg._ack_status && typeof wMsg._ack_status === "object"
-              ? { ...wMsg._ack_status }
-              : null;
-          const os =
-            wMsg && wMsg.kind === "chat.message" && wMsg._obligation_status && typeof wMsg._obligation_status === "object"
-              ? { ...wMsg._obligation_status }
-              : null;
-          if (os && Object.prototype.hasOwnProperty.call(os, actorId) && typeof os[actorId] === "object") {
-            const prev = os[actorId];
-            const changed = !prev.replied || !prev.acked;
-            if (changed) {
-              os[actorId] = { ...prev, replied: true, acked: true };
-              if (as && Object.prototype.hasOwnProperty.call(as, actorId)) {
-                as[actorId] = true;
-                wNext[wIdx] = { ...wMsg, _ack_status: as, _obligation_status: os };
-              } else {
-                wNext[wIdx] = { ...wMsg, _obligation_status: os };
-              }
-              nextWindow = { ...state.chatWindow, events: wNext };
-              didChange = true;
-            }
+      if (!didChange) return state;
+      return buildChatBucketPatch(state, gid, {
+        events: liveResult.next,
+        chatWindow: nextWindow,
+      }) ?? state;
+    }),
+
+  updateReplyStatus: (eventId, actorId, groupId) =>
+    set((state) => {
+      const gid = resolveChatGroupId(state, groupId);
+      if (!gid) return state;
+      const bucket = getGroupChatBucket(state.chatByGroup, gid);
+      const eventIndex = bucket.events.findIndex(
+        (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+      );
+      if (eventIndex < 0 && !bucket.chatWindow) return state;
+
+      const liveResult = eventIndex >= 0
+        ? updateReplyAtIndex(bucket.events, eventIndex, actorId)
+        : { next: bucket.events, changed: false };
+      let nextWindow = bucket.chatWindow;
+      let didChange = liveResult.changed;
+
+      if (bucket.chatWindow) {
+        const windowIndex = bucket.chatWindow.events.findIndex(
+          (event) => event.kind === "chat.message" && String(event.id || "") === eventId
+        );
+        if (windowIndex >= 0) {
+          const windowResult = updateReplyAtIndex(bucket.chatWindow.events, windowIndex, actorId);
+          if (windowResult.changed) {
+            nextWindow = { ...bucket.chatWindow, events: windowResult.next };
+            didChange = true;
           }
         }
       }
 
       if (!didChange) return state;
-      return { events: next, chatWindow: nextWindow };
+      return buildChatBucketPatch(state, gid, {
+        events: liveResult.next,
+        chatWindow: nextWindow,
+      }) ?? state;
     }),
-  setHasMoreHistory: (v) => set({ hasMoreHistory: v }),
-  setIsLoadingHistory: (v) => set({ isLoadingHistory: v }),
-  setIsChatWindowLoading: (v) => set({ isChatWindowLoading: v }),
+  setHasMoreHistory: (value, groupId) =>
+    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { hasMoreHistory: value }) ?? state),
+  setIsLoadingHistory: (value, groupId) =>
+    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { isLoadingHistory: value }) ?? state),
+  setIsChatWindowLoading: (value, groupId) =>
+    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), { isChatWindowLoading: value }) ?? state),
 
   // Async actions
   refreshGroups: async () => {
@@ -600,8 +702,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
             // Selected group disappeared (or none selected): switch to first group
             // and clear stale per-group caches so UI does not render old data while switching.
             const nextGroupId = String(next[0].group_id || "");
+            const nextChatByGroup = ensureGroupChatBucket(get().chatByGroup, nextGroupId);
             set({
               selectedGroupId: nextGroupId,
+              chatByGroup: nextChatByGroup,
               ...buildPrimedGroupState(nextGroupId, next),
             });
           } else {
@@ -609,6 +713,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
             groupViewCache.clear();
             set({
               selectedGroupId: "",
+              chatByGroup: {},
               groupDoc: null,
               events: [],
               actors: [],
@@ -616,6 +721,8 @@ export const useGroupStore = create<GroupState>((set, get) => ({
               groupSettings: null,
               chatWindow: null,
               hasMoreHistory: false,
+              isLoadingHistory: false,
+              isChatWindowLoading: false,
             });
           }
           return;
@@ -686,20 +793,40 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     const token = ++loadGroupToken;
     const isLatestSelection = () => get().selectedGroupId === gid && loadGroupToken === token;
-    const commitPatch = (patch: Partial<Pick<GroupState, "groupDoc" | "events" | "actors" | "groupContext" | "groupSettings" | "hasMoreHistory">>) => {
+    const commitViewPatch = (patch: Partial<Pick<GroupState, "groupDoc" | "actors" | "groupContext" | "groupSettings">>) => {
       saveGroupView(gid, patch);
       if (isLatestSelection()) {
         set(patch);
+      }
+    };
+    const commitChatPatch = (patch: Partial<GroupChatBucket>) => {
+      const cachePatch: Partial<Omit<GroupViewSnapshot, "cachedAt">> = {};
+      if (patch.events !== undefined) cachePatch.events = patch.events;
+      if (patch.hasMoreHistory !== undefined) cachePatch.hasMoreHistory = patch.hasMoreHistory;
+      if (Object.keys(cachePatch).length > 0) {
+        saveGroupView(gid, cachePatch);
+      }
+      if (isLatestSelection()) {
+        set((state) => buildChatBucketPatch(state, gid, patch) ?? state);
       }
     };
 
     const state = get();
     const currentDocGroupId = String(state.groupDoc?.group_id || "").trim();
     if (currentDocGroupId !== gid) {
+      const nextChatByGroup = ensureGroupChatBucket(state.chatByGroup, gid);
+      const chatBucket = nextChatByGroup[gid] || EMPTY_CHAT_BUCKET;
       const primedState = buildPrimedGroupState(gid, state.groups);
-      saveGroupView(gid, primedState);
+      saveGroupView(gid, {
+        groupDoc: primedState.groupDoc,
+        events: chatBucket.events,
+        actors: primedState.actors,
+        groupContext: primedState.groupContext,
+        groupSettings: primedState.groupSettings,
+        hasMoreHistory: chatBucket.hasMoreHistory,
+      });
       if (isLatestSelection()) {
-        set(primedState);
+        set({ chatByGroup: nextChatByGroup, ...primedState });
       }
     }
 
@@ -709,23 +836,30 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     void showPromise.then((show) => {
       if (show.ok) {
-        commitPatch({ groupDoc: show.result.group });
+        commitViewPatch({ groupDoc: show.result.group });
         return;
       }
 
       const code = String(show.error?.code || "").trim();
       if (code === "group_not_found") {
         groupViewCache.delete(gid);
-        if (isLatestSelection()) {
-          set({
-            groupDoc: null,
+        set((state) => ({
+          ...(buildChatBucketPatch(state, gid, {
             events: [],
-            actors: [],
-            groupContext: null,
-            groupSettings: null,
+            chatWindow: null,
             hasMoreHistory: false,
-          });
-        }
+            isLoadingHistory: false,
+            isChatWindowLoading: false,
+          }) || {}),
+          ...(isLatestSelection()
+            ? {
+                groupDoc: null,
+                actors: [],
+                groupContext: null,
+                groupSettings: null,
+              }
+            : {}),
+        }));
       }
     }).catch((error) => {
       console.error(`Failed to load group metadata for group=${gid}:`, error);
@@ -733,7 +867,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     void tailPromise.then((tail) => {
       if (!tail.ok) return;
-      commitPatch({
+      commitChatPatch({
         events: filterUiEvents(tail.result.events || []),
         hasMoreHistory: !!tail.result.has_more,
       });
@@ -743,7 +877,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     void actorsPromise.then((actorsResp) => {
       if (!actorsResp.ok) return;
-      commitPatch({ actors: actorsResp.result.actors || [] });
+      commitViewPatch({ actors: actorsResp.result.actors || [] });
     }).catch((error) => {
       console.error(`Failed to load actors for group=${gid}:`, error);
     });
@@ -752,14 +886,14 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     void Promise.allSettled([showPromise, tailPromise, actorsPromise]).then(() => {
       void api.fetchContext(gid).then((ctx) => {
         if (!ctx.ok) return;
-        commitPatch({ groupContext: ctx.result as GroupContext });
+        commitViewPatch({ groupContext: ctx.result as GroupContext });
       }).catch((error) => {
         console.error(`Failed to load context for group=${gid}:`, error);
       });
 
       void api.fetchSettings(gid).then((settings) => {
         if (!settings.ok || !settings.result.settings) return;
-        commitPatch({ groupSettings: settings.result.settings });
+        commitViewPatch({ groupSettings: settings.result.settings });
       }).catch((error) => {
         console.error(`Failed to load settings for group=${gid}:`, error);
       });
@@ -803,38 +937,35 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }
   },
 
-  loadMoreHistory: async () => {
-    const { selectedGroupId, events, isLoadingHistory, hasMoreHistory } = get();
-    if (!selectedGroupId) return;
-    if (isLoadingHistory || !hasMoreHistory) return;
+  loadMoreHistory: async (groupId?: string) => {
+    const gid = String(groupId || get().selectedGroupId || "").trim();
+    if (!gid) return;
 
-    // Find first chat message to use as cursor
-    const chatMessages = events.filter((ev) => ev.kind === "chat.message");
+    const bucket = getGroupChatBucket(get().chatByGroup, gid);
+    if (bucket.isLoadingHistory || !bucket.hasMoreHistory) return;
+
+    const chatMessages = bucket.events.filter((event) => event.kind === "chat.message");
     const firstEvent = chatMessages[0];
     if (!firstEvent?.id) return;
 
-    set({ isLoadingHistory: true });
+    set((state) => buildChatBucketPatch(state, gid, { isLoadingHistory: true }) ?? state);
     try {
-      const resp = await api.fetchOlderMessages(selectedGroupId, String(firstEvent.id), 50);
-      // Guard against group switch during loading
-      if (get().selectedGroupId !== selectedGroupId) return;
-
+      const resp = await api.fetchOlderMessages(gid, String(firstEvent.id), 50);
       if (resp.ok) {
-        // Filter to only chat messages (same as initial load)
         const olderChatEvents = (resp.result.events || []).filter(
-          (ev) => ev && ev.kind === "chat.message"
+          (event) => event && event.kind === "chat.message"
         );
-        // Deduplicate and prepend
-        const existingIds = new Set(get().events.map((e) => e.id).filter(Boolean));
-        const uniqueNew = olderChatEvents.filter((e) => e.id && !existingIds.has(e.id));
-        const merged = [...uniqueNew, ...get().events];
-        set({
+        const currentBucket = getGroupChatBucket(get().chatByGroup, gid);
+        const existingIds = new Set(currentBucket.events.map((event) => event.id).filter(Boolean));
+        const uniqueNew = olderChatEvents.filter((event) => event.id && !existingIds.has(event.id));
+        const merged = [...uniqueNew, ...currentBucket.events];
+        set((state) => buildChatBucketPatch(state, gid, {
           events: merged.length > MAX_UI_EVENTS ? merged.slice(0, MAX_UI_EVENTS) : merged,
           hasMoreHistory: resp.result.has_more,
-        });
+        }) ?? state);
       }
     } finally {
-      set({ isLoadingHistory: false });
+      set((state) => buildChatBucketPatch(state, gid, { isLoadingHistory: false }) ?? state);
     }
   },
 
@@ -843,7 +974,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     const eid = String(centerEventId || "").trim();
     if (!gid || !eid) return;
 
-    set({
+    set((state) => buildChatBucketPatch(state, gid, {
       isChatWindowLoading: true,
       chatWindow: {
         groupId: gid,
@@ -853,18 +984,16 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         hasMoreBefore: false,
         hasMoreAfter: false,
       },
-    });
+    }) ?? state);
     try {
       const resp = await api.fetchMessageWindow(gid, eid, { before: 30, after: 30 });
       if (!resp.ok) {
-        set({ chatWindow: null });
+        set((state) => buildChatBucketPatch(state, gid, { chatWindow: null }) ?? state);
         return;
       }
-      // Guard against group switch during load.
-      if (get().selectedGroupId !== gid) return;
 
-      const events = (resp.result.events || []).filter((ev) => ev && ev.kind === "chat.message");
-      set({
+      const events = (resp.result.events || []).filter((event) => event && event.kind === "chat.message");
+      set((state) => buildChatBucketPatch(state, gid, {
         chatWindow: {
           groupId: gid,
           centerEventId: resp.result.center_id,
@@ -873,11 +1002,15 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           hasMoreBefore: !!resp.result.has_more_before,
           hasMoreAfter: !!resp.result.has_more_after,
         },
-      });
+      }) ?? state);
     } finally {
-      set({ isChatWindowLoading: false });
+      set((state) => buildChatBucketPatch(state, gid, { isChatWindowLoading: false }) ?? state);
     }
   },
 
-  closeChatWindow: () => set({ chatWindow: null, isChatWindowLoading: false }),
+  closeChatWindow: (groupId?: string) =>
+    set((state) => buildChatBucketPatch(state, resolveChatGroupId(state, groupId), {
+      chatWindow: null,
+      isChatWindowLoading: false,
+    }) ?? state),
 }));

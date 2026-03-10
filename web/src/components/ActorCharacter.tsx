@@ -230,11 +230,14 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     const isForeman = role === "foreman";
     const isOffline = isRunning === false;
 
-    // Cache rotation tuple to prevent R3F re-applying on re-render
-    // (which would fight useFrame-driven rotation, e.g. sleeping face-up)
-    const rotationTuple = useMemo(
+    // 角色的位姿在挂载后交给 useCharacterAnimation 接管，避免每次 render 把新目标位硬灌进去造成闪现。
+    const initialPosition = useMemo(
+      () => position,
+      [agent.id],
+    );
+    const initialRotationTuple = useMemo(
       () => [0, rotationY, 0] as [number, number, number],
-      [rotationY],
+      [agent.id],
     );
 
     // Shared cached material (body color; gray + semi-transparent when offline)
@@ -478,8 +481,8 @@ export const ActorCharacter = React.forwardRef<THREE.Group, ActorCharacterProps>
     return (
       <group
         ref={ref}
-        position={position}
-        rotation={rotationTuple}
+        position={initialPosition}
+        rotation={initialRotationTuple}
         onClick={(e) => { e.stopPropagation(); onCharacterClick?.(); }}
         onPointerOver={() => { document.body.style.cursor = "pointer"; }}
         onPointerOut={() => { document.body.style.cursor = "auto"; }}

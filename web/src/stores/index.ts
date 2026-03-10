@@ -1,5 +1,5 @@
 // Centralized store exports.
-export { useGroupStore } from "./useGroupStore";
+export { useGroupStore, selectChatBucketState } from "./useGroupStore";
 export { useUIStore } from "./useUIStore";
 export { useModalStore } from "./useModalStore";
 export { useComposerStore } from "./useComposerStore";

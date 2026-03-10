@@ -19,6 +19,7 @@ interface ActorScene3DProps {
   tasksSummary?: GroupContext["tasks_summary"];
   projectStatus?: string | null;
   isDark: boolean;
+  isSmallScreen?: boolean;
   groupId?: string;
   className?: string;
 }
@@ -49,13 +50,14 @@ interface SceneProps {
   tasksSummary?: GroupContext["tasks_summary"];
   projectStatus?: string | null;
   isDark: boolean;
+  isSmallScreen?: boolean;
   groupId?: string;
   camZ: number;
   followTarget: string | null;
   onCharacterClick: (agentId: string) => void;
 }
 
-function Scene({ agents, actors, tasks, tasksSummary: _tasksSummary, projectStatus, isDark, groupId: _groupId, camZ, followTarget, onCharacterClick }: SceneProps) {
+function Scene({ agents, actors, tasks, tasksSummary: _tasksSummary, projectStatus, isDark, isSmallScreen = false, groupId: _groupId, camZ, followTarget, onCharacterClick }: SceneProps) {
   const characterRefs = useRef<Map<string, THREE.Group>>(new Map());
 
   const actorMap = useMemo(() => {
@@ -127,6 +129,7 @@ function Scene({ agents, actors, tasks, tasksSummary: _tasksSummary, projectStat
       <SemanticMap
         zones={semanticMap.zones}
         isDark={isDark}
+        compact={isSmallScreen}
         projectStatus={projectStatus}
       />
 
@@ -204,6 +207,7 @@ type HudStatusKey = "blocked" | "active" | "thinking" | "waiting";
 
 function buildHudSummary(agents: AgentState[], actors?: Actor[]) {
   const actorMap = new Map((actors || []).map((actor) => [actor.id, actor]));
+  const totalAgents = agents.length;
   let activeAgents = 0;
   let blockedAgents = 0;
   let waitingAgents = 0;
@@ -242,11 +246,11 @@ function buildHudSummary(agents: AgentState[], actors?: Actor[]) {
   }
 
   items.sort((a, b) => Number(b.blocked) - Number(a.blocked) || Number(b.active) - Number(a.active) || a.title.localeCompare(b.title));
-  return { activeAgents, blockedAgents, waitingAgents, items: items.slice(0, 6) };
+  return { totalAgents, activeAgents, blockedAgents, waitingAgents, items: items.slice(0, 6) };
 }
 
 
-export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatus, isDark, groupId, className }: ActorScene3DProps) {
+export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatus, isDark, isSmallScreen = false, groupId, className }: ActorScene3DProps) {
   const { t } = useTranslation("layout");
   const [followTarget, setFollowTarget] = useState<string | null>(null);
 
@@ -477,7 +481,7 @@ export function ActorScene3D({ agents, actors, tasks, tasksSummary, projectStatu
         onPointerMissed={() => setFollowTarget(null)}
       >
         <Suspense fallback={null}>
-          <Scene agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} projectStatus={projectStatus} isDark={isDark} groupId={groupId} camZ={camZ} followTarget={followTarget} onCharacterClick={handleCharacterClick} />
+          <Scene agents={agents} actors={actors} tasks={tasks} tasksSummary={tasksSummary} projectStatus={projectStatus} isDark={isDark} isSmallScreen={isSmallScreen} groupId={groupId} camZ={camZ} followTarget={followTarget} onCharacterClick={handleCharacterClick} />
         </Suspense>
       </Canvas>
     </div>

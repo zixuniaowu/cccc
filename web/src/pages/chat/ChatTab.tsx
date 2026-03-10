@@ -35,13 +35,6 @@ export interface ChatTabProps {
 
   // Refs for scroll state (shared with App)
   chatAtBottomRef?: MutableRefObject<boolean>;
-  chatScrollMemoryRef?: MutableRefObject<
-    Record<string, { atBottom: boolean; anchorId: string; offsetPx: number }>
-  >;
-
-  // Scroll restore (computed in App)
-  chatInitialScrollAnchorId?: string;
-  chatInitialScrollAnchorOffsetPx?: number;
 
   // File handling (from useDragDrop)
   appendComposerFiles: (files: File[]) => void;
@@ -72,9 +65,6 @@ export function ChatTab({
   composerRef,
   fileInputRef,
   chatAtBottomRef,
-  chatScrollMemoryRef,
-  chatInitialScrollAnchorId,
-  chatInitialScrollAnchorOffsetPx,
   appendComposerFiles,
   onStartGroup,
   showMentionMenu,
@@ -93,6 +83,8 @@ export function ChatTab({
     chatViewKey,
     chatWindowProps,
     chatInitialScrollTargetId,
+    chatInitialScrollAnchorId,
+    chatInitialScrollAnchorOffsetPx,
     chatHighlightEventId,
     isLoadingHistory,
     hasMoreHistory,
@@ -150,14 +142,18 @@ export function ChatTab({
     composerRef,
     fileInputRef,
     chatAtBottomRef,
-    chatScrollMemoryRef,
     scrollRef,
   });
 
   const { t } = useTranslation('chat');
 
   // Empty state: show full-screen setup guidance.
-  if (chatMessages.length === 0 && showSetupCard) {
+  // Don't show setup card while initial group data is still loading.
+  // Fresh buckets have hasMoreHistory=true; the API sets it to the real value.
+  // When hasMoreHistory is true but messages are empty, we're still loading —
+  // fall through to VirtualMessageList which shows a loading spinner.
+  const isInitiallyLoading = chatMessages.length === 0 && hasMoreHistory;
+  if (chatMessages.length === 0 && showSetupCard && !isInitiallyLoading) {
     return (
       <>
         <div
