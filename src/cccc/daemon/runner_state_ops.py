@@ -7,6 +7,7 @@ from typing import Callable
 
 from ..paths import ensure_home
 from ..util.fs import atomic_write_json, read_json
+from ..util.process import HARD_TERMINATE_SIGNAL
 from ..util.time import utc_now_iso
 
 
@@ -107,7 +108,7 @@ def cleanup_stale_pty_state(
         while time.time() < deadline and pid_alive(pid):
             time.sleep(0.05)
         if pid_alive(pid):
-            best_effort_killpg(pid, signal.SIGKILL)
+            best_effort_killpg(pid, HARD_TERMINATE_SIGNAL)
         try:
             p.unlink()
         except Exception:

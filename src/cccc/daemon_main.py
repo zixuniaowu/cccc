@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
 from .daemon.server import DaemonPaths, call_daemon, default_paths, read_pid, serve_forever
+from .util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive
 
 
 def _spawn_daemon(paths: DaemonPaths) -> int:
@@ -51,20 +51,18 @@ def main(argv: Optional[list[str]] = None) -> int:
         # Clean up stale socket/pid if daemon is not actually running
         pid = read_pid(paths)
         if pid > 0:
-            try:
-                os.kill(pid, 0)  # Check if process exists
+            if pid_is_alive(pid):
                 print(f"ccccd: pid file points to a live process (pid={pid}) but IPC is not responding; refusing to spawn duplicate daemon")
                 return 1
-            except OSError:
-                # Process doesn't exist, clean up stale files
-                print("ccccd: cleaning up stale state from crashed daemon")
-                try:
-                    paths.sock_path.unlink(missing_ok=True)
-                    paths.addr_path.unlink(missing_ok=True)
-                    paths.pid_path.unlink(missing_ok=True)
-                except Exception as e:
-                    print(f"ccccd: failed to clean stale daemon state: {e}")
-                    return 1
+            # 进程不存在，清理陈旧状态文件。
+            print("ccccd: cleaning up stale state from crashed daemon")
+            try:
+                paths.sock_path.unlink(missing_ok=True)
+                paths.addr_path.unlink(missing_ok=True)
+                paths.pid_path.unlink(missing_ok=True)
+            except Exception as e:
+                print(f"ccccd: failed to clean stale daemon state: {e}")
+                return 1
         pid = _spawn_daemon(paths)
         print(f"ccccd: started pid={pid}")
         return 0
@@ -77,9 +75,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         pid = read_pid(paths)
         if pid > 0:
             try:
-                os.kill(pid, signal.SIGTERM)
-                print("ccccd: SIGTERM sent")
-                return 0
+                if best_effort_signal_pid(pid, SOFT_TERMINATE_SIGNAL, include_group=True):
+                    print("ccccd: SIGTERM sent")
+                    return 0
+                raise RuntimeError("signal not delivered")
             except Exception as e:
                 print(f"ccccd: failed to signal pid={pid}: {e}")
                 return 1
