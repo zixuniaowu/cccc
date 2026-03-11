@@ -10,22 +10,6 @@ from .group_space import get_group_space_prompt_state
 from .prompt_files import DEFAULT_PREAMBLE_BODY, PREAMBLE_FILENAME, read_group_prompt_file
 
 
-def _memory_policy_lines(group_id: str) -> List[str]:
-    """Memory system guidance for agents."""
-    gid = str(group_id or "").strip()
-    if not gid:
-        return []
-    return [
-        "Memory:",
-        "- Split by horizon: Context agent state is short-term execution memory; long-term memory lives in state/memory/MEMORY.md + state/memory/daily/*.md.",
-        "- Keep transient execution status in Context; write only stable, reusable outcomes to memory files.",
-        "- Resume gate: use cccc_bootstrap.memory_recall_gate on start/resume; if empty, run cccc_memory(search/get) manually before implementation.",
-        "- Recall path: cccc_memory(action=search) -> cccc_memory(action=get) before planning or writing.",
-        '- Write path: cccc_memory(action="write", target="daily"|"memory", ...) with dedup intent.',
-        '- Compaction path (when context grows): cccc_memory_admin(action="context_check") -> cccc_memory_admin(action="compact"|"daily_flush").',
-    ]
-
-
 def _group_space_policy_lines(group_id: str) -> List[str]:
     gid = str(group_id or "").strip()
     if not gid:
@@ -38,28 +22,25 @@ def _group_space_policy_lines(group_id: str) -> List[str]:
         mode = str(state.get("mode") or "disabled")
         work_bound = bool(state.get("work_bound"))
         memory_bound = bool(state.get("memory_bound"))
+        if not (work_bound or memory_bound):
+            return []
         lines = [
             "Group Space:",
             f"- NotebookLM provider: {provider} ({mode}); work_bound={str(work_bound).lower()} memory_bound={str(memory_bound).lower()}.",
         ]
-        if work_bound or memory_bound:
-            lines.append(
-                '- If cccc_space is hidden in this session, use cccc_capability_use(tool_name="cccc_space", tool_arguments={"action":"status"}) first to auto-enable pack:space.'
-            )
         if work_bound:
-            lines.extend([
-                '- Use cccc_space(action=query) on lane="work" for long-horizon/shared/project knowledge lookup.',
-                '- Use cccc_space(action=ingest) on lane="work" only for stable findings/resources worth reusing.',
-                '- For resource_ingest payloads, use source_type + {url|content|file_id} depending on source kind.',
-                '- Use cccc_space(action=artifact) on lane="work" for NotebookLM outputs (save_to_space=true persists to repo/space/artifacts).',
-                "- If you see files matching '*.conflict.remote.*' under space/, report and ask user for resolution; do not auto-merge/delete.",
-            ])
+            lines.append(
+                '- `cccc_space(action="query", lane="work")` is available for shared/project knowledge lookup.'
+            )
+            lines.append(
+                "- Long NotebookLM artifact jobs that return pending/queued complete via a later system.notify; stop polling and wait for the notification."
+            )
         if memory_bound:
-            lines.extend([
-                '- Memory recall order: local memory first (`cccc_bootstrap.memory_recall_gate` -> `cccc_memory(search/get)`), then `cccc_space(action=query, lane="memory")` only when deeper recall is needed.',
-                '- Never ingest or generate artifacts on lane="memory"; it is daemon-synced from finalized daily memory files.',
-            ])
-        lines.append("- If provider is degraded/disabled, continue with Context + ledger + local memory and report fallback explicitly.")
+            lines.append(
+                '- Recall order: local memory first; use `cccc_space(action="query", lane="memory")` only as a deeper recall fallback.'
+            )
+        if mode != "active":
+            lines.append("- If the provider is degraded, continue with Context + local memory and report the fallback explicitly.")
         return lines
     except Exception:
         return []
@@ -180,27 +161,14 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
     # Minimal platform invariants. Keep this stable and short; group-specific details belong in cccc_help / repo files.
     core_lines = [
         "Non-negotiables:",
-        "- No fabrication: do not invent facts/results/sources. Investigate first; mark hypotheses.",
-        "- Visible chat MUST be sent via MCP: cccc_message_send / cccc_message_reply.",
-        "- Terminal output is NOT delivered as chat. If you replied in the terminal, resend via MCP.",
-        "- Keep the control plane fresh at key transitions (start/milestone/blocker/resume/done): update shared tasks/coordination + your agent state.",
-        '- Agent-state minimum each update: focus + next_action + what_changed (and active_task_id when applicable).',
-        "- Fact-Goal gate: strategy/scope discussion first; implement only after explicit action intent.",
-        "- Planning gate (6D) for non-trivial changes: value/ROI, complexity load, feasibility, verifiability, risk/side-effects, reversibility.",
-        "- Todo discipline: track every concrete or implicit user ask as a runtime todo; keep parallel asks separate.",
-        "- Reconcile the full current approved scope before implementation; do not execute only the latest discussed part.",
-        "- Delivery rule: once implementation is approved, complete the agreed scope in one pass unless a real blocker stops progress.",
-        "- Completion rule (current approved scope): report each in-scope ask as done/pending/blocked(owner); do not claim full done with unresolved in-scope asks.",
-        "- Promote to shared cccc_task only for multi-actor, long-horizon, or user-explicit tracking.",
-        "- Gap policy: info gap -> search evidence first (Context/PROJECT/memory/inbox, then web if allowed); capability gap -> use cccc_capability_use (or search then use).",
-        "- If capability ops return refresh_required=true, relist/reconnect then retry.",
-        "- On capability install/enable failure, inspect diagnostics/resolution_plan first; escalate only for real user-side blockers (keys/permissions).",
-        "- Prefer simplification/removal over stacking fallback patches.",
-        "- Detailed collaboration workflow lives in cccc_help (refresh when needed).",
+        "- No fabrication. Verify before claiming done.",
+        "- Visible replies must go through MCP: cccc_message_send / cccc_message_reply.",
+        "- Terminal output is not delivery.",
+        "- Cold start or resume: call cccc_bootstrap first.",
+        "- Need the full playbook or refreshed scoped guidance: run cccc_help.",
+        "- At key transitions, sync shared control-plane state and your cccc_agent_state.",
+        "- For strategy or scope discussion, align first; implement only after explicit action intent.",
     ]
-    memory_lines = _memory_policy_lines(group_id)
-    if memory_lines:
-        core_lines.extend(["", *memory_lines])
 
     group_space_lines = _group_space_policy_lines(group_id)
     if group_space_lines:

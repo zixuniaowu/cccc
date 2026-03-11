@@ -191,7 +191,7 @@ Notes:
 | Unread nudge | `unread_nudge_after_seconds` | 900s | Inbox still-unread reminder |
 | Actor idle | `actor_idle_timeout_seconds` | 600s | Actor idle notification to foreman |
 | Keepalive | `keepalive_delay_seconds` | 120s | Foreman keepalive reminder |
-| Silence | `silence_timeout_seconds` | 600s | Group silence notification to foreman |
+| Quiet review | `silence_timeout_seconds` | 0s | Optional foreman review when the whole group stays quiet; `0` disables it |
 | Help nudge | `help_nudge_interval_seconds` / `help_nudge_min_messages` | 600s / 10 | Prompt actor to revisit `cccc_help` |
 
 ### Delivery Throttling

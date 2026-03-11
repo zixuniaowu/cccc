@@ -42,6 +42,7 @@ class TestGroupTemplateDirtySettingsTolerance(unittest.TestCase):
                 tpl = build_group_template_from_group(group)
                 self.assertEqual(tpl.settings.nudge_after_seconds, 300)
                 self.assertEqual(tpl.settings.reply_required_nudge_after_seconds, 300)
+                self.assertEqual(tpl.settings.silence_timeout_seconds, 0)
                 self.assertEqual(tpl.settings.min_interval_seconds, 0)
                 self.assertFalse(bool(tpl.settings.auto_mark_on_delivery))
 

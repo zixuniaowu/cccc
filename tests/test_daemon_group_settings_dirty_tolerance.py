@@ -37,7 +37,7 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
                     "actor_idle_timeout_seconds": "bad",
                     "keepalive_delay_seconds": "bad",
                     "keepalive_max_per_actor": -2,
-                    "silence_timeout_seconds": 900,
+                    "silence_timeout_seconds": "bad",
                     "help_nudge_interval_seconds": "bad",
                     "help_nudge_min_messages": "bad",
                 }
@@ -77,7 +77,7 @@ class TestDaemonGroupSettingsDirtyTolerance(unittest.TestCase):
                 self.assertEqual(settings.get("actor_idle_timeout_seconds"), 600)
                 self.assertEqual(settings.get("keepalive_delay_seconds"), 120)
                 self.assertEqual(settings.get("keepalive_max_per_actor"), 0)
-                self.assertEqual(settings.get("silence_timeout_seconds"), 900)
+                self.assertEqual(settings.get("silence_timeout_seconds"), 0)
                 self.assertEqual(settings.get("help_nudge_interval_seconds"), 600)
                 self.assertEqual(settings.get("help_nudge_min_messages"), 10)
                 self.assertEqual(settings.get("min_interval_seconds"), 0)

@@ -186,7 +186,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Recipients/selectors (repeatable, supports comma-separated, e.g. --to peer-a --to @foreman,@peers)",
     )
-    p_send.add_argument("--priority", choices=["normal", "attention"], default="normal", help="Message priority")
+    p_send.add_argument("--priority", choices=["normal", "attention"], default="normal", help="Message mode")
     p_send.add_argument("--reply-required", action="store_true", help="Require recipients to reply")
     p_send.add_argument("--path", default="", help="Send message under this scope (path inside repo/scope)")
     p_send.set_defaults(func=cmd_send)
@@ -202,7 +202,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="Recipients (default: original sender); repeatable, comma-separated",
     )
-    p_reply.add_argument("--priority", choices=["normal", "attention"], default="normal", help="Message priority")
+    p_reply.add_argument("--priority", choices=["normal", "attention"], default="normal", help="Message mode")
     p_reply.add_argument("--reply-required", action="store_true", help="Require recipients to reply")
     p_reply.set_defaults(func=cmd_reply)
 

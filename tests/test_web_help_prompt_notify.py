@@ -101,6 +101,11 @@ class TestWebHelpPromptNotify(unittest.TestCase):
             self.assertEqual(result.get("notified_actor_ids"), ["fm1", "peer1"])
             targets = sorted(str((call.get("args") or {}).get("target_actor_id") or "") for call in notify_calls)
             self.assertEqual(targets, ["fm1", "peer1"])
+            titles = sorted(str((call.get("args") or {}).get("title") or "") for call in notify_calls)
+            self.assertEqual(titles, ["Help updated: common guidance", "Help updated: common guidance"])
+            for call in notify_calls:
+                args = call.get("args") or {}
+                self.assertIn("Updated: common guidance.", str(args.get("message") or ""))
         finally:
             cleanup()
 
@@ -149,6 +154,8 @@ class TestWebHelpPromptNotify(unittest.TestCase):
             self.assertEqual(len(notify_calls), 1)
             notify_args = notify_calls[0].get("args") or {}
             self.assertEqual(str(notify_args.get("target_actor_id") or ""), "fm1")
+            self.assertEqual(str(notify_args.get("title") or ""), "Help updated: your actor note")
+            self.assertIn("Updated: your actor note.", str(notify_args.get("message") or ""))
         finally:
             cleanup()
 
@@ -198,6 +205,8 @@ class TestWebHelpPromptNotify(unittest.TestCase):
             notify_args = notify_calls[0].get("args") or {}
             self.assertEqual(str(notify_args.get("target_actor_id") or ""), "peer1")
             self.assertEqual(str(notify_args.get("by") or ""), "system")
+            self.assertEqual(str(notify_args.get("title") or ""), "Help updated: peer notes")
+            self.assertIn("Updated: peer notes.", str(notify_args.get("message") or ""))
         finally:
             cleanup()
 
@@ -244,6 +253,8 @@ class TestWebHelpPromptNotify(unittest.TestCase):
             self.assertEqual(result.get("notified_actor_ids"), ["fm1", "peer1"])
             targets = sorted(str((call.get("args") or {}).get("target_actor_id") or "") for call in notify_calls)
             self.assertEqual(targets, ["fm1", "peer1"])
+            titles = sorted(str((call.get("args") or {}).get("title") or "") for call in notify_calls)
+            self.assertEqual(titles, ["Help updated", "Help updated"])
         finally:
             cleanup()
 
@@ -293,7 +304,8 @@ class TestWebHelpPromptNotify(unittest.TestCase):
             queue_mock.assert_called_once()
             queue_kwargs = queue_mock.call_args.kwargs
             self.assertEqual(queue_kwargs.get("actor_id"), "fm1")
-            self.assertEqual(queue_kwargs.get("title"), "Help updated")
+            self.assertEqual(queue_kwargs.get("title"), "Help updated: your actor note")
+            self.assertIn("Updated: your actor note.", str(queue_kwargs.get("message") or ""))
             flush_mock.assert_called_once()
             self.assertEqual(flush_mock.call_args.kwargs.get("actor_id"), "fm1")
         finally:

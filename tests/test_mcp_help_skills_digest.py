@@ -1,11 +1,27 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
 
 class TestMcpHelpSkillsDigest(unittest.TestCase):
+    def _with_home(self):
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        td = td_ctx.__enter__()
+        os.environ["CCCC_HOME"] = td
+
+        def cleanup() -> None:
+            td_ctx.__exit__(None, None, None)
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+        return td, cleanup
+
     def test_cccc_help_appends_runtime_skill_digest(self) -> None:
         from cccc.ports.mcp.server import handle_tool_call
 
@@ -34,27 +50,155 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
             out = handle_tool_call("cccc_help", {})
 
         markdown = str(out.get("markdown") or "")
+        self.assertIn("## Core Routes", markdown)
+        self.assertIn("## Control Plane", markdown)
+        self.assertIn("## Memory and Recall", markdown)
+        self.assertIn("## Capability", markdown)
+        self.assertIn("## Role Notes", markdown)
         self.assertIn("## Active Skills (Runtime)", markdown)
-        self.assertIn("## Capability Quick Use (Runtime)", markdown)
-        self.assertIn("## Gap Routing", markdown)
-        self.assertIn("cccc_capability_search(kind=\"mcp_toolpack\")", markdown)
-        self.assertIn("cccc_capability_use", markdown)
-        self.assertIn("capsule skill is runtime capsule activation", markdown)
+        self.assertIn("Capsule skill is runtime capsule activation", markdown)
         self.assertIn("$CODEX_HOME/skills", markdown)
-        self.assertIn("### Todo (runtime-first)", markdown)
-        self.assertIn("Every concrete user ask/question (even simple) = one runtime todo item", markdown)
-        self.assertIn("Capture implicit asks too", markdown)
-        self.assertIn("If new evidence overturns prior assumptions, refactor todo immediately", markdown)
-        self.assertIn("Anti-drip delivery: once implementation is approved, finish the agreed scope in one pass", markdown)
-        self.assertIn("Include obvious low-risk in-scope polish in the same pass", markdown)
-        self.assertIn("For status replies, map current approved scope items to `done` / `pending` / `blocked(owner)`", markdown)
-        self.assertIn("## Intent and Scope Alignment", markdown)
-        self.assertIn("do not implement until explicit action intent", markdown)
-        self.assertIn("## Planning Balance (6D)", markdown)
-        self.assertIn("1. value / ROI", markdown)
-        self.assertIn("6. reversibility", markdown)
+        self.assertIn("### Todo and Scope Discipline", markdown)
+        self.assertIn("Every concrete or implicit user ask becomes a runtime todo item.", markdown)
+        self.assertIn("Once implementation is approved, finish the agreed scope in one pass unless a real blocker stops progress.", markdown)
+        self.assertIn("### Planning and Scope Gates", markdown)
+        self.assertIn("For non-trivial plans, run a 6D check", markdown)
         self.assertIn("triage", markdown)
         self.assertIn("review", markdown)
+        self.assertNotIn("### NotebookLM Artifact Runs", markdown)
+
+    def test_cccc_help_appends_group_space_runtime_only_when_bound(self) -> None:
+        from cccc.ports.mcp.server import handle_tool_call
+
+        with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "peer-1"}, clear=False), patch(
+            "cccc.ports.mcp.handlers.cccc_core.load_group",
+            return_value=None,
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
+            return_value={"enabled_capabilities": []},
+        ), patch(
+            "cccc.ports.mcp.handlers.cccc_core.get_group_space_prompt_state",
+            return_value={
+                "provider": "notebooklm",
+                "mode": "active",
+                "work_bound": True,
+                "memory_bound": True,
+            },
+        ):
+            out = handle_tool_call("cccc_help", {})
+
+        markdown = str(out.get("markdown") or "")
+        self.assertIn("## Group Space (Runtime)", markdown)
+        self.assertIn("If `cccc_space` is hidden in this session", markdown)
+        self.assertIn('Use `cccc_space(action="query", lane="work")` for shared/project knowledge lookup.', markdown)
+        self.assertIn("stop polling and wait for the later `system.notify`", markdown)
+        self.assertIn('use `cccc_space(action="query", lane="memory")` only as a deeper recall fallback.', markdown)
+
+    def test_cccc_help_group_space_runtime_tracks_bind_unbind_rebind(self) -> None:
+        from cccc.daemon.space.group_space_store import set_space_binding_unbound, set_space_provider_state, upsert_space_binding
+        from cccc.ports.mcp.server import handle_tool_call
+
+        _, cleanup = self._with_home()
+        try:
+            with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "peer-1"}, clear=False), patch(
+                "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
+                return_value={"enabled_capabilities": []},
+            ):
+                initial = handle_tool_call("cccc_help", {})
+                initial_markdown = str(initial.get("markdown") or "")
+                self.assertNotIn("## Group Space (Runtime)", initial_markdown)
+
+                upsert_space_binding(
+                    "g1",
+                    provider="notebooklm",
+                    lane="work",
+                    remote_space_id="nb_work_1",
+                    by="user",
+                    status="bound",
+                )
+                set_space_provider_state(
+                    "notebooklm",
+                    enabled=True,
+                    mode="active",
+                    last_error="",
+                    touch_health=True,
+                )
+                bound = handle_tool_call("cccc_help", {})
+                bound_markdown = str(bound.get("markdown") or "")
+                self.assertIn("## Group Space (Runtime)", bound_markdown)
+                self.assertIn("work_bound=true memory_bound=false", bound_markdown)
+
+                # Even if provider state remains active, removing the bound lane must remove the runtime addendum.
+                set_space_binding_unbound("g1", provider="notebooklm", lane="work", by="user")
+                unbound = handle_tool_call("cccc_help", {})
+                unbound_markdown = str(unbound.get("markdown") or "")
+                self.assertNotIn("## Group Space (Runtime)", unbound_markdown)
+                self.assertNotIn("work_bound=true", unbound_markdown)
+
+                upsert_space_binding(
+                    "g1",
+                    provider="notebooklm",
+                    lane="work",
+                    remote_space_id="nb_work_2",
+                    by="user",
+                    status="bound",
+                )
+                rebound = handle_tool_call("cccc_help", {})
+                rebound_markdown = str(rebound.get("markdown") or "")
+                self.assertIn("## Group Space (Runtime)", rebound_markdown)
+                self.assertIn("work_bound=true memory_bound=false", rebound_markdown)
+        finally:
+            cleanup()
+
+    def test_cccc_help_group_space_runtime_tracks_partial_lane_unbind(self) -> None:
+        from cccc.daemon.space.group_space_store import set_space_binding_unbound, set_space_provider_state, upsert_space_binding
+        from cccc.ports.mcp.server import handle_tool_call
+
+        _, cleanup = self._with_home()
+        try:
+            upsert_space_binding(
+                "g1",
+                provider="notebooklm",
+                lane="work",
+                remote_space_id="nb_work_1",
+                by="user",
+                status="bound",
+            )
+            upsert_space_binding(
+                "g1",
+                provider="notebooklm",
+                lane="memory",
+                remote_space_id="nb_memory_1",
+                by="user",
+                status="bound",
+            )
+            set_space_provider_state(
+                "notebooklm",
+                enabled=True,
+                mode="active",
+                last_error="",
+                touch_health=True,
+            )
+
+            with patch.dict(os.environ, {"CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "peer-1"}, clear=False), patch(
+                "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
+                return_value={"enabled_capabilities": []},
+            ):
+                both = handle_tool_call("cccc_help", {})
+                both_markdown = str(both.get("markdown") or "")
+                self.assertIn("work_bound=true memory_bound=true", both_markdown)
+                self.assertIn('`cccc_space(action="query", lane="work")`', both_markdown)
+                self.assertIn('`cccc_space(action="query", lane="memory")`', both_markdown)
+
+                set_space_binding_unbound("g1", provider="notebooklm", lane="work", by="user")
+                memory_only = handle_tool_call("cccc_help", {})
+                memory_only_markdown = str(memory_only.get("markdown") or "")
+                self.assertIn("## Group Space (Runtime)", memory_only_markdown)
+                self.assertIn("work_bound=false memory_bound=true", memory_only_markdown)
+                self.assertNotIn('Use `cccc_space(action="query", lane="work")` for shared/project knowledge lookup.', memory_only_markdown)
+                self.assertIn('use `cccc_space(action="query", lane="memory")` only as a deeper recall fallback.', memory_only_markdown)
+        finally:
+            cleanup()
 
     def test_cccc_help_includes_context_hygiene(self) -> None:
         from cccc.ports.mcp.server import handle_tool_call

@@ -84,7 +84,7 @@ def _cfg(group: Group) -> AutomationConfig:
         actor_idle_timeout_seconds=_int("actor_idle_timeout_seconds", 600),
         keepalive_delay_seconds=_int("keepalive_delay_seconds", 120),
         keepalive_max_per_actor=_int("keepalive_max_per_actor", 3),
-        silence_timeout_seconds=_int("silence_timeout_seconds", 600),
+        silence_timeout_seconds=_int("silence_timeout_seconds", 0),
         # Level 3
         help_nudge_interval_seconds=_int("help_nudge_interval_seconds", 600),
         help_nudge_min_messages=_int("help_nudge_min_messages", 10),
@@ -1883,8 +1883,8 @@ class AutomationManager:
                 priority="normal",
                 title="Refresh collaboration rules",
                 message=(
-                    "Run `cccc_help` now to refresh collaboration rules; then update your agent state "
-                    "(`cccc_agent_state`: focus/next_action/what_changed)."
+                    "Run `cccc_help` now, then refresh `cccc_agent_state` "
+                    "(focus/next_action/what_changed)."
                 ),
                 target_actor_id=aid,
                 requires_ack=False,

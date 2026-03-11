@@ -69,6 +69,18 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
             ["index_sync", "context_check", "compact", "daily_flush"],
         )
 
+    def test_messaging_toolspec_priority_matches_runtime_surface(self) -> None:
+        for tool_name in ("cccc_message_send", "cccc_message_reply", "cccc_file"):
+            spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == tool_name), None)
+            self.assertIsInstance(spec, dict, msg=f"missing toolspec for {tool_name}")
+            schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
+            self.assertIsInstance(schema, dict)
+            props = schema.get("properties") if isinstance(schema, dict) else {}
+            self.assertIsInstance(props, dict)
+            priority = props.get("priority") if isinstance(props, dict) else {}
+            self.assertIsInstance(priority, dict)
+            self.assertEqual(priority.get("enum"), ["normal", "attention"])
+
 
 if __name__ == "__main__":
     unittest.main()

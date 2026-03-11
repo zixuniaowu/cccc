@@ -161,7 +161,7 @@ class TestMcpRuntimeContext(unittest.TestCase):
                 content=prompt,
             ),
         ), patch(
-            "cccc.ports.mcp.server._append_runtime_skill_digest",
+            "cccc.ports.mcp.server._append_runtime_help_addenda",
             side_effect=lambda markdown, group_id, actor_id: markdown,
         ), patch(
             "cccc.ports.mcp.server._call_daemon_or_raise",

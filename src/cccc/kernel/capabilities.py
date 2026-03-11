@@ -21,6 +21,7 @@ CORE_BASIC_TOOLS: Tuple[str, ...] = (
     "cccc_inbox_mark_read",
     "cccc_message_send",
     "cccc_message_reply",
+    "cccc_file",
     "cccc_context_get",
     "cccc_coordination",
     "cccc_task",
@@ -51,13 +52,12 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
         "tags": ("group", "actor", "runtime"),
     },
     "pack:file-im": {
-        "title": "File + IM",
-        "description": "File attachment operations and IM bind support.",
+        "title": "IM Bind",
+        "description": "IM account bind and connection support.",
         "tool_names": (
-            "cccc_file",
             "cccc_im_bind",
         ),
-        "tags": ("file", "attachment", "im"),
+        "tags": ("im", "bind"),
     },
     "pack:space": {
         "title": "Group Space",

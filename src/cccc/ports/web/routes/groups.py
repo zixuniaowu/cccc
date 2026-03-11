@@ -410,6 +410,51 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             out.append(item)
         return out
 
+    def _help_update_reason_labels(*, actor: dict[str, Any], changed_blocks: list[str], editor_mode: str) -> list[str]:
+        mode = str(editor_mode or "").strip().lower()
+        if mode != "structured":
+            return []
+        aid = str(actor.get("id") or "").strip()
+        role = str(actor.get("role") or "").strip().lower()
+        if not aid:
+            return []
+        labels: list[str] = []
+        seen: set[str] = set()
+
+        def _add(label: str) -> None:
+            if label and label not in seen:
+                seen.add(label)
+                labels.append(label)
+
+        blocks = list(changed_blocks or [])
+        if "common" in blocks:
+            _add("common guidance")
+        if "role:foreman" in blocks and role == "foreman":
+            _add("foreman notes")
+        if "role:peer" in blocks and role == "peer":
+            _add("peer notes")
+        if f"actor:{aid}" in blocks:
+            _add("your actor note")
+        return labels
+
+    def _help_update_notify_copy(*, labels: list[str]) -> tuple[str, str]:
+        reasons = [str(label or "").strip() for label in labels if str(label or "").strip()]
+        if not reasons:
+            return (
+                "Help updated",
+                "Group help changed. Run `cccc_help` now to refresh your effective playbook.",
+            )
+        if len(reasons) == 1:
+            title = f"Help updated: {reasons[0]}"
+        else:
+            title = "Help updated: multiple sections"
+        joined = ", ".join(reasons)
+        message = (
+            f"Updated: {joined}. Run `cccc_help` now to refresh your effective playbook; "
+            "then update `cccc_agent_state` if your plan changes."
+        )
+        return title, message
+
     async def _notify_help_update(
         group_id: str,
         *,
@@ -424,45 +469,28 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if not running:
             return []
 
-        targets: set[str] = set()
-        mode = str(editor_mode or "").strip().lower()
-        blocks = list(changed_blocks or [])
-        if mode == "structured" and blocks:
-            for block in blocks:
-                if block == "common":
-                    for actor in running:
-                        aid = str(actor.get("id") or "").strip()
-                        if aid:
-                            targets.add(aid)
-                    continue
-                if block == "role:foreman":
-                    for actor in running:
-                        if str(actor.get("role") or "").strip().lower() != "foreman":
-                            continue
-                        aid = str(actor.get("id") or "").strip()
-                        if aid:
-                            targets.add(aid)
-                    continue
-                if block == "role:peer":
-                    for actor in running:
-                        if str(actor.get("role") or "").strip().lower() != "peer":
-                            continue
-                        aid = str(actor.get("id") or "").strip()
-                        if aid:
-                            targets.add(aid)
-                    continue
-                if block.startswith("actor:"):
-                    aid = str(block[len("actor:"):]).strip()
-                    if aid and any(str(actor.get("id") or "").strip() == aid for actor in running):
-                        targets.add(aid)
-        else:
+        target_reasons: dict[str, list[str]] = {}
+        for actor in running:
+            aid = str(actor.get("id") or "").strip()
+            if not aid:
+                continue
+            reasons = _help_update_reason_labels(
+                actor=actor,
+                changed_blocks=changed_blocks,
+                editor_mode=editor_mode,
+            )
+            if reasons:
+                target_reasons[aid] = reasons
+
+        if not target_reasons:
             for actor in running:
                 aid = str(actor.get("id") or "").strip()
                 if aid:
-                    targets.add(aid)
+                    target_reasons[aid] = []
 
         notified: list[str] = []
-        for aid in sorted(targets):
+        for aid in sorted(target_reasons.keys()):
+            title, message = _help_update_notify_copy(labels=target_reasons.get(aid) or [])
             try:
                 resp = await ctx.daemon({
                     "op": "system_notify",
@@ -471,8 +499,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                         "by": "system",
                         "kind": "info",
                         "priority": "normal",
-                        "title": "Help updated",
-                        "message": "Group help changed. Run `cccc_help` now to refresh your playbook, then update your agent state if your plan changes.",
+                        "title": title,
+                        "message": message,
                         "target_actor_id": aid,
                         "requires_ack": False,
                     },
@@ -637,7 +665,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "actor_idle_timeout_seconds": _safe_int(automation.get("actor_idle_timeout_seconds", 600), default=600, min_value=0),
                     "keepalive_delay_seconds": _safe_int(automation.get("keepalive_delay_seconds", 120), default=120, min_value=0),
                     "keepalive_max_per_actor": _safe_int(automation.get("keepalive_max_per_actor", 3), default=3, min_value=0),
-                    "silence_timeout_seconds": _safe_int(automation.get("silence_timeout_seconds", 600), default=600, min_value=0),
+                    "silence_timeout_seconds": _safe_int(automation.get("silence_timeout_seconds", 0), default=0, min_value=0),
                     "help_nudge_interval_seconds": _safe_int(automation.get("help_nudge_interval_seconds", 600), default=600, min_value=0),
                     "help_nudge_min_messages": _safe_int(automation.get("help_nudge_min_messages", 10), default=10, min_value=0),
                     "min_interval_seconds": _safe_int(delivery.get("min_interval_seconds", 0), default=0, min_value=0),

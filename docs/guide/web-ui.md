@@ -114,7 +114,7 @@ Access via the gear icon:
   - `Set Group Status` (operational, one-time only)
   - `Control Actor Runtimes` (operational, one-time only)
 - **One-time behavior**: One-time rules auto-complete after firing, then can be cleaned up from completed list.
-- **Engine Policies**: Configure built-in nudges (reply-required, attention ACK, unread), actor idle, keepalive, silence, and help nudges.
+- **Engine Policies**: Configure built-in nudges (reply-required, attention ACK, unread), actor idle, keepalive, quiet review, and help nudges.
 
 ### IM Bridge
 
