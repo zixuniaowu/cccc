@@ -103,6 +103,9 @@ def blob_path(*, group_id: str, rel_path: str) -> Dict[str, Any]:
     rp = str(rel_path or "").strip()
     if not rp:
         raise MCPError(code="missing_rel_path", message="missing rel_path")
+    # Auto-prefix state/blobs/ when caller provides just the blob filename.
+    if not rp.startswith("state/blobs/"):
+        rp = f"state/blobs/{rp}"
     full = resolve_blob_attachment_path(group, rel_path=rp)
     return {"path": str(full)}
 

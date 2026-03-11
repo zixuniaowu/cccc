@@ -108,7 +108,7 @@ export function RelayMessageModal({
     >
       <div
         ref={modalRef}
-        className="w-full h-full sm:h-auto sm:max-w-2xl sm:mt-14 shadow-2xl animate-scale-in overflow-hidden flex flex-col rounded-none sm:rounded-2xl glass-modal"
+        className="w-full h-full min-h-0 sm:h-auto sm:max-h-[calc(100dvh-7rem)] sm:max-w-2xl sm:mt-14 shadow-2xl animate-scale-in overflow-hidden flex flex-col rounded-none sm:rounded-2xl glass-modal"
       >
         <div className="px-6 py-4 border-b safe-area-inset-top border-[var(--glass-border-subtle)]">
           <div id="relay-modal-title" className="text-lg font-semibold text-[var(--color-text-primary)]">
@@ -119,106 +119,110 @@ export function RelayMessageModal({
           </div>
         </div>
 
-        <div className="p-6 space-y-5 flex-1 overflow-y-auto min-h-0">
+        <div className="p-6 flex flex-1 min-h-0 flex-col gap-5">
           {/* Source preview */}
-          <div className="rounded-xl p-4 glass-panel">
+          <div className="shrink-0 overflow-hidden rounded-xl p-4 glass-panel">
             <div className="text-xs font-semibold text-[var(--color-text-primary)]">
               {t("relay.source")}
             </div>
             <div className="text-[11px] mt-1 text-[var(--color-text-muted)]">
               {srcGroupId} · {srcEventId ? srcEventId : "—"} · {srcBy || "—"}
             </div>
-            <div className="mt-2 text-sm whitespace-pre-wrap break-words text-[var(--color-text-primary)]">
+            <div className="mt-2 max-h-[min(40vh,20rem)] overflow-x-hidden overflow-y-auto overscroll-contain whitespace-pre-wrap break-words pr-1 text-sm text-[var(--color-text-primary)]">
               {srcText || t("relay.emptyMessage")}
             </div>
           </div>
 
-          {/* Destination group */}
-          <div>
-            <label className="block text-xs font-medium mb-2 text-[var(--color-text-secondary)]">
-              {t("relay.destinationGroup")}
-            </label>
-            <select
-              value={dstGroupId}
-              onChange={(e) => {
-                const gid = e.target.value;
-                setDstGroupId(gid);
-                setDstActors([]);
-                setDstActorsBusy(true);
-              }}
-              className="w-full rounded-xl px-3 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
-              disabled={busy || dstGroups.length === 0}
-            >
-              {dstGroups.length === 0 ? (
-                <option value="">{t("relay.noOtherGroups")}</option>
-              ) : null}
-              {dstGroups.map((g) => (
-                <option key={g.group_id} value={g.group_id}>
-                  {g.title ? `${g.title} (${g.group_id})` : g.group_id}
-                </option>
-              ))}
-            </select>
-          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+            <div className="space-y-5">
+              {/* Destination group */}
+              <div>
+                <label className="block text-xs font-medium mb-2 text-[var(--color-text-secondary)]">
+                  {t("relay.destinationGroup")}
+                </label>
+                <select
+                  value={dstGroupId}
+                  onChange={(e) => {
+                    const gid = e.target.value;
+                    setDstGroupId(gid);
+                    setDstActors([]);
+                    setDstActorsBusy(true);
+                  }}
+                  className="w-full rounded-xl px-3 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
+                  disabled={busy || dstGroups.length === 0}
+                >
+                  {dstGroups.length === 0 ? (
+                    <option value="">{t("relay.noOtherGroups")}</option>
+                  ) : null}
+                  {dstGroups.map((g) => (
+                    <option key={g.group_id} value={g.group_id}>
+                      {g.title ? `${g.title} (${g.group_id})` : g.group_id}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          {/* Recipients */}
-          <div>
-            <div className="flex items-center justify-between gap-3">
-              <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
-                {t("relay.recipients")}
-              </label>
-              <button
-                type="button"
-                className="text-xs underline text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
-                onClick={() => setToTokens([])}
-                disabled={busy}
-              >
-                {t("common:reset")}
-              </button>
-            </div>
-
-            <div className={classNames("mt-2 flex flex-wrap gap-2", dstActorsBusy ? "opacity-60" : "")}>
-              {availableTokens.map((tok) => {
-                const active = toTokens.includes(tok);
-                return (
+              {/* Recipients */}
+              <div>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="block text-xs font-medium text-[var(--color-text-secondary)]">
+                    {t("relay.recipients")}
+                  </label>
                   <button
-                    key={tok}
                     type="button"
-                    className={classNames(
-                      "text-xs px-2.5 py-1.5 rounded-full border transition-colors",
-                      active
-                        ? "bg-[var(--glass-accent-bg)] border-[var(--glass-accent-border)] text-[var(--color-accent-primary)]"
-                        : "bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
-                    )}
-                    onClick={() => toggleToken(tok)}
+                    className="text-xs underline text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+                    onClick={() => setToTokens([])}
                     disabled={busy}
-                    title={tok}
                   >
-                    {tok}
+                    {t("common:reset")}
                   </button>
-                );
-              })}
-            </div>
-            <div className="mt-2 text-xs text-[var(--color-text-muted)]">
-              {toTokens.length ? t("relay.selectedTokens", { tokens: toTokens.join(", ") }) : t("relay.selectedBroadcast")}
+                </div>
+
+                <div className={classNames("mt-2 flex flex-wrap gap-2", dstActorsBusy ? "opacity-60" : "")}>
+                  {availableTokens.map((tok) => {
+                    const active = toTokens.includes(tok);
+                    return (
+                      <button
+                        key={tok}
+                        type="button"
+                        className={classNames(
+                          "text-xs px-2.5 py-1.5 rounded-full border transition-colors",
+                          active
+                            ? "bg-[var(--glass-accent-bg)] border-[var(--glass-accent-border)] text-[var(--color-accent-primary)]"
+                            : "bg-[var(--glass-tab-bg)] border-[var(--glass-border-subtle)] text-[var(--color-text-secondary)] hover:bg-[var(--glass-tab-bg-hover)]"
+                        )}
+                        onClick={() => toggleToken(tok)}
+                        disabled={busy}
+                        title={tok}
+                      >
+                        {tok}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 text-xs text-[var(--color-text-muted)]">
+                  {toTokens.length ? t("relay.selectedTokens", { tokens: toTokens.join(", ") }) : t("relay.selectedBroadcast")}
+                </div>
+              </div>
+
+              {/* Optional note */}
+              <div>
+                <label className="block text-xs font-medium mb-2 text-[var(--color-text-secondary)]">
+                  {t("relay.noteLabel")}
+                </label>
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-xl px-3 py-2.5 text-sm transition-colors glass-input text-[var(--color-text-primary)]"
+                  placeholder={t("relay.notePlaceholder")}
+                  disabled={busy}
+                />
+              </div>
             </div>
           </div>
 
-          {/* Optional note */}
-          <div>
-            <label className="block text-xs font-medium mb-2 text-[var(--color-text-secondary)]">
-              {t("relay.noteLabel")}
-            </label>
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              rows={3}
-              className="w-full rounded-xl px-3 py-2.5 text-sm transition-colors glass-input text-[var(--color-text-primary)]"
-              placeholder={t("relay.notePlaceholder")}
-              disabled={busy}
-            />
-          </div>
-
-          <div className="flex gap-3 pt-1 flex-wrap justify-end">
+          <div className="shrink-0 flex gap-3 pt-1 flex-wrap justify-end">
             <button
               className="px-4 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px] glass-btn text-[var(--color-text-secondary)]"
               onClick={onCancel}

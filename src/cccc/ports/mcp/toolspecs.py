@@ -161,7 +161,7 @@ MCP_TOOLS = [
                 },
                 "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
-                "rel_path": {"type": "string", "description": "Required for action=blob_path"},
+                "rel_path": {"type": "string", "description": "Required for action=blob_path. Can be just the blob filename (e.g. 'sha256_image.png') or full relative path ('state/blobs/sha256_image.png')."},
             }
         ),
     },
