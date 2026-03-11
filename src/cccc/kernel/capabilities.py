@@ -48,6 +48,7 @@ BUILTIN_CAPABILITY_PACKS: Dict[str, Dict[str, object]] = {
             "cccc_group",
             "cccc_actor",
             "cccc_runtime_list",
+            "cccc_role_notes",
         ),
         "tags": ("group", "actor", "runtime"),
     },
