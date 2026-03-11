@@ -9,6 +9,7 @@ from ...kernel.actors import find_actor
 from ...kernel.ledger import append_event
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
+from ...runners.platform_support import pty_support_error_message
 
 
 def start_actor_process(
@@ -90,6 +91,9 @@ def start_actor_process(
             except Exception:
                 pass
         else:
+            if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
+                error_message = pty_support_error_message() or "PTY runner is not supported in this environment."
+                return {"success": False, "error": error_message}
             session = pty_runner.SUPERVISOR.start_actor(
                 group_id=group.group_id,
                 actor_id=actor_id,

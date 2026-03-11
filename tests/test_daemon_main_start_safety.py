@@ -17,7 +17,7 @@ class TestDaemonMainStartSafety(unittest.TestCase):
             with patch.object(daemon_main, "default_paths", return_value=paths), patch.object(
                 daemon_main, "call_daemon", return_value={"ok": False}
             ), patch.object(daemon_main, "read_pid", return_value=12345), patch.object(
-                daemon_main.os, "kill", return_value=None
+                daemon_main, "pid_is_alive", return_value=True
             ), patch.object(
                 daemon_main, "_spawn_daemon", return_value=67890
             ) as spawn_mock, redirect_stdout(
@@ -39,7 +39,7 @@ class TestDaemonMainStartSafety(unittest.TestCase):
             with patch.object(daemon_main, "default_paths", return_value=paths), patch.object(
                 daemon_main, "call_daemon", return_value={"ok": False}
             ), patch.object(daemon_main, "read_pid", return_value=12345), patch.object(
-                daemon_main.os, "kill", side_effect=OSError("no such process")
+                daemon_main, "pid_is_alive", return_value=False
             ), patch.object(
                 daemon_main, "_spawn_daemon", return_value=67890
             ) as spawn_mock, redirect_stdout(

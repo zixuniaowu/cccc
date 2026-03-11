@@ -3,6 +3,7 @@ from __future__ import annotations
 """IM bridge related CLI command handlers."""
 
 from .common import *  # noqa: F401,F403
+from ..util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive
 
 __all__ = [
     "cmd_im_set",
@@ -190,10 +191,8 @@ def _im_find_bridge_pid(group: Any) -> Optional[int]:
         return None
     try:
         pid = int(pid_path.read_text(encoding="utf-8").strip())
-        # Check if process is alive
-        os.kill(pid, 0)
-        return pid
-    except (ValueError, ProcessLookupError, PermissionError):
+        return pid if pid_is_alive(pid) else None
+    except ValueError:
         return None
 
 def _im_find_bridge_pids_by_script(group_id: str) -> list[int]:
@@ -370,8 +369,6 @@ def cmd_im_start(args: argparse.Namespace) -> int:
 
 def cmd_im_stop(args: argparse.Namespace) -> int:
     """Stop IM bridge for a group."""
-    import signal as sig
-
     group_id = _resolve_group_id(getattr(args, "group", ""))
     if not group_id:
         _print_json({"ok": False, "error": {"code": "missing_group_id", "message": "missing group_id (no active group?)"}})
@@ -401,12 +398,9 @@ def cmd_im_stop(args: argparse.Namespace) -> int:
             pid = int(pid_path.read_text(encoding="utf-8").strip())
             if pid not in killed:
                 try:
-                    os.killpg(os.getpgid(pid), sig.SIGTERM)
+                    best_effort_signal_pid(pid, SOFT_TERMINATE_SIGNAL, include_group=True)
                 except Exception:
-                    try:
-                        os.kill(pid, sig.SIGTERM)
-                    except Exception:
-                        pass
+                    pass
                 killed.add(pid)
                 stopped += 1
         except Exception:
@@ -422,12 +416,9 @@ def cmd_im_stop(args: argparse.Namespace) -> int:
         if pid in killed:
             continue
         try:
-            os.killpg(os.getpgid(pid), sig.SIGTERM)
+            best_effort_signal_pid(pid, SOFT_TERMINATE_SIGNAL, include_group=True)
         except Exception:
-            try:
-                os.kill(pid, sig.SIGTERM)
-            except Exception:
-                pass
+            pass
         killed.add(pid)
         stopped += 1
 

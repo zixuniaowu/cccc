@@ -401,6 +401,12 @@ uv pip install -e .
 uv run cccc --help
 ```
 
+### Native Windows Notes
+
+- For local development on Windows, prefer the repo-root `start.ps1`.
+- If `cccc doctor` reports `Windows PTY: NOT READY`, run `python -m pip install pywinpty` or reinstall with `uv pip install -e .`.
+- Use `scripts/build_web.ps1` for the bundled UI and `scripts/build_package.ps1` for a full package build.
+
 ### Docker
 
 ```bash

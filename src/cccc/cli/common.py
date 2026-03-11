@@ -38,6 +38,7 @@ from ..kernel.system_prompt import render_system_prompt
 from ..paths import ensure_home
 from ..ports.im.config_schema import canonicalize_im_config
 from ..util.conv import coerce_bool
+from ..util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive, terminate_pid
 
 _SPACE_QUERY_OPTION_KEYS = {"source_ids"}
 
@@ -160,22 +161,9 @@ def _ensure_daemon_running() -> bool:
             # Last resort: terminate the stale daemon by pid (best-effort).
             if call_daemon({"op": "ping"}, timeout_s=0.5).get("ok") and daemon_pid > 0:
                 try:
-                    import signal
-
-                    killed = False
-                    try:
-                        os.killpg(os.getpgid(daemon_pid), signal.SIGTERM)
-                        killed = True
-                    except Exception as e_pg:
-                        try:
-                            os.kill(daemon_pid, signal.SIGTERM)
-                            killed = True
-                        except Exception as e_kill:
-                            print(
-                                f"warn: failed to terminate stale daemon pid={daemon_pid}: killpg={e_pg}; kill={e_kill}",
-                                file=sys.stderr,
-                            )
+                    killed = best_effort_signal_pid(daemon_pid, SOFT_TERMINATE_SIGNAL, include_group=True)
                     if not killed:
+                        print(f"warn: failed to terminate stale daemon pid={daemon_pid}: signal not delivered", file=sys.stderr)
                         return True
                 except Exception as e:
                     print(f"warn: failed to terminate stale daemon pid={daemon_pid}: {e}", file=sys.stderr)
@@ -271,7 +259,6 @@ def _show_welcome() -> None:
 
 def _default_entry() -> int:
     """Default entry: start daemon + web together, stop both on Ctrl+C."""
-    import signal
     import threading
     
     from ..paths import ensure_home
@@ -341,13 +328,7 @@ def _default_entry() -> int:
 
                 if call_daemon({"op": "ping"}, timeout_s=0.5).get("ok") and daemon_pid > 0:
                     try:
-                        try:
-                            os.killpg(os.getpgid(daemon_pid), signal.SIGTERM)
-                        except Exception:
-                            try:
-                                os.kill(daemon_pid, signal.SIGTERM)
-                            except Exception:
-                                pass
+                        best_effort_signal_pid(daemon_pid, SOFT_TERMINATE_SIGNAL, include_group=True)
                     except Exception:
                         pass
 
@@ -375,38 +356,10 @@ def _default_entry() -> int:
                 txt = pid_path.read_text(encoding="utf-8").strip()
                 pid = int(txt) if txt.isdigit() else 0
             if pid > 0:
-                try:
-                    os.kill(pid, 0)
-                except Exception:
+                if not pid_is_alive(pid):
                     pid = 0
             if pid > 0:
-                def _pid_alive_local(p: int) -> bool:
-                    try:
-                        os.kill(p, 0)
-                        return True
-                    except Exception:
-                        return False
-
-                try:
-                    os.killpg(os.getpgid(pid), signal.SIGTERM)
-                except Exception:
-                    try:
-                        os.kill(pid, signal.SIGTERM)
-                    except Exception:
-                        pass
-                deadline = time.time() + 2.0
-                while time.time() < deadline:
-                    if not _pid_alive_local(pid):
-                        break
-                    time.sleep(0.05)
-                if _pid_alive_local(pid):
-                    try:
-                        os.killpg(os.getpgid(pid), signal.SIGKILL)
-                    except Exception:
-                        try:
-                            os.kill(pid, signal.SIGKILL)
-                        except Exception:
-                            pass
+                terminate_pid(pid, timeout_s=2.0, include_group=True, force=True)
 
             sock_path.unlink(missing_ok=True)
             addr_path.unlink(missing_ok=True)

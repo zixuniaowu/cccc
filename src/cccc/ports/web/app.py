@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import logging
 import mimetypes
@@ -26,6 +27,7 @@ from .schemas import RouteContext
 
 logger = logging.getLogger("cccc.web")
 _WEB_LOG_FH: Optional[Any] = None
+_WEB_LOG_PATH: Optional[Path] = None
 _SIGNED_OUT_COOKIE = "cccc_signed_out"
 
 
@@ -37,14 +39,28 @@ class Principal:
     is_admin: bool = False
 
 
+def _close_web_logging() -> None:
+    global _WEB_LOG_FH, _WEB_LOG_PATH
+    try:
+        if _WEB_LOG_FH is not None:
+            _WEB_LOG_FH.close()
+    except Exception:
+        pass
+    _WEB_LOG_FH = None
+    _WEB_LOG_PATH = None
+
+
 def _apply_web_logging(*, home: Path, level: str) -> None:
-    global _WEB_LOG_FH
+    global _WEB_LOG_FH, _WEB_LOG_PATH
     try:
         d = home / "daemon"
         d.mkdir(parents=True, exist_ok=True)
         p = d / "cccc-web.log"
+        if _WEB_LOG_FH is not None and _WEB_LOG_PATH is not None and _WEB_LOG_PATH != p:
+            _close_web_logging()
         if _WEB_LOG_FH is None:
             _WEB_LOG_FH = p.open("a", encoding="utf-8")
+            _WEB_LOG_PATH = p
         setup_root_json_logging(component="web", level=level, stream=_WEB_LOG_FH, force=True)
     except Exception:
         # Fall back to stderr if file logging isn't possible.
@@ -128,7 +144,14 @@ async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="cccc web", version=__version__)
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            _close_web_logging()
+
+    app = FastAPI(title="cccc web", version=__version__, lifespan=_lifespan)
     home = ensure_home()
     web_mode = _web_mode()
     read_only = web_mode == "exhibit"
