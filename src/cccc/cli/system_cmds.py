@@ -77,8 +77,8 @@ def cmd_status(_: argparse.Namespace) -> int:
 
 def cmd_doctor(args: argparse.Namespace) -> int:
     """Check environment and show available agent runtimes."""
-    import shutil
-    from ..kernel.runtime import detect_all_runtimes, PRIMARY_RUNTIMES
+    from ..kernel.runtime import detect_all_runtimes
+    from ..runners.platform_support import pty_support_details
     
     print("[DOCTOR] CCCC Environment Check")
     print()
@@ -100,18 +100,32 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"Daemon: running (pid={r.get('pid')}, version={r.get('version')})")
     else:
         print("Daemon: not running")
-    
+
+    pty_diag = pty_support_details()
+    if sys.platform.startswith("win"):
+        print()
+        if bool(pty_diag.get("supported")):
+            print("Windows PTY: OK (ConPTY backend available)")
+        else:
+            print(f"Windows PTY: NOT READY ({pty_diag.get('code')})")
+            print(f"  {pty_diag.get('message')}")
+            for hint in pty_diag.get("hints") if isinstance(pty_diag.get("hints"), list) else []:
+                print(f"  - {hint}")
+
     print()
     print("Agent Runtimes:")
     
     # Check all runtimes
     all_runtimes = args.all if hasattr(args, 'all') else False
     runtimes = detect_all_runtimes(primary_only=not all_runtimes)
-    
+
+    encoding = str(getattr(sys.stdout, "encoding", "") or "").lower()
+    ascii_only = sys.platform.startswith("win") and encoding not in ("utf-8", "utf8")
+
     available_count = 0
     for rt in runtimes:
         status = "OK" if rt.available else "NOT FOUND"
-        mark = "✓" if rt.available else "✗"
+        mark = "[OK]" if rt.available else "[NO]" if ascii_only else ("✓" if rt.available else "✗")
         path_info = f" ({rt.path})" if rt.available else ""
         print(f"  {mark} {rt.name}: {status}{path_info}")
         if rt.available:

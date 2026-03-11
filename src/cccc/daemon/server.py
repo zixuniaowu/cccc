@@ -26,6 +26,7 @@ from ..runners import pty as pty_runner
 from ..runners import headless as headless_runner
 from ..util.conv import coerce_bool
 from ..util.obslog import setup_root_json_logging
+from ..util.process import best_effort_signal_pid, pid_is_alive
 from ..util.fs import atomic_write_json, atomic_write_text, read_json
 from ..util.file_lock import acquire_lockfile, release_lockfile, LockUnavailableError
 from ..util.time import utc_now_iso
@@ -491,25 +492,11 @@ def _write_pid(pid_path: Path) -> None:
 
 
 def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
-        return False
-    try:
-        os.kill(pid, 0)
-        return True
-    except Exception:
-        return False
+    return pid_is_alive(pid)
 
 
 def _best_effort_killpg(pid: int, sig: signal.Signals) -> None:
-    if pid <= 0:
-        return
-    try:
-        os.killpg(pid, sig)
-    except Exception:
-        try:
-            os.kill(pid, sig)
-        except Exception:
-            pass
+    best_effort_signal_pid(pid, sig, include_group=True)
 
 
 def _maybe_autostart_enabled_im_bridges() -> None:

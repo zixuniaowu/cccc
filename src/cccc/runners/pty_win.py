@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Optional, Tuple
 
+from .platform_support import pty_support_error_message
+
 _WINPTY_PROCESS = None
 try:
     from winpty import PtyProcess as _WINPTY_PROCESS  # type: ignore
@@ -59,7 +61,7 @@ class PtySession:
         rows: int = 40,
     ) -> None:
         if not PTY_SUPPORTED:
-            raise RuntimeError("pty runner is not supported on this platform; install pywinpty for Windows ConPTY")
+            raise RuntimeError(pty_support_error_message() or "当前平台不支持 PTY runner。")
 
         self.group_id = group_id
         self.actor_id = actor_id
