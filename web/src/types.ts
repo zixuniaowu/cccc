@@ -88,6 +88,8 @@ export type Actor = {
   runtime?: string;
   submit?: "enter" | "newline" | "none";
   profile_id?: string;
+  profile_scope?: "global" | "user";
+  profile_owner?: string;
   profile_revision_applied?: number;
   updated_at?: string;
   unread_count?: number;
@@ -96,6 +98,8 @@ export type Actor = {
 export type ActorProfile = {
   id: string;
   name: string;
+  scope?: "global" | "user";
+  owner_id?: string;
   runtime: SupportedRuntime | string;
   runner: "pty" | "headless";
   command: string[];

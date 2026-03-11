@@ -12,6 +12,7 @@
     "transcript": "终端日志",
     "blueprint": "蓝图",
     "actorProfiles": "Actor 配置库",
+    "myProfiles": "我的配置",
     "developer": "开发者",
     "webAccess": "Web Access"
   },
@@ -78,6 +79,8 @@
     "usageEmpty": "当前没有关联 actor。",
     "usageLoadFailed": "加载配置使用情况失败。",
     "loadFailed": "加载 Actor 配置失败。",
+    "myProfilesLoginRequired": "需要先登录后才能管理自己的配置。",
+    "scopeSecretsUnavailable": "当前范围的密钥变量仍未接入；请先清空密钥改动后再保存。",
     "saveFailed": "保存 Actor 配置失败。",
     "deleteFailed": "删除 Actor 配置失败。",
     "loadSecretsFailed": "加载配置密钥失败。",

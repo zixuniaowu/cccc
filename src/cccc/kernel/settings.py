@@ -6,6 +6,7 @@ Settings are stored in ~/.cccc/settings.yaml and include:
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -328,64 +329,113 @@ def get_remote_access_settings() -> Dict[str, Any]:
     return _merge_remote_access(settings.get("remote_access"))
 
 
+def resolve_remote_access_web_binding() -> Dict[str, Any]:
+    """Resolve effective Web binding with explicit settings/env/default precedence."""
+    settings = load_settings()
+    raw = settings.get("remote_access") if isinstance(settings.get("remote_access"), dict) else {}
+
+    raw_host = str(raw.get("web_host") or "").strip()
+    env_host = str(os.environ.get("CCCC_WEB_HOST") or "").strip()
+    host_source = "settings" if raw_host else ("env" if env_host else "default")
+    host = raw_host or env_host or "127.0.0.1"
+
+    # Use raw persisted values here so we can still distinguish "unset" from the
+    # merged default and preserve env fallback behavior.
+    raw_port = raw.get("web_port")
+    raw_port_s = str(raw_port or "").strip()
+    env_port_raw = os.environ.get("CCCC_WEB_PORT")
+    env_port_s = str(env_port_raw or "").strip()
+    if raw_port_s:
+        port = _as_int(raw_port, int(DEFAULT_REMOTE_ACCESS["web_port"]), min_value=1, max_value=65535)
+        port_source = "settings"
+    elif env_port_s:
+        port = _as_int(env_port_raw, int(DEFAULT_REMOTE_ACCESS["web_port"]), min_value=1, max_value=65535)
+        port_source = "env"
+    else:
+        port = int(DEFAULT_REMOTE_ACCESS["web_port"])
+        port_source = "default"
+
+    raw_public_url = str(raw.get("web_public_url") or "").strip()
+    env_public_url = str(os.environ.get("CCCC_WEB_PUBLIC_URL") or "").strip()
+    public_url_source = "settings" if raw_public_url else ("env" if env_public_url else "none")
+    public_url = raw_public_url or env_public_url
+
+    return {
+        "web_host": host,
+        "web_host_source": host_source,
+        "web_port": int(port),
+        "web_port_source": port_source,
+        "web_public_url": (public_url or None),
+        "web_public_url_source": public_url_source,
+    }
+
+
 def update_remote_access_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
-    """Update remote access settings in ~/.cccc/settings.yaml and return merged result."""
+    """Update remote access settings in ~/.cccc/settings.yaml and return merged result.
+
+    Only persists fields that are explicitly in the patch (plus fields already
+    present in the raw settings).  This avoids writing default values (e.g.
+    web_port=8848) that would shadow env-var fallbacks later.
+    """
     settings = load_settings()
     current = _merge_remote_access(settings.get("remote_access"))
     if not isinstance(patch, dict) or not patch:
         return current
 
-    merged = dict(current)
+    # Work on the RAW persisted dict, not the merged-with-defaults version.
+    # This ensures we never persist a default value that wasn't explicitly set.
+    raw = dict(settings.get("remote_access") if isinstance(settings.get("remote_access"), dict) else {})
     changed = False
 
     if "provider" in patch:
-        provider = _as_str(patch.get("provider"), str(merged["provider"])).lower()
+        provider = _as_str(patch.get("provider"), str(current["provider"])).lower()
         if provider not in ("off", "manual", "tailscale"):
             provider = "off"
-        merged["provider"] = provider
+        raw["provider"] = provider
         changed = True
 
     if "mode" in patch:
-        mode = _as_str(patch.get("mode"), str(merged["mode"]))
-        merged["mode"] = mode or str(DEFAULT_REMOTE_ACCESS["mode"])
+        mode = _as_str(patch.get("mode"), str(current["mode"]))
+        raw["mode"] = mode or str(DEFAULT_REMOTE_ACCESS["mode"])
         changed = True
 
     if "require_access_token" in patch:
-        merged["require_access_token"] = _as_bool(
+        raw["require_access_token"] = _as_bool(
             patch.get("require_access_token"),
-            bool(merged["require_access_token"]),
+            bool(current["require_access_token"]),
         )
         changed = True
 
     if "enabled" in patch:
-        merged["enabled"] = _as_bool(patch.get("enabled"), bool(merged["enabled"]))
+        raw["enabled"] = _as_bool(patch.get("enabled"), bool(current["enabled"]))
         changed = True
 
     if "web_host" in patch:
-        merged["web_host"] = str(patch.get("web_host") or "").strip()
+        raw["web_host"] = str(patch.get("web_host") or "").strip()
         changed = True
 
     if "web_port" in patch:
-        merged["web_port"] = _as_int(patch.get("web_port"), int(merged.get("web_port") or 8848), min_value=1, max_value=65535)
+        raw["web_port"] = _as_int(patch.get("web_port"), int(current.get("web_port") or 8848), min_value=1, max_value=65535)
         changed = True
 
     if "web_public_url" in patch:
-        merged["web_public_url"] = str(patch.get("web_public_url") or "").strip()
+        raw["web_public_url"] = str(patch.get("web_public_url") or "").strip()
         changed = True
-
 
     if "updated_at" in patch:
-        merged["updated_at"] = _as_str(patch.get("updated_at"), str(merged.get("updated_at") or ""))
+        raw["updated_at"] = _as_str(patch.get("updated_at"), str(raw.get("updated_at") or ""))
         changed = True
     elif changed:
-        merged["updated_at"] = utc_now_iso()
+        raw["updated_at"] = utc_now_iso()
 
-    if str(merged.get("provider") or "").strip().lower() == "off":
-        merged["enabled"] = False
+    # Enforce provider=off => enabled=False on the raw dict before save.
+    merged_provider = str(raw.get("provider") or current.get("provider") or "").strip().lower()
+    if merged_provider == "off":
+        raw["enabled"] = False
 
-    settings["remote_access"] = merged
+    settings["remote_access"] = raw
     save_settings(settings)
-    return _merge_remote_access(merged)
+    return _merge_remote_access(raw)
 
 
 def _settings_path() -> Path:

@@ -16,11 +16,13 @@ from ...util.conv import coerce_bool
 from .actor_profile_runtime import (
     PROFILE_CONTROLLED_FIELDS,
     actor_profile_id,
+    actor_profile_ref,
     apply_profile_link_to_actor,
     clear_actor_link_metadata,
     is_actor_profile_linked,
     resolve_linked_actor_before_start,
 )
+from .actor_profile_store import ProfileResolver, get_actor_profile_by_ref, normalize_actor_profile_ref
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -48,7 +50,7 @@ def handle_actor_update(
     remove_pty_state_if_pid: Callable[..., None],
     supported_runtimes: Sequence[str],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
-    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    load_actor_profile_secrets: Callable[[Any], Dict[str, str]],
     update_actor_private_env: Callable[..., Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
@@ -56,6 +58,9 @@ def handle_actor_update(
     by = str(args.get("by") or "user").strip()
     patch = args.get("patch") if isinstance(args.get("patch"), dict) else {}
     profile_id_arg = str(args.get("profile_id") or "").strip()
+    profile_scope_raw = str(args.get("profile_scope") or "").strip().lower()
+    profile_scope_arg = profile_scope_raw or "global"
+    profile_owner_arg = str(args.get("profile_owner") or "").strip()
     profile_action = str(args.get("profile_action") or "").strip()
     if not group_id:
         return _error("missing_group_id", "missing group_id")
@@ -111,6 +116,7 @@ def handle_actor_update(
     enabled_patched = "enabled" in patch
     before_foreman = foreman_id(group) if enabled_patched else ""
     applied_profile_id = ""
+    applied_profile_ref: Any = None
     profile_converted = False
     actor: Dict[str, Any]
     try:
@@ -120,13 +126,15 @@ def handle_actor_update(
             if not isinstance(current, dict) or not is_actor_profile_linked(current):
                 raise ValueError("actor is not linked to a profile")
             current_profile_id = actor_profile_id(current)
-            profile = get_actor_profile(current_profile_id)
+            current_profile_ref = actor_profile_ref(current)
+            profile = get_actor_profile_by_ref(current_profile_ref) if current_profile_ref is not None else get_actor_profile(current_profile_id)
             if not isinstance(profile, dict):
                 raise ValueError(f"profile not found: {current_profile_id}")
             apply_profile_link_to_actor(
                 group,
                 actor_id,
                 profile_id=current_profile_id,
+                profile_ref=current_profile_ref,
                 profile=profile,
                 load_actor_profile_secrets=load_actor_profile_secrets,
                 update_actor_private_env=update_actor_private_env,
@@ -135,13 +143,30 @@ def handle_actor_update(
             profile_converted = True
 
         if profile_id_arg:
-            profile = get_actor_profile(profile_id_arg)
+            applied_profile_ref = normalize_actor_profile_ref(
+                {
+                    "profile_id": profile_id_arg,
+                    "profile_scope": profile_scope_arg,
+                    "profile_owner": profile_owner_arg,
+                }
+            )
+            if applied_profile_ref.profile_scope == "global":
+                profile = get_actor_profile(profile_id_arg)
+            else:
+                resolver = ProfileResolver()
+                resolved = resolver.resolve(
+                    applied_profile_ref,
+                    caller_id=str(args.get("caller_id") or "").strip(),
+                    is_admin=coerce_bool(args.get("is_admin"), default=False),
+                )
+                profile = resolved.model_dump(exclude_none=True) if resolved is not None else None
             if not isinstance(profile, dict):
                 raise ValueError(f"profile not found: {profile_id_arg}")
             apply_profile_link_to_actor(
                 group,
                 actor_id,
                 profile_id=profile_id_arg,
+                profile_ref=applied_profile_ref,
                 profile=profile,
                 load_actor_profile_secrets=load_actor_profile_secrets,
                 update_actor_private_env=update_actor_private_env,
@@ -166,6 +191,8 @@ def handle_actor_update(
                         get_actor_profile=get_actor_profile,
                         load_actor_profile_secrets=load_actor_profile_secrets,
                         update_actor_private_env=update_actor_private_env,
+                        caller_id=str(args.get("caller_id") or "").strip(),
+                        is_admin=coerce_bool(args.get("is_admin"), default=False),
                     )
                 except Exception as e:
                     return _error("profile_not_found", str(e))
@@ -295,6 +322,9 @@ def handle_actor_update(
     }
     if applied_profile_id:
         event_data["profile_id"] = applied_profile_id
+        if applied_profile_ref is not None:
+            event_data["profile_scope"] = applied_profile_ref.profile_scope
+            event_data["profile_owner"] = applied_profile_ref.profile_owner
     if profile_converted:
         event_data["profile_action"] = "convert_to_custom"
 

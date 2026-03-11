@@ -122,6 +122,9 @@ from .handlers.context import (  # noqa: F401
     coordination_add_note,
     coordination_get,
     coordination_update_brief,
+    role_notes_clear,
+    role_notes_get,
+    role_notes_set,
     task_create,
     task_list,
     task_move,
@@ -688,6 +691,23 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
 
 
 def _handle_context_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if name == "cccc_role_notes":
+        gid = _resolve_group_id(arguments)
+        by = _resolve_caller_from_by(arguments)
+        action = str(arguments.get("action") or "get").strip().lower()
+        target = str(arguments.get("target_actor_id") or "").strip() or None
+        if action == "get":
+            return role_notes_get(group_id=gid, target_actor_id=target)
+        if action == "set":
+            if not target:
+                raise MCPError(code="invalid_request", message="target_actor_id is required for set")
+            content = str(arguments.get("content") or "")
+            return role_notes_set(group_id=gid, target_actor_id=target, content=content, by=by)
+        if action == "clear":
+            if not target:
+                raise MCPError(code="invalid_request", message="target_actor_id is required for clear")
+            return role_notes_clear(group_id=gid, target_actor_id=target, by=by)
+        raise MCPError(code="invalid_request", message="cccc_role_notes action must be get|set|clear")
     return _handle_context_namespace_impl(
         name,
         arguments,

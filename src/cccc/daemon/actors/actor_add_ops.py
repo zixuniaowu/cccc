@@ -11,7 +11,9 @@ from ...kernel.inbox import set_cursor
 from ...kernel.ledger import append_event
 from ...kernel.permissions import require_actor_permission
 from ...kernel.runtime import get_runtime_command_with_flags
-from .actor_profile_runtime import apply_profile_link_to_actor
+from ...util.conv import coerce_bool
+from .actor_profile_runtime import actor_profile_ref, apply_profile_link_to_actor
+from .actor_profile_store import ProfileResolver, get_actor_profile_by_ref, normalize_actor_profile_ref
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -29,10 +31,11 @@ def handle_actor_add(
     coerce_private_env_value: Callable[[Any], str],
     update_actor_private_env: Callable[..., Dict[str, str]],
     delete_actor_private_env: Callable[[str, str], None],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
     private_env_max_keys: int,
     supported_runtimes: Sequence[str],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
-    load_actor_profile_secrets: Callable[[str], Dict[str, str]],
+    load_actor_profile_secrets: Callable[[Any], Dict[str, str]],
 ) -> DaemonResponse:
     group_id = str(args.get("group_id") or "").strip()
     actor_id = str(args.get("actor_id") or "").strip()
@@ -47,6 +50,11 @@ def handle_actor_add(
     env_private_raw = args.get("env_private")
     default_scope_key = str(args.get("default_scope_key") or "").strip()
     profile_id = str(args.get("profile_id") or "").strip()
+    profile_scope_raw = str(args.get("profile_scope") or "").strip().lower()
+    profile_scope = profile_scope_raw or "global"
+    profile_owner = str(args.get("profile_owner") or "").strip()
+    caller_id = str(args.get("caller_id") or "").strip()
+    is_admin = coerce_bool(args.get("is_admin"), default=False)
     if not group_id:
         return _error("missing_group_id", "missing group_id")
     group = load_group(group_id)
@@ -73,15 +81,28 @@ def handle_actor_add(
 
         linked_profile: Optional[Dict[str, Any]] = None
         linked_profile_id = ""
+        linked_profile_ref: Any = None
         if profile_id:
-            linked_profile_id = profile_id
-            linked_profile = get_actor_profile(linked_profile_id)
+            linked_profile_ref = normalize_actor_profile_ref(
+                {
+                    "profile_id": profile_id,
+                    "profile_scope": profile_scope,
+                    "profile_owner": profile_owner,
+                }
+            )
+            linked_profile_id = linked_profile_ref.profile_id
+            if linked_profile_ref.profile_scope == "global":
+                linked_profile = get_actor_profile(linked_profile_id)
+            else:
+                resolver = ProfileResolver()
+                resolved = resolver.resolve(linked_profile_ref, caller_id=caller_id, is_admin=is_admin)
+                linked_profile = resolved.model_dump(exclude_none=True) if resolved is not None else None
             if not isinstance(linked_profile, dict):
                 raise ValueError(f"profile not found: {linked_profile_id}")
             runtime = str(linked_profile.get("runtime") or "codex").strip() or "codex"
             requested_runner = str(linked_profile.get("runner") or "pty").strip() or "pty"
             submit = str(linked_profile.get("submit") or submit or "enter").strip() or "enter"
-            linked_profile_secrets = load_actor_profile_secrets(linked_profile_id)
+            linked_profile_secrets = load_actor_profile_secrets(linked_profile_ref)
             if len(linked_profile_secrets) > private_env_max_keys:
                 raise ValueError("too many profile private env keys configured")
 
@@ -97,6 +118,26 @@ def handle_actor_add(
                     foreman_cfg = find_actor(group, by)
             except Exception:
                 foreman_cfg = None
+
+        # Auto-inherit foreman's profile when no explicit profile_id is given.
+        if (
+            isinstance(foreman_cfg, dict)
+            and foreman_cfg.get("id") == by
+            and not linked_profile_id
+        ):
+            foreman_profile_ref = actor_profile_ref(foreman_cfg)
+            if foreman_profile_ref is not None:
+                inherited = get_actor_profile_by_ref(foreman_profile_ref)
+                if isinstance(inherited, dict):
+                    linked_profile_ref = foreman_profile_ref
+                    linked_profile_id = foreman_profile_ref.profile_id
+                    linked_profile = inherited
+                    runtime = str(linked_profile.get("runtime") or "codex").strip() or "codex"
+                    requested_runner = str(linked_profile.get("runner") or "pty").strip() or "pty"
+                    submit = str(linked_profile.get("submit") or submit or "enter").strip() or "enter"
+                    linked_profile_secrets = load_actor_profile_secrets(linked_profile_ref)
+                    if len(linked_profile_secrets) > private_env_max_keys:
+                        raise ValueError("too many profile private env keys configured")
 
         if not actor_id:
             actor_id = generate_actor_id(group, runtime=runtime)
@@ -115,6 +156,7 @@ def handle_actor_add(
         elif isinstance(env_raw, dict) and all(isinstance(key, str) and isinstance(value, str) for key, value in env_raw.items()):
             env = {str(key): str(value) for key, value in env_raw.items()}
 
+        inherit_foreman_private_env = False
         if isinstance(foreman_cfg, dict) and foreman_cfg.get("id") == by and not linked_profile_id:
             foreman_runtime = str(foreman_cfg.get("runtime") or "").strip()
             foreman_runner = str(foreman_cfg.get("runner") or "pty").strip() or "pty"
@@ -149,6 +191,9 @@ def handle_actor_add(
                 env = dict(foreman_env)
             if env != foreman_env:
                 raise ValueError("foreman can only add actors by strict-cloning env (runtime/runner/command/env must match foreman)")
+
+            # Mark for inheriting foreman's private env (secrets) to the new peer.
+            inherit_foreman_private_env = True
         else:
             if not command:
                 command = get_runtime_command_with_flags(runtime)
@@ -176,10 +221,23 @@ def handle_actor_add(
                 group,
                 effective_actor_id,
                 profile_id=linked_profile_id,
+                profile_ref=linked_profile_ref,
                 profile=linked_profile,
                 load_actor_profile_secrets=load_actor_profile_secrets,
                 update_actor_private_env=update_actor_private_env,
             )
+        elif inherit_foreman_private_env and env_private_raw is None:
+            # No profile link — copy foreman's per-actor private env (secrets) to new peer.
+            foreman_actor_id = str(foreman_cfg.get("id") or by).strip()  # type: ignore[union-attr]
+            foreman_private = load_actor_private_env(group_id, foreman_actor_id)
+            if foreman_private:
+                update_actor_private_env(
+                    group_id,
+                    effective_actor_id,
+                    set_vars=foreman_private,
+                    unset_keys=[],
+                    clear=True,
+                )
 
         if env_private_raw is not None:
             try:
@@ -230,6 +288,8 @@ def handle_actor_add(
         runner=start_runner,
         runtime=start_runtime,
         by=by,
+        caller_id=str(args.get("caller_id") or "").strip(),
+        is_admin=coerce_bool(args.get("is_admin"), default=False),
     )
 
     result: Dict[str, Any] = {"actor": actor, "event": event}
@@ -256,6 +316,7 @@ def try_handle_actor_add_op(
     coerce_private_env_value: Callable[[Any], str],
     update_actor_private_env: Callable[..., Dict[str, str]],
     delete_actor_private_env: Callable[[str, str], None],
+    load_actor_private_env: Callable[[str, str], Dict[str, str]],
     private_env_max_keys: int,
     supported_runtimes: Sequence[str],
     get_actor_profile: Callable[[str], Optional[Dict[str, Any]]],
@@ -272,6 +333,7 @@ def try_handle_actor_add_op(
             coerce_private_env_value=coerce_private_env_value,
             update_actor_private_env=update_actor_private_env,
             delete_actor_private_env=delete_actor_private_env,
+            load_actor_private_env=load_actor_private_env,
             private_env_max_keys=private_env_max_keys,
             supported_runtimes=supported_runtimes,
             get_actor_profile=get_actor_profile,

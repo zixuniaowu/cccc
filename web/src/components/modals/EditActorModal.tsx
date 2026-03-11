@@ -50,6 +50,8 @@ export interface EditActorModalProps {
   onSave: (payload: EditActorSavePayload) => Promise<void>;
   onSaveAndRestart: (payload: EditActorSavePayload) => Promise<void>;
   linkedProfileId?: string;
+  linkedProfileScope?: "global" | "user";
+  linkedProfileOwner?: string;
   actorProfiles: ActorProfile[];
   actorProfilesBusy: boolean;
   onSaveAsProfile: () => Promise<SaveActorProfileResult | void>;
@@ -116,6 +118,8 @@ export function EditActorModal({
   onSave,
   onSaveAndRestart,
   linkedProfileId,
+  linkedProfileScope,
+  linkedProfileOwner,
   actorProfiles,
   actorProfilesBusy,
   onSaveAsProfile,
@@ -191,7 +195,10 @@ export function EditActorModal({
         return;
       }
       const requestSeq = ++secretFetchSeqRef.current;
-      const resp = await api.fetchActorProfilePrivateEnvKeys(profileId);
+      const resp = await api.fetchActorProfilePrivateEnvKeys(profileId, {
+        scope: linkedProfileScope,
+        ownerId: linkedProfileOwner,
+      });
       if (requestSeq !== secretFetchSeqRef.current) return;
       const now = modalStateRef.current;
       if (

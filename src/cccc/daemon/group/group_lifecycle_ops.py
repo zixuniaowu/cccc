@@ -12,6 +12,7 @@ from ...kernel.ledger import append_event
 from ...kernel.permissions import require_group_permission
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
+from ...util.conv import coerce_bool
 from ..actors.actor_profile_runtime import resolve_linked_actor_before_start
 
 
@@ -105,6 +106,8 @@ def handle_group_start(
                 get_actor_profile=get_actor_profile,
                 load_actor_profile_secrets=load_actor_profile_secrets,
                 update_actor_private_env=update_actor_private_env,
+                caller_id=str(args.get("caller_id") or "").strip(),
+                is_admin=coerce_bool(args.get("is_admin"), default=False),
             )
             cmd = actor.get("command") if isinstance(actor.get("command"), list) else cmd
             env = actor.get("env") if isinstance(actor.get("env"), dict) else env

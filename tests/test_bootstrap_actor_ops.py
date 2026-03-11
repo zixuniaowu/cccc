@@ -2,6 +2,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from cccc.daemon.group.bootstrap_actor_ops import autostart_running_groups
 
@@ -96,6 +97,435 @@ class TestBootstrapActorOps(unittest.TestCase):
             self.assertIsNotNone(reloaded)
             assert reloaded is not None
             self.assertFalse(bool(reloaded.doc.get("running")))
+        finally:
+            cleanup()
+
+    def test_autostart_restores_explicit_user_scope_profile_secrets(self) -> None:
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.actors.actor_profile_runtime import resolve_linked_actor_before_start
+            from cccc.daemon.actors.actor_profile_store import get_actor_profile, load_actor_profile_secrets
+            from cccc.daemon.actors.private_env_ops import merge_actor_env_with_private, update_actor_private_env
+            from cccc.kernel.actors import find_actor
+            from cccc.kernel.group import load_group
+
+            create, _ = self._call("group_create", {"title": "autostart-profile", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            profile_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "member-profile",
+                        "name": "Member Profile",
+                        "scope": "user",
+                        "owner_id": "user-a",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(profile_upsert.ok, getattr(profile_upsert, "error", None))
+
+            secret_update, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "member-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "set": {"API_KEY": "user-secret"},
+                },
+            )
+            self.assertTrue(secret_update.ok, getattr(secret_update, "error", None))
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "profile_id": "member-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            group.doc["running"] = True
+            group.save()
+
+            captured: list[dict[str, object]] = []
+
+            def _fake_headless_start_actor(*, group_id: str, actor_id: str, cwd: Path, env: dict[str, str]):
+                captured.append(
+                    {
+                        "group_id": group_id,
+                        "actor_id": actor_id,
+                        "cwd": cwd,
+                        "env": dict(env),
+                    }
+                )
+
+                class _Session:
+                    pass
+
+                return _Session()
+
+            with patch("cccc.daemon.group.bootstrap_actor_ops.headless_runner.SUPERVISOR.start_actor", side_effect=_fake_headless_start_actor):
+                autostart_running_groups(
+                    home,
+                    effective_runner_kind=lambda runner: runner,
+                    find_scope_url=lambda current_group, scope_key: (
+                        str(Path(".").resolve())
+                        if str(current_group.group_id or "").strip() == group_id and str(scope_key or "").strip()
+                        else ""
+                    ),
+                    supported_runtimes=("codex", "custom"),
+                    ensure_mcp_installed=lambda _runtime, _cwd: True,
+                    auto_mcp_runtimes=("codex",),
+                    pty_supported=lambda: True,
+                    merge_actor_env_with_private=merge_actor_env_with_private,
+                    inject_actor_context_env=lambda env, _gid, _aid: dict(env),
+                    prepare_pty_env=lambda env: dict(env),
+                    normalize_runtime_command=lambda _runtime, command: list(command),
+                    pty_backlog_bytes=lambda: 1024,
+                    write_headless_state=lambda _gid, _aid: None,
+                    write_pty_state=lambda _gid, _aid, _pid: None,
+                    clear_preamble_sent=lambda _group, _aid: None,
+                    throttle_reset_actor=lambda _gid, _aid: None,
+                    automation_on_resume=lambda _group: None,
+                    get_group_state=lambda _group: "idle",
+                    resolve_linked_actor_before_start=lambda grp, aid, caller_id="", is_admin=False: resolve_linked_actor_before_start(
+                        grp,
+                        aid,
+                        get_actor_profile=get_actor_profile,
+                        load_actor_profile_secrets=load_actor_profile_secrets,
+                        update_actor_private_env=update_actor_private_env,
+                        caller_id=caller_id,
+                        is_admin=is_admin,
+                    ),
+                )
+
+            self.assertEqual(len(captured), 1)
+            launched = captured[0]
+            self.assertEqual(launched.get("group_id"), group_id)
+            self.assertEqual(launched.get("actor_id"), "peer1")
+            env = launched.get("env")
+            self.assertIsInstance(env, dict)
+            assert isinstance(env, dict)
+            self.assertEqual(env.get("API_KEY"), "user-secret")
+
+            reloaded = load_group(group_id)
+            self.assertIsNotNone(reloaded)
+            assert reloaded is not None
+            actor = find_actor(reloaded, "peer1")
+            self.assertIsNotNone(actor)
+            assert actor is not None
+            self.assertEqual(str(actor.get("runtime") or ""), "custom")
+            self.assertEqual(str(actor.get("submit") or ""), "newline")
+            self.assertEqual(str(actor.get("profile_scope") or ""), "user")
+            self.assertEqual(str(actor.get("profile_owner") or ""), "user-a")
+        finally:
+            cleanup()
+
+
+    def test_global_profile_start_persists_explicit_scope(self) -> None:
+        """Global profile attach persists profile_scope='global' and start resolves via explicit ref."""
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.actors.actor_profile_runtime import resolve_linked_actor_before_start
+            from cccc.daemon.actors.actor_profile_store import get_actor_profile, load_actor_profile_secrets
+            from cccc.daemon.actors.private_env_ops import update_actor_private_env
+            from cccc.kernel.actors import find_actor
+            from cccc.kernel.group import load_group
+
+            create, _ = self._call("group_create", {"title": "global-start", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+
+            # Create a global profile (admin only).
+            profile_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "",
+                    "is_admin": True,
+                    "profile": {
+                        "id": "global-prof",
+                        "name": "Global Profile",
+                        "scope": "global",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(profile_upsert.ok, getattr(profile_upsert, "error", None))
+
+            # Add secrets to the global profile.
+            secret_update, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "global-prof",
+                    "caller_id": "",
+                    "is_admin": True,
+                    "set": {"GLOBAL_KEY": "global-secret"},
+                },
+            )
+            self.assertTrue(secret_update.ok, getattr(secret_update, "error", None))
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            # Attach profile WITHOUT explicit profile_scope — should still persist "global".
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer-g",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "profile_id": "global-prof",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            # Verify actor has explicit profile_scope persisted.
+            group = load_group(group_id)
+            assert group is not None
+            actor = find_actor(group, "peer-g")
+            assert actor is not None
+            self.assertEqual(str(actor.get("profile_id") or ""), "global-prof")
+            self.assertEqual(str(actor.get("profile_scope") or ""), "global")
+
+            # Simulate start: resolve should succeed via explicit ref, not caller-based fallback.
+            resolved = resolve_linked_actor_before_start(
+                group,
+                "peer-g",
+                get_actor_profile=get_actor_profile,
+                load_actor_profile_secrets=load_actor_profile_secrets,
+                update_actor_private_env=update_actor_private_env,
+                caller_id="",
+                is_admin=False,
+            )
+            self.assertIsInstance(resolved, dict)
+            self.assertEqual(str(resolved.get("runtime") or ""), "custom")
+            self.assertEqual(str(resolved.get("profile_scope") or ""), "global")
+        finally:
+            cleanup()
+
+    def test_user_scope_profile_start_resolves_via_explicit_ref(self) -> None:
+        """User-scope profile start resolves via explicit ref persisted at attach time."""
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.actors.actor_profile_runtime import resolve_linked_actor_before_start
+            from cccc.daemon.actors.actor_profile_store import get_actor_profile, load_actor_profile_secrets
+            from cccc.daemon.actors.private_env_ops import update_actor_private_env
+            from cccc.kernel.actors import find_actor
+            from cccc.kernel.group import load_group
+
+            create, _ = self._call("group_create", {"title": "user-start", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+
+            # Create a user-scope profile.
+            profile_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-b",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "user-prof",
+                        "name": "User Profile",
+                        "scope": "user",
+                        "owner_id": "user-b",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(profile_upsert.ok, getattr(profile_upsert, "error", None))
+
+            # Add secrets.
+            secret_update, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "user-prof",
+                    "profile_scope": "user",
+                    "profile_owner": "user-b",
+                    "caller_id": "user-b",
+                    "is_admin": False,
+                    "set": {"USER_KEY": "user-b-secret"},
+                },
+            )
+            self.assertTrue(secret_update.ok, getattr(secret_update, "error", None))
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            # Attach with explicit user-scope ref.
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer-u",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "profile_id": "user-prof",
+                    "profile_scope": "user",
+                    "profile_owner": "user-b",
+                    "caller_id": "user-b",
+                    "is_admin": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            # Verify persisted ref.
+            group = load_group(group_id)
+            assert group is not None
+            actor = find_actor(group, "peer-u")
+            assert actor is not None
+            self.assertEqual(str(actor.get("profile_scope") or ""), "user")
+            self.assertEqual(str(actor.get("profile_owner") or ""), "user-b")
+
+            # Start resolve: explicit ref should stably hit user-scope profile.
+            resolved = resolve_linked_actor_before_start(
+                group,
+                "peer-u",
+                get_actor_profile=get_actor_profile,
+                load_actor_profile_secrets=load_actor_profile_secrets,
+                update_actor_private_env=update_actor_private_env,
+                caller_id="user-b",
+                is_admin=False,
+            )
+            self.assertIsInstance(resolved, dict)
+            self.assertEqual(str(resolved.get("runtime") or ""), "custom")
+            self.assertEqual(str(resolved.get("profile_scope") or ""), "user")
+            self.assertEqual(str(resolved.get("profile_owner") or ""), "user-b")
+        finally:
+            cleanup()
+
+
+    def test_legacy_bare_profile_id_resolves_as_global_only_in_resolver(self) -> None:
+        """Actor with bare profile_id (no profile_scope/profile_owner) resolves via
+        legacy compat in _resolve_profile_for_start only — actor_profile_ref() must
+        return None so the implicit-global semantic does not leak to other helpers."""
+        home, cleanup = self._with_home()
+        try:
+            from cccc.daemon.actors.actor_profile_runtime import (
+                actor_profile_ref,
+                resolve_linked_actor_before_start,
+            )
+            from cccc.daemon.actors.actor_profile_store import get_actor_profile, load_actor_profile_secrets
+            from cccc.daemon.actors.private_env_ops import update_actor_private_env
+            from cccc.kernel.actors import find_actor, update_actor
+            from cccc.kernel.group import load_group
+
+            create, _ = self._call("group_create", {"title": "legacy-test", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+
+            # Create a global profile.
+            profile_upsert, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "",
+                    "is_admin": True,
+                    "profile": {
+                        "id": "legacy-prof",
+                        "name": "Legacy Profile",
+                        "scope": "global",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(profile_upsert.ok, getattr(profile_upsert, "error", None))
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            # Add actor normally (this will persist explicit scope).
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "legacy-peer",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "profile_id": "legacy-prof",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            # Simulate legacy data: strip profile_scope/profile_owner from the actor,
+            # leaving only bare profile_id.
+            group = load_group(group_id)
+            assert group is not None
+            actor = find_actor(group, "legacy-peer")
+            assert actor is not None
+            actor.pop("profile_scope", None)
+            actor.pop("profile_owner", None)
+            group.save()
+
+            # Verify actor_profile_ref returns None for bare profile_id — no implicit global.
+            reloaded = load_group(group_id)
+            assert reloaded is not None
+            legacy_actor = find_actor(reloaded, "legacy-peer")
+            assert legacy_actor is not None
+            self.assertIsNone(actor_profile_ref(legacy_actor))
+
+            # But resolve_linked_actor_before_start still works via legacy compat.
+            resolved = resolve_linked_actor_before_start(
+                reloaded,
+                "legacy-peer",
+                get_actor_profile=get_actor_profile,
+                load_actor_profile_secrets=load_actor_profile_secrets,
+                update_actor_private_env=update_actor_private_env,
+                caller_id="",
+                is_admin=False,
+            )
+            self.assertIsInstance(resolved, dict)
+            self.assertEqual(str(resolved.get("runtime") or ""), "custom")
+            # After start resolution, the actor should now have explicit scope persisted
+            # (the resolver writes it back via apply_profile_link_to_actor).
+            final_group = load_group(group_id)
+            assert final_group is not None
+            final_actor = find_actor(final_group, "legacy-peer")
+            assert final_actor is not None
+            self.assertEqual(str(final_actor.get("profile_scope") or ""), "global")
         finally:
             cleanup()
 

@@ -12,6 +12,7 @@
     "transcript": "Transcript",
     "blueprint": "Blueprint",
     "actorProfiles": "Actor Profiles",
+    "myProfiles": "My Profiles",
     "developer": "Developer",
     "webAccess": "Web Access"
   },
@@ -78,6 +79,8 @@
     "usageEmpty": "No linked actors.",
     "usageLoadFailed": "Failed to load profile usage.",
     "loadFailed": "Failed to load actor profiles.",
+    "myProfilesLoginRequired": "Sign in to manage your personal profiles.",
+    "scopeSecretsUnavailable": "Secret env variables are not wired for this scope yet. Clear secret edits before saving.",
     "saveFailed": "Failed to save actor profile.",
     "deleteFailed": "Failed to delete actor profile.",
     "loadSecretsFailed": "Failed to load profile secrets.",

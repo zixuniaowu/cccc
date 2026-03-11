@@ -691,6 +691,8 @@ export async function addActor(
   envPrivate?: Record<string, string>,
   options?: {
     profileId?: string;
+    profileScope?: ProfileScope;
+    profileOwner?: string;
     title?: string;
     capabilityAutoload?: string[];
   }
@@ -706,6 +708,8 @@ export async function addActor(
       env: {},
       env_private: envPrivate && Object.keys(envPrivate).length ? envPrivate : undefined,
       profile_id: options?.profileId || undefined,
+      profile_scope: options?.profileScope || undefined,
+      profile_owner: options?.profileOwner || undefined,
       capability_autoload: Array.isArray(options?.capabilityAutoload)
         ? options?.capabilityAutoload
         : [],
@@ -724,6 +728,8 @@ export async function updateActor(
   title?: string,
   opts?: {
     profileId?: string;
+    profileScope?: ProfileScope;
+    profileOwner?: string;
     profileAction?: "convert_to_custom";
     enabled?: boolean;
     capabilityAutoload?: string[];
@@ -734,6 +740,8 @@ export async function updateActor(
   if (command !== undefined) body.command = command.trim();
   if (title !== undefined) body.title = title.trim();
   if (opts?.profileId !== undefined) body.profile_id = String(opts.profileId || "");
+  if (opts?.profileScope !== undefined) body.profile_scope = String(opts.profileScope || "");
+  if (opts?.profileOwner !== undefined) body.profile_owner = String(opts.profileOwner || "");
   if (opts?.profileAction) body.profile_action = opts.profileAction;
   if (typeof opts?.enabled === "boolean") body.enabled = opts.enabled;
   if (Array.isArray(opts?.capabilityAutoload)) body.capability_autoload = opts.capabilityAutoload;
@@ -746,12 +754,17 @@ export async function updateActor(
   );
 }
 
-export async function attachActorProfile(groupId: string, actorId: string, profileId: string) {
+export async function attachActorProfile(groupId: string, actorId: string, profileId: string, opts?: ProfileLookupOptions) {
   return apiJson<{ actor: Actor }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
     {
       method: "POST",
-      body: JSON.stringify({ by: "user", profile_id: profileId }),
+      body: JSON.stringify({
+        by: "user",
+        profile_id: profileId,
+        profile_scope: opts?.scope || undefined,
+        profile_owner: opts?.ownerId || undefined,
+      }),
     }
   );
 }
@@ -816,40 +829,98 @@ export async function updateActorPrivateEnv(
   );
 }
 
-export async function listActorProfiles() {
-  return apiJson<{ profiles: ActorProfile[] }>(`/api/v1/actor_profiles?by=user`);
+export type ProfileView = "global" | "my" | "all";
+export type ProfileScope = "global" | "user";
+
+type ProfileLookupOptions = {
+  scope?: ProfileScope;
+  ownerId?: string;
+};
+
+type ProfileDeleteOptions = ProfileLookupOptions & {
+  forceDetach?: boolean;
+};
+
+function buildProfileQuery(opts?: ProfileLookupOptions): string {
+  const params = new URLSearchParams();
+  if (opts?.scope) params.set("scope", String(opts.scope));
+  if (opts?.ownerId) params.set("owner_id", String(opts.ownerId));
+  const query = params.toString();
+  return query ? `?${query}` : "";
 }
 
-export async function getActorProfile(profileId: string) {
+function buildProfileDeleteQuery(opts?: ProfileDeleteOptions): string {
+  const params = new URLSearchParams();
+  params.set("by", "user");
+  if (opts?.scope) params.set("scope", String(opts.scope));
+  if (opts?.ownerId) params.set("owner_id", String(opts.ownerId));
+  if (opts?.forceDetach) params.set("force_detach", "true");
+  return params.toString();
+}
+
+export async function listProfiles(view: ProfileView = "global") {
+  return apiJson<{ profiles: ActorProfile[] }>(`/api/v1/profiles?view=${encodeURIComponent(view)}`);
+}
+
+export async function getProfile(profileId: string, opts?: ProfileLookupOptions) {
   return apiJson<{ profile: ActorProfile; usage: ActorProfileUsage[] }>(
-    `/api/v1/actor_profiles/${encodeURIComponent(profileId)}?by=user`
+    `/api/v1/profiles/${encodeURIComponent(profileId)}${buildProfileQuery(opts)}`
   );
 }
 
-export async function upsertActorProfile(profile: Record<string, unknown>, expectedRevision?: number) {
-  const body: Record<string, unknown> = { by: "user", profile };
+export async function saveProfile(profile: Record<string, unknown>, expectedRevision?: number) {
+  const profileId = String(profile.id || "").trim();
+  if (!profileId) {
+    const body: Record<string, unknown> = { by: "user", profile };
+    if (typeof expectedRevision === "number") {
+      body.expected_revision = Math.trunc(expectedRevision);
+    }
+    return apiJson<{ profile: ActorProfile }>(`/api/v1/actor_profiles`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
+  const body: Record<string, unknown> = { ...profile, by: "user" };
   if (typeof expectedRevision === "number") {
     body.expected_revision = Math.trunc(expectedRevision);
   }
-  return apiJson<{ profile: ActorProfile }>(`/api/v1/actor_profiles`, {
-    method: "POST",
+  return apiJson<{ profile: ActorProfile }>(`/api/v1/profiles/${encodeURIComponent(profileId)}`, {
+    method: "PUT",
     body: JSON.stringify(body),
   });
 }
 
-export async function deleteActorProfile(profileId: string, opts?: { forceDetach?: boolean }) {
-  const params = new URLSearchParams();
-  params.set("by", "user");
-  if (opts?.forceDetach) params.set("force_detach", "true");
+export async function deleteProfile(profileId: string, opts?: ProfileDeleteOptions) {
   return apiJson<{ deleted: boolean; profile_id: string; detached_count?: number; detached?: ActorProfileUsage[] }>(
-    `/api/v1/actor_profiles/${encodeURIComponent(profileId)}?${params.toString()}`,
+    `/api/v1/profiles/${encodeURIComponent(profileId)}?${buildProfileDeleteQuery(opts)}`,
     { method: "DELETE" }
   );
 }
 
+export async function listActorProfiles() {
+  return listProfiles("global");
+}
+
+export async function getActorProfile(profileId: string) {
+  return getProfile(profileId, { scope: "global" });
+}
+
+export async function upsertActorProfile(profile: Record<string, unknown>, expectedRevision?: number) {
+  return saveProfile({ ...profile, scope: "global", owner_id: "" }, expectedRevision);
+}
+
+export async function deleteActorProfile(profileId: string, opts?: { forceDetach?: boolean }) {
+  return deleteProfile(profileId, { scope: "global", forceDetach: opts?.forceDetach });
+}
+
 export async function fetchActorProfilePrivateEnvKeys(profileId: string) {
+  return fetchProfilePrivateEnvKeys(profileId, { scope: "global" });
+}
+
+export async function fetchProfilePrivateEnvKeys(profileId: string, opts?: ProfileLookupOptions) {
   return apiJson<{ profile_id: string; keys: string[]; masked_values?: Record<string, string> }>(
-    `/api/v1/actor_profiles/${encodeURIComponent(profileId)}/env_private?by=user`
+    `/api/v1/profiles/${encodeURIComponent(profileId)}/env_private${buildProfileQuery(opts)}${buildProfileQuery(opts) ? "&" : "?"}by=user`
   );
 }
 
@@ -859,31 +930,87 @@ export async function updateActorProfilePrivateEnv(
   unsetKeys: string[],
   clear: boolean
 ) {
+  return updateProfilePrivateEnv(profileId, setVars, unsetKeys, clear, { scope: "global" });
+}
+
+export async function updateProfilePrivateEnv(
+  profileId: string,
+  setVars: Record<string, string>,
+  unsetKeys: string[],
+  clear: boolean,
+  opts?: ProfileLookupOptions
+) {
   return apiJson<{ profile_id: string; keys: string[] }>(
-    `/api/v1/actor_profiles/${encodeURIComponent(profileId)}/env_private`,
+    `/api/v1/profiles/${encodeURIComponent(profileId)}/env_private`,
     {
       method: "POST",
-      body: JSON.stringify({ by: "user", set: setVars, unset: unsetKeys, clear }),
+      body: JSON.stringify({
+        by: "user",
+        scope: opts?.scope,
+        owner_id: opts?.ownerId,
+        set: setVars,
+        unset: unsetKeys,
+        clear,
+      }),
     }
   );
 }
 
-export async function copyActorPrivateEnvToProfile(profileId: string, groupId: string, actorId: string) {
+export async function copyActorPrivateEnvToProfile(
+  profileId: string,
+  groupId: string,
+  actorId: string,
+  opts?: ProfileLookupOptions
+) {
   return apiJson<{ profile_id: string; group_id: string; actor_id: string; keys: string[] }>(
     `/api/v1/actor_profiles/${encodeURIComponent(profileId)}/copy_actor_secrets`,
     {
       method: "POST",
-      body: JSON.stringify({ by: "user", group_id: groupId, actor_id: actorId }),
+      body: JSON.stringify({
+        by: "user",
+        scope: opts?.scope,
+        owner_id: opts?.ownerId,
+        group_id: groupId,
+        actor_id: actorId,
+      }),
     }
   );
 }
 
-export async function copyActorProfilePrivateEnvFromProfile(profileId: string, sourceProfileId: string) {
+export async function copyActorProfilePrivateEnvFromProfile(
+  profileId: string,
+  sourceProfileId: string,
+  opts?: ProfileLookupOptions & {
+    sourceScope?: ProfileScope;
+    sourceOwnerId?: string;
+  }
+) {
+  return copyProfilePrivateEnvFromProfile(profileId, sourceProfileId, {
+    scope: "global",
+    ...opts,
+  });
+}
+
+export async function copyProfilePrivateEnvFromProfile(
+  profileId: string,
+  sourceProfileId: string,
+  opts?: ProfileLookupOptions & {
+    sourceScope?: ProfileScope;
+    sourceOwnerId?: string;
+  }
+) {
   return apiJson<{ profile_id: string; source_profile_id: string; keys: string[] }>(
-    `/api/v1/actor_profiles/${encodeURIComponent(profileId)}/copy_profile_secrets`,
+    `/api/v1/profiles/${encodeURIComponent(profileId)}/copy_profile_secrets`,
     {
       method: "POST",
-      body: JSON.stringify({ by: "user", source_profile_id: sourceProfileId }),
+      body: JSON.stringify({
+        by: "user",
+        scope: opts?.scope,
+        owner_id: opts?.ownerId,
+        source_profile_id: sourceProfileId,
+        source_scope: opts?.sourceScope ?? opts?.scope,
+        source_owner_id: opts?.sourceOwnerId ?? opts?.ownerId,
+      }),
     }
   );
 }

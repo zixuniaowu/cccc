@@ -595,6 +595,19 @@ MCP_TOOLS = [
         ),
     },
     {
+        "name": "cccc_role_notes",
+        "description": "Manage actor role notes (persona_notes): action=get|set|clear. Foreman/user can read and write any actor's role notes.",
+        "inputSchema": _obj(
+            {
+                **_COMMON_GROUP,
+                "action": {"type": "string", "enum": ["get", "set", "clear"], "default": "get"},
+                "target_actor_id": {"type": "string", "description": "The actor whose role notes to read/write. Omit for get to list all."},
+                "content": {"type": "string", "description": "New role notes content (required for set, max 600 chars)"},
+                "by": {"type": "string", "description": "Caller actor id override (normally auto-resolved)"},
+            }
+        ),
+    },
+    {
         "name": "cccc_memory",
         "description": "ReMe file-memory primary ops: action=layout_get|search|get|write.",
         "inputSchema": _obj(

@@ -139,6 +139,8 @@ class ActorUpdateData(BaseModel):
     actor_id: str
     patch: ActorUpdatePatch
     profile_id: Optional[str] = None
+    profile_scope: Optional[str] = None
+    profile_owner: Optional[str] = None
     profile_action: Optional[Literal["convert_to_custom"]] = None
 
     model_config = ConfigDict(extra="forbid")

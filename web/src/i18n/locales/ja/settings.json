@@ -12,6 +12,7 @@
     "transcript": "ターミナルログ",
     "blueprint": "ブループリント",
     "actorProfiles": "Actor Profiles",
+    "myProfiles": "My Profiles",
     "developer": "開発者",
     "webAccess": "Web Access"
   },
@@ -78,6 +79,8 @@
     "usageEmpty": "リンク中の actor はありません。",
     "usageLoadFailed": "プロファイルの使用状況を読み込めませんでした。",
     "loadFailed": "Actor Profile の読み込みに失敗しました。",
+    "myProfilesLoginRequired": "個人プロファイルを管理するにはサインインが必要です。",
+    "scopeSecretsUnavailable": "このスコープでは秘密環境変数がまだ未対応です。保存前にシークレット編集をクリアしてください。",
     "saveFailed": "Actor Profile の保存に失敗しました。",
     "deleteFailed": "Actor Profile の削除に失敗しました。",
     "loadSecretsFailed": "プロファイルシークレットの読み込みに失敗しました。",

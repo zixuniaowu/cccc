@@ -33,7 +33,8 @@ from ...paths import ensure_home
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
-from ..actors.actor_profile_store import get_actor_profile
+from ..actors.actor_profile_runtime import actor_profile_ref
+from ..actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
 from ..messaging.delivery import THROTTLE, clear_preamble_sent
 
 
@@ -89,7 +90,8 @@ def group_template_export(args: Dict[str, Any]) -> DaemonResponse:
             profile_id = str(actor_doc.get("profile_id") or "").strip()
             if not profile_id:
                 continue
-            profile = get_actor_profile(profile_id)
+            ref = actor_profile_ref(actor_doc)
+            profile = get_actor_profile_by_ref(ref) if ref is not None else get_actor_profile(profile_id)
             if not isinstance(profile, dict):
                 continue
             actor_tpl.runtime = str(profile.get("runtime") or actor_tpl.runtime)  # type: ignore[assignment]

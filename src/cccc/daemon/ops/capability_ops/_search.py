@@ -1259,9 +1259,11 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
         profile_autoload_capabilities: List[str] = []
         if profile_id:
             try:
-                from ..actors.actor_profile_store import get_actor_profile as _get_actor_profile
+                from ..actors.actor_profile_runtime import actor_profile_ref as _actor_profile_ref
+                from ..actors.actor_profile_store import get_actor_profile as _get_actor_profile, get_actor_profile_by_ref as _get_actor_profile_by_ref
 
-                profile_doc = _get_actor_profile(profile_id)
+                profile_ref = _actor_profile_ref(actor_record) if isinstance(actor_record, dict) else None
+                profile_doc = _get_actor_profile_by_ref(profile_ref) if profile_ref is not None else _get_actor_profile(profile_id)
                 if isinstance(profile_doc, dict):
                     defaults_cfg = _pkg()._normalize_profile_capability_defaults(profile_doc.get("capability_defaults"))
                     profile_autoload_capabilities = list(defaults_cfg.get("autoload_capabilities") or [])

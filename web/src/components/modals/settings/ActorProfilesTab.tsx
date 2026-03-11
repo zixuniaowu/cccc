@@ -12,6 +12,7 @@ import { CapabilityPicker } from "../../CapabilityPicker";
 interface ActorProfilesTabProps {
   isDark: boolean;
   isActive: boolean;
+  scope: "global" | "my";
 }
 
 type EditorState = {
@@ -83,7 +84,7 @@ function buildEditor(profile?: ActorProfile | null): EditorState {
   };
 }
 
-export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
+export function ActorProfilesTab({ isDark, isActive, scope }: ActorProfilesTabProps) {
   const { t } = useTranslation("settings");
   const groups = useGroupStore((s) => s.groups);
   const refreshGroups = useGroupStore((s) => s.refreshGroups);
@@ -104,6 +105,17 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
   const [secretUnsetText, setSecretUnsetText] = useState("");
   const [secretClear, setSecretClear] = useState(false);
   const [duplicateSourceProfileId, setDuplicateSourceProfileId] = useState("");
+  const [sessionUserId, setSessionUserId] = useState("");
+
+  const isMyScope = scope === "my";
+  const profileScope: api.ProfileScope = isMyScope ? "user" : "global";
+  const profileLookup = useMemo(
+    () => ({
+      scope: profileScope,
+      ownerId: isMyScope ? sessionUserId.trim() : "",
+    }),
+    [isMyScope, profileScope, sessionUserId]
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -132,6 +144,32 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
     () => defaultCommandForRuntime(editor.runtime),
     [editor.runtime]
   );
+
+  const ensureSessionContext = async () => {
+    try {
+      const resp = await api.fetchWebAccessSession();
+      if (!resp.ok) {
+        setSessionUserId("");
+        return null;
+      }
+      const session = resp.result?.web_access_session ?? null;
+      const userId = String(session?.user_id || "").trim();
+      const signedIn = Boolean(session?.current_browser_signed_in);
+      setSessionUserId(userId);
+      return { userId, signedIn };
+    } catch {
+      setSessionUserId("");
+      return null;
+    }
+  };
+
+  const scopeRequestError = (code: string | undefined, fallback: string) => {
+    const normalized = String(code || "").trim();
+    if (isMyScope && (normalized === "unauthorized" || normalized === "permission_denied")) {
+      return t("actorProfiles.myProfilesLoginRequired");
+    }
+    return fallback;
+  };
 
   const closeEditor = () => {
     setDuplicateSourceProfileId("");
@@ -374,11 +412,17 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
     setBusy(true);
     setErr("");
     try {
-      const resp = await api.listActorProfiles();
+      const session = await ensureSessionContext();
+      if (isMyScope && !(session?.signedIn && session.userId)) {
+        setProfiles([]);
+        setErr(t("actorProfiles.myProfilesLoginRequired"));
+        return;
+      }
+      const resp = await api.listProfiles(isMyScope ? "my" : "global");
       if (resp.ok) {
         setProfiles(Array.isArray(resp.result?.profiles) ? resp.result.profiles : []);
       } else {
-        setErr(resp.error?.message || t("actorProfiles.loadFailed"));
+        setErr(scopeRequestError(resp.error?.code, resp.error?.message || t("actorProfiles.loadFailed")));
       }
     } catch (e) {
       console.error("Failed to load actor profiles:", e);
@@ -415,7 +459,12 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
       setSecretMasks({});
       return;
     }
-    const resp = await api.fetchActorProfilePrivateEnvKeys(profileId);
+    if (isMyScope && !profileLookup.ownerId) {
+      setSecretKeys([]);
+      setSecretMasks({});
+      return;
+    }
+    const resp = await api.fetchProfilePrivateEnvKeys(profileId, profileLookup);
     if (!resp.ok) {
       setEditorErr(resp.error?.message || t("actorProfiles.loadSecretsFailed"));
       setSecretKeys([]);
@@ -481,10 +530,18 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
 
   const handleDelete = async (profile: ActorProfile) => {
     if (!window.confirm(t("actorProfiles.deleteConfirm", { name: profile.name || profile.id }))) return;
+    const ownerId = isMyScope ? sessionUserId.trim() : "";
+    if (isMyScope && !ownerId) {
+      setErr(t("actorProfiles.myProfilesLoginRequired"));
+      return;
+    }
     setBusy(true);
     setErr("");
     try {
-      const resp = await api.deleteActorProfile(profile.id);
+      const resp = await api.deleteProfile(String(profile.id || ""), {
+        scope: profileScope,
+        ownerId,
+      });
       if (!resp.ok) {
         const code = String(resp.error?.code || "").trim();
         if (code === "profile_in_use") {
@@ -512,16 +569,20 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
             )}`
           );
           if (!forceConfirm) return;
-          const forceResp = await api.deleteActorProfile(profile.id, { forceDetach: true });
+          const forceResp = await api.deleteProfile(String(profile.id || ""), {
+            scope: profileScope,
+            ownerId,
+            forceDetach: true,
+          });
           if (!forceResp.ok) {
-            setErr(forceResp.error?.message || t("actorProfiles.deleteFailed"));
+            setErr(scopeRequestError(forceResp.error?.code, forceResp.error?.message || t("actorProfiles.deleteFailed")));
             return;
           }
           await loadProfiles();
           await refreshAllGroupsActors();
           return;
         }
-        setErr(resp.error?.message || t("actorProfiles.deleteFailed"));
+        setErr(scopeRequestError(resp.error?.code, resp.error?.message || t("actorProfiles.deleteFailed")));
         return;
       }
       await loadProfiles();
@@ -539,9 +600,12 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
     setUsageBusyProfileId(profileId);
     setErr("");
     try {
-      const resp = await api.getActorProfile(profileId);
+      const resp = await api.getProfile(profileId, {
+        scope: profileScope,
+        ownerId: isMyScope ? sessionUserId.trim() : "",
+      });
       if (!resp.ok) {
-        setErr(resp.error?.message || t("actorProfiles.usageLoadFailed"));
+        setErr(scopeRequestError(resp.error?.code, resp.error?.message || t("actorProfiles.usageLoadFailed")));
         return;
       }
       const usage = Array.isArray(resp.result?.usage) ? resp.result.usage : [];
@@ -578,6 +642,11 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
       setEditorErr(t("actorProfiles.nameRequired"));
       return;
     }
+    const ownerId = isMyScope ? sessionUserId.trim() : "";
+    if (isMyScope && !ownerId) {
+      setEditorErr(t("actorProfiles.myProfilesLoginRequired"));
+      return;
+    }
     setEditorBusy(true);
     setEditorErr("");
     try {
@@ -595,6 +664,8 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
       const payload: Record<string, unknown> = {
         id: editor.id || undefined,
         name,
+        scope: profileScope,
+        owner_id: ownerId,
         runtime: editor.runtime,
         runner: "pty",
         command: editorSupportsDefaultCommand && editor.useDefaultCommand ? "" : editor.command.trim(),
@@ -621,10 +692,12 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
         setEditorErr(t("actorProfiles.customRuntimeCommandRequired"));
         return;
       }
+      const copyFromProfileId = duplicateSourceProfileId.trim();
+      const hasSecretOps = secretClear || Object.keys(setParsed.setVars).length > 0 || unsetParsed.unsetKeys.length > 0;
       const expectedRevision = editor.id ? editor.revision : undefined;
-      const upsertResp = await api.upsertActorProfile(payload, expectedRevision);
+      const upsertResp = await api.saveProfile(payload, expectedRevision);
       if (!upsertResp.ok) {
-        setEditorErr(upsertResp.error?.message || t("actorProfiles.saveFailed"));
+        setEditorErr(scopeRequestError(upsertResp.error?.code, upsertResp.error?.message || t("actorProfiles.saveFailed")));
         return;
       }
       const profile = upsertResp.result?.profile;
@@ -634,18 +707,22 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
         return;
       }
 
-      const copyFromProfileId = duplicateSourceProfileId.trim();
       if (copyFromProfileId && copyFromProfileId !== profileId) {
-        const copyResp = await api.copyActorProfilePrivateEnvFromProfile(profileId, copyFromProfileId);
+        const copyResp = await api.copyProfilePrivateEnvFromProfile(profileId, copyFromProfileId, profileLookup);
         if (!copyResp.ok) {
           setEditorErr(copyResp.error?.message || t("actorProfiles.saveSecretsFailed"));
           return;
         }
       }
 
-      const hasSecretOps = secretClear || Object.keys(setParsed.setVars).length > 0 || unsetParsed.unsetKeys.length > 0;
       if (hasSecretOps) {
-        const secretResp = await api.updateActorProfilePrivateEnv(profileId, setParsed.setVars, unsetParsed.unsetKeys, secretClear);
+        const secretResp = await api.updateProfilePrivateEnv(
+          profileId,
+          setParsed.setVars,
+          unsetParsed.unsetKeys,
+          secretClear,
+          profileLookup
+        );
         if (!secretResp.ok) {
           setEditorErr(secretResp.error?.message || t("actorProfiles.saveSecretsFailed"));
           return;
@@ -693,7 +770,7 @@ export function ActorProfilesTab({ isDark, isActive }: ActorProfilesTabProps) {
           <div key={profile.id} className={cardClass()}>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
-                <div className="text-sm font-semibold truncate text-[var(--color-text-primary)]">
+              <div className="text-sm font-semibold truncate text-[var(--color-text-primary)]">
                   {profile.name || profile.id}
                 </div>
                 <div className="mt-0.5 text-xs text-[var(--color-text-tertiary)]">

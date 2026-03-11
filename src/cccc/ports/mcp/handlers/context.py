@@ -294,6 +294,44 @@ def agent_state_clear(*, group_id: str, actor_id: str, by: Optional[str] = None)
     return context_sync(group_id=group_id, ops=[{"op": "agent_state.clear", "actor_id": actor_id}], by=by)
 
 
+def role_notes_get(*, group_id: str, target_actor_id: Optional[str] = None) -> Dict[str, Any]:
+    snapshot = context_get(group_id=group_id, include_archived=True)
+    states = snapshot.get("agent_states") if isinstance(snapshot.get("agent_states"), list) else []
+    if target_actor_id:
+        target = str(target_actor_id).strip().lower()
+        for item in states:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("id") or "").strip().lower() != target:
+                continue
+            warm = item.get("warm") if isinstance(item.get("warm"), dict) else {}
+            return {"target_actor_id": target, "persona_notes": warm.get("persona_notes", ""), "version": snapshot.get("version")}
+        return {"target_actor_id": target, "persona_notes": "", "version": snapshot.get("version")}
+    results = []
+    for item in states:
+        if not isinstance(item, dict):
+            continue
+        warm = item.get("warm") if isinstance(item.get("warm"), dict) else {}
+        results.append({"actor_id": item.get("id", ""), "persona_notes": warm.get("persona_notes", "")})
+    return {"role_notes": results, "version": snapshot.get("version")}
+
+
+def role_notes_set(*, group_id: str, target_actor_id: str, content: str, by: Optional[str] = None) -> Dict[str, Any]:
+    return context_sync(
+        group_id=group_id,
+        ops=[{"op": "role_notes.set", "actor_id": target_actor_id, "persona_notes": content}],
+        by=by,
+    )
+
+
+def role_notes_clear(*, group_id: str, target_actor_id: str, by: Optional[str] = None) -> Dict[str, Any]:
+    return context_sync(
+        group_id=group_id,
+        ops=[{"op": "role_notes.set", "actor_id": target_actor_id, "persona_notes": ""}],
+        by=by,
+    )
+
+
 def _handle_context_namespace(
     name: str,
     arguments: Dict[str, Any],

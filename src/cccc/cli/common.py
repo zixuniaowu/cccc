@@ -33,6 +33,7 @@ from ..kernel.ledger_retention import snapshot as snapshot_ledger
 from ..kernel.messaging import default_reply_recipients
 from ..kernel.permissions import require_actor_permission, require_group_permission, require_inbox_permission
 from ..kernel.registry import load_registry
+from ..kernel.settings import resolve_remote_access_web_binding
 from ..kernel.scope import detect_scope
 from ..kernel.system_prompt import render_system_prompt
 from ..paths import ensure_home
@@ -56,6 +57,14 @@ def _http_host_literal(host: str) -> str:
     if h != "localhost" and ":" in h and not (h.startswith("[") and h.endswith("]")):
         return f"[{h}]"
     return h
+
+
+def _resolve_web_server_binding() -> tuple[str, int]:
+    binding = resolve_remote_access_web_binding()
+    host = str(binding.get("web_host") or "").strip() or "127.0.0.1"
+    port = int(binding.get("web_port") or 8848)
+    return host, port
+
 
 def _print_json(obj: Any) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
@@ -461,9 +470,8 @@ def _default_entry() -> int:
     monitor_thread = threading.Thread(target=_monitor_daemon, daemon=True)
     monitor_thread.start()
 
-    # Build web args from environment
-    host = str(os.environ.get("CCCC_WEB_HOST") or "").strip() or "127.0.0.1"
-    port = int(os.environ.get("CCCC_WEB_PORT") or 8848)
+    # Keep runtime binding aligned with remote_access settings/UI.
+    host, port = _resolve_web_server_binding()
     log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip() or "info"
     reload_mode = _env_flag("CCCC_WEB_RELOAD", default=False)
     

@@ -556,7 +556,7 @@ export const MessageBubble = memo(function MessageBubble({
                     )}
                 <div
                     className={classNames(
-                        "max-h-[min(70vh,32rem)] overflow-x-hidden overflow-y-auto px-4 py-2.5 text-sm leading-relaxed",
+                        "px-4 py-2.5 text-sm leading-relaxed",
                         isUserMessage
                             ? "bg-blue-600 text-white rounded-2xl rounded-tr-none shadow-sm"
                             : "glass-bubble rounded-2xl rounded-tl-none text-[var(--color-text-primary)]"

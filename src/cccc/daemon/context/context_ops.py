@@ -371,6 +371,11 @@ def _check_permission(
             return f"Permission denied: {op_name} for {target_actor_id} (caller is {by})"
         return None
 
+    if op_name == "role_notes.set":
+        if role not in {"user", "foreman"}:
+            return "Permission denied: role_notes.set requires foreman or user"
+        return None
+
     if op_name == "coordination.brief.update":
         return "Permission denied: coordination brief updates require foreman or user"
 
@@ -944,6 +949,24 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 agent.updated_at = _utc_now_iso()
                 agents_dirty = True
                 _mark_change(idx, op_name, f"Cleared agent state {actor_id}")
+                continue
+
+            if op_name == "role_notes.set":
+                actor_id = str(raw.get("actor_id") or "").strip().lower()
+                if not actor_id:
+                    raise ValueError(f"op[{idx}] role_notes.set actor_id is required")
+                perm_err = _check_permission(by, op_name, group_id)
+                if perm_err:
+                    raise ValueError(perm_err)
+                agent = _get_or_create_agent(agents_state, actor_id)
+                warm = agent.warm if isinstance(agent.warm, AgentStateWarm) else AgentStateWarm()
+                value = _normalize_text(raw.get("persona_notes"), max_len=600)
+                if warm.persona_notes != value:
+                    warm.persona_notes = value
+                    agent.warm = warm
+                    agent.updated_at = _utc_now_iso()
+                    agents_dirty = True
+                    _mark_change(idx, op_name, f"Set role notes for {actor_id}")
                 continue
 
             if op_name == "meta.merge":

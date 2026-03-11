@@ -16,6 +16,7 @@ from ..schemas import (
     _normalize_command,
     check_admin,
     check_group,
+    get_principal,
     require_admin,
     require_group,
     require_user,
@@ -98,6 +99,64 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if _runner_is_headless(profile_runner):
             raise _headless_error(source=f"{source}:profile")
 
+    def _profile_auth_args(request: Request) -> Dict[str, Any]:
+        if not websocket_tokens_active():
+            return {}
+        principal = get_principal(request)
+        return {
+            "caller_id": str(getattr(principal, "user_id", "") or "").strip(),
+            "is_admin": bool(getattr(principal, "is_admin", False)),
+        }
+
+    def _profile_ref_args(*, scope: Optional[str] = None, owner_id: Optional[str] = None) -> Dict[str, Any]:
+        out: Dict[str, Any] = {}
+        normalized_scope = str(scope or "").strip().lower()
+        normalized_owner = str(owner_id or "").strip()
+        if normalized_scope:
+            out["profile_scope"] = normalized_scope
+        if normalized_owner:
+            out["profile_owner"] = normalized_owner
+        return out
+
+    async def _filter_standard_profiles_response(resp: Dict[str, Any]) -> Dict[str, Any]:
+        if await _developer_mode_enabled():
+            return resp
+        result = resp.get("result") if isinstance(resp, dict) else None
+        profiles = result.get("profiles") if isinstance(result, dict) else None
+        if isinstance(profiles, list):
+            result["profiles"] = [
+                item for item in profiles if isinstance(item, dict) and not _runner_is_headless(item.get("runner"))
+            ]
+        return resp
+
+    async def _actor_profile_upsert_impl(
+        request: Request,
+        *,
+        profile_payload: Dict[str, Any],
+        by: str,
+        expected_revision: Optional[int],
+    ) -> Dict[str, Any]:
+        if ctx.read_only:
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "code": "read_only",
+                    "message": "Actor profile write endpoints are disabled in read-only (exhibit) mode.",
+                },
+            )
+        if not await _developer_mode_enabled():
+            if _runner_is_headless(profile_payload.get("runner")):
+                raise _headless_error(source="actor_profile_upsert")
+            profile_payload["runner"] = "pty"
+        args: Dict[str, Any] = {
+            "profile": profile_payload,
+            "by": by,
+            **_profile_auth_args(request),
+        }
+        if expected_revision is not None:
+            args["expected_revision"] = int(expected_revision)
+        return await ctx.daemon({"op": "actor_profile_upsert", "args": args})
+
     @group_router.get("/actors")
     async def actors(group_id: str, include_unread: bool = False) -> Dict[str, Any]:
         gid = str(group_id or "").strip()
@@ -108,7 +167,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.cached_json(f"actors:{gid}:{int(bool(include_unread))}", ttl, _fetch)
 
     @group_router.post("/actors")
-    async def actor_create(group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:
+    async def actor_create(request: Request, group_id: str, req: ActorCreateRequest) -> Dict[str, Any]:
         command = _normalize_command(req.command) or []
         env_private = dict(req.env_private) if isinstance(req.env_private, dict) else None
         profile_id = str(req.profile_id or "").strip()
@@ -128,15 +187,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "capability_autoload": list(req.capability_autoload or []),
                     "env_private": env_private,
                     "profile_id": profile_id,
+                    **_profile_ref_args(scope=req.profile_scope, owner_id=req.profile_owner),
                     "default_scope_key": req.default_scope_key,
                     "submit": req.submit,
                     "by": req.by,
+                    **_profile_auth_args(request),
                 },
             }
         )
 
     @group_router.post("/actors/{actor_id}")
-    async def actor_update(group_id: str, actor_id: str, req: ActorUpdateRequest) -> Dict[str, Any]:
+    async def actor_update(request: Request, group_id: str, actor_id: str, req: ActorUpdateRequest) -> Dict[str, Any]:
         await _ensure_standard_web_runner(
             source="actor_update",
             runner=str(req.runner or "") if req.runner is not None else None,
@@ -167,9 +228,11 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             "actor_id": actor_id,
             "patch": patch,
             "by": req.by,
+            **_profile_auth_args(request),
         }
         if req.profile_id is not None:
             args["profile_id"] = str(req.profile_id or "").strip()
+            args.update(_profile_ref_args(scope=req.profile_scope, owner_id=req.profile_owner))
         if req.profile_action is not None:
             args["profile_action"] = str(req.profile_action or "").strip()
         return await ctx.daemon({"op": "actor_update", "args": args})
@@ -179,20 +242,30 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.daemon({"op": "actor_remove", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
 
     @group_router.post("/actors/{actor_id}/start")
-    async def actor_start(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
+    async def actor_start(request: Request, group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
         if not await _developer_mode_enabled() and _runner_is_headless(await _actor_runner(group_id, actor_id)):
             raise _headless_error(source="actor_start")
-        return await ctx.daemon({"op": "actor_start", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+        return await ctx.daemon(
+            {
+                "op": "actor_start",
+                "args": {"group_id": group_id, "actor_id": actor_id, "by": by, **_profile_auth_args(request)},
+            }
+        )
 
     @group_router.post("/actors/{actor_id}/stop")
     async def actor_stop(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
         return await ctx.daemon({"op": "actor_stop", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
 
     @group_router.post("/actors/{actor_id}/restart")
-    async def actor_restart(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
+    async def actor_restart(request: Request, group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
         if not await _developer_mode_enabled() and _runner_is_headless(await _actor_runner(group_id, actor_id)):
             raise _headless_error(source="actor_restart")
-        return await ctx.daemon({"op": "actor_restart", "args": {"group_id": group_id, "actor_id": actor_id, "by": by}})
+        return await ctx.daemon(
+            {
+                "op": "actor_restart",
+                "args": {"group_id": group_id, "actor_id": actor_id, "by": by, **_profile_auth_args(request)},
+            }
+        )
 
     @group_router.get("/actors/{actor_id}/env_private")
     async def actor_env_private_keys(group_id: str, actor_id: str, by: str = "user") -> Dict[str, Any]:
@@ -271,52 +344,94 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @global_router.get("/actor_profiles", dependencies=[Depends(require_user)])
-    async def actor_profiles_list(by: str = "user") -> Dict[str, Any]:
-        resp = await ctx.daemon({"op": "actor_profile_list", "args": {"by": by}})
-        if await _developer_mode_enabled():
-            return resp
-        result = resp.get("result") if isinstance(resp, dict) else None
-        profiles = result.get("profiles") if isinstance(result, dict) else None
-        if isinstance(profiles, list):
-            result["profiles"] = [
-                item for item in profiles if isinstance(item, dict) and not _runner_is_headless(item.get("runner"))
-            ]
-        return resp
+    @global_router.get("/profiles", dependencies=[Depends(require_user)])
+    async def actor_profiles_list(request: Request, by: str = "user", view: str = "global") -> Dict[str, Any]:
+        resp = await ctx.daemon(
+            {
+                "op": "actor_profile_list",
+                "args": {"by": by, "view": view, **_profile_auth_args(request)},
+            }
+        )
+        return await _filter_standard_profiles_response(resp)
 
     @global_router.get("/actor_profiles/{profile_id}", dependencies=[Depends(require_user)])
-    async def actor_profiles_get(profile_id: str, by: str = "user") -> Dict[str, Any]:
-        resp = await ctx.daemon({"op": "actor_profile_get", "args": {"profile_id": profile_id, "by": by}})
+    @global_router.get("/profiles/{profile_id}", dependencies=[Depends(require_user)])
+    async def actor_profiles_get(
+        request: Request,
+        profile_id: str,
+        by: str = "user",
+        scope: str = "global",
+        owner_id: str = "",
+    ) -> Dict[str, Any]:
+        resp = await ctx.daemon(
+            {
+                "op": "actor_profile_get",
+                "args": {
+                    "profile_id": profile_id,
+                    "by": by,
+                    **_profile_ref_args(scope=scope, owner_id=owner_id),
+                    **_profile_auth_args(request),
+                },
+            }
+        )
         if not await _developer_mode_enabled():
             profile = (resp.get("result") or {}).get("profile") if isinstance(resp, dict) else None
             if isinstance(profile, dict) and _runner_is_headless(profile.get("runner")):
                 raise _headless_error(source="actor_profile_get")
         return resp
 
-    @global_router.post("/actor_profiles", dependencies=[Depends(require_admin)])
-    async def actor_profiles_upsert(req: ActorProfileUpsertRequest) -> Dict[str, Any]:
-        if ctx.read_only:
-            raise HTTPException(
-                status_code=403,
-                detail={
-                    "code": "read_only",
-                    "message": "Actor profile write endpoints are disabled in read-only (exhibit) mode.",
-                },
-            )
+    @global_router.post("/actor_profiles", dependencies=[Depends(require_user)])
+    async def actor_profiles_upsert(request: Request, req: ActorProfileUpsertRequest) -> Dict[str, Any]:
         profile_payload = dict(req.profile or {})
-        if not await _developer_mode_enabled():
-            if _runner_is_headless(profile_payload.get("runner")):
-                raise _headless_error(source="actor_profile_upsert")
-            profile_payload["runner"] = "pty"
-        args: Dict[str, Any] = {
-            "profile": profile_payload,
-            "by": req.by,
-        }
-        if req.expected_revision is not None:
-            args["expected_revision"] = int(req.expected_revision)
-        return await ctx.daemon({"op": "actor_profile_upsert", "args": args})
+        return await _actor_profile_upsert_impl(
+            request,
+            profile_payload=profile_payload,
+            by=req.by,
+            expected_revision=req.expected_revision,
+        )
 
-    @global_router.delete("/actor_profiles/{profile_id}", dependencies=[Depends(require_admin)])
-    async def actor_profiles_delete(profile_id: str, by: str = "user", force_detach: bool = False) -> Dict[str, Any]:
+    @global_router.put("/profiles/{profile_id}", dependencies=[Depends(require_user)])
+    async def profiles_put(request: Request, profile_id: str) -> Dict[str, Any]:
+        try:
+            payload = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "invalid JSON body", "details": {}})
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object", "details": {}})
+
+        by = str(payload.get("by") or "user").strip() or "user"
+        expected_revision_raw = payload.get("expected_revision")
+        expected_revision: Optional[int] = None
+        if expected_revision_raw is not None:
+            try:
+                expected_revision = int(expected_revision_raw)
+            except Exception:
+                raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "expected_revision must be an integer", "details": {}})
+
+        profile_payload = payload.get("profile") if isinstance(payload.get("profile"), dict) else dict(payload)
+        if not isinstance(profile_payload, dict):
+            raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "profile must be an object", "details": {}})
+        profile_payload = dict(profile_payload)
+        profile_payload["id"] = profile_id
+        profile_payload.pop("expected_revision", None)
+        profile_payload.pop("by", None)
+        return await _actor_profile_upsert_impl(
+            request,
+            profile_payload=profile_payload,
+            by=by,
+            expected_revision=expected_revision,
+        )
+
+    @global_router.delete("/actor_profiles/{profile_id}", dependencies=[Depends(require_user)])
+    @global_router.delete("/profiles/{profile_id}", dependencies=[Depends(require_user)])
+    async def actor_profiles_delete(
+        request: Request,
+        profile_id: str,
+        by: str = "user",
+        force_detach: bool = False,
+        scope: str = "global",
+        owner_id: str = "",
+    ) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
                 status_code=403,
@@ -328,16 +443,57 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.daemon(
             {
                 "op": "actor_profile_delete",
-                "args": {"profile_id": profile_id, "by": by, "force_detach": bool(force_detach)},
+                "args": {
+                    "profile_id": profile_id,
+                    "by": by,
+                    "force_detach": bool(force_detach),
+                    **_profile_ref_args(scope=scope, owner_id=owner_id),
+                    **_profile_auth_args(request),
+                },
+            }
+        )
+
+    async def _actor_profile_secret_keys_impl(
+        request: Request,
+        *,
+        profile_id: str,
+        by: str,
+        scope: str,
+        owner_id: str,
+    ) -> Dict[str, Any]:
+        return await ctx.daemon(
+            {
+                "op": "actor_profile_secret_keys",
+                "args": {
+                    "profile_id": profile_id,
+                    "by": by,
+                    **_profile_ref_args(scope=scope, owner_id=owner_id),
+                    **_profile_auth_args(request),
+                },
             }
         )
 
     @global_router.get("/actor_profiles/{profile_id}/env_private", dependencies=[Depends(require_admin)])
-    async def actor_profile_secret_keys(profile_id: str, by: str = "user") -> Dict[str, Any]:
-        return await ctx.daemon({"op": "actor_profile_secret_keys", "args": {"profile_id": profile_id, "by": by}})
+    async def actor_profile_secret_keys_legacy(request: Request, profile_id: str, by: str = "user") -> Dict[str, Any]:
+        return await _actor_profile_secret_keys_impl(request, profile_id=profile_id, by=by, scope="global", owner_id="")
 
-    @global_router.post("/actor_profiles/{profile_id}/env_private", dependencies=[Depends(require_admin)])
-    async def actor_profile_secret_update(request: Request, profile_id: str) -> Dict[str, Any]:
+    @global_router.get("/profiles/{profile_id}/env_private", dependencies=[Depends(require_user)])
+    async def actor_profile_secret_keys(
+        request: Request,
+        profile_id: str,
+        by: str = "user",
+        scope: str = "global",
+        owner_id: str = "",
+    ) -> Dict[str, Any]:
+        return await _actor_profile_secret_keys_impl(request, profile_id=profile_id, by=by, scope=scope, owner_id=owner_id)
+
+    async def _actor_profile_secret_update_impl(
+        request: Request,
+        *,
+        profile_id: str,
+        default_scope: str,
+        default_owner_id: str,
+    ) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
                 status_code=403,
@@ -354,6 +510,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             raise HTTPException(status_code=400, detail={"code": "invalid_request", "message": "request body must be an object", "details": {}})
 
         by = str(payload.get("by") or "user").strip() or "user"
+        scope = str(payload.get("scope") or default_scope or "global").strip() or "global"
+        owner_id = str(payload.get("owner_id") or default_owner_id or "").strip()
         clear = bool(payload.get("clear") is True)
         set_raw = payload.get("set")
         unset_raw = payload.get("unset")
@@ -384,11 +542,31 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "args": {
                     "profile_id": profile_id,
                     "by": by,
+                    **_profile_ref_args(scope=scope, owner_id=owner_id),
+                    **_profile_auth_args(request),
                     "set": set_vars,
                     "unset": unset_keys,
                     "clear": clear,
                 },
             }
+        )
+
+    @global_router.post("/actor_profiles/{profile_id}/env_private", dependencies=[Depends(require_admin)])
+    async def actor_profile_secret_update_legacy(request: Request, profile_id: str) -> Dict[str, Any]:
+        return await _actor_profile_secret_update_impl(
+            request,
+            profile_id=profile_id,
+            default_scope="global",
+            default_owner_id="",
+        )
+
+    @global_router.post("/profiles/{profile_id}/env_private", dependencies=[Depends(require_user)])
+    async def actor_profile_secret_update(request: Request, profile_id: str) -> Dict[str, Any]:
+        return await _actor_profile_secret_update_impl(
+            request,
+            profile_id=profile_id,
+            default_scope="global",
+            default_owner_id="",
         )
 
     @global_router.post("/actor_profiles/{profile_id}/copy_actor_secrets")
@@ -430,8 +608,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             }
         )
 
-    @global_router.post("/actor_profiles/{profile_id}/copy_profile_secrets", dependencies=[Depends(require_admin)])
-    async def actor_profile_secret_copy_from_profile(request: Request, profile_id: str) -> Dict[str, Any]:
+    async def _actor_profile_secret_copy_from_profile_impl(
+        request: Request,
+        *,
+        profile_id: str,
+        default_scope: str,
+        default_owner_id: str,
+    ) -> Dict[str, Any]:
         if ctx.read_only:
             raise HTTPException(
                 status_code=403,
@@ -449,6 +632,10 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         by = str(payload.get("by") or "user").strip() or "user"
         source_profile_id = str(payload.get("source_profile_id") or "").strip()
+        scope = str(payload.get("scope") or default_scope or "global").strip() or "global"
+        owner_id = str(payload.get("owner_id") or default_owner_id or "").strip()
+        source_scope = str(payload.get("source_scope") or payload.get("source_profile_scope") or scope or "global").strip() or "global"
+        source_owner_id = str(payload.get("source_owner_id") or payload.get("source_profile_owner") or owner_id or "").strip()
         if not source_profile_id:
             raise HTTPException(
                 status_code=400,
@@ -462,8 +649,30 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "profile_id": profile_id,
                     "source_profile_id": source_profile_id,
                     "by": by,
+                    **_profile_ref_args(scope=scope, owner_id=owner_id),
+                    "source_profile_scope": source_scope,
+                    "source_profile_owner": source_owner_id,
+                    **_profile_auth_args(request),
                 },
             }
+        )
+
+    @global_router.post("/actor_profiles/{profile_id}/copy_profile_secrets", dependencies=[Depends(require_admin)])
+    async def actor_profile_secret_copy_from_profile_legacy(request: Request, profile_id: str) -> Dict[str, Any]:
+        return await _actor_profile_secret_copy_from_profile_impl(
+            request,
+            profile_id=profile_id,
+            default_scope="global",
+            default_owner_id="",
+        )
+
+    @global_router.post("/profiles/{profile_id}/copy_profile_secrets", dependencies=[Depends(require_user)])
+    async def actor_profile_secret_copy_from_profile(request: Request, profile_id: str) -> Dict[str, Any]:
+        return await _actor_profile_secret_copy_from_profile_impl(
+            request,
+            profile_id=profile_id,
+            default_scope="global",
+            default_owner_id="",
         )
 
     @global_router.websocket("/groups/{group_id}/actors/{actor_id}/term")

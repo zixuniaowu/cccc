@@ -238,6 +238,7 @@ def dispatch_request(
         coerce_private_env_value=deps.coerce_private_env_value,
         update_actor_private_env=deps.update_actor_private_env,
         delete_actor_private_env=deps.delete_actor_private_env,
+        load_actor_private_env=deps.load_actor_private_env,
         private_env_max_keys=deps.private_env_max_keys,
         supported_runtimes=deps.supported_runtimes,
         get_actor_profile=deps.get_actor_profile,

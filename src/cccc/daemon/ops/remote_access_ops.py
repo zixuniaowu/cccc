@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional, Tuple
 from ...contracts.v1 import DaemonError, DaemonResponse
 from ...kernel.access_tokens import list_access_tokens
 from ...kernel.events import publish_event
-from ...kernel.settings import get_remote_access_settings, update_remote_access_settings
+from ...kernel.settings import get_remote_access_settings, resolve_remote_access_web_binding, update_remote_access_settings
 from ...util.conv import coerce_bool
 from ...util.time import utc_now_iso
 
@@ -65,38 +65,8 @@ def _access_token_count() -> int:
 
 
 def _effective_web_binding(cfg: Dict[str, Any]) -> Dict[str, Any]:
-    cfg_host = str(cfg.get("web_host") or "").strip()
-    env_host = str(os.environ.get("CCCC_WEB_HOST") or "").strip()
-    host_source = "settings" if cfg_host else ("env" if env_host else "default")
-    host = cfg_host or env_host or "127.0.0.1"
-
-    cfg_port_raw = cfg.get("web_port")
-    env_port_raw = os.environ.get("CCCC_WEB_PORT")
-    cfg_port_s = str(cfg_port_raw or "").strip()
-    env_port_s = str(env_port_raw or "").strip()
-    if cfg_port_s:
-        port = _safe_web_port(cfg_port_raw)
-        port_source = "settings"
-    elif env_port_s:
-        port = _safe_web_port(env_port_raw)
-        port_source = "env"
-    else:
-        port = _safe_web_port(8848)
-        port_source = "default"
-
-    cfg_public_url = str(cfg.get("web_public_url") or "").strip()
-    env_public_url = str(os.environ.get("CCCC_WEB_PUBLIC_URL") or "").strip()
-    public_url_source = "settings" if cfg_public_url else ("env" if env_public_url else "none")
-    public_url = cfg_public_url or env_public_url
-
-    return {
-        "web_host": host,
-        "web_host_source": host_source,
-        "web_port": int(port),
-        "web_port_source": port_source,
-        "web_public_url": (public_url or None),
-        "web_public_url_source": public_url_source,
-    }
+    _ = cfg
+    return resolve_remote_access_web_binding()
 
 
 def _manual_endpoint(binding: Dict[str, Any]) -> Optional[str]:

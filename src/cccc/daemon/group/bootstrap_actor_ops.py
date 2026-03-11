@@ -14,6 +14,8 @@ from ...runners import pty as pty_runner
 
 logger = logging.getLogger("cccc.daemon.server")
 
+ResolveLinkedActorBeforeStart = Callable[..., Dict[str, Any]]
+
 
 def autostart_running_groups(
     home: Path,
@@ -35,7 +37,7 @@ def autostart_running_groups(
     throttle_reset_actor: Callable[[str, str], None],
     automation_on_resume: Callable[[Any], None],
     get_group_state: Callable[[Any], str],
-    resolve_linked_actor_before_start: Optional[Callable[[Any, str], Dict[str, Any]]] = None,
+    resolve_linked_actor_before_start: Optional[ResolveLinkedActorBeforeStart] = None,
 ) -> None:
     base = home / "groups"
     if not base.exists():
@@ -69,7 +71,14 @@ def autostart_running_groups(
 
             if callable(resolve_linked_actor_before_start):
                 try:
-                    actor = resolve_linked_actor_before_start(group, actor_id)
+                    # Autostart has no interactive caller context; keep the runtime resolver
+                    # interface aligned with manual start/restart while passing empty identity.
+                    actor = resolve_linked_actor_before_start(
+                        group,
+                        actor_id,
+                        caller_id="",
+                        is_admin=False,
+                    )
                 except Exception as e:
                     logger.warning("Autostart skipped for %s/%s: %s", group_id, actor_id, e)
                     continue

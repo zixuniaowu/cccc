@@ -21,6 +21,8 @@ def start_actor_process(
     runner: str,
     runtime: str,
     by: str,
+    caller_id: str = "",
+    is_admin: bool = False,
     find_scope_url: Callable[[Any, str], str],
     effective_runner_kind: Callable[[str], str],
     merge_actor_env_with_private: Callable[[str, str, Dict[str, Any]], Dict[str, Any]],
@@ -45,7 +47,12 @@ def start_actor_process(
         return {"success": False, "error": f"actor not found: {actor_id}"}
     if callable(resolve_linked_actor_before_start):
         try:
-            actor = resolve_linked_actor_before_start(group, actor_id)
+            actor = resolve_linked_actor_before_start(
+                group,
+                actor_id,
+                caller_id=str(caller_id or "").strip(),
+                is_admin=bool(is_admin),
+            )
             command = actor.get("command") if isinstance(actor.get("command"), list) else command
             env = actor.get("env") if isinstance(actor.get("env"), dict) else env
             runner = str(actor.get("runner") or runner).strip() or runner

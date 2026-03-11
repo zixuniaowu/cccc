@@ -525,12 +525,14 @@ def _maybe_autostart_running_groups() -> None:
         throttle_reset_actor=lambda gid, aid: THROTTLE.reset_actor(gid, aid, keep_pending=True),
         automation_on_resume=AUTOMATION.on_resume,
         get_group_state=get_group_state,
-        resolve_linked_actor_before_start=lambda grp, aid: _resolve_linked_actor_before_start(
+        resolve_linked_actor_before_start=lambda grp, aid, caller_id="", is_admin=False: _resolve_linked_actor_before_start(
             grp,
             aid,
             get_actor_profile=_get_actor_profile,
             load_actor_profile_secrets=_load_actor_profile_secrets,
             update_actor_private_env=_update_actor_private_env,
+            caller_id=caller_id,
+            is_admin=is_admin,
         ),
     )
 
@@ -593,6 +595,8 @@ def _start_actor_process(
     runner: str,
     runtime: str,
     by: str,
+    caller_id: str = "",
+    is_admin: bool = False,
 ) -> Dict[str, Any]:
     return runtime_start_actor_process(
         group,
@@ -602,6 +606,8 @@ def _start_actor_process(
         runner=runner,
         runtime=runtime,
         by=by,
+        caller_id=caller_id,
+        is_admin=is_admin,
         find_scope_url=_find_scope_url,
         effective_runner_kind=_effective_runner_kind,
         merge_actor_env_with_private=_merge_actor_env_with_private,
@@ -615,12 +621,14 @@ def _start_actor_process(
         clear_preamble_sent=clear_preamble_sent,
         throttle_reset_actor=lambda gid, aid: THROTTLE.reset_actor(gid, aid, keep_pending=True),
         supported_runtimes=SUPPORTED_RUNTIMES,
-        resolve_linked_actor_before_start=lambda grp, aid: _resolve_linked_actor_before_start(
+        resolve_linked_actor_before_start=lambda grp, aid, caller_id="", is_admin=False: _resolve_linked_actor_before_start(
             grp,
             aid,
             get_actor_profile=_get_actor_profile,
             load_actor_profile_secrets=_load_actor_profile_secrets,
             update_actor_private_env=_update_actor_private_env,
+            caller_id=caller_id,
+            is_admin=is_admin,
         ),
     )
 

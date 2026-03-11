@@ -788,6 +788,397 @@ class TestActorProfilesOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_user_scope_profile_ops_require_caller_context(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create_user, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "shared-user",
+                        "name": "User A Profile",
+                        "scope": "user",
+                        "owner_id": "user-a",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "command": [],
+                    },
+                },
+            )
+            self.assertTrue(create_user.ok, getattr(create_user, "error", None))
+
+            list_my, _ = self._call(
+                "actor_profile_list",
+                {"by": "user", "view": "my", "caller_id": "user-a", "is_admin": False},
+            )
+            self.assertTrue(list_my.ok, getattr(list_my, "error", None))
+            profiles = (list_my.result or {}).get("profiles") if isinstance(list_my.result, dict) else []
+            self.assertEqual([(item.get("id"), item.get("scope"), item.get("owner_id")) for item in profiles], [("shared-user", "user", "user-a")])
+
+            denied_get, _ = self._call(
+                "actor_profile_get",
+                {
+                    "by": "user",
+                    "profile_id": "shared-user",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-b",
+                    "is_admin": False,
+                },
+            )
+            self.assertFalse(denied_get.ok)
+            self.assertEqual(getattr(denied_get.error, "code", ""), "permission_denied")
+
+            denied_delete, _ = self._call(
+                "actor_profile_delete",
+                {
+                    "by": "user",
+                    "profile_id": "shared-user",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-b",
+                    "is_admin": False,
+                },
+            )
+            self.assertFalse(denied_delete.ok)
+            self.assertEqual(getattr(denied_delete.error, "code", ""), "permission_denied")
+
+            admin_delete, _ = self._call(
+                "actor_profile_delete",
+                {
+                    "by": "user",
+                    "profile_id": "shared-user",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "admin-user",
+                    "is_admin": True,
+                },
+            )
+            self.assertTrue(admin_delete.ok, getattr(admin_delete, "error", None))
+        finally:
+            cleanup()
+
+    def test_view_all_requires_admin_when_explicit_auth_is_present(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create_global, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "admin-user",
+                    "is_admin": True,
+                    "profile": {
+                        "id": "global-one",
+                        "name": "Global One",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "command": [],
+                    },
+                },
+            )
+            self.assertTrue(create_global.ok, getattr(create_global, "error", None))
+
+            create_user, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "user-one",
+                        "name": "User One",
+                        "scope": "user",
+                        "owner_id": "user-a",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "command": [],
+                    },
+                },
+            )
+            self.assertTrue(create_user.ok, getattr(create_user, "error", None))
+
+            denied, _ = self._call(
+                "actor_profile_list",
+                {"by": "user", "view": "all", "caller_id": "user-a", "is_admin": False},
+            )
+            self.assertFalse(denied.ok)
+            self.assertEqual(getattr(denied.error, "code", ""), "permission_denied")
+
+            allowed, _ = self._call(
+                "actor_profile_list",
+                {"by": "user", "view": "all", "caller_id": "admin-user", "is_admin": True},
+            )
+            self.assertTrue(allowed.ok, getattr(allowed, "error", None))
+            profiles = (allowed.result or {}).get("profiles") if isinstance(allowed.result, dict) else []
+            self.assertEqual(
+                sorted((item.get("id"), item.get("scope"), item.get("owner_id")) for item in profiles),
+                [("global-one", "global", ""), ("user-one", "user", "user-a")],
+            )
+        finally:
+            cleanup()
+
+    def test_actor_start_uses_persisted_global_profile_ref(self) -> None:
+        from cccc.daemon.actors.private_env_ops import load_actor_private_env
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group("ap-start-fallback")
+            create_global, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "admin-user",
+                    "is_admin": True,
+                    "profile": {
+                        "id": "shared-profile",
+                        "name": "Shared Global",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "enter",
+                    },
+                },
+            )
+            self.assertTrue(create_global.ok, getattr(create_global, "error", None))
+            set_global_secret, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "shared-profile",
+                    "set": {"SHARED_SECRET": "global-secret"},
+                },
+            )
+            self.assertTrue(set_global_secret.ok, getattr(set_global_secret, "error", None))
+
+            create_user, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "shared-profile",
+                        "name": "Shared User",
+                        "scope": "user",
+                        "owner_id": "user-a",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(create_user.ok, getattr(create_user, "error", None))
+            set_user_secret, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "shared-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "set": {"SHARED_SECRET": "user-secret"},
+                },
+            )
+            self.assertTrue(set_user_secret.ok, getattr(set_user_secret, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "profile_id": "shared-profile",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            actor_added = (add.result or {}).get("actor") if isinstance(add.result, dict) else {}
+            self.assertIsInstance(actor_added, dict)
+            assert isinstance(actor_added, dict)
+            self.assertEqual(str(actor_added.get("profile_scope") or ""), "global")
+            self.assertEqual(str(actor_added.get("profile_owner") or ""), "")
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            start_global, _ = self._call(
+                "actor_start",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                },
+            )
+            self.assertTrue(start_global.ok, getattr(start_global, "error", None))
+            actor_global = (start_global.result or {}).get("actor") if isinstance(start_global.result, dict) else {}
+            self.assertIsInstance(actor_global, dict)
+            assert isinstance(actor_global, dict)
+            self.assertEqual(str(actor_global.get("runtime") or ""), "codex")
+            self.assertEqual(str(actor_global.get("submit") or ""), "enter")
+            self.assertEqual(str(actor_global.get("profile_scope") or ""), "global")
+            self.assertEqual(str(actor_global.get("profile_owner") or ""), "")
+            self.assertEqual(load_actor_private_env(group_id, "peer1").get("SHARED_SECRET"), "global-secret")
+        finally:
+            cleanup()
+
+    def test_actor_start_uses_explicit_user_scope_profile_ref(self) -> None:
+        from cccc.daemon.actors.private_env_ops import load_actor_private_env
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group("ap-start-user-ref")
+            create_user, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "shared-profile",
+                        "name": "Shared User",
+                        "scope": "user",
+                        "owner_id": "user-a",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(create_user.ok, getattr(create_user, "error", None))
+            set_user_secret, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "shared-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "set": {"SHARED_SECRET": "user-secret"},
+                },
+            )
+            self.assertTrue(set_user_secret.ok, getattr(set_user_secret, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "profile_id": "shared-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            actor_added = (add.result or {}).get("actor") if isinstance(add.result, dict) else {}
+            self.assertIsInstance(actor_added, dict)
+            assert isinstance(actor_added, dict)
+            self.assertEqual(str(actor_added.get("profile_scope") or ""), "user")
+            self.assertEqual(str(actor_added.get("profile_owner") or ""), "user-a")
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            start_user, _ = self._call(
+                "actor_start",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(start_user.ok, getattr(start_user, "error", None))
+            actor_user = (start_user.result or {}).get("actor") if isinstance(start_user.result, dict) else {}
+            self.assertIsInstance(actor_user, dict)
+            assert isinstance(actor_user, dict)
+            self.assertEqual(str(actor_user.get("runtime") or ""), "custom")
+            self.assertEqual(str(actor_user.get("submit") or ""), "newline")
+            self.assertEqual(str(actor_user.get("profile_scope") or ""), "user")
+            self.assertEqual(str(actor_user.get("profile_owner") or ""), "user-a")
+            self.assertEqual(load_actor_private_env(group_id, "peer1").get("SHARED_SECRET"), "user-secret")
+        finally:
+            cleanup()
+
+    def test_user_scope_profile_secrets_are_owner_scoped(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create_user, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "user-secret-profile",
+                        "name": "User Secret Profile",
+                        "scope": "user",
+                        "owner_id": "user-a",
+                        "runtime": "codex",
+                        "runner": "headless",
+                        "command": [],
+                    },
+                },
+            )
+            self.assertTrue(create_user.ok, getattr(create_user, "error", None))
+
+            update_ok, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "user-secret-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "set": {"API_KEY": "top-secret"},
+                },
+            )
+            self.assertTrue(update_ok.ok, getattr(update_ok, "error", None))
+
+            keys_ok, _ = self._call(
+                "actor_profile_secret_keys",
+                {
+                    "by": "user",
+                    "profile_id": "user-secret-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                },
+            )
+            self.assertTrue(keys_ok.ok, getattr(keys_ok, "error", None))
+            self.assertEqual((keys_ok.result or {}).get("keys"), ["API_KEY"])
+
+            keys_denied, _ = self._call(
+                "actor_profile_secret_keys",
+                {
+                    "by": "user",
+                    "profile_id": "user-secret-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-b",
+                    "is_admin": False,
+                },
+            )
+            self.assertFalse(keys_denied.ok)
+            self.assertEqual(getattr(keys_denied.error, "code", ""), "permission_denied")
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

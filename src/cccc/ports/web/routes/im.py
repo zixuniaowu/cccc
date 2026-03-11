@@ -19,6 +19,7 @@ from ..schemas import (
     InboxReadRequest,
     RouteContext,
     check_group,
+    get_principal,
     require_group,
 )
 
@@ -36,6 +37,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     # Group-scoped endpoints (guard via router dependency)
     # =========================================================================
 
+    def _profile_auth_args(request: Request) -> Dict[str, Any]:
+        principal = get_principal(request)
+        return {
+            "caller_id": str(getattr(principal, "user_id", "") or "").strip(),
+            "is_admin": bool(getattr(principal, "is_admin", False)),
+        }
+
     @group_router.get("/inbox/{actor_id}")
     async def inbox_list(group_id: str, actor_id: str, by: str = "user", limit: int = 50) -> Dict[str, Any]:
         return await ctx.daemon({"op": "inbox_list", "args": {"group_id": group_id, "actor_id": actor_id, "by": by, "limit": int(limit)}})
@@ -47,8 +55,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     @group_router.post("/start")
-    async def group_start(group_id: str, by: str = "user") -> Dict[str, Any]:
-        return await ctx.daemon({"op": "group_start", "args": {"group_id": group_id, "by": by}})
+    async def group_start(request: Request, group_id: str, by: str = "user") -> Dict[str, Any]:
+        return await ctx.daemon({"op": "group_start", "args": {"group_id": group_id, "by": by, **_profile_auth_args(request)}})
 
     @group_router.post("/stop")
     async def group_stop(group_id: str, by: str = "user") -> Dict[str, Any]:

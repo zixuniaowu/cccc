@@ -49,6 +49,10 @@ class Actor(BaseModel):
     enabled: bool = True
     runner: RunnerKind = "pty"  # "pty" for interactive, "headless" for MCP-driven
     runtime: AgentRuntime = "codex"  # Agent CLI runtime
+    profile_id: str = ""
+    profile_scope: Literal["global", "user"] = "global"
+    profile_owner: str = ""
+    profile_revision_applied: int = 0
     created_at: str = Field(default_factory=utc_now_iso)
     updated_at: str = Field(default_factory=utc_now_iso)
 

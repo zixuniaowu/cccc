@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from ...util.time import utc_now_iso
 from .actor import ActorSubmit, AgentRuntime, RunnerKind
 
@@ -13,12 +14,22 @@ class CapabilityDefaults(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+
+@dataclass(frozen=True)
+class ActorProfileRef:
+    profile_id: str
+    profile_scope: Literal["global", "user"] = "global"
+    profile_owner: str = ""
+
+
 class ActorProfile(BaseModel):
-    """Reusable actor runtime configuration (global asset)."""
+    """Reusable actor runtime configuration."""
 
     v: int = 1
     id: str
     name: str = ""
+    scope: Literal["global", "user"] = "global"
+    owner_id: str = ""
     runtime: AgentRuntime = "codex"
     runner: RunnerKind = "pty"
     command: List[str] = Field(default_factory=list)
@@ -30,3 +41,13 @@ class ActorProfile(BaseModel):
     capability_defaults: Optional[CapabilityDefaults] = None
 
     model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _validate_scope_owner(self) -> "ActorProfile":
+        if self.scope == "global":
+            self.owner_id = ""
+            return self
+        if not str(self.owner_id or "").strip():
+            raise ValueError("user scope profile requires owner_id")
+        self.owner_id = str(self.owner_id).strip()
+        return self

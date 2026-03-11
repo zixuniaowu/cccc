@@ -49,6 +49,8 @@ def handle_actor_start(
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
             update_actor_private_env=update_actor_private_env,
+            caller_id=str(args.get("caller_id") or "").strip(),
+            is_admin=coerce_bool(args.get("is_admin"), default=False),
         )
     except Exception as e:
         msg = str(e)
@@ -68,6 +70,8 @@ def handle_actor_start(
         runner=runner_kind,
         runtime=runtime,
         by=by,
+        caller_id=str(args.get("caller_id") or "").strip(),
+        is_admin=coerce_bool(args.get("is_admin"), default=False),
     )
     if not start_result["success"]:
         return _error("actor_start_failed", start_result.get("error") or "unknown error")
@@ -181,6 +185,8 @@ def handle_actor_restart(
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
             update_actor_private_env=update_actor_private_env,
+            caller_id=str(args.get("caller_id") or "").strip(),
+            is_admin=coerce_bool(args.get("is_admin"), default=False),
         )
         runner_kind = str(actor.get("runner") or "pty").strip()
         runner_effective = effective_runner_kind(runner_kind)
