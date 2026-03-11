@@ -43,7 +43,7 @@ class PtySupervisor:
         env: Dict[str, str],
         max_backlog_bytes: int = 2_000_000,
     ) -> PtySession:
-        raise RuntimeError(pty_support_error_message() or "当前平台不支持 PTY runner。")
+        raise RuntimeError(pty_support_error_message() or "PTY runner is not supported in this environment.")
 
     def stop_actor(self, *, group_id: str, actor_id: str) -> None:
         return None
@@ -55,7 +55,7 @@ class PtySupervisor:
         return None
 
     def attach(self, *, group_id: str, actor_id: str, sock: socket.socket) -> None:
-        raise RuntimeError(pty_support_error_message() or "当前平台不支持 PTY runner。")
+        raise RuntimeError(pty_support_error_message() or "PTY runner is not supported in this environment.")
 
     def bracketed_paste_enabled(self, *, group_id: str, actor_id: str) -> bool:
         return False

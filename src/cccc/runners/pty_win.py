@@ -12,13 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Iterable, Optional, Tuple
 
-from .platform_support import pty_support_error_message
+from .platform_support import load_winpty_process_class, pty_support_error_message
 
-_WINPTY_PROCESS = None
-try:
-    from winpty import PtyProcess as _WINPTY_PROCESS  # type: ignore
-except Exception:
-    _WINPTY_PROCESS = None
+_WINPTY_PROCESS = load_winpty_process_class()
 
 PTY_SUPPORTED = bool(os.name == "nt" and _WINPTY_PROCESS is not None)
 
@@ -61,7 +57,7 @@ class PtySession:
         rows: int = 40,
     ) -> None:
         if not PTY_SUPPORTED:
-            raise RuntimeError(pty_support_error_message() or "当前平台不支持 PTY runner。")
+            raise RuntimeError(pty_support_error_message() or "PTY runner is not supported in this environment.")
 
         self.group_id = group_id
         self.actor_id = actor_id

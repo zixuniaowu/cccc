@@ -92,7 +92,7 @@ def start_actor_process(
                 pass
         else:
             if not bool(getattr(pty_runner, "PTY_SUPPORTED", False)):
-                error_message = pty_support_error_message() or "当前环境不支持 PTY runner。"
+                error_message = pty_support_error_message() or "PTY runner is not supported in this environment."
                 return {"success": False, "error": error_message}
             session = pty_runner.SUPERVISOR.start_actor(
                 group_id=group.group_id,

@@ -1,12 +1,66 @@
 from __future__ import annotations
 
-import importlib.util
+import importlib
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
+
+
+def _windows_pty_hints() -> List[str]:
+    return [
+        "Run `python -m pip install pywinpty` to install the Windows ConPTY dependency.",
+        "If you installed the project with uv, rerun `uv pip install -e .` to refresh platform dependencies.",
+        "After installation, rerun `cccc doctor` or `pytest tests/test_windows_pty_backend.py -q` to verify support.",
+    ]
+
+
+def _probe_windows_pty_process() -> Tuple[Optional[Any], str, str, List[str]]:
+    if os.name != "nt":
+        return None, "", "", []
+
+    hints = _windows_pty_hints()
+    try:
+        module = importlib.import_module("winpty")
+    except ModuleNotFoundError as exc:
+        missing = str(getattr(exc, "name", "") or "").strip()
+        if missing in {"winpty", "pywinpty"}:
+            return (
+                None,
+                "pywinpty_missing",
+                "Windows PTY backend unavailable: install pywinpty to enable ConPTY actors.",
+                hints,
+            )
+        return (
+            None,
+            "winpty_import_failed",
+            f"Windows PTY backend import failed because module `{missing}` is missing.",
+            hints,
+        )
+    except Exception as exc:
+        return (
+            None,
+            "winpty_import_failed",
+            f"Windows PTY backend import failed: {exc}",
+            hints,
+        )
+
+    pty_process = getattr(module, "PtyProcess", None)
+    if pty_process is None:
+        return (
+            None,
+            "winpty_import_failed",
+            "Windows PTY backend import succeeded but `winpty.PtyProcess` was not found.",
+            hints,
+        )
+    return pty_process, "", "", []
+
+
+def load_winpty_process_class() -> Optional[Any]:
+    pty_process, _, _, _ = _probe_windows_pty_process()
+    return pty_process
 
 
 def pty_support_details() -> Dict[str, Any]:
-    """返回当前平台的 PTY 支持诊断信息。"""
+    """Return PTY support diagnostics for the current platform."""
     details: Dict[str, Any] = {
         "platform": os.name,
         "supported": True,
@@ -18,22 +72,9 @@ def pty_support_details() -> Dict[str, Any]:
     if os.name != "nt":
         return details
 
-    winpty_spec = importlib.util.find_spec("winpty")
-    pywinpty_spec = importlib.util.find_spec("pywinpty")
-    if winpty_spec is not None:
+    pty_process, code, message, hints = _probe_windows_pty_process()
+    if pty_process is not None:
         return details
-
-    hints: List[str] = [
-        "运行 `python -m pip install pywinpty` 安装 Windows ConPTY 依赖。",
-        "如果你使用 uv 安装项目，重新执行 `uv pip install -e .` 也会拉起平台依赖。",
-        "安装完成后重新运行 `cccc doctor` 或 `pytest tests/test_windows_pty_backend.py -q` 验证。",
-    ]
-    if pywinpty_spec is not None:
-        message = "已检测到 pywinpty 包，但当前 Python 环境无法导入 `winpty` 模块。"
-        code = "winpty_import_failed"
-    else:
-        message = "当前 Windows 环境缺少 `pywinpty`，PTY actor 无法启动。"
-        code = "pywinpty_missing"
 
     details.update(
         {
@@ -47,11 +88,11 @@ def pty_support_details() -> Dict[str, Any]:
 
 
 def pty_support_error_message() -> str:
-    """返回适合直接暴露给用户的 PTY 支持错误文案。"""
+    """Return a user-facing PTY support error message."""
     details = pty_support_details()
     if bool(details.get("supported")):
         return ""
     hints = details.get("hints") if isinstance(details.get("hints"), list) else []
-    suffix = f" {' '.join(str(item) for item in hints if str(item).strip())}".strip()
-    message = str(details.get("message") or "当前环境不支持 PTY runner。").strip()
+    suffix = " ".join(str(item) for item in hints if str(item).strip()).strip()
+    message = str(details.get("message") or "PTY runner is not supported in this environment.").strip()
     return f"{message}{(' ' + suffix) if suffix else ''}".strip()

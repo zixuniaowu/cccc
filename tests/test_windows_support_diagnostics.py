@@ -9,10 +9,12 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
     def test_platform_support_reports_missing_pywinpty(self) -> None:
         from cccc.runners import platform_support
 
+        missing = ModuleNotFoundError("No module named 'winpty'")
+        missing.name = "winpty"
         with patch.object(platform_support.os, "name", "nt"), patch.object(
-            platform_support.importlib.util,
-            "find_spec",
-            side_effect=lambda name: None,
+            platform_support.importlib,
+            "import_module",
+            side_effect=missing,
         ):
             details = platform_support.pty_support_details()
 
@@ -21,6 +23,35 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
         self.assertIn("pywinpty", str(details.get("message") or ""))
         hints = details.get("hints") if isinstance(details.get("hints"), list) else []
         self.assertTrue(any("pip install pywinpty" in str(item) for item in hints))
+
+    def test_platform_support_matches_real_import_path(self) -> None:
+        from cccc.runners import platform_support
+
+        with patch.object(platform_support.os, "name", "nt"), patch.object(
+            platform_support.importlib,
+            "import_module",
+            return_value=SimpleNamespace(PtyProcess=object()),
+        ):
+            details = platform_support.pty_support_details()
+            pty_process = platform_support.load_winpty_process_class()
+
+        self.assertTrue(bool(details.get("supported")))
+        self.assertEqual(str(details.get("code") or ""), "")
+        self.assertIsNotNone(pty_process)
+
+    def test_platform_support_reports_import_failure(self) -> None:
+        from cccc.runners import platform_support
+
+        with patch.object(platform_support.os, "name", "nt"), patch.object(
+            platform_support.importlib,
+            "import_module",
+            side_effect=RuntimeError("native import failed"),
+        ):
+            details = platform_support.pty_support_details()
+
+        self.assertFalse(bool(details.get("supported")))
+        self.assertEqual(str(details.get("code") or ""), "winpty_import_failed")
+        self.assertIn("native import failed", str(details.get("message") or ""))
 
     def test_actor_runtime_returns_explicit_windows_pty_error(self) -> None:
         from cccc.daemon.actors import actor_runtime_ops
@@ -48,7 +79,7 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
         ), patch.object(
             actor_runtime_ops,
             "pty_support_error_message",
-            return_value="当前 Windows 环境缺少 pywinpty，PTY actor 无法启动。",
+            return_value="Windows PTY backend unavailable: install pywinpty to enable ConPTY actors.",
         ):
             result = actor_runtime_ops.start_actor_process(
                 group,

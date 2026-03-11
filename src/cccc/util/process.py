@@ -11,7 +11,7 @@ HARD_TERMINATE_SIGNAL: SignalValue = getattr(signal, "SIGKILL", SOFT_TERMINATE_S
 
 
 def pid_is_alive(pid: int) -> bool:
-    """跨平台判断进程是否仍然存活。"""
+    """Best-effort cross-platform liveness check."""
     if int(pid or 0) <= 0:
         return False
     try:
@@ -22,7 +22,7 @@ def pid_is_alive(pid: int) -> bool:
 
 
 def best_effort_signal_pid(pid: int, sig: SignalValue, *, include_group: bool = True) -> bool:
-    """尽力向进程发送信号；在 POSIX 上优先发给进程组。"""
+    """Best-effort signal delivery; prefer the process group on POSIX when requested."""
     target_pid = int(pid or 0)
     if target_pid <= 0:
         return False
@@ -30,7 +30,7 @@ def best_effort_signal_pid(pid: int, sig: SignalValue, *, include_group: bool = 
     delivered = False
     if include_group and os.name != "nt":
         try:
-            os.killpg(target_pid, sig)
+            os.killpg(os.getpgid(target_pid), sig)
             delivered = True
         except Exception:
             pass
@@ -52,7 +52,7 @@ def terminate_pid(
     include_group: bool = True,
     force: bool = False,
 ) -> bool:
-    """尽力终止进程，并在需要时执行强制终止。"""
+    """Terminate a process with optional escalation to a hard kill."""
     target_pid = int(pid or 0)
     if target_pid <= 0:
         return True
