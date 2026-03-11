@@ -914,8 +914,8 @@ export async function deleteActorProfile(profileId: string, opts?: { forceDetach
   return deleteProfile(profileId, { scope: "global", forceDetach: opts?.forceDetach });
 }
 
-export async function fetchActorProfilePrivateEnvKeys(profileId: string) {
-  return fetchProfilePrivateEnvKeys(profileId, { scope: "global" });
+export async function fetchActorProfilePrivateEnvKeys(profileId: string, opts?: ProfileLookupOptions) {
+  return fetchProfilePrivateEnvKeys(profileId, opts ?? { scope: "global" });
 }
 
 export async function fetchProfilePrivateEnvKeys(profileId: string, opts?: ProfileLookupOptions) {

@@ -1,5 +1,5 @@
 // SettingsModal renders the settings modal.
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Actor, GroupDoc, GroupSettings, IMStatus, IMPlatform, WebAccessSession } from "../types";
 import * as api from "../services/api";
@@ -720,7 +720,7 @@ export function SettingsModal({
   const currentBrowserSignedIn = Boolean(webAccessSession?.current_browser_signed_in);
   const globalScopeEnabled = globalSettingsEnabled || currentBrowserSignedIn;
 
-  const globalTabs: { id: GlobalTabId; label: string }[] = [
+  const globalTabs = useMemo<{ id: GlobalTabId; label: string }[]>(() => [
     ...(globalSettingsEnabled ? [
       { id: "capabilities" as const, label: t("tabs.capabilities") },
       { id: "actorProfiles" as const, label: t("tabs.actorProfiles") },
@@ -731,7 +731,7 @@ export function SettingsModal({
       { id: "webAccess" as const, label: t("tabs.webAccess") },
       { id: "developer" as const, label: t("tabs.developer") },
     ] : []),
-  ];
+  ], [globalSettingsEnabled, currentBrowserSignedIn, t]);
 
   useEffect(() => {
     if (scope !== "global") return;
