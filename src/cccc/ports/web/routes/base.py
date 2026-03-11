@@ -128,7 +128,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         check_group(request, group_id)
         return await ctx.daemon({"op": "debug_snapshot", "args": {"group_id": group_id, "by": "user"}})
 
-    @global_router.get("/api/v1/observability", dependencies=[Depends(require_admin)])
+    @global_router.get("/api/v1/observability", dependencies=[Depends(require_user)])
     async def observability_get() -> Dict[str, Any]:
         """Get global observability settings (developer mode, log level)."""
         return await ctx.daemon({"op": "observability_get"})
@@ -430,7 +430,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         except Exception as e:
             return {"ok": False, "error": {"code": "ERROR", "message": str(e)}}
 
-    @global_router.get("/api/v1/fs/recent", dependencies=[Depends(require_admin)])
+    @global_router.get("/api/v1/fs/recent", dependencies=[Depends(require_user)])
     async def fs_recent() -> Dict[str, Any]:
         """Get recent/common directories for quick selection."""
         if ctx.read_only:

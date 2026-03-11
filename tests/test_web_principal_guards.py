@@ -86,16 +86,24 @@ class TestWebPrincipalGuards(unittest.TestCase):
         finally:
             cleanup()
 
-    def test_non_admin_cannot_access_global_control_plane(self) -> None:
+    def test_non_admin_can_access_read_only_global_endpoints(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 
         _, cleanup = self._with_home()
         try:
             token = str(create_access_token("user-a", allowed_groups=[], is_admin=False).get("token") or "")
-            client = self._create_client()
-            resp = client.get("/api/v1/observability", headers={"Authorization": f"Bearer {token}"})
-            self.assertEqual(resp.status_code, 403)
-            self.assertEqual(str((resp.json().get("error") or {}).get("code") or ""), "permission_denied")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._create_client()
+                headers = {"Authorization": f"Bearer {token}"}
+
+                resp = client.get("/api/v1/observability", headers=headers)
+                self.assertEqual(resp.status_code, 200)
+                self.assertTrue(bool(resp.json().get("ok")))
+
+                resp = client.get("/api/v1/fs/recent", headers=headers)
+                self.assertEqual(resp.status_code, 200)
+                self.assertTrue(bool(resp.json().get("ok")))
+                self.assertIsInstance((resp.json().get("result") or {}).get("suggestions"), list)
         finally:
             cleanup()
 
