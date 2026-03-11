@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class TestChatOps(unittest.TestCase):
@@ -109,6 +110,56 @@ class TestChatOps(unittest.TestCase):
             self.assertIsInstance(ack_event, dict)
             assert isinstance(ack_event, dict)
             self.assertEqual(str(ack_event.get("kind") or ""), "chat.ack")
+        finally:
+            cleanup()
+
+    def test_user_message_wakes_idle_group_and_clears_pending_auto_idle_notifications(self) -> None:
+        from cccc.kernel.group import load_group
+
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "chat-wake", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "by": "user",
+                    "actor_id": "foreman1",
+                    "title": "Foreman 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            idle, _ = self._call("group_set_state", {"group_id": group_id, "state": "idle", "by": "user"})
+            self.assertTrue(idle.ok, getattr(idle, "error", None))
+
+            with patch("cccc.daemon.server.THROTTLE.clear_pending_system_notifies", return_value=1) as clear_mock:
+                send, _ = self._call(
+                    "send",
+                    {
+                        "group_id": group_id,
+                        "by": "user",
+                        "to": ["foreman1"],
+                        "text": "wake up",
+                    },
+                )
+
+            self.assertTrue(send.ok, getattr(send, "error", None))
+            clear_mock.assert_called_once()
+            notify_kinds = clear_mock.call_args.kwargs.get("notify_kinds")
+            self.assertIsInstance(notify_kinds, set)
+            self.assertIn("auto_idle", notify_kinds)
+
+            group = load_group(group_id)
+            self.assertIsNotNone(group)
+            assert group is not None
+            self.assertEqual(str(group.doc.get("state") or ""), "active")
         finally:
             cleanup()
 

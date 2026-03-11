@@ -417,15 +417,86 @@ def build_automation_status(group: Group, *, now: Optional[datetime] = None) -> 
 
 
 def _get_last_group_activity(group: Group) -> Optional[datetime]:
-    """Get timestamp of last activity in the group (any event)."""
+    """Get timestamp of last real group activity.
+
+    Silence detection should only consider business chat activity. Internal
+    automation notifications, and replies that only acknowledge those
+    notifications, must not keep the group artificially "active".
+    """
+    automated_notify_meta: Dict[str, Tuple[str, str]] = {}
     last_ts: Optional[datetime] = None
     for ev in iter_events(group.ledger_path):
+        notify_meta = _get_automation_activity_notify_meta(ev)
+        if notify_meta is not None:
+            event_id = str(ev.get("id") or "").strip()
+            if event_id:
+                automated_notify_meta[event_id] = notify_meta
+            continue
+        if not _is_group_activity_event(ev, automated_notify_meta=automated_notify_meta):
+            continue
         ts_str = str(ev.get("ts") or "")
-        if ts_str:
-            dt = parse_utc_iso(ts_str)
-            if dt is not None:
-                last_ts = dt
+        if not ts_str:
+            continue
+        dt = parse_utc_iso(ts_str)
+        if dt is not None:
+            last_ts = dt
     return last_ts
+
+
+_AUTOMATION_ACTIVITY_NOTIFY_KINDS = frozenset(
+    {
+        "nudge",
+        "keepalive",
+        "help_nudge",
+        "actor_idle",
+        "silence_check",
+        "auto_idle",
+        "automation",
+    }
+)
+
+_NON_ACTIVITY_REPLY_NOTIFY_KINDS = frozenset({"silence_check", "auto_idle"})
+
+
+def _get_automation_activity_notify_meta(ev: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """Return `(notify_kind, target_actor_id)` for automation notifications ignored by silence detection."""
+    if str(ev.get("kind") or "") != "system.notify":
+        return None
+    data = ev.get("data")
+    if not isinstance(data, dict):
+        return None
+    notify_kind = str(data.get("kind") or "").strip()
+    if notify_kind in _AUTOMATION_ACTIVITY_NOTIFY_KINDS:
+        return (notify_kind, str(data.get("target_actor_id") or "").strip())
+    # Defensive fallback for future notify kind namespaces.
+    if notify_kind.startswith("automation.") or notify_kind.startswith("system."):
+        return (notify_kind, str(data.get("target_actor_id") or "").strip())
+    return None
+
+
+def _is_group_activity_event(
+    ev: Dict[str, Any],
+    *,
+    automated_notify_meta: Dict[str, Tuple[str, str]],
+) -> bool:
+    """Return True only for business chat activity that should reset silence detection."""
+    if str(ev.get("kind") or "") != "chat.message":
+        return False
+    by = str(ev.get("by") or "").strip()
+    if not by or by == "system":
+        return False
+    data = ev.get("data")
+    if not isinstance(data, dict):
+        return False
+    reply_to = str(data.get("reply_to") or "").strip()
+    if reply_to:
+        notify_meta = automated_notify_meta.get(reply_to)
+        if notify_meta is not None:
+            notify_kind, target_actor_id = notify_meta
+            # Only suppress the pure "system ping -> target actor ack" chain used by silence auto-idle.
+            if notify_kind in _NON_ACTIVITY_REPLY_NOTIFY_KINDS and by and by == target_actor_id:
+                return False
+    return True
 
 
 def _get_last_actor_activity(group: Group, actor_id: str) -> Optional[datetime]:

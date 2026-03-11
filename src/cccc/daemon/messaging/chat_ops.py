@@ -52,7 +52,7 @@ def _wake_group_on_human_message(
         try:
             clear_pending_system_notifies(
                 group.group_id,
-                {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "automation"},
+                {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "auto_idle", "automation"},
             )
         except Exception:
             pass

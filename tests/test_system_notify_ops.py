@@ -138,6 +138,51 @@ class TestSystemNotifyOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_system_notify_accepts_auto_idle_kind(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "sys-notify-auto-idle", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "foreman1",
+                    "title": "Foreman 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            notify, _ = self._call(
+                "system_notify",
+                {
+                    "group_id": group_id,
+                    "by": "system",
+                    "kind": "auto_idle",
+                    "priority": "normal",
+                    "title": "idle",
+                    "message": "group auto idled",
+                    "target_actor_id": "foreman1",
+                    "requires_ack": False,
+                },
+            )
+            self.assertTrue(notify.ok, getattr(notify, "error", None))
+            notify_event = (notify.result or {}).get("event") if isinstance(notify.result, dict) else {}
+            self.assertIsInstance(notify_event, dict)
+            assert isinstance(notify_event, dict)
+            notify_data = notify_event.get("data") if isinstance(notify_event.get("data"), dict) else {}
+            self.assertIsInstance(notify_data, dict)
+            assert isinstance(notify_data, dict)
+            self.assertEqual(str(notify_data.get("kind") or ""), "auto_idle")
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

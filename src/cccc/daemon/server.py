@@ -299,7 +299,7 @@ def _inject_actor_context_env(env: Dict[str, Any], *, group_id: str, actor_id: s
 
 AUTOMATION = AutomationManager()
 
-_AUTOMATION_RESET_NOTIFY_KINDS = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "automation"}
+_AUTOMATION_RESET_NOTIFY_KINDS = {"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "auto_idle", "automation"}
 
 
 def _foreman_id(group: Any) -> str:
@@ -690,7 +690,7 @@ def _request_dispatch_deps() -> RequestDispatchDeps:
         automation_on_resume=AUTOMATION.on_resume,
         clear_pending_system_notifies=lambda group_id: THROTTLE.clear_pending_system_notifies(
             group_id,
-            notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "automation"},
+            notify_kinds={"nudge", "keepalive", "help_nudge", "actor_idle", "silence_check", "auto_idle", "automation"},
         ),
         load_actor_private_env=_load_actor_private_env,
         validate_private_env_key=_validate_private_env_key,
