@@ -6,11 +6,7 @@ import {
   RUNTIME_INFO,
 } from "../../types";
 import { useTranslation } from "react-i18next";
-import {
-  BASIC_MCP_CONFIG_SNIPPET,
-  COPILOT_MCP_CONFIG_SNIPPET,
-  OPENCODE_MCP_CONFIG_SNIPPET,
-} from "../../utils/mcpConfigSnippets";
+import { BASIC_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
 import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { CapabilityPicker } from "../CapabilityPicker";
@@ -127,13 +123,7 @@ export function AddActorModal({
   const selectedProfile = actorProfiles.find((item) => String(item.id || "") === String(newActorProfileId || ""));
   const selectedProfileRuntime = String(selectedProfile?.runtime || "").trim() as SupportedRuntime;
   const selectedProfileCommand = commandPreview(selectedProfile?.command);
-  const showRuntimeSetup =
-    !newActorUseProfile &&
-    (newActorRuntime === "cursor" ||
-      newActorRuntime === "kilocode" ||
-      newActorRuntime === "opencode" ||
-      newActorRuntime === "copilot" ||
-      newActorRuntime === "custom");
+  const showRuntimeSetup = !newActorUseProfile && newActorRuntime === "custom";
   const showCommandEditor = !newActorUseProfile && (newActorRuntime === "custom" || !newActorUseDefaultCommand);
 
   const sectionCardClass = "rounded-2xl p-4 sm:p-5 glass-panel";
@@ -414,53 +404,11 @@ export function AddActorModal({
                               <code className="px-1 rounded bg-amber-500/15">cccc mcp</code>.
                             </div>
                           </>
-                        ) : newActorRuntime === "cursor" ? (
-                          <>
-                            <div className="mt-1">
-                              {t("createEditFile")}{" "}
-                              <code className="px-1 rounded bg-amber-500/15">~/.cursor/mcp.json</code> (or{" "}
-                              <code className="px-1 rounded bg-amber-500/15">.cursor/mcp.json</code> {t("orInProject")})
-                            </div>
-                            <div className="mt-1">{t("addMcpConfig")}</div>
-                          </>
-                        ) : newActorRuntime === "kilocode" ? (
-                          <>
-                            <div className="mt-1">
-                              {t("createEditFile")}{" "}
-                              <code className="px-1 rounded bg-amber-500/15">.kilocode/mcp.json</code> {t("inProjectRoot")}
-                            </div>
-                            <div className="mt-1">{t("addMcpConfig")}</div>
-                          </>
-                        ) : newActorRuntime === "opencode" ? (
-                          <>
-                            <div className="mt-1">
-                              {t("createEditFile")}{" "}
-                              <code className="px-1 rounded bg-amber-500/15">~/.config/opencode/opencode.json</code>
-                            </div>
-                            <div className="mt-1">{t("addMcpConfig")}</div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="mt-1">
-                              {t("createEditFile")}{" "}
-                              <code className="px-1 rounded bg-amber-500/15">~/.copilot/mcp-config.json</code>
-                            </div>
-                            <div className="mt-1">
-                              {t("addMcpConfigOrFlag")}{" "}
-                              <code className="px-1 rounded bg-amber-500/15">--additional-mcp-config</code>):
-                            </div>
-                          </>
-                        )}
+                        ) : null}
 
-                        {newActorRuntime !== "custom" ? (
+                        {newActorRuntime === "custom" ? (
                           <pre className="mt-1.5 p-2 rounded overflow-x-auto whitespace-pre bg-amber-500/10 text-amber-800 dark:text-amber-200">
-                            <code>
-                              {newActorRuntime === "opencode"
-                                ? OPENCODE_MCP_CONFIG_SNIPPET
-                                : newActorRuntime === "copilot"
-                                  ? COPILOT_MCP_CONFIG_SNIPPET
-                                  : BASIC_MCP_CONFIG_SNIPPET}
-                            </code>
+                            <code>{BASIC_MCP_CONFIG_SNIPPET}</code>
                           </pre>
                         ) : null}
 

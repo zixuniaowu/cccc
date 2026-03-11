@@ -61,7 +61,7 @@ Split one medium project into parallel tracks while keeping alignment.
 cccc actor add foreman --runtime claude
 cccc actor add frontend --runtime codex
 cccc actor add backend --runtime gemini
-cccc actor add qa --runtime copilot
+cccc actor add qa --runtime kimi
 cccc group start
 ```
 

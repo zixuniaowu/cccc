@@ -26,13 +26,12 @@ const CROWN_MAT = new THREE.MeshStandardMaterial({ color: "#fbbf24" });
 const RUNTIME_BODY_COLORS: Record<string, string> = {
   claude:   "#38bdf8", // sky blue
   gemini:   "#34d399", // emerald
+  kimi:     "#84cc16", // lime
   codex:    "#22d3ee", // cyan
-  grok:     "#f87171", // red
-  copilot:  "#94a3b8", // slate
-  aider:    "#a78bfa", // violet
-  roo:      "#e879f9", // fuchsia
   neovate:  "#d946ef", // fuchsia-deep
-  opencode: "#06b6d4", // cyan-deep
+  droid:    "#8b5cf6", // violet
+  amp:      "#fb7185", // rose
+  auggie:   "#14b8a6", // teal
   custom:   "#fb923c", // orange
 };
 
@@ -40,13 +39,12 @@ const RUNTIME_BODY_COLORS: Record<string, string> = {
 const RUNTIME_FACE: Record<string, string> = {
   claude:   "C",
   gemini:   "G",
+  kimi:     "K",
   codex:    "Cx",
-  grok:     "Gk",
-  copilot:  "Cp",
-  aider:    "A",
-  roo:      "R",
   neovate:  "N",
-  opencode: "O",
+  droid:    "D",
+  amp:      "Am",
+  auggie:   "Au",
   custom:   "?",
 };
 

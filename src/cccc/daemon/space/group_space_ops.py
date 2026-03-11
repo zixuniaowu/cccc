@@ -118,6 +118,29 @@ _GENERATE_LANES: Dict[str, "_GenerateLaneState"] = {}
 _GENERATE_LANES_LOCK = threading.Lock()
 _DEFAULT_QUERY_RETRY_AFTER_SECONDS = 2
 _DEFAULT_GENERATE_RETRY_AFTER_SECONDS = 5
+
+
+def _artifact_wait_guidance_text() -> str:
+    return (
+        "Do not poll in a loop. Wait for system.notify, continue other work or standby, "
+        "and only set one one-shot reminder if this result blocks delivery and nothing else can proceed."
+    )
+
+
+def _artifact_notify_recommended_action(*, ok: bool, output_path: str) -> str:
+    if ok:
+        if str(output_path or "").strip():
+            return "use_output_path"
+        return "download_or_list_artifact"
+    return "report_failure_or_fallback"
+
+
+def _artifact_completion_guidance(*, ok: bool, output_path: str) -> str:
+    if ok:
+        if str(output_path or "").strip():
+            return "Artifact is ready. Use output_path from this notify context directly and do not poll again."
+        return "Artifact is ready. If you still need the file, do one direct fetch step and do not poll again."
+    return "Artifact generation failed. Stop polling, switch to a fallback path, or report the failure clearly."
 _DEFAULT_ASYNC_GENERATE_WAIT_TIMEOUT_SECONDS = 7200.0
 
 
@@ -752,10 +775,18 @@ def _emit_artifact_async_notify(
         if group is None:
             return
         title = "Group Space artifact ready" if ok else "Group Space artifact failed"
+        recommended_next_action = _artifact_notify_recommended_action(ok=ok, output_path=output_path)
+        completion_guidance = _artifact_completion_guidance(ok=ok, output_path=output_path)
         if ok:
-            message = f"{kind} generation completed."
+            if str(output_path or "").strip():
+                message = f"{kind} generation completed. Use output_path from context; no extra polling is needed."
+            else:
+                message = f"{kind} generation completed. No extra polling is needed."
         else:
-            message = f"{kind} generation failed: {error_message or error_code or 'unknown error'}"
+            message = (
+                f"{kind} generation failed: {error_message or error_code or 'unknown error'}. "
+                "Stop polling and switch to a fallback or report the failure."
+            )
         context = {
             "group_id": str(group_id or ""),
             "provider": str(provider or "notebooklm"),
@@ -763,6 +794,10 @@ def _emit_artifact_async_notify(
             "task_id": str(task_id or ""),
             "status": str(status or ""),
             "output_path": str(output_path or ""),
+            "completion_signal": "system.notify",
+            "polling_discouraged": True,
+            "recommended_next_action": recommended_next_action,
+            "completion_guidance": completion_guidance,
             "error": {"code": str(error_code or ""), "message": str(error_message or "")},
         }
         notify = SystemNotifyData(
@@ -1797,6 +1832,7 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
                     "completion_signal": "system.notify",
                     "recommended_next_action": "wait_for_notify",
                     "polling_discouraged": True,
+                    "wait_guidance": _artifact_wait_guidance_text(),
                     "saved_to_space": False,
                     "output_path": "",
                     "generate_result": {},
@@ -1828,6 +1864,7 @@ def handle_group_space_artifact(args: Dict[str, Any]) -> DaemonResponse:
                     "completion_signal": "system.notify",
                     "recommended_next_action": "wait_for_notify",
                     "polling_discouraged": True,
+                    "wait_guidance": _artifact_wait_guidance_text(),
                     "saved_to_space": False,
                     "output_path": "",
                     "generate_result": {},

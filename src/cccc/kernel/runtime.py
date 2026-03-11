@@ -51,12 +51,6 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "codex mcp add {name} -- {cmd}",
     },
-    "cursor": {
-        "display_name": "Cursor CLI",
-        "command": "cursor-agent",
-        "capabilities": "MCP; MCP setup: manual",
-        "mcp_add_pattern": None,
-    },
     "droid": {
         "display_name": "Droid CLI",
         "command": "droid",
@@ -69,29 +63,17 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "gemini mcp add -s user {name} {cmd}",
     },
-    "kilocode": {
-        "display_name": "Kilo Code CLI",
-        "command": "kilocode",
-        "capabilities": "MCP; MCP setup: manual",
-        "mcp_add_pattern": None,
+    "kimi": {
+        "display_name": "Kimi CLI",
+        "command": "kimi",
+        "capabilities": "MCP; MCP setup: auto",
+        "mcp_add_pattern": "kimi mcp add {name} --command {cmd}",
     },
     "neovate": {
         "display_name": "Neovate Code",
         "command": "neovate",
         "capabilities": "MCP; MCP setup: auto",
         "mcp_add_pattern": "neovate mcp add -g {name} {cmd}",
-    },
-    "opencode": {
-        "display_name": "OpenCode",
-        "command": "opencode",
-        "capabilities": "MCP; MCP setup: manual",
-        "mcp_add_pattern": None,  # Requires manual config
-    },
-    "copilot": {
-        "display_name": "GitHub Copilot CLI",
-        "command": "copilot",
-        "capabilities": "MCP; MCP setup: manual",
-        "mcp_add_pattern": None,
     },
     "custom": {
         "display_name": "Custom Runtime",
@@ -101,8 +83,8 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# Primary supported runtimes (auto MCP installation)
-PRIMARY_RUNTIMES = ["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini"]
+# First-class supported runtimes (CCCC manages startup defaults + MCP wiring)
+PRIMARY_RUNTIMES = ["claude", "codex", "droid", "amp", "auggie", "neovate", "gemini", "kimi"]
 
 
 def detect_runtime(name: str) -> RuntimeInfo:
@@ -156,8 +138,8 @@ def detect_all_runtimes(primary_only: bool = True) -> List[RuntimeInfo]:
     """Detect all known runtimes on the system.
     
     Args:
-        primary_only: If True, only check auto-setup runtimes (claude, codex, droid, amp, auggie, neovate, gemini).
-                     If False, check all supported runtimes (including manual MCP ones).
+        primary_only: If True, only check first-class runtimes (claude, codex, droid, amp, auggie, neovate, gemini, kimi).
+                     If False, check all configured runtimes (including custom).
     
     Returns:
         List of RuntimeInfo for each runtime.
@@ -193,13 +175,10 @@ def get_runtime_command_with_flags(name: str) -> List[str]:
         # Codex spawns MCP servers as subprocesses; ensure it inherits actor env (CCCC_GROUP_ID/CCCC_ACTOR_ID)
         # so MCP tools can resolve "self" context reliably.
         "codex": ["codex", "-c", "shell_environment_policy.inherit=all", "--dangerously-bypass-approvals-and-sandbox", "--search"],
-        "cursor": ["cursor-agent"],
         "droid": ["droid", "--auto", "high"],
         "gemini": ["gemini", "--yolo"],
-        "kilocode": ["kilocode"],
+        "kimi": ["kimi"],
         "neovate": ["neovate"],
-        "opencode": ["opencode"],
-        "copilot": ["copilot", "--allow-all-tools", "--allow-all-paths"],
         "custom": [],
     }
     return commands.get(name, [name])

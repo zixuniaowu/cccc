@@ -403,7 +403,8 @@ MCP_TOOLS = [
         "name": "cccc_space",
         "description": (
             "Group Space hub tool. NotebookLM has two lanes: work and memory. action: status|capabilities|bind|ingest|query|sources|artifact|jobs|sync|"
-            "provider_auth|provider_credential_status|provider_credential_update"
+            "provider_auth|provider_credential_status|provider_credential_update. For artifact runs with wait=false, accepted=true plus "
+            "status=pending|queued means background accepted: do not poll in a loop; wait for the later system.notify."
         ),
         "inputSchema": _obj(
             {

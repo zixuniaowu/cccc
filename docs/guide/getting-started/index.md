@@ -45,8 +45,8 @@ Both approaches require:
 - At least one AI agent CLI:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (recommended)
   - [Codex CLI](https://github.com/openai/codex)
-  - [GitHub Copilot CLI](https://docs.github.com/en/copilot)
-  - Or any other supported runtime
+  - [Kimi CLI](https://github.com/MoonshotAI/kimi-cli)
+  - Or a custom runtime command if you wire MCP manually
 
 ## Installation
 

@@ -133,11 +133,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     
     print()
     if available_count == 0:
-        print("No agent runtimes detected. Install one of:")
-        print("  - Claude Code: https://claude.ai/code")
-        print("  - Codex CLI: https://github.com/openai/codex")
-        print("  - Droid: https://github.com/anthropics/droid")
-        print("  - OpenCode: https://github.com/opencode-ai/opencode")
+        print("No agent runtimes detected.")
+        print("First-class supported runtimes: claude, codex, droid, amp, auggie, neovate, gemini, kimi")
+        print("Manual fallback: custom (bring your own command and MCP wiring)")
     else:
         print(f"{available_count} runtime(s) available.")
         print()
@@ -174,15 +172,13 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
 def cmd_setup(args: argparse.Namespace) -> int:
     """Setup CCCC MCP for agent runtimes (configure MCP, print guidance)."""
-    import os
     import shutil
 
     runtime = str(args.runtime or "").strip()
     project_path = Path(args.path or ".").resolve()
 
     # Supported runtimes
-    # - claude/codex/droid/amp/auggie/neovate/gemini: MCP setup can be automated via their CLIs
-    # - cursor/kilocode/opencode/copilot: MCP setup is manual (cccc prints config guidance)
+    # - claude/codex/droid/amp/auggie/neovate/gemini/kimi: MCP setup can be automated via their CLIs
     # - custom: user-provided runtime; MCP setup is manual (generic guidance only)
     SUPPORTED_RUNTIMES = [
         "claude",
@@ -192,10 +188,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
         "auggie",
         "neovate",
         "gemini",
-        "cursor",
-        "kilocode",
-        "opencode",
-        "copilot",
+        "kimi",
         "custom",
     ]
 
@@ -351,92 +344,23 @@ def cmd_setup(args: argparse.Namespace) -> int:
                 results["mcp"]["gemini"] = {"mode": "manual", "command": _cmd_line(cmd)}
                 results["notes"].append("gemini: CLI not found; run the command shown in result.mcp.gemini.command")
 
-        elif rt == "cursor":
-            cursor_config_path = Path.home() / ".cursor" / "mcp.json"
-            mcp_config = {
-                "mcpServers": {
-                    "cccc": {
-                        "command": cccc_cmd[0],
-                        "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
-                    }
-                }
-            }
-            results["mcp"]["cursor"] = {
-                "mode": "manual",
-                "file": str(cursor_config_path),
-                "snippet": mcp_config,
-                "hint": "Create ~/.cursor/mcp.json (or .cursor/mcp.json in the project) and add mcpServers.cccc with the provided snippet.",
-            }
-            results["notes"].append(
-                "cursor: MCP config is manual. Create ~/.cursor/mcp.json (or .cursor/mcp.json in the project) "
-                "and add `mcpServers.cccc` with the provided snippet."
-            )
-
-        elif rt == "kilocode":
-            kilocode_config_path = project_path / ".kilocode" / "mcp.json"
-            mcp_config = {
-                "mcpServers": {
-                    "cccc": {
-                        "command": cccc_cmd[0],
-                        "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
-                    }
-                }
-            }
-            results["mcp"]["kilocode"] = {
-                "mode": "manual",
-                "file": str(kilocode_config_path),
-                "snippet": mcp_config,
-                "hint": "Create <project>/.kilocode/mcp.json and add mcpServers.cccc with the provided snippet.",
-            }
-            results["notes"].append(
-                "kilocode: MCP config is manual. Create <project>/.kilocode/mcp.json and add `mcpServers.cccc` "
-                "with the provided snippet."
-            )
-
-        elif rt == "opencode":
-            # OpenCode: MCP config is manual.
-            xdg_config_home = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-            opencode_config_path = xdg_config_home / "opencode" / "opencode.json"
-            mcp_config = {
-                "mcp": {
-                    "cccc": {
-                        "type": "local",
-                        "command": [cccc_cmd[0], *cccc_cmd[1:]] if len(cccc_cmd) > 1 else [cccc_cmd[0]],
-                        "environment": {},
-                    }
-                }
-            }
-
-            results["mcp"]["opencode"] = {
-                "mode": "manual",
-                "file": str(opencode_config_path),
-                "snippet": mcp_config,
-            }
-            results["notes"].append(
-                f"opencode: MCP is manual. Add `mcp.cccc` to {opencode_config_path} with the provided snippet."
-            )
-
-        elif rt == "copilot":
-            copilot_config_path = Path.home() / ".copilot" / "mcp-config.json"
-            mcp_config = {
-                "mcpServers": {
-                    "cccc": {
-                        "command": cccc_cmd[0],
-                        "args": cccc_cmd[1:] if len(cccc_cmd) > 1 else [],
-                        "tools": ["*"],
-                    }
-                }
-            }
-            results["mcp"]["copilot"] = {
-                "mode": "manual",
-                "file": str(copilot_config_path),
-                "snippet": mcp_config,
-                "hint": f"Add mcpServers.cccc to {copilot_config_path} (or run: copilot --additional-mcp-config @<file>)",
-            }
-            results["notes"].append(
-                f"copilot: MCP is manual. Add `mcpServers.cccc` to {copilot_config_path} "
-                f"(or run Copilot with `--additional-mcp-config @<file>`)."
-            )
+        elif rt == "kimi":
+            cmd = ["kimi", "mcp", "add", "cccc", "--command", *cccc_cmd]
+            try:
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    cwd=str(project_path),
+                )
+                if result.returncode == 0:
+                    results["mcp"]["kimi"] = {"mode": "auto", "status": "added"}
+                else:
+                    results["mcp"]["kimi"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                    results["notes"].append("kimi: MCP CLI failed; run the command shown in result.mcp.kimi.command")
+            except FileNotFoundError:
+                results["mcp"]["kimi"] = {"mode": "manual", "command": _cmd_line(cmd)}
+                results["notes"].append("kimi: CLI not found; run the command shown in result.mcp.kimi.command")
 
         elif rt == "custom":
             results["mcp"]["custom"] = {

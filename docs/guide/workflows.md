@@ -57,7 +57,7 @@ For complex projects, use multiple specialized agents.
 cccc actor add architect --runtime claude    # Design decisions
 cccc actor add frontend --runtime codex      # UI implementation
 cccc actor add backend --runtime droid       # API implementation
-cccc actor add tester --runtime copilot      # Testing
+cccc actor add tester --runtime kimi         # Testing
 ```
 
 ### Coordination

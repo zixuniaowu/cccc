@@ -288,14 +288,13 @@ Recommended options:
 | auggie | `auggie` | Auggie (Augment CLI) |
 | claude | `claude` | Claude Code |
 | codex | `codex` | Codex CLI |
-| cursor | `cursor-agent` | Cursor CLI |
 | droid | `droid` | Droid |
 | gemini | `gemini` | Gemini CLI |
-| kilocode | `kilocode` | Kilo Code CLI |
+| kimi | `kimi` | Kimi CLI |
 | neovate | `neovate` | Neovate Code |
-| opencode | `opencode` | OpenCode |
-| copilot | `copilot` | GitHub Copilot CLI |
 | custom | Custom | Any command |
+
+CCCC first-class runtime support is the eight named CLIs above. `custom` remains the manual fallback for any other command.
 
 ### Setup Commands
 
@@ -307,10 +306,7 @@ cccc setup --runtime amp
 cccc setup --runtime auggie
 cccc setup --runtime neovate
 cccc setup --runtime gemini
-cccc setup --runtime cursor   # prints config guidance (manual)
-cccc setup --runtime kilocode # prints config guidance (manual)
-cccc setup --runtime opencode
-cccc setup --runtime copilot
+cccc setup --runtime kimi
 cccc setup --runtime custom
 ```
 

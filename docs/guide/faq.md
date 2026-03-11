@@ -59,16 +59,13 @@ This checks Python version, available runtimes, and daemon status.
 
 - Claude Code (`claude`)
 - Codex CLI (`codex`)
-- GitHub Copilot CLI (`copilot`)
 - Droid (`droid`)
-- OpenCode (`opencode`)
 - Gemini CLI (`gemini`)
+- Kimi CLI (`kimi`)
 - Amp (`amp`)
 - Auggie (`auggie`)
-- Cursor (`cursor`)
-- Kilocode (`kilocode`)
 - Neovate (`neovate`)
-- Custom (any command)
+- Custom (manual fallback; provide your own command and MCP wiring)
 
 ### What's the difference between Foreman and Peer?
 

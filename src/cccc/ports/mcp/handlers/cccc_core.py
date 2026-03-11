@@ -502,7 +502,7 @@ def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str)
                     '- Use `cccc_space(action="query", lane="work")` for shared/project knowledge lookup.'
                 )
                 lines_space.append(
-                    '- For long artifact jobs that return `accepted=true` with `status="pending"` or `status="queued"`, stop polling and wait for the later `system.notify`.'
+                    '- For long artifact jobs that return `accepted=true` with `status="pending"` or `status="queued"`, do not poll. Wait for the later `system.notify`, continue other work or standby, and use a one-shot reminder only if the result blocks delivery and nothing else can proceed.'
                 )
             if memory_bound:
                 lines_space.append(

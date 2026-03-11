@@ -91,7 +91,9 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertIn("## Group Space (Runtime)", markdown)
         self.assertIn("If `cccc_space` is hidden in this session", markdown)
         self.assertIn('Use `cccc_space(action="query", lane="work")` for shared/project knowledge lookup.', markdown)
-        self.assertIn("stop polling and wait for the later `system.notify`", markdown)
+        self.assertIn("do not poll. Wait for the later `system.notify`", markdown)
+        self.assertIn("continue other work or standby", markdown)
+        self.assertIn("one-shot reminder", markdown)
         self.assertIn('use `cccc_space(action="query", lane="memory")` only as a deeper recall fallback.', markdown)
 
     def test_cccc_help_group_space_runtime_tracks_bind_unbind_rebind(self) -> None:

@@ -38,13 +38,10 @@ const RUNTIME_DEFAULT_COMMANDS: Record<string, string> = {
   auggie: "auggie",
   claude: "claude --dangerously-skip-permissions",
   codex: "codex -c shell_environment_policy.inherit=all --dangerously-bypass-approvals-and-sandbox --search",
-  cursor: "cursor-agent",
   droid: "droid --auto high",
   gemini: "gemini --yolo",
-  kilocode: "kilocode",
+  kimi: "kimi",
   neovate: "neovate",
-  opencode: "opencode",
-  copilot: "copilot --allow-all-tools --allow-all-paths",
   custom: "",
 };
 

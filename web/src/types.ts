@@ -736,10 +736,7 @@ export const SUPPORTED_RUNTIMES = [
   "auggie",
   "neovate",
   "gemini",
-  "cursor",
-  "kilocode",
-  "opencode",
-  "copilot",
+  "kimi",
   "custom",
 ] as const;
 
@@ -750,13 +747,10 @@ export const RUNTIME_INFO: Record<string, { label: string; desc: string }> = {
   auggie: { label: "Auggie (Augment)", desc: "" },
   claude: { label: "Claude Code", desc: "" },
   codex: { label: "Codex CLI", desc: "" },
-  cursor: { label: "Cursor CLI", desc: "Manual MCP installation needed" },
   droid: { label: "Droid", desc: "" },
   gemini: { label: "Gemini CLI", desc: "" },
-  kilocode: { label: "Kilo Code", desc: "Manual MCP installation needed" },
+  kimi: { label: "Kimi CLI", desc: "" },
   neovate: { label: "Neovate Code", desc: "" },
-  opencode: { label: "OpenCode", desc: "Manual MCP installation needed" },
-  copilot: { label: "GitHub Copilot", desc: "Manual MCP installation needed" },
   custom: { label: "Custom", desc: "Manual MCP installation needed" },
 };
 
@@ -791,10 +785,6 @@ export const RUNTIME_COLORS: Record<string, {
     bg: "bg-emerald-900/30", text: "text-emerald-300", border: "border-emerald-600/50", dot: "bg-emerald-400",
     bgLight: "bg-emerald-50", textLight: "text-emerald-700", borderLight: "border-emerald-300", dotLight: "bg-emerald-500"
   },
-  cursor: {
-    bg: "bg-indigo-900/30", text: "text-indigo-300", border: "border-indigo-600/50", dot: "bg-indigo-400",
-    bgLight: "bg-indigo-50", textLight: "text-indigo-700", borderLight: "border-indigo-300", dotLight: "bg-indigo-500"
-  },
   droid: { 
     bg: "bg-violet-900/30", text: "text-violet-300", border: "border-violet-600/50", dot: "bg-violet-400",
     bgLight: "bg-violet-50", textLight: "text-violet-700", borderLight: "border-violet-300", dotLight: "bg-violet-500"
@@ -803,21 +793,13 @@ export const RUNTIME_COLORS: Record<string, {
     bg: "bg-yellow-900/30", text: "text-yellow-300", border: "border-yellow-600/50", dot: "bg-yellow-400",
     bgLight: "bg-yellow-50", textLight: "text-yellow-700", borderLight: "border-yellow-300", dotLight: "bg-yellow-500"
   },
-  kilocode: {
-    bg: "bg-pink-900/30", text: "text-pink-300", border: "border-pink-600/50", dot: "bg-pink-400",
-    bgLight: "bg-pink-50", textLight: "text-pink-700", borderLight: "border-pink-300", dotLight: "bg-pink-500"
+  kimi: {
+    bg: "bg-lime-900/30", text: "text-lime-300", border: "border-lime-600/50", dot: "bg-lime-400",
+    bgLight: "bg-lime-50", textLight: "text-lime-700", borderLight: "border-lime-300", dotLight: "bg-lime-500"
   },
   neovate: {
     bg: "bg-fuchsia-900/30", text: "text-fuchsia-300", border: "border-fuchsia-600/50", dot: "bg-fuchsia-400",
     bgLight: "bg-fuchsia-50", textLight: "text-fuchsia-700", borderLight: "border-fuchsia-300", dotLight: "bg-fuchsia-500"
-  },
-  opencode: { 
-    bg: "bg-cyan-900/30", text: "text-cyan-300", border: "border-cyan-600/50", dot: "bg-cyan-400",
-    bgLight: "bg-cyan-50", textLight: "text-cyan-700", borderLight: "border-cyan-300", dotLight: "bg-cyan-500"
-  },
-  copilot: { 
-    bg: "bg-slate-800/50", text: "text-slate-300", border: "border-slate-500/50", dot: "bg-slate-400",
-    bgLight: "bg-gray-100", textLight: "text-gray-700", borderLight: "border-gray-300", dotLight: "bg-gray-500"
   },
   custom: {
     bg: "bg-zinc-800/50", text: "text-zinc-300", border: "border-zinc-500/50", dot: "bg-zinc-400",

@@ -82,6 +82,18 @@ def is_mcp_installed(runtime: str) -> bool:
                 return False
             servers = doc.get("mcpServers")
             return isinstance(servers, dict) and "cccc" in servers
+
+        if runtime == "kimi":
+            result = subprocess.run(
+                ["kimi", "mcp", "list"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode != 0:
+                return False
+            output = f"{result.stdout}\n{result.stderr}"
+            return "cccc" in output
     except (FileNotFoundError, subprocess.TimeoutExpired):
         pass
     except Exception:
@@ -158,6 +170,16 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
         if runtime == "gemini":
             result = subprocess.run(
                 ["gemini", "mcp", "add", "-s", "user", "cccc", "cccc", "mcp"],
+                capture_output=True,
+                text=True,
+                cwd=str(cwd),
+                timeout=30,
+            )
+            return result.returncode == 0
+
+        if runtime == "kimi":
+            result = subprocess.run(
+                ["kimi", "mcp", "add", "cccc", "--command", "cccc", "mcp"],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),

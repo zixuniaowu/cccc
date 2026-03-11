@@ -1018,6 +1018,9 @@ class TestGroupSpaceOps(unittest.TestCase):
                 first_result = first.result if isinstance(first.result, dict) else {}
                 self.assertEqual(str(first_result.get("status") or ""), "pending")
                 self.assertFalse(bool(first_result.get("queued")))
+                self.assertEqual(str(first_result.get("recommended_next_action") or ""), "wait_for_notify")
+                self.assertEqual(bool(first_result.get("polling_discouraged")), True)
+                self.assertIn("Do not poll in a loop.", str(first_result.get("wait_guidance") or ""))
 
                 second, _ = self._call(
                     "group_space_artifact",
@@ -1036,6 +1039,9 @@ class TestGroupSpaceOps(unittest.TestCase):
                 second_result = second.result if isinstance(second.result, dict) else {}
                 self.assertEqual(str(second_result.get("status") or ""), "queued")
                 self.assertTrue(bool(second_result.get("queued")))
+                self.assertEqual(str(second_result.get("recommended_next_action") or ""), "wait_for_notify")
+                self.assertEqual(bool(second_result.get("polling_discouraged")), True)
+                self.assertIn("one-shot reminder", str(second_result.get("wait_guidance") or ""))
 
                 third, _ = self._call(
                     "group_space_artifact",
@@ -1102,7 +1108,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 )
                 self.assertTrue(generated.ok, getattr(generated, "error", None))
 
-            found = False
+            matched_notify = None
             for _ in range(30):
                 inbox, _ = self._call(
                     "inbox_list",
@@ -1125,12 +1131,21 @@ class TestGroupSpaceOps(unittest.TestCase):
                         data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
                         context = data.get("context") if isinstance(data.get("context"), dict) else {}
                         if str(context.get("task_id") or "") == "task_notify_1":
-                            found = True
+                            matched_notify = ev
                             break
-                if found:
+                if matched_notify is not None:
                     break
                 time.sleep(0.1)
-            self.assertTrue(found, "expected async generate completion notify in inbox")
+            self.assertIsNotNone(matched_notify, "expected async generate completion notify in inbox")
+            assert isinstance(matched_notify, dict)
+            data = matched_notify.get("data") if isinstance(matched_notify.get("data"), dict) else {}
+            context = data.get("context") if isinstance(data.get("context"), dict) else {}
+            self.assertEqual(str(data.get("title") or ""), "Group Space artifact ready")
+            self.assertIn("No extra polling is needed.", str(data.get("message") or ""))
+            self.assertEqual(str(context.get("completion_signal") or ""), "system.notify")
+            self.assertEqual(bool(context.get("polling_discouraged")), True)
+            self.assertEqual(str(context.get("recommended_next_action") or ""), "download_or_list_artifact")
+            self.assertIn("do not poll again", str(context.get("completion_guidance") or "").lower())
         finally:
             cleanup_stub()
             cleanup()
@@ -1188,6 +1203,7 @@ class TestGroupSpaceOps(unittest.TestCase):
                 self.assertEqual(str(result.get("completion_signal") or ""), "system.notify")
                 self.assertEqual(str(result.get("recommended_next_action") or ""), "wait_for_notify")
                 self.assertEqual(bool(result.get("polling_discouraged")), True)
+                self.assertIn("Do not poll in a loop.", str(result.get("wait_guidance") or ""))
                 self.assertLess(elapsed, 1.0, f"expected async return, elapsed={elapsed:.3f}s")
                 # Let background worker consume patched provider fns before exiting patch scope.
                 time.sleep(2.3)

@@ -33,7 +33,7 @@ def _group_space_policy_lines(group_id: str) -> List[str]:
                 '- `cccc_space(action="query", lane="work")` is available for shared/project knowledge lookup.'
             )
             lines.append(
-                "- Long NotebookLM artifact jobs that return pending/queued complete via a later system.notify; stop polling and wait for the notification."
+                "- Long NotebookLM artifact jobs that return pending/queued complete via a later system.notify; do not poll. Continue other work or standby, and only set one one-shot reminder if the result blocks delivery and nothing else can proceed."
             )
         if memory_bound:
             lines.append(

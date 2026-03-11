@@ -233,7 +233,7 @@ Configure MCP for an agent runtime.
 ```bash
 cccc setup --runtime claude        # Auto-configure for Claude Code
 cccc setup --runtime codex         # Auto-configure for Codex
-cccc setup --runtime cursor        # Print manual config instructions
+cccc setup --runtime kimi          # Auto-configure for Kimi CLI
 ```
 
 ## Web Commands

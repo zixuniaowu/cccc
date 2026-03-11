@@ -32,6 +32,9 @@ class TestMcpToolspecSchemaGuard(unittest.TestCase):
     def test_space_query_toolspec_options_are_explicit(self) -> None:
         spec = next((item for item in MCP_TOOLS if str(item.get("name") or "") == "cccc_space"), None)
         self.assertIsInstance(spec, dict)
+        desc = str(spec.get("description") or "") if isinstance(spec, dict) else ""
+        self.assertIn("status=pending|queued", desc)
+        self.assertIn("wait for the later system.notify", desc)
         schema = spec.get("inputSchema") if isinstance(spec, dict) else {}
         self.assertIsInstance(schema, dict)
         props = schema.get("properties") if isinstance(schema, dict) else {}

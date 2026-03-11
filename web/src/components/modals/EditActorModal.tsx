@@ -1,6 +1,6 @@
 import { ActorProfile, RuntimeInfo, SupportedRuntime, SUPPORTED_RUNTIMES, RUNTIME_INFO } from "../../types";
 import { useTranslation } from "react-i18next";
-import { BASIC_MCP_CONFIG_SNIPPET, COPILOT_MCP_CONFIG_SNIPPET, OPENCODE_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
+import { BASIC_MCP_CONFIG_SNIPPET } from "../../utils/mcpConfigSnippets";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
@@ -453,7 +453,7 @@ export function EditActorModal({
     (editMode === "custom" && effectiveLinked) ||
     (editMode === "custom" && requireCommand && !command.trim()) ||
     (editMode === "profile" && !String(attachProfileId || "").trim());
-  const showRuntimeSetup = !effectiveLinked && editMode === "custom" && (runtime === "cursor" || runtime === "kilocode" || runtime === "opencode" || runtime === "copilot" || runtime === "custom");
+  const showRuntimeSetup = !effectiveLinked && editMode === "custom" && runtime === "custom";
 
   return (
     <div
@@ -654,40 +654,10 @@ export function EditActorModal({
                         <div className="mt-1">
                           {t("configureMcpStdio")} <code className="px-1 rounded bg-amber-500/15">cccc</code> {t("thatRuns")} <code className="px-1 rounded bg-amber-500/15">cccc mcp</code>.
                         </div>
-                      ) : runtime === "cursor" ? (
-                        <>
-                          <div className="mt-1">
-                            {t("createEditFile")} <code className="px-1 rounded bg-amber-500/15">~/.cursor/mcp.json</code> (or <code className="px-1 rounded bg-amber-500/15">.cursor/mcp.json</code> {t("orInProject")})
-                          </div>
-                          <div className="mt-1">{t("addMcpConfig")}</div>
-                        </>
-                      ) : runtime === "kilocode" ? (
-                        <>
-                          <div className="mt-1">
-                            {t("createEditFile")} <code className="px-1 rounded bg-amber-500/15">.kilocode/mcp.json</code> {t("inProjectRoot")}
-                          </div>
-                          <div className="mt-1">{t("addMcpConfig")}</div>
-                        </>
-                      ) : runtime === "opencode" ? (
-                        <>
-                          <div className="mt-1">
-                            {t("createEditFile")} <code className="px-1 rounded bg-amber-500/15">~/.config/opencode/opencode.json</code>
-                          </div>
-                          <div className="mt-1">{t("addMcpConfig")}</div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="mt-1">
-                            {t("createEditFile")} <code className="px-1 rounded bg-amber-500/15">~/.copilot/mcp-config.json</code>
-                          </div>
-                          <div className="mt-1">
-                            {t("addMcpConfigOrFlag")} <code className="px-1 rounded bg-amber-500/15">--additional-mcp-config</code>):
-                          </div>
-                        </>
-                      )}
-                      {runtime !== "custom" ? (
+                      ) : null}
+                      {runtime === "custom" ? (
                         <pre className="mt-1.5 p-2 rounded overflow-x-auto whitespace-pre bg-amber-500/10 text-amber-800 dark:text-amber-100">
-                          <code>{runtime === "opencode" ? OPENCODE_MCP_CONFIG_SNIPPET : runtime === "copilot" ? COPILOT_MCP_CONFIG_SNIPPET : BASIC_MCP_CONFIG_SNIPPET}</code>
+                          <code>{BASIC_MCP_CONFIG_SNIPPET}</code>
                         </pre>
                       ) : null}
                       <div className="mt-1 text-[10px] text-amber-700/80 dark:text-amber-100/80">{t("restartAfterConfig")}</div>
