@@ -400,6 +400,12 @@ uv pip install -e .
 uv run cccc --help
 ```
 
+### Windows 原生运行
+
+- 推荐直接使用仓库根目录的 `start.ps1` 启动开发环境。
+- 如果 `cccc doctor` 显示 `Windows PTY: NOT READY`，先执行 `python -m pip install pywinpty`，或重新执行 `uv pip install -e .`。
+- Web 打包可用 `scripts/build_web.ps1`，完整打包可用 `scripts/build_package.ps1`。
+
 ### Docker
 
 ```bash
