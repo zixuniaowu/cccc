@@ -474,7 +474,7 @@ THROTTLE = DeliveryThrottle()
 REMINDER_EVERY_N_MESSAGES = 1
 MCP_REMINDER_LINE = (
     "[cccc] If you respond: use MCP (cccc_message_send / cccc_message_reply). "
-    "Terminal output isn't delivered. Help: cccc_help."
+    "Terminal output isn't delivered."
 )
 
 

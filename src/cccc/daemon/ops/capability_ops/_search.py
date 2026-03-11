@@ -379,7 +379,7 @@ def _role_preferred_pack_ids(actor_role: str) -> List[str]:
     if role == "peer":
         return [
             "pack:space",
-            "pack:file-im",
+            "pack:automation",
         ]
     return [
         "pack:group-runtime",

@@ -48,8 +48,8 @@ from .toolspecs import MCP_TOOLS
 # ---------------------------------------------------------------------------
 from .handlers.cccc_core import (  # noqa: F401
     _CCCC_HELP_BUILTIN,
+    _append_runtime_help_addenda,
     _build_context_hygiene_hint,
-    _append_runtime_skill_digest,
     bootstrap,
     inbox_list,
     inbox_mark_all_read,
@@ -175,7 +175,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 pf = read_group_prompt_file(g, HELP_FILENAME)
                 if pf.found and isinstance(pf.content, str) and pf.content.strip():
                     help_result = {
-                        "markdown": _append_runtime_skill_digest(
+                        "markdown": _append_runtime_help_addenda(
                             _select_help_markdown(pf.content, role=role, actor_id=aid),
                             group_id=gid,
                             actor_id=aid,
@@ -184,7 +184,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                     }
                 else:
                     help_result = {
-                        "markdown": _append_runtime_skill_digest(
+                        "markdown": _append_runtime_help_addenda(
                             _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
                             group_id=gid,
                             actor_id=aid,
@@ -193,7 +193,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                     }
             else:
                 help_result = {
-                    "markdown": _append_runtime_skill_digest(
+                    "markdown": _append_runtime_help_addenda(
                         _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
                         group_id=gid,
                         actor_id=aid,
@@ -202,7 +202,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 }
         else:
             help_result = {
-                "markdown": _append_runtime_skill_digest(
+                "markdown": _append_runtime_help_addenda(
                     _select_help_markdown(_CCCC_HELP_BUILTIN, role=role, actor_id=aid),
                     group_id=gid,
                     actor_id=aid,

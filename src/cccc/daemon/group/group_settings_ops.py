@@ -164,7 +164,7 @@ def handle_group_settings_update(args: Dict[str, Any]) -> DaemonResponse:
         ),
         "keepalive_delay_seconds": _safe_int(automation.get("keepalive_delay_seconds", 120), default=120, min_value=0),
         "keepalive_max_per_actor": _safe_int(automation.get("keepalive_max_per_actor", 3), default=3, min_value=0),
-        "silence_timeout_seconds": _safe_int(automation.get("silence_timeout_seconds", 600), default=600, min_value=0),
+        "silence_timeout_seconds": _safe_int(automation.get("silence_timeout_seconds", 0), default=0, min_value=0),
         "help_nudge_interval_seconds": _safe_int(
             automation.get("help_nudge_interval_seconds", 600),
             default=600,

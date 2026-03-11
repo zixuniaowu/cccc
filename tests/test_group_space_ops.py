@@ -1184,6 +1184,10 @@ class TestGroupSpaceOps(unittest.TestCase):
                 result = generated.result if isinstance(generated.result, dict) else {}
                 self.assertEqual(str(result.get("status") or ""), "pending")
                 self.assertFalse(bool(result.get("queued")))
+                self.assertEqual(bool(result.get("background")), True)
+                self.assertEqual(str(result.get("completion_signal") or ""), "system.notify")
+                self.assertEqual(str(result.get("recommended_next_action") or ""), "wait_for_notify")
+                self.assertEqual(bool(result.get("polling_discouraged")), True)
                 self.assertLess(elapsed, 1.0, f"expected async return, elapsed={elapsed:.3f}s")
                 # Let background worker consume patched provider fns before exiting patch scope.
                 time.sleep(2.3)

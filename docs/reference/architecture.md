@@ -147,7 +147,7 @@ class ChatMessageData:
 
 - **Foreman = Coordinator + Worker**
   - Does actual work, not just task assignment
-  - Extra coordination duties (receives actor_idle, silence_check notifications)
+  - Extra coordination duties (receives actor_idle and quiet-review `silence_check` notifications)
   - Can add/start/stop any actor
 
 - **Peer = Independent Expert**

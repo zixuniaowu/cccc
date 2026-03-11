@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ....kernel.group import load_group
+from ....kernel.group_space import get_group_space_prompt_state
 from ....kernel.prompt_files import load_builtin_help_markdown as _load_builtin_help_markdown
 from ....util.time import parse_utc_iso
 from ..common import MCPError, _call_daemon_or_raise
@@ -15,15 +16,6 @@ from . import context as _context_mod
 
 
 _CCCC_HELP_BUILTIN = _load_builtin_help_markdown().strip()
-
-_PACK_QUICK_USE_EXAMPLES: Dict[str, str] = {
-    "pack:space": 'cccc_capability_use(tool_name="cccc_space", tool_arguments={"action":"status"})',
-    "pack:group-runtime": 'cccc_capability_use(tool_name="cccc_group", tool_arguments={"action":"info"})',
-    "pack:file-im": 'cccc_capability_use(tool_name="cccc_file", tool_arguments={"action":"blob_path","rel_path":"state/blobs/..."})',
-    "pack:automation": 'cccc_capability_use(tool_name="cccc_automation", tool_arguments={"action":"state"})',
-    "pack:context-advanced": 'cccc_capability_use(tool_name="cccc_memory_admin", tool_arguments={"action":"index_sync","mode":"scan"})',
-}
-
 
 def _trim_text(value: Any, *, max_chars: int) -> str:
     text = str(value or "").strip()
@@ -100,8 +92,8 @@ def _build_memory_recall_gate(*, group_id: str, actor_id: str, context: Dict[str
         "query": query,
         "hits": [],
         "note": (
-            "Recall gate: read bootstrap.memory_recall_gate before planning/implementation. "
-            "If empty, run cccc_memory(search/get) manually."
+            "Recall gate: read this before planning or implementation. "
+            "If it is empty, expand with local cccc_memory(search/get)."
         ),
     }
     try:
@@ -457,11 +449,11 @@ def _build_bootstrap_inbox_preview(*, inbox: Dict[str, Any], limit: int) -> Dict
     }
 
 
-def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str) -> str:
+def _append_runtime_help_addenda(markdown: str, *, group_id: str, actor_id: str) -> str:
     base = str(markdown or "")
     if not base.strip():
         return base
-    if "## Active Skills (Runtime)" in base or "## Capability Quick Use (Runtime)" in base:
+    if "## Active Skills (Runtime)" in base or "## Group Space (Runtime)" in base:
         return base
     gid = str(group_id or "").strip()
     aid = str(actor_id or "").strip()
@@ -475,14 +467,52 @@ def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str)
     except Exception:
         return base
     enabled_caps = state.get("enabled_capabilities") if isinstance(state, dict) else []
-    hidden_caps = state.get("hidden_capabilities") if isinstance(state, dict) else []
     active = state.get("active_capsule_skills") if isinstance(state, dict) else []
     autoload = state.get("autoload_skills") if isinstance(state, dict) else []
     enabled_list = enabled_caps if isinstance(enabled_caps, list) else []
-    hidden_list = hidden_caps if isinstance(hidden_caps, list) else []
     active_list = active if isinstance(active, list) else []
     autoload_list = autoload if isinstance(autoload, list) else []
     sections: List[str] = []
+    enabled_pack_ids = {
+        str(item).strip()
+        for item in enabled_list
+        if str(item).strip().startswith("pack:")
+    }
+
+    try:
+        space_state = get_group_space_prompt_state(gid, provider="notebooklm")
+    except Exception:
+        space_state = {}
+    if isinstance(space_state, dict):
+        provider = str(space_state.get("provider") or "notebooklm")
+        mode = str(space_state.get("mode") or "disabled")
+        work_bound = bool(space_state.get("work_bound"))
+        memory_bound = bool(space_state.get("memory_bound"))
+        if work_bound or memory_bound:
+            lines_space: List[str] = [
+                "## Group Space (Runtime)",
+                f"- NotebookLM provider: {provider} ({mode}); work_bound={str(work_bound).lower()} memory_bound={str(memory_bound).lower()}.",
+            ]
+            if "pack:space" not in enabled_pack_ids:
+                lines_space.append(
+                    '- If `cccc_space` is hidden in this session, use `cccc_capability_use(tool_name="cccc_space", tool_arguments={"action":"status"})` to expose it.'
+                )
+            if work_bound:
+                lines_space.append(
+                    '- Use `cccc_space(action="query", lane="work")` for shared/project knowledge lookup.'
+                )
+                lines_space.append(
+                    '- For long artifact jobs that return `accepted=true` with `status="pending"` or `status="queued"`, stop polling and wait for the later `system.notify`.'
+                )
+            if memory_bound:
+                lines_space.append(
+                    '- Keep local memory first; use `cccc_space(action="query", lane="memory")` only as a deeper recall fallback.'
+                )
+            if mode != "active":
+                lines_space.append(
+                    "- If the provider is degraded, continue with Context + local memory and report the fallback explicitly."
+                )
+            sections.append("\n".join(lines_space).rstrip())
 
     if active_list or autoload_list:
         lines: List[str] = ["## Active Skills (Runtime)"]
@@ -510,59 +540,14 @@ def _append_runtime_skill_digest(markdown: str, *, group_id: str, actor_id: str)
                 if desc:
                     line += f": {desc[:120]}"
                 lines.append(line)
+        lines.extend(
+            [
+                "- Capsule skill is runtime capsule activation, not a full local skill-package install.",
+                "- Runtime success is mainly visible via `capability_state.active_capsule_skills`; `dynamic_tools` may stay unchanged.",
+                "- If you need full local skill scripts or assets, install a normal skill package into `$CODEX_HOME/skills`.",
+            ]
+        )
         sections.append("\n".join(lines).rstrip())
-
-    enabled_packs = [
-        str(x).strip()
-        for x in enabled_list
-        if str(x).strip().startswith("pack:")
-    ]
-    suggested_packs: List[str] = []
-    seen: set[str] = set()
-    for item in hidden_list:
-        if not isinstance(item, dict):
-            continue
-        cid = str(item.get("capability_id") or "").strip()
-        reason = str(item.get("reason") or "").strip().lower()
-        if not cid.startswith("pack:"):
-            continue
-        if reason not in {"not_enabled", "scope_mismatch"}:
-            continue
-        if cid in seen:
-            continue
-        seen.add(cid)
-        suggested_packs.append(cid)
-        if len(suggested_packs) >= 4:
-            break
-    if not suggested_packs:
-        for cid in ("pack:space", "pack:file-im", "pack:group-runtime", "pack:context-advanced"):
-            if cid in seen:
-                continue
-            seen.add(cid)
-            suggested_packs.append(cid)
-            if len(suggested_packs) >= 4:
-                break
-
-    if enabled_packs or suggested_packs:
-        lines_cap: List[str] = [
-            "## Capability Quick Use (Runtime)",
-            '- list packs quickly: `cccc_capability_search(kind="mcp_toolpack")`',
-        ]
-        if enabled_packs:
-            lines_cap.append(
-                "- enabled_packs: " + ", ".join(enabled_packs[:8])
-            )
-        if suggested_packs:
-            lines_cap.append("- one-step examples:")
-            for cid in suggested_packs:
-                example = _PACK_QUICK_USE_EXAMPLES.get(cid)
-                if example:
-                    lines_cap.append(f"  - {cid}: `{example}`")
-                else:
-                    lines_cap.append(
-                        f'  - {cid}: `cccc_capability_use(capability_id="{cid}", scope="session")`'
-                    )
-        sections.append("\n".join(lines_cap).rstrip())
 
     if not sections:
         return base

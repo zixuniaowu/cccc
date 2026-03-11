@@ -159,7 +159,7 @@ class ChatMessageData:
 
 - **Foreman = Coordinator + Worker**
   - 做实际工作，不只是分配任务
-  - 额外协调职责（收到 actor_idle, silence_check 通知）
+  - 额外协调职责（收到 actor_idle 与静默复核 `silence_check` 通知）
   - 可添加/启动/停止任何 actor
   
 - **Peer = Independent Expert**

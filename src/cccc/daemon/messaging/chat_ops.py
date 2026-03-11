@@ -117,10 +117,10 @@ def _notify_headless_targets(
     try:
         headless_targets = get_headless_targets_for_message(group, event=event, by=by)
         if reply_required:
-            notify_title = "Task message"
+            notify_title = "Need reply"
             notify_priority = "urgent" if priority == "attention" else "high"
         else:
-            notify_title = "Important message" if priority == "attention" else "New message"
+            notify_title = "Needs acknowledgement" if priority == "attention" else "New message"
             notify_priority = "urgent" if priority == "attention" else "high"
         for actor_id in headless_targets:
             append_event(

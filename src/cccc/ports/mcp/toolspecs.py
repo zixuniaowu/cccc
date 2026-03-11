@@ -38,7 +38,8 @@ MCP_TOOLS = [
         "name": "cccc_bootstrap",
         "description": (
             "Cold-start bootstrap: session + recovery + inbox_preview + memory_recall_gate + next_calls. "
-            "Use cccc_help / cccc_project_info / cccc_context_get on demand for cold detail."
+            "Use it first on cold start or resume; pull cccc_help / cccc_project_info / cccc_context_get "
+            "only when you need colder detail."
         ),
         "inputSchema": _obj(
             {
@@ -115,7 +116,7 @@ MCP_TOOLS = [
                         {"type": "array", "items": {"type": "string"}},
                     ]
                 },
-                "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
+                "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
             },
             required=["text"],
@@ -137,7 +138,7 @@ MCP_TOOLS = [
                         {"type": "array", "items": {"type": "string"}},
                     ]
                 },
-                "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
+                "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
             },
             required=["text"],
@@ -159,7 +160,7 @@ MCP_TOOLS = [
                         {"type": "array", "items": {"type": "string"}},
                     ]
                 },
-                "priority": {"type": "string", "enum": ["low", "normal", "high", "urgent"], "default": "normal"},
+                "priority": {"type": "string", "enum": ["normal", "attention"], "default": "normal"},
                 "reply_required": {"type": "boolean", "default": False},
                 "rel_path": {"type": "string", "description": "Required for action=blob_path. Can be just the blob filename (e.g. 'sha256_image.png') or full relative path ('state/blobs/sha256_image.png')."},
             }

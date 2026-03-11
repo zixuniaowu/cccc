@@ -8,32 +8,60 @@ class TestPromptDefaults(unittest.TestCase):
         from cccc.kernel.prompt_files import DEFAULT_PREAMBLE_BODY
 
         body = str(DEFAULT_PREAMBLE_BODY or "")
-        self.assertIn("Quick start:", body)
-        self.assertIn("Execution checklist:", body)
-        self.assertIn("Gap routing:", body)
-        self.assertIn("Memory boundary:", body)
+        self.assertIn("Startup routes:", body)
         self.assertIn("cccc_bootstrap", body)
-        self.assertIn("cccc_agent_state(action=update", body)
-        self.assertIn("cccc_capability_use(...)", body)
-        self.assertIn("cccc_capability_search(...)", body)
-        self.assertIn("retry guidance", body)
-        self.assertIn("real env/permission blockers", body)
-        self.assertLessEqual(len(body.split()), 220)
+        self.assertIn("cccc_help", body)
+        self.assertIn("cccc_context_get", body)
+        self.assertIn("cccc_project_info", body)
+        self.assertLessEqual(len(body.split()), 80)
 
     def test_default_preamble_avoids_long_rule_duplication(self) -> None:
         from cccc.kernel.prompt_files import DEFAULT_PREAMBLE_BODY
 
         body = str(DEFAULT_PREAMBLE_BODY or "")
-        self.assertNotIn("Todo loop (runtime-first):", body)
-        self.assertNotIn("Completion gate: no full-done summary", body)
-        self.assertNotIn("For non-trivial plans, run a 6D check", body)
+        self.assertNotIn("Execution checklist:", body)
+        self.assertNotIn("Gap routing:", body)
+        self.assertNotIn("Memory boundary:", body)
+        self.assertNotIn("cccc_capability_search", body)
+        self.assertNotIn("cccc_agent_state(action=update", body)
 
     def test_builtin_help_is_compact(self) -> None:
         from cccc.kernel.prompt_files import load_builtin_help_markdown
 
         body = str(load_builtin_help_markdown() or "")
         self.assertLessEqual(len(body.split()), 1300)
-        self.assertIn("This document is on-demand operational guidance.", body)
+        self.assertIn("Use this playbook in the group.", body)
+        self.assertIn("## Core Routes", body)
+        self.assertIn("## Control Plane", body)
+        self.assertIn("## Memory and Recall", body)
+        self.assertIn("## Capability", body)
+        self.assertIn("## Role Notes", body)
+        self.assertIn("## Appendix", body)
+        self.assertNotIn("## Quick Card", body)
+        self.assertNotIn("## Where Things Live", body)
+        self.assertNotIn("### NotebookLM Work vs Memory Lane", body)
+        self.assertNotIn("### NotebookLM Artifact Runs", body)
+        self.assertNotIn("### Capsule Skill Boundary", body)
+        self.assertNotIn("### Terminal Transcript", body)
+        self.assertNotIn("### Automation Tools", body)
+
+    def test_mcp_reminder_line_stays_single_purpose(self) -> None:
+        from cccc.daemon.messaging.delivery import MCP_REMINDER_LINE
+
+        self.assertIn("use MCP", MCP_REMINDER_LINE)
+        self.assertIn("Terminal output isn't delivered.", MCP_REMINDER_LINE)
+        self.assertNotIn("Help: cccc_help", MCP_REMINDER_LINE)
+
+    def test_default_standup_stays_short_ritual(self) -> None:
+        from cccc.kernel.group import _DEFAULT_AUTOMATION_STANDUP_SNIPPET
+
+        body = str(_DEFAULT_AUTOMATION_STANDUP_SNIPPET or "")
+        self.assertIn("Checklist:", body)
+        self.assertIn("Recall:", body)
+        self.assertIn("cccc_capability_use(...)", body)
+        self.assertIn("cccc_help", body)
+        self.assertNotIn('cccc_capability_search(kind="mcp_toolpack"|"skill"', body)
+        self.assertNotIn("diagnostics", body)
 
 
 if __name__ == "__main__":

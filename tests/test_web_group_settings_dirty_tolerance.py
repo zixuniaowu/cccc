@@ -46,7 +46,7 @@ class TestWebGroupSettingsDirtyTolerance(unittest.TestCase):
                 "actor_idle_timeout_seconds": "abc",
                 "keepalive_delay_seconds": "120",
                 "keepalive_max_per_actor": "-5",
-                "silence_timeout_seconds": "900",
+                "silence_timeout_seconds": "bad",
                 "help_nudge_interval_seconds": {},
                 "help_nudge_min_messages": [],
             }
@@ -79,7 +79,7 @@ class TestWebGroupSettingsDirtyTolerance(unittest.TestCase):
             self.assertEqual(settings.get("actor_idle_timeout_seconds"), 600)
             self.assertEqual(settings.get("keepalive_delay_seconds"), 120)
             self.assertEqual(settings.get("keepalive_max_per_actor"), 0)
-            self.assertEqual(settings.get("silence_timeout_seconds"), 900)
+            self.assertEqual(settings.get("silence_timeout_seconds"), 0)
             self.assertEqual(settings.get("help_nudge_interval_seconds"), 600)
             self.assertEqual(settings.get("help_nudge_min_messages"), 10)
             self.assertEqual(settings.get("min_interval_seconds"), 0)
