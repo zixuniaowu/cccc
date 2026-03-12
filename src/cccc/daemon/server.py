@@ -114,14 +114,22 @@ from .ops.template_ops import (
 
 _OBS_LOCK = threading.Lock()
 _OBSERVABILITY: Dict[str, Any] = {}
+_OBSERVABILITY_HOME: Optional[Path] = None
 _AUTO_WAKE_LOCK = threading.Lock()
 _AUTO_WAKE_IN_PROGRESS: set[tuple[str, str]] = set()
 _REQUEST_DISPATCH_DEPS: Optional[RequestDispatchDeps] = None
 
 
 def _get_observability() -> Dict[str, Any]:
+    global _OBSERVABILITY_HOME
+    current_home = ensure_home()
     with _OBS_LOCK:
-        return copy.deepcopy(_OBSERVABILITY) if _OBSERVABILITY else get_observability_settings()
+        if _OBSERVABILITY:
+            if _OBSERVABILITY_HOME == current_home:
+                return copy.deepcopy(_OBSERVABILITY)
+            _OBSERVABILITY.clear()
+            _OBSERVABILITY_HOME = None
+    return get_observability_settings()
 
 
 def _developer_mode_enabled() -> bool:
@@ -131,11 +139,13 @@ def _developer_mode_enabled() -> bool:
 
 def _apply_observability_settings(home: Path, obs: Dict[str, Any]) -> None:
     """Apply observability settings in-process (best-effort)."""
+    global _OBSERVABILITY_HOME
     if not isinstance(obs, dict):
         return
     with _OBS_LOCK:
         _OBSERVABILITY.clear()
         _OBSERVABILITY.update(copy.deepcopy(obs))
+        _OBSERVABILITY_HOME = home
 
     # Logging: keep simple; configure root JSONL logger to stderr.
     level = str(obs.get("log_level") or "INFO").strip().upper() or "INFO"

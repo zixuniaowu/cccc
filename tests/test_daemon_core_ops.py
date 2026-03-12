@@ -63,6 +63,25 @@ class TestDaemonCoreOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_observability_cache_is_scoped_to_current_home(self) -> None:
+        _, cleanup_first = self._with_home()
+        try:
+            update, _ = self._call("observability_update", {"by": "user", "patch": {"developer_mode": True}})
+            self.assertTrue(update.ok, getattr(update, "error", None))
+        finally:
+            cleanup_first()
+
+        _, cleanup_second = self._with_home()
+        try:
+            get, _ = self._call("observability_get", {})
+            self.assertTrue(get.ok, getattr(get, "error", None))
+            obs = (get.result or {}).get("observability") if isinstance(get.result, dict) else {}
+            self.assertIsInstance(obs, dict)
+            assert isinstance(obs, dict)
+            self.assertEqual(bool(obs.get("developer_mode")), False)
+        finally:
+            cleanup_second()
+
     def test_try_handle_unknown_daemon_core_op_returns_none(self) -> None:
         from cccc.daemon.ops.daemon_core_ops import try_handle_daemon_core_op
 
