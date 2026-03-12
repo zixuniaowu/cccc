@@ -375,6 +375,7 @@ export function useChatTab({
           to: toTokens,
           priority: prio,
           reply_required: replyRequired,
+          client_id: localId,
           reply_to: replyTargetSnapshot?.eventId || null,
           format: "plain",
           attachments: [],
@@ -397,7 +398,8 @@ export function useChatTab({
           replyTargetSnapshot.eventId,
           composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
           prio,
-          replyRequired
+          replyRequired,
+          localId
         );
       } else {
         if (isCrossGroup) {
@@ -409,7 +411,8 @@ export function useChatTab({
             to,
             composerFilesSnapshot.length > 0 ? composerFilesSnapshot : undefined,
             prio,
-            replyRequired
+            replyRequired,
+            localId
           );
         }
       }

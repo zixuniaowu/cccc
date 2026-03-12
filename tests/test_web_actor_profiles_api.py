@@ -35,6 +35,13 @@ class TestWebActorProfilesApi(unittest.TestCase):
         resp, _ = handle_request(request)
         return resp.model_dump(exclude_none=True)
 
+    def _create_group(self) -> str:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        reg = load_registry()
+        return create_group(reg, title="web-actor-profile-test", topic="").group_id
+
     def test_profiles_routes_support_my_and_all_views(self) -> None:
         from cccc.kernel.access_tokens import create_access_token
 
@@ -194,5 +201,139 @@ class TestWebActorProfilesApi(unittest.TestCase):
                 self.assertEqual(denied.status_code, 200)
                 self.assertFalse(bool(denied.json().get("ok")))
                 self.assertEqual(str(((denied.json().get("error") or {}).get("code")) or ""), "permission_denied")
+        finally:
+            cleanup()
+
+    def test_actor_create_rejects_user_scoped_headless_profile(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+
+                global_profile = self._local_call_daemon(
+                    {
+                        "op": "actor_profile_upsert",
+                        "args": {
+                            "by": "user",
+                            "profile": {
+                                "id": "shared-profile",
+                                "name": "Shared PTY",
+                                "runtime": "codex",
+                                "runner": "pty",
+                                "command": [],
+                            },
+                        },
+                    }
+                )
+                self.assertTrue(bool(global_profile.get("ok")))
+
+                user_profile = self._local_call_daemon(
+                    {
+                        "op": "actor_profile_upsert",
+                        "args": {
+                            "by": "user",
+                            "caller_id": "member-user",
+                            "is_admin": False,
+                            "profile": {
+                                "id": "shared-profile",
+                                "scope": "user",
+                                "owner_id": "member-user",
+                                "name": "Scoped Headless",
+                                "runtime": "custom",
+                                "runner": "headless",
+                                "command": ["bash", "-lc", "echo hi"],
+                            },
+                        },
+                    }
+                )
+                self.assertTrue(bool(user_profile.get("ok")))
+
+                create_resp = client.post(
+                    f"/api/v1/groups/{group_id}/actors",
+                    json={
+                        "actor_id": "peer-1",
+                        "runtime": "codex",
+                        "runner": "pty",
+                        "profile_id": "shared-profile",
+                        "profile_scope": "user",
+                        "profile_owner": "member-user",
+                    },
+                )
+                self.assertEqual(create_resp.status_code, 400)
+                body = create_resp.json()
+                self.assertEqual(str(((body.get("error") or {}).get("code")) or ""), "headless_internal_only")
+        finally:
+            cleanup()
+
+    def test_actor_update_rejects_user_scoped_headless_profile(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+
+                created_actor = self._local_call_daemon(
+                    {
+                        "op": "actor_add",
+                        "args": {
+                            "group_id": group_id,
+                            "actor_id": "peer-1",
+                            "runtime": "codex",
+                            "runner": "pty",
+                            "command": [],
+                            "env": {},
+                            "by": "user",
+                        },
+                    }
+                )
+                self.assertTrue(bool(created_actor.get("ok")))
+
+                self._local_call_daemon(
+                    {
+                        "op": "actor_profile_upsert",
+                        "args": {
+                            "by": "user",
+                            "profile": {
+                                "id": "shared-profile",
+                                "name": "Shared PTY",
+                                "runtime": "codex",
+                                "runner": "pty",
+                                "command": [],
+                            },
+                        },
+                    }
+                )
+                self._local_call_daemon(
+                    {
+                        "op": "actor_profile_upsert",
+                        "args": {
+                            "by": "user",
+                            "caller_id": "member-user",
+                            "is_admin": False,
+                            "profile": {
+                                "id": "shared-profile",
+                                "scope": "user",
+                                "owner_id": "member-user",
+                                "name": "Scoped Headless",
+                                "runtime": "custom",
+                                "runner": "headless",
+                                "command": ["bash", "-lc", "echo hi"],
+                            },
+                        },
+                    }
+                )
+
+                update_resp = client.post(
+                    f"/api/v1/groups/{group_id}/actors/peer-1",
+                    json={
+                        "profile_id": "shared-profile",
+                        "profile_scope": "user",
+                        "profile_owner": "member-user",
+                    },
+                )
+                self.assertEqual(update_resp.status_code, 400)
+                body = update_resp.json()
+                self.assertEqual(str(((body.get("error") or {}).get("code")) or ""), "headless_internal_only")
         finally:
             cleanup()

@@ -1313,7 +1313,8 @@ export async function sendMessage(
   to: string[],
   files?: File[],
   priority: "normal" | "attention" = "normal",
-  replyRequired = false
+  replyRequired = false,
+  clientId = ""
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -1323,12 +1324,13 @@ export async function sendMessage(
     form.append("path", "");
     form.append("priority", priority);
     form.append("reply_required", replyRequired ? "true" : "false");
+    if (clientId) form.append("client_id", clientId);
     for (const f of files) form.append("files", f);
     return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/send_upload`, form);
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/send`, {
     method: "POST",
-    body: JSON.stringify({ text, by: "user", to, path: "", priority, reply_required: replyRequired }),
+    body: JSON.stringify({ text, by: "user", to, path: "", priority, reply_required: replyRequired, client_id: clientId }),
   });
 }
 
@@ -1339,7 +1341,8 @@ export async function replyMessage(
   replyTo: string,
   files?: File[],
   priority: "normal" | "attention" = "normal",
-  replyRequired = false
+  replyRequired = false,
+  clientId = ""
 ) {
   if (files && files.length > 0) {
     const form = new FormData();
@@ -1349,12 +1352,13 @@ export async function replyMessage(
     form.append("reply_to", replyTo);
     form.append("priority", priority);
     form.append("reply_required", replyRequired ? "true" : "false");
+    if (clientId) form.append("client_id", clientId);
     for (const f of files) form.append("files", f);
     return apiForm(`/api/v1/groups/${encodeURIComponent(groupId)}/reply_upload`, form);
   }
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/reply`, {
     method: "POST",
-    body: JSON.stringify({ text, by: "user", to, reply_to: replyTo, priority, reply_required: replyRequired }),
+    body: JSON.stringify({ text, by: "user", to, reply_to: replyTo, priority, reply_required: replyRequired, client_id: clientId }),
   });
 }
 

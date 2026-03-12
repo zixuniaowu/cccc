@@ -37,6 +37,7 @@ export type ChatMessageData = {
   to?: string[];
   priority?: "normal" | "attention";
   reply_required?: boolean;
+  client_id?: string;
   quote_text?: string;
   src_group_id?: string;
   src_event_id?: string;

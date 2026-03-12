@@ -40,6 +40,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "reply_required": _normalize_reply_required(req.reply_required),
                     "src_group_id": req.src_group_id,
                     "src_event_id": req.src_event_id,
+                    "client_id": req.client_id,
                 },
             }
         )
@@ -80,6 +81,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "reply_to": req.reply_to,
                     "priority": req.priority,
                     "reply_required": _normalize_reply_required(req.reply_required),
+                    "client_id": req.client_id,
                 },
             }
         )
@@ -105,6 +107,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         path: str = Form(""),
         priority: str = Form("normal"),
         reply_required: str = Form("false"),
+        client_id: str = Form(""),
         files: list[UploadFile] = File(default_factory=list),
     ) -> Dict[str, Any]:
         group = load_group(group_id)
@@ -193,6 +196,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "attachments": attachments,
                     "priority": prio,
                     "reply_required": _normalize_reply_required(reply_required),
+                    "client_id": str(client_id or "").strip(),
                 },
             }
         )
@@ -206,6 +210,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         reply_to: str = Form(""),
         priority: str = Form("normal"),
         reply_required: str = Form("false"),
+        client_id: str = Form(""),
         files: list[UploadFile] = File(default_factory=list),
     ) -> Dict[str, Any]:
         group = load_group(group_id)
@@ -283,6 +288,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "attachments": attachments,
                     "priority": prio,
                     "reply_required": _normalize_reply_required(reply_required),
+                    "client_id": str(client_id or "").strip(),
                 },
             }
         )

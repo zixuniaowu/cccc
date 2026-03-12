@@ -25,6 +25,21 @@ class TestIMSubscribersTolerance(unittest.TestCase):
             self.assertTrue(manager.is_subscribed("bad-int"))
             self.assertEqual(manager.count(), 2)
 
+    def test_missing_verbose_defaults_to_user_only_mode(self) -> None:
+        from cccc.ports.im.subscribers import SubscriberManager
+
+        with tempfile.TemporaryDirectory() as td:
+            state_dir = Path(td)
+            payload = {
+                "legacy": {"subscribed": True, "thread_id": 0},
+            }
+            (state_dir / "im_subscribers.json").write_text(json.dumps(payload), encoding="utf-8")
+
+            manager = SubscriberManager(state_dir)
+
+            self.assertTrue(manager.is_subscribed("legacy"))
+            self.assertFalse(manager.is_verbose("legacy"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -53,12 +53,28 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             },
         )
 
-    async def _profile_runner(profile_id: str) -> Optional[str]:
+    async def _profile_runner(
+        request: Request,
+        profile_id: str,
+        *,
+        scope: str = "",
+        owner_id: str = "",
+    ) -> Optional[str]:
         pid = str(profile_id or "").strip()
         if not pid:
             return None
         try:
-            resp = await ctx.daemon({"op": "actor_profile_get", "args": {"profile_id": pid, "by": "user"}})
+            resp = await ctx.daemon(
+                {
+                    "op": "actor_profile_get",
+                    "args": {
+                        "profile_id": pid,
+                        "by": "user",
+                        **_profile_ref_args(scope=scope, owner_id=owner_id),
+                        **_profile_auth_args(request),
+                    },
+                }
+            )
         except Exception:
             return None
         if not bool(resp.get("ok")):
@@ -90,12 +106,20 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return str(actor.get("runner_effective") or actor.get("runner") or "pty").strip().lower() or "pty"
         return None
 
-    async def _ensure_standard_web_runner(*, source: str, runner: Optional[str] = None, profile_id: str = "") -> None:
+    async def _ensure_standard_web_runner(
+        request: Request,
+        *,
+        source: str,
+        runner: Optional[str] = None,
+        profile_id: str = "",
+        profile_scope: str = "",
+        profile_owner: str = "",
+    ) -> None:
         if await _developer_mode_enabled():
             return
         if _runner_is_headless(runner):
             raise _headless_error(source=source)
-        profile_runner = await _profile_runner(profile_id)
+        profile_runner = await _profile_runner(request, profile_id, scope=profile_scope, owner_id=profile_owner)
         if _runner_is_headless(profile_runner):
             raise _headless_error(source=f"{source}:profile")
 
@@ -171,7 +195,14 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         command = _normalize_command(req.command) or []
         env_private = dict(req.env_private) if isinstance(req.env_private, dict) else None
         profile_id = str(req.profile_id or "").strip()
-        await _ensure_standard_web_runner(source="actor_create", runner=str(req.runner or "pty"), profile_id=profile_id)
+        await _ensure_standard_web_runner(
+            request,
+            source="actor_create",
+            runner=str(req.runner or "pty"),
+            profile_id=profile_id,
+            profile_scope=str(req.profile_scope or ""),
+            profile_owner=str(req.profile_owner or ""),
+        )
         return await ctx.daemon(
             {
                 "op": "actor_add",
@@ -199,9 +230,12 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     @group_router.post("/actors/{actor_id}")
     async def actor_update(request: Request, group_id: str, actor_id: str, req: ActorUpdateRequest) -> Dict[str, Any]:
         await _ensure_standard_web_runner(
+            request,
             source="actor_update",
             runner=str(req.runner or "") if req.runner is not None else None,
             profile_id=str(req.profile_id or "").strip(),
+            profile_scope=str(req.profile_scope or ""),
+            profile_owner=str(req.profile_owner or ""),
         )
         patch: Dict[str, Any] = {}
         # Note: role is ignored - auto-determined by position

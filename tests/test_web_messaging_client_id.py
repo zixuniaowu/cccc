@@ -1,0 +1,133 @@
+import os
+import tempfile
+import unittest
+from io import BytesIO
+from unittest.mock import patch
+
+from fastapi.testclient import TestClient
+
+
+class TestWebMessagingClientId(unittest.TestCase):
+    def _with_home(self):
+        old_home = os.environ.get("CCCC_HOME")
+        td_ctx = tempfile.TemporaryDirectory()
+        td = td_ctx.__enter__()
+        os.environ["CCCC_HOME"] = td
+
+        def cleanup() -> None:
+            td_ctx.__exit__(None, None, None)
+            if old_home is None:
+                os.environ.pop("CCCC_HOME", None)
+            else:
+                os.environ["CCCC_HOME"] = old_home
+
+        return td, cleanup
+
+    def _client(self) -> TestClient:
+        from cccc.ports.web.app import create_app
+
+        return TestClient(create_app())
+
+    def _local_call_daemon(self, req: dict):
+        from cccc.contracts.v1 import DaemonRequest
+        from cccc.daemon.server import handle_request
+
+        request = DaemonRequest.model_validate(req)
+        resp, _ = handle_request(request)
+        return resp.model_dump(exclude_none=True)
+
+    def test_send_and_reply_preserve_client_id(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="client-id", topic="")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+
+                send_resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/send",
+                    json={
+                        "text": "hello",
+                        "by": "user",
+                        "to": ["user"],
+                        "client_id": "local-send-1",
+                    },
+                )
+                self.assertEqual(send_resp.status_code, 200)
+                send_body = send_resp.json()
+                self.assertTrue(bool(send_body.get("ok")))
+                send_event = ((send_body.get("result") or {}).get("event")) or {}
+                self.assertEqual((((send_event.get("data") or {}).get("client_id")) or ""), "local-send-1")
+
+                reply_to = str(send_event.get("id") or "")
+                reply_resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/reply",
+                    json={
+                        "text": "reply",
+                        "by": "user",
+                        "to": ["user"],
+                        "reply_to": reply_to,
+                        "client_id": "local-reply-1",
+                    },
+                )
+                self.assertEqual(reply_resp.status_code, 200)
+                reply_body = reply_resp.json()
+                self.assertTrue(bool(reply_body.get("ok")))
+                reply_event = ((reply_body.get("result") or {}).get("event")) or {}
+                self.assertEqual((((reply_event.get("data") or {}).get("client_id")) or ""), "local-reply-1")
+        finally:
+            cleanup()
+
+    def test_upload_routes_preserve_client_id(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+
+        _, cleanup = self._with_home()
+        try:
+            reg = load_registry()
+            group = create_group(reg, title="client-id-upload", topic="")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+
+                send_upload_resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/send_upload",
+                    data={
+                        "by": "user",
+                        "text": "upload hello",
+                        "to_json": "[\"user\"]",
+                        "client_id": "upload-send-1",
+                    },
+                    files={"files": ("note.txt", BytesIO(b"hello"), "text/plain")},
+                )
+                self.assertEqual(send_upload_resp.status_code, 200)
+                send_upload_body = send_upload_resp.json()
+                self.assertTrue(bool(send_upload_body.get("ok")))
+                send_upload_event = ((send_upload_body.get("result") or {}).get("event")) or {}
+                self.assertEqual((((send_upload_event.get("data") or {}).get("client_id")) or ""), "upload-send-1")
+
+                reply_to = str(send_upload_event.get("id") or "")
+                reply_upload_resp = client.post(
+                    f"/api/v1/groups/{group.group_id}/reply_upload",
+                    data={
+                        "by": "user",
+                        "text": "upload reply",
+                        "to_json": "[\"user\"]",
+                        "reply_to": reply_to,
+                        "client_id": "upload-reply-1",
+                    },
+                    files={"files": ("reply.txt", BytesIO(b"reply"), "text/plain")},
+                )
+                self.assertEqual(reply_upload_resp.status_code, 200)
+                reply_upload_body = reply_upload_resp.json()
+                self.assertTrue(bool(reply_upload_body.get("ok")))
+                reply_upload_event = ((reply_upload_body.get("result") or {}).get("event")) or {}
+                self.assertEqual((((reply_upload_event.get("data") or {}).get("client_id")) or ""), "upload-reply-1")
+        finally:
+            cleanup()
+
+
+if __name__ == "__main__":
+    unittest.main()

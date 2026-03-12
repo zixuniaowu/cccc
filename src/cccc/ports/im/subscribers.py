@@ -57,7 +57,7 @@ class Subscriber:
         return cls(
             chat_id=chat_id,
             subscribed=coerce_bool(data.get("subscribed"), default=True),
-            verbose=coerce_bool(data.get("verbose"), default=True),
+            verbose=coerce_bool(data.get("verbose"), default=False),
             subscribed_at=data.get("subscribed_at"),
             chat_title=str(data.get("chat_title", "")),
             thread_id=_safe_int(data.get("thread_id"), 0),
