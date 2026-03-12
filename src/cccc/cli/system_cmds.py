@@ -172,7 +172,7 @@ def cmd_mcp(args: argparse.Namespace) -> int:
 
 def cmd_setup(args: argparse.Namespace) -> int:
     """Setup CCCC MCP for agent runtimes (configure MCP, print guidance)."""
-    import shutil
+    from ..kernel.runtime import get_cccc_mcp_stdio_command
 
     runtime = str(args.runtime or "").strip()
     project_path = Path(args.path or ".").resolve()
@@ -204,12 +204,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     results: dict[str, Any] = {"mcp": {}, "notes": []}
 
-    # Find cccc executable path for MCP config
-    cccc_path = shutil.which("cccc") or sys.executable
-    if cccc_path == sys.executable:
-        cccc_cmd = [sys.executable, "-m", "cccc.ports.mcp.main"]
-    else:
-        cccc_cmd = ["cccc", "mcp"]
+    cccc_cmd = get_cccc_mcp_stdio_command()
 
     def _cmd_line(parts: list[str]) -> str:
         return " ".join(shlex.quote(p) for p in parts)

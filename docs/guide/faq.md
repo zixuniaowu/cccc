@@ -160,10 +160,24 @@ cccc daemon stop    # Stop existing instance
 cccc daemon start   # Start fresh
 ```
 
-### Port 8848 is in use
+### Port 8848 is unavailable
 
 ```bash
 CCCC_WEB_PORT=9000 cccc
+```
+
+On Windows, Hyper-V / WSL / WinNAT / HNS can reserve a TCP port even when no
+process is listening on it. If `8848` still fails to start and you do not see an
+owning PID, check the excluded port ranges:
+
+```powershell
+netsh interface ipv4 show excludedportrange protocol=tcp
+```
+
+If `8848` falls inside one of those ranges, start CCCC on a different port:
+
+```powershell
+cccc web --port 9000
 ```
 
 ### MCP not working

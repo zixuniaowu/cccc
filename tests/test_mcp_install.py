@@ -34,13 +34,35 @@ class TestMcpInstall(unittest.TestCase):
     def test_ensure_mcp_installed_kimi_adds_cccc_stdio(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             cwd = Path(td)
-            with patch("cccc.daemon.mcp_install.is_mcp_installed", return_value=False):
+            with patch("cccc.daemon.mcp_install.is_mcp_installed", return_value=False), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["/abs/cccc", "mcp"],
+            ):
                 with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
                     mock_run.return_value.returncode = 0
                     ok = ensure_mcp_installed("kimi", cwd, auto_mcp_runtimes=("kimi",))
                     self.assertTrue(ok)
                     mock_run.assert_called_once_with(
-                        ["kimi", "mcp", "add", "cccc", "--command", "cccc", "mcp"],
+                        ["kimi", "mcp", "add", "cccc", "--command", "/abs/cccc", "mcp"],
+                        capture_output=True,
+                        text=True,
+                        cwd=str(cwd),
+                        timeout=30,
+                    )
+
+    def test_ensure_mcp_installed_claude_uses_absolute_cccc_command(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            cwd = Path(td)
+            with patch("cccc.daemon.mcp_install.is_mcp_installed", return_value=False), patch(
+                "cccc.daemon.mcp_install.get_cccc_mcp_stdio_command",
+                return_value=["C:\\CCCC\\cccc.exe", "mcp"],
+            ):
+                with patch("cccc.daemon.mcp_install.subprocess.run") as mock_run:
+                    mock_run.return_value.returncode = 0
+                    ok = ensure_mcp_installed("claude", cwd, auto_mcp_runtimes=("claude",))
+                    self.assertTrue(ok)
+                    mock_run.assert_called_once_with(
+                        ["claude", "mcp", "add", "-s", "user", "cccc", "--", "C:\\CCCC\\cccc.exe", "mcp"],
                         capture_output=True,
                         text=True,
                         cwd=str(cwd),

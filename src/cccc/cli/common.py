@@ -38,6 +38,7 @@ from ..kernel.scope import detect_scope
 from ..kernel.system_prompt import render_system_prompt
 from ..paths import ensure_home
 from ..ports.im.config_schema import canonicalize_im_config
+from ..ports.web.bind_preflight import ensure_tcp_port_bindable
 from ..util.conv import coerce_bool
 from ..util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive, terminate_pid
 
@@ -459,6 +460,17 @@ def _default_entry() -> int:
                         pass
             daemon_process = None
     
+    # Keep runtime binding aligned with remote_access settings/UI.
+    host, port = _resolve_web_server_binding()
+    log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip() or "info"
+    reload_mode = _env_flag("CCCC_WEB_RELOAD", default=False)
+
+    try:
+        ensure_tcp_port_bindable(host=host, port=port)
+    except RuntimeError as e:
+        print(f"[cccc] Error: {e}", file=sys.stderr)
+        return 1
+
     # Start daemon
     print("[cccc] Starting daemon...", file=sys.stderr)
     if not _start_daemon():
@@ -470,11 +482,6 @@ def _default_entry() -> int:
     monitor_thread = threading.Thread(target=_monitor_daemon, daemon=True)
     monitor_thread.start()
 
-    # Keep runtime binding aligned with remote_access settings/UI.
-    host, port = _resolve_web_server_binding()
-    log_level = str(os.environ.get("CCCC_WEB_LOG_LEVEL") or "").strip() or "info"
-    reload_mode = _env_flag("CCCC_WEB_RELOAD", default=False)
-    
     # Run web. Let uvicorn own signal handling; set a bounded graceful timeout to
     # avoid hanging forever on long-lived connections (e.g. SSE/WebSocket).
     import uvicorn

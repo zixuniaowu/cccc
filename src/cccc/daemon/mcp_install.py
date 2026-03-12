@@ -6,6 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from ..kernel.runtime import get_cccc_mcp_stdio_command
 from ..util.conv import coerce_bool
 from ..util.fs import read_json
 
@@ -106,10 +107,11 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
         return True
     if is_mcp_installed(runtime):
         return True
+    cccc_cmd = get_cccc_mcp_stdio_command()
     try:
         if runtime == "claude":
             result = subprocess.run(
-                ["claude", "mcp", "add", "-s", "user", "cccc", "--", "cccc", "mcp"],
+                ["claude", "mcp", "add", "-s", "user", "cccc", "--", *cccc_cmd],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -119,7 +121,7 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
 
         if runtime == "codex":
             result = subprocess.run(
-                ["codex", "mcp", "add", "cccc", "--", "cccc", "mcp"],
+                ["codex", "mcp", "add", "cccc", "--", *cccc_cmd],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -129,7 +131,7 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
 
         if runtime == "droid":
             result = subprocess.run(
-                ["droid", "mcp", "add", "--type", "stdio", "cccc", "cccc", "mcp"],
+                ["droid", "mcp", "add", "--type", "stdio", "cccc", *cccc_cmd],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -139,7 +141,7 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
 
         if runtime == "amp":
             result = subprocess.run(
-                ["amp", "mcp", "add", "cccc", "cccc", "mcp"],
+                ["amp", "mcp", "add", "cccc", *cccc_cmd],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -149,7 +151,7 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
 
         if runtime == "auggie":
             result = subprocess.run(
-                ["auggie", "mcp", "add", "cccc", "--", "cccc", "mcp"],
+                ["auggie", "mcp", "add", "cccc", "--", *cccc_cmd],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -159,7 +161,7 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
 
         if runtime == "neovate":
             result = subprocess.run(
-                ["neovate", "mcp", "add", "-g", "cccc", "cccc", "mcp"],
+                ["neovate", "mcp", "add", "-g", "cccc", *cccc_cmd],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -169,7 +171,7 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
 
         if runtime == "gemini":
             result = subprocess.run(
-                ["gemini", "mcp", "add", "-s", "user", "cccc", "cccc", "mcp"],
+                ["gemini", "mcp", "add", "-s", "user", "cccc", *cccc_cmd],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),
@@ -179,7 +181,7 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
 
         if runtime == "kimi":
             result = subprocess.run(
-                ["kimi", "mcp", "add", "cccc", "--command", "cccc", "mcp"],
+                ["kimi", "mcp", "add", "cccc", "--command", *cccc_cmd],
                 capture_output=True,
                 text=True,
                 cwd=str(cwd),

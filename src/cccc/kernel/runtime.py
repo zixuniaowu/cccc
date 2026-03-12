@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
@@ -164,6 +166,23 @@ def get_runtime_command(name: str) -> List[str]:
     if not config:
         return [name]
     return [config["command"]]
+
+
+def get_cccc_mcp_stdio_command() -> List[str]:
+    """Return the most stable command line for launching `cccc mcp`.
+
+    Prefer an absolute path to the installed `cccc` entrypoint when available.
+    On Windows this avoids relying on runtime-specific PATH inheritance for MCP
+    child processes. Fall back to the current Python interpreter otherwise.
+    """
+    cccc_path = shutil.which("cccc")
+    if cccc_path:
+        try:
+            cccc_path = str(Path(cccc_path).resolve())
+        except Exception:
+            cccc_path = str(cccc_path)
+        return [cccc_path, "mcp"]
+    return [sys.executable, "-m", "cccc.ports.mcp.main"]
 
 
 def get_runtime_command_with_flags(name: str) -> List[str]:

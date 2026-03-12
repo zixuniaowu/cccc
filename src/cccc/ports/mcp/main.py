@@ -73,10 +73,27 @@ def _encode_cursor(offset: int) -> str:
     return str(max(0, int(offset)))
 
 
+def _stdin_buffer() -> Any:
+    return getattr(sys.stdin, "buffer", None)
+
+
+def _stdout_buffer() -> Any:
+    return getattr(sys.stdout, "buffer", None)
+
+
 def _read_message() -> Optional[Dict[str, Any]]:
     """Read a single JSON-RPC message from stdin."""
     try:
-        line = sys.stdin.readline()
+        raw_stdin = _stdin_buffer()
+        if raw_stdin is not None:
+            raw_line = raw_stdin.readline()
+            if not raw_line:
+                return None
+            line = raw_line.decode("utf-8")
+        else:
+            line = sys.stdin.readline()
+            if not line:
+                return None
         if not line:
             return None
         return json.loads(line.strip())
@@ -86,7 +103,13 @@ def _read_message() -> Optional[Dict[str, Any]]:
 
 def _write_message(msg: Dict[str, Any]) -> None:
     """Write a single JSON-RPC message to stdout."""
-    sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
+    payload = json.dumps(msg, ensure_ascii=False) + "\n"
+    raw_stdout = _stdout_buffer()
+    if raw_stdout is not None:
+        raw_stdout.write(payload.encode("utf-8"))
+        raw_stdout.flush()
+        return
+    sys.stdout.write(payload)
     sys.stdout.flush()
 
 

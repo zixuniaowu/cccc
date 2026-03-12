@@ -8,6 +8,7 @@ from typing import Optional
 import uvicorn
 
 from ...daemon.server import call_daemon
+from .bind_preflight import ensure_tcp_port_bindable
 
 
 def _check_daemon_running() -> bool:
@@ -39,6 +40,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not _check_daemon_running():
         print("error: daemon is not running. Start it with: cccc daemon start", file=sys.stderr)
         print("  or use: cccc (to start both daemon and web together)", file=sys.stderr)
+        return 1
+
+    try:
+        ensure_tcp_port_bindable(host=str(args.host), port=int(args.port))
+    except RuntimeError as e:
+        print(f"error: {e}", file=sys.stderr)
         return 1
 
     try:

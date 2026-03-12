@@ -9,6 +9,19 @@ from unittest.mock import patch
 
 
 class TestMcpRuntimeContext(unittest.TestCase):
+    def test_iter_ancestor_pids_uses_windows_parent_chain(self) -> None:
+        from cccc.ports.mcp.common import _iter_ancestor_pids
+
+        chain = {900: 700, 700: 500, 500: 0}
+        with patch("cccc.ports.mcp.common.os.name", "nt"), patch(
+            "cccc.ports.mcp.common.os.getpid",
+            return_value=900,
+        ), patch(
+            "cccc.ports.mcp.common._proc_parent_pid_windows",
+            side_effect=lambda pid: chain.get(pid, 0),
+        ):
+            self.assertEqual(_iter_ancestor_pids(), [900, 700, 500])
+
     def test_runtime_context_recovers_from_ancestor_env(self) -> None:
         from cccc.ports.mcp.common import _runtime_context
 
