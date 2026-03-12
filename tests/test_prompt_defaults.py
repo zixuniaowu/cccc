@@ -10,6 +10,7 @@ class TestPromptDefaults(unittest.TestCase):
         body = str(DEFAULT_PREAMBLE_BODY or "")
         self.assertIn("Startup routes:", body)
         self.assertIn("cccc_bootstrap", body)
+        self.assertIn("context_hygiene", body)
         self.assertIn("cccc_help", body)
         self.assertIn("cccc_context_get", body)
         self.assertIn("cccc_project_info", body)

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 
@@ -235,6 +237,76 @@ class TestMcpHelpSkillsDigest(unittest.TestCase):
         self.assertEqual(str(hygiene.get("actor_id") or ""), "peer-1")
         self.assertEqual(bool(hygiene.get("present")), True)
         self.assertEqual(bool(hygiene.get("min_fields_ready")), True)
+        self.assertEqual(str((hygiene.get("execution_health") or {}).get("status") or ""), "stale")
+        self.assertEqual(str((hygiene.get("mind_context_health") or {}).get("status") or ""), "missing")
+
+    def test_cccc_help_marks_mind_context_stale_from_runtime_churn(self) -> None:
+        from cccc.kernel.group import create_group
+        from cccc.kernel.registry import load_registry
+        from cccc.ports.mcp.server import handle_tool_call
+
+        _, cleanup = self._with_home()
+        try:
+            now = datetime.now(timezone.utc)
+            touched_at = (now - timedelta(minutes=5)).isoformat().replace("+00:00", "Z")
+            updated_at = now.isoformat().replace("+00:00", "Z")
+            group = create_group(load_registry(), title="help-hygiene")
+            state_path = group.path / "state" / "automation.json"
+            state_path.write_text(
+                json.dumps(
+                    {
+                        "v": 5,
+                        "actors": {
+                            "peer-1": {
+                                "mind_context_touched_at": touched_at,
+                                "hot_only_updates_since_mind_touch": 3,
+                            }
+                        },
+                        "rules": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                os.environ,
+                {"CCCC_GROUP_ID": group.group_id, "CCCC_ACTOR_ID": "peer-1"},
+                clear=False,
+            ), patch(
+                "cccc.ports.mcp.handlers.cccc_core._call_daemon_or_raise",
+                return_value={},
+            ), patch(
+                "cccc.ports.mcp.server._call_daemon_or_raise",
+                return_value={
+                    "agent_states": [
+                        {
+                            "id": "peer-1",
+                            "hot": {
+                                "focus": "verify hygiene",
+                                "next_action": "read current status",
+                                "blockers": [],
+                            },
+                            "warm": {
+                                "what_changed": "recently updated execution state",
+                                "environment_summary": "single bugfix branch in progress",
+                                "user_model": "prefers direct evidence",
+                                "persona_notes": "do not overbuild the fix",
+                            },
+                            "updated_at": updated_at,
+                        }
+                    ]
+                },
+            ):
+                out = handle_tool_call("cccc_help", {})
+
+            hygiene = out.get("context_hygiene") if isinstance(out, dict) else None
+            self.assertIsInstance(hygiene, dict)
+            assert isinstance(hygiene, dict)
+            self.assertEqual(str((hygiene.get("execution_health") or {}).get("status") or ""), "ready")
+            self.assertEqual(str((hygiene.get("mind_context_health") or {}).get("status") or ""), "stale")
+            self.assertEqual(int((hygiene.get("mind_context_health") or {}).get("hot_only_updates_since_touch") or 0), 3)
+        finally:
+            cleanup()
 
 
 if __name__ == "__main__":

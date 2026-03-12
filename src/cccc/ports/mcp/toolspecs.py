@@ -37,7 +37,7 @@ MCP_TOOLS = [
     {
         "name": "cccc_bootstrap",
         "description": (
-            "Cold-start bootstrap: session + recovery + inbox_preview + memory_recall_gate + next_calls. "
+            "Cold-start bootstrap: session + recovery + inbox_preview + context_hygiene + memory_recall_gate + next_calls. "
             "Use it first on cold start or resume; pull cccc_help / cccc_project_info / cccc_context_get "
             "only when you need colder detail."
         ),

@@ -255,26 +255,6 @@ function isAgentStale(agent: AgentState | null | undefined): boolean {
   return (Date.now() - timestamp) > 20 * 60 * 1000;
 }
 
-function sortAgentsForDisplay(agents: AgentState[]): AgentState[] {
-  return [...agents].sort((left, right) => {
-    const leftHot = agentHot(left);
-    const rightHot = agentHot(right);
-    const leftBlocked = leftHot.blockers.length > 0 ? 1 : 0;
-    const rightBlocked = rightHot.blockers.length > 0 ? 1 : 0;
-    if (leftBlocked !== rightBlocked) return rightBlocked - leftBlocked;
-
-    const leftActive = leftHot.activeTaskId ? 1 : 0;
-    const rightActive = rightHot.activeTaskId ? 1 : 0;
-    if (leftActive !== rightActive) return rightActive - leftActive;
-
-    const leftUpdated = agentUpdatedAtTimestamp(left);
-    const rightUpdated = agentUpdatedAtTimestamp(right);
-    if (leftUpdated !== rightUpdated) return rightUpdated - leftUpdated;
-
-    return String(left.id || "").localeCompare(String(right.id || ""));
-  });
-}
-
 function recoverySummary(agent: AgentState, tr: ContextTranslator): string {
   const warm = agentWarm(agent);
   const parts: string[] = [];
@@ -698,8 +678,6 @@ export function ContextModal({
     () => (Array.isArray(context?.coordination?.recent_handoffs) ? context.coordination.recent_handoffs : []),
     [context]
   );
-  const sortedAgents = useMemo(() => sortAgentsForDisplay(agents), [agents]);
-
   const projectPathLabel = useMemo(() => {
     const path = String(projectMd?.path || "").trim();
     return path || "PROJECT.md";
@@ -1670,8 +1648,8 @@ export function ContextModal({
   };
 
   const renderAgentsView = () => {
-    const agentsWithBlockers = sortedAgents.filter((agent) => agentHot(agent).blockers.length > 0).length;
-    const agentsWithActiveTask = sortedAgents.filter((agent) => !!agentHot(agent).activeTaskId).length;
+    const agentsWithBlockers = agents.filter((agent) => agentHot(agent).blockers.length > 0).length;
+    const agentsWithActiveTask = agents.filter((agent) => !!agentHot(agent).activeTaskId).length;
     return (
       <section className={classNames(surfaceClass, "p-4")}>
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1686,7 +1664,7 @@ export function ContextModal({
           </div>
         </div>
         <div className="mt-4 grid gap-3 2xl:grid-cols-2">
-          {sortedAgents.length > 0 ? sortedAgents.map((agent) => (
+          {agents.length > 0 ? agents.map((agent) => (
             <AgentStateCard
               key={agent.id}
               agent={agent}

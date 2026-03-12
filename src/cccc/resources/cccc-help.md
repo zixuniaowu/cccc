@@ -9,6 +9,7 @@ If reminded, rerun `cccc_help`.
 ## Core Routes
 
 - Bootstrap / resume: start with `cccc_bootstrap`.
+- On cold start or resume, inspect `cccc_bootstrap().context_hygiene` before drifting into generic execution.
 - Shared coordination: visible replies go through `cccc_message_send` / `cccc_message_reply`; terminal output is not delivery.
 - Context upkeep: at key transitions, sync `cccc_coordination` / `cccc_task` and refresh `cccc_agent_state`.
 - Scope first: align before implementation; do not act on unresolved strategy questions.
@@ -33,10 +34,16 @@ If reminded, rerun `cccc_help`.
 
 ### Agent State
 
-- `cccc_agent_state` is per-actor execution memory.
+- `cccc_agent_state` is per-actor working memory, not just task status.
 - Refresh hot fields at key transitions: `focus`, `next_action`, `what_changed`, `active_task_id` when applicable, and real `blockers`.
-- Use warm recovery fields when they improve continuity: `open_loops`, `commitments`, `environment_summary`, `user_model`, `persona_notes`, `resume_hint`.
-- Recommended update pattern: `cccc_agent_state(action="update", actor_id="<self>", focus="...", next_action="...", what_changed="...")`
+- Mind context is your current working model of environment, user, and operating stance: `environment_summary`, `user_model`, `persona_notes`.
+- Use warm recovery fields when they improve continuity: `open_loops`, `commitments`, `resume_hint`.
+- If `context_hygiene.execution_health.status != "ready"`, refresh execution fields first.
+- If execution is healthy but `context_hygiene.mind_context_health.status` is `missing`, `partial`, or `stale`, re-check and refresh that working model.
+- If a mind-context line is too generic to change your next decision, rewrite it.
+- `cccc_bootstrap().recovery.self_state.mind_context_mini` is only a tiny continuity projection under token pressure, not a replacement for full `agent_state`.
+- Recommended execution update: `cccc_agent_state(action="update", actor_id="<self>", focus="...", next_action="...", what_changed="...")`
+- Recommended mind-context update: `cccc_agent_state(action="update", actor_id="<self>", environment_summary="...", user_model="...", persona_notes="...")`
 
 ### PROJECT.md
 

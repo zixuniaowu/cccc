@@ -1,5 +1,6 @@
 """Context v3 focused tests: CAS, coordination brief, task lifecycle, permissions, panorama, meta validation."""
 
+import json
 import os
 import tempfile
 import unittest
@@ -167,6 +168,30 @@ class TestContextV2Ops(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_context_get_agent_states_follow_group_actor_order(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.actors import add_actor
+            from cccc.kernel.group import load_group
+
+            gid = self._create_group()
+            group = load_group(gid)
+            assert group is not None
+
+            add_actor(group, actor_id="PeerA", runtime="codex")
+            add_actor(group, actor_id="管理员", runtime="codex")
+            add_actor(group, actor_id="alpha", runtime="codex")
+
+            self._sync(gid, [{"op": "agent_state.update", "actor_id": "alpha", "focus": "alpha work"}], by="alpha")
+            self._sync(gid, [{"op": "agent_state.update", "actor_id": "PeerA", "focus": "peer work"}], by="PeerA")
+            self._sync(gid, [{"op": "agent_state.update", "actor_id": "管理员", "focus": "manager work"}], by="管理员")
+
+            ctx, _ = self._context(gid)
+            agent_ids = [str(item.get("id") or "") for item in ctx.result["agent_states"]]
+            self.assertEqual(agent_ids, ["PeerA", "管理员", "alpha"])
+        finally:
+            cleanup()
+
     def test_panorama_mermaid_includes_coordination_tasks_and_agents(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -216,6 +241,93 @@ class TestContextV2Ops(unittest.TestCase):
                 "persona_notes": "",
                 "resume_hint": "",
             })
+        finally:
+            cleanup()
+
+    def test_agent_state_update_tracks_mind_context_touch_and_hot_only_churn(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+
+            gid = self._create_group()
+            initial_resp, _ = self._sync(
+                gid,
+                [{
+                    "op": "agent_state.update",
+                    "actor_id": "peer1",
+                    "focus": "triage the bug",
+                    "next_action": "capture evidence",
+                    "what_changed": "picked up the bug pass",
+                    "environment_summary": "workspace has one active bugfix branch",
+                    "user_model": "prefers concrete evidence",
+                    "persona_notes": "avoid speculative fixes",
+                }],
+                by="peer1",
+            )
+            self.assertTrue(initial_resp.ok, getattr(initial_resp, "error", None))
+            first_ctx, _ = self._context(gid)
+            first_state = [item for item in first_ctx.result["agent_states"] if item["id"] == "peer1"][0]
+            first_updated_at = str(first_state.get("updated_at") or "")
+            self.assertTrue(first_updated_at)
+
+            second_resp, _ = self._sync(
+                gid,
+                [{
+                    "op": "agent_state.update",
+                    "actor_id": "peer1",
+                    "focus": "reproduce the bug precisely",
+                    "next_action": "inspect current logs",
+                    "what_changed": "refined the active debug step",
+                }],
+                by="peer1",
+            )
+            self.assertTrue(second_resp.ok, getattr(second_resp, "error", None))
+
+            group = load_group(gid)
+            assert group is not None
+            automation_state = json.loads((group.path / "state" / "automation.json").read_text(encoding="utf-8"))
+            actor_state = automation_state["actors"]["peer1"]
+
+            self.assertEqual(str(actor_state.get("mind_context_touched_at") or ""), first_updated_at)
+            self.assertEqual(int(actor_state.get("hot_only_updates_since_mind_touch") or 0), 1)
+            self.assertTrue(str(actor_state.get("mind_context_hash") or "").strip())
+        finally:
+            cleanup()
+
+    def test_agent_state_clear_resets_mind_context_touch_runtime_state(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.kernel.group import load_group
+
+            gid = self._create_group()
+            seed_resp, _ = self._sync(
+                gid,
+                [{
+                    "op": "agent_state.update",
+                    "actor_id": "peer1",
+                    "focus": "prepare handoff",
+                    "next_action": "summarize current state",
+                    "what_changed": "handoff prep started",
+                    "environment_summary": "repo has one scoped patch",
+                    "user_model": "wants direct closure",
+                    "persona_notes": "keep the handoff crisp",
+                }],
+                by="peer1",
+            )
+            self.assertTrue(seed_resp.ok, getattr(seed_resp, "error", None))
+
+            clear_resp, _ = self._sync(gid, [{"op": "agent_state.clear", "actor_id": "peer1"}], by="peer1")
+            self.assertTrue(clear_resp.ok, getattr(clear_resp, "error", None))
+
+            group = load_group(gid)
+            assert group is not None
+            automation_state = json.loads((group.path / "state" / "automation.json").read_text(encoding="utf-8"))
+            actor_state = automation_state["actors"]["peer1"]
+
+            self.assertEqual(str(actor_state.get("mind_context_hash") or ""), "")
+            self.assertEqual(str(actor_state.get("mind_context_touched_at") or ""), "")
+            self.assertEqual(int(actor_state.get("hot_only_updates_since_mind_touch") or 0), 0)
+            self.assertTrue(str(actor_state.get("agent_state_last_seen_updated_at") or "").strip())
         finally:
             cleanup()
 

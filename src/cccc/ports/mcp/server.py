@@ -220,6 +220,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 help_result["context_hygiene"] = _build_context_hygiene_hint(
                     context=context_payload if isinstance(context_payload, dict) else {},
                     actor_id=aid,
+                    group_id=gid,
                 )
             except Exception:
                 pass

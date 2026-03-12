@@ -15,9 +15,11 @@ import hashlib
 import json
 import logging
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from ...contracts.v1 import DaemonError, DaemonResponse
+from ...kernel.agent_state_hygiene import sync_mind_context_runtime_state
 from ...kernel.context import (
     AgentState,
     AgentStateHot,
@@ -35,10 +37,11 @@ from ...kernel.context import (
     WaitingOn,
     _utc_now_iso,
 )
-from ...kernel.actors import get_effective_role
+from ...kernel.actors import get_effective_role, list_actors
 from ...kernel.group import load_group
 from ...kernel.ledger import append_event
 from ...util.conv import coerce_bool
+from ...util.fs import atomic_write_json, read_json
 from ..space.group_space_projection import sync_group_space_projection
 from ..space.group_space_store import enqueue_space_job, get_space_binding, get_space_provider_state
 
@@ -406,7 +409,7 @@ def _check_permission(
 
 
 def _get_or_create_agent(agents_state: AgentsData, agent_id: str) -> AgentState:
-    canonical = str(agent_id or "").strip().replace("_", "-").lower()
+    canonical = str(agent_id or "").strip()
     if not canonical:
         raise ValueError("actor_id must be non-empty")
     for agent in agents_state.agents:
@@ -457,7 +460,94 @@ def _filter_agents_to_group(storage: ContextStorage, agents_state: AgentsData) -
     }
     if not actor_ids:
         return agents_state
-    return AgentsData(agents=[agent for agent in agents_state.agents if agent.id in actor_ids])
+    return AgentsData(agents=[agent for agent in agents_state.agents if str(agent.id or "").strip().lower() in actor_ids])
+
+
+def _sort_agents_for_group(storage: ContextStorage, agents_state: AgentsData) -> List[AgentState]:
+    ordered_actor_ids = [
+        str(actor.get("id") or "").strip()
+        for actor in list_actors(storage.group)
+        if isinstance(actor, dict) and str(actor.get("id") or "").strip()
+    ]
+    if not ordered_actor_ids:
+        return list(agents_state.agents)
+
+    by_norm: Dict[str, AgentState] = {}
+    for agent in agents_state.agents:
+        norm = str(agent.id or "").strip().casefold()
+        if norm and norm not in by_norm:
+            by_norm[norm] = agent
+
+    ordered: List[AgentState] = []
+    seen: set[str] = set()
+    for actor_id in ordered_actor_ids:
+        norm = actor_id.casefold()
+        agent = by_norm.get(norm)
+        if agent is None:
+            continue
+        ordered.append(agent)
+        seen.add(norm)
+
+    for agent in agents_state.agents:
+        norm = str(agent.id or "").strip().casefold()
+        if norm in seen:
+            continue
+        ordered.append(agent)
+    return ordered
+
+
+def _automation_state_path(storage: ContextStorage) -> Path:
+    return storage.group.path / "state" / "automation.json"
+
+
+def _load_automation_state(storage: ContextStorage) -> Dict[str, Any]:
+    doc = read_json(_automation_state_path(storage))
+    if not isinstance(doc, dict):
+        doc = {}
+    try:
+        version = int(doc.get("v") or 0)
+    except Exception:
+        version = 0
+    if version < 5:
+        doc["v"] = 5
+    actors = doc.get("actors")
+    if not isinstance(actors, dict):
+        doc["actors"] = {}
+    rules = doc.get("rules")
+    if not isinstance(rules, dict):
+        doc["rules"] = {}
+    return doc
+
+
+def _save_automation_state(storage: ContextStorage, doc: Dict[str, Any]) -> None:
+    doc["updated_at"] = _utc_now_iso()
+    atomic_write_json(_automation_state_path(storage), doc)
+
+
+def _sync_agents_mind_context_runtime(storage: ContextStorage, agents_state: AgentsData) -> None:
+    state = _load_automation_state(storage)
+    actors = state.get("actors")
+    if not isinstance(actors, dict):
+        actors = {}
+        state["actors"] = actors
+    dirty = False
+    for agent in agents_state.agents:
+        actor_id = str(agent.id or "").strip()
+        if not actor_id:
+            continue
+        current = actors.get(actor_id)
+        runtime_actor = current if isinstance(current, dict) else {}
+        if sync_mind_context_runtime_state(
+            runtime_actor,
+            warm=agent.warm,
+            updated_at=agent.updated_at,
+        ):
+            dirty = True
+        if runtime_actor and current is not runtime_actor:
+            actors[actor_id] = runtime_actor
+            dirty = True
+    if dirty:
+        _save_automation_state(storage, state)
 
 
 def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
@@ -472,6 +562,7 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
     context = storage.load_context()
     tasks = storage.list_tasks()
     agents_state = _filter_agents_to_group(storage, storage.load_agents())
+    ordered_agents = _sort_agents_for_group(storage, agents_state)
     attention = _attention_projection(tasks)
     board = _board_projection(tasks)
 
@@ -491,14 +582,14 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
             "recent_decisions": [_note_to_dict(note) for note in context.coordination.recent_decisions],
             "recent_handoffs": [_note_to_dict(note) for note in context.coordination.recent_handoffs],
         },
-        "agent_states": [_agent_state_to_dict(agent) for agent in sorted(agents_state.agents, key=lambda x: x.id)],
+        "agent_states": [_agent_state_to_dict(agent) for agent in ordered_agents],
         "attention": attention,
         "board": board,
         "tasks_summary": _tasks_summary(tasks, attention=attention),
         "panorama": {
             "mermaid": storage.compute_panorama_mermaid(
                 tasks=tasks,
-                agents_state=agents_state,
+                agents_state=AgentsData(agents=ordered_agents),
                 coordination=context.coordination,
             )
         },
@@ -860,7 +951,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 continue
 
             if op_name == "agent_state.update":
-                actor_id = str(raw.get("actor_id") or raw.get("agent_id") or "").strip().lower()
+                actor_id = str(raw.get("actor_id") or raw.get("agent_id") or "").strip()
                 if not actor_id:
                     raise ValueError(f"op[{idx}] agent_state.update actor_id is required")
                 perm_err = _check_permission(by, op_name, group_id, target_actor_id=actor_id)
@@ -937,7 +1028,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 continue
 
             if op_name == "agent_state.clear":
-                actor_id = str(raw.get("actor_id") or raw.get("agent_id") or "").strip().lower()
+                actor_id = str(raw.get("actor_id") or raw.get("agent_id") or "").strip()
                 if not actor_id:
                     raise ValueError(f"op[{idx}] agent_state.clear actor_id is required")
                 perm_err = _check_permission(by, op_name, group_id, target_actor_id=actor_id)
@@ -952,7 +1043,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                 continue
 
             if op_name == "role_notes.set":
-                actor_id = str(raw.get("actor_id") or "").strip().lower()
+                actor_id = str(raw.get("actor_id") or "").strip()
                 if not actor_id:
                     raise ValueError(f"op[{idx}] role_notes.set actor_id is required")
                 perm_err = _check_permission(by, op_name, group_id)
@@ -1010,6 +1101,7 @@ def handle_context_sync(args: Dict[str, Any]) -> DaemonResponse:
                     storage.save_task(task)
             if agents_dirty:
                 storage.save_agents(agents_state)
+                _sync_agents_mind_context_runtime(storage, agents_state)
 
         version = storage.compute_version() if not dry_run else current_version
 

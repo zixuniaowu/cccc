@@ -23,6 +23,8 @@ from zoneinfo import ZoneInfo
 
 from ...contracts.v1 import AutomationRule, AutomationRuleSet, SystemNotifyData
 from ...kernel.actors import list_actors, find_foreman
+from ...kernel.agent_state_hygiene import evaluate_agent_state_hygiene, sync_mind_context_runtime_state
+from ...kernel.context import ContextStorage
 from ...kernel.group import Group, load_group, get_group_state, set_group_state
 from ...kernel.inbox import iter_events, is_message_for_actor, get_cursor, get_obligation_status_batch
 from ...kernel.ledger import append_event
@@ -1767,7 +1769,17 @@ class AutomationManager:
             return
 
         running_ids = [aid for aid, _, _ in running]
-        to_notify: list[tuple[str, str]] = []  # (actor_id, runner_kind)
+        to_notify: list[tuple[str, str, str]] = []  # (actor_id, runner_kind, nudge_kind)
+        agents_by_id: Dict[str, Any] = {}
+        try:
+            agents_state = ContextStorage(group).load_agents()
+            agents_by_id = {
+                str(agent.id or "").strip(): agent
+                for agent in agents_state.agents
+                if str(agent.id or "").strip()
+            }
+        except Exception:
+            agents_by_id = {}
 
         with self._lock:
             state = _load_state(group)
@@ -1842,6 +1854,15 @@ class AutomationManager:
             # Decide which actors should be nudged.
             for aid, runner_kind, session_key in running:
                 st = _actor_state(state, aid)
+                agent = agents_by_id.get(aid)
+                if agent is not None:
+                    if sync_mind_context_runtime_state(
+                        st,
+                        warm=getattr(agent, "warm", None),
+                        updated_at=getattr(agent, "updated_at", None),
+                        now=now,
+                    ):
+                        dirty = True
 
                 # Reset per-actor counters when the session changes.
                 if session_key and str(st.get("help_session_key") or "") != session_key:
@@ -1869,23 +1890,64 @@ class AutomationManager:
                 if count < int(cfg.help_nudge_min_messages):
                     continue
 
+                hygiene = evaluate_agent_state_hygiene(
+                    actor_id=aid,
+                    hot=getattr(agent, "hot", None),
+                    warm=getattr(agent, "warm", None),
+                    updated_at=getattr(agent, "updated_at", None),
+                    mind_touched_at=st.get("mind_context_touched_at"),
+                    hot_only_updates_since_mind_touch=int(st.get("hot_only_updates_since_mind_touch") or 0),
+                    present=aid in agents_by_id,
+                    now=now,
+                )
+                exec_status = str(
+                    (
+                        hygiene.get("execution_health")
+                        if isinstance(hygiene.get("execution_health"), dict)
+                        else {}
+                    ).get("status")
+                    or "missing"
+                )
+                mind_status = str(
+                    (
+                        hygiene.get("mind_context_health")
+                        if isinstance(hygiene.get("mind_context_health"), dict)
+                        else {}
+                    ).get("status")
+                    or "missing"
+                )
+                if exec_status in {"missing", "stale"}:
+                    nudge_kind = "execution"
+                elif mind_status in {"missing", "partial", "stale"}:
+                    nudge_kind = "mind_context"
+                else:
+                    continue
+
                 st["help_last_nudge_at"] = utc_now_iso()
                 st["help_msg_count_since"] = 0
                 dirty = True
-                to_notify.append((aid, runner_kind))
+                to_notify.append((aid, runner_kind, nudge_kind))
 
             if dirty:
                 _save_state(group, state)
 
-        for aid, runner_kind in to_notify:
+        for aid, runner_kind, nudge_kind in to_notify:
+            if nudge_kind == "mind_context":
+                message = (
+                    "Run `cccc_help` now, then refresh `cccc_agent_state` "
+                    "and re-check your working model "
+                    "(environment_summary/user_model/persona_notes)."
+                )
+            else:
+                message = (
+                    "Run `cccc_help` now, then refresh `cccc_agent_state` "
+                    "(focus/next_action/what_changed)."
+                )
             notify_data = SystemNotifyData(
                 kind="help_nudge",
                 priority="normal",
-                title="Refresh collaboration rules",
-                message=(
-                    "Run `cccc_help` now, then refresh `cccc_agent_state` "
-                    "(focus/next_action/what_changed)."
-                ),
+                title="Refresh collaboration context",
+                message=message,
                 target_actor_id=aid,
                 requires_ack=False,
             )
