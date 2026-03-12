@@ -403,7 +403,8 @@ MCP_TOOLS = [
         "name": "cccc_space",
         "description": (
             "Group Space hub tool. NotebookLM has two lanes: work and memory. action: status|capabilities|bind|ingest|query|sources|artifact|jobs|sync|"
-            "provider_auth|provider_credential_status|provider_credential_update. For artifact runs with wait=false, accepted=true plus "
+            "provider_auth|provider_credential_status|provider_credential_update. provider_auth sub_action: status|start|cancel|disconnect; "
+            "use force_reauth=true with provider_auth/start to switch Google account. For artifact runs with wait=false, accepted=true plus "
             "status=pending|queued means background accepted: do not poll in a loop; wait for the later system.notify."
         ),
         "inputSchema": _obj(
@@ -433,6 +434,10 @@ MCP_TOOLS = [
                 "sub_action": {
                     "type": "string",
                     "description": "Optional secondary action for sources/jobs/sync/provider_auth/artifact branches.",
+                },
+                "force_reauth": {
+                    "type": "boolean",
+                    "description": "Only for provider_auth/start. Skip saved credential reuse and clear the auth browser profile first.",
                 },
                 "remote_space_id": {"type": "string"},
                 "kind": {"type": "string"},
@@ -597,13 +602,22 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_role_notes",
-        "description": "Manage actor role notes (persona_notes): action=get|set|clear. Foreman/user can read and write any actor's role notes.",
+        "description": (
+            "Manage actor-scoped role notes in CCCC_HELP.md (`## @actor: <actor_id>` blocks): action=get|set|clear. "
+            "Foreman can read/write any actor's role notes; other actors can only read their own notes."
+        ),
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,
                 "action": {"type": "string", "enum": ["get", "set", "clear"], "default": "get"},
-                "target_actor_id": {"type": "string", "description": "The actor whose role notes to read/write. Omit for get to list all."},
-                "content": {"type": "string", "description": "New role notes content (required for set, max 600 chars)"},
+                "target_actor_id": {
+                    "type": "string",
+                    "description": "The actor whose help-scoped role notes to read/write. Omit for get only when listing all as foreman.",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "New markdown body for this actor's `## @actor:` help block (required for set).",
+                },
                 "by": {"type": "string", "description": "Caller actor id override (normally auto-resolved)"},
             }
         ),

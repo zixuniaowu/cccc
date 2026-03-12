@@ -13,7 +13,7 @@ from ...kernel.permissions import require_actor_permission
 from ...runners import headless as headless_runner
 from ...runners import pty as pty_runner
 from ...util.conv import coerce_bool
-from .actor_profile_runtime import resolve_linked_actor_before_start
+from .actor_profile_runtime import ActorProfileAccessDeniedError, resolve_linked_actor_before_start
 
 
 def _error(code: str, message: str, *, details: Optional[Dict[str, Any]] = None) -> DaemonResponse:
@@ -40,6 +40,9 @@ def handle_actor_start(
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
     before_foreman = foreman_id(group)
+    caller_context_explicit = "caller_id" in args or "is_admin" in args
+    caller_id = str(args.get("caller_id") or "").strip()
+    is_admin = coerce_bool(args.get("is_admin"), default=not caller_context_explicit)
     try:
         require_actor_permission(group, by=by, action="actor.start", target_actor_id=actor_id)
         actor = update_actor(group, actor_id, {"enabled": True})
@@ -49,13 +52,15 @@ def handle_actor_start(
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
             update_actor_private_env=update_actor_private_env,
-            caller_id=str(args.get("caller_id") or "").strip(),
-            is_admin=coerce_bool(args.get("is_admin"), default=False),
+            caller_id=caller_id,
+            is_admin=is_admin,
         )
     except Exception as e:
         msg = str(e)
         if "profile not found:" in msg:
             return _error("profile_not_found", msg)
+        if isinstance(e, ActorProfileAccessDeniedError):
+            return _error("permission_denied", msg)
         return _error("actor_start_failed", msg)
 
     cmd = actor.get("command") if isinstance(actor.get("command"), list) else []
@@ -70,8 +75,8 @@ def handle_actor_start(
         runner=runner_kind,
         runtime=runtime,
         by=by,
-        caller_id=str(args.get("caller_id") or "").strip(),
-        is_admin=coerce_bool(args.get("is_admin"), default=False),
+        caller_id=caller_id,
+        is_admin=is_admin,
     )
     if not start_result["success"]:
         return _error("actor_start_failed", start_result.get("error") or "unknown error")
@@ -176,6 +181,9 @@ def handle_actor_restart(
     if group is None:
         return _error("group_not_found", f"group not found: {group_id}")
     before_foreman = foreman_id(group)
+    caller_context_explicit = "caller_id" in args or "is_admin" in args
+    caller_id = str(args.get("caller_id") or "").strip()
+    is_admin = coerce_bool(args.get("is_admin"), default=not caller_context_explicit)
     try:
         require_actor_permission(group, by=by, action="actor.restart", target_actor_id=actor_id)
         actor = update_actor(group, actor_id, {"enabled": True})
@@ -185,8 +193,8 @@ def handle_actor_restart(
             get_actor_profile=get_actor_profile,
             load_actor_profile_secrets=load_actor_profile_secrets,
             update_actor_private_env=update_actor_private_env,
-            caller_id=str(args.get("caller_id") or "").strip(),
-            is_admin=coerce_bool(args.get("is_admin"), default=False),
+            caller_id=caller_id,
+            is_admin=is_admin,
         )
         runner_kind = str(actor.get("runner") or "pty").strip()
         runner_effective = effective_runner_kind(runner_kind)
@@ -204,6 +212,8 @@ def handle_actor_restart(
         msg = str(e)
         if "profile not found:" in msg:
             return _error("profile_not_found", msg)
+        if isinstance(e, ActorProfileAccessDeniedError):
+            return _error("permission_denied", msg)
         return _error("actor_restart_failed", msg)
 
     if coerce_bool(group.doc.get("running"), default=False):

@@ -5,6 +5,15 @@ import socket
 import sys
 
 
+def _switch_port_examples(port: int = 9000) -> str:
+    cli_cmd = f"`cccc web --port {int(port)}`"
+    if sys.platform.startswith("win"):
+        env_cmd = f"`$env:CCCC_WEB_PORT={int(port)}; cccc`"
+    else:
+        env_cmd = f"`CCCC_WEB_PORT={int(port)} cccc`"
+    return f"Example: {cli_cmd} or {env_cmd}."
+
+
 def _format_bind_target(host: str, port: int) -> str:
     raw_host = str(host or "").strip() or "0.0.0.0"
     if ":" in raw_host and not (raw_host.startswith("[") and raw_host.endswith("]")):
@@ -32,8 +41,8 @@ def describe_bind_error(*, host: str, port: int, exc: OSError) -> str:
     if _is_addr_in_use(exc):
         return (
             f"{base} Another process is already using that port. "
-            "Stop the existing process, or choose a different port with --port <port> "
-            "or CCCC_WEB_PORT."
+            "Stop the existing process, or restart CCCC on a different port. "
+            f"{_switch_port_examples()}"
         )
     if _is_windows_access_denied(exc):
         return (
@@ -41,7 +50,7 @@ def describe_bind_error(*, host: str, port: int, exc: OSError) -> str:
             "inside an excluded TCP port range reserved by Hyper-V, WSL, WinNAT, or HNS, "
             "even when no process is listening. Check with "
             "`netsh interface ipv4 show excludedportrange protocol=tcp`, then restart CCCC "
-            "with a different port via --port <port> or CCCC_WEB_PORT."
+            f"with a different port. {_switch_port_examples()}"
         )
     detail = str(exc).strip()
     if detail:
@@ -63,6 +72,11 @@ def ensure_tcp_port_bindable(*, host: str, port: int) -> None:
         seen.add(addr_key)
         sock = socket.socket(family, socktype, proto)
         try:
+            if not sys.platform.startswith("win"):
+                try:
+                    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                except OSError:
+                    pass
             if sys.platform.startswith("win") and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
                 try:
                     sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)

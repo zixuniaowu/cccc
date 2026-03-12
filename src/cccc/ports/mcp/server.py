@@ -626,6 +626,7 @@ def _handle_cccc_namespace(name: str, arguments: Dict[str, Any]) -> Optional[Dic
                 by=by,
                 action=str(arguments.get("provider_action") or arguments.get("sub_action") or "status"),
                 timeout_seconds=timeout_seconds,
+                force_reauth=coerce_bool(arguments.get("force_reauth"), default=False),
             )
         if action == "provider_credential_status":
             by = _resolve_caller_from_by(arguments)
@@ -698,7 +699,7 @@ def _handle_context_namespace(name: str, arguments: Dict[str, Any]) -> Optional[
         action = str(arguments.get("action") or "get").strip().lower()
         target = str(arguments.get("target_actor_id") or "").strip() or None
         if action == "get":
-            return role_notes_get(group_id=gid, target_actor_id=target)
+            return role_notes_get(group_id=gid, caller_actor_id=by, target_actor_id=target)
         if action == "set":
             if not target:
                 raise MCPError(code="invalid_request", message="target_actor_id is required for set")

@@ -75,7 +75,7 @@
   "changeSettings": "Change settings for this agent",
   "sectionBasics": "Basics",
   "addSectionBasicsHint": "Set the actor name and team role before choosing how it runs.",
-  "sectionBasicsHint": "Edit the actor label and stable role notes here.",
+  "sectionBasicsHint": "Edit the actor label and stable actor-scoped role notes here.",
   "sectionRuntime": "Runtime & Profile",
   "sectionRuntimeHint": "Choose how this actor runs, then adjust only the fields that matter.",
   "sectionAdvanced": "Advanced",
@@ -131,6 +131,8 @@
   "actorProfile": "Actor Profile",
   "loadingProfiles": "Loading profiles...",
   "selectActorProfile": "Select a profile",
+  "profileScopeGlobal": "Global",
+  "profileScopeOwnedBy": "User: {{owner}}",
   "createFromProfile": "Create from Profile",
   "profileRequired": "Please select an actor profile.",
   "selectProfileFirst": "Please select an actor profile first.",
@@ -158,7 +160,7 @@
   "connectionLostDescription": "Terminal connection failed. The agent process may have stopped or the server is unreachable.",
   "reconnect": "Reconnect",
   "roleNotes": "Role Notes",
-  "roleNotesHint": "Stored in CCCC_HELP.md for this actor only. Use it for stable local guidance, not temporary tasks.",
+  "roleNotesHint": "Stored in CCCC_HELP.md as this actor's `## @actor:` block. Use it for stable local guidance, not temporary tasks.",
   "roleNotesPlaceholder": "Describe only this actor's local responsibilities, boundaries, and preferred behavior…",
   "loadingRoleNotes": "Loading role notes…"
 }

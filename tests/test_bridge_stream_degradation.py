@@ -66,6 +66,9 @@ class FailEndAdapter(IMAdapter):
 
     platform = "test"
 
+    def __init__(self) -> None:
+        self.sent_messages: List[Dict[str, Any]] = []
+
     def connect(self) -> bool:
         return True
 
@@ -76,6 +79,7 @@ class FailEndAdapter(IMAdapter):
         return []
 
     def send_message(self, chat_id: str, text: str, thread_id: Optional[int] = None) -> bool:
+        self.sent_messages.append({"chat_id": chat_id, "text": text, "thread_id": thread_id})
         return True
 
     def get_chat_title(self, chat_id: str) -> str:
@@ -213,12 +217,13 @@ class TestBridgeStreamDegradation(unittest.TestCase):
                 "by": "agent-1",
                 "data": {"op": "end", "stream_id": "s3", "text": "final"},
             })
-            self.assertIn("s3", bridge._active_streams)
+            self.assertNotIn("s3", bridge._active_streams)
+            self.assertIn("s3", bridge._completed_stream_targets)
         finally:
             cleanup()
 
     def test_end_stream_exception_does_not_block(self) -> None:
-        """end_stream exception → logged, handle removed, chat.message can still deliver."""
+        """end_stream exception should degrade back to final chat.message delivery."""
         adapter = FailEndAdapter()
         bridge, cleanup = self._make_bridge(adapter)
         try:
@@ -235,8 +240,16 @@ class TestBridgeStreamDegradation(unittest.TestCase):
                 "by": "agent-1",
                 "data": {"op": "end", "stream_id": "s4", "text": "final"},
             })
-            # Entry still in cache for chat.message dedup
-            self.assertIn("s4", bridge._active_streams)
+            self.assertNotIn("s4", bridge._active_streams)
+            self.assertNotIn("s4", bridge._completed_stream_targets)
+
+            bridge._forward_event({
+                "kind": "chat.message",
+                "by": "agent-1",
+                "data": {"text": "final fallback", "to": ["user"], "stream_id": "s4", "attachments": []},
+            })
+            self.assertEqual(len(adapter.sent_messages), 1)
+            self.assertEqual(adapter.sent_messages[0]["text"], "[agent-1] final fallback")
         finally:
             cleanup()
 

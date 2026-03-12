@@ -1113,6 +1113,80 @@ class TestActorProfilesOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_explicit_non_owner_cannot_start_actor_with_user_scope_profile(self) -> None:
+        from cccc.daemon.actors.private_env_ops import load_actor_private_env, update_actor_private_env
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group("ap-start-user-owner-guard")
+            create_user, _ = self._call(
+                "actor_profile_upsert",
+                {
+                    "by": "user",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "profile": {
+                        "id": "shared-profile",
+                        "name": "Shared User",
+                        "scope": "user",
+                        "owner_id": "user-a",
+                        "runtime": "custom",
+                        "runner": "headless",
+                        "command": [],
+                        "submit": "newline",
+                    },
+                },
+            )
+            self.assertTrue(create_user.ok, getattr(create_user, "error", None))
+            set_user_secret, _ = self._call(
+                "actor_profile_secret_update",
+                {
+                    "by": "user",
+                    "profile_id": "shared-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "set": {"SHARED_SECRET": "user-secret"},
+                },
+            )
+            self.assertTrue(set_user_secret.ok, getattr(set_user_secret, "error", None))
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "profile_id": "shared-profile",
+                    "profile_scope": "user",
+                    "profile_owner": "user-a",
+                    "caller_id": "user-a",
+                    "is_admin": False,
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+            update_actor_private_env(group_id, "peer1", set_vars={}, unset_keys=[], clear=True)
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            denied_start, _ = self._call(
+                "actor_start",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "by": "user",
+                    "caller_id": "user-b",
+                    "is_admin": False,
+                },
+            )
+            self.assertFalse(denied_start.ok)
+            self.assertEqual(getattr(denied_start.error, "code", ""), "permission_denied")
+            self.assertEqual(load_actor_private_env(group_id, "peer1").get("SHARED_SECRET"), None)
+        finally:
+            cleanup()
+
     def test_user_scope_profile_secrets_are_owner_scoped(self) -> None:
         _, cleanup = self._with_home()
         try:

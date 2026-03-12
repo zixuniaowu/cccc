@@ -21,6 +21,7 @@ import { RecipientsModal } from "./modals/RecipientsModal";
 import { parsePrivateEnvSetText } from "../utils/privateEnvInput";
 import { parseHelpMarkdown, updateActorHelpNote } from "../utils/helpMarkdown";
 import { formatCapabilityIdInput, normalizeCapabilityIdList, parseCapabilityIdInput } from "../utils/capabilityAutoload";
+import { actorProfileIdentityKey, actorProfileMatchesRef } from "../utils/actorProfiles";
 import {
   useGroupStore,
   useUIStore,
@@ -399,11 +400,15 @@ export function AppModals({
 
     const label = String(editingActor.title || editingActor.id || actorId).trim() || actorId;
     const mode = payload.mode === "profile" ? "profile" : "custom";
-    const profileId = String(payload.profileId || "").trim();
+    const profileSelectionKey = String(payload.profileId || "").trim();
+    const selectedProfile = mode === "profile"
+      ? actorProfiles.find((item) => actorProfileIdentityKey(item) === profileSelectionKey) || null
+      : null;
+    const profileId = String(selectedProfile?.id || "").trim();
     const linkedBefore = Boolean(String(editingActor.profile_id || "").trim());
     const convertToCustom = mode === "custom" && linkedBefore && !!payload.convertToCustom;
 
-    if (mode === "profile" && !profileId) {
+    if (mode === "profile" && !selectedProfile) {
       showError(t("profileRequired"));
       return;
     }
@@ -441,7 +446,11 @@ export function AppModals({
     const titleChanged = nextTitle !== currentTitle;
     const autoloadChanged =
       JSON.stringify(nextCapabilityAutoload) !== JSON.stringify(currentCapabilityAutoload);
-    const profileChanged = mode === "profile" && profileId !== String(editingActor.profile_id || "").trim();
+    const profileChanged = mode === "profile" && !actorProfileMatchesRef(selectedProfile || { id: "", scope: "global", owner_id: "" }, {
+      profileId: String(editingActor.profile_id || "").trim(),
+      profileScope: String(editingActor.profile_scope || "global").trim() || "global",
+      profileOwner: String(editingActor.profile_owner || "").trim(),
+    });
     const roleNotesChanged = nextRoleNotes !== currentRoleNotes;
     const hasActorMutation =
       convertToCustom || runtimeChanged || commandChanged || titleChanged || autoloadChanged || profileChanged;
@@ -495,6 +504,8 @@ export function AppModals({
             nextTitle,
             {
               profileId,
+              profileScope: (selectedProfile?.scope || "global") as api.ProfileScope,
+              profileOwner: String(selectedProfile?.owner_id || "").trim() || undefined,
               capabilityAutoload: nextCapabilityAutoload,
             }
           );
@@ -788,7 +799,7 @@ export function AppModals({
     if (!selectedGroupId) return;
     const actorId = newActorId.trim();
     const secretsText = String(newActorSecretsSetText || "");
-    const selectedProfile = actorProfiles.find((item) => String(item.id || "") === String(newActorProfileId || "")) || null;
+    const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim()) || null;
     const capabilityAutoload = parseCapabilityIdInput(newActorCapabilityAutoloadText);
 
     if (newActorUseProfile && !selectedProfile) {
@@ -820,6 +831,8 @@ export function AppModals({
         newActorUseProfile
           ? {
               profileId: String(selectedProfile?.id || "").trim(),
+              profileScope: (selectedProfile?.scope || "global") as api.ProfileScope,
+              profileOwner: String(selectedProfile?.owner_id || "").trim() || undefined,
               capabilityAutoload,
             }
           : {
@@ -889,7 +902,7 @@ export function AppModals({
 
   // Computed for AddActorModal
   const suggestedActorId = (() => {
-    const selectedProfile = actorProfiles.find((item) => String(item.id || "") === String(newActorProfileId || "")) || null;
+    const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim()) || null;
     const profileRuntime = String(selectedProfile?.runtime || "").trim();
     const prefix = newActorUseProfile ? (profileRuntime || "actor") : newActorRuntime;
     const existing = new Set(actors.map((a) => String(a.id || "")));
@@ -1157,6 +1170,8 @@ export function AppModals({
         onSave={handleSaveEditActorOnly}
         onSaveAndRestart={handleSaveEditActorAndRestart}
         linkedProfileId={String(editingActor?.profile_id || "") || undefined}
+        linkedProfileScope={(String(editingActor?.profile_scope || "global").trim() || "global") as "global" | "user"}
+        linkedProfileOwner={String(editingActor?.profile_owner || "").trim() || undefined}
         actorProfiles={actorProfiles}
         actorProfilesBusy={actorProfilesBusy}
         onSaveAsProfile={handleSaveEditActorAsProfile}

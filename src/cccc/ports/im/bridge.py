@@ -287,6 +287,9 @@ class IMBridge:
         # Active outbound streams: stream_id -> {target_key -> OutboundStreamHandle}
         # Two-level cache so each subscriber chat gets its own handle.
         self._active_streams: Dict[str, Dict[str, OutboundStreamHandle]] = {}
+        # Targets that successfully completed a stream and may skip the final
+        # plain-text fallback for the same stream_id.
+        self._completed_stream_targets: Dict[str, set[str]] = {}
         # Inbound health monitoring: periodic log every 5 minutes
         self._last_health_log: float = 0.0
         self._inbound_count: int = 0  # messages processed since last health log
@@ -589,7 +592,8 @@ class IMBridge:
           subsequent update/end are silently ignored for that target and the final
           chat.message will deliver as plain text (E4 fix).
         - update_stream exception → logged, frame dropped, stream continues.
-        - end_stream exception → logged, does not block final chat.message delivery.
+        - only targets whose end_stream succeeds may suppress the final plain-text
+          fallback; failures degrade back to chat.message delivery.
         """
         data = event.get("data", {})
         if not isinstance(data, dict):
@@ -641,14 +645,17 @@ class IMBridge:
                 if targets is not None:
                     handle = targets.get(target_key)
                     if handle is not None:
+                        end_ok = False
                         try:
-                            self.adapter.end_stream(handle, text=text)
+                            end_ok = bool(self.adapter.end_stream(handle, text=text))
                         except Exception:
                             self._log(f"[stream] end_stream exception for stream={stream_id} target={target_key}")
-                    # NOTE: do NOT remove target_key here — keep it so
-                    # _forward_event can dedup when chat.message arrives
-                    # with the same stream_id. The chat.message handler
-                    # pops the whole stream entry from _active_streams.
+                        if end_ok:
+                            completed = self._completed_stream_targets.setdefault(stream_id, set())
+                            completed.add(target_key)
+                        targets.pop(target_key, None)
+                        if not targets:
+                            self._active_streams.pop(stream_id, None)
 
     def _forward_event(self, event: Dict[str, Any], *, actor_labels: Optional[Dict[str, str]] = None) -> None:
         """Forward a ledger event to subscribed chats."""
@@ -679,16 +686,16 @@ class IMBridge:
         attachments = data.get("attachments", [])
 
         # E4: per-target dedup for streamed messages.
-        # If chat.message carries stream_id, collect target keys that successfully
-        # began streaming — those targets already received content via chat.stream
-        # and should be skipped. Targets where begin_stream failed (no cached handle)
-        # still receive the plain-text fallback.
+        # If chat.message carries stream_id, only targets that successfully
+        # completed end_stream skip the final plain-text fallback. Attachments are
+        # still delivered because the stream never carried them.
         _streamed_msg_id = str(data.get("stream_id") or "").strip() if is_chat else ""
         _streamed_targets: set[str] = set()
         if _streamed_msg_id:
-            targets = self._active_streams.pop(_streamed_msg_id, None)
-            if targets:
-                _streamed_targets = set(targets.keys())
+            self._active_streams.pop(_streamed_msg_id, None)
+            completed = self._completed_stream_targets.pop(_streamed_msg_id, None)
+            if completed:
+                _streamed_targets = set(completed)
 
         if not text and not attachments:
             return
@@ -708,11 +715,8 @@ class IMBridge:
             if not self.key_manager.is_authorized(sub.chat_id, sub.thread_id):
                 continue
 
-            # E4: skip targets that already received content via chat.stream.
-            if _streamed_targets:
-                target_key = self._stream_target_key(sub.chat_id, sub.thread_id)
-                if target_key in _streamed_targets:
-                    continue
+            target_key = self._stream_target_key(sub.chat_id, sub.thread_id)
+            skip_text_due_to_stream = bool(_streamed_targets and target_key in _streamed_targets)
 
             verbose = bool(sub.verbose)
 
@@ -763,7 +767,7 @@ class IMBridge:
                         # Skip oversized files (no fallback).
                         continue
                     title = str(a.get("title") or abs_path.name or "file")
-                    cap = formatted if (i == 0 and formatted) else ""
+                    cap = formatted if (i == 0 and formatted and not skip_text_due_to_stream) else ""
                     ok = False
                     try:
                         ok = bool(self.adapter.send_file(sub.chat_id, file_path=abs_path, filename=title, caption=cap, thread_id=sub.thread_id))
@@ -775,7 +779,7 @@ class IMBridge:
                             delivered_user_facing = True
 
             # If we didn't send any files, or if there's text with no files, send message.
-            if formatted and not sent_any_file:
+            if formatted and not sent_any_file and not skip_text_due_to_stream:
                 sent_msg = bool(self.adapter.send_message(sub.chat_id, formatted, thread_id=sub.thread_id))
                 if sent_msg and is_user_facing:
                     delivered_user_facing = True

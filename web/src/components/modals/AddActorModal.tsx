@@ -11,6 +11,7 @@ import { classNames } from "../../utils/classNames";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { CapabilityPicker } from "../CapabilityPicker";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
+import { actorProfileIdentityKey } from "../../utils/actorProfiles";
 
 export interface AddActorModalProps {
   isOpen: boolean;
@@ -64,6 +65,13 @@ export interface AddActorModalProps {
 function commandPreview(command: string[] | undefined): string {
   const cmd = Array.isArray(command) ? command.filter((item) => typeof item === "string" && item.trim()) : [];
   return cmd.join(" ");
+}
+
+function profileScopeLabel(profile: ActorProfile, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (String(profile.scope || "global").trim() === "user") {
+    return t("profileScopeOwnedBy", { owner: String(profile.owner_id || "").trim() || "?" });
+  }
+  return t("profileScopeGlobal");
 }
 
 function modeButtonClass(selected: boolean): string {
@@ -120,7 +128,7 @@ export function AddActorModal({
   const runtimeInfo = runtimes.find((r) => r.name === newActorRuntime);
   const runtimeAvailable = runtimeInfo?.available ?? false;
   const defaultCommand = runtimeInfo?.recommended_command || "";
-  const selectedProfile = actorProfiles.find((item) => String(item.id || "") === String(newActorProfileId || ""));
+  const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim());
   const selectedProfileRuntime = String(selectedProfile?.runtime || "").trim() as SupportedRuntime;
   const selectedProfileCommand = commandPreview(selectedProfile?.command);
   const showRuntimeSetup = !newActorUseProfile && newActorRuntime === "custom";
@@ -256,8 +264,8 @@ export function AddActorModal({
                       >
                         <option value="">{actorProfilesBusy ? t("loadingProfiles") : t("selectActorProfile")}</option>
                         {actorProfiles.map((profile) => (
-                          <option key={profile.id} value={profile.id}>
-                            {profile.name || profile.id}
+                          <option key={actorProfileIdentityKey(profile)} value={actorProfileIdentityKey(profile)}>
+                            {(profile.name || profile.id) + " · " + profileScopeLabel(profile, t)}
                           </option>
                         ))}
                       </select>
@@ -267,6 +275,9 @@ export function AddActorModal({
                       <div className="rounded-xl border px-3 py-3 border-[var(--glass-border-subtle)] bg-[var(--glass-bg)] text-[var(--color-text-secondary)]">
                         <div className="text-sm font-medium text-[var(--color-text-primary)]">
                           {selectedProfile.name || selectedProfile.id}
+                        </div>
+                        <div className="mt-1 text-xs">
+                          {profileScopeLabel(selectedProfile, t)}
                         </div>
                         <div className="mt-1 text-xs">
                           {RUNTIME_INFO[selectedProfileRuntime]?.label || selectedProfile.runtime}

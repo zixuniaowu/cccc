@@ -17,6 +17,21 @@ class _DeniedBindSocket:
         return None
 
 
+class _CaptureSocket:
+    def __init__(self) -> None:
+        self.setsockopt_calls: list[tuple[int, int, int]] = []
+        self.bound = False
+
+    def setsockopt(self, level: int, optname: int, value: int) -> None:
+        self.setsockopt_calls.append((level, optname, value))
+
+    def bind(self, _sockaddr) -> None:
+        self.bound = True
+
+    def close(self) -> None:
+        return None
+
+
 class TestWebBindPreflight(unittest.TestCase):
     def test_in_use_port_reports_clear_message(self) -> None:
         from cccc.ports.web.bind_preflight import ensure_tcp_port_bindable
@@ -33,6 +48,8 @@ class TestWebBindPreflight(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn(f"Web port {port} is unavailable", message)
         self.assertIn("already using that port", message)
+        self.assertIn("cccc web --port 9000", message)
+        self.assertIn("CCCC_WEB_PORT=9000 cccc", message)
 
     def test_windows_access_denied_points_to_excluded_port_ranges(self) -> None:
         from cccc.ports.web import bind_preflight
@@ -48,6 +65,22 @@ class TestWebBindPreflight(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("excluded TCP port range", message)
         self.assertIn("netsh interface ipv4 show excludedportrange protocol=tcp", message)
+        self.assertIn("cccc web --port 9000", message)
+        self.assertIn("$env:CCCC_WEB_PORT=9000; cccc", message)
+
+    def test_posix_preflight_sets_reuseaddr(self) -> None:
+        from cccc.ports.web import bind_preflight
+
+        fake_socket = _CaptureSocket()
+        with patch.object(bind_preflight.sys, "platform", "linux"), patch.object(
+            bind_preflight.socket,
+            "getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 8848))],
+        ), patch.object(bind_preflight.socket, "socket", return_value=fake_socket):
+            bind_preflight.ensure_tcp_port_bindable(host="127.0.0.1", port=8848)
+
+        self.assertTrue(fake_socket.bound)
+        self.assertIn((socket.SOL_SOCKET, socket.SO_REUSEADDR, 1), fake_socket.setsockopt_calls)
 
     def test_web_main_returns_error_when_preflight_fails(self) -> None:
         from cccc.ports.web import main as web_main
@@ -57,12 +90,35 @@ class TestWebBindPreflight(unittest.TestCase):
             web_main,
             "ensure_tcp_port_bindable",
             side_effect=RuntimeError("boom"),
-        ), patch.object(web_main.uvicorn, "run") as mock_run, patch.object(web_main.sys, "stderr", stderr):
+        ), patch.object(web_main.uvicorn, "Config") as mock_config, patch.object(
+            web_main.uvicorn, "Server"
+        ) as mock_server, patch.object(web_main.sys, "stderr", stderr):
             rc = web_main.main(["--host", "127.0.0.1", "--port", "8848"])
 
         self.assertEqual(rc, 1)
         self.assertIn("boom", stderr.getvalue())
-        mock_run.assert_not_called()
+        mock_config.assert_not_called()
+        mock_server.assert_not_called()
+
+    def test_web_main_uses_fast_shutdown_timeout(self) -> None:
+        from cccc.ports.web import main as web_main
+
+        server_instance = unittest.mock.Mock()
+        with patch.object(web_main, "_check_daemon_running", return_value=True), patch.object(
+            web_main,
+            "ensure_tcp_port_bindable",
+            return_value=None,
+        ), patch.object(web_main.uvicorn, "Config") as mock_config, patch.object(
+            web_main.uvicorn, "Server",
+            return_value=server_instance,
+        ) as mock_server:
+            rc = web_main.main(["--host", "127.0.0.1", "--port", "8848"])
+
+        self.assertEqual(rc, 0)
+        mock_config.assert_called_once()
+        self.assertEqual(mock_config.call_args.kwargs.get("timeout_graceful_shutdown"), 0.2)
+        mock_server.assert_called_once()
+        server_instance.run.assert_called_once_with()
 
 
 if __name__ == "__main__":

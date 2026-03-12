@@ -482,8 +482,8 @@ def _default_entry() -> int:
     monitor_thread = threading.Thread(target=_monitor_daemon, daemon=True)
     monitor_thread.start()
 
-    # Run web. Let uvicorn own signal handling; set a bounded graceful timeout to
-    # avoid hanging forever on long-lived connections (e.g. SSE/WebSocket).
+    # Run web. Keep shutdown nearly immediate so Ctrl+C releases the port fast,
+    # while avoiding uvicorn's noisy zero-timeout cancellation path.
     import uvicorn
 
     config = uvicorn.Config(
@@ -493,7 +493,7 @@ def _default_entry() -> int:
         port=port,
         log_level=log_level,
         reload=reload_mode,
-        timeout_graceful_shutdown=3,
+        timeout_graceful_shutdown=0.2,
     )
     server = uvicorn.Server(config)
 

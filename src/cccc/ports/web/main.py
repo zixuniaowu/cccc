@@ -48,15 +48,19 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
 
+    config = uvicorn.Config(
+        "cccc.ports.web.app:create_app",
+        factory=True,
+        host=str(args.host),
+        port=int(args.port),
+        log_level=str(args.log_level),
+        reload=bool(args.reload),
+        timeout_graceful_shutdown=0.2,
+    )
+    server = uvicorn.Server(config)
+
     try:
-        uvicorn.run(
-            "cccc.ports.web.app:create_app",
-            factory=True,
-            host=str(args.host),
-            port=int(args.port),
-            log_level=str(args.log_level),
-            reload=bool(args.reload),
-        )
+        server.run()
     except (KeyboardInterrupt, SystemExit):
         pass
     

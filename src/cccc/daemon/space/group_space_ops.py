@@ -35,6 +35,7 @@ from ...providers.notebooklm.health import notebooklm_health_check, parse_notebo
 from ..messaging.delivery import emit_system_notify
 from .notebooklm_auth_flow import (
     cancel_notebooklm_auth_flow,
+    disconnect_notebooklm_auth_flow,
     get_notebooklm_auth_flow_status,
     start_notebooklm_auth_flow,
 )
@@ -43,7 +44,12 @@ from .group_space_memory_sync import (
     summarize_memory_notebooklm_sync,
     sync_memory_daily_files,
 )
-from .group_space_sync import group_space_local_file_policy, read_group_space_sync_state, sync_group_space_files
+from .group_space_sync import (
+    group_space_local_file_policy,
+    mark_group_space_sync_pending,
+    read_group_space_sync_state,
+    sync_group_space_files,
+)
 from .group_space_projection import sync_group_space_projection
 from .group_space_runtime import acquire_space_provider_write, execute_space_job, retry_space_job, run_space_query
 from .group_space_store import (
@@ -99,7 +105,7 @@ _SPACE_ARTIFACT_KIND_ALIASES = {
     "summary": "report",
     "briefing": "report",
 }
-_SPACE_PROVIDER_AUTH_ACTIONS = {"status", "start", "cancel"}
+_SPACE_PROVIDER_AUTH_ACTIONS = {"status", "start", "cancel", "disconnect"}
 _SPACE_PROVIDER_SECRET_KEYS = {"notebooklm": "NOTEBOOKLM_AUTH_JSON"}
 _SPACE_RESOURCE_INGEST_TYPES = {
     "file",
@@ -1292,21 +1298,7 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                 by=by,
                 status="bound",
             )
-            provider_state = set_space_provider_state(
-                provider,
-                enabled=True,
-                mode="degraded",
-                last_error=f"binding {lane} lane",
-                touch_health=True,
-            )
-            try:
-                if lane == "work":
-                    sync_result = sync_group_space_files(group.group_id, provider=provider, force=True, by=by)
-                else:
-                    sync_result = sync_memory_daily_files(group.group_id, provider=provider, force=False, by=by)
-            except Exception as e:
-                sync_result = {"ok": False, "code": "space_sync_failed", "message": str(e)}
-            if isinstance(sync_result, dict) and bool(sync_result.get("ok")):
+            if lane == "work":
                 provider_state = set_space_provider_state(
                     provider,
                     enabled=True,
@@ -1314,15 +1306,57 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                     last_error="",
                     touch_health=True,
                 )
+                current_sync_state = read_group_space_sync_state(group.group_id)
+                current_sync_remote_id = str(current_sync_state.get("remote_space_id") or "").strip()
+                if current_sync_remote_id and current_sync_remote_id == remote_space_id:
+                    sync_result = {
+                        "ok": True,
+                        "deferred": True,
+                        "reason": "background_sync",
+                        "remote_space_id": remote_space_id,
+                    }
+                else:
+                    pending_state = mark_group_space_sync_pending(
+                        group.group_id,
+                        provider=provider,
+                        remote_space_id=remote_space_id,
+                    )
+                    sync_result = {
+                        "ok": True,
+                        "deferred": True,
+                        "reason": "background_sync",
+                        "remote_space_id": remote_space_id,
+                        "state": pending_state,
+                    }
             else:
-                last_error = str((sync_result or {}).get("message") or f"{lane} lane sync failed")
                 provider_state = set_space_provider_state(
                     provider,
                     enabled=True,
                     mode="degraded",
-                    last_error=last_error,
+                    last_error=f"binding {lane} lane",
                     touch_health=True,
                 )
+                try:
+                    sync_result = sync_memory_daily_files(group.group_id, provider=provider, force=False, by=by)
+                except Exception as e:
+                    sync_result = {"ok": False, "code": "space_sync_failed", "message": str(e)}
+                if isinstance(sync_result, dict) and bool(sync_result.get("ok")):
+                    provider_state = set_space_provider_state(
+                        provider,
+                        enabled=True,
+                        mode="active",
+                        last_error="",
+                        touch_health=True,
+                    )
+                else:
+                    last_error = str((sync_result or {}).get("message") or f"{lane} lane sync failed")
+                    provider_state = set_space_provider_state(
+                        provider,
+                        enabled=True,
+                        mode="degraded",
+                        last_error=last_error,
+                        touch_health=True,
+                    )
         else:
             binding = set_space_binding_unbound(group.group_id, provider=provider, lane=lane, by=by)
             has_any_bound = any(
@@ -2269,6 +2303,7 @@ def handle_group_space_provider_auth(args: Dict[str, Any]) -> DaemonResponse:
     by = str(args.get("by") or "user").strip() or "user"
     action_raw = args.get("action")
     timeout_seconds = int(args.get("timeout_seconds") or 900)
+    force_reauth = bool(args.get("force_reauth") is True)
     if not _is_user_writer(by):
         return _error("space_permission_denied", "only user can run provider auth flow")
     try:
@@ -2277,9 +2312,21 @@ def handle_group_space_provider_auth(args: Dict[str, Any]) -> DaemonResponse:
             return _error("space_job_invalid", f"unsupported provider auth flow: {provider}")
         action = _provider_auth_action_or_error(action_raw)
         if action == "start":
-            auth = start_notebooklm_auth_flow(timeout_seconds=timeout_seconds)
+            auth = start_notebooklm_auth_flow(
+                timeout_seconds=timeout_seconds,
+                force_reauth=force_reauth,
+            )
         elif action == "cancel":
             auth = cancel_notebooklm_auth_flow()
+        elif action == "disconnect":
+            auth = disconnect_notebooklm_auth_flow()
+            _ = set_space_provider_state(
+                provider,
+                enabled=False,
+                mode="disabled",
+                last_error="",
+                touch_health=True,
+            )
         else:
             auth = get_notebooklm_auth_flow_status()
         provider_state = get_space_provider_state(provider)
@@ -2296,6 +2343,11 @@ def handle_group_space_provider_auth(args: Dict[str, Any]) -> DaemonResponse:
         )
     except ValueError as e:
         return _error("space_job_invalid", str(e))
+    except RuntimeError as e:
+        message = str(e)
+        if "connect flow is running" in message:
+            return _error("space_provider_auth_flow_running", message)
+        return _error("group_space_provider_auth_failed", message)
     except Exception as e:
         return _error("group_space_provider_auth_failed", str(e))
 

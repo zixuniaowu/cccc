@@ -6,6 +6,7 @@ import * as api from "../../services/api";
 import { useModalA11y } from "../../hooks/useModalA11y";
 import { parsePrivateEnvSetText, parsePrivateEnvUnsetText } from "../../utils/privateEnvInput";
 import { formatCapabilityIdInput, parseCapabilityIdInput } from "../../utils/capabilityAutoload";
+import { actorProfileIdentityKey, actorProfileMatchesRef } from "../../utils/actorProfiles";
 import { CapabilityPicker } from "../CapabilityPicker";
 
 type EditMode = "custom" | "profile";
@@ -87,6 +88,13 @@ function commandPreview(command: string[] | undefined): string {
   return cmd.join(" ");
 }
 
+function profileScopeLabel(profile: ActorProfile, t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (String(profile.scope || "global").trim() === "user") {
+    return t("profileScopeOwnedBy", { owner: String(profile.owner_id || "").trim() || "?" });
+  }
+  return t("profileScopeGlobal");
+}
+
 function modeButtonClass(selected: boolean): string {
   return [
     "px-3 py-2.5 rounded-xl border text-sm min-h-[44px] font-medium transition-colors",
@@ -160,7 +168,7 @@ export function EditActorModal({
   const linked = Boolean(String(linkedProfileId || "").trim());
   const effectiveLinked = linked && !pendingConvertToCustom;
   const selectedProfile = useMemo(
-    () => actorProfiles.find((profile) => String(profile.id || "") === String(attachProfileId || "")),
+    () => actorProfiles.find((profile) => actorProfileIdentityKey(profile) === String(attachProfileId || "").trim()),
     [actorProfiles, attachProfileId]
   );
   const selectedProfileName = String(selectedProfile?.name || "").trim();
@@ -283,7 +291,15 @@ export function EditActorModal({
     const hasLinked = Boolean(String(linkedProfileId || "").trim());
     setEditMode(hasLinked ? "profile" : "custom");
     setPendingConvertToCustom(false);
-    setAttachProfileId(hasLinked ? String(linkedProfileId || "") : "");
+    setAttachProfileId(
+      hasLinked
+        ? actorProfileIdentityKey({
+            id: String(linkedProfileId || "").trim(),
+            scope: linkedProfileScope || "global",
+            owner_id: linkedProfileOwner || "",
+          })
+        : ""
+    );
     setLocalNotice("");
     setSecretsError("");
     setSecretMasks({});
@@ -294,20 +310,26 @@ export function EditActorModal({
     setSecretSource("none");
     if (!hasLinked) void refreshSecretKeys();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [groupId, actorId, isOpen, linkedProfileId]);
+  }, [groupId, actorId, isOpen, linkedProfileId, linkedProfileOwner, linkedProfileScope]);
 
   useEffect(() => {
     if (!isOpen) return;
     const linkedId = String(linkedProfileId || "").trim();
     if (!linkedId || actorProfilesBusy) return;
-    const exists = actorProfiles.some((profile) => String(profile.id || "").trim() === linkedId);
+    const exists = actorProfiles.some((profile) =>
+      actorProfileMatchesRef(profile, {
+        profileId: linkedId,
+        profileScope: linkedProfileScope || "global",
+        profileOwner: linkedProfileOwner || "",
+      })
+    );
     if (exists) return;
     // Defensive fallback: when profile was deleted/detached and actor list is briefly stale,
     // prefer Custom tab to avoid opening in an invalid "Use Profile" state.
     setEditMode("custom");
     setPendingConvertToCustom(false);
     setAttachProfileId("");
-  }, [isOpen, linkedProfileId, actorProfilesBusy, actorProfiles]);
+  }, [isOpen, linkedProfileId, linkedProfileOwner, linkedProfileScope, actorProfilesBusy, actorProfiles]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -346,7 +368,7 @@ export function EditActorModal({
       if (profileId && result?.useNow) {
         setPendingConvertToCustom(false);
         setEditMode("profile");
-        setAttachProfileId(profileId);
+        setAttachProfileId(actorProfileIdentityKey({ id: profileId, scope: "global", owner_id: "" }));
         setLocalNotice(
           t("profileSelectedPendingSave", {
             name: String(result.profileName || profileId),
@@ -547,8 +569,8 @@ export function EditActorModal({
                       >
                         <option value="">{actorProfilesBusy ? t("loadingProfiles") : t("selectActorProfile")}</option>
                         {actorProfiles.map((profile) => (
-                          <option key={profile.id} value={profile.id}>
-                            {profile.name || profile.id}
+                          <option key={actorProfileIdentityKey(profile)} value={actorProfileIdentityKey(profile)}>
+                            {(profile.name || profile.id) + " · " + profileScopeLabel(profile, t)}
                           </option>
                         ))}
                       </select>
@@ -557,6 +579,7 @@ export function EditActorModal({
                     {selectedProfile ? (
                       <div className="rounded-xl border px-3 py-2 text-xs border-[var(--glass-border-subtle)] bg-[var(--glass-bg)] text-[var(--color-text-secondary)]">
                         <div className="font-medium">{selectedProfile.name || selectedProfile.id}</div>
+                        <div className="mt-1">{profileScopeLabel(selectedProfile, t)}</div>
                         <div className="mt-1">
                           {RUNTIME_INFO[String(selectedProfile.runtime) as SupportedRuntime]?.label || selectedProfile.runtime}
                         </div>

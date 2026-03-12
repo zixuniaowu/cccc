@@ -137,8 +137,9 @@ class TestBridgeStreamForwarding(unittest.TestCase):
                 "by": "agent-1",
                 "data": {"op": "end", "stream_id": "s3", "text": "final"},
             })
-            # end calls adapter.end_stream but keeps entry for chat.message dedup
-            self.assertIn("s3", bridge._active_streams)
+            # end success moves the target into final-message dedup tracking
+            self.assertNotIn("s3", bridge._active_streams)
+            self.assertIn("s3", bridge._completed_stream_targets)
             self.assertEqual(len(adapter.streams_ended), 1)
             self.assertEqual(adapter.streams_ended[0]["text"], "final")
         finally:
@@ -165,13 +166,19 @@ class TestBridgeStreamForwarding(unittest.TestCase):
         bridge, cleanup = self._make_bridge(adapter)
         try:
             adapter.send_message = MagicMock(return_value=True)
-            # First, start a stream so the target is cached
+            # First, start and successfully end a stream so the target is eligible
+            # to skip the final plain-text fallback.
             bridge._forward_stream_event({
                 "kind": "chat.stream",
                 "by": "agent-1",
                 "data": {"op": "start", "stream_id": "s5", "text": ""},
             })
-            self.assertIn("s5", bridge._active_streams)
+            bridge._forward_stream_event({
+                "kind": "chat.stream",
+                "by": "agent-1",
+                "data": {"op": "end", "stream_id": "s5", "text": "final streamed"},
+            })
+            self.assertIn("s5", bridge._completed_stream_targets)
 
             # Now forward the final chat.message with matching stream_id
             event = {
@@ -187,8 +194,9 @@ class TestBridgeStreamForwarding(unittest.TestCase):
             bridge._forward_event(event)
             # send_message should NOT be called — target already received via stream
             adapter.send_message.assert_not_called()
-            # stream entry cleaned up by chat.message handler
+            # stream bookkeeping cleaned up by chat.message handler
             self.assertNotIn("s5", bridge._active_streams)
+            self.assertNotIn("s5", bridge._completed_stream_targets)
         finally:
             cleanup()
 

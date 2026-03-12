@@ -5,13 +5,17 @@ from typing import Any, Callable, Dict, Optional
 
 from ...kernel.actors import find_actor, update_actor
 from ...contracts.v1 import ActorProfileRef
-from .actor_profile_store import get_actor_profile_by_ref, normalize_actor_profile_ref
+from .actor_profile_store import ProfileResolver, normalize_actor_profile_ref
 
 PROFILE_CONTROLLED_FIELDS = ("runtime", "runner", "command", "submit", "env")
 _LOG = logging.getLogger("cccc.daemon.actor_profile_runtime")
 
 
 class ActorProfileNotFoundError(RuntimeError):
+    pass
+
+
+class ActorProfileAccessDeniedError(RuntimeError):
     pass
 
 
@@ -61,15 +65,19 @@ def _resolve_profile_for_start(
 ) -> Optional[Dict[str, Any]]:
     ref = actor_profile_ref(actor)
     if ref is not None:
-        return get_actor_profile_by_ref(ref)
+        profile = ProfileResolver().resolve(ref, caller_id=caller_id, is_admin=is_admin)
+        if profile is None:
+            if ref.profile_scope == "user" and not is_admin and ref.profile_owner != str(caller_id or "").strip():
+                raise ActorProfileAccessDeniedError(
+                    f"profile access denied: {ref.profile_id} (owned by {ref.profile_owner})"
+                )
+            return None
+        return profile.model_dump(exclude_none=True)
     # Legacy compat: actor has bare profile_id but no constructible ref.
     # Treat as global — no caller-based fallback.
     pid = actor_profile_id(actor)
     if pid:
-        fallback_ref = normalize_actor_profile_ref(
-            {"profile_id": pid, "profile_scope": "global", "profile_owner": ""}
-        )
-        return get_actor_profile_by_ref(fallback_ref)
+        return get_actor_profile(pid)
     return None
 
 

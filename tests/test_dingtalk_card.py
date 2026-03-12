@@ -106,12 +106,12 @@ def test_create_card_robot_space_id(client):
     assert "IM_ROBOT.user123" in captured["body"]["openSpaceId"]
 
 
-def test_create_card_api_failure_returns_id(client):
-    """Even on API failure, create_card returns an id (best-effort)."""
+def test_create_card_api_failure_returns_none(client):
+    """API failure should return None so bridge can fall back to plain text."""
     resp = _mock_response(500, {"error": "fail"})
     with _patch_aiohttp(resp):
         card_id = _run(client.create_card("cidXXX", "text"))
-    assert card_id
+    assert card_id is None
 
 
 # ── update_card (no throttle) ────────────────────────────────────────

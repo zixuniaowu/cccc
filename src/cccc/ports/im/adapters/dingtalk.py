@@ -1244,6 +1244,9 @@ class DingTalkAdapter(IMAdapter):
         try:
             client = self._get_card_client()
             card_instance_id = self._run_async(client.create_card(chat_id, text))
+            if not card_instance_id:
+                self._log(f"[stream] begin_stream create_card failed for chat={chat_id} stream={stream_id}")
+                return None
             from .dingtalk_card import DingTalkCardHandle
 
             card_handle = DingTalkCardHandle(client, card_instance_id, stream_id=stream_id)

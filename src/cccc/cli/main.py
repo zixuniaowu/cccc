@@ -379,12 +379,22 @@ def build_parser() -> argparse.ArgumentParser:
         default=900,
         help="Auth flow timeout seconds (60-1800, default: 900)",
     )
+    p_space_auth_start.add_argument(
+        "--force-reauth",
+        action="store_true",
+        help="Force browser-based account switch instead of reusing a saved Google credential",
+    )
     p_space_auth_start.set_defaults(func=cmd_space_auth_start)
 
     p_space_auth_cancel = space_auth_sub.add_parser("cancel", help="Cancel provider auth flow")
     p_space_auth_cancel.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
     p_space_auth_cancel.add_argument("--by", default="user", help="Requester (default: user)")
     p_space_auth_cancel.set_defaults(func=cmd_space_auth_cancel)
+
+    p_space_auth_disconnect = space_auth_sub.add_parser("disconnect", help="Disconnect stored provider auth and clear local browser session")
+    p_space_auth_disconnect.add_argument("--provider", choices=["notebooklm"], default="notebooklm", help="Provider (default: notebooklm)")
+    p_space_auth_disconnect.add_argument("--by", default="user", help="Requester (default: user)")
+    p_space_auth_disconnect.set_defaults(func=cmd_space_auth_disconnect)
 
     p_space_bind = space_sub.add_parser("bind", help="Bind group to a provider remote space")
     p_space_bind.add_argument("remote_space_id", nargs="?", default="", help="Provider remote space/notebook ID (optional; auto-create when omitted)")

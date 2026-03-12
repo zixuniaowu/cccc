@@ -37,6 +37,7 @@ import type {
   TaskBoardEntry,
   TaskChecklistItem,
 } from "../types";
+import { actorProfileIdentityKey } from "../utils/actorProfiles";
 
 // ============ Access token auth ============
 
@@ -908,8 +909,9 @@ export async function listActorProfiles(): Promise<ApiResponse<{ profiles: Actor
   const seen = new Set<string>();
   const profiles: ActorProfile[] = [];
   for (const p of [...globalRes.result.profiles, ...myRes.result.profiles]) {
-    if (!seen.has(p.id)) {
-      seen.add(p.id);
+    const key = actorProfileIdentityKey(p);
+    if (!seen.has(key)) {
+      seen.add(key);
       profiles.push(p);
     }
   }
@@ -2027,8 +2029,9 @@ export async function checkGroupSpaceProviderHealth(provider: string = "notebook
 
 export async function controlGroupSpaceProviderAuth(args: {
   provider?: string;
-  action: "status" | "start" | "cancel";
+  action: "status" | "start" | "cancel" | "disconnect";
   timeoutSeconds?: number;
+  forceReauth?: boolean;
 }) {
   const provider = args.provider || "notebooklm";
   if (args.action === "status") {
@@ -2052,6 +2055,7 @@ export async function controlGroupSpaceProviderAuth(args: {
       by: "user",
       action: args.action,
       timeout_seconds: Number(args.timeoutSeconds || 900),
+      force_reauth: Boolean(args.forceReauth),
     }),
   });
 }

@@ -10,6 +10,7 @@ Test coverage:
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock
 
@@ -95,6 +96,73 @@ class PartialFailAdapter(IMAdapter):
         return True
 
 
+class AttachmentRecordingAdapter(IMAdapter):
+    """Adapter that streams text and records final file delivery."""
+
+    platform = "test"
+
+    def __init__(self) -> None:
+        self.sent_messages: List[Dict[str, Any]] = []
+        self.sent_files: List[Dict[str, Any]] = []
+
+    def connect(self) -> bool:
+        return True
+
+    def disconnect(self) -> None:
+        pass
+
+    def poll(self) -> list:
+        return []
+
+    def send_message(self, chat_id: str, text: str, thread_id: Optional[int] = None) -> bool:
+        self.sent_messages.append({"chat_id": chat_id, "text": text, "thread_id": thread_id})
+        return True
+
+    def get_chat_title(self, chat_id: str) -> str:
+        return "test"
+
+    def format_outbound(self, by: str, to: List[str], text: str, is_system: bool = False) -> str:
+        _ = by
+        _ = to
+        _ = is_system
+        return text
+
+    def send_file(
+        self,
+        chat_id: str,
+        *,
+        file_path: Path,
+        filename: str,
+        caption: str = "",
+        thread_id: Optional[int] = None,
+    ) -> bool:
+        self.sent_files.append(
+            {
+                "chat_id": chat_id,
+                "file_path": str(file_path),
+                "filename": filename,
+                "caption": caption,
+                "thread_id": thread_id,
+            }
+        )
+        return True
+
+    def begin_stream(self, chat_id: str, stream_id: str, *, text: str = "", thread_id: Optional[int] = None) -> Optional[OutboundStreamHandle]:
+        _ = text
+        return {"stream_id": stream_id, "platform_handle": f"ph_{chat_id}_{stream_id}"}
+
+    def update_stream(self, handle: OutboundStreamHandle, *, text: str = "", seq: int = 0) -> bool:
+        _ = handle
+        _ = text
+        _ = seq
+        return True
+
+    def end_stream(self, handle: OutboundStreamHandle, *, text: str = "") -> bool:
+        _ = handle
+        _ = text
+        return True
+
+
 def _make_bridge(adapter, subscriber_specs):
     """Create a minimal IMBridge with N subscribers.
 
@@ -169,8 +237,8 @@ class TestE1MultiSubscriberFanOut(unittest.TestCase):
                 "data": {"op": "end", "stream_id": "s1", "text": "final"},
             })
             self.assertEqual(len(adapter.end_calls), 2)
-            # Entry kept for chat.message per-target dedup (E4)
-            self.assertIn("s1", bridge._active_streams)
+            self.assertNotIn("s1", bridge._active_streams)
+            self.assertEqual(bridge._completed_stream_targets.get("s1"), {"chatA:0", "chatB:0"})
         finally:
             cleanup()
 
@@ -276,6 +344,45 @@ class TestE4PerTargetDedup(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_streamed_target_still_receives_final_attachment(self) -> None:
+        """Final attachments should still be delivered even when final text is deduped."""
+        adapter = AttachmentRecordingAdapter()
+        bridge, cleanup = _make_bridge(adapter, [
+            {"chat_id": "chatA", "thread_id": 0, "verbose": True},
+        ])
+        try:
+            blob_dir = bridge.group.path / "state" / "blobs"
+            blob_dir.mkdir(parents=True, exist_ok=True)
+            blob_path = blob_dir / "sample.txt"
+            blob_path.write_text("hello", encoding="utf-8")
+
+            bridge._forward_stream_event({
+                "kind": "chat.stream", "by": "agent-1",
+                "data": {"op": "start", "stream_id": "sf2", "text": "draft"},
+            })
+            bridge._forward_stream_event({
+                "kind": "chat.stream", "by": "agent-1",
+                "data": {"op": "end", "stream_id": "sf2", "text": "final"},
+            })
+
+            bridge._forward_event({
+                "kind": "chat.message",
+                "by": "agent-1",
+                "data": {
+                    "text": "final message",
+                    "to": ["user"],
+                    "stream_id": "sf2",
+                    "attachments": [{"path": "state/blobs/sample.txt", "title": "sample.txt"}],
+                },
+            })
+
+            self.assertEqual(len(adapter.sent_files), 1)
+            self.assertEqual(adapter.sent_files[0]["filename"], "sample.txt")
+            self.assertEqual(adapter.sent_files[0]["caption"], "")
+            self.assertEqual(adapter.sent_messages, [])
+        finally:
+            cleanup()
+
 
 class TestE2ThrottleCrossCallSurvival(unittest.TestCase):
     """E2: DingTalk adapter reuses the same card client (throttle state persists)."""
@@ -299,6 +406,24 @@ class TestE2ThrottleCrossCallSurvival(unittest.TestCase):
         client1 = adapter._get_card_client()
         client2 = adapter._get_card_client()
         self.assertIs(client1, client2, "_get_card_client must return same instance")
+
+    def test_begin_stream_returns_none_when_card_creation_fails(self) -> None:
+        """DingTalkAdapter should degrade cleanly when AI Card creation fails."""
+        from cccc.ports.im.adapters.dingtalk import DingTalkAdapter
+
+        class FakeCardClient:
+            def create_card(self, chat_id: str, text: str) -> None:
+                _ = chat_id
+                _ = text
+                return None
+
+        adapter = DingTalkAdapter.__new__(DingTalkAdapter)
+        adapter._get_card_client = lambda: FakeCardClient()
+        adapter._run_async = lambda result: result
+        adapter._log = lambda msg: None
+
+        handle = adapter.begin_stream("chat1", "stream-1", text="hello")
+        self.assertIsNone(handle)
 
     def test_throttle_state_dataclass_has_no_pending_task(self) -> None:
         """_ThrottleState should not have pending_task field after E2 cleanup."""

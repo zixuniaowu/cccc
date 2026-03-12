@@ -64,10 +64,10 @@ class DingTalkAICardClient:
         content: str,
         *,
         title: str = "",
-    ) -> str:
+    ) -> Optional[str]:
         """Create and deliver an AI Card instance.
 
-        Returns the ``card_instance_id`` (== outTrackId).
+        Returns the ``card_instance_id`` (== outTrackId) on success, else None.
         """
         card_instance_id = uuid.uuid4().hex
 
@@ -109,7 +109,8 @@ class DingTalkAICardClient:
         )
 
         if resp is None:
-            logger.warning("[dingtalk_card] create_card failed, returning id anyway")
+            logger.warning("[dingtalk_card] create_card failed")
+            return None
 
         return card_instance_id
 

@@ -322,8 +322,9 @@ class GroupSpaceProviderCredentialUpdateRequest(BaseModel):
 
 class GroupSpaceProviderAuthRequest(BaseModel):
     by: str = Field(default="user")
-    action: Literal["status", "start", "cancel"] = "status"
+    action: Literal["status", "start", "cancel", "disconnect"] = "status"
     timeout_seconds: int = 900
+    force_reauth: bool = False
 
 
 class IMSetRequest(BaseModel):
