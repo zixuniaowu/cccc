@@ -337,3 +337,51 @@ class TestWebActorProfilesApi(unittest.TestCase):
                 self.assertEqual(str(((body.get("error") or {}).get("code")) or ""), "headless_internal_only")
         finally:
             cleanup()
+
+    def test_actor_create_rejects_user_scoped_headless_profile_even_with_non_owner_token(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            viewer_token = str(create_access_token("viewer-user", is_admin=False, allowed_groups=[group_id]).get("token") or "")
+            with patch("cccc.ports.web.app.call_daemon", side_effect=self._local_call_daemon):
+                client = self._client()
+
+                self._local_call_daemon(
+                    {
+                        "op": "actor_profile_upsert",
+                        "args": {
+                            "by": "user",
+                            "caller_id": "member-user",
+                            "is_admin": False,
+                            "profile": {
+                                "id": "shared-profile",
+                                "scope": "user",
+                                "owner_id": "member-user",
+                                "name": "Scoped Headless",
+                                "runtime": "custom",
+                                "runner": "headless",
+                                "command": ["bash", "-lc", "echo hi"],
+                            },
+                        },
+                    }
+                )
+
+                create_resp = client.post(
+                    f"/api/v1/groups/{group_id}/actors",
+                    headers={"Authorization": f"Bearer {viewer_token}"},
+                    json={
+                        "actor_id": "peer-1",
+                        "runtime": "codex",
+                        "runner": "pty",
+                        "profile_id": "shared-profile",
+                        "profile_scope": "user",
+                        "profile_owner": "member-user",
+                    },
+                )
+                self.assertEqual(create_resp.status_code, 400)
+                body = create_resp.json()
+                self.assertEqual(str(((body.get("error") or {}).get("code")) or ""), "headless_internal_only")
+        finally:
+            cleanup()

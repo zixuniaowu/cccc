@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 
 from ....daemon.server import call_daemon, get_daemon_endpoint
+from ....daemon.actors.actor_profile_store import get_actor_profile, get_actor_profile_by_ref
 from ....kernel.group import load_group
 from ..schemas import (
     ActorCreateRequest,
@@ -54,7 +55,6 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         )
 
     async def _profile_runner(
-        request: Request,
         profile_id: str,
         *,
         scope: str = "",
@@ -64,22 +64,18 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if not pid:
             return None
         try:
-            resp = await ctx.daemon(
-                {
-                    "op": "actor_profile_get",
-                    "args": {
+            if str(scope or "").strip():
+                profile = get_actor_profile_by_ref(
+                    {
                         "profile_id": pid,
-                        "by": "user",
-                        **_profile_ref_args(scope=scope, owner_id=owner_id),
-                        **_profile_auth_args(request),
-                    },
-                }
-            )
+                        "profile_scope": scope,
+                        "profile_owner": owner_id,
+                    }
+                )
+            else:
+                profile = get_actor_profile(pid)
         except Exception:
             return None
-        if not bool(resp.get("ok")):
-            return None
-        profile = (resp.get("result") or {}).get("profile") if isinstance(resp, dict) else None
         if not isinstance(profile, dict):
             return None
         return str(profile.get("runner") or "pty").strip().lower() or "pty"
@@ -119,7 +115,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             return
         if _runner_is_headless(runner):
             raise _headless_error(source=source)
-        profile_runner = await _profile_runner(request, profile_id, scope=profile_scope, owner_id=profile_owner)
+        profile_runner = await _profile_runner(profile_id, scope=profile_scope, owner_id=profile_owner)
         if _runner_is_headless(profile_runner):
             raise _headless_error(source=f"{source}:profile")
 
