@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from ...contracts.v1 import ChatMessageData, DaemonError, DaemonResponse
+from ...contracts.v1 import ChatMessageData, ChatStreamData, DaemonError, DaemonResponse
 from ...kernel.actors import find_actor, list_actors, resolve_recipient_tokens
 from ...kernel.group import get_group_state, load_group, set_group_state
 from ...kernel.inbox import find_event, get_quote_text, has_chat_ack, is_message_for_actor
@@ -518,6 +519,63 @@ def handle_reply(
     return DaemonResponse(ok=True, result={"event": event, "ack_event": ack_event})
 
 
+def handle_stream_emit(args: Dict[str, Any]) -> DaemonResponse:
+    """Handle chat.stream events (start/update/end)."""
+    group_id = str(args.get("group_id") or "").strip()
+    by = str(args.get("by") or "").strip()
+    op = str(args.get("op") or "").strip()
+
+    if not group_id:
+        return _error("missing_group_id", "missing group_id")
+    if not by:
+        return _error("missing_by", "missing by")
+    if op not in ("start", "update", "end"):
+        return _error("invalid_op", "op must be 'start', 'update', or 'end'")
+
+    group = load_group(group_id)
+    if group is None:
+        return _error("group_not_found", f"group not found: {group_id}")
+
+    stream_id = str(args.get("stream_id") or "").strip()
+    if op == "start":
+        stream_id = uuid.uuid4().hex
+    elif not stream_id:
+        return _error("missing_stream_id", "stream_id is required for update/end")
+
+    text = str(args.get("text") or "")
+    fmt = str(args.get("format") or "plain").strip() or "plain"
+    seq = int(args.get("seq") or 0)
+    to_raw = args.get("to")
+    to: list[str] = []
+    if isinstance(to_raw, list):
+        to = [str(x).strip() for x in to_raw if isinstance(x, str) and str(x).strip()]
+    reply_to = str(args.get("reply_to") or "").strip() or None
+    client_id = str(args.get("client_id") or "").strip() or None
+
+    data = ChatStreamData(
+        stream_id=stream_id,
+        op=op,
+        text=text,
+        format=fmt,
+        seq=seq,
+        to=to,
+        reply_to=reply_to,
+        client_id=client_id,
+    )
+
+    scope_key = str(group.doc.get("active_scope_key") or "").strip()
+    event = append_event(
+        group.ledger_path,
+        kind="chat.stream",
+        group_id=group.group_id,
+        scope_key=scope_key,
+        by=by,
+        data=data.model_dump(),
+    )
+
+    return DaemonResponse(ok=True, result={"event": event, "stream_id": stream_id})
+
+
 def try_handle_chat_op(
     op: str,
     args: Dict[str, Any],
@@ -530,6 +588,8 @@ def try_handle_chat_op(
     automation_on_new_message: Callable[[Any], None],
     clear_pending_system_notifies: Callable[[str, set[str]], None],
 ) -> Optional[DaemonResponse]:
+    if op == "stream_emit":
+        return handle_stream_emit(args)
     if op == "send":
         return handle_send(
             args,

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ...util.time import utc_now_iso
 from .actor import Actor, ActorRole, ActorSubmit, AgentRuntime, RunnerKind
-from .message import ChatMessageData, ChatReactionData
+from .message import ChatMessageData, ChatReactionData, ChatStreamData
 from .notify import NotifyAckData, SystemNotifyData
 
 
@@ -31,6 +31,7 @@ EventKind = Literal[
     "actor.remove",
     "context.sync",
     "chat.message",
+    "chat.stream",
     "chat.ack",
     "chat.read",
     "chat.reaction",
@@ -220,6 +221,7 @@ _KIND_TO_MODEL = {
     "actor.remove": ActorLifecycleData,
     "context.sync": ContextSyncData,
     "chat.message": ChatMessageData,
+    "chat.stream": ChatStreamData,
     "chat.ack": ChatAckData,
     "chat.read": ChatReadData,
     "chat.reaction": ChatReactionData,

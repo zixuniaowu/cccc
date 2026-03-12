@@ -6,7 +6,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypedDict
+
+
+class OutboundStreamHandle(TypedDict):
+    """Handle returned by begin_stream for subsequent updates."""
+
+    stream_id: str
+    platform_handle: Any  # Platform-specific handle (e.g., DingTalk card instance ID)
 
 
 class IMAdapter(ABC):
@@ -147,6 +154,18 @@ class IMAdapter(ABC):
         _ = caption
         _ = filename
         _ = file_path
+        return False
+
+    def begin_stream(self, chat_id: str, stream_id: str, *, text: str = "", thread_id: Optional[int] = None) -> Optional[OutboundStreamHandle]:
+        """Begin a streaming message. Default: no-op (platform does not support streaming)."""
+        return None
+
+    def update_stream(self, handle: OutboundStreamHandle, *, text: str = "", seq: int = 0) -> bool:
+        """Update an in-progress streaming message. Default: no-op."""
+        return False
+
+    def end_stream(self, handle: OutboundStreamHandle, *, text: str = "") -> bool:
+        """Finalize a streaming message. Default: no-op."""
         return False
 
     def summarize(self, text: str, max_chars: int = 900, max_lines: int = 8) -> str:

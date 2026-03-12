@@ -62,8 +62,31 @@ class ChatMessageData(BaseModel):
     # Reserved
     thread: str = ""  # Topic/thread ID (future)
 
+    # Streaming
+    stream_id: Optional[str] = None  # Links final message to its stream
+
     # Metadata
     client_id: Optional[str] = None  # Client-generated idempotency key
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ChatStreamData(BaseModel):
+    """Streaming chunk for real-time message rendering (not persisted)."""
+
+    stream_id: str  # Unique stream identifier
+    op: Literal["start", "update", "end"]
+    mode: Literal["snapshot", "delta"] = "snapshot"
+    text: str = ""
+    format: Literal["plain", "markdown"] = "plain"
+    seq: int = 0  # Monotonic sequence number
+
+    # IM semantics
+    to: List[str] = Field(default_factory=list)
+    reply_to: Optional[str] = None
+
+    # Metadata
+    client_id: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
 

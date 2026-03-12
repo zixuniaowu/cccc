@@ -52,6 +52,14 @@ Delivery format:
 
 ## IM Bridge
 
+### Streaming Events
+
+The `chat.stream` event type represents real-time streaming content from agents. Stream events are used only for user-facing progressive rendering (e.g., AI Card typewriter effect on DingTalk) and are **not** delivered to actor inboxes.
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `chat.stream` | Outbound (to IM) | Streaming content chunk for progressive display |
+
 ### Design Principles
 
 - **1 Group = 1 Bot**: Simple, isolated, easy to understand

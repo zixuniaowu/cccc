@@ -27,7 +27,7 @@ from ...kernel.group import Group, load_group
 from ...kernel.messaging import disabled_recipient_actor_ids, get_default_send_to
 from ...paths import ensure_home
 from ...util.conv import coerce_bool
-from .adapters.base import IMAdapter
+from .adapters.base import IMAdapter, OutboundStreamHandle
 from .adapters.telegram import TelegramAdapter
 from .adapters.slack import SlackAdapter
 from .adapters.discord import DiscordAdapter
@@ -284,6 +284,12 @@ class IMBridge:
         self._typing_indicators: Dict[str, Tuple[str, str]] = {}
         # Telegram sendChatAction throttle: chat_id -> last_sent_timestamp
         self._typing_action_ts: Dict[str, float] = {}
+        # Active outbound streams: stream_id -> {target_key -> OutboundStreamHandle}
+        # Two-level cache so each subscriber chat gets its own handle.
+        self._active_streams: Dict[str, Dict[str, OutboundStreamHandle]] = {}
+        # Inbound health monitoring: periodic log every 5 minutes
+        self._last_health_log: float = 0.0
+        self._inbound_count: int = 0  # messages processed since last health log
 
     def _should_process_inbound(self, *, chat_id: str, thread_id: int, message_id: str) -> bool:
         """
@@ -299,6 +305,7 @@ class IMBridge:
         key = f"{chat_id}:{int(thread_id or 0)}:{mid}"
 
         if key in self._seen_inbound:
+            self._log(f"[inbound] Dedup skip: {key}")
             return False
 
         self._seen_inbound[key] = now
@@ -367,6 +374,17 @@ class IMBridge:
             self._process_outbound()
             self._last_outbound_check = now
 
+        # Periodic inbound health log (every 5 minutes)
+        if now - self._last_health_log >= 300.0:
+            last_enqueue = getattr(self.adapter, "_last_enqueue_ts", 0.0)
+            gap = f"{now - last_enqueue:.0f}s ago" if last_enqueue > 0 else "never"
+            self._log(
+                f"[health] inbound={self._inbound_count} since last check, "
+                f"last_enqueue={gap}, seen_cache={len(self._seen_inbound)}"
+            )
+            self._inbound_count = 0
+            self._last_health_log = now
+
     def run_forever(self, poll_interval: float = 0.5) -> None:
         """Run the bridge loop forever."""
         while self._running:
@@ -410,6 +428,7 @@ class IMBridge:
                 continue
             if not self._should_process_inbound(chat_id=chat_id, thread_id=thread_id, message_id=message_id):
                 continue
+            self._inbound_count += 1
 
             # Authorization check: unauthorized chats may only /subscribe.
             self._log(f"[inbound] Checking auth for chat_id={chat_id} thread={thread_id}")
@@ -555,6 +574,82 @@ class IMBridge:
                 return actor_labels[stripped]
         return raw
 
+    @staticmethod
+    def _stream_target_key(chat_id: str, thread_id: int) -> str:
+        return f"{chat_id}:{int(thread_id or 0)}"
+
+    def _forward_stream_event(self, event: Dict[str, Any]) -> None:
+        """Forward a chat.stream event to subscribed chats via adapter streaming methods.
+
+        Two-level cache: _active_streams[stream_id][target_key] = handle,
+        so each subscriber chat gets its own platform handle (E1 fix).
+
+        Graceful degradation:
+        - begin_stream failure (None or exception) → no handle cached for that target;
+          subsequent update/end are silently ignored for that target and the final
+          chat.message will deliver as plain text (E4 fix).
+        - update_stream exception → logged, frame dropped, stream continues.
+        - end_stream exception → logged, does not block final chat.message delivery.
+        """
+        data = event.get("data", {})
+        if not isinstance(data, dict):
+            return
+        op = str(data.get("op") or "").strip()
+        stream_id = str(data.get("stream_id") or "").strip()
+        text = str(data.get("text") or "")
+        seq = int(data.get("seq") or 0)
+        to = data.get("to", [])
+        if not stream_id or not op:
+            return
+
+        # E3 fix: filter by to field — reuse _should_forward-compatible logic.
+        is_user_facing = not to or "user" in to
+
+        platform = str(getattr(self.adapter, "platform", "") or "").strip().lower()
+        subscribed = self.subscribers.get_subscribed_targets(platform=platform)
+
+        for sub in subscribed:
+            if not self.key_manager.is_authorized(sub.chat_id, sub.thread_id):
+                continue
+
+            # E3: non-verbose subscribers only get user-facing streams.
+            if not bool(sub.verbose) and not is_user_facing:
+                continue
+
+            target_key = self._stream_target_key(sub.chat_id, sub.thread_id)
+
+            if op == "start":
+                try:
+                    handle = self.adapter.begin_stream(sub.chat_id, stream_id, text=text, thread_id=sub.thread_id)
+                except Exception:
+                    self._log(f"[stream] begin_stream exception for stream={stream_id} target={target_key}, degrading to plain text")
+                    handle = None
+                if handle is not None:
+                    targets = self._active_streams.setdefault(stream_id, {})
+                    targets[target_key] = handle
+            elif op == "update":
+                targets = self._active_streams.get(stream_id)
+                if targets is not None:
+                    handle = targets.get(target_key)
+                    if handle is not None:
+                        try:
+                            self.adapter.update_stream(handle, text=text, seq=seq)
+                        except Exception:
+                            self._log(f"[stream] update_stream exception for stream={stream_id} target={target_key} seq={seq}, frame dropped")
+            elif op == "end":
+                targets = self._active_streams.get(stream_id)
+                if targets is not None:
+                    handle = targets.get(target_key)
+                    if handle is not None:
+                        try:
+                            self.adapter.end_stream(handle, text=text)
+                        except Exception:
+                            self._log(f"[stream] end_stream exception for stream={stream_id} target={target_key}")
+                    # NOTE: do NOT remove target_key here — keep it so
+                    # _forward_event can dedup when chat.message arrives
+                    # with the same stream_id. The chat.message handler
+                    # pops the whole stream entry from _active_streams.
+
     def _forward_event(self, event: Dict[str, Any], *, actor_labels: Optional[Dict[str, str]] = None) -> None:
         """Forward a ledger event to subscribed chats."""
         kind = event.get("kind", "")
@@ -563,6 +658,11 @@ class IMBridge:
         # Skip user messages (they come from IM, Web, or CLI - avoid echo)
         # We only forward agent messages and system notifications
         if by == "user":
+            return
+
+        # Route streaming events to dedicated handler
+        if kind == "chat.stream":
+            self._forward_stream_event(event)
             return
 
         # Determine if we should forward
@@ -577,6 +677,18 @@ class IMBridge:
         text = data.get("text", "")
         to = data.get("to", [])
         attachments = data.get("attachments", [])
+
+        # E4: per-target dedup for streamed messages.
+        # If chat.message carries stream_id, collect target keys that successfully
+        # began streaming — those targets already received content via chat.stream
+        # and should be skipped. Targets where begin_stream failed (no cached handle)
+        # still receive the plain-text fallback.
+        _streamed_msg_id = str(data.get("stream_id") or "").strip() if is_chat else ""
+        _streamed_targets: set[str] = set()
+        if _streamed_msg_id:
+            targets = self._active_streams.pop(_streamed_msg_id, None)
+            if targets:
+                _streamed_targets = set(targets.keys())
 
         if not text and not attachments:
             return
@@ -595,6 +707,12 @@ class IMBridge:
             # traffic even if stale subscription state exists on disk.
             if not self.key_manager.is_authorized(sub.chat_id, sub.thread_id):
                 continue
+
+            # E4: skip targets that already received content via chat.stream.
+            if _streamed_targets:
+                target_key = self._stream_target_key(sub.chat_id, sub.thread_id)
+                if target_key in _streamed_targets:
+                    continue
 
             verbose = bool(sub.verbose)
 

@@ -40,6 +40,8 @@ CCCC uses DingTalk Stream mode (persistent WebSocket connection) for inbound mes
 | `qyapi_robot_sendmsg` | Robot proactive message sending |
 | `qyapi_chat_read` | Read group basic info |
 | `qyapi_chat_manage` | Manage group chats (create, update, send messages) |
+| `Card.Streaming.Write` | AI Card streaming writes |
+| `Card.Instance.Write` | Card instance writes |
 
 3. Click to enable each permission (no approval needed for internal apps)
 
@@ -172,6 +174,7 @@ DingTalk supports various message types:
 - **Markdown**: Formatted text
 - **Link**: URL cards
 - **ActionCard**: Interactive cards with buttons
+- **AI Card Streaming**: Agent responses are delivered as AI Cards with a real-time typewriter effect. Content streams in progressively as it is generated. If streaming fails (e.g., card API unavailable), the message automatically falls back to plain text delivery.
 
 CCCC automatically selects the appropriate format.
 

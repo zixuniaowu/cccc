@@ -19,7 +19,7 @@ The IM Bridge allows you to:
 | [Slack](./slack) | ✅ | Team collaboration |
 | [Discord](./discord) | ✅ | Community/gaming |
 | [Feishu/Lark](./feishu) | ✅ | Enterprise (China/Global) |
-| [DingTalk](./dingtalk) | ✅ | Enterprise (China) |
+| [DingTalk](./dingtalk) | ✅ | Enterprise (China) — AI Card Streaming supported |
 
 ## Design Principles
 
