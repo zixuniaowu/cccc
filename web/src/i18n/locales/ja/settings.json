@@ -606,6 +606,7 @@
     "loadFailed": "Web Access 状態の読み込みに失敗しました。",
     "invalidPort": "ポートは 1 から 65535 の範囲で指定してください。",
     "saveFailed": "Web Access 設定の保存に失敗しました。",
+    "restartRequired": "保存しました。新しいバインドを適用するにはデーモンを再起動してください。",
     "startFailed": "リモートアクセスの開始に失敗しました。",
     "stopFailed": "リモートアクセスの停止に失敗しました。",
     "started": "リモートアクセスを開始しました。",

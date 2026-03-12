@@ -606,6 +606,7 @@
     "loadFailed": "Failed to load Web Access state.",
     "invalidPort": "Port must be between 1 and 65535.",
     "saveFailed": "Failed to save Web Access settings.",
+    "restartRequired": "Saved. Restart daemon to apply the new binding.",
     "startFailed": "Failed to start remote access.",
     "stopFailed": "Failed to stop remote access.",
     "started": "Remote access started.",

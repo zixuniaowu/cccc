@@ -606,6 +606,7 @@
     "loadFailed": "加载 Web Access 状态失败。",
     "invalidPort": "端口必须在 1 到 65535 之间。",
     "saveFailed": "保存 Web Access 设置失败。",
+    "restartRequired": "已保存。需要重启 daemon 才能应用新的绑定地址。",
     "startFailed": "启动远程访问失败。",
     "stopFailed": "停止远程访问失败。",
     "started": "远程访问已启动。",

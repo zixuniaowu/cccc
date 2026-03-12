@@ -366,6 +366,11 @@ def handle_remote_access_configure(args: Dict[str, Any]) -> DaemonResponse:
     if invalid is not None:
         return invalid
 
+    # Snapshot current runtime binding before applying the patch.
+    old_binding = resolve_remote_access_web_binding()
+    old_host = str(old_binding.get("web_host") or "127.0.0.1").strip()
+    old_port = int(old_binding.get("web_port") or 8848)
+
     patch["mode"] = mode
     patch["updated_at"] = utc_now_iso()
     cfg = update_remote_access_settings(patch)
@@ -379,7 +384,16 @@ def handle_remote_access_configure(args: Dict[str, Any]) -> DaemonResponse:
             "enabled": bool(cfg.get("enabled")),
         },
     )
-    return DaemonResponse(ok=True, result=_remote_access_state_payload(cfg))
+    result = _remote_access_state_payload(cfg)
+
+    # Check if web_host or web_port changed — daemon restart required to rebind.
+    new_binding = resolve_remote_access_web_binding()
+    new_host = str(new_binding.get("web_host") or "127.0.0.1").strip()
+    new_port = int(new_binding.get("web_port") or 8848)
+    if new_host != old_host or new_port != old_port:
+        result["restart_required"] = True
+
+    return DaemonResponse(ok=True, result=result)
 
 
 def handle_remote_access_start(args: Dict[str, Any]) -> DaemonResponse:

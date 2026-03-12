@@ -315,7 +315,11 @@ export function WebAccessTab({ isDark, isActive = true }: WebAccessTabProps) {
         return;
       }
       setRemoteState(resp.result.remote_access);
-      pushHint(t("common:saved"));
+      if ((resp.result as Record<string, unknown>).restart_required) {
+        pushHint(t("webAccess.restartRequired"));
+      } else {
+        pushHint(t("common:saved"));
+      }
     } catch {
       setError(t("webAccess.saveFailed"));
     } finally {
