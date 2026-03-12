@@ -869,6 +869,9 @@ class IMBridge:
 
     def _handle_unsubscribe(self, chat_id: str, thread_id: int = 0) -> None:
         """Handle /unsubscribe command — also revokes authorization so re-subscribe requires key."""
+        # Reload auth state — authorization may have been granted by the daemon
+        # process (im_bind_chat), so in-memory _authorized can be stale.
+        self.key_manager._load()
         was_subscribed = self.subscribers.unsubscribe(chat_id, thread_id=thread_id)
         self.key_manager.revoke(chat_id, thread_id)
         if was_subscribed:

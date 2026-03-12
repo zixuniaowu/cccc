@@ -553,6 +553,36 @@ class TestImBridgeOutboundAuthGuard(unittest.TestCase):
         self.assertIn("Authorization required", text)
 
 
+    def test_unsubscribe_reloads_auth_state_and_revokes_daemon_authorized_chat(self) -> None:
+        """Unsubscribe must reload auth from disk so it can revoke chats authorized by daemon."""
+        from cccc.ports.im.bridge import IMBridge
+
+        fake_group = SimpleNamespace(
+            group_id="g_demo",
+            path=self.group_path,
+            ledger_path=self.group_path / "ledger.jsonl",
+            doc={"title": "demo", "im": {}},
+        )
+        adapter = self._FakeAdapter()
+        bridge = IMBridge(group=fake_group, adapter=adapter)
+
+        # Simulate daemon process authorizing the chat AFTER bridge init
+        # (bridge's in-memory _authorized is stale — doesn't know about this).
+        km_daemon = KeyManager(self.state_dir)
+        key = km_daemon.generate_key("chat_ext", 0, "telegram")
+        km_daemon.authorize("chat_ext", 0, "telegram", key)
+
+        # Bridge's in-memory state does NOT have this authorization.
+        self.assertFalse(bridge.key_manager.is_authorized("chat_ext", 0))
+
+        # User sends /unsubscribe — bridge must reload and then revoke.
+        bridge._handle_unsubscribe("chat_ext", thread_id=0)
+
+        # Verify authorization was revoked on disk.
+        km_verify = KeyManager(self.state_dir)
+        self.assertFalse(km_verify.is_authorized("chat_ext", 0))
+
+
 try:
     from cccc.daemon.im.im_ops import _load_km
     _HAS_DAEMON_DEPS = True
