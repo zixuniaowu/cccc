@@ -20,6 +20,7 @@ class _FakeDingTalkAdapter(IMAdapter):
     def __init__(self, messages: List[Dict[str, Any]]):
         self._messages = list(messages)
         self._connected = False
+        self.sent_messages: List[Dict[str, Any]] = []
 
     def connect(self) -> bool:
         self._connected = True
@@ -35,10 +36,22 @@ class _FakeDingTalkAdapter(IMAdapter):
         self._messages = []
         return out
 
-    def send_message(self, chat_id: str, text: str, thread_id: Optional[int] = None) -> bool:
-        _ = chat_id
-        _ = text
-        _ = thread_id
+    def send_message(
+        self,
+        chat_id: str,
+        text: str,
+        thread_id: Optional[int] = None,
+        *,
+        mention_user_ids: Optional[List[str]] = None,
+    ) -> bool:
+        self.sent_messages.append(
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "thread_id": thread_id,
+                "mention_user_ids": mention_user_ids,
+            }
+        )
         return True
 
     def get_chat_title(self, chat_id: str) -> str:
@@ -180,6 +193,63 @@ class TestImSenderIdentity(unittest.TestCase):
             self.assertIsNone(data.get("source_user_name"))
             self.assertIsNone(data.get("source_user_id"))
             self.assertEqual(str(event.get("by") or ""), "user")
+        finally:
+            cleanup()
+
+    def test_bridge_forward_passes_explicit_mention_targets(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group, _group_id = self._create_group_with_peer()
+            adapter = _FakeDingTalkAdapter([])
+            bridge = IMBridge(group=group, adapter=adapter)
+            self.assertTrue(bridge.start())
+            bridge.key_manager.is_authorized = lambda *_args, **_kwargs: True  # type: ignore[method-assign]
+            bridge.subscribers.subscribe("cid_g1", "ops", platform="dingtalk")
+            bridge._remember_mention_targets("cid_g1", 0, {"mention_user_ids": ["staff_001"]})
+
+            bridge._forward_event(
+                {
+                    "kind": "chat.message",
+                    "by": "claude-1",
+                    "data": {
+                        "text": "reply",
+                        "to": ["user"],
+                        "attachments": [],
+                    },
+                }
+            )
+
+            self.assertEqual(len(adapter.sent_messages), 1)
+            self.assertEqual(adapter.sent_messages[0]["mention_user_ids"], ["staff_001"])
+        finally:
+            cleanup()
+
+    def test_bridge_forward_does_not_promote_source_user_id_to_mention_target(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            group, _group_id = self._create_group_with_peer()
+            adapter = _FakeDingTalkAdapter([])
+            bridge = IMBridge(group=group, adapter=adapter)
+            self.assertTrue(bridge.start())
+            bridge.key_manager.is_authorized = lambda *_args, **_kwargs: True  # type: ignore[method-assign]
+            bridge.subscribers.subscribe("cid_g1", "ops", platform="dingtalk")
+
+            bridge._forward_event(
+                {
+                    "kind": "chat.message",
+                    "by": "claude-1",
+                    "data": {
+                        "text": "reply",
+                        "to": ["user"],
+                        "attachments": [],
+                        "source_platform": "dingtalk",
+                        "source_user_id": "union_or_sender_id",
+                    },
+                }
+            )
+
+            self.assertEqual(len(adapter.sent_messages), 1)
+            self.assertIsNone(adapter.sent_messages[0]["mention_user_ids"])
         finally:
             cleanup()
 
