@@ -27,7 +27,6 @@ import {
   useModalStore,
   useComposerStore,
   useFormStore,
-  useObservabilityStore,
 } from "./stores";
 import * as api from "./services/api";
 import type { Actor, ChatMessageData, LedgerEvent } from "./types";
@@ -83,7 +82,9 @@ export default function App() {
   const setWebReadOnly = useUIStore((s) => s.setWebReadOnly);
   const sseStatus = useUIStore((s) => s.sseStatus);
 
-  const { openModal } = useModalStore();
+  const openModal = useModalStore((s) => s.openModal);
+  const modalFlags = useModalStore((s) => s.modals);
+  const editingActor = useModalStore((s) => s.editingActor);
 
   const {
     activeGroupId,
@@ -416,13 +417,9 @@ export default function App() {
     parseUrlDeepLink();
 
     refreshGroups();
-    void fetchRuntimes();
-    void fetchDirSuggestions();
-    void useObservabilityStore.getState().load();
     void api.fetchPing().then((resp) => {
       if (resp.ok) {
         setWebReadOnly(Boolean(resp.result?.web?.read_only));
-        setCcccHome(String(resp.result?.home || "").trim());
       }
     }).catch(() => {
       /* ignore */
@@ -430,19 +427,54 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function fetchRuntimes() {
-    const resp = await api.fetchRuntimes();
-    if (resp.ok) {
-      useGroupStore.getState().setRuntimes(resp.result.runtimes || []);
+  const ensureRuntimesLoaded = React.useCallback(async () => {
+    if (useGroupStore.getState().runtimes.length > 0) return;
+    try {
+      const resp = await api.fetchRuntimes();
+      if (resp.ok) {
+        useGroupStore.getState().setRuntimes(resp.result.runtimes || []);
+        return;
+      }
+      showError(resp.error?.message || "Failed to load runtimes");
+    } catch {
+      showError("Failed to load runtimes");
     }
-  }
+  }, [showError]);
 
-  async function fetchDirSuggestions() {
-    const resp = await api.fetchDirSuggestions();
-    if (resp.ok) {
-      setDirSuggestions(resp.result.suggestions || []);
+  const fetchDirSuggestions = React.useCallback(async () => {
+    try {
+      const resp = await api.fetchDirSuggestions();
+      if (resp.ok) {
+        setDirSuggestions(resp.result.suggestions || []);
+        return;
+      }
+      showError(resp.error?.message || "Failed to load directories");
+    } catch {
+      showError("Failed to load directories");
     }
-  }
+  }, [setDirSuggestions, showError]);
+
+  const loadCcccHome = React.useCallback(async () => {
+    if (ccccHome) return;
+    try {
+      const resp = await api.fetchPing({ includeHome: true });
+      if (resp.ok) {
+        setCcccHome(String(resp.result?.home || "").trim());
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [ccccHome]);
+
+  useEffect(() => {
+    if (!modalFlags.groupEdit) return;
+    void loadCcccHome();
+  }, [loadCcccHome, modalFlags.groupEdit]);
+
+  useEffect(() => {
+    if (!modalFlags.addActor && !editingActor) return;
+    void ensureRuntimesLoaded();
+  }, [editingActor, ensureRuntimesLoaded, modalFlags.addActor]);
 
   // ============ Actions ============
 

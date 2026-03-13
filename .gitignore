@@ -41,6 +41,7 @@ uv.lock
 # Docs: VitePress build artifacts
 /docs/.vitepress/cache/
 /docs/.vitepress/dist/
+/docs/_archive_local/
 
 # Local iteration notes (not shipped)
 /docs/ITERATION_PLAN.md

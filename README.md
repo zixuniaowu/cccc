@@ -62,7 +62,7 @@ CCCC is a single `pip install` with zero external dependencies — no database, 
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
 | **Reliable messaging** | Read cursors, attention ACK, reply-required obligations — you know exactly who read what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Claude Code, Codex CLI, Gemini CLI, Copilot, and 8 more runtimes in one group |
+| **Multi-runtime orchestration** | Claude Code, Codex CLI, Gemini CLI, and 5 more first-class runtimes, plus custom runtime support |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
 | **Remote operations** | Bridge to Telegram, Slack, Discord, Feishu, or DingTalk — manage groups from your phone |
 
@@ -135,7 +135,7 @@ graph TB
         A1["Claude Code"]
         A2["Codex CLI"]
         A3["Gemini CLI"]
-        A4["+ 9 more"]
+        A4["+ 5 more + custom"]
     end
 
     subgraph Daemon["CCCC Daemon · single writer"]
@@ -177,7 +177,7 @@ graph TB
 
 ## Supported Runtimes
 
-CCCC orchestrates agents across 12 runtimes. Each actor in a group can use a different runtime.
+CCCC orchestrates agents across 8 first-class runtimes, with `custom` available for everything else. Each actor in a group can use a different runtime.
 
 | Runtime | Auto MCP Setup | Command |
 |---------|:--------------:|---------|
@@ -187,11 +187,8 @@ CCCC orchestrates agents across 12 runtimes. Each actor in a group can use a dif
 | Droid | ✅ | `droid` |
 | Amp | ✅ | `amp` |
 | Auggie | ✅ | `auggie` |
+| Kimi CLI | ✅ | `kimi` |
 | Neovate | ✅ | `neovate` |
-| Copilot | — | `copilot` |
-| Cursor | — | `cursor-agent` |
-| Kilo Code | — | `kilocode` |
-| OpenCode | — | `opencode` |
 | Custom | — | Any command |
 
 ```bash
@@ -211,7 +208,7 @@ CCCC implements IM-grade messaging semantics, not just "paste text into a termin
 - **Reply-required obligations** — tracked until the recipient responds
 - **Auto-wake** — disabled agents are automatically started when they receive a message
 
-Messages are delivered to PTY actors via terminal injection and to headless actors via system notifications. The daemon tracks delivery state for every message.
+Messages are delivered to actor runtimes through the daemon-managed delivery pipeline, and the daemon tracks delivery state for every message.
 
 ## Automation & Policies
 
@@ -314,19 +311,18 @@ cccc im start|stop|status
 
 ## MCP Tools
 
-Agents interact with CCCC through **49 MCP tools** across 7 namespaces:
+Agents interact with CCCC through a compact action-oriented MCP surface. Core tools are always present, and optional capability packs add more surfaces only when enabled.
 
-| Namespace | Tools | Examples |
-|-----------|:-----:|---------|
-| **Session** | 2 | `cccc_bootstrap` (one-call init), `cccc_help` (operational playbook) |
-| **Messaging** | 7 | `cccc_message_send`, `cccc_message_reply`, `cccc_file_send`, `cccc_inbox_list`, `cccc_inbox_mark_read` ... |
-| **Group & Actor** | 10 | `cccc_group_info`, `cccc_group_list`, `cccc_actor_add/remove/start/stop/restart`, `cccc_runtime_list`, `cccc_group_set_state` |
-| **Automation** | 2 | `cccc_automation_state`, `cccc_automation_manage` (create/update/enable/disable/delete rules) |
-| **Context** | 19 | `cccc_context_get/sync`, `cccc_vision_update`, `cccc_sketch_update`, `cccc_milestone_*`, `cccc_task_*`, `cccc_note_*`, `cccc_reference_*`, `cccc_presence_*` |
-| **Headless** | 3 | `cccc_headless_status`, `cccc_headless_set_status`, `cccc_headless_ack_message` |
-| **System** | 6 | `cccc_notify_send/ack`, `cccc_terminal_tail`, `cccc_project_info`, `cccc_debug_snapshot`, `cccc_debug_tail_logs` |
+| Surface | Examples |
+|---------|----------|
+| **Session & guidance** | `cccc_bootstrap`, `cccc_help`, `cccc_project_info` |
+| **Messaging & files** | `cccc_inbox_list`, `cccc_inbox_mark_read`, `cccc_message_send`, `cccc_message_reply`, `cccc_file` |
+| **Group & actor control** | `cccc_group`, `cccc_actor` |
+| **Coordination & state** | `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state`, `cccc_context_sync` |
+| **Automation & memory** | `cccc_automation`, `cccc_memory`, `cccc_memory_admin` |
+| **Capability-managed extras** | `cccc_capability_*`, `cccc_space`, `cccc_terminal`, `cccc_debug`, `cccc_im_bind` |
 
-Agents with MCP access can self-organize: read their inbox, reply, manage tasks and milestones, set automation rules, and coordinate with peers — all within permission boundaries.
+Agents with MCP access can self-organize: read inbox state, reply visibly, coordinate around tasks, refresh agent state, and enable extra capabilities when the current job actually needs them.
 
 ## Where CCCC Fits
 
