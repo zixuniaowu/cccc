@@ -22,8 +22,9 @@ export default defineConfig({
         // Split large deps into dedicated chunks to avoid oversized bundles.
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
-          // React core
-          if (/[\\/]node_modules[\\/](react|react-dom)[\\/]/.test(id)) return "react-vendor";
+          // React core + libs that import react (must stay in the same chunk
+          // to avoid circular cross-chunk dependencies during initialisation)
+          if (/[\\/]node_modules[\\/](react|react-dom|zustand|@tanstack|scheduler)[\\/]/.test(id)) return "react-vendor";
           // Three.js WebGPU renderer (heavy, split from core three)
           if (/[\\/]node_modules[\\/]three[\\/].*webgpu/i.test(id)) return "three-webgpu";
           // @react-three bindings (loaded on demand with 3D scene)

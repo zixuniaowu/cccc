@@ -209,6 +209,29 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
 
+        state_dir = group.path / "state"
+
+        # 1. Stop bridge process if running (graceful — ignore missing/dead process)
+        pid_path = state_dir / "im_bridge.pid"
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                best_effort_signal_pid(pid, SOFT_TERMINATE_SIGNAL, include_group=True)
+            except Exception:
+                pass
+            try:
+                pid_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        # 2. Clean up IM state files (graceful — ignore missing files)
+        for fname in ("im_subscribers.json", "im_authorized_chats.json", "im_pending_keys.json"):
+            try:
+                (state_dir / fname).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        # 3. Remove IM config from group doc
         if "im" in group.doc:
             del group.doc["im"]
             group.save()
