@@ -177,11 +177,13 @@ MCP is exposed as an action-oriented surface. Tool count is intentionally not ha
 - Coordination and state: `cccc_context_get`, `cccc_coordination`, `cccc_task`, `cccc_agent_state`, `cccc_context_sync`
 - Automation and memory: `cccc_automation`, `cccc_memory`, `cccc_memory_admin`
 
-### Capability-Managed Extras
+### Capability Groups and Extras
 
-- Capability lifecycle: `cccc_capability_search`, `cccc_capability_enable`, `cccc_capability_block`, `cccc_capability_state`, `cccc_capability_import`, `cccc_capability_uninstall`, `cccc_capability_use`
+- These capability groups expand the surface without hardcoding a fixed namespace count. The current grouped tools include lifecycle and pack control (`cccc_capability_search`, `cccc_capability_enable`, `cccc_capability_block`, `cccc_capability_state`, `cccc_capability_import`, `cccc_capability_uninstall`, `cccc_capability_use`).
 - Space / notebook integrations: `cccc_space`
-- Terminal and diagnostics: `cccc_terminal`, `cccc_debug`
+- Automation is grouped under `cccc_automation` (`action="state" | "manage"`), which corresponds to the reminder-management surface often described as `cccc_automation_manage`.
+- Terminal transcript access is grouped under `cccc_terminal` (`action="tail"`), replacing the older single-purpose naming style `cccc_terminal_tail`.
+- Diagnostics are grouped under `cccc_debug` (`action="snapshot" | "tail_logs"`), replacing the older family-style naming `cccc_debug_*`.
 - IM binding: `cccc_im_bind`
 
 ## Tech Stack
