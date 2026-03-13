@@ -84,6 +84,7 @@ export function useChatTab({
     setReplyRequired,
     setDestGroupId,
     clearDraft,
+    clearComposer,
   } = useComposerStore();
 
   const { setRecipientsModal, setRelayModal, openModal } = useModalStore();
@@ -333,12 +334,7 @@ export function useChatTab({
     };
 
     const applyImmediateComposerFeedback = () => {
-      setComposerText("");
-      setComposerFiles([]);
-      setReplyTarget(null);
-      setPriority("normal");
-      setReplyRequired(false);
-      setToText("");
+      clearComposer();
       if (chatAtBottomRef) chatAtBottomRef.current = true;
       if (selectedGroupId) {
         setShowScrollButton(selectedGroupId, false);
@@ -377,8 +373,16 @@ export function useChatTab({
           reply_required: replyRequired,
           client_id: localId,
           reply_to: replyTargetSnapshot?.eventId || null,
+          quote_text: replyTargetSnapshot?.text || undefined,
           format: "plain",
-          attachments: [],
+          attachments: composerFilesSnapshot.length > 0
+            ? composerFilesSnapshot.map((f) => ({
+                file_name: f.name,
+                mime_type: f.type,
+                size: f.size,
+                url: URL.createObjectURL(f),
+              }))
+            : [],
           _optimistic: true,
         } as LedgerEvent["data"],
       };
@@ -467,6 +471,7 @@ export function useChatTab({
     removeOutbox,
     setBusy,
     showError,
+    clearComposer,
     setComposerText,
     setComposerFiles,
     setReplyTarget,

@@ -434,7 +434,7 @@ export const MessageBubble = memo(function MessageBubble({
                 isUserMessage
                     ? "flex-col items-end sm:items-start sm:flex-row-reverse"
                     : "flex-col items-start sm:flex-row",
-                isOptimistic ? "opacity-60" : ""
+                isOptimistic ? "opacity-95" : ""
             )}
         >
             {/* Desktop Avatar (Hidden on mobile) */}
@@ -502,7 +502,7 @@ export const MessageBubble = memo(function MessageBubble({
                         {senderDisplayName}
                     </span>
                     <span className={`text-[10px] flex-shrink-0 text-[var(--color-text-muted)]`}>
-                        {isOptimistic ? t('sending', '发送中…') : formatTime(ev.ts)}
+                        {formatTime(ev.ts)}
                     </span>
                     <span
                         className={classNames(
@@ -534,7 +534,7 @@ export const MessageBubble = memo(function MessageBubble({
                         {senderDisplayName}
                     </span>
                     <span className={`text-[10px] flex-shrink-0 text-[var(--color-text-muted)]`}>
-                        {isOptimistic ? t('sending', '发送中…') : formatTime(ev.ts)}
+                        {formatTime(ev.ts)}
                     </span>
                     <span className={classNames("text-[10px] min-w-0 truncate", "text-[var(--color-text-muted)]")} title={`to ${toLabel}`}>
                         to {toLabel}

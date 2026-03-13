@@ -1,8 +1,8 @@
-import React, { useEffect, useMemo, useRef } from "react";
+import React, { lazy, Suspense, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { TabBar } from "./components/TabBar";
 import { DropOverlay } from "./components/DropOverlay";
-import { AppModals } from "./components/AppModals";
+const AppModals = lazy(() => import("./components/AppModals").then((m) => ({ default: m.AppModals })));
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { AppHeader } from "./components/layout/AppHeader";
 import { GroupSidebar } from "./components/layout/GroupSidebar";
@@ -732,19 +732,21 @@ export default function App() {
         </div>
       ) : null}
 
-      {/* Modals */}
-      <AppModals
-        isDark={isDark}
-        ccccHome={ccccHome}
-        composerRef={composerRef}
-        onStartReply={startReply}
-        onThemeToggle={() => setTheme(isDark ? "light" : "dark")}
-        onStartGroup={handleStartGroup}
-        onStopGroup={handleStopGroup}
-        onSetGroupState={handleSetGroupState}
-        fetchContext={fetchContext}
-        canManageGroups={canManageGroups}
-      />
+      {/* Modals (lazy-loaded — not needed on first paint) */}
+      <Suspense fallback={null}>
+        <AppModals
+          isDark={isDark}
+          ccccHome={ccccHome}
+          composerRef={composerRef}
+          onStartReply={startReply}
+          onThemeToggle={() => setTheme(isDark ? "light" : "dark")}
+          onStartGroup={handleStartGroup}
+          onStopGroup={handleStopGroup}
+          onSetGroupState={handleSetGroupState}
+          fetchContext={fetchContext}
+          canManageGroups={canManageGroups}
+        />
+      </Suspense>
 
       <DropOverlay isOpen={dropOverlayOpen} isDark={isDark} maxFileMb={WEB_MAX_FILE_MB} />
     </div>
