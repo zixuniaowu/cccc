@@ -294,7 +294,6 @@ function normalizeContext(raw: unknown): GroupContext {
   const summary = normalizeTaskSummary(record.tasks_summary, tasks);
   const boardRecord = asRecord(record.board);
   const attentionRecord = asRecord(record.attention);
-  const panoramaRecord = asRecord(record.panorama);
   const metaRecord = asRecord(record.meta);
 
   return {
@@ -352,9 +351,6 @@ function normalizeContext(raw: unknown): GroupContext {
         }
       : null,
     tasks_summary: summary,
-    panorama: {
-      mermaid: asOptionalString(panoramaRecord?.mermaid),
-    },
     meta: metaRecord ? { ...metaRecord } : {},
   };
 }

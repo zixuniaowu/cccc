@@ -674,6 +674,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": _safe_int(tt.get("notify_lines", 20), default=20, min_value=1, max_value=80),
                     "panorama_enabled": coerce_bool(features.get("panorama_enabled"), default=False),
+                    "desktop_pet_enabled": coerce_bool(features.get("desktop_pet_enabled"), default=False),
                 }
             }
         }
@@ -725,6 +726,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         if req.panorama_enabled is not None:
             patch["panorama_enabled"] = bool(req.panorama_enabled)
+        if req.desktop_pet_enabled is not None:
+            patch["desktop_pet_enabled"] = bool(req.desktop_pet_enabled)
 
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}

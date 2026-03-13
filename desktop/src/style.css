@@ -1,0 +1,204 @@
+/* Transparent window background */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  color: #333;
+}
+
+body {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+}
+
+/* --- Pet container (always visible) --- */
+
+#pet-container {
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: grab;
+}
+
+#pet-container.drag-armed {
+  cursor: grabbing;
+}
+
+#cat-canvas {
+  width: 64px;
+  height: 64px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  pointer-events: none;
+}
+
+/* --- Mini panel (M5) --- */
+
+#panel-container {
+  width: 240px;
+  pointer-events: auto;
+}
+
+.panel {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 12px;
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .panel {
+    background: rgba(40, 40, 40, 0.92);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #e0e0e0;
+  }
+
+  .panel-status {
+    color: #aaa;
+  }
+
+  .panel-item {
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+  }
+
+  .item-agent {
+    color: #82aaff;
+  }
+
+  .panel-empty {
+    color: #888;
+  }
+
+  .panel-btn {
+    background: #2d5fa0;
+    color: #fff;
+  }
+
+  .panel-btn:hover {
+    background: #3a70b8;
+  }
+}
+
+/* --- Panel header --- */
+
+.panel-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.panel-team {
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.conn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.conn-ok {
+  background: #22c55e;
+}
+
+.conn-err {
+  background: #ef4444;
+}
+
+.panel-status {
+  font-size: 11px;
+  color: #666;
+}
+
+/* --- Action items --- */
+
+.panel-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.panel-item {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  cursor: default;
+}
+
+.panel-item:last-child {
+  border-bottom: none;
+}
+
+.item-agent {
+  font-weight: 500;
+  font-size: 11px;
+  color: #2563eb;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.item-text {
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel-empty {
+  font-size: 11px;
+  color: #999;
+  text-align: center;
+  padding: 8px 0;
+}
+
+/* --- Footer --- */
+
+.panel-footer {
+  display: flex;
+  justify-content: center;
+}
+
+.panel-btn {
+  font-size: 11px;
+  padding: 4px 16px;
+  border: none;
+  border-radius: 6px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.panel-btn:hover {
+  background: #1d4ed8;
+}
+
+.panel-btn:active {
+  background: #1e40af;
+}
