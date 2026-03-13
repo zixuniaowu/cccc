@@ -25,22 +25,13 @@ Three commands to go. Zero infrastructure, production-grade power.
 
 ---
 
-## Build With the Official SDK
+## Why CCCC
 
-For app integration, bots, IDE extensions, and background services, use the official SDK repo:
-
-- [cccc-sdk](https://github.com/ChesterRa/cccc-sdk)
-- Python package: `cccc-sdk` (import as `cccc_sdk`)
-- TypeScript package: `cccc-sdk`
-
-SDK clients connect to the same CCCC daemon and share the same `CCCC_HOME` runtime state.
-
-## Why v0.4.0 Is a Generational Upgrade
-
-- **Chat-native orchestration**: assign work in Web chat as naturally as talking to teammates, with full delivery/read/ack/reply visibility.
-- **Workflow-by-design**: configure multi-agent behavior with guidance prompts and automation rules, instead of brittle ad-hoc scripts.
-- **Bi-directional control**: CCCC orchestrates agents, while agents can also schedule and customize CCCC workflows through MCP tools.
-- **Beyond the browser**: the same operating model extends to Telegram/Slack/Discord/Feishu/DingTalk via IM bridges.
+- **Durable coordination**: working state lives in an append-only ledger, not in terminal scrollback.
+- **Visible delivery semantics**: messages have routing, read, ack, and reply-required tracking instead of best-effort prompting.
+- **One control plane**: Web UI, CLI, MCP, and IM bridges all operate on the same daemon-owned state.
+- **Multi-runtime by default**: Claude Code, Codex CLI, Gemini CLI, and the rest of the first-class runtimes can collaborate in one group.
+- **Local-first operations**: one `pip install`, runtime state in `CCCC_HOME`, and remote supervision only when you choose to expose it.
 
 ## The Problem
 
@@ -55,16 +46,16 @@ These aren't minor inconveniences. They're the reason most multi-agent setups st
 
 ## What CCCC Does
 
-CCCC is a single `pip install` with zero external dependencies — no database, no message broker, no Docker required. Yet it delivers the operational reliability you'd expect from a production messaging system:
+CCCC is a single `pip install` with zero external dependencies — no database, no message broker, no Docker required. Yet it gives you the pieces fragile multi-agent setups usually lack:
 
 | Capability | How |
 |---|---|
 | **Single source of truth** | Append-only ledger (`ledger.jsonl`) records every message and event — replayable, auditable, never lost |
-| **Reliable messaging** | Read cursors, attention ACK, reply-required obligations — you know exactly who read what |
+| **Reliable messaging** | Read cursors, attention ACK, and reply-required obligations — you know exactly who saw what |
 | **Unified control plane** | Web UI, CLI, MCP tools, and IM bridges all talk to one daemon — no state fragmentation |
-| **Multi-runtime orchestration** | Claude Code, Codex CLI, Gemini CLI, and 5 more first-class runtimes, plus custom runtime support |
+| **Multi-runtime orchestration** | Claude Code, Codex CLI, Gemini CLI, and 5 more first-class runtimes, plus `custom` for everything else |
 | **Role-based coordination** | Foreman + peer model with permission boundaries and recipient routing (`@all`, `@peers`, `@foreman`) |
-| **Remote operations** | Bridge to Telegram, Slack, Discord, Feishu, or DingTalk — manage groups from your phone |
+| **Local-first runtime state** | Runtime data stays in `CCCC_HOME`, not your repo, while Web Access and IM bridges cover remote operations |
 
 
 ## How CCCC looks
@@ -99,7 +90,7 @@ pip install -U --pre \
 cccc
 ```
 
-Open **http://127.0.0.1:8848** — the Web UI is ready.
+Open **http://127.0.0.1:8848** — by default, CCCC brings up the daemon and the local Web UI together.
 
 ### Create a multi-agent group
 
@@ -113,7 +104,7 @@ cccc group start                           # start all actors
 cccc send "Split the task and begin." --to @all
 ```
 
-You now have two agents collaborating in a persistent group with full message history, delivery tracking, and a web dashboard.
+You now have two agents collaborating in a persistent group with full message history, delivery tracking, and a web dashboard. The daemon owns delivery and coordination, and runtime state stays in `CCCC_HOME` rather than inside your repo.
 
 ## Programmatic Access (SDK)
 

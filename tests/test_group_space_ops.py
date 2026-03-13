@@ -208,6 +208,59 @@ class TestGroupSpaceOps(unittest.TestCase):
             project_ctx.__exit__(None, None, None)
             cleanup()
 
+    def test_status_hides_stale_work_queue_after_rebind(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            from cccc.daemon.space.group_space_store import enqueue_space_job, mark_space_job_failed
+
+            gid = self._create_group("space-status-rebind-queue")
+            bind_old, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_status_old",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind_old.ok, getattr(bind_old, "error", None))
+
+            failed_job, _ = enqueue_space_job(
+                group_id=gid,
+                provider="notebooklm",
+                lane="work",
+                remote_space_id="nb_status_old",
+                kind="context_sync",
+                payload={"summary": {"tasks": []}},
+                idempotency_key="status-old-failed",
+            )
+            mark_space_job_failed(str(failed_job.get("job_id") or ""), code="space_failed", message="old notebook failed")
+
+            bind_new, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_status_new",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind_new.ok, getattr(bind_new, "error", None))
+
+            status, _ = self._call("group_space_status", {"group_id": gid})
+            self.assertTrue(status.ok, getattr(status, "error", None))
+            result = status.result if isinstance(status.result, dict) else {}
+            summary = (((result.get("queue_summary") or {}).get("work")) if isinstance(result.get("queue_summary"), dict) else {})
+            self.assertEqual(int(summary.get("pending") or 0), 0)
+            self.assertEqual(int(summary.get("running") or 0), 0)
+            self.assertEqual(int(summary.get("failed") or 0), 0)
+        finally:
+            cleanup()
+
     def test_memory_sync_status_hides_stale_summary_after_unbind(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -659,6 +712,79 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(str(result.get("latest_context_sync_at") or ""), "2026-03-08T10:00:00Z")
             self.assertEqual(int(result.get("remote_sources", -1)), 0)
             self.assertEqual(int(result.get("materialized_sources", -1)), 0)
+        finally:
+            cleanup_stub()
+            cleanup()
+
+    def test_group_space_query_ignores_old_context_sync_after_rebind(self) -> None:
+        _, cleanup = self._with_home()
+        cleanup_stub = self._with_env("CCCC_NOTEBOOKLM_STUB", "1")
+        try:
+            from cccc.daemon.space.group_space_store import enqueue_space_job, mark_space_job_succeeded
+
+            gid = self._create_group("space-query-rebind-diagnostics")
+            bind_old, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_diag_old",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind_old.ok, getattr(bind_old, "error", None))
+
+            old_job, _ = enqueue_space_job(
+                group_id=gid,
+                provider="notebooklm",
+                lane="work",
+                remote_space_id="nb_diag_old",
+                kind="context_sync",
+                payload={"summary": {"tasks": []}},
+                idempotency_key="diag-old-success",
+            )
+            mark_space_job_succeeded(
+                str(old_job.get("job_id") or ""),
+                result={"ok": True},
+            )
+
+            bind_new, _ = self._call(
+                "group_space_bind",
+                {
+                    "group_id": gid,
+                    "provider": "notebooklm",
+                    "lane": "work",
+                    "action": "bind",
+                    "remote_space_id": "nb_diag_new",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(bind_new.ok, getattr(bind_new, "error", None))
+
+            with patch(
+                "cccc.daemon.space.group_space_ops.read_group_space_sync_state",
+                return_value={
+                    "available": True,
+                    "remote_space_id": "nb_diag_new",
+                    "remote_sources": 0,
+                    "materialized_sources": 0,
+                },
+            ):
+                query, _ = self._call(
+                    "group_space_query",
+                    {
+                        "group_id": gid,
+                        "provider": "notebooklm",
+                        "lane": "work",
+                        "query": "What is the current focus?",
+                    },
+                )
+            self.assertTrue(query.ok, getattr(query, "error", None))
+            result = query.result if isinstance(query.result, dict) else {}
+            self.assertEqual(str(result.get("source_basis_hint") or ""), "unknown")
+            self.assertEqual(str(result.get("latest_context_sync_at") or ""), "")
         finally:
             cleanup_stub()
             cleanup()

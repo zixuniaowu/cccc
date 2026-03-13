@@ -330,8 +330,8 @@
     "foremanAlerts": "Foreman アラート",
     "actorIdleAlert": "エージェントアイドルアラート (秒)",
     "actorIdleAlertHelp": "エージェントがこの時間非アクティブなら Foreman に通知します。",
-    "groupSilenceCheck": "静寂レビュー (秒)",
-    "groupSilenceCheckHelp": "任意のヒューリスティックです。グループ全体がこの時間だけ静かな場合、Foreman に idle 化の見直しを促します。0 で無効化します。",
+    "groupSilenceCheck": "静黙から idle へのタイムアウト (秒)",
+    "groupSilenceCheckHelp": "2 段階のヒューリスティックです。1 回目のタイムアウトで Foreman に確認を促し、連続 2 回目のタイムアウトでグループを idle にします。0 で無効化します。",
     "savePolicies": "ポリシーの保存",
     "savePoliciesTitle": "エンジンポリシー設定の保存"
   },

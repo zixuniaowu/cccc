@@ -25,22 +25,13 @@
 
 ---
 
-## 使用官方 SDK 进行二次开发
+## 为什么选择 CCCC
 
-如果你要把 CCCC 接入应用、服务、插件或 IDE，请使用官方 SDK 仓库：
-
-- [cccc-sdk](https://github.com/ChesterRa/cccc-sdk)
-- Python 包：`cccc-sdk`（import 名称 `cccc_sdk`）
-- TypeScript 包：`cccc-sdk`
-
-SDK 客户端会连接同一个 CCCC daemon，并共享同一个 `CCCC_HOME` 运行时状态。
-
-## 为什么说 v0.4.0 是代际升级
-
-- **聊天式编排**：在 Web 聊天里像和同事对话一样布置任务，并实时看到送达/已读/确认/回复状态。
-- **工作流可配置**：通过 guidance 提示词与 automation 规则定义多智能体协作方式，不再依赖脆弱脚本拼装。
-- **双向调度能力**：CCCC 可以调度 agent，agent 也能通过 MCP 工具反向配置和调度 CCCC 工作流。
-- **不止于浏览器**：同一套协作模型可无缝扩展到 Telegram/Slack/Discord/飞书/钉钉。
+- **协作可持久**：工作状态进入 append-only ledger，而不是埋在终端滚动缓冲区里。
+- **触达可验证**：消息具备路由、已读、ACK、reply-required 追踪，而不是“发过去了应该看到了”。
+- **控制面统一**：Web UI、CLI、MCP、IM 桥接全部围绕同一 daemon 运作，不会出现多套状态。
+- **多运行时是默认能力**：Claude Code、Codex CLI、Gemini CLI 以及其它一线 runtime 可以在同一协作组内协同工作。
+- **本地优先但可远程值守**：单条 `pip install` 即可启动，运行时状态放在 `CCCC_HOME`，需要时再通过 Web / IM 远程运维。
 
 ## 痛点
 
@@ -55,16 +46,16 @@ SDK 客户端会连接同一个 CCCC daemon，并共享同一个 `CCCC_HOME` 运
 
 ## CCCC 能做什么
 
-CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不需要消息队列、不强制 Docker。但它提供的运维可靠性，媲美生产级消息系统：
+CCCC 只需一条 `pip install`，零外部依赖 — 不需要数据库、不需要消息队列、不强制 Docker。但它补上了脆弱多智能体方案最缺的那几块能力：
 
 | 能力 | 实现方式 |
 |---|---|
 | **唯一事实源** | append-only ledger（`ledger.jsonl`）记录所有消息和事件 — 可回放、可审计、永不丢失 |
-| **可靠的消息语义** | 已读游标、attention ACK、reply-required 义务追踪 — 谁读了什么一清二楚 |
+| **可靠的消息语义** | 已读游标、attention ACK、reply-required 义务追踪 — 谁看到了什么一清二楚 |
 | **统一控制面** | Web UI、CLI、MCP 工具、IM 桥接全部对接同一 daemon — 不存在状态分裂 |
-| **多运行时编排** | Claude Code、Codex CLI、Gemini CLI 等 8 种一线运行时可混用，此外还支持 `custom` 运行时 |
+| **多运行时编排** | Claude Code、Codex CLI、Gemini CLI 等 8 种一线运行时可混用，此外还支持 `custom` 运行时兜底 |
 | **角色化协调** | Foreman + Peer 角色模型，权限边界清晰，收件人路由精确（`@all`、`@peers`、`@foreman`） |
-| **远程运维** | 桥接至 Telegram、Slack、Discord、飞书、钉钉 — 手机上即可管理协作组 |
+| **本地优先的运行时状态** | 运行时数据保存在 `CCCC_HOME` 而不是代码仓库里，同时仍可通过 Web Access 与 IM 做远程运维 |
 
 ## CCCC 长什么样
 
@@ -98,7 +89,7 @@ pip install -U --pre \
 cccc
 ```
 
-打开 **http://127.0.0.1:8848** — Web UI 就绪。
+打开 **http://127.0.0.1:8848** — 默认会一起拉起 daemon 和本地 Web UI。
 
 ### 建立多智能体协作组
 
@@ -112,7 +103,7 @@ cccc group start                           # 启动所有 actor
 cccc send "请拆分任务并开始实现。" --to @all
 ```
 
-此刻你已拥有两个 agent 在一个持久化协作组中协同工作，具备完整的消息历史、触达追踪和 Web 看板。
+此刻你已拥有两个 agent 在一个持久化协作组中协同工作，具备完整的消息历史、触达追踪和 Web 看板。投递与协调由 daemon 统一负责，运行时状态则保存在 `CCCC_HOME`，不会污染代码仓库。
 
 ## 程序化接入（SDK）
 

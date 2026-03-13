@@ -330,8 +330,8 @@
     "foremanAlerts": "Foreman Alerts",
     "actorIdleAlert": "Actor Idle Alert (sec)",
     "actorIdleAlertHelp": "Alert foreman if actor is inactive for this long.",
-    "groupSilenceCheck": "Quiet Review (sec)",
-    "groupSilenceCheckHelp": "Optional heuristic. If the whole group stays quiet this long, prompt the foreman to review whether it should go idle. Set 0 to disable.",
+    "groupSilenceCheck": "Silence to Idle Timeout (sec)",
+    "groupSilenceCheckHelp": "Two-step heuristic. The first timeout prompts the foreman to review; the second consecutive timeout sets the group idle. Set 0 to disable.",
     "savePolicies": "Save Policies",
     "savePoliciesTitle": "Save engine policy settings"
   },

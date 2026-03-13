@@ -330,8 +330,8 @@
     "foremanAlerts": "Foreman 告警",
     "actorIdleAlert": "Actor 空闲告警（秒）",
     "actorIdleAlertHelp": "当 Actor 空闲超过此时间时通知 Foreman。",
-    "groupSilenceCheck": "静默复核（秒）",
-    "groupSilenceCheckHelp": "可选启发式检查。整个工作组静默达到此时长时，提醒 Foreman 复核是否应转为空闲；设为 0 即关闭。",
+    "groupSilenceCheck": "静默转空闲超时（秒）",
+    "groupSilenceCheckHelp": "两段式启发：第一次超时提醒 Foreman 复核；连续第二次超时会自动将工作组置为 idle。设为 0 即关闭。",
     "savePolicies": "保存策略",
     "savePoliciesTitle": "保存引擎策略设置"
   },

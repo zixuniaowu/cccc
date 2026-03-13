@@ -577,8 +577,20 @@ def _release_query_slot(*, lane_key: str) -> None:
 
 
 def _latest_context_sync_at(*, group_id: str, provider: str) -> str:
+    binding = get_space_binding(group_id, provider=provider, lane="work") or {}
+    binding_status = str(binding.get("status") or "").strip().lower()
+    bound_remote_id = str(binding.get("remote_space_id") or "").strip()
+    if binding_status != "bound" or not bound_remote_id:
+        return ""
     fallback = ""
-    for item in list_space_jobs(group_id=group_id, provider=provider, lane="work", state="", limit=20):
+    for item in list_space_jobs(
+        group_id=group_id,
+        provider=provider,
+        lane="work",
+        state="",
+        remote_space_id=bound_remote_id,
+        limit=20,
+    ):
         if not isinstance(item, dict):
             continue
         if str(item.get("kind") or "").strip() != "context_sync":
@@ -694,6 +706,39 @@ def _live_work_sync_state(*, group_id: str, provider: str, binding: Dict[str, An
             reason=("sync_state_not_ready" if not raw_remote_id else "binding_remote_mismatch"),
         )
     return raw_state
+
+
+def _live_work_queue_summary(*, group_id: str, provider: str, binding: Dict[str, Any]) -> Dict[str, Any]:
+    binding_status = str(binding.get("status") or "").strip().lower()
+    bound_remote_id = str(binding.get("remote_space_id") or "").strip()
+    if binding_status != "bound" or not bound_remote_id:
+        return {"pending": 0, "running": 0, "failed": 0}
+    return space_queue_summary(
+        group_id=group_id,
+        provider=provider,
+        lane="work",
+        remote_space_id=bound_remote_id,
+    )
+
+
+def _cancel_stale_pending_work_jobs(*, group_id: str, provider: str, current_remote_space_id: str = "") -> int:
+    keep_remote_id = str(current_remote_space_id or "").strip()
+    canceled = 0
+    for item in list_space_jobs(group_id=group_id, provider=provider, lane="work", state="pending", limit=500):
+        if not isinstance(item, dict):
+            continue
+        remote_space_id = str(item.get("remote_space_id") or "").strip()
+        if keep_remote_id and remote_space_id == keep_remote_id:
+            continue
+        job_id = str(item.get("job_id") or "").strip()
+        if not job_id:
+            continue
+        try:
+            cancel_space_job(job_id)
+            canceled += 1
+        except Exception:
+            continue
+    return canceled
 
 
 def _build_space_query_diagnostics(
@@ -1264,8 +1309,9 @@ def handle_group_space_status(args: Dict[str, Any]) -> DaemonResponse:
         provider_state = get_space_provider_state(provider)
         provider_state.update(_provider_runtime_readiness(provider))
         bindings = get_space_bindings(group.group_id, provider=provider)
-        summary = space_queue_summaries(group_id=group.group_id, provider=provider)
         work_binding = bindings.get("work") if isinstance(bindings.get("work"), dict) else {}
+        summary = space_queue_summaries(group_id=group.group_id, provider=provider)
+        summary["work"] = _live_work_queue_summary(group_id=group.group_id, provider=provider, binding=work_binding)
         sync_state = _live_work_sync_state(group_id=group.group_id, provider=provider, binding=work_binding)
         memory_binding = bindings.get("memory") if isinstance(bindings.get("memory"), dict) else {}
         return DaemonResponse(
@@ -1365,6 +1411,11 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                 status="bound",
             )
             if lane == "work":
+                _cancel_stale_pending_work_jobs(
+                    group_id=group.group_id,
+                    provider=provider,
+                    current_remote_space_id=remote_space_id,
+                )
                 provider_state = set_space_provider_state(
                     provider,
                     enabled=True,
@@ -1425,6 +1476,8 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                     )
         else:
             binding = set_space_binding_unbound(group.group_id, provider=provider, lane=lane, by=by)
+            if lane == "work":
+                _cancel_stale_pending_work_jobs(group_id=group.group_id, provider=provider)
             has_any_bound = any(
                 str(item.get("status") or "") == "bound" and str(item.get("remote_space_id") or "").strip()
                 for item in list_space_bindings(provider)
@@ -1440,9 +1493,10 @@ def handle_group_space_bind(args: Dict[str, Any]) -> DaemonResponse:
                     touch_health=True,
                 )
         bindings = get_space_bindings(group.group_id, provider=provider)
-        summary = space_queue_summaries(group_id=group.group_id, provider=provider)
-        _sync_projection_best_effort(group.group_id, provider)
         work_binding = bindings.get("work") if isinstance(bindings.get("work"), dict) else {}
+        summary = space_queue_summaries(group_id=group.group_id, provider=provider)
+        summary["work"] = _live_work_queue_summary(group_id=group.group_id, provider=provider, binding=work_binding)
+        _sync_projection_best_effort(group.group_id, provider)
         sync_state = _live_work_sync_state(group_id=group.group_id, provider=provider, binding=work_binding)
         memory_binding = bindings.get("memory") if isinstance(bindings.get("memory"), dict) else {}
         return DaemonResponse(
