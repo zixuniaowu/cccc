@@ -3,11 +3,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 
+from ....daemon.im.im_bridge_ops import stop_im_bridges_for_group
 from ....kernel.group import load_group
+from ....paths import ensure_home
 from ....ports.im.config_schema import canonicalize_im_config
 from ....util.conv import coerce_bool
 from ....util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive
@@ -209,22 +212,16 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         if group is None:
             raise HTTPException(status_code=404, detail={"code": "group_not_found", "message": f"group not found: {req.group_id}"})
 
-        state_dir = group.path / "state"
+        # 1. Stop bridge (pid file + orphan scan) via reusable helper
+        def _killpg(pid: int, sig: signal.Signals) -> None:
+            best_effort_signal_pid(pid, sig, include_group=True)
 
-        # 1. Stop bridge process if running (graceful — ignore missing/dead process)
-        pid_path = state_dir / "im_bridge.pid"
-        if pid_path.exists():
-            try:
-                pid = int(pid_path.read_text(encoding="utf-8").strip())
-                best_effort_signal_pid(pid, SOFT_TERMINATE_SIGNAL, include_group=True)
-            except Exception:
-                pass
-            try:
-                pid_path.unlink(missing_ok=True)
-            except Exception:
-                pass
+        stop_im_bridges_for_group(
+            ensure_home(), group_id=req.group_id, best_effort_killpg=_killpg,
+        )
 
         # 2. Clean up IM state files (graceful — ignore missing files)
+        state_dir = group.path / "state"
         for fname in ("im_subscribers.json", "im_authorized_chats.json", "im_pending_keys.json"):
             try:
                 (state_dir / fname).unlink(missing_ok=True)
