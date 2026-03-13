@@ -13,6 +13,9 @@ class _DeniedBindSocket:
         exc.winerror = 10013  # type: ignore[attr-defined]
         raise exc
 
+    def setsockopt(self, *args) -> None:
+        pass
+
     def close(self) -> None:
         return None
 

@@ -82,6 +82,7 @@ class DingTalkAdapter(IMAdapter):
     """
 
     platform = "dingtalk"
+    _LAST_SENDER_MAX = 256
 
     def __init__(
         self,
@@ -129,6 +130,10 @@ class DingTalkAdapter(IMAdapter):
         # Persistent AI Card client (lazy init) — shared across stream calls
         # so throttle state survives across begin/update/end invocations.
         self._card_client: Optional[Any] = None
+
+        # Cache: last inbound sender per conversation (for outbound @mention)
+        # conversation_id -> (staff_id, nick)   — bounded to _LAST_SENDER_MAX entries
+        self._last_sender: Dict[str, tuple[str, str]] = {}
 
         # Inbound health tracking: timestamp of last successfully enqueued message
         self._last_enqueue_ts: float = 0.0
@@ -674,6 +679,17 @@ class DingTalkAdapter(IMAdapter):
                 self._session_webhook_cache[conversation_id] = (session_webhook, expires_at)
                 self._log(f"[webhook] Cached: id={conversation_id}, expires_raw={session_expires}, expires_at={expires_at:.0f}")
 
+            # Cache sender for outbound @mention (group chats only)
+            if sender_id and conversation_id:
+                # Evict oldest entries when cache is full
+                if len(self._last_sender) >= self._LAST_SENDER_MAX:
+                    try:
+                        oldest_key = next(iter(self._last_sender))
+                        del self._last_sender[oldest_key]
+                    except StopIteration:
+                        pass
+                self._last_sender[conversation_id] = (sender_id, sender_nick)
+
             # Normalize message
             normalized = {
                 "chat_id": conversation_id,
@@ -684,6 +700,7 @@ class DingTalkAdapter(IMAdapter):
                 "text": text,
                 "attachments": attachments,
                 "from_user": sender_nick or sender_id,
+                "from_user_id": sender_id,
                 "message_id": msg_id,
                 "timestamp": self._parse_event_time(event.get("createAt")),
                 # Keep sessionWebhook for potential reply use
@@ -753,16 +770,19 @@ class DingTalkAdapter(IMAdapter):
         self._conversation_cache[conversation_id] = title
         return title
 
-    def _send_via_webhook(self, webhook_url: str, text: str) -> bool:
+    def _send_via_webhook(self, webhook_url: str, text: str,
+                          at_user_ids: Optional[List[str]] = None) -> bool:
         """Send message via sessionWebhook (most reliable for groups)."""
         title = text[:20] if len(text) > 20 else text
-        body = {
+        body: Dict[str, Any] = {
             "msgtype": "markdown",
             "markdown": {
                 "title": title,
                 "text": text,
-            }
+            },
         }
+        if at_user_ids:
+            body["at"] = {"atUserIds": at_user_ids}
         data = json.dumps(body, ensure_ascii=False).encode('utf-8')
 
         req = urllib.request.Request(webhook_url, data=data, method="POST")
@@ -800,6 +820,13 @@ class DingTalkAdapter(IMAdapter):
         # Ensure message fits limit
         safe_text = self._compose_safe(text)
 
+        # Resolve @mention targets for group conversations
+        at_user_ids: Optional[List[str]] = None
+        if chat_id.startswith("cid") and chat_id in self._last_sender:
+            staff_id, _nick = self._last_sender[chat_id]
+            if staff_id:
+                at_user_ids = [staff_id]
+
         # Rate limit
         self._rate_limiter.wait_and_acquire(chat_id)
 
@@ -808,7 +835,7 @@ class DingTalkAdapter(IMAdapter):
             webhook_url, expires_at = self._session_webhook_cache[chat_id]
             current_time = time.time()
             if current_time < expires_at:
-                if self._send_via_webhook(webhook_url, safe_text):
+                if self._send_via_webhook(webhook_url, safe_text, at_user_ids=at_user_ids):
                     return True
                 self._log("[send] Webhook failed, falling back to API...")
             else:
