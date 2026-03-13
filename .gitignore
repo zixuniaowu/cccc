@@ -47,6 +47,7 @@ uv.lock
 /docs/ITERATION_PLAN.md
 
 /docs/plan/
+/docs/superpowers/
 # Docs: legacy vnext - whitelist only what we ship
 /docs/vnext/*
 

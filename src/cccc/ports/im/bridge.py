@@ -1202,6 +1202,9 @@ class IMBridge:
                 "to": canonical_to,
                 "path": "",
                 "attachments": stored_attachments,
+                "source_platform": str(getattr(self.adapter, "platform", "") or "").strip() or None,
+                "source_user_name": from_user or None,
+                "source_user_id": from_user_id or None,
             },
         })
 

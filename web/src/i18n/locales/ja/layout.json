@@ -74,6 +74,8 @@
   "panoramaHudNext": "Next",
   "panoramaHudNoFocus": "まだありません",
   "panoramaHudNoNextAction": "まだありません",
+  "panoramaHudExpand": "詳細を表示",
+  "panoramaHudCollapse": "詳細を隠す",
   "forgotTokenCta": "サインインできませんか？",
   "hideRecovery": "復旧案内を閉じる",
   "recoveryTitle": "復旧方法",
