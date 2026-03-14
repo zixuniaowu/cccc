@@ -8,17 +8,39 @@ import { setCatState } from "./cat.js";
  */
 async function initIPC() {
   if (window.__TAURI__) {
-    const { listen } = window.__TAURI__.event;
+    const win = window.__TAURI__.window.getCurrentWindow();
+    const myLabel = win.label;
 
-    // Cat state change from Rust backend
+    // Listen for cat-state-changed events targeted at THIS window.
+    // We use the global listen + client-side label check as a reliable
+    // cross-version filter, since emit_to + win.listen target matching
+    // can be fragile across Tauri versions.
+    const { listen } = window.__TAURI__.event;
     listen("cat-state-changed", (event) => {
-      const { state } = event.payload;
+      const { state, details, windowLabel } = event.payload;
+      // Only process events meant for this window
+      if (windowLabel && windowLabel !== myLabel) {
+        return;
+      }
       setCatState(state);
+      if (details && details.teamName) {
+        setPetLabel(details.teamName);
+      }
     });
   } else {
     // Demo mode: cycle through states for development
     console.log("[IPC] Tauri not detected, running in demo mode");
     startDemoMode();
+  }
+}
+
+// --- Pet label ---
+
+const petLabel = document.getElementById("pet-label");
+
+function setPetLabel(text) {
+  if (petLabel && text) {
+    petLabel.textContent = text;
   }
 }
 
@@ -126,6 +148,7 @@ function startDemoMode() {
 
   // Set initial state
   setCatState("napping");
+  setPetLabel("CCCC Dev");
 }
 
 initIPC();

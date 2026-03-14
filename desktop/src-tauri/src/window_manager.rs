@@ -16,7 +16,7 @@ use crate::sse_client::{ConnectionInfo, DesktopApiClient, StreamSignal};
 use crate::state_aggregator::{CatStatePayload, PanelDetails, StateAggregator};
 
 const MARGIN: f64 = 16.0;
-const PET_SIZE: f64 = 80.0;
+const PET_SIZE: f64 = 96.0;
 const PET_GAP: f64 = 8.0;
 const PANEL_GAP: f64 = 8.0;
 const PANEL_WIDTH: f64 = 240.0;
@@ -91,6 +91,7 @@ impl WindowManager {
                 .inner_size(PET_SIZE, PET_SIZE)
                 .decorations(false)
                 .transparent(true)
+                .shadow(false)
                 .always_on_top(true)
                 .skip_taskbar(true)
                 .visible_on_all_workspaces(true)
@@ -126,7 +127,7 @@ impl WindowManager {
     }
 
     /// Stop runtime and close window for a group.
-    fn close_pet_window(&mut self, app: &AppHandle, group_id: &str) {
+    pub fn close_pet_window(&mut self, app: &AppHandle, group_id: &str) {
         if let Some(runtime) = self.windows.remove(group_id) {
             runtime.task_handle.abort();
         }
@@ -196,6 +197,7 @@ impl WindowManager {
             .inner_size(PANEL_WIDTH, PANEL_MIN_HEIGHT)
             .decorations(false)
             .transparent(true)
+            .shadow(false)
             .always_on_top(true)
             .skip_taskbar(true)
             .visible_on_all_workspaces(true)
@@ -208,7 +210,14 @@ impl WindowManager {
             .map_err(|e| e.to_string())?;
 
         if let Some(payload) = self.latest_payload_for_group(group_id) {
-            let _ = window.emit("panel-data", payload.details);
+            let tagged = serde_json::json!({
+                "teamName": payload.details.team_name,
+                "agents": payload.details.agents,
+                "actionItems": payload.details.action_items,
+                "connection": payload.details.connection,
+                "windowLabel": label,
+            });
+            let _ = app.emit_to(&label, "panel-data", tagged);
         }
 
         Ok(())
@@ -363,6 +372,9 @@ fn spawn_group_runtime(
                     if let Ok(Some(title)) = api.fetch_group_title().await {
                         aggregator.set_team_name(title);
                     }
+                    if let Ok(state) = api.fetch_group_state().await {
+                        aggregator.set_group_state(state);
+                    }
                     if let Ok(context) = api.fetch_context().await {
                         aggregator.replace_context(context);
                     }
@@ -392,6 +404,18 @@ fn spawn_group_runtime(
                         emit_group_payload(&app, &group_id, &payload);
                     }
                 }
+                StreamSignal::GroupStateChanged => {
+                    if let Ok(state) = api.fetch_group_state().await {
+                        aggregator.set_group_state(state);
+                        let payload = aggregator.payload(true, "connected");
+                        cache_group_payload(&latest_payloads, &group_id, &payload);
+                        emit_group_payload(&app, &group_id, &payload);
+                    }
+                }
+                StreamSignal::GroupStopped => {
+                    let _ = app.emit("group-stopped", group_id.clone());
+                    break;
+                }
                 StreamSignal::Reconnecting { reason, delay } => {
                     let message = format!("reconnecting in {}s: {}", delay.as_secs(), reason);
                     let payload = aggregator.payload(false, message);
@@ -404,13 +428,42 @@ fn spawn_group_runtime(
 }
 
 /// Emit payload events scoped to a specific group's pet window.
+///
+/// Uses `emit_to()` instead of `emit()` because Tauri v2's `Emitter::emit()`
+/// broadcasts to ALL windows regardless of which object it's called on.
 fn emit_group_payload(app: &AppHandle, group_id: &str, payload: &CatStatePayload) {
-    if let Some(window) = app.get_webview_window(&window_label(group_id)) {
-        let _ = window.emit("cat-state-changed", payload.clone());
-        let _ = window.emit("panel-data", payload.details.clone());
+    let pet = window_label(group_id);
+    let panel = panel_window_label(group_id);
+
+    // Build tagged payloads with windowLabel so each frontend can filter
+    // events that belong to its own window — a reliable cross-version
+    // approach that doesn't depend on emit_to target matching.
+    let cat_payload = serde_json::json!({
+        "state": payload.state,
+        "details": payload.details,
+        "windowLabel": pet,
+    });
+    let pet_panel_payload = serde_json::json!({
+        "teamName": payload.details.team_name,
+        "agents": payload.details.agents,
+        "actionItems": payload.details.action_items,
+        "connection": payload.details.connection,
+        "windowLabel": pet,
+    });
+    let panel_payload = serde_json::json!({
+        "teamName": payload.details.team_name,
+        "agents": payload.details.agents,
+        "actionItems": payload.details.action_items,
+        "connection": payload.details.connection,
+        "windowLabel": panel,
+    });
+
+    if app.get_webview_window(&pet).is_some() {
+        let _ = app.emit_to(&pet, "cat-state-changed", cat_payload);
+        let _ = app.emit_to(&pet, "panel-data", pet_panel_payload);
     }
-    if let Some(window) = app.get_webview_window(&panel_window_label(group_id)) {
-        let _ = window.emit("panel-data", payload.details.clone());
+    if app.get_webview_window(&panel).is_some() {
+        let _ = app.emit_to(&panel, "panel-data", panel_payload);
     }
 }
 

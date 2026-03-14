@@ -3,7 +3,7 @@ function getCurrentOrigin(): string {
   return String(window.location.origin || "");
 }
 
-const DESKTOP_PET_RELEASED = false;
+const DESKTOP_PET_RELEASED = true;
 
 export function buildDesktopPetDaemonUrl(origin: string = getCurrentOrigin()): string {
   return String(origin || "").trim().replace(/\/+$/, "");
@@ -72,9 +72,6 @@ export function detectPlatform(): PlatformInfo {
     arch = "aarch64";
   } else if (ua.includes("arm64") || ua.includes("aarch64")) {
     arch = "aarch64";
-  } else if (os === "macos") {
-    // Apple Silicon is dominant; default to aarch64 for macOS
-    arch = "aarch64";
   }
 
   const labels: Record<string, string> = {
@@ -91,7 +88,7 @@ export function buildDesktopPetDownloadUrl(): { url: string; label: string } | n
 
   const { os, arch, label } = detectPlatform();
 
-  const nameBase = "CCCC Desktop Pet";
+  const nameBase = "cccc-desktop-pet";
   const version = "0.1.0";
   let filename = "";
 
@@ -103,7 +100,7 @@ export function buildDesktopPetDownloadUrl(): { url: string; label: string } | n
       filename = `${nameBase}_${version}_${arch}-setup.exe`;
       break;
     case "linux":
-      filename = `${nameBase}_${version}_${arch === "aarch64" ? "aarch64" : "amd64"}.deb`;
+      filename = `${nameBase}_${version}_${arch === "aarch64" ? "aarch64" : "x64"}.deb`;
       break;
     default:
       return null;

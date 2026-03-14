@@ -32,15 +32,15 @@ pub struct DiscoveredToken {
 
 /// Attempt to load a usable token from the daemon's `access_tokens.yaml`.
 ///
-/// Prefers admin tokens (unrestricted access). Falls back to the first
-/// non-admin token that has at least one allowed group.
+/// Prefers admin token first so bootstrap can discover ALL groups.
+/// Falls back to scoped tokens when no admin token is available.
 /// Returns `None` if no tokens file exists or no usable token is found.
 pub fn discover_local_token() -> Option<DiscoveredToken> {
     let path = tokens_path()?;
     let raw = fs::read_to_string(&path).ok()?;
     let tokens = parse_tokens_yaml(&raw)?;
 
-    // Prefer admin token
+    // Prefer admin token — can see all groups for bootstrap discovery.
     if let Some(found) = tokens
         .iter()
         .find(|(_, entry)| entry.is_admin && !entry.user_id.trim().is_empty())
@@ -51,11 +51,18 @@ pub fn discover_local_token() -> Option<DiscoveredToken> {
         });
     }
 
-    // Fall back to any token with allowed groups
-    tokens
-        .into_iter()
+    // Fall back to scoped token with at least one allowed group.
+    if let Some(found) = tokens
+        .iter()
         .find(|(_, entry)| !entry.user_id.trim().is_empty() && !entry.allowed_groups.is_empty())
-        .map(|(token, entry)| DiscoveredToken { token, entry })
+    {
+        return Some(DiscoveredToken {
+            token: found.0.clone(),
+            entry: found.1.clone(),
+        });
+    }
+
+    None
 }
 
 /// Parse the YAML file content into a token map.
@@ -169,10 +176,10 @@ acc_flat1:
     }
 
     #[test]
-    fn prefers_admin_token() {
+    fn prefers_admin_token_for_bootstrap() {
         let yaml = r#"
 tokens:
-  acc_normal:
+  acc_scoped:
     user_id: bob
     is_admin: false
     allowed_groups:
@@ -181,13 +188,23 @@ tokens:
     user_id: alice
     is_admin: true
 "#;
-        let tokens = parse_tokens_yaml(yaml).unwrap();
-        // Admin should be findable
-        let admin = tokens
-            .iter()
-            .find(|(_, e)| e.is_admin && !e.user_id.trim().is_empty());
-        assert!(admin.is_some());
-        assert_eq!(admin.unwrap().0, "acc_admin");
+        let unique = format!(
+            "cccc_token_store_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(TOKENS_FILE), yaml).unwrap();
+        std::env::set_var("CCCC_HOME", &dir);
+        let found = discover_local_token().unwrap();
+        assert_eq!(found.token, "acc_admin");
+        assert!(found.entry.is_admin);
+        std::env::remove_var("CCCC_HOME");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

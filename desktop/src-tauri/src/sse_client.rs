@@ -44,6 +44,8 @@ pub enum StreamSignal {
     Connected,
     ContextChanged,
     ObligationChanged,
+    GroupStateChanged,
+    GroupStopped,
     Reconnecting { reason: String, delay: Duration },
 }
 
@@ -62,6 +64,8 @@ struct GroupShowResult {
 struct GroupDoc {
     #[serde(default)]
     title: String,
+    #[serde(default)]
+    state: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,6 +110,18 @@ impl DesktopApiClient {
         } else {
             Ok(Some(title))
         }
+    }
+
+    pub async fn fetch_group_state(&self) -> Result<String> {
+        let url = format!(
+            "{}/api/v1/groups/{}",
+            self.info.api_base_url, self.info.group_id
+        );
+        let response: ApiEnvelope<GroupShowResult> = self.get_json(&url).await?;
+        if !response.ok {
+            return Err(anyhow!("group endpoint returned ok=false"));
+        }
+        Ok(response.result.group.state)
     }
 
     pub async fn fetch_recent_obligations(&self, lines: usize) -> Result<Vec<LedgerEvent>> {
@@ -211,6 +227,8 @@ fn classify_ledger_event(event: &LedgerEvent) -> Option<StreamSignal> {
                 None
             }
         }
+        "group.set_state" => Some(StreamSignal::GroupStateChanged),
+        "group.stop" => Some(StreamSignal::GroupStopped),
         _ => None,
     }
 }
@@ -292,6 +310,30 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(classify_ledger_event(&event), None);
+    }
+
+    #[test]
+    fn classifies_group_set_state() {
+        let event = LedgerEvent {
+            kind: "group.set_state".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            classify_ledger_event(&event),
+            Some(StreamSignal::GroupStateChanged)
+        );
+    }
+
+    #[test]
+    fn classifies_group_stop() {
+        let event = LedgerEvent {
+            kind: "group.stop".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            classify_ledger_event(&event),
+            Some(StreamSignal::GroupStopped)
+        );
     }
 
     #[test]

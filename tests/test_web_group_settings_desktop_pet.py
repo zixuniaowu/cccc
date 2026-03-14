@@ -109,6 +109,48 @@ class TestWebGroupSettingsDesktopPet(unittest.TestCase):
         req3 = GroupSettingsRequest()
         self.assertIsNone(req3.desktop_pet_enabled)
 
+    def test_launch_token_endpoint_returns_current_scoped_token(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            token = str(create_access_token("member-user", is_admin=False, allowed_groups=[group_id]).get("token") or "")
+            app = create_app()
+            client = TestClient(app)
+
+            resp = client.get(
+                f"/api/v1/groups/{group_id}/desktop_pet/launch_token",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(body.get("ok"))
+            self.assertEqual(str((body.get("result") or {}).get("token") or ""), token)
+        finally:
+            cleanup()
+
+    def test_launch_token_endpoint_respects_group_scope(self) -> None:
+        from cccc.kernel.access_tokens import create_access_token
+        from cccc.ports.web.app import create_app
+
+        _, cleanup = self._with_home()
+        try:
+            group_id = self._create_group()
+            other_group_id = self._create_group()
+            token = str(create_access_token("member-user", is_admin=False, allowed_groups=[group_id]).get("token") or "")
+            app = create_app()
+            client = TestClient(app)
+
+            resp = client.get(
+                f"/api/v1/groups/{other_group_id}/desktop_pet/launch_token",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            self.assertEqual(resp.status_code, 403)
+        finally:
+            cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

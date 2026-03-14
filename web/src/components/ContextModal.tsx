@@ -3,7 +3,7 @@ import type { CSSProperties } from "react";
 import { DndContext, DragEndEvent, DragOverlay, DragStartEvent, PointerSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors } from "@dnd-kit/core";
 import { CSS } from "@dnd-kit/utilities";
 import { useTranslation } from "react-i18next";
-import { AccessTokenEntry, addCoordinationNote, apiJson, contextSync, fetchAccessTokens, revealAccessToken, updateCoordinationBrief, updateCoordinationTask } from "../services/api";
+import { addCoordinationNote, apiJson, contextSync, fetchDesktopPetLaunchToken, updateCoordinationBrief, updateCoordinationTask } from "../services/api";
 import type {
   AgentState,
   CoordinationBrief,
@@ -18,7 +18,7 @@ import type {
 } from "../types";
 import { formatFullTime, formatTime } from "../utils/time";
 import { classNames } from "../utils/classNames";
-import { buildDesktopPetDaemonUrl, buildDesktopPetDownloadUrl, buildDesktopPetLaunchUrl, pickLaunchToken } from "../utils/desktopPetLaunch";
+import { buildDesktopPetDaemonUrl, buildDesktopPetDownloadUrl, buildDesktopPetLaunchUrl } from "../utils/desktopPetLaunch";
 import { MarkdownRenderer } from "./MarkdownRenderer";
 import { useModalA11y } from "../hooks/useModalA11y";
 import { ModalFrame } from "./modals/ModalFrame";
@@ -643,22 +643,11 @@ export function ContextModal({
   );
 
   const resolveDesktopPetLaunchToken = useCallback(async (): Promise<string | null> => {
-    const tokensResp = await fetchAccessTokens();
-    if (!tokensResp.ok || !tokensResp.result?.access_tokens) {
-      throw new Error(tokensResp.error?.message || tr("context.desktopPetLaunchTokenFailed", "Failed to load access tokens."));
+    const launchResp = await fetchDesktopPetLaunchToken(groupId);
+    if (!launchResp.ok || !launchResp.result?.token) {
+      throw new Error(launchResp.error?.message || tr("context.desktopPetLaunchTokenFailed", "Failed to load access tokens."));
     }
-
-    const tokenEntry = pickLaunchToken<AccessTokenEntry>(tokensResp.result.access_tokens, groupId);
-    if (!tokenEntry?.token_id) {
-      return null;
-    }
-
-    const revealResp = await revealAccessToken(tokenEntry.token_id);
-    if (!revealResp.ok || !revealResp.result?.token) {
-      throw new Error(revealResp.error?.message || tr("context.desktopPetLaunchRevealFailed", "Failed to reveal access token."));
-    }
-
-    return String(revealResp.result.token || "").trim() || null;
+    return String(launchResp.result.token || "").trim() || null;
   }, [groupId, tr]);
 
   const handlePrepareDesktopPetLaunch = useCallback(async () => {

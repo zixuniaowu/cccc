@@ -117,6 +117,53 @@ function drawState(state, frame) {
 // --- Procedural Fallback (used when sprite PNGs are missing) ---
 
 /**
+ * Draw a pixel-art "z" at (x, y) with the given size (3px or 5px wide).
+ * Uses fillRect only — no fillText — for crisp pixel rendering.
+ */
+function drawPixelZ(x, y, size) {
+  if (size <= 3) {
+    // Small z: 3×3
+    ctx.fillRect(x, y, 3, 1);       // top bar
+    ctx.fillRect(x + 2, y + 1, 1, 1); // diagonal step 1
+    ctx.fillRect(x + 1, y + 2, 1, 1); // diagonal step 2 (not needed for 3px)
+    ctx.fillRect(x, y + 2, 3, 1);   // bottom bar — overlap is fine
+  } else {
+    // Large Z: 5×5
+    ctx.fillRect(x, y, 5, 1);       // top bar
+    ctx.fillRect(x + 3, y + 1, 1, 1);
+    ctx.fillRect(x + 2, y + 2, 1, 1);
+    ctx.fillRect(x + 1, y + 3, 1, 1);
+    ctx.fillRect(x, y + 4, 5, 1);   // bottom bar
+  }
+}
+
+/**
+ * Render three "z" letters that float upward in a staggered cycle.
+ * Each z has a lifespan of 8 frames, offset by ~3 frames from each other.
+ * Opacity fades out as the z rises.
+ */
+function drawZzzBubbles(frame, bounce) {
+  const cycle = 10; // total frames per z lifecycle
+  const zSpecs = [
+    { baseX: 46, baseY: 12 + bounce, size: 3, offset: 0 },
+    { baseX: 50, baseY: 6 + bounce,  size: 4, offset: 3 },
+    { baseX: 54, baseY: 0 + bounce,  size: 5, offset: 6 },
+  ];
+
+  for (const spec of zSpecs) {
+    const t = (frame + spec.offset) % cycle;
+    if (t >= 8) continue; // hidden for 2 frames between cycles
+
+    const rise = t * 1.2;           // float upward
+    const alpha = 1 - (t / 8) * 0.7; // fade from 1.0 → 0.3
+    ctx.globalAlpha *= alpha;
+    ctx.fillStyle = "#8888aa";
+    drawPixelZ(spec.baseX, spec.baseY - rise, spec.size);
+    ctx.globalAlpha = ctx.globalAlpha / alpha; // restore
+  }
+}
+
+/**
  * Draws a simple pixel cat procedurally for each state.
  * This serves as a development placeholder until real sprite sheets are created.
  */
@@ -183,13 +230,8 @@ function drawProcedural(state, frame) {
   ctx.fillStyle = "#000";
   switch (state) {
     case "napping":
-      // Zzz bubbles
-      if (frame % 4 < 2) {
-        ctx.fillStyle = "#888";
-        ctx.font = "8px monospace";
-        ctx.fillText("z", 46, 14);
-        ctx.fillText("Z", 50, 8);
-      }
+      // Zzz bubbles — pixel-drawn, floating upward
+      drawZzzBubbles(frame, bounce);
       break;
     case "working":
     case "busy":

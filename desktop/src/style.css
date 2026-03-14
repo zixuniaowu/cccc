@@ -26,8 +26,9 @@ body {
 
 #pet-container {
   width: 80px;
-  height: 80px;
+  height: 96px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   cursor: grab;
@@ -42,6 +43,21 @@ body {
   height: 64px;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+  pointer-events: none;
+}
+
+#pet-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 78px;
+  line-height: 1;
+  margin-top: 2px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8), 0 0 6px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
 

@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use config::DesktopConfig;
 use deep_link::LaunchPayload;
 use state_aggregator::{PanelDetails, StateAggregator};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_autostart::MacosLauncher;
 use window_manager::WindowManager;
 
@@ -203,6 +203,19 @@ pub fn run() {
                 });
             }
 
+            // Listen for group-stopped events from SSE runtime
+            {
+                let state_clone = state.clone();
+                let app_handle = app.handle().clone();
+                app.listen("group-stopped", move |event| {
+                    if let Ok(group_id) = serde_json::from_str::<String>(event.payload()) {
+                        if let Ok(mut wm) = state_clone.window_manager.lock() {
+                            wm.close_pet_window(&app_handle, &group_id);
+                        }
+                    }
+                });
+            }
+
             // Check if first instance was launched via deep-link argv
             // (e.g. app was not running, OS passes URL as CLI argument)
             for arg in std::env::args() {
@@ -256,16 +269,23 @@ fn run_bootstrap_flow(app: AppHandle, state: RuntimeState) {
         return;
     }
 
-    // 1. Try to restore from last launch state (autostart recovery)
+    // 1. Try to restore from last launch state (autostart recovery).
+    //    Skip keychain restore when local token discovery is available — local
+    //    bootstrap finds ALL pet-enabled groups, while keychain only stores
+    //    the single group from the last deep-link launch.
     if let Ok(Some(last_launch)) = keychain::load_last_launch() {
-        let payload = LaunchPayload {
-            daemon_url: last_launch.daemon_url,
-            token: last_launch.token,
-            group_id: last_launch.group_id,
-            group_title: last_launch.group_title,
-        };
-        handle_launch_payload(&app, &state, payload);
-        return;
+        if token_store::discover_local_token().is_none() {
+            // Remote mode: no local tokens, use keychain to restore
+            let payload = LaunchPayload {
+                daemon_url: last_launch.daemon_url,
+                token: last_launch.token,
+                group_id: last_launch.group_id,
+                group_title: last_launch.group_title,
+            };
+            handle_launch_payload(&app, &state, payload);
+            return;
+        }
+        // Local mode: skip keychain, fall through to bootstrap_local()
     }
 
     // 2. Local fallback: discover token from access_tokens.yaml, query daemon for pet-enabled groups
@@ -284,7 +304,7 @@ fn run_bootstrap_flow(app: AppHandle, state: RuntimeState) {
                 }
             }
             Err(e) => {
-                eprintln!("local bootstrap failed: {}", e);
+                eprintln!("[bootstrap] failed: {}", e);
                 emit_empty_state(&app, "waiting for launch from Web UI");
             }
         }

@@ -112,8 +112,14 @@ async function initPanelWindow() {
     return;
   }
 
+  const win = window.__TAURI__.window.getCurrentWindow();
+  const myLabel = win.label;
   const { listen } = window.__TAURI__.event;
   await listen("panel-data", (event) => {
+    // Only process events meant for this panel window
+    if (event.payload?.windowLabel && event.payload.windowLabel !== myLabel) {
+      return;
+    }
     updatePanel(event.payload);
   });
 

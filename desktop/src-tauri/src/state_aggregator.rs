@@ -1,7 +1,14 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
+
+/// Deserialize a JSON string that may be `null` into an empty `String`.
+/// `#[serde(default)]` only covers *missing* keys; explicit `null` still
+/// fails for plain `String`. This helper catches both.
+fn nullable_string<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -74,21 +81,21 @@ pub struct AttentionProjection {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct Task {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub title: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub assignee: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub waiting_on: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub status: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AgentState {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub id: String,
     #[serde(default)]
     pub hot: AgentHotState,
@@ -96,9 +103,9 @@ pub struct AgentState {
 
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct AgentHotState {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub active_task_id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable_string")]
     pub focus: String,
 }
 
@@ -131,6 +138,7 @@ pub struct StateAggregator {
     team_name: String,
     context: Option<GroupContext>,
     pending_reply_required: BTreeMap<String, ActionItem>,
+    group_state: String,
 }
 
 impl StateAggregator {
@@ -139,6 +147,7 @@ impl StateAggregator {
             team_name,
             context: None,
             pending_reply_required: BTreeMap::new(),
+            group_state: String::new(),
         }
     }
 
@@ -146,6 +155,10 @@ impl StateAggregator {
         if !team_name.trim().is_empty() {
             self.team_name = team_name.trim().to_string();
         }
+    }
+
+    pub fn set_group_state(&mut self, state: String) {
+        self.group_state = state;
     }
 
     pub fn replace_context(&mut self, context: GroupContext) {
@@ -200,7 +213,9 @@ impl StateAggregator {
             .filter(|agent| has_activity(agent))
             .collect();
 
-        let overall_state = if !action_items.is_empty() {
+        let overall_state = if self.group_state == "paused" {
+            CatState::Napping
+        } else if !action_items.is_empty() {
             CatState::NeedsYou
         } else if active_agents.len() >= 2 {
             CatState::Busy
@@ -278,8 +293,12 @@ fn collect_waiting_user_tasks(context: &GroupContext) -> Vec<ActionItem> {
         .collect()
 }
 
+/// An agent is considered active only when it has an assigned task.
+/// The `focus` field is informational (display-only) and is often left
+/// populated even when the agent is idle, so it must NOT be used as an
+/// activity signal.
 fn has_activity(agent: &AgentState) -> bool {
-    !agent.hot.active_task_id.trim().is_empty() || !agent.hot.focus.trim().is_empty()
+    !agent.hot.active_task_id.trim().is_empty()
 }
 
 fn display_actor(actor_id: &str) -> String {
@@ -347,7 +366,7 @@ mod tests {
                 AgentState {
                     id: "peer-impl-2".to_string(),
                     hot: AgentHotState {
-                        active_task_id: String::new(),
+                        active_task_id: "T2".to_string(),
                         focus: "Review".to_string(),
                     },
                 },
@@ -461,5 +480,157 @@ mod tests {
         assert_eq!(payload.state, CatState::NeedsYou);
         assert_eq!(payload.details.action_items[0].id, "evt1");
         assert_eq!(payload.details.action_items[0].agent, "peer-reviewer");
+    }
+
+    // --- Real-world scenario tests for has_activity fix ---
+
+    #[test]
+    fn focus_only_agents_are_not_active() {
+        // Scenario: multiple agents have focus text (stale status messages)
+        // but no active_task_id. This is the common idle state.
+        let mut aggregator = StateAggregator::new("cccc".to_string());
+        aggregator.replace_context(GroupContext {
+            agent_states: vec![
+                AgentState {
+                    id: "peer-impl-1".to_string(),
+                    hot: AgentHotState {
+                        active_task_id: String::new(),
+                        focus: "T232 返修完成，等待二审".to_string(),
+                    },
+                },
+                AgentState {
+                    id: "peer-reviewer".to_string(),
+                    hot: AgentHotState {
+                        active_task_id: String::new(),
+                        focus: "已补充 Desktop Pet UI 逻辑审查结论".to_string(),
+                    },
+                },
+                AgentState {
+                    id: "peer-debugger".to_string(),
+                    hot: AgentHotState {
+                        active_task_id: String::new(),
+                        focus: "冷启动恢复，已回复用户任务状态查询".to_string(),
+                    },
+                },
+            ],
+            ..Default::default()
+        });
+
+        let payload = aggregator.payload(true, "connected");
+        // All agents have focus but no task → should be Napping, not Busy
+        assert_eq!(payload.state, CatState::Napping);
+    }
+
+    #[test]
+    fn one_real_task_among_idle_agents_is_working() {
+        // Scenario: one agent has a real task, others have stale focus only
+        let mut aggregator = StateAggregator::new("cccc".to_string());
+        aggregator.replace_context(GroupContext {
+            agent_states: vec![
+                AgentState {
+                    id: "peer-impl-1".to_string(),
+                    hot: AgentHotState {
+                        active_task_id: "T240".to_string(),
+                        focus: "implementing auth module".to_string(),
+                    },
+                },
+                AgentState {
+                    id: "peer-reviewer".to_string(),
+                    hot: AgentHotState {
+                        active_task_id: String::new(),
+                        focus: "等待审查任务".to_string(),
+                    },
+                },
+            ],
+            ..Default::default()
+        });
+
+        let payload = aggregator.payload(true, "connected");
+        assert_eq!(payload.state, CatState::Working);
+    }
+
+    #[test]
+    fn needs_you_overrides_active_agents() {
+        // Scenario: agents are working but there are waiting_user tasks
+        let mut aggregator = StateAggregator::new("cccc".to_string());
+        aggregator.replace_context(GroupContext {
+            agent_states: vec![AgentState {
+                id: "peer-impl-1".to_string(),
+                hot: AgentHotState {
+                    active_task_id: "T1".to_string(),
+                    focus: "working on something".to_string(),
+                },
+            }],
+            attention: AttentionProjection {
+                waiting_user: vec![Task {
+                    id: "T200".to_string(),
+                    title: "请确认部署".to_string(),
+                    assignee: "peer-impl-1".to_string(),
+                    waiting_on: "user".to_string(),
+                    status: "active".to_string(),
+                }],
+            },
+            ..Default::default()
+        });
+
+        let payload = aggregator.payload(true, "connected");
+        assert_eq!(payload.state, CatState::NeedsYou);
+    }
+
+    #[test]
+    fn paused_overrides_needs_you_to_napping() {
+        let mut aggregator = StateAggregator::new("cccc".to_string());
+        aggregator.set_group_state("paused".to_string());
+        aggregator.replace_context(GroupContext {
+            attention: AttentionProjection {
+                waiting_user: vec![Task {
+                    id: "T100".to_string(),
+                    title: "Need approval".to_string(),
+                    assignee: "peer-impl-1".to_string(),
+                    waiting_on: "user".to_string(),
+                    status: "active".to_string(),
+                }],
+            },
+            agent_states: vec![AgentState {
+                id: "peer-impl-1".to_string(),
+                hot: AgentHotState {
+                    active_task_id: "T1".to_string(),
+                    focus: "working".to_string(),
+                },
+            }],
+            ..Default::default()
+        });
+
+        let payload = aggregator.payload(true, "connected");
+        // paused overrides everything to Napping
+        assert_eq!(payload.state, CatState::Napping);
+    }
+
+    #[test]
+    fn all_fields_empty_is_napping() {
+        // Scenario: all agents have completely empty hot state
+        let mut aggregator = StateAggregator::new("cccc".to_string());
+        aggregator.replace_context(GroupContext {
+            agent_states: vec![
+                AgentState {
+                    id: "peer-impl-1".to_string(),
+                    hot: AgentHotState {
+                        active_task_id: String::new(),
+                        focus: String::new(),
+                    },
+                },
+                AgentState {
+                    id: "peer-impl-2".to_string(),
+                    hot: AgentHotState {
+                        active_task_id: String::new(),
+                        focus: String::new(),
+                    },
+                },
+            ],
+            ..Default::default()
+        });
+
+        let payload = aggregator.payload(true, "connected");
+        assert_eq!(payload.state, CatState::Napping);
     }
 }
