@@ -4,7 +4,16 @@ import { Trans, useTranslation } from "react-i18next";
 import * as api from "../../../services/api";
 import type { Actor } from "../../../types";
 import { buildHelpMarkdown, parseHelpMarkdown, type HelpChangedBlock, type ParsedHelpMarkdown } from "../../../utils/helpMarkdown";
-import { cardClass, inputClass, labelClass, primaryButtonClass, preClass, secondaryButtonClass, settingsDialogPanelClass } from "./types";
+import {
+  cardClass,
+  inputClass,
+  labelClass,
+  primaryButtonClass,
+  preClass,
+  secondaryButtonClass,
+  settingsDialogBodyClass,
+  settingsDialogPanelClass,
+} from "./types";
 
 type PromptKind = "preamble" | "help";
 type PromptInfo = api.GroupPromptInfo;
@@ -252,7 +261,7 @@ export function GuidanceTab({ isDark, groupId }: {
       : isDark
         ? "bg-slate-800 text-slate-300 border border-slate-700"
         : "bg-gray-100 text-gray-700 border border-gray-200";
-  const settingsScrollAreaClass = "overflow-y-auto pr-3 pb-3 [scrollbar-gutter:stable]";
+  const settingsScrollAreaClass = "overflow-y-auto scrollbar-subtle pr-3 pb-3 [scrollbar-gutter:stable]";
 
   const renderSourceBadge = (kind: PromptKind) => {
     const badgeClass = kind === "help" ? helpBadge : preambleBadge;
@@ -295,7 +304,7 @@ export function GuidanceTab({ isDark, groupId }: {
   };
 
   const renderPreambleCard = (expanded = false) => (
-    <div className={`${cardClass(isDark)} ${expanded ? "flex h-full min-h-0 flex-col" : ""}`}>
+    <div className={`${expanded ? "flex h-full min-h-0 flex-col" : cardClass(isDark)}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("guidance.preambleTitle")}</div>
@@ -450,7 +459,7 @@ export function GuidanceTab({ isDark, groupId }: {
   };
 
   const renderHelpCard = (expanded = false) => (
-    <div className={`${cardClass(isDark)} ${expanded ? "flex h-full min-h-0 flex-col" : ""}`}>
+    <div className={`${expanded ? "flex h-full min-h-0 flex-col" : cardClass(isDark)}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className={`text-sm font-semibold ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("guidance.helpTitle")}</div>
@@ -478,15 +487,14 @@ export function GuidanceTab({ isDark, groupId }: {
         </div>
       ) : null}
 
-      <div className={`mt-3 rounded-xl border px-3 py-3 ${isDark ? "border-slate-800 bg-slate-950/30" : "border-gray-200 bg-white"} ${expanded ? "min-h-0 flex flex-1 flex-col" : ""}`}>
-        <div className="flex items-start justify-between gap-3">
+      <div className={`${expanded ? "mt-3 min-h-0 flex flex-1 flex-col" : `mt-3 rounded-xl border px-3 py-3 ${isDark ? "border-slate-800 bg-slate-950/30" : "border-gray-200 bg-white"}`}`}>
+        <div className={`flex items-start justify-between gap-3 ${expanded ? "pb-3" : ""}`}>
           <div className="min-w-0">
-            <div className={`text-sm font-medium ${isDark ? "text-slate-100" : "text-gray-900"}`}>{t("guidance.helpEditorTitle", "Help editor")}</div>
-            <div className={`text-[11px] ${isDark ? "text-slate-500" : "text-gray-500"}`}>
+            <div className={`text-[11px] leading-5 ${isDark ? "text-slate-500" : "text-gray-500"}`}>
               {t("guidance.helpEditorHint", "Structured mode edits common, role, and actor notes; raw mode keeps full-file control.")}
             </div>
           </div>
-          <div className={`inline-flex rounded-lg border p-1 ${isDark ? "border-slate-800 bg-slate-900" : "border-gray-200 bg-gray-50"}`}>
+          <div className={`inline-flex rounded-lg border p-1 ${isDark ? "border-slate-800 bg-slate-900" : "border-gray-200 bg-gray-50"} ${expanded ? "shrink-0" : ""}`}>
             <button
               type="button"
               className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
@@ -523,11 +531,8 @@ export function GuidanceTab({ isDark, groupId }: {
         ) : null}
 
         {helpViewMode === "structured" ? (
-          <div className={`mt-4 grid grid-cols-1 gap-4 ${expanded ? "min-h-0 flex-1 xl:grid-cols-[240px_minmax(0,1fr)]" : "items-start xl:grid-cols-[200px_minmax(0,1fr)]"}`}>
-            <div className={`rounded-xl border p-2.5 ${isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50"} ${expanded ? "min-h-0 flex flex-col" : "space-y-2.5"}`}>
-              {expanded ? (
-                <div className={`mb-2 text-[11px] font-medium ${isDark ? "text-slate-400" : "text-gray-600"}`}>{t("guidance.helpEditorTitle", "Help editor")}</div>
-              ) : null}
+            <div className={`mt-4 grid grid-cols-1 gap-4 ${expanded ? "min-h-0 flex-1 xl:grid-cols-[240px_minmax(0,1fr)]" : "items-start xl:grid-cols-[200px_minmax(0,1fr)]"}`}>
+              <div className={`rounded-xl border p-2.5 ${isDark ? "border-slate-800 bg-slate-950/40" : "border-gray-200 bg-gray-50"} ${expanded ? "min-h-0 flex flex-col" : "space-y-2.5"}`}>
               <div className={expanded ? `min-h-0 flex-1 space-y-3 ${settingsScrollAreaClass}` : "space-y-2.5"}>
                 <div className="space-y-2">
                   {renderHelpScopeButton(commonScope)}
@@ -632,14 +637,14 @@ export function GuidanceTab({ isDark, groupId }: {
                 if (e.target === e.currentTarget) setExpandedKind(null);
               }}
             >
-              <div className="absolute inset-0 bg-black/50" />
+              <div className="absolute inset-0 glass-overlay" />
               <div className={settingsDialogPanelClass("xl")}>
-                <div className="flex shrink-0 justify-end px-3 py-2 sm:px-4 sm:py-3">
+                <div className="flex shrink-0 justify-end border-b border-[var(--glass-border-subtle)] px-3 py-2 sm:px-4 sm:py-3">
                   <button type="button" className={secondaryButtonClass("sm")} onClick={() => setExpandedKind(null)}>
                     {t("common:close")}
                   </button>
                 </div>
-                <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-5 md:p-6 [scrollbar-gutter:stable]">
+                <div className={settingsDialogBodyClass}>
                   {expandedKind === "help" ? renderHelpCard(true) : renderPreambleCard(true)}
                 </div>
               </div>

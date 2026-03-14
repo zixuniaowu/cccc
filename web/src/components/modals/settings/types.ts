@@ -14,7 +14,7 @@ export type GlobalTabId = "capabilities" | "actorProfiles" | "myProfiles" | "web
 
 // Shared style class helpers — glass design system
 export const inputClass = (_isDark?: boolean) =>
-  `glass-input w-full rounded-xl px-4 py-3 pr-5 text-[var(--color-text-primary)] text-sm leading-6 min-h-[44px] placeholder:text-[var(--color-text-muted)] [scrollbar-gutter:stable]`;
+  `glass-input w-full rounded-xl px-4 py-3 pr-5 text-[var(--color-text-primary)] text-sm leading-6 min-h-[44px] placeholder:text-[var(--color-text-muted)]`;
 
 export const labelClass = (_isDark?: boolean) =>
   `block text-xs mb-1 text-[var(--color-text-secondary)]`;
@@ -38,6 +38,15 @@ export const settingsDialogPanelClass = (size: "lg" | "xl" = "lg") =>
       ? "sm:w-[min(980px,calc(100vw-2rem))] sm:h-[min(88vh,860px)]"
       : "sm:w-[min(920px,calc(100vw-2rem))] sm:h-[min(86vh,820px)]"
   } sm:-translate-x-1/2 sm:-translate-y-1/2 rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden`;
+
+export const settingsDialogHeaderClass =
+  `flex shrink-0 items-start gap-3 border-b border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5 sm:py-4`;
+
+export const settingsDialogBodyClass =
+  `min-h-0 flex-1 overflow-y-auto scrollbar-subtle p-4 sm:p-5 [scrollbar-gutter:stable]`;
+
+export const settingsDialogFooterClass =
+  `flex shrink-0 items-center justify-end gap-2 border-t border-[var(--glass-border-subtle)] px-4 py-3 sm:px-5 sm:py-4 safe-area-bottom-compact`;
 
 export const cardClass = (_isDark?: boolean) =>
   `glass-panel rounded-lg p-3`;

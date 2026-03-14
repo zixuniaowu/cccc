@@ -795,7 +795,7 @@ export function SettingsModal({
         />
 
         {/* Main Content Area */}
-        <div className="min-h-0 flex-1 overflow-y-auto flex flex-col [scrollbar-gutter:stable]">
+        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-subtle flex flex-col [scrollbar-gutter:stable]">
           <div className="p-5 pb-8 sm:p-8 sm:pb-10 space-y-6">
             {scope === "global" && !globalSettingsEnabled && !currentBrowserSignedIn ? (
               <div className={`rounded-xl border p-6 ${isDark ? "border-amber-700/40 bg-amber-900/10 text-amber-200" : "border-amber-200 bg-amber-50 text-amber-800"}`}>

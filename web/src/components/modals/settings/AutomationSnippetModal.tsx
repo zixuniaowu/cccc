@@ -3,7 +3,17 @@ import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
 import { getAutomationVarHelp } from "./automationUtils";
-import { cardClass, dangerButtonClass, inputClass, primaryButtonClass, secondaryButtonClass, settingsDialogPanelClass } from "./types";
+import {
+  cardClass,
+  dangerButtonClass,
+  inputClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+  settingsDialogBodyClass,
+  settingsDialogFooterClass,
+  settingsDialogHeaderClass,
+  settingsDialogPanelClass,
+} from "./types";
 
 interface AutomationSnippetModalProps {
   open: boolean;
@@ -53,9 +63,9 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
       role="dialog"
       aria-modal="true"
     >
-      <div className="absolute inset-0 bg-black/50" onMouseDown={onClose} />
+      <div className="absolute inset-0 glass-overlay" onPointerDown={onClose} />
       <div className={settingsDialogPanelClass("lg")}>
-        <div className="px-4 py-3 border-b border-[var(--glass-border-subtle)] flex items-start gap-3">
+        <div className={settingsDialogHeaderClass}>
           <div className="min-w-0">
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">{t("snippetModal.title")}</div>
             <div className="mt-1 text-[11px] text-[var(--color-text-tertiary)]">
@@ -71,26 +81,26 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
           </button>
         </div>
 
-        <div className="p-4 sm:p-5 flex-1 overflow-auto [scrollbar-gutter:stable]">
-          <div className="space-y-4 safe-area-inset-bottom pb-2">
+        <div className={settingsDialogBodyClass}>
+          <div className="space-y-4">
             {templateErr ? <div className="text-xs text-rose-600 dark:text-rose-300">{templateErr}</div> : null}
             {!templateErr && saveErr ? <div className="text-xs text-rose-600 dark:text-rose-300">{saveErr}</div> : null}
             <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2">
-            <input
-              value={newSnippetId}
-              onChange={(e) => onNewSnippetIdChange(e.target.value)}
-              className={`${inputClass(isDark)} font-mono`}
-              placeholder="snippet_name"
-              spellCheck={false}
-            />
-            <button
-              type="button"
-              className={secondaryButtonClass()}
-              onClick={onAddSnippet}
-            >
-              {t("snippetModal.addSnippet")}
-            </button>
-          </div>
+              <input
+                value={newSnippetId}
+                onChange={(e) => onNewSnippetIdChange(e.target.value)}
+                className={`${inputClass(isDark)} font-mono`}
+                placeholder="snippet_name"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                className={secondaryButtonClass()}
+                onClick={onAddSnippet}
+              >
+                {t("snippetModal.addSnippet")}
+              </button>
+            </div>
 
             {supportedVars.length > 0 ? (
               <div className="rounded-lg border border-[var(--glass-border-subtle)] p-2.5 text-[11px] bg-[var(--glass-panel-bg)] text-[var(--color-text-tertiary)]">
@@ -136,25 +146,25 @@ export function AutomationSnippetModal(props: AutomationSnippetModalProps) {
                 </div>
               ))}
             </div>
-            <div className="flex justify-end gap-2 pt-3">
-              <button
-                type="button"
-                onClick={onClose}
-                className={secondaryButtonClass()}
-                disabled={saveBusy}
-              >
-                {t("common:cancel")}
-              </button>
-              <button
-                type="button"
-                onClick={() => void onSave()}
-                className={primaryButtonClass(saveBusy)}
-                disabled={saveBusy}
-              >
-                {saveBusy ? t("common:saving") : t("common:save")}
-              </button>
-            </div>
           </div>
+        </div>
+        <div className={settingsDialogFooterClass}>
+          <button
+            type="button"
+            onClick={onClose}
+            className={secondaryButtonClass()}
+            disabled={saveBusy}
+          >
+            {t("common:cancel")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void onSave()}
+            className={primaryButtonClass(saveBusy)}
+            disabled={saveBusy}
+          >
+            {saveBusy ? t("common:saving") : t("common:save")}
+          </button>
         </div>
       </div>
     </div>

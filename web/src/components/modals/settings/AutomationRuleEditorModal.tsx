@@ -22,7 +22,16 @@ import {
   parseTimeInput,
 } from "./automationUtils";
 import type { SchedulePreset } from "./automationUtils";
-import { inputClass, labelClass, primaryButtonClass, secondaryButtonClass, settingsDialogPanelClass } from "./types";
+import {
+  inputClass,
+  labelClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+  settingsDialogBodyClass,
+  settingsDialogFooterClass,
+  settingsDialogHeaderClass,
+  settingsDialogPanelClass,
+} from "./types";
 
 interface AutomationRuleEditorModalProps {
   isDark: boolean;
@@ -116,9 +125,9 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
 
   const content = (
     <div className="fixed inset-0 z-[1000]" role="dialog" aria-modal="true">
-      <div className="absolute inset-0 bg-black/50" onMouseDown={onClose} />
+      <div className="absolute inset-0 glass-overlay" onPointerDown={onClose} />
       <div className={settingsDialogPanelClass("xl")}>
-        <div className="px-4 py-3 border-b border-[var(--glass-border-subtle)] flex items-start gap-3">
+        <div className={settingsDialogHeaderClass}>
           <div className="min-w-0">
             <div className="text-sm font-semibold text-[var(--color-text-primary)]">
               {title} <span className="font-mono">{ruleId || t("ruleEditor.unnamed")}</span>
@@ -150,70 +159,70 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
         {errorMessage ? <div className="px-4 pt-3 text-xs text-rose-600 dark:text-rose-300">{errorMessage}</div> : null}
         {status.last_error && !isNewRule ? <div className="px-4 pt-1 text-xs text-rose-600 dark:text-rose-300">{status.last_error}</div> : null}
 
-        <div className="p-4 sm:p-5 flex-1 overflow-auto [scrollbar-gutter:stable]">
-          <div className="space-y-3 safe-area-inset-bottom pb-2">
+        <div className={settingsDialogBodyClass}>
+          <div className="space-y-3">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className={labelClass(isDark)}>{t("ruleEditor.ruleName")}</label>
-              <input
-                value={ruleId}
-                onChange={(e) => patchRule({ id: e.target.value })}
-                className={`${inputClass(isDark)} font-mono`}
-                placeholder="daily_checkin"
-                spellCheck={false}
-              />
-              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                {t("ruleEditor.ruleNameHint")}
+              <div>
+                <label className={labelClass(isDark)}>{t("ruleEditor.ruleName")}</label>
+                <input
+                  value={ruleId}
+                  onChange={(e) => patchRule({ id: e.target.value })}
+                  className={`${inputClass(isDark)} font-mono`}
+                  placeholder="daily_checkin"
+                  spellCheck={false}
+                />
+                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  {t("ruleEditor.ruleNameHint")}
+                </div>
+              </div>
+              <div>
+                <label className={labelClass(isDark)}>{t("ruleEditor.scheduleType")}</label>
+                <select
+                  value={scheduleSelectValue}
+                  disabled={scheduleLockedToOneTime}
+                  onChange={(e) => {
+                    const nextKind = String(e.target.value || "interval");
+                    if (nextKind === "cron") {
+                      const nextCron = buildCronFromPreset({
+                        preset: schedule.preset,
+                        hour: schedule.hour,
+                        minute: schedule.minute,
+                        weekday: schedule.weekday,
+                        dayOfMonth: schedule.dayOfMonth,
+                      });
+                      patchRule({
+                        trigger: {
+                          kind: "cron",
+                          cron: cronExpr || nextCron,
+                          timezone: localTz,
+                        },
+                      });
+                      return;
+                    }
+                    if (nextKind === "at") {
+                      onSetOneShotMode("after");
+                      patchRule({ trigger: { kind: "at", at: atRaw || new Date(Date.now() + 30 * 60 * 1000).toISOString() } });
+                      return;
+                    }
+                    patchRule({ trigger: { kind: "interval", every_seconds: everySeconds } });
+                  }}
+                  className={inputClass(isDark)}
+                >
+                  {kind === "notify" ? <option value="interval">{t("ruleEditor.intervalSchedule")}</option> : null}
+                  {kind === "notify" ? <option value="cron">{t("ruleEditor.recurringSchedule")}</option> : null}
+                  <option value="at">{t("ruleEditor.oneTimeSchedule")}</option>
+                </select>
+                <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
+                  {scheduleLockedToOneTime
+                    ? t("ruleEditor.oneTimeOnly")
+                    : activeTriggerKind === "interval"
+                      ? t("ruleEditor.intervalHint")
+                      : activeTriggerKind === "cron"
+                        ? t("ruleEditor.recurringHint")
+                        : t("ruleEditor.oneTimeHint")}
+                </div>
               </div>
             </div>
-            <div>
-              <label className={labelClass(isDark)}>{t("ruleEditor.scheduleType")}</label>
-              <select
-                value={scheduleSelectValue}
-                disabled={scheduleLockedToOneTime}
-                onChange={(e) => {
-                  const nextKind = String(e.target.value || "interval");
-                  if (nextKind === "cron") {
-                    const nextCron = buildCronFromPreset({
-                      preset: schedule.preset,
-                      hour: schedule.hour,
-                      minute: schedule.minute,
-                      weekday: schedule.weekday,
-                      dayOfMonth: schedule.dayOfMonth,
-                    });
-                    patchRule({
-                      trigger: {
-                        kind: "cron",
-                        cron: cronExpr || nextCron,
-                        timezone: localTz,
-                      },
-                    });
-                    return;
-                  }
-                  if (nextKind === "at") {
-                    onSetOneShotMode("after");
-                    patchRule({ trigger: { kind: "at", at: atRaw || new Date(Date.now() + 30 * 60 * 1000).toISOString() } });
-                    return;
-                  }
-                  patchRule({ trigger: { kind: "interval", every_seconds: everySeconds } });
-                }}
-                className={inputClass(isDark)}
-              >
-                {kind === "notify" ? <option value="interval">{t("ruleEditor.intervalSchedule")}</option> : null}
-                {kind === "notify" ? <option value="cron">{t("ruleEditor.recurringSchedule")}</option> : null}
-                <option value="at">{t("ruleEditor.oneTimeSchedule")}</option>
-              </select>
-              <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">
-                {scheduleLockedToOneTime
-                  ? t("ruleEditor.oneTimeOnly")
-                  : activeTriggerKind === "interval"
-                    ? t("ruleEditor.intervalHint")
-                    : activeTriggerKind === "cron"
-                      ? t("ruleEditor.recurringHint")
-                      : t("ruleEditor.oneTimeHint")}
-              </div>
-            </div>
-          </div>
 
           {scope === "personal" ? (
             <div className="text-[11px] text-amber-700 dark:text-amber-300">
@@ -659,15 +668,15 @@ export function AutomationRuleEditorModal(props: AutomationRuleEditorModalProps)
               </div>
             </div>
             ) : null}
-            <div className="flex justify-end gap-2 pt-3">
-              <button type="button" className={secondaryButtonClass()} onClick={onClose} disabled={saveBusy}>
-                {t("common:cancel")}
-              </button>
-              <button type="button" className={primaryButtonClass(saveBusy)} onClick={() => void onSave()} disabled={saveBusy}>
-                {saveBusy ? t("common:saving") : t("common:save")}
-              </button>
-            </div>
           </div>
+        </div>
+        <div className={settingsDialogFooterClass}>
+          <button type="button" className={secondaryButtonClass()} onClick={onClose} disabled={saveBusy}>
+            {t("common:cancel")}
+          </button>
+          <button type="button" className={primaryButtonClass(saveBusy)} onClick={() => void onSave()} disabled={saveBusy}>
+            {saveBusy ? t("common:saving") : t("common:save")}
+          </button>
         </div>
       </div>
     </div>
