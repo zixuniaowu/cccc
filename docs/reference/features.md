@@ -229,7 +229,7 @@ cccc actor secrets <actor_id> --keys
 
 CCCC Web supports blueprint export/import for portable group setup.
 
-- Export captures actors, settings, automation rules/snippets, and guidance overrides.
+- Export captures actors, actor startup autoload baselines, group settings/feature toggles, automation rules/snippets, and guidance overrides.
 - Import uses replace semantics (applies the incoming configuration as the new group setup).
 - Ledger history is preserved (import does not rewrite historical events).
 - Environment secrets are intentionally excluded.
