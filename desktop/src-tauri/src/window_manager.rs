@@ -416,6 +416,21 @@ fn spawn_group_runtime(
                     let _ = app.emit("group-stopped", group_id.clone());
                     break;
                 }
+                StreamSignal::DesktopPetSettingChanged => {
+                    match api.fetch_desktop_pet_enabled().await {
+                        Ok(false) => {
+                            let _ = app.emit("desktop-pet-disabled", group_id.clone());
+                            break;
+                        }
+                        Ok(true) => {}
+                        Err(error) => {
+                            eprintln!(
+                                "failed to fetch desktop_pet_enabled for {}: {}",
+                                group_id, error
+                            );
+                        }
+                    }
+                }
                 StreamSignal::Reconnecting { reason, delay } => {
                     let message = format!("reconnecting in {}s: {}", delay.as_secs(), reason);
                     let payload = aggregator.payload(false, message);

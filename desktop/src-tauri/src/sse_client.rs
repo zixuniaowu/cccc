@@ -46,6 +46,7 @@ pub enum StreamSignal {
     ObligationChanged,
     GroupStateChanged,
     GroupStopped,
+    DesktopPetSettingChanged,
     Reconnecting { reason: String, delay: Duration },
 }
 
@@ -122,6 +123,18 @@ impl DesktopApiClient {
             return Err(anyhow!("group endpoint returned ok=false"));
         }
         Ok(response.result.group.state)
+    }
+
+    pub async fn fetch_desktop_pet_enabled(&self) -> Result<bool> {
+        let url = format!(
+            "{}/api/v1/groups/{}/settings",
+            self.info.api_base_url, self.info.group_id
+        );
+        let response: ApiEnvelope<Value> = self.get_json(&url).await?;
+        if !response.ok {
+            return Err(anyhow!("settings endpoint returned ok=false"));
+        }
+        Ok(parse_desktop_pet_enabled(&response.result))
     }
 
     pub async fn fetch_recent_obligations(&self, lines: usize) -> Result<Vec<LedgerEvent>> {
@@ -211,6 +224,14 @@ impl DesktopApiClient {
     }
 }
 
+fn parse_desktop_pet_enabled(result: &Value) -> bool {
+    result
+        .get("settings")
+        .and_then(|s| s.get("desktop_pet_enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn classify_ledger_event(event: &LedgerEvent) -> Option<StreamSignal> {
     match event.kind.as_str() {
         "context.sync" => Some(StreamSignal::ContextChanged),
@@ -229,6 +250,18 @@ fn classify_ledger_event(event: &LedgerEvent) -> Option<StreamSignal> {
         }
         "group.set_state" => Some(StreamSignal::GroupStateChanged),
         "group.stop" => Some(StreamSignal::GroupStopped),
+        "group.settings_update" => {
+            let has_pet_key = event
+                .data
+                .get("patch")
+                .and_then(Value::as_object)
+                .map_or(false, |patch| patch.contains_key("desktop_pet_enabled"));
+            if has_pet_key {
+                Some(StreamSignal::DesktopPetSettingChanged)
+            } else {
+                None
+            }
+        }
         _ => None,
     }
 }
@@ -237,7 +270,7 @@ fn classify_ledger_event(event: &LedgerEvent) -> Option<StreamSignal> {
 mod tests {
     use serde_json::json;
 
-    use super::{classify_ledger_event, StreamSignal};
+    use super::{classify_ledger_event, parse_desktop_pet_enabled, StreamSignal};
     use crate::state_aggregator::LedgerEvent;
 
     #[test]
@@ -345,5 +378,65 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(classify_ledger_event(&event), None);
+    }
+
+    #[test]
+    fn classifies_settings_update_with_desktop_pet_enabled_false() {
+        let event = LedgerEvent {
+            kind: "group.settings_update".to_string(),
+            data: json!({"patch": {"desktop_pet_enabled": false}}),
+            ..Default::default()
+        };
+        assert_eq!(
+            classify_ledger_event(&event),
+            Some(StreamSignal::DesktopPetSettingChanged)
+        );
+    }
+
+    #[test]
+    fn classifies_settings_update_with_desktop_pet_enabled_true() {
+        let event = LedgerEvent {
+            kind: "group.settings_update".to_string(),
+            data: json!({"patch": {"desktop_pet_enabled": true}}),
+            ..Default::default()
+        };
+        assert_eq!(
+            classify_ledger_event(&event),
+            Some(StreamSignal::DesktopPetSettingChanged)
+        );
+    }
+
+    #[test]
+    fn ignores_settings_update_without_desktop_pet_enabled() {
+        let event = LedgerEvent {
+            kind: "group.settings_update".to_string(),
+            data: json!({"patch": {"other_setting": "value"}}),
+            ..Default::default()
+        };
+        assert_eq!(classify_ledger_event(&event), None);
+    }
+
+    #[test]
+    fn parse_desktop_pet_enabled_reads_nested_settings() {
+        let result = json!({"settings": {"desktop_pet_enabled": true}});
+        assert_eq!(parse_desktop_pet_enabled(&result), true);
+
+        let result = json!({"settings": {"desktop_pet_enabled": false}});
+        assert_eq!(parse_desktop_pet_enabled(&result), false);
+    }
+
+    #[test]
+    fn parse_desktop_pet_enabled_defaults_false_when_missing() {
+        // Missing settings key entirely
+        let result = json!({});
+        assert_eq!(parse_desktop_pet_enabled(&result), false);
+
+        // Missing desktop_pet_enabled inside settings
+        let result = json!({"settings": {}});
+        assert_eq!(parse_desktop_pet_enabled(&result), false);
+
+        // Wrong nesting (old bug: reading from root instead of settings)
+        let result = json!({"desktop_pet_enabled": true});
+        assert_eq!(parse_desktop_pet_enabled(&result), false);
     }
 }

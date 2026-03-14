@@ -226,6 +226,7 @@
     "desktopPetLaunchRevealFailed": "读取访问令牌失败。",
     "desktopPetLaunchNoToken": "当前工作组没有可用的访问令牌。",
     "desktopPetLaunchNoHandler": "Desktop Pet 尚未安装。",
+    "desktopPetLaunchNotFound": "当前守护进程尚不支持 Desktop Pet，请升级到最新版本。",
     "desktopPetDownload": "下载 Desktop Pet",
     "desktopPetDownloadFor": "下载 {{platform}} 版",
     "desktopPetLaunchBlocked": "浏览器阻止了 Desktop Pet 启动请求。",

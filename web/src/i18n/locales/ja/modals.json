@@ -226,6 +226,7 @@
     "desktopPetLaunchRevealFailed": "アクセストークンの表示に失敗しました。",
     "desktopPetLaunchNoToken": "このグループで使えるアクセストークンがありません。",
     "desktopPetLaunchNoHandler": "Desktop Pet がインストールされていません。",
+    "desktopPetLaunchNotFound": "デーモンはまだ Desktop Pet に対応していません。最新バージョンにアップグレードしてください。",
     "desktopPetDownload": "Desktop Pet をダウンロード",
     "desktopPetDownloadFor": "{{platform}} 版をダウンロード",
     "desktopPetLaunchBlocked": "ブラウザが Desktop Pet の起動要求をブロックしました。",

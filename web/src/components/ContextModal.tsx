@@ -645,7 +645,14 @@ export function ContextModal({
   const resolveDesktopPetLaunchToken = useCallback(async (): Promise<string | null> => {
     const launchResp = await fetchDesktopPetLaunchToken(groupId);
     if (!launchResp.ok || !launchResp.result?.token) {
-      throw new Error(launchResp.error?.message || tr("context.desktopPetLaunchTokenFailed", "Failed to load access tokens."));
+      const raw = launchResp.error?.message || "";
+      const code = launchResp.error?.code || "";
+      const combined = `${code} ${raw}`;
+      const isNotFound = /not.?found/i.test(combined) || /PARSE_ERROR|EMPTY_RESPONSE/i.test(code) || /returned 4\d\d/i.test(raw);
+      const msg = isNotFound
+        ? tr("context.desktopPetLaunchNotFound", "The daemon does not support Desktop Pet yet. Please upgrade to the latest version.")
+        : raw || tr("context.desktopPetLaunchTokenFailed", "Failed to load access tokens.");
+      throw new Error(msg);
     }
     return String(launchResp.result.token || "").trim() || null;
   }, [groupId, tr]);
@@ -1737,13 +1744,16 @@ export function ContextModal({
       <section className={classNames(surfaceClass, "p-4")}>
         <div className="flex flex-col gap-4">
           <div>
-            <div className={classNames("text-lg font-semibold", "text-[var(--color-text-primary)]")}>
+            <div className={classNames("flex items-center gap-2 text-lg font-semibold", "text-[var(--color-text-primary)]")}>
               {tr("context.desktopPetTitle", "Desktop Pet")}
+              <span className="rounded-md bg-cyan-500/15 px-2 py-0.5 text-xs font-semibold leading-none text-cyan-400">Beta</span>
             </div>
             <div className={classNames("mt-1 text-sm", subtleTextClass)}>
               {tr("context.desktopPetHint", "Show a pixel cat on your desktop that reflects this team's status.")}
             </div>
           </div>
+
+          {desktopPetLaunchError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{desktopPetLaunchError}</div> : null}
 
           <div className={classNames("flex flex-col gap-4 rounded-2xl border p-4", "glass-panel")}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1914,13 +1924,12 @@ export function ContextModal({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex min-h-full flex-col gap-4 p-4 sm:p-5">
           {syncError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{syncError}</div> : null}
-          {desktopPetLaunchError ? <div className={classNames("rounded-xl border px-3 py-2 text-sm", "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400")}>{desktopPetLaunchError}</div> : null}
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className={classNames("inline-flex w-fit rounded-2xl border p-1", isDark ? "border-slate-800 bg-slate-950/70" : "border-gray-200 bg-gray-100/80")}>
               <button type="button" onClick={() => handleSwitchActiveView("coordination")} className={viewButtonClass(activeView === "coordination")}>{tr("context.coordination", "Coordination")}</button>
               <button type="button" onClick={() => handleSwitchActiveView("agents")} className={viewButtonClass(activeView === "agents")}>{tr("context.agents", "Agents")}</button>
-              <button type="button" onClick={() => handleSwitchActiveView("desktop_pet")} className={viewButtonClass(activeView === "desktop_pet")}>{tr("context.desktopPetTab", "Desktop Pet")}</button>
+              <button type="button" onClick={() => handleSwitchActiveView("desktop_pet")} className={viewButtonClass(activeView === "desktop_pet")}>{tr("context.desktopPetTab", "Desktop Pet")}<span className="ml-1.5 rounded-md bg-cyan-500/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-cyan-400">Beta</span></button>
             </div>
           </div>
 

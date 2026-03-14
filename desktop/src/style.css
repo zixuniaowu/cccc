@@ -25,6 +25,7 @@ body {
 /* --- Pet container (always visible) --- */
 
 #pet-container {
+  position: relative;
   width: 80px;
   height: 96px;
   display: flex;
@@ -36,6 +37,44 @@ body {
 
 #pet-container.drag-armed {
   cursor: grabbing;
+}
+
+.pet-hint {
+  position: absolute;
+  right: 58px;
+  bottom: 42px;
+  max-width: 168px;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.18);
+  color: #0f172a;
+  font-size: 10px;
+  line-height: 1.35;
+  text-align: left;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  pointer-events: none;
+}
+
+.pet-hint.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.pet-hint::after {
+  content: "";
+  position: absolute;
+  right: 10px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  border-right: 1px solid rgba(15, 23, 42, 0.14);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.14);
+  transform: rotate(45deg);
 }
 
 #cat-canvas {
@@ -80,6 +119,18 @@ body {
 
 /* Dark mode support */
 @media (prefers-color-scheme: dark) {
+  .pet-hint {
+    background: rgba(30, 41, 59, 0.96);
+    border-color: rgba(148, 163, 184, 0.24);
+    color: #f8fafc;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.42);
+  }
+
+  .pet-hint::after {
+    border-right-color: rgba(148, 163, 184, 0.24);
+    border-bottom-color: rgba(148, 163, 184, 0.24);
+  }
+
   .panel {
     background: rgba(40, 40, 40, 0.92);
     border-color: rgba(255, 255, 255, 0.1);

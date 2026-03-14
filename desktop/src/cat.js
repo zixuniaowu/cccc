@@ -9,6 +9,9 @@ const PROCEDURAL_FRAMES = 8;  // Frame count for procedural fallback animation
 
 const canvas = document.getElementById("cat-canvas");
 const ctx = canvas.getContext("2d");
+const petHint = document.getElementById("pet-hint");
+
+const LAUNCH_GUIDANCE_MARKERS = ["web ui", "launch", "启动"];
 
 // Disable image smoothing for crisp pixel art
 ctx.imageSmoothingEnabled = false;
@@ -54,6 +57,7 @@ let fadeOpacity = 1;
 let fadeStart = 0;
 let prevState = null;
 let animationId = null;
+let currentHintMessage = "";
 
 /**
  * Main render loop driven by requestAnimationFrame.
@@ -121,46 +125,69 @@ function drawState(state, frame) {
  * Uses fillRect only — no fillText — for crisp pixel rendering.
  */
 function drawPixelZ(x, y, size) {
-  if (size <= 3) {
+  if (size <= 4) {
     // Small z: 3×3
-    ctx.fillRect(x, y, 3, 1);       // top bar
-    ctx.fillRect(x + 2, y + 1, 1, 1); // diagonal step 1
-    ctx.fillRect(x + 1, y + 2, 1, 1); // diagonal step 2 (not needed for 3px)
-    ctx.fillRect(x, y + 2, 3, 1);   // bottom bar — overlap is fine
-  } else {
-    // Large Z: 5×5
-    ctx.fillRect(x, y, 5, 1);       // top bar
+    ctx.fillRect(x, y, 3, 1);
+    ctx.fillRect(x + 2, y + 1, 1, 1);
+    ctx.fillRect(x + 1, y + 2, 1, 1);
+    ctx.fillRect(x, y + 2, 3, 1);
+  } else if (size <= 6) {
+    // Medium Z: 5×5
+    ctx.fillRect(x, y, 5, 1);
     ctx.fillRect(x + 3, y + 1, 1, 1);
     ctx.fillRect(x + 2, y + 2, 1, 1);
     ctx.fillRect(x + 1, y + 3, 1, 1);
-    ctx.fillRect(x, y + 4, 5, 1);   // bottom bar
+    ctx.fillRect(x, y + 4, 5, 1);
+  } else if (size <= 8) {
+    // Large Z: 7×6
+    ctx.fillRect(x, y, 7, 1);
+    ctx.fillRect(x + 5, y + 1, 1, 1);
+    ctx.fillRect(x + 4, y + 2, 1, 1);
+    ctx.fillRect(x + 3, y + 3, 1, 1);
+    ctx.fillRect(x + 2, y + 4, 1, 1);
+    ctx.fillRect(x, y + 5, 7, 1);
+  } else {
+    // XL Z: 9×7
+    ctx.fillRect(x, y, 9, 2);
+    ctx.fillRect(x + 7, y + 2, 2, 1);
+    ctx.fillRect(x + 5, y + 3, 2, 1);
+    ctx.fillRect(x + 3, y + 4, 2, 1);
+    ctx.fillRect(x + 1, y + 5, 2, 1);
+    ctx.fillRect(x, y + 6, 9, 2);
   }
 }
 
 /**
- * Render three "z" letters that float upward in a staggered cycle.
+ * Render three "Z" letters that float upward in a staggered cycle.
  * Each z has a lifespan of 8 frames, offset by ~3 frames from each other.
- * Opacity fades out as the z rises.
+ * Uses white fill with dark outline for visibility on any background.
  */
 function drawZzzBubbles(frame, bounce) {
   const cycle = 10; // total frames per z lifecycle
   const zSpecs = [
-    { baseX: 46, baseY: 12 + bounce, size: 3, offset: 0 },
-    { baseX: 50, baseY: 6 + bounce,  size: 4, offset: 3 },
-    { baseX: 54, baseY: 0 + bounce,  size: 5, offset: 6 },
+    { baseX: 42, baseY: 14 + bounce, size: 5, offset: 0 },
+    { baseX: 48, baseY: 6 + bounce,  size: 7, offset: 3 },
+    { baseX: 44, baseY: -2 + bounce, size: 9, offset: 6 },
   ];
 
+  const savedAlpha = ctx.globalAlpha;
   for (const spec of zSpecs) {
     const t = (frame + spec.offset) % cycle;
     if (t >= 8) continue; // hidden for 2 frames between cycles
 
-    const rise = t * 1.2;           // float upward
-    const alpha = 1 - (t / 8) * 0.7; // fade from 1.0 → 0.3
-    ctx.globalAlpha *= alpha;
-    ctx.fillStyle = "#8888aa";
+    const rise = t * 1.5;            // float upward
+    const alpha = 1 - (t / 8) * 0.6; // fade from 1.0 → 0.4
+    ctx.globalAlpha = savedAlpha * alpha;
+
+    // Dark outline for contrast
+    ctx.fillStyle = "#333355";
+    drawPixelZ(spec.baseX - 1, spec.baseY - rise - 1, spec.size + 2);
+
+    // White fill for visibility
+    ctx.fillStyle = "#FFFFFF";
     drawPixelZ(spec.baseX, spec.baseY - rise, spec.size);
-    ctx.globalAlpha = ctx.globalAlpha / alpha; // restore
   }
+  ctx.globalAlpha = savedAlpha;
 }
 
 /**
@@ -230,8 +257,10 @@ function drawProcedural(state, frame) {
   ctx.fillStyle = "#000";
   switch (state) {
     case "napping":
-      // Zzz bubbles — pixel-drawn, floating upward
-      drawZzzBubbles(frame, bounce);
+      // Launch guidance should replace sleep feedback instead of stacking on top of it.
+      if (!shouldSuppressNappingEffects()) {
+        drawZzzBubbles(frame, bounce);
+      }
       break;
     case "working":
     case "busy":
@@ -290,6 +319,33 @@ export function setCatState(stateId) {
  */
 export function getCatState() {
   return currentState;
+}
+
+export function setCatHint(message) {
+  if (!petHint) {
+    return;
+  }
+
+  const text = typeof message === "string" ? message.trim() : "";
+  const visible = isLaunchGuidanceMessage(text);
+  currentHintMessage = visible ? text : "";
+
+  petHint.hidden = !visible;
+  petHint.classList.toggle("visible", visible);
+  petHint.textContent = visible ? text : "";
+}
+
+function isLaunchGuidanceMessage(text) {
+  if (!text) {
+    return false;
+  }
+
+  const normalized = text.toLowerCase();
+  return LAUNCH_GUIDANCE_MARKERS.every((marker) => normalized.includes(marker));
+}
+
+function shouldSuppressNappingEffects() {
+  return currentState === "napping" && isLaunchGuidanceMessage(currentHintMessage);
 }
 
 // --- Initialization ---

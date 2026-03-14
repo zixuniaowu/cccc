@@ -223,6 +223,7 @@
     "desktopPetLaunchHint": "Launch opens the Desktop Pet app for this group using your Web access token.",
     "desktopPetLaunchLoading": "Preparing…",
     "desktopPetLaunchTokenFailed": "Failed to load access tokens.",
+    "desktopPetLaunchNotFound": "The daemon does not support Desktop Pet yet. Please upgrade to the latest version.",
     "desktopPetLaunchRevealFailed": "Failed to reveal access token.",
     "desktopPetLaunchNoToken": "No access token is available for this group.",
     "desktopPetLaunchNoHandler": "Desktop Pet app is not installed.",

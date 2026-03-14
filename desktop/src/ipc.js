@@ -1,6 +1,6 @@
 // Tauri IPC bridge — listens for backend events and drives UI
 
-import { setCatState } from "./cat.js";
+import { setCatHint, setCatState } from "./cat.js";
 
 /**
  * Initialize IPC listeners.
@@ -23,6 +23,7 @@ async function initIPC() {
         return;
       }
       setCatState(state);
+      setCatHint(details?.connection?.connected === false ? details.connection.message : "");
       if (details && details.teamName) {
         setPetLabel(details.teamName);
       }
@@ -142,12 +143,14 @@ function startDemoMode() {
   setInterval(() => {
     const state = states[idx];
     setCatState(state);
+    setCatHint("");
     console.log("[IPC] Panel preview payload", demoDetails[state]);
     idx = (idx + 1) % states.length;
   }, 5000);
 
   // Set initial state
   setCatState("napping");
+  setCatHint("");
   setPetLabel("CCCC Dev");
 }
 

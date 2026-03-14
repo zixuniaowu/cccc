@@ -89,18 +89,17 @@ export function buildDesktopPetDownloadUrl(): { url: string; label: string } | n
   const { os, arch, label } = detectPlatform();
 
   const nameBase = "cccc-desktop-pet";
-  const version = "0.1.0";
   let filename = "";
 
   switch (os) {
     case "macos":
-      filename = `${nameBase}_${version}_${arch}.dmg`;
+      filename = `${nameBase}_macos_${arch}.dmg`;
       break;
     case "windows":
-      filename = `${nameBase}_${version}_${arch}-setup.exe`;
+      filename = `${nameBase}_windows_x64-setup.exe`;
       break;
     case "linux":
-      filename = `${nameBase}_${version}_${arch === "aarch64" ? "aarch64" : "x64"}.deb`;
+      filename = `${nameBase}_linux_x64.deb`;
       break;
     default:
       return null;

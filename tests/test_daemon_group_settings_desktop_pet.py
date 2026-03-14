@@ -63,6 +63,9 @@ class TestDaemonGroupSettingsDesktopPet(unittest.TestCase):
         self.assertTrue(resp.ok)
         settings = (resp.result or {}).get("settings", {})
         self.assertTrue(settings.get("desktop_pet_enabled"))
+        event = (resp.result or {}).get("event", {})
+        self.assertEqual(event.get("kind"), "group.settings_update")
+        self.assertTrue(((event.get("data") or {}).get("patch") or {}).get("desktop_pet_enabled"))
 
     def test_desktop_pet_enabled_can_be_toggled_back_to_false(self) -> None:
         from cccc.contracts.v1 import DaemonRequest
@@ -90,6 +93,9 @@ class TestDaemonGroupSettingsDesktopPet(unittest.TestCase):
         self.assertTrue(resp.ok)
         settings = (resp.result or {}).get("settings", {})
         self.assertFalse(settings.get("desktop_pet_enabled"))
+        event = (resp.result or {}).get("event", {})
+        self.assertEqual(event.get("kind"), "group.settings_update")
+        self.assertIs(((event.get("data") or {}).get("patch") or {}).get("desktop_pet_enabled"), False)
 
     def test_desktop_pet_enabled_tolerates_dirty_value(self) -> None:
         from cccc.contracts.v1 import DaemonRequest

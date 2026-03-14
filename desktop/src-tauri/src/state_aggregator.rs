@@ -454,6 +454,7 @@ mod tests {
 
         let disconnected = aggregator.payload(false, "reconnecting in 5s");
         assert!(!disconnected.details.connection.connected);
+        assert_eq!(disconnected.details.connection.message, "reconnecting in 5s");
     }
 
     #[test]

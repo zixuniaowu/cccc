@@ -7,6 +7,9 @@ use serde::Deserialize;
 use crate::config::DesktopConfig;
 use crate::token_store;
 
+const ERR_NO_USABLE_TOKEN: &str = "no usable token in access_tokens.yaml";
+const ERR_NO_ENABLED_GROUPS: &str = "no groups have desktop_pet_enabled; enable it in group settings";
+
 /// A fully resolved connection ready to spawn a pet-window runtime.
 #[derive(Debug, Clone)]
 pub struct ResolvedConnection {
@@ -71,7 +74,7 @@ struct SettingsDoc {
 /// query daemon for groups with `desktop_pet_enabled`, return connections.
 pub async fn bootstrap_local(config: &DesktopConfig) -> Result<Vec<ResolvedConnection>> {
     let discovered = token_store::discover_local_token()
-        .ok_or_else(|| anyhow!("no usable token in access_tokens.yaml"))?;
+        .ok_or_else(|| anyhow!(ERR_NO_USABLE_TOKEN))?;
 
     let daemon_url = config.daemon_url.trim_end_matches('/').to_string();
     let token = &discovered.token;
@@ -136,9 +139,7 @@ pub async fn bootstrap_local(config: &DesktopConfig) -> Result<Vec<ResolvedConne
         if cfg!(debug_assertions) {
             groups.iter().filter(|g| g.running).collect()
         } else {
-            return Err(anyhow!(
-                "no groups have desktop_pet_enabled; enable it in group settings"
-            ));
+            return Err(anyhow!(ERR_NO_ENABLED_GROUPS));
         }
     } else {
         pet_enabled
@@ -163,6 +164,10 @@ pub async fn bootstrap_local(config: &DesktopConfig) -> Result<Vec<ResolvedConne
     }
 
     Ok(connections)
+}
+
+pub fn should_prompt_web_launch(error: &anyhow::Error) -> bool {
+    matches!(error.to_string().as_str(), ERR_NO_USABLE_TOKEN | ERR_NO_ENABLED_GROUPS)
 }
 
 #[cfg(test)]
@@ -211,5 +216,17 @@ mod tests {
             auth_token: "".into(),
         };
         assert_eq!(conn.team_label(), "My Team");
+    }
+
+    #[test]
+    fn launch_prompt_errors_are_classified() {
+        assert!(should_prompt_web_launch(&anyhow!(ERR_NO_USABLE_TOKEN)));
+        assert!(should_prompt_web_launch(&anyhow!(ERR_NO_ENABLED_GROUPS)));
+    }
+
+    #[test]
+    fn non_launch_errors_are_not_classified_as_launch_prompt() {
+        assert!(!should_prompt_web_launch(&anyhow!("failed to fetch groups")));
+        assert!(!should_prompt_web_launch(&anyhow!("no eligible groups found (none running)")));
     }
 }

@@ -18,6 +18,8 @@ use tauri::{AppHandle, Emitter, Listener, Manager, State};
 use tauri_plugin_autostart::MacosLauncher;
 use window_manager::WindowManager;
 
+const WAITING_FOR_WEB_LAUNCH_MESSAGE: &str = "请从 Web UI 点击 Launch 启动";
+
 #[derive(Clone)]
 struct RuntimeState {
     config: Arc<Mutex<DesktopConfig>>,
@@ -216,6 +218,19 @@ pub fn run() {
                 });
             }
 
+            // Listen for desktop pet disable requests from runtime
+            {
+                let state_clone = state.clone();
+                let app_handle = app.handle().clone();
+                app.listen("desktop-pet-disabled", move |event| {
+                    if let Ok(group_id) = serde_json::from_str::<String>(event.payload()) {
+                        if let Ok(mut wm) = state_clone.window_manager.lock() {
+                            wm.close_pet_window(&app_handle, &group_id);
+                        }
+                    }
+                });
+            }
+
             // Check if first instance was launched via deep-link argv
             // (e.g. app was not running, OS passes URL as CLI argument)
             for arg in std::env::args() {
@@ -305,7 +320,12 @@ fn run_bootstrap_flow(app: AppHandle, state: RuntimeState) {
             }
             Err(e) => {
                 eprintln!("[bootstrap] failed: {}", e);
-                emit_empty_state(&app, "waiting for launch from Web UI");
+                let message = if bootstrap::should_prompt_web_launch(&e) {
+                    WAITING_FOR_WEB_LAUNCH_MESSAGE.to_string()
+                } else {
+                    e.to_string()
+                };
+                emit_empty_state(&app, &message);
             }
         }
     });
