@@ -99,6 +99,21 @@ fn toggle_panel_window(window: tauri::WebviewWindow, state: State<'_, RuntimeSta
 }
 
 #[tauri::command]
+fn close_pet_window(window: tauri::WebviewWindow, state: State<'_, RuntimeState>) -> Result<(), String> {
+    let label = window.label().to_string();
+    let group_id = label
+        .strip_prefix("pet-")
+        .ok_or_else(|| format!("unsupported pet window label {}", label))?;
+
+    let manager = state
+        .window_manager
+        .lock()
+        .map_err(|_| "window manager mutex poisoned".to_string())?;
+    manager.hide_pet_window_ui(window.app_handle(), group_id);
+    Ok(())
+}
+
+#[tauri::command]
 fn resize_panel_window(
     window: tauri::WebviewWindow,
     state: State<'_, RuntimeState>,
@@ -172,6 +187,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_cccc_web,
             toggle_panel_window,
+            close_pet_window,
             resize_panel_window,
             get_panel_data,
         ])

@@ -58,8 +58,8 @@ closeBtn.addEventListener("pointerup", (event) => {
   event.preventDefault();
   event.stopPropagation();
   if (window.__TAURI__) {
-    const win = window.__TAURI__.window.getCurrentWindow();
-    void win.close();
+    const { invoke } = window.__TAURI__.core;
+    void invoke("close_pet_window");
   } else {
     console.log("[IPC] Close button clicked (demo mode)");
   }
