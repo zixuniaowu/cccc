@@ -51,6 +51,15 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     # --- group-scoped router ---
     group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
 
+    def _request_access_token(request: Request) -> str:
+        auth = str(request.headers.get("authorization") or "").strip()
+        if auth.lower().startswith("bearer "):
+            return str(auth[7:] or "").strip()
+        cookie_token = str(request.cookies.get("cccc_access_token") or "").strip()
+        if cookie_token:
+            return cookie_token
+        return str(request.query_params.get("token") or "").strip()
+
     # ------------------------------------------------------------------ #
     # Global routes
     # ------------------------------------------------------------------ #
@@ -674,9 +683,20 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                     "terminal_transcript_notify_tail": coerce_bool(tt.get("notify_tail"), default=False),
                     "terminal_transcript_notify_lines": _safe_int(tt.get("notify_lines", 20), default=20, min_value=1, max_value=80),
                     "panorama_enabled": coerce_bool(features.get("panorama_enabled"), default=False),
+                    "desktop_pet_enabled": coerce_bool(features.get("desktop_pet_enabled"), default=False),
                 }
             }
         }
+
+    @group_router.get("/desktop_pet/launch_token")
+    async def group_desktop_pet_launch_token(request: Request, group_id: str) -> Dict[str, Any]:
+        token = _request_access_token(request)
+        if not token:
+            raise HTTPException(
+                status_code=403,
+                detail={"code": "permission_denied", "message": "authentication required", "details": {}},
+            )
+        return {"ok": True, "result": {"token": token}}
 
     @group_router.put("/settings")
     async def group_settings_update(group_id: str, req: GroupSettingsRequest) -> Dict[str, Any]:
@@ -725,6 +745,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
         if req.panorama_enabled is not None:
             patch["panorama_enabled"] = bool(req.panorama_enabled)
+        if req.desktop_pet_enabled is not None:
+            patch["desktop_pet_enabled"] = bool(req.desktop_pet_enabled)
 
         if not patch:
             return {"ok": True, "result": {"message": "no changes"}}
