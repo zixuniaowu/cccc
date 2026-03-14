@@ -29,7 +29,7 @@ interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
   settings: GroupSettings | null;
-  onUpdateSettings: (settings: Partial<GroupSettings>) => Promise<void>;
+  onUpdateSettings: (settings: Partial<GroupSettings>) => Promise<boolean | void>;
   onRegistryChanged?: () => Promise<void> | void;
   busy: boolean;
   isDark: boolean;

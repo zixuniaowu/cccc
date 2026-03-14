@@ -31,7 +31,7 @@ interface ContextModalProps {
   onRefreshContext: () => Promise<void>;
   isDark: boolean;
   settings?: GroupSettings | null;
-  onUpdateSettings?: (settings: Partial<GroupSettings>) => Promise<void>;
+  onUpdateSettings?: (settings: Partial<GroupSettings>) => Promise<boolean | void>;
 }
 
 interface BriefDraft {
@@ -1185,11 +1185,15 @@ export function ContextModal({
     if (!onUpdateSettings) return;
     setViewBusy(true);
     try {
-      await onUpdateSettings({ desktop_pet_enabled: enabled });
+      const ok = await onUpdateSettings({ desktop_pet_enabled: enabled });
+      if (ok === false) return; // settings update failed — don't proceed with launch
+      if (enabled) {
+        await handlePrepareDesktopPetLaunch();
+      }
     } finally {
       setViewBusy(false);
     }
-  }, [onUpdateSettings]);
+  }, [handlePrepareDesktopPetLaunch, onUpdateSettings]);
 
   const handleSaveBrief = async () => {
     if (!groupId) return;

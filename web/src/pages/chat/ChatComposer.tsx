@@ -452,7 +452,7 @@ export function ChatComposer({
             recipientActorsBusy ? "opacity-50 pointer-events-none" : ""
           )}>
             {/* Special tokens */}
-            {["@all", "@foreman", "@peers"].map((tok) => {
+            {["@all", "@foreman", "@peers", "@user"].map((tok) => {
               const active = toTokens.includes(tok);
               return (
                 <button

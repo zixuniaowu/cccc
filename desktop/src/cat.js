@@ -67,7 +67,12 @@ function render(timestamp) {
   // Advance frame at TARGET_FPS
   const frameDuration = 1000 / TARGET_FPS;
   if (timestamp - lastFrameTime >= frameDuration) {
-    lastFrameTime = timestamp;
+    // Use additive timing to prevent drift (instead of lastFrameTime = timestamp)
+    lastFrameTime += frameDuration;
+    // Guard against spiral if tab was backgrounded — reset to now
+    if (timestamp - lastFrameTime > frameDuration * 2) {
+      lastFrameTime = timestamp;
+    }
     const sheet = spriteSheets[currentState];
     const frameCount = sheet ? sheet.frameCount : PROCEDURAL_FRAMES;
     currentFrame = (currentFrame + 1) % frameCount;
@@ -115,6 +120,12 @@ function drawState(state, frame) {
     ctx.drawImage(sheet.img, sx, 0, FRAME_SIZE, FRAME_SIZE, 0, 0, RENDER_SIZE, RENDER_SIZE);
   } else {
     drawProcedural(state, frame);
+  }
+
+  // Zzz overlay for napping state (drawn at 64px render resolution for crisp Z shapes)
+  if (state === "napping" && !shouldSuppressNappingEffects(state)) {
+    const bounce = Math.sin((frame / 4) * Math.PI) * 2;
+    drawZzzBubbles(frame, bounce);
   }
 }
 
@@ -171,6 +182,7 @@ function drawZzzBubbles(frame, bounce) {
   ];
 
   const savedAlpha = ctx.globalAlpha;
+  const savedFill = ctx.fillStyle;
   for (const spec of zSpecs) {
     const t = (frame + spec.offset) % cycle;
     if (t >= 8) continue; // hidden for 2 frames between cycles
@@ -188,6 +200,7 @@ function drawZzzBubbles(frame, bounce) {
     drawPixelZ(spec.baseX, spec.baseY - rise, spec.size);
   }
   ctx.globalAlpha = savedAlpha;
+  ctx.fillStyle = savedFill;
 }
 
 /**
@@ -257,10 +270,7 @@ function drawProcedural(state, frame) {
   ctx.fillStyle = "#000";
   switch (state) {
     case "napping":
-      // Launch guidance should replace sleep feedback instead of stacking on top of it.
-      if (!shouldSuppressNappingEffects()) {
-        drawZzzBubbles(frame, bounce);
-      }
+      // Zzz is now drawn in drawState() after sprite/procedural rendering
       break;
     case "working":
     case "busy":
@@ -344,8 +354,8 @@ function isLaunchGuidanceMessage(text) {
   return LAUNCH_GUIDANCE_MARKERS.every((marker) => normalized.includes(marker));
 }
 
-function shouldSuppressNappingEffects() {
-  return currentState === "napping" && isLaunchGuidanceMessage(currentHintMessage);
+function shouldSuppressNappingEffects(state) {
+  return state === "napping" && isLaunchGuidanceMessage(currentHintMessage);
 }
 
 // --- Initialization ---

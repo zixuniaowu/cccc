@@ -101,7 +101,7 @@ export function useChatTab({
 
   // Valid recipient tokens
   const validRecipientSet = useMemo(() => {
-    const out = new Set<string>(["@all", "@foreman", "@peers"]);
+    const out = new Set<string>(["@all", "@foreman", "@peers", "@user", "user"]);
     for (const a of recipientActors) {
       const id = String(a.id || "").trim();
       if (id) out.add(id);
@@ -115,21 +115,22 @@ export function useChatTab({
       .split(",")
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
-    const filtered = raw.filter((t) => t !== "user" && t !== "@user" && t !== "@");
     const out: string[] = [];
     const seen = new Set<string>();
-    for (const t of filtered) {
-      if (!validRecipientSet.has(t)) continue;
-      if (seen.has(t)) continue;
-      seen.add(t);
-      out.push(t);
+    for (const token of raw) {
+      if (token === "@") continue;
+      const normalized = token === "user" ? "@user" : token;
+      if (!validRecipientSet.has(normalized)) continue;
+      if (seen.has(normalized)) continue;
+      seen.add(normalized);
+      out.push(normalized);
     }
     return out;
   }, [toText, validRecipientSet]);
 
   // Mention suggestions
   const mentionSuggestions = useMemo(() => {
-    const base = ["@all", "@foreman", "@peers"];
+    const base = ["@all", "@foreman", "@peers", "@user"];
     const actorIds = recipientActors.map((a) => String(a.id || "")).filter((id) => id);
     return [...base, ...actorIds];
   }, [recipientActors]);

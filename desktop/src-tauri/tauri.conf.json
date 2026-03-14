@@ -18,6 +18,7 @@
         "transparent": true,
         "decorations": false,
         "alwaysOnTop": true,
+        "visible": false,
         "resizable": false,
         "maximizable": false,
         "fullscreen": false,

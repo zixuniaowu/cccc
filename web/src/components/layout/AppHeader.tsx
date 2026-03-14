@@ -168,7 +168,7 @@ export function AppHeader({
                   headerIconButtonClass,
                   "border shadow-sm hover:-translate-y-px active:translate-y-0",
                   "border-emerald-200/70 bg-emerald-50/75 text-emerald-700 shadow-emerald-100/80 hover:bg-emerald-100/80 hover:shadow-emerald-200/70",
-                  "dark:border-emerald-400/15 dark:bg-emerald-500/12 dark:text-emerald-300 dark:shadow-[0_8px_24px_-16px_rgba(16,185,129,0.45)] dark:hover:bg-emerald-500/18"
+                  "dark:border-[var(--glass-border-subtle)] dark:bg-[var(--glass-panel-bg)] dark:text-emerald-400 dark:shadow-none dark:hover:text-emerald-300"
                 )}
                 title={t('launchAllAgents')}
               >

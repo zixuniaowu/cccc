@@ -212,20 +212,33 @@ pub fn run() {
                 app.listen("group-stopped", move |event| {
                     if let Ok(group_id) = serde_json::from_str::<String>(event.payload()) {
                         if let Ok(mut wm) = state_clone.window_manager.lock() {
-                            wm.close_pet_window(&app_handle, &group_id);
+                            wm.remove_connection(&app_handle, &group_id);
                         }
                     }
                 });
             }
 
-            // Listen for desktop pet disable requests from runtime
+            // Listen for desktop pet disable — hide UI only, keep SSE watcher alive
             {
                 let state_clone = state.clone();
                 let app_handle = app.handle().clone();
                 app.listen("desktop-pet-disabled", move |event| {
                     if let Ok(group_id) = serde_json::from_str::<String>(event.payload()) {
+                        if let Ok(wm) = state_clone.window_manager.lock() {
+                            wm.hide_pet_window_ui(&app_handle, &group_id);
+                        }
+                    }
+                });
+            }
+
+            // Listen for desktop pet enable — reopen UI window from existing runtime
+            {
+                let state_clone = state.clone();
+                let app_handle = app.handle().clone();
+                app.listen("desktop-pet-enabled", move |event| {
+                    if let Ok(group_id) = serde_json::from_str::<String>(event.payload()) {
                         if let Ok(mut wm) = state_clone.window_manager.lock() {
-                            wm.close_pet_window(&app_handle, &group_id);
+                            wm.reopen_pet_window(&app_handle, &group_id);
                         }
                     }
                 });
@@ -320,6 +333,14 @@ fn run_bootstrap_flow(app: AppHandle, state: RuntimeState) {
             }
             Err(e) => {
                 eprintln!("[bootstrap] failed: {}", e);
+
+                // The static pet window starts with `visible: false` (tauri.conf.json),
+                // so we must show() it before emitting the error state — otherwise
+                // the user sees the app "disappear".
+                if let Some(static_pet) = app.get_webview_window("pet") {
+                    let _ = static_pet.show();
+                }
+
                 let message = if bootstrap::should_prompt_web_launch(&e) {
                     WAITING_FOR_WEB_LAUNCH_MESSAGE.to_string()
                 } else {

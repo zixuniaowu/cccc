@@ -51,6 +51,11 @@ impl WindowManager {
         !self.windows.is_empty()
     }
 
+    /// Returns true if a runtime exists for the given group (regardless of window state).
+    pub fn has_runtime(&self, group_id: &str) -> bool {
+        self.windows.contains_key(group_id)
+    }
+
     /// Synchronize windows to match the given connections.
     ///
     /// - New groups → create window + start runtime
@@ -64,7 +69,7 @@ impl WindowManager {
         // Remove windows for groups no longer present
         for id in &old_ids {
             if !new_ids.contains(id) {
-                self.close_pet_window(app, id);
+                self.remove_connection(app, id);
             }
         }
 
@@ -81,27 +86,10 @@ impl WindowManager {
 
     /// Create a pet window and start its SSE runtime.
     fn ensure_pet_window(&mut self, app: &AppHandle, conn: ResolvedConnection) {
-        let label = window_label(&conn.group_id);
         let group_id = conn.group_id.clone();
 
-        // Create window if it doesn't exist
-        if app.get_webview_window(&label).is_none() {
-            let result = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
-                .title(format!("CCCC Pet — {}", conn.team_label()))
-                .inner_size(PET_SIZE, PET_SIZE)
-                .decorations(false)
-                .transparent(true)
-                .shadow(false)
-                .always_on_top(true)
-                .skip_taskbar(true)
-                .visible_on_all_workspaces(true)
-                .visible(true)
-                .build();
-
-            if let Err(e) = result {
-                eprintln!("failed to create pet window for {}: {}", group_id, e);
-                return;
-            }
+        if !self.ensure_pet_window_ui(app, &group_id, &conn.team_label()) {
+            return;
         }
 
         // Start SSE runtime for this group
@@ -126,13 +114,60 @@ impl WindowManager {
         );
     }
 
-    /// Stop runtime and close window for a group.
-    pub fn close_pet_window(&mut self, app: &AppHandle, group_id: &str) {
+    /// Create the pet window UI only (no runtime start).
+    ///
+    /// Returns `true` if the window exists (already present or just created).
+    fn ensure_pet_window_ui(&self, app: &AppHandle, group_id: &str, title: &str) -> bool {
+        let label = window_label(group_id);
+        if app.get_webview_window(&label).is_some() {
+            return true;
+        }
+
+        let result = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
+            .title(title)
+            .inner_size(PET_SIZE, PET_SIZE)
+            .decorations(false)
+            .transparent(true)
+            .shadow(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .visible_on_all_workspaces(true)
+            .visible(true)
+            .accept_first_mouse(true)
+            .build();
+
+        match result {
+            Ok(_) => true,
+            Err(e) => {
+                eprintln!("failed to create pet window for {}: {}", group_id, e);
+                false
+            }
+        }
+    }
+
+    /// Fully remove a group: stop runtime, close all windows, remove from registry.
+    pub fn remove_connection(&mut self, app: &AppHandle, group_id: &str) {
         if let Some(runtime) = self.windows.remove(group_id) {
             runtime.task_handle.abort();
         }
         self.close_panel_window(app, group_id);
         self.clear_cached_payload(group_id);
+
+        let label = window_label(group_id);
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.close();
+        }
+    }
+
+    /// Close only UI windows (pet + panel), keeping the SSE runtime alive.
+    ///
+    /// Used when the desktop pet setting is toggled OFF — the watcher must
+    /// stay alive to detect when the setting is toggled back ON.
+    pub fn hide_pet_window_ui(&self, app: &AppHandle, group_id: &str) {
+        self.close_panel_window(app, group_id);
+        // NOTE: do NOT clear cached payload here — the SSE runtime keeps
+        // running and reopen_pet_window() needs the cache for first-frame
+        // rendering. Cache is only cleared in remove_connection().
 
         let label = window_label(group_id);
         if let Some(window) = app.get_webview_window(&label) {
@@ -158,6 +193,26 @@ impl WindowManager {
         }
     }
 
+    /// Re-create the pet window for an existing runtime (e.g. after toggle ON).
+    ///
+    /// The SSE watcher must already be in the registry. Only the UI window is
+    /// rebuilt; the runtime is left untouched.
+    pub fn reopen_pet_window(&mut self, app: &AppHandle, group_id: &str) {
+        let Some(runtime) = self.windows.get(group_id) else {
+            eprintln!("reopen_pet_window: no runtime for {}", group_id);
+            return;
+        };
+        let title = runtime.team_label.clone();
+        self.ensure_pet_window_ui(app, group_id, &title);
+        self.layout_windows(app);
+
+        // Emit the latest cached payload so the new window renders immediately
+        // instead of staying blank until the next SSE event arrives.
+        if let Some(payload) = self.latest_payload_for_group(group_id) {
+            emit_group_payload(app, group_id, &payload);
+        }
+    }
+
     /// Add or update a single connection.
     ///
     /// If the group already exists, its runtime is restarted with the new connection.
@@ -167,7 +222,7 @@ impl WindowManager {
 
         // If group already exists, tear down old runtime first
         if self.windows.contains_key(&group_id) {
-            self.close_pet_window(app, &group_id);
+            self.remove_connection(app, &group_id);
         }
 
         self.ensure_pet_window(app, conn);
@@ -203,6 +258,7 @@ impl WindowManager {
             .visible_on_all_workspaces(true)
             .resizable(false)
             .visible(true)
+            .focused(false)
             .build()
             .map_err(|e| e.to_string())?;
 
@@ -385,6 +441,13 @@ fn spawn_group_runtime(
                     cache_group_payload(&latest_payloads, &group_id, &payload);
                     notifier.check_and_notify(&app, &group_id, &payload);
                     emit_group_payload(&app, &group_id, &payload);
+
+                    // First-frame guard: if desktop_pet was disabled before we
+                    // connected, hide the window immediately so a stale deep-link
+                    // launch doesn't leave an orphan window.
+                    if let Ok(false) = api.fetch_desktop_pet_enabled().await {
+                        let _ = app.emit("desktop-pet-disabled", group_id.clone());
+                    }
                 }
                 StreamSignal::ContextChanged => {
                     if let Ok(context) = api.fetch_context().await {
@@ -419,13 +482,22 @@ fn spawn_group_runtime(
                 StreamSignal::DesktopPetSettingChanged => {
                     match api.fetch_desktop_pet_enabled().await {
                         Ok(false) => {
+                            // Hide UI but keep this watcher alive so we can
+                            // detect when the setting is toggled back ON.
                             let _ = app.emit("desktop-pet-disabled", group_id.clone());
-                            break;
                         }
-                        Ok(true) => {}
+                        Ok(true) => {
+                            // Setting toggled ON — rebuild window if it was closed.
+                            let pet_label = format!("pet-{}", group_id);
+                            if app.get_webview_window(&pet_label).is_none() {
+                                let _ = app.emit("desktop-pet-enabled", group_id.clone());
+                            }
+                        }
                         Err(error) => {
+                            // GET failed — keep current state as-is.
+                            // The next SSE event or reconnect will retry.
                             eprintln!(
-                                "failed to fetch desktop_pet_enabled for {}: {}",
+                                "failed to fetch desktop_pet_enabled for {}: {}; keeping current state",
                                 group_id, error
                             );
                         }
@@ -511,6 +583,13 @@ mod tests {
         assert_eq!(group_id_from_label("pet-"), Some(""));
         assert_eq!(group_id_from_label("other-label"), None);
         assert_eq!(group_id_from_label(""), None);
+    }
+
+    #[test]
+    fn new_manager_has_no_connections() {
+        let wm = WindowManager::new();
+        assert!(!wm.has_connections());
+        assert!(!wm.has_runtime("g_abc123"));
     }
 
     #[test]

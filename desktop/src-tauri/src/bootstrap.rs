@@ -54,8 +54,6 @@ struct GroupEntry {
     group_id: String,
     #[serde(default)]
     title: String,
-    #[serde(default)]
-    running: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -132,21 +130,22 @@ pub async fn bootstrap_local(config: &DesktopConfig) -> Result<Vec<ResolvedConne
         }
     }
 
-    // If no groups have desktop_pet_enabled:
-    // - Dev mode: fallback to all running groups for easier local development
-    // - Production: no windows (require explicit opt-in via settings)
-    let selected: Vec<&GroupEntry> = if pet_enabled.is_empty() {
-        if cfg!(debug_assertions) {
-            groups.iter().filter(|g| g.running).collect()
-        } else {
-            return Err(anyhow!(ERR_NO_ENABLED_GROUPS));
-        }
-    } else {
-        pet_enabled
-    };
+    resolve_enabled_connections(&pet_enabled, &daemon_url, token)
+}
 
-    let connections: Vec<ResolvedConnection> = selected
-        .into_iter()
+/// Build connections from groups that have `desktop_pet_enabled`.
+/// Returns `ERR_NO_ENABLED_GROUPS` if the list is empty.
+fn resolve_enabled_connections(
+    enabled_groups: &[&GroupEntry],
+    daemon_url: &str,
+    token: &str,
+) -> Result<Vec<ResolvedConnection>> {
+    if enabled_groups.is_empty() {
+        return Err(anyhow!(ERR_NO_ENABLED_GROUPS));
+    }
+
+    let connections = enabled_groups
+        .iter()
         .map(|group| ResolvedConnection {
             group_id: group.group_id.clone(),
             group_title: if group.title.is_empty() {
@@ -154,14 +153,10 @@ pub async fn bootstrap_local(config: &DesktopConfig) -> Result<Vec<ResolvedConne
             } else {
                 group.title.clone()
             },
-            daemon_url: daemon_url.clone(),
-            auth_token: token.clone(),
+            daemon_url: daemon_url.to_string(),
+            auth_token: token.to_string(),
         })
         .collect();
-
-    if connections.is_empty() {
-        return Err(anyhow!("no eligible groups found (none running)"));
-    }
 
     Ok(connections)
 }
@@ -228,5 +223,38 @@ mod tests {
     fn non_launch_errors_are_not_classified_as_launch_prompt() {
         assert!(!should_prompt_web_launch(&anyhow!("failed to fetch groups")));
         assert!(!should_prompt_web_launch(&anyhow!("no eligible groups found (none running)")));
+    }
+
+    /// Regression T237: multiple groups exist but none have desktop_pet_enabled
+    /// → resolve_enabled_connections returns ERR_NO_ENABLED_GROUPS, 0 connections.
+    /// Dev mode must NOT bypass this check.
+    #[test]
+    fn no_enabled_groups_returns_error_with_zero_connections() {
+        // Simulate: 3 groups fetched from daemon, all with desktop_pet_enabled=false
+        // → the enabled list passed to resolve is empty
+        let enabled: Vec<&GroupEntry> = vec![];
+        let result = resolve_enabled_connections(&enabled, "http://localhost:8848", "tok");
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert_eq!(err.to_string(), ERR_NO_ENABLED_GROUPS);
+        assert!(should_prompt_web_launch(&err));
+    }
+
+    /// When some groups are enabled, resolve_enabled_connections returns only those.
+    #[test]
+    fn only_enabled_groups_become_connections() {
+        let g1 = GroupEntry { group_id: "g_1".into(), title: "Team A".into() };
+        let g2 = GroupEntry { group_id: "g_2".into(), title: "Team B".into() };
+        // Only g1 has desktop_pet_enabled=true
+        let enabled: Vec<&GroupEntry> = vec![&g1];
+        let result = resolve_enabled_connections(&enabled, "http://localhost:8848", "tok");
+
+        let conns = result.unwrap();
+        assert_eq!(conns.len(), 1);
+        assert_eq!(conns[0].group_id, "g_1");
+        assert_eq!(conns[0].group_title, "Team A");
+        // g2 is not included even though it exists
+        assert!(!conns.iter().any(|c| c.group_id == g2.group_id));
     }
 }

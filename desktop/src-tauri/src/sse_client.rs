@@ -157,10 +157,15 @@ impl DesktopApiClient {
                 Ok(()) => "SSE stream closed".to_string(),
                 Err(error) => error.to_string(),
             };
-            let _ = tx.send(StreamSignal::Reconnecting {
-                reason: reconnect_reason,
-                delay,
-            });
+            if tx
+                .send(StreamSignal::Reconnecting {
+                    reason: reconnect_reason,
+                    delay,
+                })
+                .is_err()
+            {
+                break;
+            }
             sleep(delay).await;
             delay = std::cmp::min(delay.saturating_mul(2), Duration::from_secs(30));
         }
@@ -180,7 +185,9 @@ impl DesktopApiClient {
             .error_for_status()
             .context("ledger stream returned error status")?;
 
-        let _ = tx.send(StreamSignal::Connected);
+        if tx.send(StreamSignal::Connected).is_err() {
+            return Ok(());
+        }
 
         let mut stream = response.bytes_stream().eventsource();
         while let Some(event) = stream.next().await {
@@ -192,7 +199,9 @@ impl DesktopApiClient {
             let ledger_event: LedgerEvent =
                 serde_json::from_str(&event.data).context("failed to decode ledger event")?;
             if let Some(signal) = classify_ledger_event(&ledger_event) {
-                let _ = tx.send(signal);
+                if tx.send(signal).is_err() {
+                    return Ok(());
+                }
             }
         }
 
