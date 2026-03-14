@@ -45,6 +45,26 @@ function setPetLabel(text) {
   }
 }
 
+// --- Close button ---
+
+const closeBtn = document.getElementById("close-btn");
+
+closeBtn.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation(); // prevent drag initiation
+});
+
+closeBtn.addEventListener("pointerup", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  if (window.__TAURI__) {
+    const win = window.__TAURI__.window.getCurrentWindow();
+    void win.close();
+  } else {
+    console.log("[IPC] Close button clicked (demo mode)");
+  }
+});
+
 // --- Click handler for pet container ---
 
 const petContainer = document.getElementById("pet-container");

@@ -77,6 +77,39 @@ body {
   transform: rotate(45deg);
 }
 
+/* --- Close button (hover overlay) --- */
+
+#close-btn {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: auto;
+  transition: opacity 120ms ease;
+  z-index: 10;
+}
+
+#pet-container:hover #close-btn {
+  opacity: 1;
+}
+
+#close-btn:hover {
+  background: rgba(239, 68, 68, 0.85);
+}
+
 #cat-canvas {
   width: 64px;
   height: 64px;
@@ -129,6 +162,15 @@ body {
   .pet-hint::after {
     border-right-color: rgba(148, 163, 184, 0.24);
     border-bottom-color: rgba(148, 163, 184, 0.24);
+  }
+
+  #close-btn {
+    background: rgba(255, 255, 255, 0.3);
+    color: #fff;
+  }
+
+  #close-btn:hover {
+    background: rgba(239, 68, 68, 0.85);
   }
 
   .panel {

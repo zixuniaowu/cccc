@@ -644,7 +644,7 @@ export function ContextModal({
 
   const resolveDesktopPetLaunchToken = useCallback(async (): Promise<string | null> => {
     const launchResp = await fetchDesktopPetLaunchToken(groupId);
-    if (!launchResp.ok || !launchResp.result?.token) {
+    if (!launchResp.ok) {
       const raw = launchResp.error?.message || "";
       const code = launchResp.error?.code || "";
       const combined = `${code} ${raw}`;
@@ -654,7 +654,9 @@ export function ContextModal({
         : raw || tr("context.desktopPetLaunchTokenFailed", "Failed to load access tokens.");
       throw new Error(msg);
     }
-    return String(launchResp.result.token || "").trim() || null;
+    // Empty string token is valid in empty-password mode
+    const token = launchResp.result?.token;
+    return typeof token === "string" ? token : null;
   }, [groupId, tr]);
 
   const handlePrepareDesktopPetLaunch = useCallback(async () => {
@@ -662,7 +664,7 @@ export function ContextModal({
     setDesktopPetLaunchError("");
     try {
       const token = await resolveDesktopPetLaunchToken();
-      if (!token) {
+      if (token === null) {
         setDesktopPetLaunchError(tr("context.desktopPetLaunchNoToken", "No access token is available for this group."));
         return;
       }

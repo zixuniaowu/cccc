@@ -21,6 +21,7 @@ from ....kernel.prompt_files import (
     read_group_prompt_file,
     write_group_prompt_file,
 )
+from ....kernel.access_tokens import list_access_tokens
 from ....util.conv import coerce_bool
 from ....util.fs import atomic_write_text
 from ..schemas import (
@@ -692,6 +693,9 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def group_desktop_pet_launch_token(request: Request, group_id: str) -> Dict[str, Any]:
         token = _request_access_token(request)
         if not token:
+            # Empty password mode: no tokens configured → allow with empty token
+            if not list_access_tokens():
+                return {"ok": True, "result": {"token": ""}}
             raise HTTPException(
                 status_code=403,
                 detail={"code": "permission_denied", "message": "authentication required", "details": {}},
