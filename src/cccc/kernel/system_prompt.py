@@ -132,8 +132,7 @@ def render_system_prompt(*, group: Group, actor: Dict[str, Any]) -> str:
         "- No fabrication. Verify before claiming done.",
         "- Visible replies must go through MCP: cccc_message_send / cccc_message_reply.",
         "- Terminal output is not delivery.",
-        "- Cold start or resume: call cccc_bootstrap first.",
-        "- Need the full playbook or refreshed scoped guidance: run cccc_help.",
+        "- Cold start or resume: call cccc_bootstrap first, then cccc_help.",
         "- At key transitions, sync shared control-plane state and your cccc_agent_state.",
         "- For strategy or scope discussion, align first; implement only after explicit action intent.",
     ]

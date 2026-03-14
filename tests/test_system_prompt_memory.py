@@ -67,8 +67,7 @@ class TestSystemPromptMemory(unittest.TestCase):
             self.assertIn("Work like a sharp teammate, not a customer-service script.", prompt)
             self.assertIn("No fabrication. Verify before claiming done.", prompt)
             self.assertIn("Visible replies must go through MCP", prompt)
-            self.assertIn("Cold start or resume: call cccc_bootstrap first.", prompt)
-            self.assertIn("Need the full playbook or refreshed scoped guidance: run cccc_help.", prompt)
+            self.assertIn("Cold start or resume: call cccc_bootstrap first, then cccc_help.", prompt)
             self.assertIn("At key transitions, sync shared control-plane state and your cccc_agent_state.", prompt)
             self.assertIn("For strategy or scope discussion, align first; implement only after explicit action intent.", prompt)
 

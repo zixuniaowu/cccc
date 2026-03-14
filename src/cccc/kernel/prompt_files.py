@@ -16,9 +16,8 @@ PROMPTS_DIRNAME = "prompts"
 _MAX_FILE_BYTES = 512 * 1024  # Safety limit for prompt markdown files.
 
 DEFAULT_PREAMBLE_BODY = """Startup routes:
-- Cold start or resume: run `cccc_bootstrap`.
-- From bootstrap, inspect `context_hygiene` and `memory_recall_gate` before planning.
-- Need the full playbook or refreshed scoped guidance: run `cccc_help`.
+- Cold start or resume: run `cccc_bootstrap`, then `cccc_help`.
+- From bootstrap, inspect `context_hygiene`, `memory_recall_gate`, and inbox preview before planning.
 - Need colder group or project detail: use `cccc_context_get` / `cccc_project_info`.
 
 Working stance:
