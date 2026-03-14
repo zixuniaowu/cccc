@@ -188,17 +188,53 @@ class _AuthBrowserSession:
                 self.browser.close()
         except Exception:
             pass
-        proc = self.process
-        if proc is not None:
+        _terminate_browser_process(
+            self.process,
+            include_descendants=bool(str(self.strategy or "").startswith("system_browser_cdp:")),
+        )
+
+
+def _terminate_browser_process(
+    proc: Optional[subprocess.Popen[str]],
+    *,
+    include_descendants: bool,
+) -> None:
+    if proc is None:
+        return
+
+    pid = 0
+    try:
+        pid = int(getattr(proc, "pid", 0) or 0)
+    except Exception:
+        pid = 0
+
+    if include_descendants and os.name == "nt" and pid > 0:
+        try:
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                text=True,
+                timeout=5.0,
+            )
+        except Exception:
+            pass
+        try:
+            proc.wait(timeout=1.0)
+            return
+        except Exception:
+            pass
+
+    try:
+        if proc.poll() is None:
+            proc.terminate()
             try:
-                if proc.poll() is None:
-                    proc.terminate()
-                    try:
-                        proc.wait(timeout=3.0)
-                    except Exception:
-                        proc.kill()
+                proc.wait(timeout=3.0)
             except Exception:
-                pass
+                proc.kill()
+    except Exception:
+        pass
 
 
 def _ensure_dir(path: Path, mode: int = 0o700) -> None:
@@ -337,16 +373,7 @@ def _start_system_browser_over_cdp(playwright_obj: Any) -> Optional[_AuthBrowser
                 process=proc,
             )
         except Exception:
-            if proc is not None:
-                try:
-                    if proc.poll() is None:
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=2.0)
-                        except Exception:
-                            proc.kill()
-                except Exception:
-                    pass
+            _terminate_browser_process(proc, include_descendants=True)
             continue
     return None
 

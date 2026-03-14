@@ -90,7 +90,7 @@ export function useChatTab({
   const { setRecipientsModal, setRelayModal, openModal } = useModalStore();
   const { setNewActorRole } = useFormStore();
 
-  // Outbox (optimistic pending messages) — stable selector, no new array allocation
+  // Outbox (optimistic pending messages) — stable selector, no new array allocation.
   const outboxEntries = useChatOutboxStore(
     useCallback((s) => selectOutboxEntries(s, selectedGroupId), [selectedGroupId])
   );
@@ -170,14 +170,10 @@ export function useChatTab({
     return !!chatWindow && String(chatWindow.groupId || "") === String(selectedGroupId || "");
   }, [chatWindow, selectedGroupId]);
 
-  // Filtered live chat messages (canonical + outbox pending merged)
+  // Filtered live chat messages (canonical + optimistic pending merged)
   const liveChatMessages = useMemo(() => {
     const all = events.filter((ev) => ev.kind === "chat.message");
-
-    // Merge outbox pending messages at the end (they are optimistic, not yet confirmed)
-    const pendingEvents = outboxEntries
-      .filter((e) => e.status === "pending")
-      .map((e) => e.event);
+    const pendingEvents = outboxEntries.map((entry) => entry.event);
     const merged = pendingEvents.length > 0 ? [...all, ...pendingEvents] : all;
 
     if (chatFilter === "attention") {
@@ -358,7 +354,8 @@ export function useChatTab({
       return;
     }
 
-    // Optimistic: enqueue to outbox immediately for same-group sends
+    // Optimistic: enqueue to outbox immediately for same-group sends.
+    // If the request fails, we remove the pending entry and restore the composer.
     if (!isCrossGroup) {
       const optimisticEvent: LedgerEvent = {
         id: localId,
@@ -416,7 +413,7 @@ export function useChatTab({
         }
       }
       if (!resp.ok) {
-        // Remove optimistic entry and restore composer
+        // Pending-only outbox: failed sends roll back to the composer.
         removeOutbox(selectedGroupId, localId);
         restoreComposerState();
         showError(`${resp.error.code}: ${resp.error.message}`);
@@ -443,6 +440,7 @@ export function useChatTab({
       onMessageSent?.();
     } catch (error) {
       const message = error instanceof Error ? error.message : "send failed";
+      // Pending-only outbox: failed sends roll back to the composer.
       removeOutbox(selectedGroupId, localId);
       restoreComposerState();
       showError(message);

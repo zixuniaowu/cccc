@@ -2307,6 +2307,64 @@ class TestGroupSpaceOps(unittest.TestCase):
             self.assertEqual(str(state.get("state") or ""), "failed")
             self.assertIn("failed to prepare browser runtime", str(state.get("message") or "").lower())
 
+    def test_notebooklm_auth_flow_closes_windows_system_browser_process_tree(self) -> None:
+        from cccc.daemon.space import notebooklm_auth_flow as auth_flow
+
+        class _FakeClosable:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+        class _FakeProc:
+            def __init__(self) -> None:
+                self.pid = 4321
+                self.terminated = False
+                self.killed = False
+                self.wait_calls: list[float] = []
+
+            def poll(self) -> None:
+                return None
+
+            def wait(self, timeout: float | None = None) -> int:
+                self.wait_calls.append(float(timeout or 0.0))
+                return 0
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def kill(self) -> None:
+                self.killed = True
+
+        context = _FakeClosable()
+        browser = _FakeClosable()
+        proc = _FakeProc()
+        session = auth_flow._AuthBrowserSession(
+            browser=browser,
+            context=context,
+            strategy="system_browser_cdp:chrome.exe",
+            process=proc,
+        )
+
+        with patch.object(auth_flow.os, "name", "nt"), patch.object(
+            auth_flow.subprocess,
+            "run",
+            return_value=None,
+        ) as taskkill_mock:
+            session.close()
+
+        self.assertTrue(context.closed)
+        self.assertTrue(browser.closed)
+        taskkill_mock.assert_called_once()
+        self.assertEqual(
+            taskkill_mock.call_args.args[0],
+            ["taskkill", "/PID", "4321", "/T", "/F"],
+        )
+        self.assertEqual(proc.wait_calls, [1.0])
+        self.assertFalse(proc.terminated)
+        self.assertFalse(proc.killed)
+
     def test_notebooklm_auth_flow_waits_for_notebook_before_collecting_cookies(self) -> None:
         from cccc.daemon.space import notebooklm_auth_flow as auth_flow
 
