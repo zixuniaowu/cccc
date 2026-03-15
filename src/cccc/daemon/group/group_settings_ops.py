@@ -160,8 +160,8 @@ def handle_group_settings_update(args: Dict[str, Any]) -> DaemonResponse:
             min_value=0,
         ),
         "actor_idle_timeout_seconds": _safe_int(
-            automation.get("actor_idle_timeout_seconds", 600),
-            default=600,
+            automation.get("actor_idle_timeout_seconds", 0),
+            default=0,
             min_value=0,
         ),
         "keepalive_delay_seconds": _safe_int(automation.get("keepalive_delay_seconds", 120), default=120, min_value=0),

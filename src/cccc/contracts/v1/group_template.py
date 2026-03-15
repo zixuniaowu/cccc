@@ -44,7 +44,7 @@ class GroupTemplateSettings(BaseModel):
     nudge_max_repeats_per_obligation: int = 3
     nudge_escalate_after_repeats: int = 2
     auto_mark_on_delivery: bool = False
-    actor_idle_timeout_seconds: int = 600
+    actor_idle_timeout_seconds: int = 0
     keepalive_delay_seconds: int = 120
     keepalive_max_per_actor: int = 3
     silence_timeout_seconds: int = 0

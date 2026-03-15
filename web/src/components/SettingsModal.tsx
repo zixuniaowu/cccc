@@ -51,7 +51,7 @@ export function SettingsModal({
   const { t } = useTranslation("settings");
   const { modalRef } = useModalA11y(isOpen, onClose);
   const [scope, setScope] = useState<SettingsScope>(groupId ? "group" : "global");
-  const [groupTab, setGroupTab] = useState<GroupTabId>("automation");
+  const [groupTab, setGroupTab] = useState<GroupTabId>("guidance");
   const [globalTab, setGlobalTab] = useState<GlobalTabId>("capabilities");
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = useState<boolean | null>(null);
   const [webAccessSession, setWebAccessSession] = useState<WebAccessSession | null>(null);
@@ -64,13 +64,12 @@ export function SettingsModal({
   const [nudgeDigestMinIntervalSeconds, setNudgeDigestMinIntervalSeconds] = useState(120);
   const [nudgeMaxRepeatsPerObligation, setNudgeMaxRepeatsPerObligation] = useState(3);
   const [nudgeEscalateAfterRepeats, setNudgeEscalateAfterRepeats] = useState(2);
-  const [idleSeconds, setIdleSeconds] = useState(600);
+  const [idleSeconds, setIdleSeconds] = useState(0);
   const [keepaliveSeconds, setKeepaliveSeconds] = useState(120);
   const [keepaliveMax, setKeepaliveMax] = useState(3);
   const [silenceSeconds, setSilenceSeconds] = useState(600);
   const [helpNudgeIntervalSeconds, setHelpNudgeIntervalSeconds] = useState(600);
   const [helpNudgeMinMessages, setHelpNudgeMinMessages] = useState(10);
-  const [deliveryInterval, setDeliveryInterval] = useState(0);
   const [autoMarkOnDelivery, setAutoMarkOnDelivery] = useState(false);
 
   // Messaging policy
@@ -162,7 +161,6 @@ export function SettingsModal({
       setSilenceSeconds(settings.silence_timeout_seconds);
       setHelpNudgeIntervalSeconds(settings.help_nudge_interval_seconds ?? 600);
       setHelpNudgeMinMessages(settings.help_nudge_min_messages ?? 10);
-      setDeliveryInterval(settings.min_interval_seconds);
       setAutoMarkOnDelivery(Boolean(settings.auto_mark_on_delivery));
       setDefaultSendTo(settings.default_send_to || "foreman");
       setTerminalVisibility(settings.terminal_transcript_visibility || "foreman");
@@ -325,7 +323,6 @@ export function SettingsModal({
 
   const handleSaveDeliverySettings = async () => {
     await onUpdateSettings({
-      min_interval_seconds: deliveryInterval,
       auto_mark_on_delivery: autoMarkOnDelivery,
     });
   };
@@ -853,8 +850,6 @@ export function SettingsModal({
                 <DeliveryTab
                   isDark={isDark}
                   busy={busy}
-                  deliveryInterval={deliveryInterval}
-                  setDeliveryInterval={setDeliveryInterval}
                   autoMarkOnDelivery={autoMarkOnDelivery}
                   setAutoMarkOnDelivery={setAutoMarkOnDelivery}
                   onSave={handleSaveDeliverySettings}

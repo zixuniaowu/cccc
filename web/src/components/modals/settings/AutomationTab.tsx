@@ -1,4 +1,4 @@
-// AutomationTab configures proactive system behaviors (nudges/alerts) and user-defined rules.
+// AutomationTab configures built-in automation loops and user-authored scheduled rules.
 import React, { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -507,6 +507,38 @@ export function AutomationTab(props: AutomationTabProps) {
         </p>
       </div>
 
+      <AutomationPoliciesSection
+        isDark={isDark}
+        busy={props.busy}
+        nudgeSeconds={props.nudgeSeconds}
+        setNudgeSeconds={props.setNudgeSeconds}
+        replyRequiredNudgeSeconds={props.replyRequiredNudgeSeconds}
+        setReplyRequiredNudgeSeconds={props.setReplyRequiredNudgeSeconds}
+        attentionAckNudgeSeconds={props.attentionAckNudgeSeconds}
+        setAttentionAckNudgeSeconds={props.setAttentionAckNudgeSeconds}
+        unreadNudgeSeconds={props.unreadNudgeSeconds}
+        setUnreadNudgeSeconds={props.setUnreadNudgeSeconds}
+        nudgeDigestMinIntervalSeconds={props.nudgeDigestMinIntervalSeconds}
+        setNudgeDigestMinIntervalSeconds={props.setNudgeDigestMinIntervalSeconds}
+        nudgeMaxRepeatsPerObligation={props.nudgeMaxRepeatsPerObligation}
+        setNudgeMaxRepeatsPerObligation={props.setNudgeMaxRepeatsPerObligation}
+        nudgeEscalateAfterRepeats={props.nudgeEscalateAfterRepeats}
+        setNudgeEscalateAfterRepeats={props.setNudgeEscalateAfterRepeats}
+        keepaliveSeconds={props.keepaliveSeconds}
+        setKeepaliveSeconds={props.setKeepaliveSeconds}
+        keepaliveMax={props.keepaliveMax}
+        setKeepaliveMax={props.setKeepaliveMax}
+        helpNudgeIntervalSeconds={props.helpNudgeIntervalSeconds}
+        setHelpNudgeIntervalSeconds={props.setHelpNudgeIntervalSeconds}
+        helpNudgeMinMessages={props.helpNudgeMinMessages}
+        setHelpNudgeMinMessages={props.setHelpNudgeMinMessages}
+        idleSeconds={props.idleSeconds}
+        setIdleSeconds={props.setIdleSeconds}
+        silenceSeconds={props.silenceSeconds}
+        setSilenceSeconds={props.setSilenceSeconds}
+        onSavePolicies={props.onSavePolicies}
+      />
+
       <Section
         isDark={isDark}
         icon={SparkIcon}
@@ -597,38 +629,6 @@ export function AutomationTab(props: AutomationTabProps) {
         onSetOneShotMode={setEditingOneShotModeValue}
         onSetOneShotAfterMinutes={setEditingOneShotAfterMinutesValue}
         onSave={saveRuleEditor}
-      />
-
-      <AutomationPoliciesSection
-        isDark={isDark}
-        busy={props.busy}
-        nudgeSeconds={props.nudgeSeconds}
-        setNudgeSeconds={props.setNudgeSeconds}
-        replyRequiredNudgeSeconds={props.replyRequiredNudgeSeconds}
-        setReplyRequiredNudgeSeconds={props.setReplyRequiredNudgeSeconds}
-        attentionAckNudgeSeconds={props.attentionAckNudgeSeconds}
-        setAttentionAckNudgeSeconds={props.setAttentionAckNudgeSeconds}
-        unreadNudgeSeconds={props.unreadNudgeSeconds}
-        setUnreadNudgeSeconds={props.setUnreadNudgeSeconds}
-        nudgeDigestMinIntervalSeconds={props.nudgeDigestMinIntervalSeconds}
-        setNudgeDigestMinIntervalSeconds={props.setNudgeDigestMinIntervalSeconds}
-        nudgeMaxRepeatsPerObligation={props.nudgeMaxRepeatsPerObligation}
-        setNudgeMaxRepeatsPerObligation={props.setNudgeMaxRepeatsPerObligation}
-        nudgeEscalateAfterRepeats={props.nudgeEscalateAfterRepeats}
-        setNudgeEscalateAfterRepeats={props.setNudgeEscalateAfterRepeats}
-        keepaliveSeconds={props.keepaliveSeconds}
-        setKeepaliveSeconds={props.setKeepaliveSeconds}
-        keepaliveMax={props.keepaliveMax}
-        setKeepaliveMax={props.setKeepaliveMax}
-        helpNudgeIntervalSeconds={props.helpNudgeIntervalSeconds}
-        setHelpNudgeIntervalSeconds={props.setHelpNudgeIntervalSeconds}
-        helpNudgeMinMessages={props.helpNudgeMinMessages}
-        setHelpNudgeMinMessages={props.setHelpNudgeMinMessages}
-        idleSeconds={props.idleSeconds}
-        setIdleSeconds={props.setIdleSeconds}
-        silenceSeconds={props.silenceSeconds}
-        setSilenceSeconds={props.setSilenceSeconds}
-        onSavePolicies={props.onSavePolicies}
       />
 
       <AutomationSnippetModal
