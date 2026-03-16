@@ -1687,10 +1687,6 @@ export async function revealAccessToken(tokenId: string) {
   return apiJson<{ token: string }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}/reveal`);
 }
 
-export async function fetchDesktopPetLaunchToken(groupId: string) {
-  return apiJson<{ token: string }>(`/api/v1/groups/${encodeURIComponent(groupId)}/desktop_pet/launch_token`);
-}
-
 export async function deleteAccessToken(tokenId: string) {
   return apiJson<{ deleted: boolean; access_tokens_remain?: boolean; deleted_current_session?: boolean }>(`/api/v1/access-tokens/${encodeURIComponent(tokenId)}`, {
     method: "DELETE",
