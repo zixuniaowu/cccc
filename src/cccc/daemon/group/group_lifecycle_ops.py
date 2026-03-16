@@ -138,7 +138,12 @@ def handle_group_start(
                         "hint": "Set actor.command (or switch runner to headless).",
                     },
                 )
-            ensure_mcp_installed(runtime, cwd)
+            try:
+                mcp_ready = bool(ensure_mcp_installed(runtime, cwd))
+            except Exception as e:
+                raise RuntimeError(f"failed to install MCP for actor {aid}: {e}") from e
+            if not mcp_ready:
+                raise RuntimeError(f"failed to install MCP for actor {aid} (runtime={runtime})")
 
             effective_env = merge_actor_env_with_private(group.group_id, aid, env)
             if runner_effective == "headless":

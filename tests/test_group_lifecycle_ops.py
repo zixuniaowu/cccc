@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 class TestGroupLifecycleOps(unittest.TestCase):
@@ -76,6 +77,41 @@ class TestGroupLifecycleOps(unittest.TestCase):
             assert isinstance(group_doc, dict)
             self.assertEqual(str(group_doc.get("state") or ""), "paused")
             self.assertTrue(bool(group_doc.get("running")))
+        finally:
+            cleanup()
+
+    def test_group_start_fails_when_mcp_install_reports_false(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            create, _ = self._call("group_create", {"title": "group-start-mcp-fail", "topic": "", "by": "user"})
+            self.assertTrue(create.ok, getattr(create, "error", None))
+            group_id = str((create.result or {}).get("group_id") or "").strip()
+            self.assertTrue(group_id)
+
+            attach, _ = self._call("attach", {"group_id": group_id, "path": ".", "by": "user"})
+            self.assertTrue(attach.ok, getattr(attach, "error", None))
+
+            add, _ = self._call(
+                "actor_add",
+                {
+                    "group_id": group_id,
+                    "actor_id": "peer1",
+                    "title": "Peer 1",
+                    "runtime": "codex",
+                    "runner": "headless",
+                    "by": "user",
+                },
+            )
+            self.assertTrue(add.ok, getattr(add, "error", None))
+
+            with patch("cccc.daemon.server._ensure_mcp_installed", return_value=False), patch(
+                "cccc.daemon.server._REQUEST_DISPATCH_DEPS", None
+            ):
+                start, _ = self._call("group_start", {"group_id": group_id, "by": "user"})
+
+            self.assertFalse(start.ok)
+            self.assertEqual(getattr(start.error, "code", ""), "group_start_failed")
+            self.assertIn("failed to install MCP for actor peer1", getattr(start.error, "message", ""))
         finally:
             cleanup()
 

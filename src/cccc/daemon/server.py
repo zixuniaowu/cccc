@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import ntpath
 import os
 import socket
 import signal
@@ -245,9 +246,9 @@ def _normalize_runtime_command(runtime: str, command: list[str]) -> list[str]:
 
     if rt == "codex":
         try:
-            exe = Path(str(cmd[0] or "")).name
+            exe = os.path.splitext(ntpath.basename(str(cmd[0] or "")))[0].lower()
         except Exception:
-            exe = str(cmd[0] or "")
+            exe = str(cmd[0] or "").strip().lower()
         if exe == "codex":
             # Ensure MCP servers inherit actor env (CCCC_* / ARENA_*).
             has_env_inherit = any("shell_environment_policy.inherit" in str(x) for x in cmd)

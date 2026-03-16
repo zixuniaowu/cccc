@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -106,6 +108,39 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
 
         self.assertFalse(bool(result.get("success")))
         self.assertIn("pywinpty", str(result.get("error") or ""))
+
+    def test_windows_pty_does_not_fallback_to_spawn_without_env(self) -> None:
+        from cccc.runners import pty_win
+
+        with tempfile.TemporaryDirectory() as td:
+            spawn_calls: list[dict[str, object]] = []
+
+            def _spawn(_cmdline: str, **kwargs: object) -> object:
+                spawn_calls.append(dict(kwargs))
+                raise TypeError("spawn signature mismatch")
+
+            fake_proc = SimpleNamespace(spawn=_spawn)
+            with patch.object(pty_win, "PTY_SUPPORTED", True), patch.object(pty_win, "_WINPTY_PROCESS", fake_proc):
+                with self.assertRaisesRegex(RuntimeError, "environment forwarding"):
+                    pty_win.PtySession(
+                        group_id="g1",
+                        actor_id="peer1",
+                        cwd=Path(td),
+                        command=["codex"],
+                        env={"CCCC_HOME": td, "CCCC_GROUP_ID": "g1", "CCCC_ACTOR_ID": "peer1"},
+                    )
+
+            self.assertEqual(len(spawn_calls), 2)
+            self.assertTrue(all("env" in call for call in spawn_calls))
+
+    def test_codex_windows_command_still_gets_env_inherit_flag(self) -> None:
+        from cccc.daemon import server as daemon_server
+
+        cmd = daemon_server._normalize_runtime_command("codex", [r"C:\Tools\codex.cmd", "--search"])
+
+        self.assertEqual(cmd[0], r"C:\Tools\codex.cmd")
+        self.assertEqual(cmd[1:3], ["-c", "shell_environment_policy.inherit=all"])
+        self.assertEqual(cmd[3:], ["--search"])
 
 
 if __name__ == "__main__":

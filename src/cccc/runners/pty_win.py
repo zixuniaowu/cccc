@@ -106,8 +106,6 @@ class PtySession:
         for attempt in (
             lambda: _WINPTY_PROCESS.spawn(cmdline, cwd=str(cwd), env=proc_env, dimensions=(int(cols), int(rows))),  # type: ignore[misc]
             lambda: _WINPTY_PROCESS.spawn(cmdline, cwd=str(cwd), env=proc_env),  # type: ignore[misc]
-            lambda: _WINPTY_PROCESS.spawn(cmdline, cwd=str(cwd)),  # type: ignore[misc]
-            lambda: _WINPTY_PROCESS.spawn(cmdline),  # type: ignore[misc]
         ):
             try:
                 proc = attempt()
@@ -119,7 +117,10 @@ class PtySession:
                 spawn_err = e
                 continue
         if proc is None:
-            raise RuntimeError(f"failed to start ConPTY process: {spawn_err or 'spawn failed'}")
+            raise RuntimeError(
+                "failed to start ConPTY process with environment forwarding: "
+                f"{spawn_err or 'spawn failed'}"
+            )
 
         self._proc = proc
         self._reader_thread = threading.Thread(
