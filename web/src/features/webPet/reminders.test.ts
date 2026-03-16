@@ -190,7 +190,7 @@ describe("projectPetReminders", () => {
     });
   });
 
-  it("projects mention for messages addressed to user and not sent by user", () => {
+  it("does not project mention reminders for agent-to-user messages (visible in chat)", () => {
     const reminders = projectPetReminders(
       makeInput({
         events: [
@@ -208,22 +208,10 @@ describe("projectPetReminders", () => {
       }),
     );
 
-    expect(reminders).toHaveLength(1);
-    expect(reminders[0]).toMatchObject({
-      kind: "mention",
-      priority: 90,
-      source: { eventId: "evt-1" },
-      fingerprint: "group:g-demo:mention:evt-1",
-      action: {
-        type: "open_chat",
-        groupId: "g-demo",
-        eventId: "evt-1",
-      },
-      agent: "peer-reviewer",
-    });
+    expect(reminders).toHaveLength(0);
   });
 
-  it("sorts reminders by priority descending", () => {
+  it("sorts reminders by priority descending (mention disabled)", () => {
     const reminders = projectPetReminders(
       makeInput({
         waitingUser: [{ taskId: "T249", label: "Need approval" }],
@@ -250,7 +238,6 @@ describe("projectPetReminders", () => {
 
     expect(reminders.map((item) => item.kind)).toEqual([
       "waiting_user",
-      "mention",
       "reply_required",
       "stalled_peer",
     ]);
@@ -263,24 +250,11 @@ describe("projectPetReminders", () => {
           { taskId: "T249", label: "Need approval" },
           { taskId: "T249", label: "Need approval" },
         ],
-        events: [
-          makeChatEvent("evt-1", {
-            by: "peer-reviewer",
-            text: "ping",
-            to: ["user"],
-          }),
-          makeChatEvent("evt-1", {
-            by: "peer-reviewer",
-            text: "ping again",
-            to: ["user"],
-          }),
-        ],
       }),
     );
 
     expect(reminders.map((item) => item.fingerprint)).toEqual([
       "group:g-demo:waiting_user:T249",
-      "group:g-demo:mention:evt-1",
     ]);
   });
 
@@ -305,7 +279,7 @@ describe("projectPetReminders", () => {
     expect(reminders[0]?.source.taskId).toBeUndefined();
   });
 
-  it("creates standalone mention reminder for the latest event", () => {
+  it("does not create standalone mention reminder for agent messages", () => {
     const reminder = createMentionReminder(
       "g-demo",
       makeChatEvent("evt-1", {
@@ -315,16 +289,6 @@ describe("projectPetReminders", () => {
       }),
     );
 
-    expect(reminder).toMatchObject({
-      kind: "mention",
-      fingerprint: "group:g-demo:mention:evt-1",
-      source: { eventId: "evt-1" },
-      action: {
-        type: "open_chat",
-        groupId: "g-demo",
-        eventId: "evt-1",
-      },
-      ephemeral: true,
-    });
+    expect(reminder).toBeNull();
   });
 });

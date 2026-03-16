@@ -20,6 +20,7 @@ import {
 
 const SNOOZE_MS = 60 * 1000;
 const ROTATE_MS = 8_000;
+const DISMISS_COOLDOWN_MS = 3_000;
 
 export interface UseWebPetNotificationsResult {
   reminders: PetReminder[];
@@ -159,12 +160,15 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
   const [rotationCursor, setRotationCursor] = useState(0);
   const [nowTick, setNowTick] = useState(0);
   const [snoozedUntilSnapshot, setSnoozedUntilSnapshot] = useState<Record<string, number>>({});
+  const [dismissCooldownUntil, setDismissCooldownUntil] = useState(0);
 
   const lastProcessedEventIdRef = useRef("");
   const didHydrateTaskSnapshotRef = useRef(false);
   const previousTaskSnapshotRef = useRef<TaskReactionSnapshotMap>({});
   const snoozedUntilRef = useRef<Record<string, number>>({});
   const previousTopPriorityRef = useRef<number | null>(null);
+  const dismissCooldownUntilRef = useRef(0);
+  const dismissCooldownTimerRef = useRef<number | null>(null);
 
   const reminderInput = useMemo(
     () => ({
@@ -258,8 +262,9 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
   const activeReminder = useMemo(() => {
     if (ephemeralReminder) return ephemeralReminder;
     if (reminders.length === 0) return null;
+    if (nowTick > 0 && dismissCooldownUntil > nowTick) return null;
     return reminders[rotationCursor % reminders.length] ?? null;
-  }, [ephemeralReminder, reminders, rotationCursor]);
+  }, [dismissCooldownUntil, ephemeralReminder, nowTick, reminders, rotationCursor]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -341,12 +346,15 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
     const normalized = String(fingerprint || "").trim();
     if (!normalized) return;
 
+    const now = Date.now();
     snoozedUntilRef.current = {
       ...snoozedUntilRef.current,
-      [normalized]: Date.now() + SNOOZE_MS,
+      [normalized]: now + SNOOZE_MS,
     };
+    dismissCooldownUntilRef.current = now + DISMISS_COOLDOWN_MS;
+    setDismissCooldownUntil(dismissCooldownUntilRef.current);
     setSnoozedUntilSnapshot(snoozedUntilRef.current);
-    setNowTick(Date.now());
+    setNowTick(now);
 
     setEphemeralReminder((current) => {
       if (!current || current.fingerprint !== normalized) {
@@ -354,6 +362,17 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
       }
       return null;
     });
+
+    // Schedule a tick after cooldown to re-enable reminders
+    if (dismissCooldownTimerRef.current !== null) {
+      window.clearTimeout(dismissCooldownTimerRef.current);
+    }
+    dismissCooldownTimerRef.current = window.setTimeout(() => {
+      dismissCooldownTimerRef.current = null;
+      dismissCooldownUntilRef.current = 0;
+      setDismissCooldownUntil(0);
+      setNowTick(Date.now());
+    }, DISMISS_COOLDOWN_MS + 10);
   }, []);
 
   return {

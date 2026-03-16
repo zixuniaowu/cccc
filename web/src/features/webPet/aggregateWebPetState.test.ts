@@ -9,6 +9,7 @@ function makeInput(overrides: Partial<AggregateInput> = {}): AggregateInput {
     events: [],
     sseStatus: "connected",
     teamName: "cccc",
+    groupId: "g_test",
     ...overrides,
   };
 }
@@ -164,7 +165,7 @@ describe("aggregateWebPetState", () => {
       makeInput({ sseStatus: "disconnected" })
     );
     expect(disconnected.panelData.connection.connected).toBe(false);
-    expect(disconnected.panelData.connection.message).toBe("Disconnected");
+    expect(disconnected.panelData.connection.message).toBe("connectionDisconnected");
 
     const connected = aggregateWebPetState(
       makeInput({ sseStatus: "connected" })
@@ -189,5 +190,66 @@ describe("aggregateWebPetState", () => {
       makeInput({ groupContext: context })
     );
     expect(result.panelData.actionItems).toHaveLength(3);
+  });
+
+  it("populates action on waiting_user action items", () => {
+    const context: GroupContext = {
+      attention: {
+        waiting_user: [
+          { id: "T1", title: "Review PR", assignee: "peer-impl-1" },
+        ],
+      },
+      agent_states: [],
+    };
+    const result = aggregateWebPetState(
+      makeInput({ groupContext: context, groupId: "g_abc" })
+    );
+    expect(result.panelData.actionItems[0].action).toEqual({
+      type: "open_task",
+      groupId: "g_abc",
+      taskId: "T1",
+    });
+  });
+
+  it("populates action on reply_required action items", () => {
+    const events: LedgerEvent[] = [
+      {
+        id: "evt1",
+        kind: "chat.message",
+        by: "peer-reviewer",
+        data: { text: "Please confirm" },
+        _obligation_status: {
+          user: { read: false, acked: false, replied: false, reply_required: true },
+        },
+      },
+    ];
+    const result = aggregateWebPetState(
+      makeInput({ events, groupId: "g_xyz" })
+    );
+    expect(result.panelData.actionItems[0].action).toEqual({
+      type: "open_chat",
+      groupId: "g_xyz",
+      eventId: "evt1",
+    });
+  });
+
+  it("populates taskProgress from tasks_summary excluding archived", () => {
+    const context: GroupContext = {
+      agent_states: [],
+      tasks_summary: { total: 75, done: 3, active: 21, planned: 41, archived: 10 },
+    };
+    const result = aggregateWebPetState(
+      makeInput({ groupContext: context })
+    );
+    expect(result.panelData.taskProgress).toEqual({
+      total: 65,
+      done: 3,
+      active: 21,
+    });
+  });
+
+  it("taskProgress is undefined when no tasks_summary", () => {
+    const result = aggregateWebPetState(makeInput());
+    expect(result.panelData.taskProgress).toBeUndefined();
   });
 });

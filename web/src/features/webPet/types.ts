@@ -19,6 +19,7 @@ export interface ActionItem {
   id: string;
   agent: string;
   summary: string;
+  action?: ReminderAction;
 }
 
 export type ReminderKind =
@@ -41,6 +42,11 @@ export type ReminderAction =
   | {
       type: "open_panel";
       groupId: string;
+    }
+  | {
+      type: "complete_task";
+      groupId: string;
+      taskId: string;
     };
 
 export interface PetReminder {
@@ -69,6 +75,11 @@ export interface PanelData {
   agents: AgentSummary[];
   actionItems: ActionItem[];
   connection: ConnectionStatus;
+  taskProgress?: {
+    total: number;
+    done: number;
+    active: number;
+  };
 }
 
 export type WebPetSpriteUrls = Record<CatState, string>;

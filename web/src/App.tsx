@@ -499,7 +499,7 @@ export default function App() {
         }}
       />
 
-      <div className={`relative h-full md:grid transition-all duration-300 ${
+      <div className={`relative h-full md:grid transition-[grid-template-columns] duration-300 ease-out ${
         sidebarCollapsed ? "md:grid-cols-[60px_1fr]" : "md:grid-cols-[280px_1fr]"
       }`}>
         <GroupSidebar

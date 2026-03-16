@@ -24,7 +24,7 @@ class TestWebImStart(unittest.TestCase):
     def _with_home(self):
         old_home = os.environ.get("CCCC_HOME")
         td_ctx = tempfile.TemporaryDirectory()
-        td = td_ctx.__enter__()
+        td = os.path.realpath(td_ctx.__enter__())
         os.environ["CCCC_HOME"] = td
 
         def cleanup() -> None:

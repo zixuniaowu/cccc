@@ -20,6 +20,7 @@ export interface AggregateInput {
   sseStatus: "connected" | "connecting" | "disconnected";
   groupState?: string;
   teamName?: string;
+  groupId?: string;
 }
 
 export interface AggregateOutput {
@@ -65,29 +66,49 @@ function hasActivity(agent: AgentState): boolean {
   return !!(agent.hot?.active_task_id ?? "").trim();
 }
 
+function isTaskDoneOrArchived(
+  taskId: string,
+  context: GroupContext,
+): boolean {
+  if (!taskId) return false;
+  const tasks = context.coordination?.tasks ?? [];
+  const task = tasks.find((t) => t.id === taskId);
+  if (!task) return false;
+  const status = (task.status ?? "").toLowerCase();
+  return status === "done" || status === "archived";
+}
+
 function collectWaitingUserTasks(
-  context: GroupContext
+  context: GroupContext,
+  groupId: string,
 ): ActionItem[] {
   const attention = context.attention;
   const waitingUser = attention?.waiting_user;
 
   // If attention.waiting_user is an array of tasks/entries, use it
   if (Array.isArray(waitingUser) && waitingUser.length > 0) {
-    return waitingUser.map((entry) => {
+    const items: ActionItem[] = [];
+    for (const entry of waitingUser) {
       if (typeof entry === "string") {
-      return {
-        id: `${entry}_waiting_on_user`,
-        agent: "system",
-        summary: entry,
-      };
+        items.push({
+          id: `${entry}_waiting_on_user`,
+          agent: "system",
+          summary: entry,
+        });
+        continue;
       }
-      const task = entry;
-      return {
-        id: `${task.id || "unknown"}_waiting_on_user`,
-        agent: displayActor(task.assignee || ""),
-        summary: truncateWebPetSummary(task.title || ""),
-      };
-    });
+      const taskId = String(entry.id || "").trim();
+      if (taskId && isTaskDoneOrArchived(taskId, context)) continue;
+      items.push({
+        id: `${taskId || "unknown"}_waiting_on_user`,
+        agent: displayActor(entry.assignee || ""),
+        summary: truncateWebPetSummary(entry.title || ""),
+        action: taskId && groupId
+          ? { type: "open_task", groupId, taskId }
+          : undefined,
+      });
+    }
+    return items;
   }
 
   // Fallback: scan coordination tasks for waiting_on=user
@@ -98,15 +119,22 @@ function collectWaitingUserTasks(
       const status = (task.status ?? "").toLowerCase();
       return waitingOn === "user" && status !== "done" && status !== "archived";
     })
-    .map((task) => ({
-      id: `${task.id || "unknown"}_waiting_on_user`,
-      agent: displayActor(task.assignee || ""),
-      summary: truncateWebPetSummary(task.title || ""),
-    }));
+    .map((task) => {
+      const taskId = (task.id || "").trim();
+      return {
+        id: `${taskId || "unknown"}_waiting_on_user`,
+        agent: displayActor(task.assignee || ""),
+        summary: truncateWebPetSummary(task.title || ""),
+        action: taskId && groupId
+          ? { type: "open_task" as const, groupId, taskId }
+          : undefined,
+      };
+    });
 }
 
 function collectPendingReplyRequired(
-  events: LedgerEvent[]
+  events: LedgerEvent[],
+  groupId: string,
 ): ActionItem[] {
   const items: ActionItem[] = [];
 
@@ -116,10 +144,14 @@ function collectPendingReplyRequired(
     const text = getChatMessageText(event);
     if (!text) continue;
 
+    const eventId = event.id || "unknown";
     items.push({
-      id: event.id || "unknown",
+      id: eventId,
       agent: displayActor(event.by || ""),
       summary: truncateWebPetSummary(text),
+      action: groupId
+        ? { type: "open_chat", groupId, eventId }
+        : undefined,
     });
   }
 
@@ -133,22 +165,26 @@ export function aggregateWebPetState(input: AggregateInput): AggregateOutput {
     sseStatus,
     groupState = "",
     teamName = "Team",
+    groupId = "",
   } = input;
 
   const context = groupContext ?? {};
   const agentStates: AgentState[] = context.agent_states ?? [];
 
   // Collect action items
-  const waitingUserItems = collectWaitingUserTasks(context as GroupContext);
-  const replyRequiredItems = collectPendingReplyRequired(events);
+  const waitingUserItems = collectWaitingUserTasks(context as GroupContext, groupId);
+  const replyRequiredItems = collectPendingReplyRequired(events, groupId);
   const actionItems = [...waitingUserItems, ...replyRequiredItems];
 
-  // Count active agents
-  const activeAgents = agentStates.filter(hasActivity);
+  // When group is inactive, treat all agents as idle
+  const groupInactive = groupState === "paused" || groupState === "idle" || groupState === "stopped";
 
-  // Determine cat state (priority: paused > needs_you > busy > working > napping)
+  // Count active agents (none when group is inactive)
+  const activeAgents = groupInactive ? [] : agentStates.filter(hasActivity);
+
+  // Determine cat state (priority: inactive > needs_you > busy > working > napping)
   let catState: CatState;
-  if (groupState === "paused") {
+  if (groupInactive) {
     catState = "napping";
   } else if (actionItems.length > 0) {
     catState = "needs_you";
@@ -163,11 +199,13 @@ export function aggregateWebPetState(input: AggregateInput): AggregateOutput {
   // Build agent summaries
   const agents: AgentSummary[] = agentStates.map((agent) => ({
     id: agent.id,
-    state: hasActivity(agent)
-      ? activeAgents.length >= 2
-        ? "busy"
-        : "working"
-      : "napping",
+    state: groupInactive
+      ? "napping"
+      : hasActivity(agent)
+        ? activeAgents.length >= 2
+          ? "busy"
+          : "working"
+        : "napping",
     focus: agent.hot?.focus ?? "",
   }));
 
@@ -191,12 +229,24 @@ export function aggregateWebPetState(input: AggregateInput): AggregateOutput {
 
   // Connection status from SSE
   const connected = sseStatus === "connected";
+  // Return i18n key (webPet namespace) — translated at the component layer.
   const connectionMessage =
     sseStatus === "connected"
-      ? "Connected"
+      ? "connectionConnected"
       : sseStatus === "connecting"
-        ? "Connecting..."
-        : "Disconnected";
+        ? "connectionConnecting"
+        : "connectionDisconnected";
+
+  // Extract task progress from tasks_summary.
+  // Exclude archived from total so the progress bar reflects actionable tasks only.
+  const tasksSummary = (context as GroupContext).tasks_summary;
+  const taskProgress = tasksSummary
+    ? {
+        total: tasksSummary.total - (tasksSummary.archived ?? 0),
+        done: tasksSummary.done,
+        active: tasksSummary.active,
+      }
+    : undefined;
 
   return {
     catState,
@@ -208,6 +258,7 @@ export function aggregateWebPetState(input: AggregateInput): AggregateOutput {
         connected,
         message: connectionMessage,
       },
+      taskProgress,
     },
   };
 }

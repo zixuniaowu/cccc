@@ -1,12 +1,13 @@
 import type { CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
-import type { PanelData } from "./types";
+import type { PanelData, ReminderAction } from "./types";
 
 interface PetPanelProps {
   panelData: PanelData;
   /** Panel opens on this side of the cat */
   align?: "left" | "right";
   onClose?: () => void;
+  onAction?: (action: ReminderAction) => void;
   catSize?: number;
 }
 
@@ -22,7 +23,7 @@ function countAgentsByState(panelData: PanelData) {
   );
 }
 
-export function PetPanel({ panelData, align = "left", onClose, catSize = 80 }: PetPanelProps) {
+export function PetPanel({ panelData, align = "left", onClose, onAction, catSize = 80 }: PetPanelProps) {
   const { t } = useTranslation("modals");
   const counts = countAgentsByState(panelData);
   const actionItems = panelData.actionItems.slice(0, 3);
@@ -80,6 +81,35 @@ export function PetPanel({ panelData, align = "left", onClose, catSize = 80 }: P
               </button>
             ) : null}
           </div>
+          {panelData.taskProgress && panelData.taskProgress.total > 0 ? (
+            <div className="mt-3">
+              <div className="flex items-center justify-between text-[11px] text-[var(--color-text-secondary)]">
+                <span>
+                  {t("webPet.taskProgress", {
+                    defaultValue: "{{done}}/{{total}} done",
+                    done: panelData.taskProgress.done,
+                    total: panelData.taskProgress.total,
+                  })}
+                </span>
+                {panelData.taskProgress.active > 0 ? (
+                  <span>
+                    {t("webPet.taskActive", {
+                      defaultValue: "{{count}} active",
+                      count: panelData.taskProgress.active,
+                    })}
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-emerald-400/80 transition-all duration-500"
+                  style={{
+                    width: `${Math.round((panelData.taskProgress.done / panelData.taskProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
             <span className={countPillClass}>
               {t("webPet.countWorking", {
@@ -105,20 +135,50 @@ export function PetPanel({ panelData, align = "left", onClose, catSize = 80 }: P
         <div className="overflow-y-auto px-4 py-3">
           {actionItems.length > 0 ? (
             <div className="space-y-2">
-              {actionItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 backdrop-blur-sm dark:border-white/5"
-                  title={item.summary}
-                >
-                  <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-                    {item.agent}
+              {actionItems.map((item) => {
+                const clickable = !!(item.action && onAction);
+                return (
+                  <div
+                    key={item.id}
+                    role={clickable ? "button" : undefined}
+                    tabIndex={clickable ? 0 : undefined}
+                    className={`rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 backdrop-blur-sm dark:border-white/5 ${
+                      clickable
+                        ? "cursor-pointer transition hover:border-white/20 hover:bg-white/10 active:scale-[0.98]"
+                        : ""
+                    }`}
+                    title={item.summary}
+                    onClick={clickable ? () => onAction(item.action!) : undefined}
+                    onKeyDown={
+                      clickable
+                        ? (e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              onAction(item.action!);
+                            }
+                          }
+                        : undefined
+                    }
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
+                        {item.agent}
+                      </div>
+                      {clickable ? (
+                        <span className="text-[10px] text-[var(--color-text-secondary)] opacity-60">
+                          {item.action!.type === "open_task"
+                            ? t("webPet.actionView", { defaultValue: "View" })
+                            : t("webPet.actionReply", { defaultValue: "Reply" })}
+                          {" →"}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="mt-1 text-sm leading-5 text-[var(--color-text-primary)]">
+                      {item.summary}
+                    </div>
                   </div>
-                  <div className="mt-1 text-sm leading-5 text-[var(--color-text-primary)]">
-                    {item.summary}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-[var(--glass-border-subtle)] px-3 py-4 text-sm text-[var(--color-text-secondary)]">

@@ -103,6 +103,7 @@ export function useWebPetData() {
       sseStatus,
       groupState,
       teamName: groupDocTitle || selectedGroupId || "",
+      groupId: selectedGroupId || "",
     });
     const localizedPanelData = localizePanelData(rawPanelData, sseStatus, tr);
     const localizedReminders = reminders.map((reminder) =>
@@ -112,13 +113,35 @@ export function useWebPetData() {
       ? localizeReminder(activeReminder, tr)
       : null;
 
-    const hint =
-      !localizedPanelData.connection.connected
-        ? localizedPanelData.connection.message
-        : localizedActiveReminder?.summary ||
-          localizedPanelData.actionItems[0]?.summary ||
-          localizedPanelData.agents.find((agent) => agent.focus.trim())?.focus ||
-          localizedPanelData.teamName;
+    // Smart hint: prioritize connection > active reminder > task progress > agent focus > team name
+    let hint: string;
+    if (!localizedPanelData.connection.connected) {
+      hint = localizedPanelData.connection.message;
+    } else if (localizedActiveReminder?.summary) {
+      hint = localizedActiveReminder.summary;
+    } else if (
+      localizedPanelData.taskProgress &&
+      localizedPanelData.taskProgress.total > 0
+    ) {
+      const { done, total } = localizedPanelData.taskProgress;
+      const needsYouCount = localizedPanelData.actionItems.length;
+      hint = needsYouCount > 0
+        ? tr(
+            "webPet.hintTaskWithAction",
+            "{{done}}/{{total}} done, {{count}} need you",
+            { done, total, count: needsYouCount },
+          )
+        : tr(
+            "webPet.hintTaskProgress",
+            "{{done}}/{{total}} tasks done",
+            { done, total },
+          );
+    } else {
+      hint =
+        localizedPanelData.actionItems[0]?.summary ||
+        localizedPanelData.agents.find((agent) => agent.focus.trim())?.focus ||
+        localizedPanelData.teamName;
+    }
 
     return {
       catState,
@@ -130,6 +153,7 @@ export function useWebPetData() {
       dismissReminder,
     };
   }, [
+    t,
     activeReminder,
     dismissReminder,
     events,

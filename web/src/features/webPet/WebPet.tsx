@@ -1,12 +1,13 @@
 import { useCallback } from "react";
 import { useGroupStore, useModalStore, useUIStore } from "../../stores";
 import { useWebPetStore } from "../../stores/useWebPetStore";
+import { contextSync } from "../../services/api";
 import { PetReminderBubble } from "./PetReminderBubble";
 import { PetPanel } from "./PetPanel";
 import { WebPetBubble } from "./WebPetBubble";
 import { useWebPetData } from "./useWebPetData";
-import type { ReminderAction } from "./types";
 import { WEB_PET_BUBBLE_SIZE, WEB_PET_VIEWPORT_MARGIN } from "./constants";
+import type { ReminderAction } from "./types";
 
 function handleReminderAction(action: ReminderAction) {
   switch (action.type) {
@@ -28,6 +29,11 @@ function handleReminderAction(action: ReminderAction) {
       if (!useWebPetStore.getState().panelOpen) {
         useWebPetStore.getState().togglePanel();
       }
+      break;
+    case "complete_task":
+      void contextSync(action.groupId, [
+        { op: "task.move", task_id: action.taskId, status: "done" },
+      ]);
       break;
   }
 }
@@ -73,7 +79,11 @@ export function WebPet() {
       {panelOpen ? (
         <div
           className="fixed inset-0 z-[1099]"
-          onPointerDown={closePanel}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            closePanel();
+          }}
           aria-hidden="true"
         />
       ) : null}
@@ -82,6 +92,8 @@ export function WebPet() {
         style={{
           left: position.x,
           top: position.y,
+          width: WEB_PET_BUBBLE_SIZE,
+          height: WEB_PET_BUBBLE_SIZE,
         }}
       >
         {panelOpen ? null : (
@@ -92,7 +104,7 @@ export function WebPet() {
           />
         )}
         {panelOpen ? (
-          <PetPanel panelData={panelData} align={panelAlign} onClose={closePanel} catSize={80} />
+          <PetPanel panelData={panelData} align={panelAlign} onClose={closePanel} onAction={handleReminderAction} catSize={80} />
         ) : null}
         <WebPetBubble
           state={catState}

@@ -141,6 +141,15 @@ function collectWaitingUserReminders(
 
   if (input.waitingUser.length > 0) {
     for (const entry of input.waitingUser) {
+      // Skip entries whose linked task is already done/archived
+      const taskId = String(entry.taskId || "").trim();
+      if (taskId) {
+        const task = taskMap.get(taskId);
+        if (task) {
+          const status = normalizeStatus(task.status);
+          if (status === "done" || status === "archived") continue;
+        }
+      }
       const reminder = createWaitingUserReminder(
         input.groupId,
         taskMap,
@@ -182,11 +191,13 @@ function isReplyRequired(event: ReminderEventInput): boolean {
 }
 
 function isMention(event: ReminderEventInput): boolean {
-  if (event.kind !== "chat.message") return false;
-  if (event.by.trim() === "user") return false;
-
-  const normalizedRecipients = event.to.map(normalizeRecipient);
-  return normalizedRecipients.includes("user") || normalizedRecipients.includes("@user");
+  // In multi-agent workflows, agents frequently send status updates addressed
+  // to the user. These are already visible in the chat panel and showing them
+  // as popup reminders creates noise ("不智能"). Truly actionable messages are
+  // covered by the reply_required and waiting_user reminder types instead.
+  // The cat mention *reaction* (animation) is handled separately and still works.
+  void event;
+  return false;
 }
 
 function createMentionReminderDraft(

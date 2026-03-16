@@ -1,14 +1,47 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { PetReminder, ReminderAction } from "./types";
 
 const AUTO_HIDE_MS = 6000;
-const EXIT_ANIMATION_MS = 220;
 
 interface PetReminderBubbleProps {
   reminder: PetReminder | null;
   onDismiss: (fingerprint: string) => void;
   onAction?: (action: ReminderAction) => void;
+}
+
+function getActionButtons(
+  reminder: PetReminder,
+  t: (key: string, opts?: Record<string, unknown>) => string,
+): { label: string; action: ReminderAction }[] {
+  const buttons: { label: string; action: ReminderAction }[] = [];
+
+  if (reminder.kind === "waiting_user" && reminder.source.taskId) {
+    buttons.push({
+      label: String(t("webPet.action.complete" as never, { defaultValue: "Done" } as never)),
+      action: {
+        type: "complete_task",
+        groupId: reminder.action.groupId,
+        taskId: reminder.source.taskId,
+      },
+    });
+    buttons.push({
+      label: String(t("webPet.action.view" as never, { defaultValue: "View" } as never)),
+      action: reminder.action,
+    });
+  } else if (reminder.kind === "reply_required") {
+    buttons.push({
+      label: String(t("webPet.action.reply" as never, { defaultValue: "Reply" } as never)),
+      action: reminder.action,
+    });
+  } else {
+    buttons.push({
+      label: String(t("webPet.action.view" as never, { defaultValue: "View" } as never)),
+      action: reminder.action,
+    });
+  }
+
+  return buttons;
 }
 
 export function PetReminderBubble({
@@ -17,9 +50,7 @@ export function PetReminderBubble({
   onAction,
 }: PetReminderBubbleProps) {
   const { t } = useTranslation("modals");
-  const [closingFingerprint, setClosingFingerprint] = useState<string | null>(null);
   const autoHideTimeoutRef = useRef<number | null>(null);
-  const dismissTimeoutRef = useRef<number | null>(null);
 
   const clearAutoHideTimer = useCallback(() => {
     if (autoHideTimeoutRef.current === null) return;
@@ -27,32 +58,8 @@ export function PetReminderBubble({
     autoHideTimeoutRef.current = null;
   }, []);
 
-  const clearDismissTimer = useCallback(() => {
-    if (dismissTimeoutRef.current === null) return;
-    window.clearTimeout(dismissTimeoutRef.current);
-    dismissTimeoutRef.current = null;
-  }, []);
-
-  const startDismiss = useCallback(
-    (fingerprint: string) => {
-      if (!fingerprint) return;
-      if (closingFingerprint === fingerprint) return;
-
-      clearAutoHideTimer();
-      clearDismissTimer();
-      setClosingFingerprint(fingerprint);
-
-      dismissTimeoutRef.current = window.setTimeout(() => {
-        dismissTimeoutRef.current = null;
-        onDismiss(fingerprint);
-      }, EXIT_ANIMATION_MS);
-    },
-    [clearAutoHideTimer, clearDismissTimer, closingFingerprint, onDismiss],
-  );
-
   useEffect(() => {
     clearAutoHideTimer();
-    clearDismissTimer();
 
     if (!reminder) {
       return;
@@ -60,25 +67,29 @@ export function PetReminderBubble({
 
     autoHideTimeoutRef.current = window.setTimeout(() => {
       autoHideTimeoutRef.current = null;
-      startDismiss(reminder.fingerprint);
+      onDismiss(reminder.fingerprint);
     }, AUTO_HIDE_MS);
 
     return () => {
       clearAutoHideTimer();
-      clearDismissTimer();
     };
-  }, [clearAutoHideTimer, clearDismissTimer, reminder, startDismiss]);
+  }, [clearAutoHideTimer, onDismiss, reminder]);
 
   const handleDismiss = useCallback(() => {
     if (!reminder) return;
-    startDismiss(reminder.fingerprint);
-  }, [reminder, startDismiss]);
+    clearAutoHideTimer();
+    onDismiss(reminder.fingerprint);
+  }, [clearAutoHideTimer, onDismiss, reminder]);
 
-  const handleAction = useCallback(() => {
-    if (!reminder) return;
-    onAction?.(reminder.action);
-    startDismiss(reminder.fingerprint);
-  }, [onAction, reminder, startDismiss]);
+  const handleButtonAction = useCallback(
+    (action: ReminderAction) => {
+      if (!reminder) return;
+      clearAutoHideTimer();
+      onAction?.(action);
+      onDismiss(reminder.fingerprint);
+    },
+    [clearAutoHideTimer, onAction, onDismiss, reminder],
+  );
 
   const displayAgent = reminder?.agent === "system"
     ? t("webPet.systemAgent", { defaultValue: "System" })
@@ -91,11 +102,15 @@ export function PetReminderBubble({
       : `${displayAgent}: ${reminder.summary}`;
   }, [displayAgent, reminder]);
 
+  const actionButtons = useMemo(
+    () => (reminder ? getActionButtons(reminder, t) : []),
+    [reminder, t],
+  );
+
   if (!reminder) {
     return null;
   }
 
-  const isClosing = closingFingerprint === reminder.fingerprint;
   const kindLabel = String(
     t(`webPet.kind.${reminder.kind}` as never, {
       defaultValue: reminder.kind.replace(/_/g, " "),
@@ -104,23 +119,20 @@ export function PetReminderBubble({
 
   return (
     <div
-      className={`pointer-events-auto absolute bottom-[calc(100%+14px)] left-1/2 z-[1110] w-[min(280px,calc(100vw-32px))] -translate-x-1/2 transform transition-all duration-200 ${
-        isClosing ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"
-      }`}
-      onClick={handleAction}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          handleAction();
-        }
+      className="pointer-events-auto absolute z-[1110] w-[min(280px,calc(100vw-32px))]"
+      style={{
+        bottom: "calc(100% + 14px)",
+        left: "50%",
+        transform: "translateX(-50%)",
+      }}
+      onPointerDown={(event) => {
+        event.stopPropagation();
       }}
       aria-live={reminder.ephemeral ? "assertive" : "polite"}
       aria-atomic="true"
     >
-      <div className="glass-modal rounded-2xl border border-[var(--glass-border-subtle)] px-3 py-2.5 shadow-2xl">
-        <div className="flex items-start gap-2">
+      <div className="glass-modal rounded-2xl border border-[var(--glass-border-subtle)] px-3 py-2 shadow-2xl">
+        <div className="flex items-start gap-1">
           <div className="min-w-0 flex-1">
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
               {kindLabel}
@@ -131,11 +143,35 @@ export function PetReminderBubble({
             >
               {label}
             </div>
+            <div className="mt-1.5 flex gap-1.5">
+              {actionButtons.map((btn) => (
+                <button
+                  key={btn.action.type}
+                  type="button"
+                  className="rounded-md bg-white/10 px-2 py-0.5 text-xs font-medium text-[var(--color-text-primary)] transition hover:bg-white/20 active:bg-white/25"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    handleButtonAction(btn.action);
+                  }}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                  }}
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
           </div>
           <button
             type="button"
-            className="rounded-full px-2 py-1 text-xs text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+            className="-mt-0.5 -mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+            onPointerDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
             onClick={(event) => {
+              event.preventDefault();
               event.stopPropagation();
               handleDismiss();
             }}
