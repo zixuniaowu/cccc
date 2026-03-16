@@ -239,6 +239,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def im_start(request: Request, req: IMActionRequest) -> Dict[str, Any]:
         """Start IM bridge for a group."""
         import subprocess
+        import sys
 
         check_group(request, req.group_id)
         group = load_group(req.group_id)
@@ -340,33 +341,44 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         log_path = state_dir / "im_bridge.log"
 
         try:
-            import sys
-            log_file = log_path.open("a", encoding="utf-8")
-            proc = subprocess.Popen(
-                [sys.executable, "-m", "cccc.ports.im.bridge", req.group_id, platform],
-                env=env,
-                stdout=log_file,
-                stderr=log_file,
-                start_new_session=True,
-            )
-            # If the process exits immediately (common for missing token/deps), report failure.
-            await asyncio.sleep(0.25)
-            exit_code = proc.poll()
-            if exit_code is not None:
-                try:
-                    proc.wait(timeout=0.1)
-                except Exception:
-                    pass
-                return {
-                    "ok": False,
-                    "error": {
-                        "code": "bridge_exited",
-                        "message": f"bridge exited early (code={exit_code}). Check log: {log_path}",
-                    },
-                }
+            popen_kwargs: Dict[str, Any] = {
+                "env": env,
+                "stdin": subprocess.DEVNULL,
+                "close_fds": True,
+                "cwd": str(ensure_home()),
+            }
+            if os.name == "nt":
+                creationflags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)) | int(getattr(subprocess, "DETACHED_PROCESS", 0))
+                if creationflags:
+                    popen_kwargs["creationflags"] = creationflags
+            else:
+                popen_kwargs["start_new_session"] = True
 
-            pid_path.write_text(str(proc.pid), encoding="utf-8")
-            return {"ok": True, "result": {"group_id": req.group_id, "platform": platform, "pid": proc.pid}}
+            with log_path.open("a", encoding="utf-8") as log_file:
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "cccc.ports.im", req.group_id, platform],
+                    stdout=log_file,
+                    stderr=log_file,
+                    **popen_kwargs,
+                )
+                # If the process exits immediately (common for missing token/deps), report failure.
+                await asyncio.sleep(0.25)
+                exit_code = proc.poll()
+                if exit_code is not None:
+                    try:
+                        proc.wait(timeout=0.1)
+                    except Exception:
+                        pass
+                    return {
+                        "ok": False,
+                        "error": {
+                            "code": "bridge_exited",
+                            "message": f"bridge exited early (code={exit_code}). Check log: {log_path}",
+                        },
+                    }
+
+                pid_path.write_text(str(proc.pid), encoding="utf-8")
+                return {"ok": True, "result": {"group_id": req.group_id, "platform": platform, "pid": proc.pid}}
         except Exception as e:
             return {"ok": False, "error": {"code": "start_failed", "message": str(e)}}
 

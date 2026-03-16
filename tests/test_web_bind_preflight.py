@@ -108,31 +108,23 @@ class TestWebBindPreflight(unittest.TestCase):
         stderr = io.StringIO()
         with patch.object(web_main, "_check_daemon_running", return_value=True), patch.object(
             web_main,
-            "ensure_tcp_port_bindable",
-            side_effect=RuntimeError("boom"),
-        ), patch.object(web_main.uvicorn, "Config") as mock_config, patch.object(
-            web_main.uvicorn, "Server"
-        ) as mock_server, patch.object(web_main.sys, "stderr", stderr):
+            "start_supervised_web_child",
+            return_value=(None, "boom"),
+        ), patch.object(web_main.sys, "stderr", stderr):
             rc = web_main.main(["--host", "127.0.0.1", "--port", "8848"])
 
         self.assertEqual(rc, 1)
         self.assertIn("boom", stderr.getvalue())
-        mock_config.assert_not_called()
-        mock_server.assert_not_called()
 
     def test_web_main_uses_fast_shutdown_timeout(self) -> None:
         from cccc.ports.web import main as web_main
 
         server_instance = unittest.mock.Mock()
-        with patch.object(web_main, "_check_daemon_running", return_value=True), patch.object(
-            web_main,
-            "ensure_tcp_port_bindable",
-            return_value=None,
-        ), patch.object(web_main.uvicorn, "Config") as mock_config, patch.object(
+        with patch.object(web_main.uvicorn, "Config") as mock_config, patch.object(
             web_main.uvicorn, "Server",
             return_value=server_instance,
         ) as mock_server:
-            rc = web_main.main(["--host", "127.0.0.1", "--port", "8848"])
+            rc = web_main.main(["--serve-child", "--host", "127.0.0.1", "--port", "8848"])
 
         self.assertEqual(rc, 0)
         mock_config.assert_called_once()
@@ -145,26 +137,26 @@ class TestWebBindPreflight(unittest.TestCase):
         from cccc.ports.web import main as web_main
 
         _, cleanup = self._with_home()
-        server_instance = unittest.mock.Mock()
+        proc = unittest.mock.Mock()
+        proc.wait.return_value = 0
         try:
             update_remote_access_settings({"web_host": "127.0.0.1", "web_port": 9001})
             with patch.object(web_main, "_check_daemon_running", return_value=True), patch.object(
                 web_main,
-                "ensure_tcp_port_bindable",
-                return_value=None,
-            ), patch.object(web_main.uvicorn, "Config") as mock_config, patch.object(
-                web_main.uvicorn,
-                "Server",
-                return_value=server_instance,
+                "start_supervised_web_child",
+                return_value=(proc, None),
+            ) as mock_start, patch.object(
+                web_main,
+                "_print_web_banner",
             ):
                 rc = web_main.main([])
         finally:
             cleanup()
 
         self.assertEqual(rc, 0)
-        self.assertEqual(mock_config.call_args.kwargs.get("host"), "127.0.0.1")
-        self.assertEqual(mock_config.call_args.kwargs.get("port"), 9001)
-        server_instance.run.assert_called_once_with()
+        self.assertEqual(mock_start.call_args.kwargs.get("host"), "127.0.0.1")
+        self.assertEqual(mock_start.call_args.kwargs.get("port"), 9001)
+        proc.wait.assert_called_once_with()
 
 
 if __name__ == "__main__":

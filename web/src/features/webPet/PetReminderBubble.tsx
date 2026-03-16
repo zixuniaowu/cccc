@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { PetReminder, ReminderAction } from "./types";
 
 const AUTO_HIDE_MS = 6000;
@@ -15,6 +16,7 @@ export function PetReminderBubble({
   onDismiss,
   onAction,
 }: PetReminderBubbleProps) {
+  const { t } = useTranslation("modals");
   const [closingFingerprint, setClosingFingerprint] = useState<string | null>(null);
   const autoHideTimeoutRef = useRef<number | null>(null);
   const dismissTimeoutRef = useRef<number | null>(null);
@@ -78,18 +80,27 @@ export function PetReminderBubble({
     startDismiss(reminder.fingerprint);
   }, [onAction, reminder, startDismiss]);
 
+  const displayAgent = reminder?.agent === "system"
+    ? t("webPet.systemAgent", { defaultValue: "System" })
+    : reminder?.agent || "";
+
   const label = useMemo(() => {
     if (!reminder) return "";
     return reminder.agent === "system"
       ? reminder.summary
-      : `${reminder.agent}: ${reminder.summary}`;
-  }, [reminder]);
+      : `${displayAgent}: ${reminder.summary}`;
+  }, [displayAgent, reminder]);
 
   if (!reminder) {
     return null;
   }
 
   const isClosing = closingFingerprint === reminder.fingerprint;
+  const kindLabel = String(
+    t(`webPet.kind.${reminder.kind}` as never, {
+      defaultValue: reminder.kind.replace(/_/g, " "),
+    } as never),
+  );
 
   return (
     <div
@@ -112,7 +123,7 @@ export function PetReminderBubble({
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-              {reminder.kind.replace("_", " ")}
+              {kindLabel}
             </div>
             <div
               className="mt-1 text-sm leading-5 text-[var(--color-text-primary)]"
@@ -128,7 +139,9 @@ export function PetReminderBubble({
               event.stopPropagation();
               handleDismiss();
             }}
-            aria-label="关闭提醒"
+            aria-label={t("webPet.dismissReminderAria", {
+              defaultValue: "Dismiss reminder",
+            })}
           >
             ×
           </button>

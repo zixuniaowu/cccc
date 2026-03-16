@@ -1616,6 +1616,7 @@ export async function logoutWebAccess() {
 export async function updateRemoteAccessConfig(args: {
   provider?: "off" | "manual" | "tailscale";
   mode?: string;
+  enabled?: boolean;
   requireAccessToken?: boolean;
   webHost?: string;
   webPort?: number;
@@ -1627,6 +1628,7 @@ export async function updateRemoteAccessConfig(args: {
       by: "user",
       provider: args.provider,
       mode: args.mode,
+      enabled: args.enabled,
       require_access_token: args.requireAccessToken,
       web_host: args.webHost,
       web_port: args.webPort,
@@ -1645,6 +1647,15 @@ export async function stopRemoteAccess() {
   return apiJson<{ remote_access: RemoteAccessState }>("/api/v1/remote_access/stop?by=user", {
     method: "POST",
   });
+}
+
+export async function applyRemoteAccess() {
+  return apiJson<{ accepted: boolean; remote_access: RemoteAccessState; target_local_url?: string | null; target_remote_url?: string | null }>(
+    "/api/v1/remote_access/apply?by=user",
+    {
+      method: "POST",
+    }
+  );
 }
 
 // ============ Access token management ============

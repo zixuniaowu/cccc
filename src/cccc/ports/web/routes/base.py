@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from ....kernel.access_tokens import list_access_tokens
@@ -288,6 +288,8 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
             args["provider"] = str(req.provider)
         if req.mode is not None:
             args["mode"] = str(req.mode or "").strip()
+        if req.enabled is not None:
+            args["enabled"] = bool(req.enabled)
         if req.require_access_token is not None:
             args["require_access_token"] = bool(req.require_access_token)
         if req.web_host is not None:
@@ -307,6 +309,45 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
     async def remote_access_stop(by: str = "user") -> Dict[str, Any]:
         """Stop remote access service."""
         return await ctx.daemon({"op": "remote_access_stop", "args": {"by": str(by or "user")}})
+
+    @global_router.post("/api/v1/remote_access/apply", dependencies=[Depends(require_admin)])
+    async def remote_access_apply(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        by: str = "user",
+    ) -> Dict[str, Any]:
+        """Apply saved Web binding changes by restarting the supervised Web child."""
+        state_resp = await ctx.daemon({"op": "remote_access_state", "args": {"by": str(by or "user")}})
+        remote = (state_resp.get("result") or {}).get("remote_access") if state_resp.get("ok") else None
+        if not isinstance(remote, dict):
+            raise HTTPException(status_code=503, detail={"code": "remote_access_unavailable", "message": "remote access state unavailable"})
+        diagnostics = remote.get("diagnostics") if isinstance(remote.get("diagnostics"), dict) else {}
+        if not bool(remote.get("restart_required")):
+            return {"ok": True, "result": {"accepted": False, "remote_access": remote}}
+        if not bool(remote.get("apply_supported")):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "web_apply_unsupported",
+                    "message": "the running Web service is not supervisor-managed, so it cannot self-apply binding changes",
+                },
+            )
+        restart_cb = getattr(request.app.state, "request_web_restart", None)
+        if not callable(restart_cb):
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "web_apply_unavailable", "message": "web apply is not available in this runtime"},
+            )
+        background_tasks.add_task(restart_cb)
+        return {
+            "ok": True,
+            "result": {
+                "accepted": True,
+                "remote_access": remote,
+                "target_local_url": diagnostics.get("desired_local_url"),
+                "target_remote_url": diagnostics.get("desired_remote_url"),
+            },
+        }
 
     @global_router.get("/api/v1/registry/reconcile", dependencies=[Depends(require_admin)])
     async def registry_reconcile_preview() -> Dict[str, Any]:

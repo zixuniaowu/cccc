@@ -6,6 +6,7 @@ import { PetPanel } from "./PetPanel";
 import { WebPetBubble } from "./WebPetBubble";
 import { useWebPetData } from "./useWebPetData";
 import type { ReminderAction } from "./types";
+import { WEB_PET_BUBBLE_SIZE, WEB_PET_VIEWPORT_MARGIN } from "./constants";
 
 function handleReminderAction(action: ReminderAction) {
   switch (action.type) {
@@ -48,10 +49,23 @@ export function WebPet() {
     return null;
   }
 
-  const panelAlign =
-    typeof window !== "undefined" && position.x > window.innerWidth / 2
-      ? "right"
-      : "left";
+  const panelAlign = (() => {
+    if (typeof window === "undefined") {
+      return "right" as const;
+    }
+    const estimatedPanelWidth = 320;
+    const leftSpace = position.x - WEB_PET_VIEWPORT_MARGIN;
+    const rightSpace =
+      window.innerWidth -
+      position.x -
+      WEB_PET_BUBBLE_SIZE -
+      WEB_PET_VIEWPORT_MARGIN;
+
+    if (rightSpace >= estimatedPanelWidth || rightSpace >= leftSpace) {
+      return "left" as const;
+    }
+    return "right" as const;
+  })();
 
   return (
     <>
@@ -80,7 +94,13 @@ export function WebPet() {
         {panelOpen ? (
           <PetPanel panelData={panelData} align={panelAlign} onClose={closePanel} catSize={80} />
         ) : null}
-        <WebPetBubble state={catState} hint={hint} reaction={reaction} />
+        <WebPetBubble
+          state={catState}
+          hint={hint}
+          reaction={reaction}
+          panelOpen={panelOpen}
+          onTogglePanel={togglePanel}
+        />
       </div>
     </>
   );

@@ -83,6 +83,7 @@ export function AgentTab({
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
   // Last terminal output captured when agent stops — shows crash/error info
   const [stoppedTerminalTail, setStoppedTerminalTail] = useState("");
+  const [stoppedTerminalTailLoading, setStoppedTerminalTailLoading] = useState(false);
 
   const pasteStateRef = useRef<{ inFlight: boolean; lastAt: number }>({ inFlight: false, lastAt: 0 });
 
@@ -108,15 +109,26 @@ export function AgentTab({
   useEffect(() => {
     if (isRunning || isHeadless) {
       setStoppedTerminalTail("");
+      setStoppedTerminalTailLoading(false);
       return;
     }
     let cancelled = false;
-    void fetchTerminalTail(groupId, actor.id, 4000, true, true).then((resp) => {
-      if (cancelled) return;
-      if (resp.ok && resp.result.text?.trim()) {
-        setStoppedTerminalTail(resp.result.text.trim());
-      }
-    });
+    setStoppedTerminalTail("");
+    setStoppedTerminalTailLoading(true);
+    void fetchTerminalTail(groupId, actor.id, 4000, true, true)
+      .then((resp) => {
+        if (cancelled) return;
+        if (resp.ok && resp.result.text?.trim()) {
+          setStoppedTerminalTail(resp.result.text.trim());
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setStoppedTerminalTailLoading(false);
+      });
     return () => { cancelled = true; };
   }, [isRunning, isHeadless, groupId, actor.id]);
 
@@ -775,7 +787,11 @@ export function AgentTab({
                 </button>
               ) : null}
             </div>
-            {stoppedTerminalTail ? (
+            {stoppedTerminalTailLoading ? (
+              <div className="mt-6 w-full max-w-xl flex-shrink-0 rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
+                {t('loadingLastTerminalOutput')}
+              </div>
+            ) : stoppedTerminalTail ? (
               <div className="mt-6 w-full max-w-xl flex-shrink-0">
                 <div className="text-xs font-medium mb-2 text-[var(--color-text-secondary)]">
                   {t('lastTerminalOutput')}
@@ -787,7 +803,11 @@ export function AgentTab({
                   {stoppedTerminalTail}
                 </pre>
               </div>
-            ) : null}
+            ) : (
+              <div className="mt-6 w-full max-w-xl flex-shrink-0 rounded-lg border border-dashed border-[var(--glass-border-subtle)] px-4 py-3 text-sm text-[var(--color-text-secondary)]">
+                {t('noRecentTerminalOutput')}
+              </div>
+            )}
           </div>
         )}
       </div>

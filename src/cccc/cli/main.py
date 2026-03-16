@@ -292,13 +292,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_im_revoke.set_defaults(func=cmd_im_revoke)
 
     p_web = sub.add_parser("web", help="Run web server only (requires daemon to be running)")
-    p_web.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
-    p_web.add_argument("--port", type=int, default=8848, help="Bind port (default: 8848)")
+    p_web.add_argument("--host", default="", help="Bind host (default: use saved Web binding)")
+    p_web.add_argument("--port", type=int, default=None, help="Bind port (default: use saved Web binding)")
     p_web.add_argument(
         "--mode",
         choices=["normal", "exhibit"],
-        default="normal",
-        help="Web mode: normal (read/write) or exhibit (read-only) (default: normal)",
+        default="",
+        help="Web mode: normal (read/write) or exhibit (read-only) (default: current Web mode)",
     )
     p_web.add_argument("--exhibit", action="store_true", help="Shortcut for: --mode exhibit")
     p_web.add_argument("--reload", action="store_true", help="Enable autoreload (dev)")

@@ -23,6 +23,11 @@ from ...daemon.server import call_daemon
 from ...kernel.access_tokens import list_access_tokens, lookup_access_token
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
+from .runtime_control import (
+    WEB_RUNTIME_RESTART_EXIT_CODE,
+    clear_web_runtime_state,
+    write_web_runtime_state,
+)
 from .schemas import RouteContext
 
 logger = logging.getLogger("cccc.web")
@@ -144,11 +149,55 @@ async def _daemon(req: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def create_app() -> FastAPI:
+    def _int_env(name: str, default: int) -> int:
+        raw = str(os.environ.get(name) or "").strip()
+        if not raw:
+            return int(default)
+        try:
+            return int(raw)
+        except Exception:
+            return int(default)
+
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
+        restart_supported = str(os.environ.get("CCCC_WEB_SUPERVISED") or "").strip().lower() in ("1", "true", "yes", "on")
+        runtime_host_raw = str(os.environ.get("CCCC_WEB_EFFECTIVE_HOST") or "").strip()
+        runtime_port_raw = str(os.environ.get("CCCC_WEB_EFFECTIVE_PORT") or "").strip()
+        runtime_binding_known = restart_supported or bool(runtime_host_raw or runtime_port_raw)
+        runtime_pid = os.getpid()
+        runtime_host = runtime_host_raw or "127.0.0.1"
+        runtime_port = _int_env("CCCC_WEB_EFFECTIVE_PORT", 8848)
+        runtime_mode = str(os.environ.get("CCCC_WEB_EFFECTIVE_MODE") or _web_mode()).strip() or "normal"
+        runtime_supervisor_pid = _int_env("CCCC_WEB_SUPERVISOR_PID", 0)
+        runtime_launch_source = str(os.environ.get("CCCC_WEB_LAUNCH_SOURCE") or "").strip() or "unknown"
+
+        if runtime_binding_known:
+            write_web_runtime_state(
+                home=home,
+                pid=runtime_pid,
+                host=runtime_host,
+                port=runtime_port,
+                mode=runtime_mode,
+                supervisor_managed=restart_supported,
+                supervisor_pid=runtime_supervisor_pid if restart_supported and runtime_supervisor_pid > 0 else None,
+                launch_source=runtime_launch_source,
+            )
+
+        if restart_supported:
+            def _request_web_restart() -> None:
+                # Let the HTTP response flush before terminating this child.
+                clear_web_runtime_state(home=home, pid=runtime_pid)
+                time.sleep(0.2)
+                os._exit(WEB_RUNTIME_RESTART_EXIT_CODE)
+
+            _app.state.request_web_restart = _request_web_restart
+        else:
+            _app.state.request_web_restart = None
         try:
             yield
         finally:
+            if runtime_binding_known:
+                clear_web_runtime_state(home=home, pid=runtime_pid)
             _close_web_logging()
 
     app = FastAPI(title="cccc web", version=__version__, lifespan=_lifespan)

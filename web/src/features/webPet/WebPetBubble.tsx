@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { useWebPetDrag } from "./useWebPetDrag";
 import { CatCanvas } from "./CatCanvas";
 import type { CatState, PetReaction } from "./types";
@@ -7,9 +8,18 @@ interface WebPetBubbleProps {
   state: CatState;
   hint: string;
   reaction: PetReaction;
+  panelOpen: boolean;
+  onTogglePanel: () => void;
 }
 
-export function WebPetBubble({ state, hint, reaction }: WebPetBubbleProps) {
+export function WebPetBubble({
+  state,
+  hint,
+  reaction,
+  panelOpen,
+  onTogglePanel,
+}: WebPetBubbleProps) {
+  const { t } = useTranslation("modals");
   const { isDragging, handlers } = useWebPetDrag();
 
   return (
@@ -25,7 +35,21 @@ export function WebPetBubble({ state, hint, reaction }: WebPetBubbleProps) {
       }}
       role="button"
       tabIndex={0}
-      aria-label={hint ? `Web Pet: ${hint}` : "Web Pet"}
+      aria-controls="web-pet-panel"
+      aria-expanded={panelOpen}
+      aria-label={
+        hint
+          ? t("webPet.bubbleAriaHint", {
+              defaultValue: "Web Pet. {{hint}}",
+              hint,
+            })
+          : t("webPet.bubbleAria", { defaultValue: "Web Pet" })
+      }
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onTogglePanel();
+      }}
     >
       <CatCanvas state={state} hint={hint} reaction={reaction} />
     </div>

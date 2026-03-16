@@ -278,6 +278,12 @@ export default function App() {
     if (atBottom) setChatUnreadCount(selectedGroupId, 0);
   }, [activeTab, selectedGroupId, chatSessionAtBottom, setChatUnreadCount, setShowScrollButton]);
 
+  useEffect(() => {
+    if (activeTab !== "chat") return;
+    if (isSmallScreen) return;
+    requestAnimationFrame(() => composerRef.current?.focus());
+  }, [activeTab, isSmallScreen]);
+
   // Keep visited actor tabs mounted (sticky) so their terminal sessions do not reconnect/replay on tab switches.
   useEffect(() => {
     if (!activeTab || activeTab === "chat") return;
