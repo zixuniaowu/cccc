@@ -70,13 +70,15 @@ export function WebPet() {
           top: position.y,
         }}
       >
-        <PetReminderBubble
-          reminder={activeReminder}
-          onDismiss={dismissReminder}
-          onAction={handleReminderAction}
-        />
+        {panelOpen ? null : (
+          <PetReminderBubble
+            reminder={activeReminder}
+            onDismiss={dismissReminder}
+            onAction={handleReminderAction}
+          />
+        )}
         {panelOpen ? (
-          <PetPanel panelData={panelData} align={panelAlign} onClose={closePanel} />
+          <PetPanel panelData={panelData} align={panelAlign} onClose={closePanel} catSize={80} />
         ) : null}
         <WebPetBubble state={catState} hint={hint} reaction={reaction} />
       </div>

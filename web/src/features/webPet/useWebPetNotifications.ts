@@ -157,7 +157,8 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
   const [ephemeralReminder, setEphemeralReminder] = useState<PetReminder | null>(null);
   const [reaction, setReaction] = useState<PetReaction | null>(null);
   const [rotationCursor, setRotationCursor] = useState(0);
-  const [snoozeVersion, setSnoozeVersion] = useState(0);
+  const [nowTick, setNowTick] = useState(0);
+  const [snoozedUntilSnapshot, setSnoozedUntilSnapshot] = useState<Record<string, number>>({});
 
   const lastProcessedEventIdRef = useRef("");
   const didHydrateTaskSnapshotRef = useRef(false);
@@ -184,21 +185,12 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
   );
 
   const reminders = useMemo(() => {
-    const now = Date.now();
-    const filtered = filterExpiredSnoozes(snoozedUntilRef.current, now);
-    const hasExpired =
-      Object.keys(filtered).length !==
-      Object.keys(snoozedUntilRef.current).length;
-
-    if (hasExpired) {
-      snoozedUntilRef.current = filtered;
-    }
-
+    const filtered = filterExpiredSnoozes(snoozedUntilSnapshot, nowTick);
     return projected.filter((reminder) => {
       const expiresAt = filtered[reminder.fingerprint];
-      return !expiresAt || expiresAt <= now;
+      return !expiresAt || expiresAt <= nowTick;
     });
-  }, [projected, snoozeVersion]);
+  }, [nowTick, projected, snoozedUntilSnapshot]);
 
   useEffect(() => {
     const entries = Object.entries(snoozedUntilRef.current);
@@ -217,17 +209,20 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
         snoozedUntilRef.current,
         Date.now(),
       );
-      setSnoozeVersion((value) => value + 1);
+      setSnoozedUntilSnapshot(snoozedUntilRef.current);
+      setNowTick(Date.now());
     }, delay + 10);
 
     return () => window.clearTimeout(timeout);
-  }, [snoozeVersion]);
+  }, [nowTick]);
 
   useEffect(() => {
     if (reminders.length === 0) {
       previousTopPriorityRef.current = null;
-      setRotationCursor(0);
-      return;
+      const frame = window.requestAnimationFrame(() => {
+        setRotationCursor(0);
+      });
+      return () => window.cancelAnimationFrame(frame);
     }
 
     const topPriority = reminders[0]?.priority ?? null;
@@ -235,13 +230,19 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
     previousTopPriorityRef.current = topPriority;
 
     if (previousTopPriority === null || (topPriority !== null && topPriority > previousTopPriority)) {
-      setRotationCursor(0);
-      return;
+      const frame = window.requestAnimationFrame(() => {
+        setRotationCursor(0);
+      });
+      return () => window.cancelAnimationFrame(frame);
     }
 
-    setRotationCursor((cursor) =>
-      reminders.length === 0 ? 0 : Math.min(cursor, reminders.length - 1),
-    );
+    const frame = window.requestAnimationFrame(() => {
+      setRotationCursor((cursor) =>
+        reminders.length === 0 ? 0 : Math.min(cursor, reminders.length - 1),
+      );
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [reminders]);
 
   useEffect(() => {
@@ -261,13 +262,16 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
   }, [ephemeralReminder, reminders, rotationCursor]);
 
   useEffect(() => {
-    setEphemeralReminder(null);
-    setReaction(null);
-    setRotationCursor(0);
+    const frame = window.requestAnimationFrame(() => {
+      setEphemeralReminder(null);
+      setReaction(null);
+      setRotationCursor(0);
+    });
     lastProcessedEventIdRef.current = "";
     didHydrateTaskSnapshotRef.current = false;
     previousTaskSnapshotRef.current = {};
     previousTopPriorityRef.current = null;
+    return () => window.cancelAnimationFrame(frame);
   }, [selectedGroupId]);
 
   useEffect(() => {
@@ -283,14 +287,19 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
       selectedGroupId,
       mapReminderEvent(latestEvent),
     );
-    if (mentionReminder) {
-      setEphemeralReminder(mentionReminder);
-    }
-
     const mentionReaction = createMentionReaction(latestEvent);
-    if (mentionReaction) {
-      setReaction(mentionReaction);
-    }
+    if (!mentionReminder && !mentionReaction) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      if (mentionReminder) {
+        setEphemeralReminder(mentionReminder);
+      }
+      if (mentionReaction) {
+        setReaction(mentionReaction);
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frame);
   }, [events, selectedGroupId]);
 
   useEffect(() => {
@@ -309,7 +318,10 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
     previousTaskSnapshotRef.current = nextSnapshot;
 
     if (taskReaction) {
-      setReaction(taskReaction);
+      const frame = window.requestAnimationFrame(() => {
+        setReaction(taskReaction);
+      });
+      return () => window.cancelAnimationFrame(frame);
     }
   }, [groupContext]);
 
@@ -333,7 +345,8 @@ export function useWebPetNotifications(): UseWebPetNotificationsResult {
       ...snoozedUntilRef.current,
       [normalized]: Date.now() + SNOOZE_MS,
     };
-    setSnoozeVersion((value) => value + 1);
+    setSnoozedUntilSnapshot(snoozedUntilRef.current);
+    setNowTick(Date.now());
 
     setEphemeralReminder((current) => {
       if (!current || current.fingerprint !== normalized) {

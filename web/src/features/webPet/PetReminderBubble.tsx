@@ -15,11 +15,9 @@ export function PetReminderBubble({
   onDismiss,
   onAction,
 }: PetReminderBubbleProps) {
-  const [renderedReminder, setRenderedReminder] = useState<PetReminder | null>(
-    reminder,
-  );
-  const [visible, setVisible] = useState(Boolean(reminder));
+  const [closingFingerprint, setClosingFingerprint] = useState<string | null>(null);
   const autoHideTimeoutRef = useRef<number | null>(null);
+  const dismissTimeoutRef = useRef<number | null>(null);
 
   const clearAutoHideTimer = useCallback(() => {
     if (autoHideTimeoutRef.current === null) return;
@@ -27,66 +25,76 @@ export function PetReminderBubble({
     autoHideTimeoutRef.current = null;
   }, []);
 
-  useEffect(() => {
-    if (!reminder) {
+  const clearDismissTimer = useCallback(() => {
+    if (dismissTimeoutRef.current === null) return;
+    window.clearTimeout(dismissTimeoutRef.current);
+    dismissTimeoutRef.current = null;
+  }, []);
+
+  const startDismiss = useCallback(
+    (fingerprint: string) => {
+      if (!fingerprint) return;
+      if (closingFingerprint === fingerprint) return;
+
       clearAutoHideTimer();
-      setVisible(false);
-      const timeout = window.setTimeout(() => {
-        setRenderedReminder(null);
+      clearDismissTimer();
+      setClosingFingerprint(fingerprint);
+
+      dismissTimeoutRef.current = window.setTimeout(() => {
+        dismissTimeoutRef.current = null;
+        onDismiss(fingerprint);
       }, EXIT_ANIMATION_MS);
-      return () => window.clearTimeout(timeout);
-    }
-
-    setRenderedReminder(reminder);
-    const frame = window.requestAnimationFrame(() => {
-      setVisible(true);
-    });
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [clearAutoHideTimer, reminder]);
+    },
+    [clearAutoHideTimer, clearDismissTimer, closingFingerprint, onDismiss],
+  );
 
   useEffect(() => {
     clearAutoHideTimer();
-    if (!reminder) return;
+    clearDismissTimer();
+
+    if (!reminder) {
+      return;
+    }
 
     autoHideTimeoutRef.current = window.setTimeout(() => {
       autoHideTimeoutRef.current = null;
-      onDismiss(reminder.fingerprint);
+      startDismiss(reminder.fingerprint);
     }, AUTO_HIDE_MS);
 
-    return clearAutoHideTimer;
-  }, [clearAutoHideTimer, onDismiss, reminder]);
+    return () => {
+      clearAutoHideTimer();
+      clearDismissTimer();
+    };
+  }, [clearAutoHideTimer, clearDismissTimer, reminder, startDismiss]);
 
   const handleDismiss = useCallback(() => {
-    if (!renderedReminder) return;
-    clearAutoHideTimer();
-    onDismiss(renderedReminder.fingerprint);
-  }, [clearAutoHideTimer, onDismiss, renderedReminder]);
+    if (!reminder) return;
+    startDismiss(reminder.fingerprint);
+  }, [reminder, startDismiss]);
 
   const handleAction = useCallback(() => {
-    if (!renderedReminder) return;
-    clearAutoHideTimer();
-    onAction?.(renderedReminder.action);
-    onDismiss(renderedReminder.fingerprint);
-  }, [clearAutoHideTimer, onAction, onDismiss, renderedReminder]);
+    if (!reminder) return;
+    onAction?.(reminder.action);
+    startDismiss(reminder.fingerprint);
+  }, [onAction, reminder, startDismiss]);
 
   const label = useMemo(() => {
-    if (!renderedReminder) return "";
-    return renderedReminder.agent === "system"
-      ? renderedReminder.summary
-      : `${renderedReminder.agent}: ${renderedReminder.summary}`;
-  }, [renderedReminder]);
+    if (!reminder) return "";
+    return reminder.agent === "system"
+      ? reminder.summary
+      : `${reminder.agent}: ${reminder.summary}`;
+  }, [reminder]);
 
-  if (!renderedReminder) {
+  if (!reminder) {
     return null;
   }
+
+  const isClosing = closingFingerprint === reminder.fingerprint;
 
   return (
     <div
       className={`pointer-events-auto absolute bottom-[calc(100%+14px)] left-1/2 z-[1110] w-[min(280px,calc(100vw-32px))] -translate-x-1/2 transform transition-all duration-200 ${
-        visible
-          ? "translate-y-0 opacity-100"
-          : "translate-y-2 opacity-0"
+        isClosing ? "translate-y-2 opacity-0" : "translate-y-0 opacity-100"
       }`}
       onClick={handleAction}
       role="button"
@@ -97,14 +105,14 @@ export function PetReminderBubble({
           handleAction();
         }
       }}
-      aria-live={renderedReminder.ephemeral ? "assertive" : "polite"}
+      aria-live={reminder.ephemeral ? "assertive" : "polite"}
       aria-atomic="true"
     >
       <div className="glass-modal rounded-2xl border border-[var(--glass-border-subtle)] px-3 py-2.5 shadow-2xl">
         <div className="flex items-start gap-2">
           <div className="min-w-0 flex-1">
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-              {renderedReminder.kind.replace("_", " ")}
+              {reminder.kind.replace("_", " ")}
             </div>
             <div
               className="mt-1 text-sm leading-5 text-[var(--color-text-primary)]"

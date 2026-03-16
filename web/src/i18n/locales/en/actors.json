@@ -16,6 +16,7 @@
   "statusRunning": "Status: Running",
   "agentNotRunning": "Agent Not Running",
   "agentStoppedDescription": "This agent is currently stopped.",
+  "lastTerminalOutput": "Last terminal output",
   "launchAgent": "Launch Agent",
   "launching": "Launching...",
   "launch": "Launch",

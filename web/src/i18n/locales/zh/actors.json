@@ -16,6 +16,7 @@
   "statusRunning": "状态：运行中",
   "agentNotRunning": "智能体未运行",
   "agentStoppedDescription": "该智能体当前已停止。",
+  "lastTerminalOutput": "最近终端输出",
   "launchAgent": "启动智能体",
   "launching": "启动中…",
   "launch": "启动",

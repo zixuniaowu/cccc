@@ -16,6 +16,7 @@
   "statusRunning": "ステータス： 実行中",
   "agentNotRunning": "エージェントは稼働していません",
   "agentStoppedDescription": "このエージェントは現在停止しています。",
+  "lastTerminalOutput": "最後のターミナル出力",
   "launchAgent": "エージェントを起動",
   "launching": "起動中…",
   "launch": "起動",
