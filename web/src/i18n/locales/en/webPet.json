@@ -1,25 +1,39 @@
 {
-  "panelLabel": "Web Pet panel",
-  "closePanel": "Close panel",
-  "noActionItems": "No pending items",
+  "panelAria": "Web Pet panel",
+  "closePanelAria": "Close panel",
+  "dismissReminderAria": "Dismiss reminder",
+  "bubbleAria": "Web Pet",
+  "bubbleAriaHint": "Web Pet. {{hint}}",
+  "teamFallback": "Team",
+  "systemAgent": "System",
+  "taskFallback": "this task",
+  "connection": {
+    "connected": "Connected",
+    "connecting": "Connecting…",
+    "disconnected": "Disconnected"
+  },
   "countWorking": "{{count}} working",
   "countBusy": "{{count}} busy",
   "countNeedsYou": "{{count}} needs you",
-  "dismissReminder": "Dismiss reminder",
-  "reminderKind_waiting_user": "waiting user",
-  "reminderKind_reply_required": "reply required",
-  "reminderKind_stalled_peer": "stalled peer",
-  "reminderKind_mention": "mention",
-  "reminderAction_complete": "Done",
-  "reminderAction_view": "View",
-  "reminderAction_reply": "Reply",
-  "connectionConnected": "Connected",
-  "connectionConnecting": "Connecting...",
-  "connectionDisconnected": "Disconnected",
+  "noActionItems": "No action items right now.",
+  "kind": {
+    "waiting_user": "waiting user",
+    "reply_required": "reply required",
+    "stalled_peer": "stalled peer",
+    "mention": "mention"
+  },
+  "action": {
+    "complete": "Done",
+    "view": "View",
+    "reply": "Reply"
+  },
   "taskProgress": "{{done}}/{{total}} done",
   "taskActive": "{{count}} active",
-  "actionView": "View",
-  "actionReply": "Reply",
   "hintTaskProgress": "{{done}}/{{total}} tasks done",
-  "hintTaskWithAction": "{{done}}/{{total}} done, {{count}} need you"
+  "hintTaskWithAction": "{{done}}/{{total}} done, {{count}} need you",
+  "reminderSummary": {
+    "mention": "{{actor}} mentioned you.",
+    "replyRequired": "{{actor}} is waiting for your reply.",
+    "stalledPeer": "{{actor}} has been idle for a while on {{taskId}}."
+  }
 }

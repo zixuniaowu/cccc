@@ -352,35 +352,5 @@
     "agents": "Agents",
     "tasks": "Tasks",
     "direction": "Direction"
-  },
-  "webPet": {
-    "panelAria": "Web Pet panel",
-    "closePanelAria": "Close panel",
-    "dismissReminderAria": "Dismiss reminder",
-    "bubbleAria": "Web Pet",
-    "bubbleAriaHint": "Web Pet. {{hint}}",
-    "teamFallback": "Team",
-    "systemAgent": "System",
-    "taskFallback": "this task",
-    "connection": {
-      "connected": "Connected",
-      "connecting": "Connecting…",
-      "disconnected": "Disconnected"
-    },
-    "countWorking": "{{count}} working",
-    "countBusy": "{{count}} busy",
-    "countNeedsYou": "{{count}} needs you",
-    "noActionItems": "No action items right now.",
-    "kind": {
-      "waiting_user": "waiting user",
-      "reply_required": "reply required",
-      "stalled_peer": "stalled peer",
-      "mention": "mention"
-    },
-    "reminderSummary": {
-      "mention": "{{actor}} mentioned you.",
-      "replyRequired": "{{actor}} is waiting for your reply.",
-      "stalledPeer": "{{actor}} has been idle for a while on {{taskId}}."
-    }
   }
 }

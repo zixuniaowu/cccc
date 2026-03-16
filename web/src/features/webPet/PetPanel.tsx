@@ -24,7 +24,7 @@ function countAgentsByState(panelData: PanelData) {
 }
 
 export function PetPanel({ panelData, align = "left", onClose, onAction, catSize = 80 }: PetPanelProps) {
-  const { t } = useTranslation("modals");
+  const { t } = useTranslation("webPet");
   const counts = countAgentsByState(panelData);
   const actionItems = panelData.actionItems.slice(0, 3);
 
@@ -49,7 +49,7 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
         maxHeight: "calc(100vh - 48px)",
         ...horizontalStyle,
       }}
-      aria-label={t("webPet.panelAria", { defaultValue: "Web Pet panel" })}
+      aria-label={t("panelAria", { defaultValue: "Web Pet panel" })}
     >
       <div className="flex max-h-[inherit] flex-col overflow-hidden rounded-2xl">
         <div className="shrink-0 border-b border-[var(--glass-border-subtle)] px-4 py-3">
@@ -75,7 +75,7 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
                 type="button"
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-sm text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)]"
                 onClick={onClose}
-                aria-label={t("webPet.closePanelAria", { defaultValue: "Close panel" })}
+                aria-label={t("closePanelAria", { defaultValue: "Close panel" })}
               >
                 ×
               </button>
@@ -85,7 +85,7 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
             <div className="mt-3">
               <div className="flex items-center justify-between text-[11px] text-[var(--color-text-secondary)]">
                 <span>
-                  {t("webPet.taskProgress", {
+                  {t("taskProgress", {
                     defaultValue: "{{done}}/{{total}} done",
                     done: panelData.taskProgress.done,
                     total: panelData.taskProgress.total,
@@ -93,7 +93,7 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
                 </span>
                 {panelData.taskProgress.active > 0 ? (
                   <span>
-                    {t("webPet.taskActive", {
+                    {t("taskActive", {
                       defaultValue: "{{count}} active",
                       count: panelData.taskProgress.active,
                     })}
@@ -112,19 +112,19 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
           ) : null}
           <div className="mt-3 flex flex-wrap gap-2">
             <span className={countPillClass}>
-              {t("webPet.countWorking", {
+              {t("countWorking", {
                 defaultValue: "{{count}} working",
                 count: counts.working,
               })}
             </span>
             <span className={countPillClass}>
-              {t("webPet.countBusy", {
+              {t("countBusy", {
                 defaultValue: "{{count}} busy",
                 count: counts.busy,
               })}
             </span>
             <span className={countPillClass}>
-              {t("webPet.countNeedsYou", {
+              {t("countNeedsYou", {
                 defaultValue: "{{count}} needs you",
                 count: counts.needsYou,
               })}
@@ -167,8 +167,8 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
                       {clickable ? (
                         <span className="text-[10px] text-[var(--color-text-secondary)] opacity-60">
                           {item.action!.type === "open_task"
-                            ? t("webPet.actionView", { defaultValue: "View" })
-                            : t("webPet.actionReply", { defaultValue: "Reply" })}
+                            ? t("action.view", { defaultValue: "View" })
+                            : t("action.reply", { defaultValue: "Reply" })}
                           {" →"}
                         </span>
                       ) : null}
@@ -182,7 +182,7 @@ export function PetPanel({ panelData, align = "left", onClose, onAction, catSize
             </div>
           ) : (
             <div className="rounded-xl border border-dashed border-[var(--glass-border-subtle)] px-3 py-4 text-sm text-[var(--color-text-secondary)]">
-              {t("webPet.noActionItems", {
+              {t("noActionItems", {
                 defaultValue: "No action items right now.",
               })}
             </div>

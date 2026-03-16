@@ -57,7 +57,7 @@ class TestGroupLifecycleOps(unittest.TestCase):
                     "actor_id": "peer1",
                     "title": "Peer 1",
                     "runtime": "codex",
-                    "runner": "pty",
+                    "runner": "headless",
                     "by": "user",
                 },
             )

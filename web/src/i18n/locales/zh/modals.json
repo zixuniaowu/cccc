@@ -352,35 +352,5 @@
     "agents": "Agent",
     "tasks": "任务",
     "direction": "方向"
-  },
-  "webPet": {
-    "panelAria": "Web 宠物面板",
-    "closePanelAria": "关闭面板",
-    "dismissReminderAria": "关闭提醒",
-    "bubbleAria": "Web 宠物",
-    "bubbleAriaHint": "Web 宠物：{{hint}}",
-    "teamFallback": "团队",
-    "systemAgent": "系统",
-    "taskFallback": "这条任务",
-    "connection": {
-      "connected": "已连接",
-      "connecting": "连接中…",
-      "disconnected": "已断开"
-    },
-    "countWorking": "工作中 {{count}}",
-    "countBusy": "繁忙 {{count}}",
-    "countNeedsYou": "待你处理 {{count}}",
-    "noActionItems": "当前没有待处理事项。",
-    "kind": {
-      "waiting_user": "等待用户",
-      "reply_required": "等待回复",
-      "stalled_peer": "停滞中的 peer",
-      "mention": "提及"
-    },
-    "reminderSummary": {
-      "mention": "{{actor}} 提到了你。",
-      "replyRequired": "{{actor}} 正在等你回复。",
-      "stalledPeer": "{{actor}} 挂着 {{taskId}} 已经空闲很久了。"
-    }
   }
 }

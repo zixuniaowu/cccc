@@ -10,12 +10,12 @@ function localizeConnectionMessage(
   tr: (key: string, fallback: string, vars?: Record<string, unknown>) => string,
 ): string {
   if (sseStatus === "connected") {
-    return tr("webPet.connection.connected", "Connected");
+    return tr("connection.connected", "Connected");
   }
   if (sseStatus === "connecting") {
-    return tr("webPet.connection.connecting", "Connecting…");
+    return tr("connection.connecting", "Connecting…");
   }
-  return tr("webPet.connection.disconnected", "Disconnected");
+  return tr("connection.disconnected", "Disconnected");
 }
 
 function localizeReminder(
@@ -24,29 +24,29 @@ function localizeReminder(
 ): PetReminder {
   const agentLabel =
     reminder.agent === "system"
-      ? tr("webPet.systemAgent", "System")
+      ? tr("systemAgent", "System")
       : reminder.agent;
 
   let summary = reminder.summary;
   if (reminder.kind === "stalled_peer") {
     summary = tr(
-      "webPet.reminderSummary.stalledPeer",
+      "reminderSummary.stalledPeer",
       "{{actor}} has been idle for a while on {{taskId}}.",
       {
         actor: reminder.source.actorId || agentLabel,
-        taskId: reminder.source.taskId || tr("webPet.taskFallback", "this task"),
+        taskId: reminder.source.taskId || tr("taskFallback", "this task"),
       },
     );
   } else if (!summary.trim()) {
     if (reminder.kind === "mention") {
       summary = tr(
-        "webPet.reminderSummary.mention",
+        "reminderSummary.mention",
         "{{actor}} mentioned you.",
         { actor: agentLabel },
       );
     } else if (reminder.kind === "reply_required") {
       summary = tr(
-        "webPet.reminderSummary.replyRequired",
+        "reminderSummary.replyRequired",
         "{{actor}} is waiting for your reply.",
         { actor: agentLabel },
       );
@@ -68,12 +68,12 @@ function localizePanelData(
     ...panelData,
     teamName:
       panelData.teamName.trim() ||
-      tr("webPet.teamFallback", "Team"),
+      tr("teamFallback", "Team"),
     actionItems: panelData.actionItems.map((item) => ({
       ...item,
       agent:
         item.agent === "system"
-          ? tr("webPet.systemAgent", "System")
+          ? tr("systemAgent", "System")
           : item.agent,
     })),
     connection: {
@@ -84,7 +84,7 @@ function localizePanelData(
 }
 
 export function useWebPetData() {
-  const { t } = useTranslation("modals");
+  const { t } = useTranslation("webPet");
   const selectedGroupId = useGroupStore((state) => state.selectedGroupId);
   const groupContext = useGroupStore((state) => state.groupContext);
   const groupDocTitle = useGroupStore((state) => state.groupDoc?.title ?? "");
@@ -94,7 +94,7 @@ export function useWebPetData() {
   const { reminders, activeReminder, reaction, dismissReminder } =
     useWebPetNotifications();
   const tr = (key: string, fallback: string, vars?: Record<string, unknown>) =>
-    String(t(key as never, { defaultValue: fallback, ...(vars || {}) } as never));
+    String(t(key, { defaultValue: fallback, ...(vars || {}) }));
 
   return useMemo(() => {
     const { catState, panelData: rawPanelData } = aggregateWebPetState({
@@ -127,12 +127,12 @@ export function useWebPetData() {
       const needsYouCount = localizedPanelData.actionItems.length;
       hint = needsYouCount > 0
         ? tr(
-            "webPet.hintTaskWithAction",
+            "hintTaskWithAction",
             "{{done}}/{{total}} done, {{count}} need you",
             { done, total, count: needsYouCount },
           )
         : tr(
-            "webPet.hintTaskProgress",
+            "hintTaskProgress",
             "{{done}}/{{total}} tasks done",
             { done, total },
           );

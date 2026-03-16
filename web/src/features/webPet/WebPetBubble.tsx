@@ -19,7 +19,7 @@ export function WebPetBubble({
   panelOpen,
   onTogglePanel,
 }: WebPetBubbleProps) {
-  const { t } = useTranslation("modals");
+  const { t } = useTranslation("webPet");
   const { isDragging, handlers } = useWebPetDrag();
 
   return (
@@ -39,11 +39,11 @@ export function WebPetBubble({
       aria-expanded={panelOpen}
       aria-label={
         hint
-          ? t("webPet.bubbleAriaHint", {
+          ? t("bubbleAriaHint", {
               defaultValue: "Web Pet. {{hint}}",
               hint,
             })
-          : t("webPet.bubbleAria", { defaultValue: "Web Pet" })
+          : t("bubbleAria", { defaultValue: "Web Pet" })
       }
       onKeyDown={(event) => {
         if (event.key !== "Enter" && event.key !== " ") return;

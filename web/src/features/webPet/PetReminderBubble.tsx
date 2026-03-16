@@ -18,7 +18,7 @@ function getActionButtons(
 
   if (reminder.kind === "waiting_user" && reminder.source.taskId) {
     buttons.push({
-      label: String(t("webPet.action.complete" as never, { defaultValue: "Done" } as never)),
+      label: String(t("action.complete", { defaultValue: "Done" })),
       action: {
         type: "complete_task",
         groupId: reminder.action.groupId,
@@ -26,17 +26,17 @@ function getActionButtons(
       },
     });
     buttons.push({
-      label: String(t("webPet.action.view" as never, { defaultValue: "View" } as never)),
+      label: String(t("action.view", { defaultValue: "View" })),
       action: reminder.action,
     });
   } else if (reminder.kind === "reply_required") {
     buttons.push({
-      label: String(t("webPet.action.reply" as never, { defaultValue: "Reply" } as never)),
+      label: String(t("action.reply", { defaultValue: "Reply" })),
       action: reminder.action,
     });
   } else {
     buttons.push({
-      label: String(t("webPet.action.view" as never, { defaultValue: "View" } as never)),
+      label: String(t("action.view", { defaultValue: "View" })),
       action: reminder.action,
     });
   }
@@ -49,7 +49,7 @@ export function PetReminderBubble({
   onDismiss,
   onAction,
 }: PetReminderBubbleProps) {
-  const { t } = useTranslation("modals");
+  const { t } = useTranslation("webPet");
   const autoHideTimeoutRef = useRef<number | null>(null);
 
   const clearAutoHideTimer = useCallback(() => {
@@ -92,7 +92,7 @@ export function PetReminderBubble({
   );
 
   const displayAgent = reminder?.agent === "system"
-    ? t("webPet.systemAgent", { defaultValue: "System" })
+    ? t("systemAgent", { defaultValue: "System" })
     : reminder?.agent || "";
 
   const label = useMemo(() => {
@@ -112,9 +112,9 @@ export function PetReminderBubble({
   }
 
   const kindLabel = String(
-    t(`webPet.kind.${reminder.kind}` as never, {
+    t(`kind.${reminder.kind}`, {
       defaultValue: reminder.kind.replace(/_/g, " "),
-    } as never),
+    }),
   );
 
   return (
@@ -175,7 +175,7 @@ export function PetReminderBubble({
               event.stopPropagation();
               handleDismiss();
             }}
-            aria-label={t("webPet.dismissReminderAria", {
+            aria-label={t("dismissReminderAria", {
               defaultValue: "Dismiss reminder",
             })}
           >
