@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -437,6 +438,19 @@ def _default_entry() -> int:
     daemon_process = None
     shutdown_requested = False
     log_path = home / "daemon" / "ccccd.log"
+    previous_signal_handlers: dict[int, Any] = {}
+
+    def _handle_shutdown_signal(signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt()
+
+    for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGHUP", None)):
+        if sig is None:
+            continue
+        try:
+            previous_signal_handlers[int(sig)] = signal.getsignal(sig)
+            signal.signal(sig, _handle_shutdown_signal)
+        except Exception:
+            continue
     
     def _start_daemon() -> bool:
         nonlocal daemon_process
@@ -622,6 +636,11 @@ def _default_entry() -> int:
             except Exception:
                 pass
         _stop_daemon()
+        for sig_num, previous_handler in previous_signal_handlers.items():
+            try:
+                signal.signal(sig_num, previous_handler)
+            except Exception:
+                pass
         release_lockfile(app_lock)
     
     return 0

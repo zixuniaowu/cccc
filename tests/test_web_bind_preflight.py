@@ -22,6 +22,19 @@ class _DeniedBindSocket:
         return None
 
 
+class _AddrInUseSocket:
+    def bind(self, _sockaddr) -> None:
+        exc = OSError(errno.EADDRINUSE, "in use")
+        exc.winerror = 10048  # type: ignore[attr-defined]
+        raise exc
+
+    def setsockopt(self, *args) -> None:
+        pass
+
+    def close(self) -> None:
+        return None
+
+
 class _CaptureSocket:
     def __init__(self) -> None:
         self.setsockopt_calls: list[tuple[int, int, int]] = []
@@ -68,7 +81,7 @@ class TestWebBindPreflight(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn(f"Web port {port} is unavailable", message)
         self.assertIn("already using that port", message)
-        self.assertIn("cccc web --port 9000", message)
+        self.assertIn("cccc --port 9000", message)
         self.assertIn("CCCC_WEB_PORT=9000 cccc", message)
 
     def test_windows_access_denied_points_to_excluded_port_ranges(self) -> None:
@@ -85,8 +98,26 @@ class TestWebBindPreflight(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("excluded TCP port range", message)
         self.assertIn("netsh interface ipv4 show excludedportrange protocol=tcp", message)
-        self.assertIn("cccc web --port 9000", message)
+        self.assertIn("cccc --port 9000", message)
         self.assertIn("$env:CCCC_WEB_PORT=9000; cccc", message)
+
+    def test_windows_addr_in_use_without_listener_points_to_excluded_port_ranges(self) -> None:
+        from cccc.ports.web import bind_preflight
+
+        with patch.object(bind_preflight.sys, "platform", "win32"), patch.object(
+            bind_preflight.socket,
+            "getaddrinfo",
+            return_value=[(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 8848))],
+        ), patch.object(bind_preflight, "_listener_detected", return_value=False), patch.object(
+            bind_preflight.socket, "socket", return_value=_AddrInUseSocket()
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                bind_preflight.ensure_tcp_port_bindable(host="127.0.0.1", port=8848)
+
+        message = str(ctx.exception)
+        self.assertIn("no TCP listener was detected", message)
+        self.assertIn("excluded TCP port range", message)
+        self.assertNotIn("Another process is already using that port", message)
 
     def test_posix_preflight_sets_reuseaddr(self) -> None:
         from cccc.ports.web import bind_preflight
