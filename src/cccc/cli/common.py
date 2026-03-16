@@ -46,6 +46,7 @@ from ..ports.web.runtime_control import (
     restart_supervised_web_child_with_fallback,
     start_supervised_web_child,
     stop_web_child,
+    wait_for_child_exit_interruptibly,
 )
 from ..util.conv import coerce_bool
 from ..util.file_lock import LockUnavailableError, acquire_lockfile, release_lockfile
@@ -606,7 +607,7 @@ def _default_entry() -> int:
 
         current_host, current_port = host, port
         while True:
-            ret = web_process.wait()
+            ret = wait_for_child_exit_interruptibly(web_process)
             if int(ret or 0) == WEB_RUNTIME_RESTART_EXIT_CODE:
                 print("[cccc] Applying saved Web binding changes...", file=sys.stderr)
                 restarted, current_host, current_port = restart_supervised_web_child_with_fallback(

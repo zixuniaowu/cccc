@@ -4,11 +4,52 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
+from typing import Dict
 
 from ..kernel.runtime import get_cccc_mcp_stdio_command
 from ..util.conv import coerce_bool
 from ..util.fs import read_json
+
+
+def _parse_codex_mcp_get_output(output: str) -> Dict[str, str]:
+    parsed: Dict[str, str] = {}
+    for raw in str(output or "").splitlines():
+        line = raw.strip()
+        if not line or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        parsed[key.strip().lower()] = value.strip()
+    return parsed
+
+
+def _normalize_mcp_command_value(value: str) -> str:
+    normalized = str(value or "").strip().strip('"').strip("'")
+    if sys.platform.startswith("win"):
+        return normalized.replace("/", "\\").lower()
+    return normalized
+
+
+def _codex_mcp_entry_matches_expected(output: str, expected_cmd: list[str]) -> bool:
+    entry = _parse_codex_mcp_get_output(output)
+    if not entry:
+        return False
+    if str(entry.get("enabled", "true")).strip().lower() == "false":
+        return False
+    if str(entry.get("transport", "stdio")).strip().lower() != "stdio":
+        return False
+    if not sys.platform.startswith("win"):
+        return True
+    if not expected_cmd:
+        return False
+    command = _normalize_mcp_command_value(entry.get("command", ""))
+    expected_command = _normalize_mcp_command_value(expected_cmd[0])
+    if not command or command != expected_command:
+        return False
+    args = str(entry.get("args", "")).strip()
+    expected_args = " ".join(str(part or "").strip() for part in expected_cmd[1:] if str(part or "").strip())
+    return args == expected_args
 
 
 def is_mcp_installed(runtime: str) -> bool:
@@ -25,9 +66,12 @@ def is_mcp_installed(runtime: str) -> bool:
             result = subprocess.run(
                 ["codex", "mcp", "get", "cccc"],
                 capture_output=True,
+                text=True,
                 timeout=10,
             )
-            return result.returncode == 0
+            if result.returncode != 0:
+                return False
+            return _codex_mcp_entry_matches_expected(result.stdout, get_cccc_mcp_stdio_command())
 
         if runtime == "droid":
             for cfg_path in (
@@ -127,7 +171,7 @@ def ensure_mcp_installed(runtime: str, cwd: Path, *, auto_mcp_runtimes: tuple[st
                 cwd=str(cwd),
                 timeout=30,
             )
-            return result.returncode == 0
+            return result.returncode == 0 and is_mcp_installed("codex")
 
         if runtime == "droid":
             result = subprocess.run(

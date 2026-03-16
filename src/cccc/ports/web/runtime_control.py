@@ -177,6 +177,19 @@ def stop_web_child(proc: subprocess.Popen[str], *, timeout_s: float = 2.0) -> bo
     return terminate_pid(int(getattr(proc, "pid", 0) or 0), timeout_s=timeout_s, include_group=True, force=True)
 
 
+def wait_for_child_exit_interruptibly(
+    proc: subprocess.Popen[str],
+    *,
+    poll_interval_s: float = 0.2,
+) -> int:
+    interval = max(float(poll_interval_s or 0.0), 0.05)
+    while True:
+        ret = proc.poll()
+        if ret is not None:
+            return int(ret or 0)
+        time.sleep(interval)
+
+
 def wait_for_web_ready(*, host: str, port: int, timeout_s: float = 6.0) -> bool:
     target = http_url(local_connect_host(host), int(port), path="/api/v1/health")
     deadline = time.time() + max(float(timeout_s or 0.0), 0.1)

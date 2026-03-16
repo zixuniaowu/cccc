@@ -169,7 +169,7 @@ class TestWebBindPreflight(unittest.TestCase):
 
         _, cleanup = self._with_home()
         proc = unittest.mock.Mock()
-        proc.wait.return_value = 0
+        proc.poll.return_value = 0
         try:
             update_remote_access_settings({"web_host": "127.0.0.1", "web_port": 9001})
             with patch.object(web_main, "_check_daemon_running", return_value=True), patch.object(
@@ -187,7 +187,7 @@ class TestWebBindPreflight(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(mock_start.call_args.kwargs.get("host"), "127.0.0.1")
         self.assertEqual(mock_start.call_args.kwargs.get("port"), 9001)
-        proc.wait.assert_called_once_with()
+        proc.poll.assert_called()
 
 
 if __name__ == "__main__":

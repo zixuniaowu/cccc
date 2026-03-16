@@ -5,6 +5,26 @@ from typing import Callable
 from unittest.mock import patch
 
 
+class _DaemonProc:
+    def __init__(self, pid: int = 1234) -> None:
+        self.pid = pid
+        self.terminate_called = False
+        self.kill_called = False
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout: float | None = None):
+        _ = timeout
+        return 0
+
+    def terminate(self) -> None:
+        self.terminate_called = True
+
+    def kill(self) -> None:
+        self.kill_called = True
+
+
 class TestCliDefaultEntryOwnership(unittest.TestCase):
     def _with_home(self) -> tuple[Path, Callable[[], None]]:
         td_ctx = tempfile.TemporaryDirectory()
@@ -129,6 +149,42 @@ class TestCliDefaultEntryOwnership(unittest.TestCase):
                 ok = common._stop_existing_daemon(home)
 
             self.assertFalse(ok)
+        finally:
+            cleanup()
+
+    def test_default_entry_ctrl_c_while_waiting_for_web_child_stops_web_and_daemon(self) -> None:
+        from cccc.cli import common
+
+        home, cleanup = self._with_home()
+        try:
+            daemon_proc = _DaemonProc()
+            web_proc = object()
+
+            class _DummyThread:
+                def __init__(self, *args, **kwargs) -> None:
+                    _ = args, kwargs
+
+                def start(self) -> None:
+                    return None
+
+            with patch.object(common, "_is_first_run", return_value=False), patch.object(
+                common, "ensure_home", return_value=home
+            ), patch.object(common, "_acquire_default_entry_lock", return_value=("lock", None)), patch.object(
+                common, "_stop_existing_web_runtime", return_value=True
+            ), patch.object(common, "_stop_existing_daemon", return_value=True), patch.object(
+                common, "_resolve_web_server_binding", return_value=("127.0.0.1", 8848)
+            ), patch.object(common, "call_daemon", return_value={"ok": True}), patch.object(
+                common.subprocess, "Popen", return_value=daemon_proc
+            ), patch.object(common, "start_supervised_web_child", return_value=(web_proc, None)), patch.object(
+                common, "wait_for_child_exit_interruptibly", side_effect=KeyboardInterrupt()
+            ), patch.object(common, "stop_web_child", return_value=True) as mock_stop_web, patch.object(
+                common, "release_lockfile"
+            ) as mock_release, patch("threading.Thread", _DummyThread):
+                ret = common._default_entry()
+
+            self.assertEqual(ret, 0)
+            mock_stop_web.assert_called_once_with(web_proc, timeout_s=2.0)
+            mock_release.assert_called_once_with("lock")
         finally:
             cleanup()
 

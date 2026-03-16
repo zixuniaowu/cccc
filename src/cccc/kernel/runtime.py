@@ -175,13 +175,30 @@ def get_cccc_mcp_stdio_command() -> List[str]:
     On Windows this avoids relying on runtime-specific PATH inheritance for MCP
     child processes. Fall back to the current Python interpreter otherwise.
     """
-    cccc_path = shutil.which("cccc")
-    if cccc_path:
+    candidates: List[Path] = []
+    is_windows = sys.platform.startswith("win")
+    try:
+        bin_dir = Path(sys.executable).resolve().parent
+        names = ["cccc.exe", "cccc.cmd", "cccc.bat", "cccc", "cccc-script.py"] if is_windows else ["cccc"]
+        for name in names:
+            candidate = bin_dir / name
+            if candidate.exists():
+                candidates.append(candidate)
+    except Exception:
+        pass
+    for raw in (shutil.which("cccc"), shutil.which("cccc.exe") if is_windows else None):
+        if raw:
+            candidates.append(Path(raw))
+    seen: set[str] = set()
+    for candidate in candidates:
         try:
-            cccc_path = str(Path(cccc_path).resolve())
+            resolved = str(candidate.resolve())
         except Exception:
-            cccc_path = str(cccc_path)
-        return [cccc_path, "mcp"]
+            resolved = str(candidate)
+        if not resolved or resolved in seen:
+            continue
+        seen.add(resolved)
+        return [resolved, "mcp"]
     return [sys.executable, "-m", "cccc.ports.mcp.main"]
 
 

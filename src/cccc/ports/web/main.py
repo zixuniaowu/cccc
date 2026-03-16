@@ -16,6 +16,7 @@ from .runtime_control import (
     restart_supervised_web_child_with_fallback,
     start_supervised_web_child,
     stop_web_child,
+    wait_for_child_exit_interruptibly,
 )
 
 
@@ -108,7 +109,7 @@ def _run_supervised_web(*, host: str, port: int, mode: str, reload: bool, log_le
     current_host, current_port = host, int(port)
     while True:
         try:
-            ret = proc.wait()
+            ret = wait_for_child_exit_interruptibly(proc)
         except KeyboardInterrupt:
             stop_web_child(proc, timeout_s=2.0)
             return 0
