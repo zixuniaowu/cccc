@@ -140,9 +140,12 @@ def _windows_pythonw_executable(executable: str) -> Optional[str]:
 
 def resolve_background_python_argv(argv: Sequence[str]) -> list[str]:
     """Resolve Python background-service argv, preferring pythonw.exe on Windows."""
-    parts = resolve_subprocess_argv(argv)
+    parts = [str(part) for part in (argv or [])]
     if not parts:
         return []
+    if os.name != "nt":
+        return parts
+    parts = resolve_subprocess_argv(parts)
     windowless = _windows_pythonw_executable(parts[0])
     if windowless:
         parts[0] = windowless

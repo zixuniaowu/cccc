@@ -196,6 +196,7 @@ class TestCliDefaultEntryOwnership(unittest.TestCase):
 
         home, cleanup = self._with_home()
         try:
+            sigbreak_value = 21
             with patch.object(common, "_is_first_run", return_value=False), patch(
                 "cccc.paths.ensure_home", return_value=home
             ), patch.object(common, "_acquire_default_entry_lock", return_value=("lock", None)), patch.object(
@@ -203,14 +204,14 @@ class TestCliDefaultEntryOwnership(unittest.TestCase):
             ), patch.object(common, "release_lockfile"), patch.object(
                 common.signal, "getsignal", return_value="previous"
             ), patch.object(common.signal, "signal") as mock_signal, patch.object(
-                common.signal, "SIGBREAK", 21, create=True
+                common.signal, "SIGBREAK", sigbreak_value, create=True
             ):
                 ret = common._default_entry()
 
             self.assertEqual(ret, 1)
             registered = [call.args[0] for call in mock_signal.call_args_list]
             self.assertIn(common.signal.SIGINT, registered)
-            self.assertIn(common.signal.SIGBREAK, registered)
+            self.assertIn(sigbreak_value, registered)
         finally:
             cleanup()
 

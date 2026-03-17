@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import signal
 import unittest
+from pathlib import PosixPath
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -61,19 +62,26 @@ class TestProcessUtils(unittest.TestCase):
             "resolve_subprocess_argv",
             return_value=[r"D:\dev\cccc\.venv\Scripts\python.exe", "-m", "cccc.daemon_main", "run"],
         ), patch.object(
-            process_utils.Path,
-            "exists",
-            autospec=True,
-            side_effect=lambda path_obj: str(path_obj) == r"D:\dev\cccc\.venv\Scripts\pythonw.exe",
-        ), patch.object(
-            process_utils.Path,
-            "resolve",
-            autospec=True,
-            side_effect=lambda path_obj: path_obj,
+            process_utils,
+            "_windows_pythonw_executable",
+            return_value=r"D:\dev\cccc\.venv\Scripts\pythonw.exe",
         ):
             argv = process_utils.resolve_background_python_argv([r"D:\dev\cccc\.venv\Scripts\python.exe", "-m", "cccc.daemon_main", "run"])
 
         self.assertEqual(argv, [r"D:\dev\cccc\.venv\Scripts\pythonw.exe", "-m", "cccc.daemon_main", "run"])
+
+    def test_resolve_background_python_argv_preserves_posix_venv_symlink_path(self) -> None:
+        from cccc.util import process as process_utils
+
+        argv = ["/home/dodd/dev/cccc/.venv/bin/python", "-m", "cccc.daemon_main", "run"]
+        with patch.object(process_utils.os, "name", "posix"), patch.object(
+            process_utils,
+            "resolve_subprocess_argv",
+            side_effect=AssertionError("should not resolve posix background python argv"),
+        ):
+            resolved = process_utils.resolve_background_python_argv(argv)
+
+        self.assertEqual(resolved, argv)
 
     def test_supervised_process_popen_kwargs_windows_uses_detached_group(self) -> None:
         from cccc.util import process as process_utils
@@ -120,7 +128,7 @@ class TestProcessUtils(unittest.TestCase):
     def test_resolve_subprocess_executable_searches_common_windows_user_bin_dirs(self) -> None:
         from cccc.util import process as process_utils
 
-        target = process_utils.Path(r"C:\Users\tester\.local\bin\kimi.exe")
+        target = PosixPath("/tmp/tester/.local/bin/kimi.exe")
 
         def _exists(path_obj) -> bool:
             return str(path_obj) == str(target)
@@ -132,7 +140,7 @@ class TestProcessUtils(unittest.TestCase):
         ), patch.object(
             process_utils,
             "_iter_windows_user_bin_dirs",
-            return_value=[process_utils.Path(r"C:\Users\tester\.local\bin")],
+            return_value=[PosixPath("/tmp/tester/.local/bin")],
         ), patch.object(
             process_utils,
             "_windows_command_name_candidates",
@@ -146,7 +154,7 @@ class TestProcessUtils(unittest.TestCase):
         ):
             resolved = process_utils.resolve_subprocess_executable("kimi")
 
-        self.assertEqual(resolved, r"C:\Users\tester\.local\bin\kimi.exe")
+        self.assertEqual(resolved, str(target))
 
 
 if __name__ == "__main__":

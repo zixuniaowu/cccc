@@ -79,6 +79,10 @@ class TestWebRuntimeControl(unittest.TestCase):
                 runtime_control,
                 "supervised_process_popen_kwargs",
                 return_value={"creationflags": 0x208},
+            ), patch.object(
+                runtime_control,
+                "web_runtime_log_path",
+                return_value=home / "daemon" / "cccc-web.log",
             ), patch.object(runtime_control.subprocess, "Popen", return_value=fake_proc) as mock_popen:
                 proc = runtime_control.spawn_web_child(
                     home=home,
