@@ -133,6 +133,12 @@ class TestProcessUtils(unittest.TestCase):
             base = PosixPath(td)
             target = base / "kimi.exe"
             target.write_text("", encoding="utf-8")
+            original_path = process_utils.Path
+
+            def _path_factory(value):
+                if value == "kimi":
+                    raise NotImplementedError("cannot instantiate 'WindowsPath' on your system")
+                return original_path(value)
 
             with patch.object(process_utils.os, "name", "nt"), patch.object(
                 process_utils.shutil,
@@ -146,6 +152,10 @@ class TestProcessUtils(unittest.TestCase):
                 process_utils,
                 "_windows_command_name_candidates",
                 return_value=["kimi.exe"],
+            ), patch.object(
+                process_utils,
+                "Path",
+                side_effect=_path_factory,
             ):
                 resolved = process_utils.resolve_subprocess_executable("kimi")
 

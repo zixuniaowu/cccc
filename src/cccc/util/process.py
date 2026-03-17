@@ -31,8 +31,11 @@ def find_subprocess_executable(command: str) -> Optional[str]:
         except Exception:
             return str(resolved)
 
-    path = Path(raw)
-    if path.exists():
+    try:
+        path = Path(raw)
+    except Exception:
+        path = None
+    if path is not None and path.exists():
         try:
             return str(path.resolve())
         except Exception:
