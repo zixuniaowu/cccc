@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import signal
 import shutil
@@ -192,12 +193,90 @@ def _windows_taskkill_pid_tree(pid: int, *, force: bool) -> bool:
     return not pid_is_alive(target_pid)
 
 
+def _windows_kernel32() -> Any:
+    if os.name != "nt":
+        return None
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+        kernel32.GetExitCodeProcess.restype = ctypes.c_int
+        kernel32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.TerminateProcess.restype = ctypes.c_int
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.restype = ctypes.c_int
+        return kernel32
+    except Exception:
+        return None
+
+
+def _windows_pid_is_alive(pid: int) -> Optional[bool]:
+    if os.name != "nt":
+        return None
+    target_pid = int(pid or 0)
+    if target_pid <= 0:
+        return False
+    kernel32 = _windows_kernel32()
+    if kernel32 is None:
+        return None
+
+    process_query_limited_information = 0x1000
+    still_active = 259
+    handle = kernel32.OpenProcess(process_query_limited_information, False, target_pid)
+    if not handle:
+        return False
+
+    try:
+        exit_code = ctypes.c_ulong()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+            return False
+        return int(exit_code.value) == still_active
+    finally:
+        try:
+            kernel32.CloseHandle(handle)
+        except Exception:
+            pass
+
+
+def _windows_force_terminate_pid(pid: int) -> bool:
+    if os.name != "nt":
+        return False
+    target_pid = int(pid or 0)
+    if target_pid <= 0:
+        return False
+    kernel32 = _windows_kernel32()
+    if kernel32 is None:
+        return False
+
+    process_terminate = 0x0001
+    process_query_limited_information = 0x1000
+    handle = kernel32.OpenProcess(process_terminate | process_query_limited_information, False, target_pid)
+    if not handle:
+        return False
+
+    try:
+        if not kernel32.TerminateProcess(handle, 1):
+            return False
+    finally:
+        try:
+            kernel32.CloseHandle(handle)
+        except Exception:
+            pass
+    return not pid_is_alive(target_pid)
+
+
 def pid_is_alive(pid: int) -> bool:
     """Best-effort cross-platform liveness check."""
-    if int(pid or 0) <= 0:
+    target_pid = int(pid or 0)
+    if target_pid <= 0:
         return False
+    if os.name == "nt":
+        windows_alive = _windows_pid_is_alive(target_pid)
+        if windows_alive is not None:
+            return bool(windows_alive)
     try:
-        os.kill(int(pid), 0)
+        os.kill(target_pid, 0)
         return True
     except Exception:
         return False
@@ -258,6 +337,13 @@ def terminate_pid(
             if not pid_is_alive(target_pid):
                 return True
             time.sleep(0.05)
+
+        if _windows_force_terminate_pid(target_pid):
+            deadline = time.time() + max(float(timeout_s or 0.0), 0.0)
+            while time.time() < deadline:
+                if not pid_is_alive(target_pid):
+                    return True
+                time.sleep(0.05)
         return not pid_is_alive(target_pid)
 
     best_effort_signal_pid(target_pid, SOFT_TERMINATE_SIGNAL, include_group=include_group)

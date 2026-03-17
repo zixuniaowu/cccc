@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import logging
 import mimetypes
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional
@@ -23,6 +24,7 @@ from ...daemon.server import call_daemon
 from ...kernel.access_tokens import list_access_tokens, lookup_access_token
 from ...paths import ensure_home
 from ...util.obslog import setup_root_json_logging
+from ...util.process import pid_is_alive, terminate_pid
 from .runtime_control import (
     WEB_RUNTIME_RESTART_EXIT_CODE,
     clear_web_runtime_state,
@@ -172,11 +174,14 @@ def create_app() -> FastAPI:
         runtime_port_raw = str(os.environ.get("CCCC_WEB_EFFECTIVE_PORT") or "").strip()
         runtime_binding_known = restart_supported or bool(runtime_host_raw or runtime_port_raw)
         runtime_pid = os.getpid()
+        runtime_launcher_pid = os.getppid() if restart_supported else 0
         runtime_host = runtime_host_raw or "127.0.0.1"
         runtime_port = _int_env("CCCC_WEB_EFFECTIVE_PORT", 8848)
         runtime_mode = str(os.environ.get("CCCC_WEB_EFFECTIVE_MODE") or _web_mode()).strip() or "normal"
         runtime_supervisor_pid = _int_env("CCCC_WEB_SUPERVISOR_PID", 0)
         runtime_launch_source = str(os.environ.get("CCCC_WEB_LAUNCH_SOURCE") or "").strip() or "unknown"
+        supervisor_watchdog_stop = threading.Event()
+        supervisor_watchdog_thread: Optional[threading.Thread] = None
 
         if runtime_binding_known:
             write_web_runtime_state(
@@ -187,6 +192,7 @@ def create_app() -> FastAPI:
                 mode=runtime_mode,
                 supervisor_managed=restart_supported,
                 supervisor_pid=runtime_supervisor_pid if restart_supported and runtime_supervisor_pid > 0 else None,
+                launcher_pid=runtime_launcher_pid if runtime_launcher_pid > 0 else None,
                 launch_source=runtime_launch_source,
             )
 
@@ -200,9 +206,43 @@ def create_app() -> FastAPI:
             _app.state.request_web_restart = _request_web_restart
         else:
             _app.state.request_web_restart = None
+
+        if restart_supported and runtime_supervisor_pid > 0:
+            def _supervisor_watchdog_loop() -> None:
+                while not supervisor_watchdog_stop.is_set():
+                    try:
+                        if pid_is_alive(runtime_supervisor_pid):
+                            supervisor_watchdog_stop.wait(0.5)
+                            continue
+                    except Exception:
+                        pass
+                    try:
+                        clear_web_runtime_state(home=home, pid=runtime_pid)
+                    except Exception:
+                        pass
+                    if runtime_launcher_pid > 0:
+                        try:
+                            terminate_pid(runtime_launcher_pid, timeout_s=1.0, include_group=True, force=True)
+                        except Exception:
+                            pass
+                    os._exit(0)
+
+            supervisor_watchdog_thread = threading.Thread(
+                target=_supervisor_watchdog_loop,
+                name="cccc-web-supervisor-watchdog",
+                daemon=True,
+            )
+            supervisor_watchdog_thread.start()
+
         try:
             yield
         finally:
+            supervisor_watchdog_stop.set()
+            if supervisor_watchdog_thread is not None:
+                try:
+                    supervisor_watchdog_thread.join(timeout=0.2)
+                except Exception:
+                    pass
             if runtime_binding_known:
                 clear_web_runtime_state(home=home, pid=runtime_pid)
             _close_web_logging()

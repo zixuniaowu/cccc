@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from .daemon.server import DaemonPaths, call_daemon, default_paths, read_pid, serve_forever
-from .ports.web.runtime_control import clear_web_runtime_state, read_web_runtime_state
+from .ports.web.runtime_control import clear_web_runtime_state, read_web_runtime_state, web_runtime_pid_candidates
 from .util.process import (
     resolve_background_python_argv,
     SOFT_TERMINATE_SIGNAL,
@@ -42,11 +42,14 @@ def _stop_supervised_web_runtime(paths: DaemonPaths) -> bool:
         runtime = read_web_runtime_state(home=paths.home)
     except Exception:
         runtime = {}
-    runtime_pid = int(runtime.get("pid") or 0)
-    if runtime_pid > 0 and not terminate_pid(runtime_pid, timeout_s=2.0, include_group=True, force=True):
-        return False
+    candidate_pids = web_runtime_pid_candidates(runtime)
+    for runtime_pid in candidate_pids:
+        if not pid_is_alive(runtime_pid):
+            continue
+        if not terminate_pid(runtime_pid, timeout_s=2.0, include_group=True, force=True):
+            return False
     try:
-        clear_web_runtime_state(home=paths.home, pid=runtime_pid if runtime_pid > 0 else None)
+        clear_web_runtime_state(home=paths.home, pid=candidate_pids[0] if candidate_pids else None)
     except Exception:
         pass
     return True

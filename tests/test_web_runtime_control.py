@@ -133,6 +133,34 @@ class TestWebRuntimeControl(unittest.TestCase):
             mock_stop.assert_called_once_with(proc, timeout_s=1.0)
             mock_clear.assert_called_once_with(home=home, pid=4321)
 
+    def test_web_runtime_pid_candidates_prefers_launcher_pid(self) -> None:
+        from cccc.ports.web import runtime_control
+
+        candidates = runtime_control.web_runtime_pid_candidates({"pid": 4321, "launcher_pid": 9876})
+
+        self.assertEqual(candidates, [9876, 4321])
+
+    def test_clear_web_runtime_state_accepts_launcher_pid(self) -> None:
+        from cccc.ports.web import runtime_control
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            runtime_control.write_web_runtime_state(
+                home=home,
+                pid=4321,
+                host="127.0.0.1",
+                port=8848,
+                mode="normal",
+                supervisor_managed=True,
+                supervisor_pid=1111,
+                launcher_pid=9876,
+                launch_source="test",
+            )
+
+            runtime_control.clear_web_runtime_state(home=home, pid=9876)
+
+            self.assertFalse(runtime_control.web_runtime_state_path(home).exists())
+
 
 if __name__ == "__main__":
     unittest.main()

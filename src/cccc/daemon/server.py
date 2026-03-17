@@ -97,6 +97,7 @@ from .serve_ops import (
     start_space_jobs_thread,
     start_space_sync_thread,
     start_actor_activity_thread,
+    start_supervisor_watchdog_thread,
     bind_server_socket,
     write_daemon_addr,
     start_bootstrap_thread,
@@ -828,6 +829,17 @@ def serve_forever(paths: Optional[DaemonPaths] = None) -> int:
 
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
+
+    try:
+        daemon_supervisor_pid = int(str(os.environ.get("CCCC_DAEMON_SUPERVISOR_PID") or "").strip() or 0)
+    except Exception:
+        daemon_supervisor_pid = 0
+    start_supervisor_watchdog_thread(
+        stop_event=stop_event,
+        supervisor_pid=daemon_supervisor_pid,
+        pid_alive=_pid_alive,
+        interval_seconds=0.5,
+    )
 
     start_automation_thread(
         stop_event=stop_event,

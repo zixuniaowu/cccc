@@ -47,6 +47,7 @@ from ..ports.web.runtime_control import (
     start_supervised_web_child,
     stop_web_child,
     wait_for_child_exit_interruptibly,
+    web_runtime_pid_candidates,
 )
 from ..util.conv import coerce_bool
 from ..util.file_lock import LockUnavailableError, acquire_lockfile, release_lockfile
@@ -172,11 +173,14 @@ def _terminate_same_home_daemons(home: Path, *, extra_pids: list[int] | None = N
 
 def _stop_existing_web_runtime(home: Path) -> bool:
     runtime = read_web_runtime_state(home)
-    runtime_pid = int(runtime.get("pid") or 0)
-    if runtime_pid > 0 and pid_is_alive(runtime_pid):
+    candidate_pids = web_runtime_pid_candidates(runtime)
+    for runtime_pid in candidate_pids:
+        if not pid_is_alive(runtime_pid):
+            continue
         if not terminate_pid(runtime_pid, timeout_s=2.0, include_group=True, force=True):
             return False
-    clear_web_runtime_state(home=home, pid=runtime_pid if runtime_pid > 0 else None)
+    clear_pid = candidate_pids[0] if candidate_pids else None
+    clear_web_runtime_state(home=home, pid=clear_pid)
     return True
 
 
@@ -480,6 +484,7 @@ def _default_entry() -> int:
             try:
                 daemon_env = os.environ.copy()
                 daemon_env["CCCC_HOME"] = str(home)
+                daemon_env["CCCC_DAEMON_SUPERVISOR_PID"] = str(os.getpid())
                 daemon_process = subprocess.Popen(
                     resolve_background_python_argv([sys.executable, "-m", "cccc.daemon_main", "run"]),
                     stdout=log_file,

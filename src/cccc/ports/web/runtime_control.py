@@ -30,6 +30,19 @@ def read_web_runtime_state(home: Optional[Path] = None) -> Dict[str, Any]:
     return doc if isinstance(doc, dict) else {}
 
 
+def web_runtime_pid_candidates(runtime: Optional[Dict[str, Any]]) -> list[int]:
+    doc = runtime if isinstance(runtime, dict) else {}
+    candidates: list[int] = []
+    for key in ("launcher_pid", "pid"):
+        try:
+            candidate = int(doc.get(key) or 0)
+        except Exception:
+            candidate = 0
+        if candidate > 0 and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
 def write_web_runtime_state(
     *,
     home: Optional[Path] = None,
@@ -39,9 +52,21 @@ def write_web_runtime_state(
     mode: str,
     supervisor_managed: bool,
     supervisor_pid: Optional[int],
+    launcher_pid: Optional[int] = None,
     launch_source: str,
     last_apply_error: Optional[str] = None,
 ) -> Dict[str, Any]:
+    current = read_json(web_runtime_state_path(home))
+    current_doc = current if isinstance(current, dict) else {}
+    try:
+        resolved_launcher_pid = int(launcher_pid or 0)
+    except Exception:
+        resolved_launcher_pid = 0
+    if resolved_launcher_pid <= 0:
+        try:
+            resolved_launcher_pid = int(current_doc.get("launcher_pid") or 0)
+        except Exception:
+            resolved_launcher_pid = 0
     doc: Dict[str, Any] = {
         "pid": int(pid),
         "host": str(host or "").strip() or "127.0.0.1",
@@ -50,6 +75,7 @@ def write_web_runtime_state(
         "started_at": utc_now_iso(),
         "supervisor_managed": bool(supervisor_managed),
         "supervisor_pid": int(supervisor_pid) if int(supervisor_pid or 0) > 0 else None,
+        "launcher_pid": resolved_launcher_pid if resolved_launcher_pid > 0 else None,
         "launch_source": str(launch_source or "").strip() or "unknown",
         "last_apply_error": str(last_apply_error or "").strip() or None,
     }
@@ -80,7 +106,7 @@ def clear_web_runtime_state(*, home: Optional[Path] = None, pid: Optional[int] =
         return
     if int(pid or 0) > 0:
         doc = read_json(path)
-        if int(doc.get("pid") or 0) != int(pid):
+        if int(doc.get("pid") or 0) != int(pid) and int(doc.get("launcher_pid") or 0) != int(pid):
             return
     path.unlink(missing_ok=True)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import signal
 import tempfile
 import unittest
-from pathlib import PosixPath
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -102,6 +102,23 @@ class TestProcessUtils(unittest.TestCase):
 
         self.assertEqual(kwargs, {"creationflags": 0x208})
 
+    def test_pid_is_alive_windows_prefers_native_process_query(self) -> None:
+        from cccc.util import process as process_utils
+
+        with patch.object(process_utils.os, "name", "nt"), patch.object(
+            process_utils,
+            "_windows_pid_is_alive",
+            return_value=True,
+        ) as mock_windows_alive, patch.object(
+            process_utils.os,
+            "kill",
+            side_effect=AssertionError("should not use os.kill on Windows when native query is available"),
+        ):
+            ok = process_utils.pid_is_alive(4321)
+
+        self.assertTrue(ok)
+        mock_windows_alive.assert_called_once_with(4321)
+
     def test_terminate_pid_windows_include_group_uses_taskkill_tree(self) -> None:
         from cccc.util import process as process_utils
 
@@ -126,11 +143,33 @@ class TestProcessUtils(unittest.TestCase):
             timeout=5.0,
         )
 
+    def test_terminate_pid_windows_force_falls_back_to_native_terminate(self) -> None:
+        from cccc.util import process as process_utils
+
+        with patch.object(process_utils.os, "name", "nt"), patch.object(
+            process_utils,
+            "pid_is_alive",
+            side_effect=[True, False],
+        ), patch.object(
+            process_utils,
+            "_windows_taskkill_pid_tree",
+            return_value=False,
+        ) as mock_taskkill, patch.object(
+            process_utils,
+            "_windows_force_terminate_pid",
+            return_value=True,
+        ) as mock_force_terminate:
+            ok = process_utils.terminate_pid(4321, timeout_s=0.0, include_group=True, force=True)
+
+        self.assertTrue(ok)
+        self.assertEqual(mock_taskkill.call_args_list, [unittest.mock.call(4321, force=False), unittest.mock.call(4321, force=True)])
+        mock_force_terminate.assert_called_once_with(4321)
+
     def test_resolve_subprocess_executable_searches_common_windows_user_bin_dirs(self) -> None:
         from cccc.util import process as process_utils
 
         with tempfile.TemporaryDirectory() as td:
-            base = PosixPath(td)
+            base = Path(td)
             target = base / "kimi.exe"
             target.write_text("", encoding="utf-8")
             original_path = process_utils.Path

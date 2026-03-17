@@ -52,15 +52,15 @@ class TestCliDefaultEntryOwnership(unittest.TestCase):
 
         home, cleanup = self._with_home()
         try:
-            with patch.object(common, "read_web_runtime_state", return_value={"pid": 4321}), patch.object(
-                common, "pid_is_alive", return_value=True
+            with patch.object(common, "read_web_runtime_state", return_value={"pid": 4321, "launcher_pid": 9876}), patch.object(
+                common, "pid_is_alive", side_effect=[True, False]
             ), patch.object(common, "terminate_pid") as mock_terminate, patch.object(
                 common, "clear_web_runtime_state"
             ) as mock_clear:
                 common._stop_existing_web_runtime(home)
 
-            mock_terminate.assert_called_once_with(4321, timeout_s=2.0, include_group=True, force=True)
-            mock_clear.assert_called_once_with(home=home, pid=4321)
+            mock_terminate.assert_called_once_with(9876, timeout_s=2.0, include_group=True, force=True)
+            mock_clear.assert_called_once_with(home=home, pid=9876)
         finally:
             cleanup()
 
@@ -237,6 +237,8 @@ class TestCliDefaultEntryOwnership(unittest.TestCase):
             ), patch.object(common, "_stop_existing_daemon", return_value=True), patch.object(
                 common, "_resolve_web_server_binding", return_value=("127.0.0.1", 8848)
             ), patch.object(common, "call_daemon", return_value={"ok": True}), patch.object(
+                common.os, "getpid", return_value=9999
+            ), patch.object(
                 common, "supervised_process_popen_kwargs", return_value={"creationflags": 0x208}
             ), patch.object(common.subprocess, "Popen", return_value=daemon_proc) as mock_popen, patch.object(
                 common, "start_supervised_web_child", return_value=(web_proc, None)
@@ -251,6 +253,7 @@ class TestCliDefaultEntryOwnership(unittest.TestCase):
             self.assertEqual(kwargs.get("stdin"), common.subprocess.DEVNULL)
             self.assertEqual(kwargs.get("cwd"), str(home))
             self.assertEqual(kwargs.get("env", {}).get("CCCC_HOME"), str(home))
+            self.assertEqual(kwargs.get("env", {}).get("CCCC_DAEMON_SUPERVISOR_PID"), "9999")
         finally:
             cleanup()
 

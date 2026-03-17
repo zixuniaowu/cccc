@@ -31,7 +31,9 @@ class TestDaemonMain(unittest.TestCase):
         stdout = io.StringIO()
         try:
             with patch.object(daemon_main, "call_daemon", return_value={"ok": True}), patch.object(
-                daemon_main, "read_web_runtime_state", return_value={"pid": 4321}
+                daemon_main, "read_web_runtime_state", return_value={"pid": 4321, "launcher_pid": 9876}
+            ), patch.object(
+                daemon_main, "pid_is_alive", side_effect=[True, False]
             ), patch.object(daemon_main, "terminate_pid", return_value=True) as mock_terminate, patch.object(
                 daemon_main, "clear_web_runtime_state"
             ) as mock_clear, patch.object(
@@ -42,8 +44,8 @@ class TestDaemonMain(unittest.TestCase):
             cleanup()
 
         self.assertEqual(rc, 0)
-        mock_terminate.assert_called_once_with(4321, timeout_s=2.0, include_group=True, force=True)
-        mock_clear.assert_called_once_with(home=unittest.mock.ANY, pid=4321)
+        mock_terminate.assert_called_once_with(9876, timeout_s=2.0, include_group=True, force=True)
+        mock_clear.assert_called_once_with(home=unittest.mock.ANY, pid=9876)
         self.assertIn("shutdown requested", stdout.getvalue())
 
     def test_stop_reports_failure_when_supervised_web_runtime_cannot_stop(self) -> None:
@@ -53,8 +55,10 @@ class TestDaemonMain(unittest.TestCase):
         stdout = io.StringIO()
         try:
             with patch.object(daemon_main, "call_daemon", return_value={"ok": True}), patch.object(
-                daemon_main, "read_web_runtime_state", return_value={"pid": 4321}
-            ), patch.object(daemon_main, "terminate_pid", return_value=False), patch.object(
+                daemon_main, "read_web_runtime_state", return_value={"pid": 4321, "launcher_pid": 9876}
+            ), patch.object(daemon_main, "pid_is_alive", return_value=True), patch.object(
+                daemon_main, "terminate_pid", return_value=False
+            ), patch.object(
                 daemon_main.sys, "stdout", stdout
             ):
                 rc = daemon_main.main(["stop"])
