@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import signal
+import tempfile
 import unittest
 from pathlib import PosixPath
 from types import SimpleNamespace
@@ -128,31 +129,25 @@ class TestProcessUtils(unittest.TestCase):
     def test_resolve_subprocess_executable_searches_common_windows_user_bin_dirs(self) -> None:
         from cccc.util import process as process_utils
 
-        target = PosixPath("/tmp/tester/.local/bin/kimi.exe")
+        with tempfile.TemporaryDirectory() as td:
+            base = PosixPath(td)
+            target = base / "kimi.exe"
+            target.write_text("", encoding="utf-8")
 
-        def _exists(path_obj) -> bool:
-            return str(path_obj) == str(target)
-
-        with patch.object(process_utils.os, "name", "nt"), patch.object(
-            process_utils.shutil,
-            "which",
-            return_value=None,
-        ), patch.object(
-            process_utils,
-            "_iter_windows_user_bin_dirs",
-            return_value=[PosixPath("/tmp/tester/.local/bin")],
-        ), patch.object(
-            process_utils,
-            "_windows_command_name_candidates",
-            return_value=["kimi.exe"],
-        ), patch.object(
-            process_utils.Path,
-            "exists",
-            autospec=True,
-            side_effect=_exists,
-            create=True,
-        ):
-            resolved = process_utils.resolve_subprocess_executable("kimi")
+            with patch.object(process_utils.os, "name", "nt"), patch.object(
+                process_utils.shutil,
+                "which",
+                return_value=None,
+            ), patch.object(
+                process_utils,
+                "_iter_windows_user_bin_dirs",
+                return_value=[base],
+            ), patch.object(
+                process_utils,
+                "_windows_command_name_candidates",
+                return_value=["kimi.exe"],
+            ):
+                resolved = process_utils.resolve_subprocess_executable("kimi")
 
         self.assertEqual(resolved, str(target))
 
