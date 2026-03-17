@@ -13,6 +13,7 @@ from ...kernel.settings import resolve_remote_access_web_binding
 from ...paths import ensure_home
 from .runtime_control import (
     WEB_RUNTIME_RESTART_EXIT_CODE,
+    clear_web_runtime_state,
     restart_supervised_web_child_with_fallback,
     start_supervised_web_child,
     stop_web_child,
@@ -111,7 +112,9 @@ def _run_supervised_web(*, host: str, port: int, mode: str, reload: bool, log_le
         try:
             ret = wait_for_child_exit_interruptibly(proc)
         except KeyboardInterrupt:
+            web_pid = int(getattr(proc, "pid", 0) or 0)
             stop_web_child(proc, timeout_s=2.0)
+            clear_web_runtime_state(home=home, pid=web_pid if web_pid > 0 else None)
             return 0
 
         if int(ret or 0) == WEB_RUNTIME_RESTART_EXIT_CODE:

@@ -9,7 +9,15 @@ from typing import Optional
 
 from .daemon.server import DaemonPaths, call_daemon, default_paths, read_pid, serve_forever
 from .ports.web.runtime_control import clear_web_runtime_state, read_web_runtime_state
-from .util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive, terminate_pid
+from .util.process import (
+    resolve_background_python_argv,
+    SOFT_TERMINATE_SIGNAL,
+    best_effort_signal_pid,
+    pid_is_alive,
+    resolve_subprocess_argv,
+    supervised_process_popen_kwargs,
+    terminate_pid,
+)
 
 
 def _spawn_daemon(paths: DaemonPaths) -> int:
@@ -18,13 +26,13 @@ def _spawn_daemon(paths: DaemonPaths) -> int:
     env["CCCC_HOME"] = str(paths.home)
     with paths.log_path.open("a", encoding="utf-8") as log_f:
         p = subprocess.Popen(
-            [sys.executable, "-m", "cccc.daemon_main", "run"],
+            resolve_background_python_argv([sys.executable, "-m", "cccc.daemon_main", "run"]),
             stdout=log_f,
             stderr=log_f,
             stdin=subprocess.DEVNULL,
             env=env,
-            start_new_session=True,
             cwd=str(paths.home),
+            **supervised_process_popen_kwargs(),
         )
     return int(p.pid)
 

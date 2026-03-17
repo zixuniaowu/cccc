@@ -11,7 +11,7 @@ from typing import Any, Dict, Optional
 
 from ...paths import ensure_home
 from ...util.fs import atomic_write_json, read_json
-from ...util.process import terminate_pid
+from ...util.process import resolve_background_python_argv, supervised_process_popen_kwargs, terminate_pid
 from ...util.time import utc_now_iso
 
 WEB_RUNTIME_RESTART_EXIT_CODE = 75
@@ -129,6 +129,10 @@ def local_display_url(host: str, port: int) -> str:
     return http_url(display_host, port)
 
 
+def web_runtime_log_path(home: Optional[Path] = None) -> Path:
+    return _home_dir(home) / "daemon" / "cccc-web.log"
+
+
 def spawn_web_child(
     *,
     home: Path,
@@ -166,10 +170,31 @@ def spawn_web_child(
     env["CCCC_WEB_SUPERVISOR_PID"] = str(os.getpid())
     env["CCCC_WEB_LAUNCH_SOURCE"] = str(launch_source or "unknown")
 
+    popen_kwargs: Dict[str, Any] = {
+        "env": env,
+        "stdin": subprocess.DEVNULL,
+        "cwd": str(home),
+        **supervised_process_popen_kwargs(),
+    }
+    if os.name == "nt":
+        log_path = web_runtime_log_path(home)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_file = log_path.open("a", encoding="utf-8")
+        try:
+            return subprocess.Popen(
+                resolve_background_python_argv(argv),
+                stdout=log_file,
+                stderr=log_file,
+                **popen_kwargs,
+            )
+        finally:
+            try:
+                log_file.close()
+            except Exception:
+                pass
     return subprocess.Popen(
-        argv,
-        env=env,
-        start_new_session=True,
+        resolve_background_python_argv(argv),
+        **popen_kwargs,
     )
 
 
@@ -230,11 +255,21 @@ def start_supervised_web_child(
         reload=bool(reload),
         launch_source=launch_source,
     )
-    if not wait_for_web_ready(host=str(host), port=int(port), timeout_s=6.0):
-        ret = proc.poll()
-        if ret is None:
-            stop_web_child(proc, timeout_s=1.0)
-        return None, f"web server failed to become ready on {host}:{int(port)}"
+    runtime_pid = int(getattr(proc, "pid", 0) or 0)
+    try:
+        if not wait_for_web_ready(host=str(host), port=int(port), timeout_s=6.0):
+            ret = proc.poll()
+            if ret is None:
+                stop_web_child(proc, timeout_s=1.0)
+            clear_web_runtime_state(home=home, pid=runtime_pid if runtime_pid > 0 else None)
+            return None, f"web server failed to become ready on {host}:{int(port)}"
+    except BaseException:
+        try:
+            if proc.poll() is None:
+                stop_web_child(proc, timeout_s=1.0)
+        finally:
+            clear_web_runtime_state(home=home, pid=runtime_pid if runtime_pid > 0 else None)
+        raise
     update_web_runtime_state({"last_apply_error": None}, home=home, pid=int(getattr(proc, "pid", 0) or 0))
     return proc, None
 

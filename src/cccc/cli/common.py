@@ -50,7 +50,15 @@ from ..ports.web.runtime_control import (
 )
 from ..util.conv import coerce_bool
 from ..util.file_lock import LockUnavailableError, acquire_lockfile, release_lockfile
-from ..util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive, terminate_pid
+from ..util.process import (
+    resolve_background_python_argv,
+    SOFT_TERMINATE_SIGNAL,
+    best_effort_signal_pid,
+    pid_is_alive,
+    resolve_subprocess_argv,
+    supervised_process_popen_kwargs,
+    terminate_pid,
+)
 
 _SPACE_QUERY_OPTION_KEYS = {"source_ids"}
 
@@ -444,7 +452,12 @@ def _default_entry() -> int:
     def _handle_shutdown_signal(signum: int, _frame: Any) -> None:
         raise KeyboardInterrupt()
 
-    for sig in (getattr(signal, "SIGTERM", None), getattr(signal, "SIGHUP", None)):
+    for sig in (
+        getattr(signal, "SIGINT", None),
+        getattr(signal, "SIGBREAK", None),
+        getattr(signal, "SIGTERM", None),
+        getattr(signal, "SIGHUP", None),
+    ):
         if sig is None:
             continue
         try:
@@ -465,12 +478,16 @@ def _default_entry() -> int:
             (home / "daemon").mkdir(parents=True, exist_ok=True)
             log_file = log_path.open("a", encoding="utf-8")
             try:
+                daemon_env = os.environ.copy()
+                daemon_env["CCCC_HOME"] = str(home)
                 daemon_process = subprocess.Popen(
-                    [sys.executable, "-m", "cccc.daemon_main", "run"],
+                    resolve_background_python_argv([sys.executable, "-m", "cccc.daemon_main", "run"]),
                     stdout=log_file,
                     stderr=log_file,
-                    env=os.environ.copy(),
-                    start_new_session=True,  # Don't forward SIGINT to daemon
+                    stdin=subprocess.DEVNULL,
+                    env=daemon_env,
+                    cwd=str(home),
+                    **supervised_process_popen_kwargs(),
                 )
                 try:
                     log_file.close()
@@ -632,8 +649,13 @@ def _default_entry() -> int:
     finally:
         shutdown_requested = True
         if web_process is not None:
+            web_pid = int(getattr(web_process, "pid", 0) or 0)
             try:
                 stop_web_child(web_process, timeout_s=2.0)
+            except Exception:
+                pass
+            try:
+                clear_web_runtime_state(home=home, pid=web_pid if web_pid > 0 else None)
             except Exception:
                 pass
         _stop_daemon()

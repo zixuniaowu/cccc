@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, Optional, Tuple
 
 from .platform_support import load_winpty_process_class, pty_support_error_message
+from ..util.process import terminate_pid
 
 _WINPTY_PROCESS = load_winpty_process_class()
 
@@ -383,6 +384,12 @@ class PtySession:
 
     def stop(self) -> None:
         self._running = False
+        pid = self.pid
+        if pid > 0:
+            try:
+                terminate_pid(pid, timeout_s=1.0, include_group=True, force=True)
+            except Exception:
+                pass
         self._terminate_process()
         self._notify_wake()
         try:

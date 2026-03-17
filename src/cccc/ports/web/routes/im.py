@@ -13,7 +13,7 @@ from ....kernel.group import load_group
 from ....paths import ensure_home
 from ....ports.im.config_schema import canonicalize_im_config
 from ....util.conv import coerce_bool
-from ....util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive
+from ....util.process import SOFT_TERMINATE_SIGNAL, best_effort_signal_pid, pid_is_alive, resolve_background_python_argv, supervised_process_popen_kwargs
 from ..schemas import (
     IMActionRequest,
     IMBindRequest,
@@ -348,15 +348,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 "cwd": str(ensure_home()),
             }
             if os.name == "nt":
-                creationflags = int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)) | int(getattr(subprocess, "DETACHED_PROCESS", 0))
-                if creationflags:
-                    popen_kwargs["creationflags"] = creationflags
+                popen_kwargs.update(supervised_process_popen_kwargs())
             else:
                 popen_kwargs["start_new_session"] = True
 
             with log_path.open("a", encoding="utf-8") as log_file:
                 proc = subprocess.Popen(
-                    [sys.executable, "-m", "cccc.ports.im", req.group_id, platform],
+                    resolve_background_python_argv([sys.executable, "-m", "cccc.ports.im", req.group_id, platform]),
                     stdout=log_file,
                     stderr=log_file,
                     **popen_kwargs,

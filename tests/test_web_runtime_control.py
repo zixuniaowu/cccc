@@ -42,12 +42,14 @@ class TestWebRuntimeControl(unittest.TestCase):
         td_ctx = tempfile.TemporaryDirectory()
         home = Path(td_ctx.__enter__())
         try:
-            proc = object()
+            proc = unittest.mock.Mock(pid=4321)
             with patch.object(web_main, "ensure_home", return_value=home), patch.object(
                 web_main, "_check_daemon_running", return_value=True
             ), patch.object(web_main, "start_supervised_web_child", return_value=(proc, None)), patch.object(
                 web_main, "wait_for_child_exit_interruptibly", side_effect=KeyboardInterrupt()
-            ), patch.object(web_main, "stop_web_child", return_value=True) as mock_stop:
+            ), patch.object(web_main, "stop_web_child", return_value=True) as mock_stop, patch.object(
+                web_main, "clear_web_runtime_state"
+            ) as mock_clear:
                 ret = web_main._run_supervised_web(
                     host="127.0.0.1",
                     port=8848,
@@ -59,8 +61,73 @@ class TestWebRuntimeControl(unittest.TestCase):
 
             self.assertEqual(ret, 0)
             mock_stop.assert_called_once_with(proc, timeout_s=2.0)
+            mock_clear.assert_called_once_with(home=home, pid=4321)
         finally:
             td_ctx.__exit__(None, None, None)
+
+    def test_spawn_web_child_windows_uses_supervised_process_kwargs_and_log_file(self) -> None:
+        from cccc.ports.web import runtime_control
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            fake_proc = object()
+            with patch.object(runtime_control.os, "name", "nt"), patch.object(
+                runtime_control,
+                "resolve_background_python_argv",
+                return_value=[r"D:\dev\cccc\.venv\Scripts\pythonw.exe", "-m", "cccc.ports.web.main", "--serve-child"],
+            ) as mock_argv, patch.object(
+                runtime_control,
+                "supervised_process_popen_kwargs",
+                return_value={"creationflags": 0x208},
+            ), patch.object(runtime_control.subprocess, "Popen", return_value=fake_proc) as mock_popen:
+                proc = runtime_control.spawn_web_child(
+                    home=home,
+                    host="127.0.0.1",
+                    port=8848,
+                    mode="normal",
+                    log_level="info",
+                    reload=False,
+                    launch_source="test",
+                )
+
+            self.assertIs(proc, fake_proc)
+            mock_argv.assert_called_once()
+            kwargs = mock_popen.call_args.kwargs
+            self.assertEqual(kwargs.get("creationflags"), 0x208)
+            self.assertEqual(kwargs.get("stdin"), runtime_control.subprocess.DEVNULL)
+            self.assertEqual(kwargs.get("cwd"), str(home))
+            self.assertTrue(str(getattr(kwargs.get("stdout"), "name", "")).endswith("cccc-web.log"))
+            self.assertIs(kwargs.get("stdout"), kwargs.get("stderr"))
+
+    def test_start_supervised_web_child_cleans_up_on_keyboard_interrupt(self) -> None:
+        from cccc.ports.web import runtime_control
+        from cccc.ports.web import bind_preflight
+
+        with tempfile.TemporaryDirectory() as td:
+            home = Path(td)
+            proc = unittest.mock.Mock(pid=4321)
+            proc.poll.return_value = None
+            with patch.object(bind_preflight, "ensure_tcp_port_bindable", return_value=None), patch.object(runtime_control, "spawn_web_child", return_value=proc), patch.object(
+                runtime_control,
+                "wait_for_web_ready",
+                side_effect=lambda **_kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+            ), patch.object(runtime_control, "stop_web_child", return_value=True) as mock_stop, patch.object(
+                runtime_control,
+                "clear_web_runtime_state",
+            ) as mock_clear:
+                with self.assertRaises(KeyboardInterrupt):
+                    runtime_control.start_supervised_web_child(
+                        home=home,
+                        host="127.0.0.1",
+                        port=8848,
+                        mode="normal",
+                        reload=False,
+                        log_level="info",
+                        launch_source="test",
+                    )
+
+            mock_stop.assert_called_once_with(proc, timeout_s=1.0)
+            mock_clear.assert_called_once_with(home=home, pid=4321)
 
 
 if __name__ == "__main__":

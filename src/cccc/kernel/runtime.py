@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from ..util.process import find_subprocess_executable
+
 
 @dataclass
 class RuntimeInfo:
@@ -69,7 +71,7 @@ KNOWN_RUNTIMES: Dict[str, Dict[str, Any]] = {
         "display_name": "Kimi CLI",
         "command": "kimi",
         "capabilities": "MCP; MCP setup: auto",
-        "mcp_add_pattern": "kimi mcp add {name} --command {cmd}",
+        "mcp_add_pattern": "kimi mcp add --transport stdio {name} -- {cmd}",
     },
     "neovate": {
         "display_name": "Neovate Code",
@@ -116,7 +118,7 @@ def detect_runtime(name: str) -> RuntimeInfo:
         )
 
     command = config["command"]
-    path = shutil.which(command)
+    path = find_subprocess_executable(command)
     available = path is not None
     
     mcp_add_command = None

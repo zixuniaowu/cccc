@@ -133,6 +133,28 @@ class TestWindowsSupportDiagnostics(unittest.TestCase):
             self.assertEqual(len(spawn_calls), 2)
             self.assertTrue(all("env" in call for call in spawn_calls))
 
+    def test_windows_pty_stop_uses_tree_termination(self) -> None:
+        from cccc.runners import pty_win
+
+        session = object.__new__(pty_win.PtySession)
+        session._running = True
+        session._proc = SimpleNamespace(
+            pid=4321,
+            isalive=lambda: False,
+            exitstatus=0,
+            terminate=lambda *args, **kwargs: None,
+            kill=lambda *args, **kwargs: None,
+            close=lambda *args, **kwargs: None,
+        )
+        session._notify_wake = lambda: None
+        session._thread = SimpleNamespace(is_alive=lambda: False, join=lambda timeout=None: None)
+        session._reader_thread = SimpleNamespace(is_alive=lambda: False, join=lambda timeout=None: None)
+
+        with patch.object(pty_win, "terminate_pid", return_value=True) as mock_terminate:
+            session.stop()
+
+        mock_terminate.assert_called_once_with(4321, timeout_s=1.0, include_group=True, force=True)
+
     def test_codex_windows_command_still_gets_env_inherit_flag(self) -> None:
         from cccc.daemon import server as daemon_server
 
