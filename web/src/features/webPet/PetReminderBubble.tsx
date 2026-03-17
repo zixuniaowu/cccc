@@ -131,9 +131,27 @@ export function PetReminderBubble({
       aria-live={reminder.ephemeral ? "assertive" : "polite"}
       aria-atomic="true"
     >
-      <div className="glass-modal rounded-2xl border border-[var(--glass-border-subtle)] px-3 py-2 shadow-2xl">
-        <div className="flex items-start gap-1">
-          <div className="min-w-0 flex-1">
+      <div className="glass-modal relative rounded-2xl border border-[var(--glass-border-subtle)] px-3 py-2 shadow-2xl">
+        <button
+          type="button"
+          className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full text-sm text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)]"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            handleDismiss();
+          }}
+          aria-label={t("dismissReminderAria", {
+            defaultValue: "Dismiss reminder",
+          })}
+        >
+          ×
+        </button>
+        <div className="pr-8">
+          <div className="min-w-0">
             <div className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
               {kindLabel}
             </div>
@@ -163,24 +181,6 @@ export function PetReminderBubble({
               ))}
             </div>
           </div>
-          <button
-            type="button"
-            className="-mt-0.5 -mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-sm text-[var(--color-text-secondary)] transition hover:bg-white/10 hover:text-[var(--color-text-primary)]"
-            onPointerDown={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              handleDismiss();
-            }}
-            aria-label={t("dismissReminderAria", {
-              defaultValue: "Dismiss reminder",
-            })}
-          >
-            ×
-          </button>
         </div>
       </div>
     </div>

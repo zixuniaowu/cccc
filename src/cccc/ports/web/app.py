@@ -93,9 +93,18 @@ def _web_mode() -> Literal["normal", "exhibit"]:
     return "normal"
 
 
+_PUBLIC_API_PATHS = frozenset({"/api/v1/health"})
+
+
 def _is_public_ui_path(request: Request) -> bool:
     path = str(request.url.path or "")
     return path.startswith("/ui/") or path == "/ui"
+
+
+def _is_public_path(request: Request) -> bool:
+    """Routes that bypass token authentication (UI assets + health check)."""
+    path = str(request.url.path or "")
+    return _is_public_ui_path(request) or path in _PUBLIC_API_PATHS
 
 
 def _request_token_parts(request: Request) -> tuple[str, Literal["", "header", "cookie", "query"]]:
@@ -118,8 +127,6 @@ def _request_token(request: Request) -> str:
 
 
 def _resolve_principal(request: Request) -> Principal:
-    if _is_public_ui_path(request):
-        return Principal(kind="anonymous")
     token = _request_token(request)
     if not token:
         return Principal(kind="anonymous")
@@ -324,7 +331,7 @@ def create_app() -> FastAPI:
         tokens_active = bool(list_access_tokens())
         # header/query 是用户显式提供的认证材料，仍然严格按 401 收口；
         # cookie 在无 token 配置时允许匿名放行，并顺手清掉残留脏 cookie。
-        if not _is_public_ui_path(request) and provided_token and principal.kind != "user":
+        if not _is_public_path(request) and provided_token and principal.kind != "user":
             if token_source in ("header", "query") or tokens_active:
                 return JSONResponse(
                     status_code=401,
@@ -333,7 +340,7 @@ def create_app() -> FastAPI:
             if token_source == "cookie":
                 stale_cookie = True
         # 未提供任何 token 但 token 认证已启用 → 对 API 路径返回 401，让前端显示登录框。
-        if not _is_public_ui_path(request) and not provided_token and tokens_active and principal.kind != "user":
+        if not _is_public_path(request) and not provided_token and tokens_active and principal.kind != "user":
             path = str(request.url.path or "")
             if path.startswith("/api/"):
                 return JSONResponse(

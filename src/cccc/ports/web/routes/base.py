@@ -71,19 +71,19 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         }
 
     @global_router.get("/api/v1/health")
-    async def health() -> Dict[str, Any]:
-        """Health check endpoint for monitoring."""
+    async def health(request: Request) -> Dict[str, Any]:
+        """Health check endpoint for monitoring (public, no auth required)."""
         daemon_resp = await ctx.daemon({"op": "ping"})
         daemon_ok = daemon_resp.get("ok", False)
 
-        return {
-            "ok": daemon_ok,
-            "result": {
-                "version": ctx.version,
-                "home": str(ctx.home),
-                "daemon": "running" if daemon_ok else "stopped",
-            }
-        }
+        result: Dict[str, Any] = {"daemon": "running" if daemon_ok else "stopped"}
+        # Only expose detailed info to authenticated users.
+        principal = get_principal(request)
+        if getattr(principal, "kind", "anonymous") == "user":
+            result["version"] = ctx.version
+            result["home"] = str(ctx.home)
+
+        return {"ok": daemon_ok, "result": result}
 
     @global_router.get("/api/v1/web_access/session")
     async def web_access_session(request: Request) -> Dict[str, Any]:
