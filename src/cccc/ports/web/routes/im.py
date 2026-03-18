@@ -195,6 +195,13 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 im_cfg["dingtalk_app_secret"] = app_secret
             if robot_code:
                 im_cfg["dingtalk_robot_code"] = robot_code
+        elif platform == "wecom":
+            bot_id = str(req.wecom_bot_id or "").strip()
+            secret = str(req.wecom_secret or "").strip()
+            if bot_id:
+                im_cfg["wecom_bot_id"] = bot_id
+            if secret:
+                im_cfg["wecom_secret"] = secret
 
         im_cfg = canonicalize_im_config(im_cfg)
 
@@ -320,6 +327,22 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
                 env[app_secret_env] = app_secret
             if robot_code_env and robot_code:
                 env[robot_code_env] = robot_code
+        elif platform == "wecom":
+            # WeCom: set WECOM_BOT_ID and WECOM_SECRET
+            bot_id = im_cfg.get("wecom_bot_id") or ""
+            secret = im_cfg.get("wecom_secret") or ""
+            bot_id_env = im_cfg.get("wecom_bot_id_env") or ""
+            secret_env = im_cfg.get("wecom_secret_env") or ""
+            # Set actual values to default env var names
+            if bot_id:
+                env["WECOM_BOT_ID"] = bot_id
+            if secret:
+                env["WECOM_SECRET"] = secret
+            # Also set to custom env var names if specified
+            if bot_id_env and bot_id:
+                env[bot_id_env] = bot_id
+            if secret_env and secret:
+                env[secret_env] = secret
         else:
             # Telegram/Slack/Discord: token-based
             bot_token_env = str(im_cfg.get("bot_token_env") or "").strip()

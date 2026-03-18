@@ -23,6 +23,7 @@ import {
 } from "./modals/settings";
 import { ModalFrame } from "./modals/ModalFrame";
 import { SettingsNavigation } from "./modals/settings/SettingsNavigation";
+import { IMConfigDraft, saveAndStartIMBridge, saveIMConfigDraft } from "./modals/settings/imBridgeConfig";
 import { useModalA11y } from "../hooks/useModalA11y";
 
 interface SettingsModalProps {
@@ -104,20 +105,13 @@ export function SettingsModal({
   const [imDingtalkAppKey, setImDingtalkAppKey] = useState("");
   const [imDingtalkAppSecret, setImDingtalkAppSecret] = useState("");
   const [imDingtalkRobotCode, setImDingtalkRobotCode] = useState("");
+  // WeCom fields
+  const [imWecomBotId, setImWecomBotId] = useState("");
+  const [imWecomSecret, setImWecomSecret] = useState("");
   const [imBusy, setImBusy] = useState(false);
   const imLoadSeq = useRef(0);
 
   // IM config drafts cache (per-platform local edits, not yet saved to server)
-  type IMConfigDraft = {
-    botTokenEnv: string;
-    appTokenEnv: string;
-    feishuDomain: string;
-    feishuAppId: string;
-    feishuAppSecret: string;
-    dingtalkAppKey: string;
-    dingtalkAppSecret: string;
-    dingtalkRobotCode: string;
-  };
   const [imConfigDrafts, setImConfigDrafts] = useState<Partial<Record<IMPlatform, IMConfigDraft>>>({});
 
   // Global observability (developer mode)
@@ -243,6 +237,8 @@ export function SettingsModal({
     setImDingtalkAppKey("");
     setImDingtalkAppSecret("");
     setImDingtalkRobotCode("");
+    setImWecomBotId("");
+    setImWecomSecret("");
   };
 
   const loadIMStatus = async (opts?: { resetFirst?: boolean }) => {
@@ -283,6 +279,9 @@ export function SettingsModal({
         setImDingtalkAppKey(im.dingtalk_app_key || im.dingtalk_app_key_env || "");
         setImDingtalkAppSecret(im.dingtalk_app_secret || im.dingtalk_app_secret_env || "");
         setImDingtalkRobotCode(im.dingtalk_robot_code || im.dingtalk_robot_code_env || "");
+        // WeCom fields
+        setImWecomBotId(im.wecom_bot_id || "");
+        setImWecomSecret(im.wecom_secret || "");
       }
     } catch (e) {
       console.error("Failed to load IM status:", e);
@@ -464,6 +463,8 @@ export function SettingsModal({
     dingtalkAppKey: imDingtalkAppKey,
     dingtalkAppSecret: imDingtalkAppSecret,
     dingtalkRobotCode: imDingtalkRobotCode,
+    wecomBotId: imWecomBotId,
+    wecomSecret: imWecomSecret,
   });
 
   // Apply a draft to current IM config fields
@@ -476,7 +477,15 @@ export function SettingsModal({
     setImDingtalkAppKey(draft.dingtalkAppKey);
     setImDingtalkAppSecret(draft.dingtalkAppSecret);
     setImDingtalkRobotCode(draft.dingtalkRobotCode);
+    setImWecomBotId(draft.wecomBotId);
+    setImWecomSecret(draft.wecomSecret);
   };
+
+  const getCurrentIMSaveRequest = () => ({
+    groupId: String(groupId || ""),
+    platform: imPlatform,
+    ...getCurrentIMConfigDraft(),
+  });
 
   // Handle platform change with config caching
   const handlePlatformChange = (newPlatform: IMPlatform) => {
@@ -502,6 +511,8 @@ export function SettingsModal({
       setImDingtalkAppKey("");
       setImDingtalkAppSecret("");
       setImDingtalkRobotCode("");
+      setImWecomBotId("");
+      setImWecomSecret("");
     }
 
     // 3. Set new platform
@@ -512,14 +523,7 @@ export function SettingsModal({
     if (!groupId) return;
     setImBusy(true);
     try {
-      const resp = await api.setIMConfig(groupId, imPlatform, imBotTokenEnv, imAppTokenEnv, {
-        feishu_domain: imFeishuDomain,
-        feishu_app_id: imFeishuAppId,
-        feishu_app_secret: imFeishuAppSecret,
-        dingtalk_app_key: imDingtalkAppKey,
-        dingtalk_app_secret: imDingtalkAppSecret,
-        dingtalk_robot_code: imDingtalkRobotCode,
-      });
+      const resp = await saveIMConfigDraft(getCurrentIMSaveRequest());
       if (resp.ok) await loadIMStatus();
     } catch (e) {
       console.error("Failed to save IM config:", e);
@@ -542,6 +546,8 @@ export function SettingsModal({
         setImDingtalkAppKey("");
         setImDingtalkAppSecret("");
         setImDingtalkRobotCode("");
+        setImWecomBotId("");
+        setImWecomSecret("");
         await loadIMStatus();
       }
     } catch (e) {
@@ -555,8 +561,8 @@ export function SettingsModal({
     if (!groupId) return;
     setImBusy(true);
     try {
-      await api.startIMBridge(groupId);
-      await loadIMStatus();
+      const resp = await saveAndStartIMBridge(getCurrentIMSaveRequest());
+      if (resp.ok) await loadIMStatus();
     } catch (e) {
       console.error("Failed to start bridge:", e);
     } finally {
@@ -922,6 +928,10 @@ export function SettingsModal({
                   setImDingtalkAppSecret={setImDingtalkAppSecret}
                   imDingtalkRobotCode={imDingtalkRobotCode}
                   setImDingtalkRobotCode={setImDingtalkRobotCode}
+                  imWecomBotId={imWecomBotId}
+                  setImWecomBotId={setImWecomBotId}
+                  imWecomSecret={imWecomSecret}
+                  setImWecomSecret={setImWecomSecret}
                   imBusy={imBusy}
                   onSaveConfig={handleSaveIMConfig}
                   onRemoveConfig={handleRemoveIMConfig}

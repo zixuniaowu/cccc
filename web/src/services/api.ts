@@ -1037,6 +1037,12 @@ export async function fetchContext(groupId: string) {
   return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
 }
 
+export async function fetchContextSummary(groupId: string) {
+  const resp = await apiJson<unknown>(`/api/v1/groups/${encodeURIComponent(groupId)}/context/summary`);
+  if (!resp.ok) return resp as ApiResponse<GroupContext>;
+  return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
+}
+
 export async function fetchTasks(groupId: string) {
   const resp = await apiJson<{ tasks?: unknown[] }>(`/api/v1/groups/${encodeURIComponent(groupId)}/tasks`);
   if (!resp.ok) return resp as ApiResponse<{ tasks: Task[] }>;
@@ -1447,6 +1453,8 @@ export async function setIMConfig(
     dingtalk_app_key?: string;
     dingtalk_app_secret?: string;
     dingtalk_robot_code?: string;
+    wecom_bot_id?: string;
+    wecom_secret?: string;
   }
 ) {
   const body: Record<string, unknown> = {
@@ -1474,6 +1482,12 @@ export async function setIMConfig(
     body.dingtalk_app_key = extra.dingtalk_app_key;
     body.dingtalk_app_secret = extra.dingtalk_app_secret;
     body.dingtalk_robot_code = extra.dingtalk_robot_code;
+  }
+
+  // WeCom uses bot_id / secret
+  if (platform === "wecom" && extra) {
+    body.wecom_bot_id = extra.wecom_bot_id;
+    body.wecom_secret = extra.wecom_secret;
   }
 
   return apiJson("/api/im/set", {

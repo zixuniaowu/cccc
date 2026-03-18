@@ -703,7 +703,7 @@ export type GroupAutomation = {
   server_now?: string;
 };
 
-export type IMPlatform = "telegram" | "slack" | "discord" | "feishu" | "dingtalk";
+export type IMPlatform = "telegram" | "slack" | "discord" | "feishu" | "dingtalk" | "wecom";
 
 export type IMConfig = {
   platform?: IMPlatform;
@@ -729,6 +729,9 @@ export type IMConfig = {
   dingtalk_app_secret_env?: string;
   dingtalk_robot_code?: string;
   dingtalk_robot_code_env?: string;
+  // WeCom fields
+  wecom_bot_id?: string;
+  wecom_secret?: string;
 };
 
 export type IMStatus = {
