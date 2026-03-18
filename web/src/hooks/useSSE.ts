@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react";
 import { useGroupStore, useUIStore } from "../stores";
 import { useChatOutboxStore } from "../stores/chatOutboxStore";
+import { beginContextRequest, isLatestContextRequest } from "../stores/useGroupStore";
 import * as api from "../services/api";
 import type { Actor, GroupContext } from "../types";
 import {
@@ -60,9 +61,20 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
     selectedGroupIdRef.current = selectedGroupId;
   }, [selectedGroupId]);
 
-  async function fetchContext(groupId: string) {
-    const resp = await api.fetchContext(groupId);
-    if (resp.ok && resp.result && typeof resp.result === "object" && selectedGroupIdRef.current === groupId) {
+  async function fetchContext(groupId: string, opts?: { fresh?: boolean }) {
+    if (opts?.fresh && contextRefreshTimerRef.current) {
+      window.clearTimeout(contextRefreshTimerRef.current);
+      contextRefreshTimerRef.current = null;
+    }
+    const contextEpoch = beginContextRequest(groupId);
+    const resp = await api.fetchContext(groupId, opts?.fresh ? { fresh: true } : undefined);
+    if (
+      resp.ok &&
+      resp.result &&
+      typeof resp.result === "object" &&
+      selectedGroupIdRef.current === groupId &&
+      isLatestContextRequest(groupId, contextEpoch)
+    ) {
       setGroupContext(resp.result as GroupContext);
     }
   }
@@ -129,10 +141,11 @@ export function useSSE({ activeTabRef, chatAtBottomRef, actorsRef }: UseSSEOptio
 
         // Context sync - debounced refresh
         if (isContextSyncEvent(ev)) {
+          api.invalidateContextRead(groupId);
           if (contextRefreshTimerRef.current) window.clearTimeout(contextRefreshTimerRef.current);
           contextRefreshTimerRef.current = window.setTimeout(() => {
             contextRefreshTimerRef.current = null;
-            void fetchContext(groupId);
+            void fetchContext(groupId, { fresh: true });
           }, 150);
           return;
         }

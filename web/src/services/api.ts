@@ -144,9 +144,55 @@ export type ApiResponse<T> =
   | { ok: true; result: T; error?: null }
   | { ok: false; result?: unknown; error: { code: string; message: string; details?: unknown } };
 
+type SharedReadPromise = Promise<ApiResponse<unknown>>;
+
 // Helper to create a typed error response.
 function makeErrorResponse<T>(code: string, message: string): ApiResponse<T> {
   return { ok: false, error: { code, message } };
+}
+
+const sharedReadRequests = new Map<string, SharedReadPromise>();
+
+function reuseSharedReadRequest<T>(key: string, loader: () => Promise<ApiResponse<T>>): Promise<ApiResponse<T>> {
+  const hit = sharedReadRequests.get(key);
+  if (hit) return hit as Promise<ApiResponse<T>>;
+
+  let task: SharedReadPromise;
+  task = loader().finally(() => {
+    if (sharedReadRequests.get(key) === task) {
+      sharedReadRequests.delete(key);
+    }
+  }) as SharedReadPromise;
+  sharedReadRequests.set(key, task);
+  return task as Promise<ApiResponse<T>>;
+}
+
+function clearSharedReadRequest(key: string): void {
+  sharedReadRequests.delete(key);
+}
+
+function actorsReadOnlyRequestKey(groupId: string): string {
+  return `actors:${String(groupId || "").trim()}:read-only`;
+}
+
+function groupPromptsRequestKey(groupId: string): string {
+  return `group-prompts:${String(groupId || "").trim()}`;
+}
+
+function contextRequestKey(groupId: string): string {
+  return `context:${String(groupId || "").trim()}`;
+}
+
+function clearActorsReadOnlyRequest(groupId: string): void {
+  clearSharedReadRequest(actorsReadOnlyRequestKey(groupId));
+}
+
+function clearContextRequest(groupId: string): void {
+  clearSharedReadRequest(contextRequestKey(groupId));
+}
+
+export function invalidateContextRead(groupId: string): void {
+  clearContextRequest(groupId);
 }
 
 type UnknownRecord = Record<string, unknown>;
@@ -501,18 +547,21 @@ export async function attachScope(groupId: string, path: string) {
 }
 
 export async function startGroup(groupId: string) {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/start?by=user`, {
     method: "POST",
   });
 }
 
 export async function stopGroup(groupId: string) {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/stop?by=user`, {
     method: "POST",
   });
 }
 
 export async function setGroupState(groupId: string, state: "active" | "idle" | "paused") {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/state?state=${encodeURIComponent(state)}&by=user`,
     { method: "POST" }
@@ -648,7 +697,11 @@ export type PromptUpdateOptions = {
 };
 
 export async function fetchGroupPrompts(groupId: string) {
-  return apiJson<GroupPromptsResponse>(`/api/v1/groups/${encodeURIComponent(groupId)}/prompts`);
+  const gid = String(groupId || "").trim();
+  return reuseSharedReadRequest(
+    groupPromptsRequestKey(gid),
+    () => apiJson<GroupPromptsResponse>(`/api/v1/groups/${encodeURIComponent(gid)}/prompts`)
+  );
 }
 
 export async function updateGroupPrompt(
@@ -657,6 +710,7 @@ export async function updateGroupPrompt(
   content: string,
   opts?: PromptUpdateOptions
 ) {
+  clearSharedReadRequest(groupPromptsRequestKey(groupId));
   const body: Record<string, unknown> = { content, by: "user" };
   if (opts?.editorMode) body.editor_mode = opts.editorMode;
   if (Array.isArray(opts?.changedBlocks)) body.changed_blocks = opts.changedBlocks;
@@ -667,6 +721,7 @@ export async function updateGroupPrompt(
 }
 
 export async function resetGroupPrompt(groupId: string, kind: GroupPromptKind) {
+  clearSharedReadRequest(groupPromptsRequestKey(groupId));
   return apiJson<GroupPromptInfo>(`/api/v1/groups/${encodeURIComponent(groupId)}/prompts/${kind}?confirm=${encodeURIComponent(kind)}`, {
     method: "DELETE",
   });
@@ -674,11 +729,18 @@ export async function resetGroupPrompt(groupId: string, kind: GroupPromptKind) {
 
 // ============ Actors ============
 
-export async function fetchActors(groupId: string, includeUnread = true) {
+export async function fetchActors(groupId: string, includeUnread = false) {
+  const gid = String(groupId || "").trim();
   const url = includeUnread
-    ? `/api/v1/groups/${encodeURIComponent(groupId)}/actors?include_unread=true`
-    : `/api/v1/groups/${encodeURIComponent(groupId)}/actors`;
-  return apiJson<{ actors: Actor[] }>(url);
+    ? `/api/v1/groups/${encodeURIComponent(gid)}/actors?include_unread=true`
+    : `/api/v1/groups/${encodeURIComponent(gid)}/actors`;
+  if (includeUnread) {
+    return apiJson<{ actors: Actor[] }>(url);
+  }
+  return reuseSharedReadRequest(
+    actorsReadOnlyRequestKey(gid),
+    () => apiJson<{ actors: Actor[] }>(url)
+  );
 }
 
 export async function addActor(
@@ -696,6 +758,7 @@ export async function addActor(
     capabilityAutoload?: string[];
   }
 ) {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson<{ actor: Actor }>(`/api/v1/groups/${encodeURIComponent(groupId)}/actors`, {
     method: "POST",
     body: JSON.stringify({
@@ -734,6 +797,7 @@ export async function updateActor(
     capabilityAutoload?: string[];
   }
 ) {
+  clearActorsReadOnlyRequest(groupId);
   const body: Record<string, unknown> = { by: "user" };
   if (runtime !== undefined && runtime !== "") body.runtime = runtime;
   if (command !== undefined) body.command = command.trim();
@@ -754,6 +818,7 @@ export async function updateActor(
 }
 
 export async function attachActorProfile(groupId: string, actorId: string, profileId: string, opts?: ProfileLookupOptions) {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson<{ actor: Actor }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
     {
@@ -769,6 +834,7 @@ export async function attachActorProfile(groupId: string, actorId: string, profi
 }
 
 export async function convertActorToCustom(groupId: string, actorId: string) {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson<{ actor: Actor }>(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}`,
     {
@@ -779,6 +845,7 @@ export async function convertActorToCustom(groupId: string, actorId: string) {
 }
 
 export async function removeActor(groupId: string, actorId: string) {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}?by=user`,
     { method: "DELETE" }
@@ -786,6 +853,7 @@ export async function removeActor(groupId: string, actorId: string) {
 }
 
 export async function startActor(groupId: string, actorId: string) {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/start`,
     { method: "POST" }
@@ -793,6 +861,7 @@ export async function startActor(groupId: string, actorId: string) {
 }
 
 export async function stopActor(groupId: string, actorId: string) {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/stop`,
     { method: "POST" }
@@ -800,6 +869,7 @@ export async function stopActor(groupId: string, actorId: string) {
 }
 
 export async function restartActor(groupId: string, actorId: string) {
+  clearActorsReadOnlyRequest(groupId);
   return apiJson(
     `/api/v1/groups/${encodeURIComponent(groupId)}/actors/${encodeURIComponent(actorId)}/restart?by=user`,
     { method: "POST" }
@@ -1031,16 +1101,24 @@ export async function copyProfilePrivateEnvFromProfile(
 
 // ============ Context & Settings ============
 
-export async function fetchContext(groupId: string) {
-  const resp = await apiJson<unknown>(`/api/v1/groups/${encodeURIComponent(groupId)}/context`);
-  if (!resp.ok) return resp as ApiResponse<GroupContext>;
-  return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
-}
-
-export async function fetchContextSummary(groupId: string) {
-  const resp = await apiJson<unknown>(`/api/v1/groups/${encodeURIComponent(groupId)}/context/summary`);
-  if (!resp.ok) return resp as ApiResponse<GroupContext>;
-  return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
+export async function fetchContext(groupId: string, opts?: { fresh?: boolean }) {
+  const gid = String(groupId || "").trim();
+  if (opts?.fresh) {
+    clearContextRequest(gid);
+    return reuseSharedReadRequest(contextRequestKey(gid), async () => {
+      const sep = `/api/v1/groups/${encodeURIComponent(gid)}/context`.includes("?") ? "&" : "?";
+      const resp = await apiJson<unknown>(
+        `/api/v1/groups/${encodeURIComponent(gid)}/context${sep}fresh=1&_=${Date.now()}`
+      );
+      if (!resp.ok) return resp as ApiResponse<GroupContext>;
+      return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
+    });
+  }
+  return reuseSharedReadRequest(contextRequestKey(gid), async () => {
+    const resp = await apiJson<unknown>(`/api/v1/groups/${encodeURIComponent(gid)}/context`);
+    if (!resp.ok) return resp as ApiResponse<GroupContext>;
+    return { ok: true, result: normalizeContext(resp.result) } as ApiResponse<GroupContext>;
+  });
 }
 
 export async function fetchTasks(groupId: string) {
@@ -1057,6 +1135,7 @@ export async function contextSync(
   ops: Array<Record<string, unknown>>,
   dryRun: boolean = false
 ) {
+  clearContextRequest(groupId);
   return apiJson(`/api/v1/groups/${encodeURIComponent(groupId)}/context`, {
     method: "POST",
     body: JSON.stringify({ ops, by: "user", dry_run: dryRun }),

@@ -492,7 +492,7 @@ MCP_TOOLS = [
     },
     {
         "name": "cccc_context_get",
-        "description": "Get the context control-plane snapshot (coordination, agent states, attention, board, panorama projection).",
+        "description": "Get the context control-plane snapshot (coordination, agent states, attention, board).",
         "inputSchema": _obj(
             {
                 **_COMMON_GROUP,

@@ -42,7 +42,7 @@ interface AppModalsProps {
   onStartGroup: () => Promise<void>;
   onStopGroup: () => Promise<void>;
   onSetGroupState: (state: "active" | "idle" | "paused") => Promise<void>;
-  fetchContext: (groupId: string) => Promise<void>;
+  fetchContext: (groupId: string, opts?: { fresh?: boolean }) => Promise<void>;
   canManageGroups: boolean;
 }
 
@@ -1035,7 +1035,7 @@ export function AppModals({
         onToggleTheme={onThemeToggle}
         onOpenSearch={() => openModal("search")}
         onOpenContext={() => {
-          if (selectedGroupId) void fetchContext(selectedGroupId);
+          if (selectedGroupId && !groupContext) void fetchContext(selectedGroupId);
           openModal("context");
         }}
         onOpenSettings={() => openModal("settings")}
@@ -1097,7 +1097,7 @@ export function AppModals({
         groupId={selectedGroupId}
         context={groupContext}
         onRefreshContext={async () => {
-          if (selectedGroupId) await fetchContext(selectedGroupId);
+          if (selectedGroupId) await fetchContext(selectedGroupId, { fresh: true });
         }}
         isDark={isDark}
         settings={groupSettings}

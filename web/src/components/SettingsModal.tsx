@@ -314,7 +314,7 @@ export function SettingsModal({
   const loadDevActors = async () => {
     if (!groupId) return;
     try {
-      const resp = await api.fetchActors(groupId);
+      const resp = await api.fetchActors(groupId, false);
       if (resp.ok && resp.result?.actors) {
         const actors = Array.isArray(resp.result.actors) ? resp.result.actors : [];
         setDevActors(actors);

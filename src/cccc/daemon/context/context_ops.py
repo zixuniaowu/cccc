@@ -615,13 +615,6 @@ def handle_context_get(args: Dict[str, Any]) -> DaemonResponse:
         "attention": attention,
         "board": board,
         "tasks_summary": _tasks_summary(tasks, attention=attention),
-        "panorama": {
-            "mermaid": storage.compute_panorama_mermaid(
-                tasks=tasks,
-                agents_state=AgentsData(agents=ordered_agents),
-                coordination=context.coordination,
-            )
-        },
         "meta": context.meta if isinstance(context.meta, dict) else {},
     }
     return DaemonResponse(ok=True, result=result)

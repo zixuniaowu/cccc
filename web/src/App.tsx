@@ -551,7 +551,7 @@ export default function App() {
             } : undefined}
             onOpenSearch={() => openModal("search")}
             onOpenContext={() => {
-              if (selectedGroupId) void fetchContext(selectedGroupId);
+              if (selectedGroupId && !groupContext) void fetchContext(selectedGroupId);
               openModal("context");
             }}
             onStartGroup={handleStartGroup}

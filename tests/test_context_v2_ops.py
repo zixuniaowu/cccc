@@ -1,4 +1,4 @@
-"""Context v3 focused tests: CAS, coordination brief, task lifecycle, permissions, panorama, meta validation."""
+"""Context v3 focused tests: CAS, coordination brief, task lifecycle, permissions, and meta validation."""
 
 import json
 import os
@@ -202,23 +202,6 @@ class TestContextV2Ops(unittest.TestCase):
             ctx, _ = self._context(gid)
             agent_ids = [str(item.get("id") or "") for item in ctx.result["agent_states"]]
             self.assertEqual(agent_ids, ["PeerA", "管理员", "alpha"])
-        finally:
-            cleanup()
-
-    def test_panorama_mermaid_includes_coordination_tasks_and_agents(self) -> None:
-        _, cleanup = self._with_home()
-        try:
-            gid = self._create_group()
-            self._sync(gid, [{"op": "coordination.brief.update", "objective": "Ship B3", "current_focus": "Context panel"}])
-            self._sync(gid, [{"op": "task.create", "title": "Modal", "outcome": "Redesign modal", "assignee": "foreman"}])
-            task_id = self._tasks(gid)[0].result["tasks"][0]["id"]
-            self._sync(gid, [{"op": "task.move", "task_id": task_id, "status": "active"}])
-            ctx, _ = self._context(gid)
-            mermaid = ctx.result["panorama"]["mermaid"]
-            self.assertIn("Coordination", mermaid)
-            self.assertIn("Ship B3", mermaid)
-            self.assertIn("Modal", mermaid)
-            self.assertIn("foreman", mermaid)
         finally:
             cleanup()
 

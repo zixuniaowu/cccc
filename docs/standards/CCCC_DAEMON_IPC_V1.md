@@ -1817,7 +1817,6 @@ Result:
     done?: Array<Record<string, unknown>>
     archived?: Array<Record<string, unknown>>
   }
-  panorama?: { mermaid?: string | null }
   meta?: Record<string, unknown>
 }
 ```

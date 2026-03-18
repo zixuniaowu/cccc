@@ -25,6 +25,7 @@ from ..schemas import (
     get_principal,
     require_group,
 )
+from .actors import invalidate_readonly_actor_list
 
 
 def create_routers(ctx: RouteContext) -> list[APIRouter]:
@@ -59,15 +60,18 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     @group_router.post("/start")
     async def group_start(request: Request, group_id: str, by: str = "user") -> Dict[str, Any]:
+        await invalidate_readonly_actor_list(group_id)
         return await ctx.daemon({"op": "group_start", "args": {"group_id": group_id, "by": by, **_profile_auth_args(request)}})
 
     @group_router.post("/stop")
     async def group_stop(group_id: str, by: str = "user") -> Dict[str, Any]:
+        await invalidate_readonly_actor_list(group_id)
         return await ctx.daemon({"op": "group_stop", "args": {"group_id": group_id, "by": by}})
 
     @group_router.post("/state")
     async def group_set_state(group_id: str, state: str, by: str = "user") -> Dict[str, Any]:
         """Set group state (active/idle/paused) to control automation behavior."""
+        await invalidate_readonly_actor_list(group_id)
         return await ctx.daemon({"op": "group_set_state", "args": {"group_id": group_id, "state": state, "by": by}})
 
     # =========================================================================

@@ -146,6 +146,21 @@ type GroupViewSnapshot = {
 };
 
 const groupViewCache = new Map<string, GroupViewSnapshot>();
+const contextRequestEpochByGroup = new Map<string, number>();
+
+export function beginContextRequest(groupId: string): number {
+  const gid = String(groupId || "").trim();
+  if (!gid) return 0;
+  const next = Number(contextRequestEpochByGroup.get(gid) || 0) + 1;
+  contextRequestEpochByGroup.set(gid, next);
+  return next;
+}
+
+export function isLatestContextRequest(groupId: string, epoch: number): boolean {
+  const gid = String(groupId || "").trim();
+  if (!gid || epoch <= 0) return false;
+  return Number(contextRequestEpochByGroup.get(gid) || 0) === epoch;
+}
 
 function cloneGroupDoc(doc: GroupDoc | null | undefined): GroupDoc | null {
   return doc ? { ...doc } : null;
@@ -742,7 +757,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }
     refreshActorsInFlight.add(gid);
     try {
-      const resp = await api.fetchActors(gid);
+      const resp = await api.fetchActors(gid, true);
       if (resp.ok) {
         const nextActors = resp.result.actors || [];
         saveGroupView(gid, { actors: nextActors });
@@ -806,7 +821,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     const showPromise = api.fetchGroup(gid);
     const tailPromise = api.fetchLedgerTail(gid);
-    const actorsPromise = api.fetchActors(gid);
+    const actorsPromise = api.fetchActors(gid, true);
 
     void showPromise.then((show) => {
       if (show.ok) {
@@ -858,8 +873,10 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
     // 首屏稳定后再补 context/settings，避免它们拖住切组体感。
     void Promise.allSettled([showPromise, tailPromise, actorsPromise]).then(() => {
+      const contextEpoch = beginContextRequest(gid);
       void api.fetchContext(gid).then((ctx) => {
         if (!ctx.ok) return;
+        if (!isLatestContextRequest(gid, contextEpoch)) return;
         commitViewPatch({ groupContext: ctx.result as GroupContext });
       }).catch((error) => {
         console.error(`Failed to load context for group=${gid}:`, error);
@@ -886,7 +903,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
       const [show, tail, actorsResp] = await Promise.all([
         api.fetchGroup(gid),
         api.fetchLedgerTail(gid),
-        api.fetchActors(gid),
+        api.fetchActors(gid, true),
       ]);
 
       const patch: Partial<Omit<GroupViewSnapshot, "cachedAt">> = {};

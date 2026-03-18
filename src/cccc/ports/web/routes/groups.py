@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+import time
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -51,6 +53,63 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
 
     # --- group-scoped router ---
     group_router = APIRouter(prefix="/api/v1/groups/{group_id}", dependencies=[Depends(require_group)])
+    context_inflight: Dict[str, asyncio.Future[Dict[str, Any]]] = {}
+    context_generation: Dict[str, int] = {}
+    context_lock = asyncio.Lock()
+
+    async def _invalidate_context_read(group_id: str) -> None:
+        gid = str(group_id or "").strip()
+        if not gid:
+            return
+        key = f"context:{gid}"
+        async with context_lock:
+            context_generation[key] = int(context_generation.get(key, 0)) + 1
+            context_inflight.pop(key, None)
+
+    async def _deduped_context_get(group_id: str, fetcher) -> Dict[str, Any]:  # type: ignore[no-untyped-def]
+        gid = str(group_id or "").strip()
+        if not gid:
+            return await fetcher()
+
+        key = f"context:{gid}"
+        if ctx.read_only:
+            ttl = max(0.0, min(5.0, ctx.exhibit_cache_ttl_s))
+            return await ctx.cached_json(key, ttl, fetcher)
+
+        fut: asyncio.Future[Dict[str, Any]] | None = None
+        fetch_generation = 0
+        do_fetch = False
+
+        async with context_lock:
+            fut = context_inflight.get(key)
+            if fut is None or fut.done():
+                loop = asyncio.get_running_loop()
+                fut = loop.create_future()
+                context_inflight[key] = fut
+                fetch_generation = int(context_generation.get(key, 0))
+                do_fetch = True
+
+        if fut is not None and not do_fetch:
+            return await fut
+
+        try:
+            val = await fetcher()
+            async with context_lock:
+                if int(context_generation.get(key, 0)) == fetch_generation and context_inflight.get(key) is fut:
+                    if fut is not None and not fut.done():
+                        fut.set_result(val)
+                elif fut is not None and not fut.done():
+                    fut.set_result(val)
+            return val
+        except Exception as exc:
+            async with context_lock:
+                if fut is not None and not fut.done():
+                    fut.set_exception(exc)
+            raise
+        finally:
+            async with context_lock:
+                if context_inflight.get(key) is fut:
+                    context_inflight.pop(key, None)
 
     def _request_access_token(request: Request) -> str:
         auth = str(request.headers.get("authorization") or "").strip()
@@ -206,15 +265,17 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         return await ctx.daemon({"op": "group_delete", "args": {"group_id": group_id, "by": by}})
 
     @group_router.get("/context")
-    async def group_context(group_id: str) -> Dict[str, Any]:
+    async def group_context(group_id: str, fresh: bool = False) -> Dict[str, Any]:
         """Get full group context (coordination/agent_states/projections)."""
         gid = str(group_id or "").strip()
 
         async def _fetch() -> Dict[str, Any]:
             return await ctx.daemon({"op": "context_get", "args": {"group_id": gid}})
 
-        ttl = max(0.0, min(5.0, ctx.exhibit_cache_ttl_s))
-        return await ctx.cached_json(f"context:{gid}", ttl, _fetch)
+        if fresh:
+            await _invalidate_context_read(gid)
+            return await _fetch()
+        return await _deduped_context_get(gid, _fetch)
 
     @group_router.get("/template/export")
     async def group_template_export(group_id: str) -> Dict[str, Any]:
@@ -641,6 +702,7 @@ def create_routers(ctx: RouteContext) -> list[APIRouter]:
         by = str(body.get("by") or "user")
         dry_run = coerce_bool(body.get("dry_run"), default=False)
 
+        await _invalidate_context_read(group_id)
         return await ctx.daemon({
             "op": "context_sync",
             "args": {"group_id": group_id, "ops": ops, "by": by, "dry_run": dry_run}

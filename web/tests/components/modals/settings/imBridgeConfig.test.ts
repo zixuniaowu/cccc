@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { IMConfigSaveRequest } from "./imBridgeConfig";
-import { saveAndStartIMBridge, saveIMConfigDraft } from "./imBridgeConfig";
-import * as api from "../../../services/api";
+import type { IMConfigSaveRequest } from "../../../../src/components/modals/settings/imBridgeConfig";
+import {
+  saveAndStartIMBridge,
+  saveIMConfigDraft,
+} from "../../../../src/components/modals/settings/imBridgeConfig";
+import * as api from "../../../../src/services/api";
 
-vi.mock("../../../services/api", () => ({
+vi.mock("../../../../src/services/api", () => ({
   setIMConfig: vi.fn(),
   startIMBridge: vi.fn(),
 }));
