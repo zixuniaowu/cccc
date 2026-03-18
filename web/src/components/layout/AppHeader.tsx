@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { Actor, GroupDoc, Theme } from "../../types";
 import { getGroupStatusUnified } from "../../utils/groupStatus";
+import { getGroupControlVisual, getLaunchControlMode } from "../../utils/groupControls";
 import { classNames } from "../../utils/classNames";
 import { ThemeToggleCompact } from "../ThemeToggle";
 import { LanguageSwitcher } from "../LanguageSwitcher";
@@ -8,7 +9,6 @@ import {
   ClipboardIcon,
   SearchIcon,
   RocketIcon,
-  PlayIcon,
   PauseIcon,
   StopIcon,
   SettingsIcon,
@@ -61,8 +61,44 @@ export function AppHeader({
   sseStatus,
 }: AppHeaderProps) {
   const { t } = useTranslation('layout');
-  const headerIconButtonClass =
-    "flex items-center justify-center w-11 h-11 rounded-xl transition-all shrink-0 glass-btn";
+  const headerIconButtonBaseClass =
+    "flex items-center justify-center w-11 h-11 rounded-xl transition-all shrink-0";
+  const headerRailClass =
+    "flex items-center gap-1 rounded-2xl border border-[var(--glass-border-subtle)] bg-[var(--glass-panel-bg)] p-1 shadow-sm backdrop-blur-xl";
+  const headerRailButtonClass =
+    "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0 border border-transparent bg-transparent text-[var(--color-text-muted)] hover:bg-black/5 hover:text-[var(--color-text-primary)] disabled:opacity-45 disabled:hover:bg-transparent disabled:hover:text-[var(--color-text-muted)] dark:hover:bg-white/6";
+  const selectedStatus = selectedGroupId ? getGroupStatusUnified(selectedGroupRunning, groupDoc?.state) : null;
+  const selectedStatusKey = selectedStatus?.key ?? null;
+  const launchMode = getLaunchControlMode(selectedStatusKey);
+  const launchControl = getGroupControlVisual(selectedStatusKey, "launch", busy);
+  const pauseControl = getGroupControlVisual(selectedStatusKey, "pause", busy);
+  const stopControl = getGroupControlVisual(selectedStatusKey, "stop", busy);
+  const isGroupBusy = busy.startsWith("group-");
+  const launchHardUnavailable = !selectedGroupId || actors.length === 0;
+  const pauseHardUnavailable = !selectedGroupId || !selectedGroupRunning;
+  const stopHardUnavailable = !selectedGroupId;
+  const launchDisabled = launchHardUnavailable || isGroupBusy;
+  const pauseDisabled = pauseHardUnavailable || isGroupBusy;
+  const stopDisabled = stopHardUnavailable || isGroupBusy;
+
+  const handleLaunchClick = () => {
+    if (launchDisabled || selectedStatusKey === "run") return;
+    if (launchMode === "activate") {
+      void onSetGroupState("active");
+      return;
+    }
+    onStartGroup();
+  };
+
+  const handlePauseClick = () => {
+    if (pauseDisabled || selectedStatusKey === "paused") return;
+    void onSetGroupState("paused");
+  };
+
+  const handleStopClick = () => {
+    if (stopDisabled || selectedStatusKey === "stop") return;
+    onStopGroup();
+  };
   return (
     <header
       className="flex-shrink-0 z-20 px-4 h-14 flex items-center justify-between gap-3 glass-header"
@@ -71,7 +107,8 @@ export function AppHeader({
         <button
           className={classNames(
             "md:hidden -ml-1",
-            headerIconButtonClass,
+            headerIconButtonBaseClass,
+            "glass-btn",
             "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
           )}
           onClick={onOpenSidebar}
@@ -94,21 +131,16 @@ export function AppHeader({
                 title={sseStatus === "connecting" ? t('reconnecting') : t('disconnected')}
               />
             )}
-            {selectedGroupId &&
-              groupDoc &&
-              (() => {
-                const status = getGroupStatusUnified(selectedGroupRunning, groupDoc.state);
-                return (
-                  <span
-                    className={classNames(
-                      "w-2 h-2 rounded-full ring-2",
-                      status.dotClass,
-                      "ring-black/10 dark:ring-white/10"
-                    )}
-                    title={status.label}
-                  />
-                );
-              })()}
+            {selectedStatus && (
+              <span
+                className={classNames(
+                  "w-2 h-2 rounded-full ring-2",
+                  selectedStatus.dotClass,
+                  "ring-black/10 dark:ring-white/10"
+                )}
+                title={selectedStatus.label}
+              />
+            )}
           </div>
         </div>
 
@@ -133,117 +165,95 @@ export function AppHeader({
           <>
             {/* Desktop Actions */}
             <div className="hidden md:flex items-center gap-1.5 mr-2">
-              <button
-                onClick={onOpenSearch}
-                disabled={!selectedGroupId}
-                className={classNames(
-                  headerIconButtonClass,
-                  "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
-                )}
-                title={t('searchMessages')}
-              >
-                <span className="sr-only">{t('searchMessages')}</span>
-                <SearchIcon size={18} />
-              </button>
-
-              <button
-                onClick={onOpenContext}
-                disabled={!selectedGroupId}
-                className={classNames(
-                  headerIconButtonClass,
-                  "text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
-                )}
-                title={t('context')}
-              >
-                <span className="sr-only">{t('context')}</span>
-                <ClipboardIcon size={18} />
-              </button>
-
-              <div className="w-px h-4 mx-1 bg-black/10 dark:bg-white/10" />
-
-              <button
-                onClick={onStartGroup}
-                disabled={!selectedGroupId || busy === "group-start" || actors.length === 0}
-                className={classNames(
-                  headerIconButtonClass,
-                  "border shadow-sm hover:-translate-y-px active:translate-y-0",
-                  "border-emerald-200/70 bg-emerald-50/75 text-emerald-700 shadow-emerald-100/80 hover:bg-emerald-100/80 hover:shadow-emerald-200/70",
-                  "dark:border-[var(--glass-border-subtle)] dark:bg-[var(--glass-panel-bg)] dark:text-emerald-400 dark:shadow-none dark:hover:text-emerald-300"
-                )}
-                title={t('launchAllAgents')}
-              >
-                <span className="sr-only">{t('launchAllAgents')}</span>
-                <RocketIcon size={18} className="drop-shadow-[0_1px_3px_rgba(16,185,129,0.22)]" />
-              </button>
-
-              {groupDoc?.state === "paused" ? (
+              <div className={headerRailClass}>
                 <button
-                  onClick={() => void onSetGroupState("active")}
-                  disabled={!selectedGroupId || busy === "group-state"}
-                  className={classNames(
-                    headerIconButtonClass,
-                    "text-amber-600 dark:text-amber-400"
-                  )}
-                  title={t('resumeDelivery')}
+                  onClick={onOpenSearch}
+                  disabled={!selectedGroupId}
+                  className={headerRailButtonClass}
+                  title={t('searchMessages')}
                 >
-                  <span className="sr-only">{t('resumeDelivery')}</span>
-                  <PlayIcon size={18} />
+                  <span className="sr-only">{t('searchMessages')}</span>
+                  <SearchIcon size={18} />
                 </button>
-              ) : (
+
                 <button
-                  onClick={() => void onSetGroupState("paused")}
-                  disabled={!selectedGroupId || busy === "group-state"}
+                  onClick={onOpenContext}
+                  disabled={!selectedGroupId}
+                  className={headerRailButtonClass}
+                  title={t('context')}
+                >
+                  <span className="sr-only">{t('context')}</span>
+                  <ClipboardIcon size={18} />
+                </button>
+              </div>
+
+              <div className={headerRailClass}>
+                <button
+                  onClick={handleLaunchClick}
+                  disabled={launchDisabled}
                   className={classNames(
-                    headerIconButtonClass,
-                    "text-gray-400 hover:text-amber-600 dark:text-slate-400 dark:hover:text-amber-300"
+                    "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0",
+                    launchControl.className,
+                    launchHardUnavailable && "opacity-45"
+                  )}
+                  title={launchMode === "activate" ? t('resumeDelivery') : t('launchAllAgents')}
+                  aria-pressed={launchControl.active}
+                >
+                  <span className="sr-only">{launchMode === "activate" ? t('resumeDelivery') : t('launchAllAgents')}</span>
+                  <RocketIcon size={18} />
+                </button>
+
+                <button
+                  onClick={handlePauseClick}
+                  disabled={pauseDisabled}
+                  className={classNames(
+                    "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0",
+                    pauseControl.className,
+                    pauseHardUnavailable && "opacity-45"
                   )}
                   title={t('pauseDelivery')}
+                  aria-pressed={pauseControl.active}
                 >
                   <span className="sr-only">{t('pauseDelivery')}</span>
                   <PauseIcon size={18} />
                 </button>
-              )}
 
-              <button
-                onClick={onStopGroup}
-                disabled={!selectedGroupId || busy === "group-stop"}
-                className={classNames(
-                  headerIconButtonClass,
-                  "text-gray-400 hover:text-rose-600 dark:text-slate-400 dark:hover:text-rose-400"
-                )}
-                title={t('stopAllAgents')}
-              >
-                <span className="sr-only">{t('stopAllAgents')}</span>
-                <StopIcon size={18} />
-              </button>
-            </div>
+                <button
+                  onClick={handleStopClick}
+                  disabled={stopDisabled}
+                  className={classNames(
+                    "flex items-center justify-center w-10 h-10 rounded-xl transition-all shrink-0",
+                    stopControl.className,
+                    stopHardUnavailable && "opacity-45"
+                  )}
+                  title={t('stopAllAgents')}
+                  aria-pressed={stopControl.active}
+                >
+                  <span className="sr-only">{t('stopAllAgents')}</span>
+                  <StopIcon size={18} />
+                </button>
+              </div>
 
-            <div className="hidden md:flex items-center gap-1">
-              <ThemeToggleCompact theme={theme} onThemeChange={onThemeChange} isDark={isDark} />
-            </div>
-
-            <button
-              onClick={onOpenSettings}
-              disabled={!selectedGroupId}
-              className={classNames(
-                "hidden md:flex",
-                headerIconButtonClass,
-                "text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]"
-              )}
-              title={t('settings')}
-            >
-              <SettingsIcon size={18} />
-            </button>
-
-            <div className="hidden md:block w-px h-4 bg-black/10 dark:bg-white/10" />
-            <div className="hidden md:block">
-              <LanguageSwitcher isDark={isDark} />
+              <div className={headerRailClass}>
+                <ThemeToggleCompact theme={theme} onThemeChange={onThemeChange} isDark={isDark} variant="rail" />
+                <LanguageSwitcher isDark={isDark} variant="rail" />
+                <button
+                  onClick={onOpenSettings}
+                  disabled={!selectedGroupId}
+                  className={headerRailButtonClass}
+                  title={t('settings')}
+                >
+                  <span className="sr-only">{t('settings')}</span>
+                  <SettingsIcon size={18} />
+                </button>
+              </div>
             </div>
 
             <button
               className={classNames(
                 "md:hidden",
-                headerIconButtonClass,
+                headerIconButtonBaseClass,
+                "glass-btn",
                 "text-[var(--color-text-muted)]"
               )}
               onClick={onOpenMobileMenu}

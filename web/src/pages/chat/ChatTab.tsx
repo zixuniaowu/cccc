@@ -330,11 +330,11 @@ export function ChatTab({
               )}>
                 {[
                   ["all", t('filterAll')],
-                  ["to_user", t('filterToUser')],
+                  ["user", t('filterUser')],
                   ["attention", t('filterImportant')],
                   ["task", t('filterNeedReply')],
                 ].map(([key, label]) => {
-                  const k = key as "all" | "to_user" | "attention" | "task";
+                  const k = key as "all" | "user" | "attention" | "task";
                   const active = chatFilter === k;
                   return (
                     <button
@@ -374,11 +374,11 @@ export function ChatTab({
               >
                 {[
                   ["all", t('filterAll')],
-                  ["to_user", t('filterToUser')],
+                  ["user", t('filterUser')],
                   ["attention", t('filterImportant')],
                   ["task", t('filterNeedReply')],
                 ].map(([key, label]) => {
-                  const k = key as "all" | "to_user" | "attention" | "task";
+                  const k = key as "all" | "user" | "attention" | "task";
                   const active = chatFilter === k;
                   return (
                     <button

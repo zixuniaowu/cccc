@@ -116,6 +116,7 @@
     "collaborationPlaceholder": "团队如何协作推进？",
     "noOverview": "尚未设置总览",
     "overviewMermaid": "项目关系图",
+    "expand": "展开",
     "openLarge": "放大查看",
     "diagramHint": "点击图表进入全屏并缩放",
     "zoomLevel": "缩放 {{percent}}%",

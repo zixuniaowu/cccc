@@ -8,7 +8,7 @@
   "returnToLatest": "最新に戻る",
   "setupChecklist": "セットアップチェックリスト",
   "filterAll": "すべて",
-  "filterToUser": "ユーザー宛",
+  "filterUser": "ユーザー",
   "filterImportant": "要確認",
   "filterNeedReply": "要返信",
   "chatFilters": "チャットフィルター",

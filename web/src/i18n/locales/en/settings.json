@@ -642,6 +642,12 @@
   "developer": {
     "title": "Developer Mode (Global)",
     "description": "These settings apply to the whole CCCC instance (daemon + Web). Use this only when debugging.",
+    "runtimeInfoTitle": "Runtime Info",
+    "runtimeInfoHint": "Quick version check for the current Web package and the connected daemon.",
+    "ccccVersion": "CCCC",
+    "daemonVersion": "Daemon",
+    "versionMismatchBadge": "Mismatch",
+    "versionMismatchHint": "The Web package and daemon are on different versions. Restart CCCC to realign them.",
     "warningTitle": "Warning",
     "warningText": "Developer mode enables verbose logs and extra diagnostics. Only enable it when you need it.",
     "enableDeveloperMode": "Enable developer mode",

@@ -8,7 +8,7 @@
   "returnToLatest": "Return to latest",
   "setupChecklist": "Setup checklist",
   "filterAll": "All",
-  "filterToUser": "To user",
+  "filterUser": "User",
   "filterImportant": "Needs Ack",
   "filterNeedReply": "Need Reply",
   "chatFilters": "Chat filters",

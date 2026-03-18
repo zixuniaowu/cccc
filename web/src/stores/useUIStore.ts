@@ -7,7 +7,7 @@ interface UINotice {
   actionId?: string;
 }
 
-export type ChatFilter = "all" | "to_user" | "attention" | "task";
+export type ChatFilter = "all" | "user" | "attention" | "task";
 
 export interface ChatScrollSnapshot {
   atBottom: boolean;

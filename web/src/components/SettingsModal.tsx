@@ -132,6 +132,9 @@ export function SettingsModal({
   const [debugSnapshot, setDebugSnapshot] = useState("");
   const [debugSnapshotErr, setDebugSnapshotErr] = useState("");
   const [debugSnapshotBusy, setDebugSnapshotBusy] = useState(false);
+  const [runtimeVersion, setRuntimeVersion] = useState("");
+  const [daemonVersion, setDaemonVersion] = useState("");
+  const [runtimeInfoErr, setRuntimeInfoErr] = useState("");
 
   const [logComponent, setLogComponent] = useState<"daemon" | "web" | "im">("daemon");
   const [logLines, setLogLines] = useState(200);
@@ -219,6 +222,12 @@ export function SettingsModal({
     if (!isOpen) return;
     if (scope !== "global" || globalTab !== "developer") return;
     void loadRegistryPreview();
+  }, [isOpen, scope, globalTab]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    if (scope !== "global" || globalTab !== "developer") return;
+    void loadRuntimeInfo();
   }, [isOpen, scope, globalTab]);
 
   // ============ Data Loading ============
@@ -623,6 +632,29 @@ export function SettingsModal({
     }
   };
 
+  const loadRuntimeInfo = async () => {
+    setRuntimeInfoErr("");
+    try {
+      const resp = await api.fetchPing();
+      if (!resp.ok) {
+        setRuntimeVersion("");
+        setDaemonVersion("");
+        setRuntimeInfoErr(resp.error?.message || "Failed to load runtime info");
+        return;
+      }
+      const result = resp.result || {};
+      const daemon = result.daemon && typeof result.daemon === "object" && !Array.isArray(result.daemon)
+        ? result.daemon as Record<string, unknown>
+        : null;
+      setRuntimeVersion(String(result.version || "").trim());
+      setDaemonVersion(String(daemon?.version || "").trim());
+    } catch {
+      setRuntimeVersion("");
+      setDaemonVersion("");
+      setRuntimeInfoErr("Failed to load runtime info");
+    }
+  };
+
   const loadLogTail = async () => {
     setLogBusy(true);
     setLogErr("");
@@ -977,6 +1009,9 @@ export function SettingsModal({
                 <DeveloperTab
                   isDark={isDark}
                   groupId={groupId}
+                  runtimeVersion={runtimeVersion}
+                  daemonVersion={daemonVersion}
+                  runtimeInfoErr={runtimeInfoErr}
                   developerMode={developerMode}
                   setDeveloperMode={setDeveloperMode}
                   logLevel={logLevel}

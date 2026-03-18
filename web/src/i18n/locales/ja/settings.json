@@ -642,6 +642,12 @@
   "developer": {
     "title": "開発者モード (グローバル)",
     "description": "これらの設定は、CCCC インスタンス全体 (daemon + Web) に適用されます。これはデバッグ時にのみ使用してください。",
+    "runtimeInfoTitle": "ランタイム情報",
+    "runtimeInfoHint": "現在の Web パッケージと接続中 daemon のバージョンをすばやく確認します。",
+    "ccccVersion": "CCCC",
+    "daemonVersion": "Daemon",
+    "versionMismatchBadge": "不一致",
+    "versionMismatchHint": "Web パッケージと daemon のバージョンが一致していません。CCCC を再起動して揃えてください。",
     "warningTitle": "警告",
     "warningText": "開発者モードでは、詳細なログと追加の診断が有効になります。必要な場合にのみ有効にしてください。",
     "enableDeveloperMode": "開発者モードを有効にする",

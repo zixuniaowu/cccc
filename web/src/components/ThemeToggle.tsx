@@ -7,6 +7,7 @@ interface ThemeToggleProps {
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   isDark: boolean;
+  variant?: "default" | "rail";
   className?: string;
 }
 
@@ -42,7 +43,7 @@ export function ThemeToggle({ theme, onThemeChange, isDark: _isDark }: ThemeTogg
 }
 
 // Compact version for header
-export function ThemeToggleCompact({ theme, onThemeChange, isDark: _isDark, className }: ThemeToggleProps) {
+export function ThemeToggleCompact({ theme, onThemeChange, isDark: _isDark, variant = "default", className }: ThemeToggleProps) {
   const { t } = useTranslation('layout');
   const nextTheme = (): Theme => {
     if (theme === "light") return "dark";
@@ -57,8 +58,9 @@ export function ThemeToggleCompact({ theme, onThemeChange, isDark: _isDark, clas
     <button
       onClick={() => onThemeChange(nextTheme())}
       className={classNames(
-        "flex items-center justify-center w-11 h-11 rounded-xl transition-all min-h-[44px] min-w-[44px] shrink-0 glass-btn",
-        "text-[var(--color-text-secondary)]",
+        variant === "rail"
+          ? "flex items-center justify-center w-10 h-10 rounded-xl transition-all min-h-[40px] min-w-[40px] shrink-0 border border-transparent bg-transparent text-[var(--color-text-muted)] hover:bg-black/5 hover:text-[var(--color-text-primary)] dark:hover:bg-white/6"
+          : "flex items-center justify-center w-11 h-11 rounded-xl transition-all min-h-[44px] min-w-[44px] shrink-0 glass-btn text-[var(--color-text-secondary)]",
         className
       )}
       title={t('themeClickToChange', { theme: label })}

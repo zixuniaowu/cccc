@@ -116,6 +116,7 @@
     "collaborationPlaceholder": "チームはどう連携して進めるか？",
     "noOverview": "概要はまだ設定されていません",
     "overviewMermaid": "プロジェクト全体図",
+    "expand": "展開",
     "openLarge": "拡大表示",
     "diagramHint": "図をクリックして全画面表示とズーム",
     "zoomLevel": "ズーム {{percent}}%",

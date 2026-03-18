@@ -116,6 +116,7 @@
     "collaborationPlaceholder": "How does the team collaborate?",
     "noOverview": "No overview set",
     "overviewMermaid": "Project Diagram",
+    "expand": "Expand",
     "openLarge": "Open Large",
     "diagramHint": "Tap the diagram to open full-screen and zoom",
     "zoomLevel": "Zoom {{percent}}%",

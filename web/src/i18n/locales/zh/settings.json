@@ -642,6 +642,12 @@
   "developer": {
     "title": "开发者模式（全局）",
     "description": "这些设置应用于整个 CCCC 实例（守护进程 + Web）。仅在调试时使用。",
+    "runtimeInfoTitle": "运行时信息",
+    "runtimeInfoHint": "快速查看当前 Web 包和已连接 daemon 的版本。",
+    "ccccVersion": "CCCC",
+    "daemonVersion": "Daemon",
+    "versionMismatchBadge": "版本不一致",
+    "versionMismatchHint": "Web 包与 daemon 的版本不一致。请重启 CCCC 让它们重新对齐。",
     "warningTitle": "警告",
     "warningText": "开发者模式会启用详细日志和额外诊断。仅在需要时开启。",
     "enableDeveloperMode": "启用开发者模式",

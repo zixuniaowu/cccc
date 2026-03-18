@@ -189,13 +189,14 @@ export function useChatTab({
         return !!d?.reply_required;
       });
     }
-    if (chatFilter === "to_user") {
+    if (chatFilter === "user") {
       return merged.filter((ev) => {
         const d = ev.data as ChatMessageData | undefined;
         const dst = typeof d?.dst_group_id === "string" ? String(d.dst_group_id || "").trim() : "";
         if (dst) return false;
         const to = Array.isArray(d?.to) ? d?.to : [];
-        return to.includes("user") || to.includes("@user");
+        const by = String(ev.by || "").trim();
+        return by === "user" || to.includes("user") || to.includes("@user");
       });
     }
     return merged;
