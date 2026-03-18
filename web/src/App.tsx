@@ -134,7 +134,7 @@ export default function App() {
   const [canAccessGlobalSettings, setCanAccessGlobalSettings] = React.useState<boolean | null>(null);
 
   // Custom hooks
-  const { connectStream, fetchContext, contextRefreshTimerRef, cleanup: cleanupSSE } = useSSE({
+  const { connectStream, fetchContext, cleanup: cleanupSSE } = useSSE({
     activeTabRef,
     chatAtBottomRef,
     actorsRef,

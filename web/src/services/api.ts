@@ -157,8 +157,7 @@ function reuseSharedReadRequest<T>(key: string, loader: () => Promise<ApiRespons
   const hit = sharedReadRequests.get(key);
   if (hit) return hit as Promise<ApiResponse<T>>;
 
-  let task: SharedReadPromise;
-  task = loader().finally(() => {
+  const task = loader().finally(() => {
     if (sharedReadRequests.get(key) === task) {
       sharedReadRequests.delete(key);
     }

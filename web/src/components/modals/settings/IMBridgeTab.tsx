@@ -142,7 +142,7 @@ export function IMBridgeTab({
     } finally {
       setAuthLoading(false);
     }
-  }, [groupId]);
+  }, [groupId, t]);
 
   const loadPendingRequests = useCallback(async (opts?: { silent?: boolean }) => {
     if (!groupId) return;
@@ -169,7 +169,7 @@ export function IMBridgeTab({
         setPendingLoading(false);
       }
     }
-  }, [groupId]);
+  }, [groupId, t]);
 
   const loadIMAuthState = useCallback(async () => {
     await Promise.all([loadAuthorizedChats(), loadPendingRequests()]);

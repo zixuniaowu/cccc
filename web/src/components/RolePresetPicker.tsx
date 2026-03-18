@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { classNames } from "../utils/classNames";
 import { BUILTIN_ROLE_PRESETS, getRolePresetApplyState, getRolePresetById } from "../utils/rolePresets";
@@ -12,26 +12,28 @@ type RolePresetPickerProps = {
 export function RolePresetPicker({ draftValue, disabled = false, onChangeDraft }: RolePresetPickerProps) {
   const { t } = useTranslation("actors");
   const [selectedPresetId, setSelectedPresetId] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<{
+    presetId: string;
+    kind: "applied" | "no_change";
+    draftValue: string;
+  } | null>(null);
 
   const selectedPreset = getRolePresetById(selectedPresetId);
-
-  useEffect(() => {
-    setNotice("");
-  }, [selectedPresetId]);
-
-  useEffect(() => {
-    if (!notice || !selectedPreset) return;
-    if (String(draftValue || "").trim() !== String(selectedPreset.content || "").trim()) {
-      setNotice("");
-    }
-  }, [draftValue, notice, selectedPreset]);
+  const normalizedDraftValue = String(draftValue || "").trim();
+  const visibleNotice =
+    notice && notice.presetId === selectedPresetId && notice.draftValue === normalizedDraftValue
+      ? t(
+          notice.kind === "applied" ? "rolePresetAppliedNotice" : "rolePresetAlreadyMatchesDraft",
+          { name: getRolePresetById(notice.presetId)?.name || "" }
+        )
+      : "";
 
   const applyPreset = () => {
     if (!selectedPreset || disabled) return;
     const applyState = getRolePresetApplyState(draftValue, selectedPreset.content);
+    const nextDraftValue = String(selectedPreset.content || "").trim();
     if (applyState === "no_change") {
-      setNotice(t("rolePresetAlreadyMatchesDraft", { name: selectedPreset.name }));
+      setNotice({ presetId: selectedPreset.id, kind: "no_change", draftValue: nextDraftValue });
       return;
     }
     if (
@@ -41,7 +43,7 @@ export function RolePresetPicker({ draftValue, disabled = false, onChangeDraft }
       return;
     }
     onChangeDraft(selectedPreset.content);
-    setNotice(t("rolePresetAppliedNotice", { name: selectedPreset.name }));
+    setNotice({ presetId: selectedPreset.id, kind: "applied", draftValue: nextDraftValue });
   };
 
   return (
@@ -55,7 +57,10 @@ export function RolePresetPicker({ draftValue, disabled = false, onChangeDraft }
         <select
           className="w-full flex-1 rounded-xl border px-3 py-2.5 text-sm min-h-[44px] transition-colors glass-input text-[var(--color-text-primary)]"
           value={selectedPresetId}
-          onChange={(e) => setSelectedPresetId(e.target.value)}
+          onChange={(e) => {
+            setSelectedPresetId(e.target.value);
+            setNotice(null);
+          }}
           disabled={disabled}
         >
           <option value="">{t("rolePresetSelectPlaceholder")}</option>
@@ -85,9 +90,9 @@ export function RolePresetPicker({ draftValue, disabled = false, onChangeDraft }
         {selectedPreset ? selectedPreset.summary : t("rolePresetSelectPrompt")}
       </div>
 
-      {notice ? (
+      {visibleNotice ? (
         <div className="rounded-xl border px-3 py-2 text-xs border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-200">
-          {notice}
+          {visibleNotice}
         </div>
       ) : null}
     </div>

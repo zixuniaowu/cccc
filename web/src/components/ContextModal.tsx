@@ -1073,7 +1073,7 @@ export function ContextModal({
     return window.confirm(tr("context.unsavedTaskConfirm", "You have unsaved task edits. Discard them and continue?"));
   }, [hasTaskUnsaved, tr]);
 
-  const selectTask = (task: Task) => {
+  const selectTask = useCallback((task: Task) => {
     if (selectedTaskId === task.id && taskEditorMode === "edit") return;
     if (!confirmDiscardTaskChanges()) return;
     setSelectedTaskId(task.id);
@@ -1081,7 +1081,7 @@ export function ContextModal({
     setTaskEditorMode("edit");
     setSyncError("");
     setActiveView("coordination");
-  };
+  }, [confirmDiscardTaskChanges, selectedTaskId, taskEditorMode]);
 
   useEffect(() => {
     if (!isOpen) return;
