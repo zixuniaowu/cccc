@@ -133,6 +133,7 @@ export function AppModals({
     newActorUseDefaultCommand,
     newActorSecretsSetText,
     newActorCapabilityAutoloadText,
+    newActorRoleNotes,
     newActorUseProfile,
     newActorProfileId,
     showAdvancedActor,
@@ -144,6 +145,7 @@ export function AppModals({
     setNewActorUseDefaultCommand,
     setNewActorSecretsSetText,
     setNewActorCapabilityAutoloadText,
+    setNewActorRoleNotes,
     setNewActorUseProfile,
     setNewActorProfileId,
     setShowAdvancedActor,
@@ -208,6 +210,39 @@ export function AppModals({
       }
     }
   }, [setEditActorRoleNotes]);
+
+  const persistActorRoleNotes = useCallback(
+    async (groupId: string, actorId: string, note: string, actorOrder?: string[]) => {
+      const gid = String(groupId || "").trim();
+      const aid = String(actorId || "").trim();
+      const nextNote = String(note || "").trim();
+      if (!gid || !aid) return { ok: false as const, error: "missing actor or group" };
+
+      const promptsResp = await api.fetchGroupPrompts(gid);
+      if (!promptsResp.ok) {
+        return {
+          ok: false as const,
+          error: `${promptsResp.error?.code || "prompt_fetch_failed"}: ${promptsResp.error?.message || "Failed to load help prompt"}`,
+        };
+      }
+
+      const currentHelpContent = String(promptsResp.result?.help?.content || "");
+      const nextHelpContent = updateActorHelpNote(currentHelpContent, aid, nextNote, actorOrder);
+      const helpResp = await api.updateGroupPrompt(gid, "help", nextHelpContent, {
+        editorMode: "structured",
+        changedBlocks: [`actor:${aid}`],
+      });
+      if (!helpResp.ok) {
+        return {
+          ok: false as const,
+          error: `${helpResp.error?.code || "prompt_save_failed"}: ${helpResp.error?.message || "Failed to save help prompt"}`,
+        };
+      }
+
+      return { ok: true as const };
+    },
+    []
+  );
 
   // Computed
   const selectedGroupRunning = useGroupStore(
@@ -570,24 +605,14 @@ export function AppModals({
       }
 
       if (roleNotesChanged) {
-        const promptsResp = await api.fetchGroupPrompts(selectedGroupId);
-        if (!promptsResp.ok) {
-          showError(`${promptsResp.error?.code || "prompt_fetch_failed"}: ${promptsResp.error?.message || "Failed to load help prompt"}`);
-          return;
-        }
-        const currentHelpContent = String(promptsResp.result?.help?.content || "");
-        const nextHelpContent = updateActorHelpNote(
-          currentHelpContent,
+        const roleNotesResp = await persistActorRoleNotes(
+          selectedGroupId,
           actorId,
           nextRoleNotes,
           actors.map((item) => String(item.id || "").trim()).filter(Boolean)
         );
-        const helpResp = await api.updateGroupPrompt(selectedGroupId, "help", nextHelpContent, {
-          editorMode: "structured",
-          changedBlocks: [`actor:${actorId}`],
-        });
-        if (!helpResp.ok) {
-          showError(`${helpResp.error?.code || "prompt_save_failed"}: ${helpResp.error?.message || "Failed to save help prompt"}`);
+        if (!roleNotesResp.ok) {
+          showError(roleNotesResp.error);
           return;
         }
         editActorRoleNotesBaselineRef.current = nextRoleNotes;
@@ -809,6 +834,7 @@ export function AppModals({
     if (!selectedGroupId) return;
     const actorId = newActorId.trim();
     const secretsText = String(newActorSecretsSetText || "");
+    const roleNotes = String(newActorRoleNotes || "").trim();
     const selectedProfile = actorProfiles.find((item) => actorProfileIdentityKey(item) === String(newActorProfileId || "").trim()) || null;
     const capabilityAutoload = parseCapabilityIdInput(newActorCapabilityAutoloadText);
 
@@ -852,6 +878,28 @@ export function AppModals({
       if (!resp.ok) {
         setAddActorError(resp.error?.message || t('failedToAddAgent'));
         return;
+      }
+
+      const createdActorId = String(
+        (resp.result && typeof resp.result === "object"
+          ? (resp.result as { actor?: { id?: string } }).actor?.id
+          : "") || actorId || suggestedActorId
+      ).trim();
+
+      if (roleNotes && createdActorId) {
+        const roleNotesResp = await persistActorRoleNotes(
+          selectedGroupId,
+          createdActorId,
+          roleNotes,
+          [...actors.map((item) => String(item.id || "").trim()).filter(Boolean), createdActorId]
+        );
+        if (!roleNotesResp.ok) {
+          closeModal("addActor");
+          resetAddActorForm();
+          await refreshActors();
+          showError(t("actorCreatedRoleNotesSaveFailed", { actor: createdActorId, message: roleNotesResp.error }));
+          return;
+        }
       }
 
       closeModal("addActor");
@@ -1246,6 +1294,8 @@ export function AppModals({
         setNewActorSecretsSetText={setNewActorSecretsSetText}
         newActorCapabilityAutoloadText={newActorCapabilityAutoloadText}
         setNewActorCapabilityAutoloadText={setNewActorCapabilityAutoloadText}
+        newActorRoleNotes={newActorRoleNotes}
+        setNewActorRoleNotes={setNewActorRoleNotes}
         showAdvancedActor={showAdvancedActor}
         setShowAdvancedActor={setShowAdvancedActor}
         addActorError={addActorError}

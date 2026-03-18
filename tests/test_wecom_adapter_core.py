@@ -284,9 +284,82 @@ class TestWecomWebSocketReconnect(unittest.TestCase):
         self.assertIsNone(adapter._ws_connect_error)
         self.assertGreaterEqual(attempts["count"], 2)
 
+    def test_missing_heartbeat_ack_triggers_reconnect_backoff(self):
+        from cccc.ports.im.adapters.wecom import WS_HEARTBEAT_INTERVAL
+
+        adapter = self._make_adapter()
+        sends: list[str] = []
+        sleep_calls: list[float] = []
+
+        class FakeWebSocketApp:
+            def __init__(self, url, on_open, on_message, on_error, on_close):
+                self._on_open = on_open
+                self._on_message = on_message
+                self._on_error = on_error
+                self._on_close = on_close
+
+            def send(self, payload: str) -> None:
+                data = __import__("json").loads(payload)
+                cmd = str(data.get("cmd") or "")
+                sends.append(cmd)
+                if cmd == "aibot_subscribe":
+                    self._on_message(
+                        self,
+                        __import__("json").dumps(
+                            {
+                                "headers": {"req_id": str((data.get("headers") or {}).get("req_id") or "")},
+                                "errcode": 0,
+                                "errmsg": "ok",
+                            }
+                        ),
+                    )
+
+            def close(self) -> None:
+                return None
+
+            def run_forever(self, ping_interval: int = 0) -> None:
+                _ = ping_interval
+                self._on_open(self)
+
+        class FakeThread:
+            def __init__(self, target=None, kwargs=None, daemon=None):
+                self._target = target
+                self._kwargs = kwargs or {}
+                self._alive = False
+                self._keep_alive_after_start = getattr(target, "__name__", "") == "run_forever"
+
+            def start(self) -> None:
+                self._alive = True
+                if self._target:
+                    self._target(**self._kwargs)
+                if not self._keep_alive_after_start:
+                    self._alive = False
+
+            def is_alive(self) -> bool:
+                return self._alive
+
+        fake_websocket_module = type("FakeWebSocketModule", (), {"WebSocketApp": FakeWebSocketApp})
+
+        def fake_sleep(seconds: float) -> None:
+            sleep_calls.append(seconds)
+            if 1.0 <= seconds < WS_HEARTBEAT_INTERVAL:
+                adapter._ws_running = False
+
+        with patch.dict(sys.modules, {"websocket": fake_websocket_module}):
+            with patch("cccc.ports.im.adapters.wecom.threading.Thread", FakeThread):
+                with patch("cccc.ports.im.adapters.wecom.random.uniform", return_value=0.0):
+                    with patch("cccc.ports.im.adapters.wecom.time.sleep", side_effect=fake_sleep):
+                        adapter._start_ws_listener()
+
+        self.assertTrue(adapter._ws_started.is_set())
+        self.assertIsNone(adapter._ws_connect_error)
+        self.assertEqual(sends.count("ping"), 3)
+        self.assertIn(WS_HEARTBEAT_INTERVAL, sleep_calls)
+        self.assertIn(1.0, sleep_calls)
+
 
 class TestWecomRespondHandles(unittest.TestCase):
-    """Step 10-11: callback req_id capture and expiry."""
+    """Step 10-11: callback req_id capture and cache behavior."""
 
     def _make_adapter(self):
         from cccc.ports.im.adapters.wecom import WecomAdapter
@@ -309,13 +382,25 @@ class TestWecomRespondHandles(unittest.TestCase):
         adapter._enqueue_message(data)
         self.assertEqual(adapter._get_reply_req_id("conv_1"), "req_abc123")
 
-    def test_reply_req_id_expires(self):
-        from cccc.ports.im.adapters.wecom import RESPOND_HANDLE_TTL
+    def test_reply_req_id_does_not_artificially_expire(self):
         adapter = self._make_adapter()
         adapter._store_reply_ref("conv_1", "req_old")
-        # Artificially expire
-        adapter._reply_refs["conv_1"]["ts"] = time.time() - RESPOND_HANDLE_TTL - 1
-        self.assertEqual(adapter._get_reply_req_id("conv_1"), "")
+        adapter._reply_refs["conv_1"]["ts"] = 1.0
+        self.assertEqual(adapter._get_reply_req_id("conv_1"), "req_old")
+
+    def test_reply_ref_cache_prunes_oldest_entries(self):
+        from cccc.ports.im.adapters.wecom import REPLY_REF_MAX_ENTRIES
+
+        adapter = self._make_adapter()
+        for idx in range(REPLY_REF_MAX_ENTRIES + 8):
+            adapter._store_reply_ref(f"conv_{idx}", f"req_{idx}")
+            adapter._reply_refs[f"conv_{idx}"]["ts"] = float(idx)
+
+        adapter._store_reply_ref("conv_latest", "req_latest")
+
+        self.assertLessEqual(len(adapter._reply_refs), REPLY_REF_MAX_ENTRIES)
+        self.assertEqual(adapter._get_reply_req_id("conv_latest"), "req_latest")
+        self.assertEqual(adapter._get_reply_req_id("conv_0"), "")
 
     def test_reply_req_id_missing_returns_empty(self):
         adapter = self._make_adapter()

@@ -38,8 +38,6 @@ Copyable scope configuration:
 {
   "scopes": {
     "tenant": [
-      "aily:file:read",
-      "aily:file:write",
       "application:application.app_message_stats.overview:readonly",
       "application:application:self_manage",
       "application:bot.menu:write",
@@ -58,8 +56,6 @@ Copyable scope configuration:
       "im:resource"
     ],
     "user": [
-      "aily:file:read",
-      "aily:file:write",
       "im:chat.access_event.bot_p2p_chat:read"
     ]
   }

@@ -15,6 +15,9 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("cccc_help", body)
         self.assertIn("cccc_context_get", body)
         self.assertIn("cccc_project_info", body)
+        self.assertIn("Prefer silence over low-signal chatter", body)
+        self.assertIn("routine `@all` updates", body)
+        self.assertIn("finish it end-to-end", body)
         self.assertLessEqual(len(body.split()), 90)
 
     def test_default_preamble_avoids_long_rule_duplication(self) -> None:
@@ -41,6 +44,10 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("## Capability", body)
         self.assertIn("## Role Notes", body)
         self.assertIn("## Appendix", body)
+        self.assertIn("Prefer silence over low-signal chatter.", body)
+        self.assertIn('"standing by"', body)
+        self.assertIn("routine status, acknowledgements", body)
+        self.assertIn("Do not drip-feed obvious in-scope next steps", body)
         self.assertNotIn("## Quick Card", body)
         self.assertNotIn("## Where Things Live", body)
         self.assertNotIn("### NotebookLM Work vs Memory Lane", body)

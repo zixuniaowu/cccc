@@ -36,8 +36,9 @@ WS_RECONNECT_INITIAL = 1.0  # seconds
 WS_RECONNECT_MAX = 30.0  # seconds
 WS_RECONNECT_JITTER = 0.2  # 0-20%
 
-# Respond handle expiry
-RESPOND_HANDLE_TTL = 600.0  # 10 minutes
+# Keep the latest callback handle per chat for the lifetime of this bridge
+# process. We only need a bounded cache, not a time-based expiry.
+REPLY_REF_MAX_ENTRIES = 256
 
 
 class RateLimiter:
@@ -129,21 +130,18 @@ class WecomAdapter(IMAdapter):
                 "req_id": req_id,
                 "ts": time.time(),
             }
-            if len(self._reply_refs) > 256:
-                cutoff = time.time() - RESPOND_HANDLE_TTL
-                self._reply_refs = {
-                    k: v for k, v in self._reply_refs.items()
-                    if v["ts"] >= cutoff
-                }
+            if len(self._reply_refs) > REPLY_REF_MAX_ENTRIES:
+                sorted_items = sorted(
+                    self._reply_refs.items(),
+                    key=lambda item: float((item[1] or {}).get("ts") or 0.0),
+                )
+                self._reply_refs = dict(sorted_items[-REPLY_REF_MAX_ENTRIES:])
 
     def _get_reply_req_id(self, chat_id: str) -> str:
-        """Get the latest valid callback req_id for the given chat_id."""
+        """Get the latest callback req_id for the given chat_id."""
         with self._reply_lock:
             entry = self._reply_refs.get(chat_id)
             if not entry:
-                return ""
-            if time.time() - entry["ts"] > RESPOND_HANDLE_TTL:
-                del self._reply_refs[chat_id]
                 return ""
             return str(entry.get("req_id") or "")
 
@@ -246,6 +244,7 @@ class WecomAdapter(IMAdapter):
             while self._ws_running:
                 ws = None
                 heartbeat_failures = 0
+                awaiting_ping_ack = False
                 connected_event = threading.Event()
                 subscribe_acked = threading.Event()
                 error_holder: List[str] = []
@@ -259,8 +258,7 @@ class WecomAdapter(IMAdapter):
                     ws_conn.send(json.dumps(self._build_subscribe_frame()))
 
                 def on_message(ws_conn: Any, message: str) -> None:
-                    nonlocal heartbeat_failures
-                    heartbeat_failures = 0
+                    nonlocal heartbeat_failures, awaiting_ping_ack
                     try:
                         data = json.loads(message)
                     except Exception:
@@ -270,21 +268,33 @@ class WecomAdapter(IMAdapter):
                     cmd = str(data.get("cmd") or "")
                     req_id = str((data.get("headers") or {}).get("req_id") or "")
 
-                    if cmd == "aibot_msg_callback":
+                    if req_id.startswith("ping"):
+                        awaiting_ping_ack = False
+                        if int(data.get("errcode", 0) or 0) == 0:
+                            heartbeat_failures = 0
+                        else:
+                            heartbeat_failures += 1
+                            self._log(f"[ws] Heartbeat ack error: {data.get('errmsg')}")
+                    elif cmd == "aibot_msg_callback":
+                        heartbeat_failures = 0
+                        awaiting_ping_ack = False
                         self._enqueue_message(data)
                     elif cmd == "aibot_event_callback":
+                        heartbeat_failures = 0
+                        awaiting_ping_ack = False
                         self._log("[ws] Ignoring event callback")
                     elif req_id.startswith("aibot_subscribe"):
                         if int(data.get("errcode", 0) or 0) == 0:
+                            heartbeat_failures = 0
+                            awaiting_ping_ack = False
                             subscribe_acked.set()
                             self._log("[ws] Subscribe acknowledged")
                         else:
                             errmsg = str(data.get("errmsg") or "subscribe failed")
                             error_holder.append(f"Authentication failed: {errmsg}")
-                    elif req_id.startswith("ping"):
-                        if int(data.get("errcode", 0) or 0) != 0:
-                            self._log(f"[ws] Heartbeat ack error: {data.get('errmsg')}")
                     else:
+                        heartbeat_failures = 0
+                        awaiting_ping_ack = False
                         self._log(f"[ws] Unhandled frame: cmd={cmd or '<ack>'} req_id={req_id or '<none>'}")
 
                 def on_error(ws_conn: Any, error: Any) -> None:
@@ -340,13 +350,24 @@ class WecomAdapter(IMAdapter):
                         time.sleep(WS_HEARTBEAT_INTERVAL)
                         if not self._ws_running:
                             break
+                        if awaiting_ping_ack:
+                            heartbeat_failures += 1
+                            awaiting_ping_ack = False
+                            self._log(
+                                f"[ws] Heartbeat ack timeout ({heartbeat_failures}/{WS_HEARTBEAT_MAX_FAILURES})"
+                            )
+                            if heartbeat_failures >= WS_HEARTBEAT_MAX_FAILURES:
+                                self._log("[ws] Too many heartbeat failures, reconnecting")
+                                break
+                        ping_req_id = f"ping_{int(time.time() * 1000)}"
                         if self._ws_send({
                             "cmd": "ping",
-                            "headers": {"req_id": f"ping_{int(time.time() * 1000)}"},
+                            "headers": {"req_id": ping_req_id},
                         }):
-                            heartbeat_failures = 0
+                            awaiting_ping_ack = True
                         else:
                             heartbeat_failures += 1
+                            awaiting_ping_ack = False
                             self._log(f"[ws] Heartbeat send failed ({heartbeat_failures}/{WS_HEARTBEAT_MAX_FAILURES})")
                             if heartbeat_failures >= WS_HEARTBEAT_MAX_FAILURES:
                                 self._log("[ws] Too many heartbeat failures, reconnecting")
@@ -606,7 +627,10 @@ class WecomAdapter(IMAdapter):
 
         req_id = self._get_reply_req_id(chat_id)
         if not req_id:
-            self._log(f"[send] No callback req_id for chat={chat_id}, cannot send")
+            self._log(
+                f"[send] No callback req_id for chat={chat_id}, cannot send. "
+                "Ask the user to send any message in that chat to re-establish outbound replies."
+            )
             return False
 
         ok = self._ws_send(self._build_reply_frame(
