@@ -11,8 +11,10 @@ from ....contracts.v1 import DaemonError, DaemonResponse
 from ....kernel.actors import get_effective_role
 from ....kernel.capabilities import (
     BUILTIN_CAPABILITY_PACKS,
+    BUILTIN_CAPSULE_SKILLS,
     CORE_TOOL_NAMES,
     all_builtin_pack_ids,
+    all_builtin_skill_ids,
     resolve_visible_tool_names,
 )
 from ....kernel.context import ContextStorage
@@ -264,7 +266,62 @@ def _build_builtin_search_records() -> List[Dict[str, Any]]:
                 "tool_names": [str(x).strip() for x in tuple(pack.get("tool_names") or ()) if str(x).strip()],
             }
         )
+    for cap_id in all_builtin_skill_ids():
+        skill = BUILTIN_CAPSULE_SKILLS.get(cap_id, {})
+        out.append(
+            {
+                "capability_id": cap_id,
+                "kind": "skill",
+                "name": str(skill.get("name") or cap_id),
+                "description_short": str(skill.get("description_short") or ""),
+                "tags": list(skill.get("tags") or []),
+                "source_id": "cccc_builtin",
+                "source_tier": "builtin",
+                "source_uri": "",
+                "trust_tier": "builtin",
+                "qualification_status": "qualified",
+                "sync_state": "fresh",
+                "enable_supported": True,
+            }
+        )
     return out
+
+
+def _is_builtin_search_record(item: Dict[str, Any]) -> bool:
+    return str(item.get("source_id") or "").strip() == "cccc_builtin"
+
+
+def _skill_capsule_preview(value: Any, *, max_lines: int = 4, max_chars: int = 420) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    raw_lines = [str(raw or "").strip() for raw in text.splitlines() if str(raw or "").strip()]
+    if not raw_lines:
+        return ""
+    protocol_start = next(
+        (
+            idx
+            for idx, line in enumerate(raw_lines)
+            if str(line).strip().lower() in {"protocol:", "workflow:", "steps:", "playbook:"}
+        ),
+        -1,
+    )
+    if protocol_start >= 0:
+        selected = [line for line in raw_lines[protocol_start + 1 :] if line]
+    else:
+        selected = [
+            line
+            for line in raw_lines
+            if not str(line).strip().lower().startswith(("you are ", "use this skill "))
+        ]
+    if not selected:
+        selected = list(raw_lines)
+    merged = "\n".join(selected[:max_lines])
+    if len(merged) <= max_chars:
+        return merged
+    if max_chars <= 3:
+        return merged[:max_chars]
+    return merged[: max_chars - 3].rstrip() + "..."
 
 
 def _search_matches(query: str, item: Dict[str, Any]) -> bool:
@@ -581,7 +638,7 @@ def handle_capability_overview(args: Dict[str, Any]) -> DaemonResponse:
             recent_count = int(recent.get("success_count") or 0)
             recent_ts = str(recent.get("last_success_at") or "")
             cap_id = str(row.get("capability_id") or "")
-            builtin_bias = 0 if cap_id.startswith("pack:") else 1
+            builtin_bias = 0 if _is_builtin_search_record(row) else 1
             return (
                 blocked_penalty,
                 builtin_bias,
@@ -883,7 +940,7 @@ def handle_capability_search(args: Dict[str, Any]) -> DaemonResponse:
 
         def _rank(item: Dict[str, Any]) -> Tuple[int, int, int, int, int, str]:
             cap_id = str(item.get("capability_id") or "")
-            is_builtin = 0 if cap_id.startswith("pack:") else 1
+            is_builtin = 0 if _is_builtin_search_record(item) else 1
             name_key = str(item.get("name") or cap_id).lower()
             enabled_bias = 0 if cap_id in enabled_set else 1
             qualification = str(item.get("qualification_status") or "").strip().lower()
@@ -1285,6 +1342,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                     "capability_id": cap_id,
                     "name": str(rec.get("name") or cap_id),
                     "description_short": str(rec.get("description_short") or ""),
+                    "capsule_preview": _skill_capsule_preview(rec.get("capsule_text")),
                     "source_id": str(rec.get("source_id") or ""),
                     "source_uri": str(rec.get("source_uri") or ""),
                     "policy_level": _effective_policy_level(
@@ -1309,6 +1367,7 @@ def handle_capability_state(args: Dict[str, Any]) -> DaemonResponse:
                     "capability_id": cap_id,
                     "name": str(rec.get("name") or cap_id),
                     "description_short": str(rec.get("description_short") or ""),
+                    "capsule_preview": _skill_capsule_preview(rec.get("capsule_text")),
                     "source_id": str(rec.get("source_id") or ""),
                     "policy_level": _effective_policy_level(
                         policy,

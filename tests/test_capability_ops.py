@@ -246,6 +246,39 @@ class TestCapabilityOps(unittest.TestCase):
         finally:
             cleanup()
 
+    def test_search_without_external_catalog_returns_builtin_skill_for_symptom_query(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+            resp, _ = self._call(
+                "capability_search",
+                {
+                    "group_id": gid,
+                    "actor_id": "peer-1",
+                    "by": "peer-1",
+                    "query": "web startup",
+                    "kind": "skill",
+                    "include_external": False,
+                    "limit": 20,
+                },
+            )
+            self.assertTrue(resp.ok, getattr(resp, "error", None))
+            result = resp.result if isinstance(resp.result, dict) else {}
+            items = result.get("items") if isinstance(result.get("items"), list) else []
+            skill = next(
+                (
+                    item
+                    for item in items
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == "skill:cccc:runtime-bootstrap"
+                ),
+                {},
+            )
+            self.assertEqual(str(skill.get("source_id") or ""), "cccc_builtin")
+            self.assertEqual(str(skill.get("kind") or ""), "skill")
+        finally:
+            cleanup()
+
     def test_search_empty_query_uses_context_signal_for_pack_ranking(self) -> None:
         _, cleanup = self._with_home()
         try:
@@ -1617,6 +1650,21 @@ class TestCapabilityOps(unittest.TestCase):
         self.assertIsInstance(rec_v2, dict)
         self.assertEqual(str((rec_v2 or {}).get("description_short") or ""), "v2")
 
+    def test_ensure_curated_catalog_records_includes_builtin_runtime_bootstrap_skill(self) -> None:
+        from cccc.daemon.ops import capability_ops as ops
+
+        catalog = ops._new_catalog_doc()
+        policy = ops._compile_allowlist_policy({})
+        changed = ops._ensure_curated_catalog_records(catalog, policy=policy)
+        self.assertTrue(changed)
+
+        rec = catalog.get("records", {}).get("skill:cccc:runtime-bootstrap")
+        self.assertIsInstance(rec, dict)
+        self.assertEqual(str((rec or {}).get("source_id") or ""), "cccc_builtin")
+        self.assertEqual(str((rec or {}).get("kind") or ""), "skill")
+        requires = (rec or {}).get("requires_capabilities") if isinstance(rec, dict) else []
+        self.assertEqual(requires, ["pack:diagnostics", "pack:group-runtime"])
+
     def test_capability_state_reports_scope_mismatch_and_unavailable_hidden_reasons(self) -> None:
         from cccc.daemon.ops import capability_ops as ops
 
@@ -2285,6 +2333,59 @@ class TestCapabilityOps(unittest.TestCase):
             )
             skill_binding = binding_states.get("skill:anthropic:write-pr") if isinstance(binding_states, dict) else {}
             self.assertEqual(str((skill_binding or {}).get("mode") or ""), "skill")
+        finally:
+            cleanup()
+
+    def test_builtin_runtime_bootstrap_enable_applies_builtin_dependencies(self) -> None:
+        _, cleanup = self._with_home()
+        try:
+            gid = self._create_group()
+            self._add_actor(gid, "peer-1", by="user")
+
+            enable_resp, _ = self._call(
+                "capability_enable",
+                {
+                    "group_id": gid,
+                    "by": "peer-1",
+                    "actor_id": "peer-1",
+                    "capability_id": "skill:cccc:runtime-bootstrap",
+                    "scope": "session",
+                    "enabled": True,
+                },
+            )
+            self.assertTrue(enable_resp.ok, getattr(enable_resp, "error", None))
+            enable_result = enable_resp.result if isinstance(enable_resp.result, dict) else {}
+            skill_payload = enable_result.get("skill") if isinstance(enable_result.get("skill"), dict) else {}
+            self.assertEqual(str(skill_payload.get("capability_id") or ""), "skill:cccc:runtime-bootstrap")
+            applied = skill_payload.get("applied_dependencies") if isinstance(skill_payload.get("applied_dependencies"), list) else []
+            self.assertEqual(applied, ["pack:diagnostics", "pack:group-runtime"])
+
+            state_resp, _ = self._call(
+                "capability_state",
+                {"group_id": gid, "actor_id": "peer-1", "by": "peer-1"},
+            )
+            self.assertTrue(state_resp.ok, getattr(state_resp, "error", None))
+            state = state_resp.result if isinstance(state_resp.result, dict) else {}
+            enabled = set(state.get("enabled_capabilities") or [])
+            self.assertIn("skill:cccc:runtime-bootstrap", enabled)
+            self.assertIn("pack:diagnostics", enabled)
+            self.assertIn("pack:group-runtime", enabled)
+            active_capsule_skills = state.get("active_capsule_skills") if isinstance(state.get("active_capsule_skills"), list) else []
+            active_ids = {str(item.get("capability_id") or "") for item in active_capsule_skills if isinstance(item, dict)}
+            self.assertIn("skill:cccc:runtime-bootstrap", active_ids)
+            active_row = next(
+                (
+                    item
+                    for item in active_capsule_skills
+                    if isinstance(item, dict) and str(item.get("capability_id") or "") == "skill:cccc:runtime-bootstrap"
+                ),
+                {},
+            )
+            self.assertIn("Restate the exact symptom", str(active_row.get("capsule_preview") or ""))
+            self.assertIn("Gather evidence first", str(active_row.get("capsule_preview") or ""))
+            visible_tools = set(state.get("visible_tools") or [])
+            self.assertIn("cccc_terminal", visible_tools)
+            self.assertIn("cccc_actor", visible_tools)
         finally:
             cleanup()
 

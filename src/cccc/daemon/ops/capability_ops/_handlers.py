@@ -8,7 +8,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from ....contracts.v1 import DaemonResponse
-from ....kernel.capabilities import BUILTIN_CAPABILITY_PACKS
+from ....kernel.capabilities import BUILTIN_CAPABILITY_PACKS, BUILTIN_CAPSULE_SKILLS
 from ....util.time import parse_utc_iso, utc_now_iso
 
 from ._common import (
@@ -268,11 +268,58 @@ def _build_curated_records_from_policy(policy: Dict[str, Any]) -> Dict[str, Dict
     return out
 
 
+def _build_builtin_skill_records() -> Dict[str, Dict[str, Any]]:
+    now_iso = utc_now_iso()
+    out: Dict[str, Dict[str, Any]] = {}
+    for cap_id, raw in BUILTIN_CAPSULE_SKILLS.items():
+        if not isinstance(raw, dict):
+            continue
+        name = str(raw.get("name") or "").strip() or _display_name_from_capability_id(cap_id).replace(" ", "-")
+        description_short = str(raw.get("description_short") or "").strip()
+        capsule_text = str(raw.get("capsule_text") or "").strip()
+        tags = [str(x).strip() for x in (raw.get("tags") if isinstance(raw.get("tags"), (list, tuple)) else []) if str(x).strip()]
+        requires_capabilities = [
+            str(x).strip()
+            for x in (raw.get("requires_capabilities") if isinstance(raw.get("requires_capabilities"), (list, tuple)) else [])
+            if str(x).strip()
+        ]
+        out[cap_id] = {
+            "capability_id": cap_id,
+            "kind": "skill",
+            "name": name,
+            "description_short": description_short,
+            "tags": ["skill", "builtin", *tags],
+            "source_id": "cccc_builtin",
+            "source_tier": "builtin",
+            "source_uri": "",
+            "source_record_id": name,
+            "source_record_version": "",
+            "updated_at_source": now_iso,
+            "last_synced_at": now_iso,
+            "sync_state": "builtin",
+            "install_mode": "builtin",
+            "install_spec": {},
+            "requirements": {},
+            "license": "",
+            "trust_tier": "builtin",
+            "qualification_status": _QUAL_QUALIFIED,
+            "qualification_reasons": [],
+            "health_status": "builtin",
+            "enable_supported": True,
+            "capsule_text": capsule_text or f"Skill: {name}\nSummary: {description_short}".strip(),
+            "requires_capabilities": requires_capabilities,
+        }
+    return out
+
+
 def _ensure_curated_catalog_records(catalog_doc: Dict[str, Any], *, policy: Dict[str, Any]) -> bool:
     records = catalog_doc.get("records") if isinstance(catalog_doc.get("records"), dict) else {}
     if not isinstance(records, dict):
         records = {}
-    curated = _build_curated_records_from_policy(policy)
+    curated = {
+        **_build_builtin_skill_records(),
+        **_build_curated_records_from_policy(policy),
+    }
     if not curated:
         return False
 
