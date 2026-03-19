@@ -22,8 +22,9 @@ DEFAULT_PREAMBLE_BODY = """Startup routes:
 
 Working stance:
 - Work like a sharp teammate, not a script.
+- Reuse working paths first.
 - Prefer silence over low-signal chatter; speak for real changes, not filler or routine `@all` updates.
-- For simple chat, be natural, brief, and direct.
+- For chat, be natural, brief, and direct.
 - Once scope is approved, finish it end-to-end; do not ask to continue on obvious next steps.
 """
 

@@ -15,6 +15,7 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("cccc_help", body)
         self.assertIn("cccc_context_get", body)
         self.assertIn("cccc_project_info", body)
+        self.assertIn("Reuse working paths first.", body)
         self.assertIn("Prefer silence over low-signal chatter", body)
         self.assertIn("routine `@all` updates", body)
         self.assertIn("finish it end-to-end", body)
@@ -34,7 +35,7 @@ class TestPromptDefaults(unittest.TestCase):
         from cccc.kernel.prompt_files import load_builtin_help_markdown
 
         body = str(load_builtin_help_markdown() or "")
-        self.assertLessEqual(len(body.split()), 1300)
+        self.assertLessEqual(len(body.split()), 1500)
         self.assertIn("This is your working playbook for this group.", body)
         self.assertIn("## Working Stance", body)
         self.assertIn("## Communication Patterns", body)
@@ -44,6 +45,7 @@ class TestPromptDefaults(unittest.TestCase):
         self.assertIn("## Capability", body)
         self.assertIn("## Role Notes", body)
         self.assertIn("## Appendix", body)
+        self.assertIn("present the post-review version, not the first draft", body)
         self.assertIn("Prefer silence over low-signal chatter.", body)
         self.assertIn('"standing by"', body)
         self.assertIn("routine status, acknowledgements", body)

@@ -24,6 +24,28 @@ describe("rolePresets", () => {
     }
   });
 
+  it("keeps the high-leverage gstack transplant kernels in the most relevant presets", () => {
+    const planner = getRolePresetById("planner")?.content || "";
+    expect(planner).toContain("what existing code, workflow, or pattern already solves part of this?");
+    expect(planner).toContain("minimum set of changes");
+    expect(planner).toContain("complete version");
+    expect(planner).toContain("post-review version, not the first draft");
+
+    const implementer = getRolePresetById("implementer")?.content || "";
+    expect(implementer).toContain("hard self-review before handoff");
+
+    const reviewer = getRolePresetById("reviewer")?.content || "";
+    expect(reviewer).toContain("Read the full diff before forming findings.");
+    expect(reviewer).toContain("docs, diagrams, or adjacent tests went stale");
+
+    const debuggerPreset = getRolePresetById("debugger")?.content || "";
+    expect(debuggerPreset).toContain("Confirm the leading hypothesis");
+    expect(debuggerPreset).toContain("regression test");
+
+    const explorer = getRolePresetById("explorer")?.content || "";
+    expect(explorer).toContain("existing code already solves it partially");
+  });
+
   it("looks up presets by id", () => {
     expect(getRolePresetById("implementer")?.name).toBe("Implementer");
     expect(getRolePresetById("")).toBeNull();
